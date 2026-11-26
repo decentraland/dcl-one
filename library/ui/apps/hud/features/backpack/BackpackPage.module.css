@@ -18,6 +18,11 @@
   mask-composite: exclude;
   -webkit-mask-composite: xor;
 }
+/* Covers the preview until the engine has drawn the avatar; outranks `.inModal .backdrop`. */
+.backdrop.backdropShut,
+.inModal .backdrop.backdropShut {
+  mask: none;
+}
 /* The drifting glow moves by transform, which the compositor runs without repainting the page. */
 .backdrop::before {
   content: '';
@@ -47,7 +52,7 @@
 }
 
 /* In the lobby's modal the page is 1600px wide and the close button takes the header's right edge:
-   a narrower search, the avatar's column 576px wide with a larger preview, and the card without the
+   a narrower search, the avatar's column 576px wide with the avatar framed in 576×886 of the preview, and the card without the
    detail column's 380px. The detail panel has no room beside the grid there: it is absent while
    nothing is selected and lies over the avatar's column, against the card, while something is. */
 .inModal .searchWrap {
@@ -58,14 +63,17 @@
   right: 430px;
 }
 .inModal .backdrop {
-  /* the glow stands under the avatar, bottom left; the card's side is the deep colour */
-  background: radial-gradient(ellipse 65% 95% at 18% 100%, var(--lava-2) 0%, var(--lava-2) 45%, var(--lava-1) 78%);
+  /* continues the engine's backdrop past the preview; the glow fades out before the preview's edge */
+  background:
+    radial-gradient(ellipse 45% 95% at 100% 100%, var(--lava-2) 0%, transparent 100%),
+    linear-gradient(180deg, var(--lava-1), var(--lava-3)) 0 -83px / 100% 1184px no-repeat;
   mask:
     linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
     linear-gradient(var(--black), var(--black)) calc(50% - 512px) calc(50% + 9px) / 1184px 1184px no-repeat;
   mask-composite: exclude;
 }
-.inModal .backdrop::before {
+.inModal .backdrop::before,
+.inModal .backdrop::after {
   display: none;
 }
 .inModal .frame {
@@ -76,6 +84,13 @@
   top: -146px;
   width: 1184px;
   height: 1184px;
+}
+.inModal .previewFocus {
+  inset: auto;
+  left: 304px;
+  top: 160px;
+  width: 576px;
+  height: 886px;
 }
 .inModal .avatarDrag {
   width: 536px;
@@ -187,6 +202,12 @@
   top: -20px;
   width: 960px;
   height: 960px;
+}
+/* The part of the preview the engine frames the avatar in. */
+.previewFocus {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 .frame {
   position: absolute;

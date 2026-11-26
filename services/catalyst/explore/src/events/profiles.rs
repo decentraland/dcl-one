@@ -3,7 +3,8 @@
 //! and decentraland-gatsby@9.0.1). Existing clients use plain JSON plus
 //! signed-fetch headers; federation envelopes remain supported.
 //!
-//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator;
+//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator
+//!   or an `edit_any_profile` grantee;
 //!   `ProfileSettings/routes/listProfileSettings.ts`),
 //!   `GET`/`PATCH /api/profiles/me/settings` (the signer's own;
 //!   `getAuthProfileSettings.ts`, `updateMyProfileSettings.ts`) and
@@ -16,16 +17,15 @@
 //!   web-push rows, kept in step with `notify_by_browser`
 //!   (`ProfileSubscription/routes.ts:17-73`); nothing sends pushes;
 //! - `GET /api/profile/{user}/{face,body}.png`: 302 to the avatar snapshot of
-//!   the profile this node holds, else the default avatar (gatsby
-//!   `entities/Profile/routes.js`).
+//!   the profile this node holds or reads through, else the default avatar
+//!   (gatsby `entities/Profile/routes.js`).
 //!
 //! "isAdmin" (gatsby's `ADMIN_ADDRESSES`) is a wallet in `explore.moderators`;
-//! the `edit_any_*` permissions count once a moderator granted them
-//! (`permissions_granted`), except `edit_any_profile`: private profile reads
-//! and permission grants stay moderator-only, the grant is stored and listed
-//! but delegates nothing. A plain signed-fetch body needs no
-//! `x-identity-metadata`; when it carries `body_sha256` the body must match
-//! it, and when it carries a `nonce` a replay answers 409.
+//! the `edit_any_*` permissions count once granted (`permissions_granted`);
+//! an `edit_any_profile` grantee reads and edits other profiles' settings as
+//! a moderator does (`ProfileSettings/utils.ts:4-11`). A plain signed-fetch
+//! body needs no `x-identity-metadata`; when it carries `body_sha256` the body
+//! must match it, and when it carries a `nonce` a replay answers 409.
 //! Every write is logged in `explore.signed_actions` and applied in one
 //! transaction: the signer's own settings and subscriptions behind
 //! `DATA_WRITES_ENABLED`, schedule and profile administration behind
@@ -50,11 +50,11 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool};
 
 use super::ScheduleRecord;
-use crate::SharedState;
 use crate::fed::{self, ProfileSettingsUpdate, ScheduleUpsert};
 use crate::shared::errors::{ApiData, ApiError};
 use crate::shared::identity::Address;
 use crate::validate::{self, Flavour};
+use crate::{ExploreState, SharedState};
 
 /// The list is capped (a table with one row per wallet that saved settings).
 const SETTINGS_LIST_CAP: i64 = 10_000;
@@ -120,13 +120,11 @@ async fn has_granted(pool: &PgPool, signer: &str, permission: &str) -> Result<bo
     .await?)
 }
 
-/// The readers and editors of other profiles: a moderator only. The old
-/// service also admits an `edit_any_profile` grant (`getProfileSettings.ts:14-16`,
-/// `listProfileSettings.ts:11-13`, `ProfileSettings/utils.ts:4-11`); here the
-/// grant reads no email and grants nothing (accepted entries
-/// `events.profiles.*_edit_any_profile`).
+/// The readers and editors of other profiles: `isAdmin(req.auth) ||
+/// canEditAnyProfile(profile)` (`getProfileSettings.ts:13-16`,
+/// `listProfileSettings.ts:10-13`, `ProfileSettings/utils.ts:4-11`).
 async fn require_profile_admin(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
-    if is_moderator(pool, signer).await? {
+    if has_granted(pool, signer, "edit_any_profile").await? {
         Ok(())
     } else {
         Err(ApiError::forbidden("Forbidden"))
@@ -170,21 +168,27 @@ fn envelope(body: Value) -> Result<Value, ApiError> {
     }
 }
 
-/// The profile entity this node holds for `address` (`id`, deployed
-/// metadata), as `/lambdas/profiles` reads it; `None` for a non-address or
-/// a wallet without a profile here.
-pub(super) async fn local_profile(
-    pool: &PgPool,
+/// The profile entity for `address`, read through when configured; a failing source is a miss, as gatsby's `API.catch` made it.
+pub(super) async fn profile(
+    state: &ExploreState,
     address: &str,
 ) -> Result<Option<(String, Value)>, ApiError> {
     let Ok(address) = Address::parse(address) else {
         return Ok(None);
     };
-    let docs =
-        crate::content::queries::active_entity_docs_by_pointers(pool, &[address.into_string()])
-            .await?;
-    Ok(docs
-        .into_iter()
+    let docs = crate::content::read_through::active_entity_docs(
+        &state.pool,
+        state.read_through.as_deref(),
+        false,
+        &[address.into_string()],
+        state.storage.as_ref().map(|s| s.denylist().as_ref()),
+    )
+    .await?;
+    Ok(profile_of(docs))
+}
+
+fn profile_of(docs: Vec<crate::content::queries::EntityDoc>) -> Option<(String, Value)> {
+    docs.into_iter()
         .filter_map(|doc| doc.to_value())
         .find(|doc| doc.get("type").and_then(Value::as_str) == Some("profile"))
         .map(|doc| {
@@ -195,13 +199,12 @@ pub(super) async fn local_profile(
                     .to_owned(),
                 doc.get("metadata").cloned().unwrap_or(Value::Null),
             )
-        }))
+        })
 }
 
-/// gatsby `withAuthProfile()` (`dist/entities/Profile/middleware.js:33-47`):
-/// a signer without a profile is 404 `Not found profile for "<user>"`.
-pub(super) async fn require_profile(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
-    if local_profile(pool, signer).await?.is_none() {
+/// gatsby `withAuthProfile()`: a signer with no profile anywhere is 404 `Not found profile for "<user>"`.
+pub(super) async fn require_profile(state: &ExploreState, signer: &str) -> Result<(), ApiError> {
+    if profile(state, signer).await?.is_none() {
         return Err(ApiError::not_found(format!(
             "Not found profile for \"{signer}\""
         )));
@@ -232,7 +235,7 @@ pub async fn avatar_body(
 }
 
 async fn avatar(state: &SharedState, user: &str, which: Snapshot) -> Result<Response, ApiError> {
-    let target = match local_profile(&state.pool, user).await? {
+    let target = match profile(state, user).await? {
         Some((entity_id, metadata)) => snapshot_url(
             &metadata,
             &entity_id,
@@ -622,8 +625,8 @@ fn profile_address(raw: &str) -> Result<String, ApiError> {
 }
 
 /// `GET /api/profiles/settings`: the rows holding permissions
-/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator
-/// (fixtures `events.profiles.list_*`).
+/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator or an
+/// `edit_any_profile` grantee (fixtures `events.profiles.list_*`).
 pub async fn list_profile_settings(
     State(state): State<SharedState>,
     method: Method,
@@ -830,7 +833,7 @@ pub(super) async fn event_permissions(
 }
 
 /// `GET /api/profiles/{profile_id}/settings` (`getProfileSettings.ts:12-27`):
-/// a moderator's read of the stored row,
+/// a moderator's or `edit_any_profile` grantee's read of the stored row,
 /// `null` when there is none; a non-address is 404 (fixtures
 /// `events.profiles.get_by_id_*`).
 pub async fn get_profile_settings(
@@ -850,7 +853,7 @@ pub async fn get_profile_settings(
 }
 
 /// `PATCH /api/profiles/{profile_id}/settings` (`updateProfileSettings.ts:19-50`):
-/// the target's `permissions`, by a moderator,
+/// the target's `permissions`, by a moderator or `edit_any_profile` grantee,
 /// with the Slack notice when the set changed (fixtures
 /// `events.profiles.patch_by_id_*`). The `ProfileSettingsUpdate` envelope,
 /// which may also set the target's own fields, stays a moderator's.
@@ -1422,6 +1425,21 @@ pub(crate) mod test_support {
     use serde_json::{Value, json};
     use sqlx::PgPool;
 
+    /// The profile entity this node holds for `address` (`id`, metadata).
+    pub async fn held_profile(pool: &PgPool, address: &str) -> Option<(String, Value)> {
+        let address = crate::shared::identity::Address::parse(address).ok()?;
+        let docs = crate::content::read_through::active_entity_docs(
+            pool,
+            None,
+            false,
+            &[address.into_string()],
+            None,
+        )
+        .await
+        .unwrap();
+        super::profile_of(docs)
+    }
+
     /// A profile deployment this node holds for `address`, its first avatar
     /// carrying `avatar` (the `{"v": ...}`-wrapped metadata the deployers store).
     /// A wallet that already has a profile keeps it (the shared test wallet is
@@ -1551,11 +1569,12 @@ mod tests {
     }
 
     /// `listProfileSettings.ts`, `getProfileSettings.ts`, `updateProfileSettings.ts`:
-    /// a moderator ("isAdmin") reads and administers other profiles; the list
-    /// holds the rows with permissions; an `edit_any_profile` grantee is listed
-    /// but stays 403 like a plain user, who cannot grant itself through `/me`.
+    /// a moderator ("isAdmin") or an `edit_any_profile` grantee
+    /// (`canEditAnyProfile`) reads and administers other profiles; the list
+    /// holds the rows with permissions; a plain user is 403 and cannot grant
+    /// itself through `/me`.
     #[tokio::test]
-    async fn profile_administration_is_moderator_only_and_lists_the_granted_rows() {
+    async fn profile_administration_is_for_moderators_and_edit_any_profile_grantees() {
         // Queues moderation-outbox rows: serialized with the outbox tests.
         let _outbox = crate::moderation_hooks::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -1612,24 +1631,99 @@ mod tests {
             body["data"]["permissions"],
             json!(["edit_any_profile", "edit_any_event"])
         );
-        // The grant is listed but delegates nothing: the grantee stays 403 on
-        // the list, the read and the write of other profiles. The old service
-        // admits it (`ProfileSettings/utils.ts:4-11`): accepted entries
-        // `events.profiles.*_edit_any_profile`.
-        let target_lower = format!("/api/profiles/{}/settings", address(&target));
+        // The grantee administers profiles as a moderator does
+        // (`listProfileSettings.ts:11`, `getProfileSettings.ts:14`,
+        // `updateProfileSettings.ts:21`): the list carries the rows' emails,
+        // the read answers the stored row and the write grants any permission,
+        // `edit_any_profile` included (`types.ts:59-77`).
+        let other = Wallet::random();
+        let other_path = format!("/api/profiles/{}/settings", address(&other));
+        let (status, body) = call(
+            &app,
+            &other,
+            "patch",
+            "/api/profiles/me/settings",
+            Some(&json!({"email":"other@example.org"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["edit_any_profile","approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let row = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["user"] == address(&other))
+            .cloned()
+            .expect("granted row listed");
+        assert_eq!(row["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // A non-permission key is 400 for the grantee too, and changes nothing.
+        let (status, answer) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":[],"email":"x@example.com"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        let (_, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        // A stored but ungranted `edit_any_profile` (a row the moderator never
+        // granted, `permissions_granted` false) delegates nothing.
+        let ungranted = Wallet::random();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions, permissions_granted) VALUES ($1, '[\"edit_any_profile\"]'::jsonb, false)")
+            .bind(address(&ungranted)).execute(&pool).await.unwrap();
         for (verb, path, body) in [
             ("get", "/api/profiles/settings".to_owned(), None),
-            ("get", target_lower.clone(), None),
-            (
-                "patch",
-                target_lower,
-                Some(json!({"permissions":["edit_any_schedule"]})),
-            ),
+            ("get", other_path.clone(), None),
+            ("patch", other_path.clone(), Some(json!({"permissions":[]}))),
         ] {
-            let (status, answer) = call(&app, &editor, verb, &path, body.as_ref()).await;
+            let (status, answer) = call(&app, &ungranted, verb, &path, body.as_ref()).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
             assert_eq!(answer["error"], "Forbidden");
         }
+        let (_, body) = call(&app, &moderator, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // Once the grant is withdrawn the old grantee is 403 again.
+        let (status, body) = call(
+            &app,
+            &moderator,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, answer) = call(&app, &other, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
         let (status, body) = call(&app, &moderator, "get", "/api/profiles/settings", None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let listed: Vec<&str> = body["data"]
@@ -1737,8 +1831,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(lost, 1);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2)")
-            .bind(address(&editor)).bind(address(&target)).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2,$3)")
+            .bind(address(&editor)).bind(address(&target)).bind(address(&other)).execute(&pool).await.unwrap();
     }
 
     /// `updateMyProfileSettings.ts:26-78` and `types.ts:79-101`: the body's
@@ -1887,6 +1981,48 @@ mod tests {
             call_with(&app, &moderator, "post", schedules, Some(&schedule), &bound).await;
         assert_eq!(status, StatusCode::CONFLICT, "{answer}");
         assert_eq!(answer["error"], "Schedule request already applied");
+    }
+
+    /// A write signed over the events host's `/api/...` path passes the nest;
+    /// without the forwarded path it is refused.
+    #[tokio::test]
+    async fn a_write_signed_on_the_events_host_passes_the_rewrite() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let moderator = moderator(&pool).await;
+        let app = axum::Router::new().nest("/events", app(&pool));
+        let schedule = json!({"name":"Host","active_since":"2031-01-01T00:00:00.000Z","active_until":"2031-02-01T00:00:00.000Z"});
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &moderator,
+            "post",
+            "/api/schedules",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        for (original, expected) in [
+            (Some("/api/schedules"), StatusCode::CREATED),
+            (None, StatusCode::UNAUTHORIZED),
+        ] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/events/api/schedules")
+                .header("content-type", "application/json");
+            for (key, value) in headers.iter() {
+                request = request.header(key, value);
+            }
+            if let Some(original) = original {
+                request = request.header("x-original-path", original);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(schedule.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{original:?}");
+        }
     }
 
     /// `Schedule/routes.ts:48-97`, `schema.ts:86-147`: the required triple,
@@ -2292,6 +2428,308 @@ mod tests {
         assert!(
             avatar_redirect(Some("javascript:alert(1)")).headers()["location"] == DEFAULT_AVATAR
         );
+    }
+
+    /// A peer serving signed `profiles` (500 when `down`), counting its `/entities/active` calls.
+    async fn profile_peer(
+        profiles: Vec<Value>,
+        down: bool,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::extract::Path as P;
+        use axum::routing::{get, post};
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut docs = Vec::new();
+        let mut files = HashMap::new();
+        let mut chains = HashMap::new();
+        for entity in profiles {
+            let bytes = serde_json::to_vec(&entity).unwrap();
+            let id = crate::auth::hash_bytes_v1(&bytes);
+            let chain = catalyst_shared::test_keys::signed_chain(
+                catalyst_shared::test_keys::ENTITY_KEY,
+                &id,
+            )
+            .await;
+            let mut doc = entity;
+            doc["id"] = json!(id);
+            docs.push(doc);
+            chains.insert(id.clone(), serde_json::to_value(chain).unwrap());
+            files.insert(id, bytes);
+        }
+        let (docs, chains, files) = (Arc::new(docs), Arc::new(chains), Arc::new(files));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let active = post(move |Json(body): Json<Value>| async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            if down {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            let wanted = body["pointers"].as_array().cloned().unwrap_or_default();
+            let found: Vec<Value> = docs
+                .iter()
+                .filter(|d| {
+                    d["pointers"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|p| wanted.contains(p))
+                })
+                .cloned()
+                .collect();
+            Json(found).into_response()
+        });
+        let app = axum::Router::new()
+            .route("/content/entities/active", active)
+            .route(
+                "/content/audit/{type}/{id}",
+                get(move |P((_, id)): P<(String, String)>| async move {
+                    Json(json!({"version": "v3", "authChain": chains[&id]}))
+                }),
+            )
+            .route(
+                "/content/contents/{hash}",
+                get(move |P(hash): P<String>| async move {
+                    files.get(&hash).cloned().ok_or(StatusCode::NOT_FOUND)
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}/content"), calls)
+    }
+
+    async fn temp_storage() -> (Arc<crate::storage::Storage>, std::path::PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "explore-profile-read-through-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        (storage, tmp)
+    }
+
+    /// Explore over `storage`, reading profiles through `source` when given.
+    fn storage_app(
+        pool: &PgPool,
+        storage: &Arc<crate::storage::Storage>,
+        source: Option<String>,
+    ) -> axum::Router {
+        let read_through = source.map(|source| {
+            Arc::new(crate::content::read_through::ReadThrough::new(
+                pool.clone(),
+                storage.clone(),
+                crate::content::sync::test_sync_client(reqwest::Client::new()),
+                vec![source],
+                None,
+                crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
+                crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+            ))
+        });
+        let state = crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings {
+                user_writes_enabled: true,
+                ..crate::Settings::for_tests()
+            },
+            None,
+        )
+        .with_storage(storage.clone())
+        .with_read_through(read_through);
+        crate::router(Arc::new(state))
+    }
+
+    async fn read_through_app(pool: &PgPool, source: String) -> (axum::Router, std::path::PathBuf) {
+        let (storage, tmp) = temp_storage().await;
+        (storage_app(pool, &storage, Some(source)), tmp)
+    }
+
+    async fn redirect(app: &axum::Router, uri: &str) -> String {
+        let response = app
+            .clone()
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND, "{uri}");
+        response.headers()["location"].to_str().unwrap().to_owned()
+    }
+
+    async fn visible_event(pool: &PgPool) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        super::super::mirror::upsert_event(
+            pool,
+            &json!({"id": id, "name": "Mirrored", "user": "0x0000000000000000000000000000000000000abc", "approved": true, "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000}),
+        )
+        .await
+        .unwrap();
+        id
+    }
+
+    fn remote_profile(user: &str, face: &str) -> Value {
+        json!({
+            "version": "v3",
+            "type": "profile",
+            "pointers": [user],
+            "timestamp": Utc::now().timestamp_millis(),
+            "content": [],
+            "metadata": {"avatars": [{"name": "Remote", "userId": user, "ethAddress": user, "avatar": {"snapshots": {"face256": face, "body": "https://peer.decentraland.org/content/contents/bafyremotebody"}}}]}
+        })
+    }
+
+    /// A poster upload signed by `wallet`.
+    async fn upload_poster(app: &axum::Router, wallet: &Wallet) -> (StatusCode, Value) {
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            wallet,
+            "post",
+            "/api/poster",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        let png = tiny_skia::Pixmap::new(2, 2).unwrap().encode_png().unwrap();
+        let mut multipart = b"--b\r\nContent-Disposition: form-data; name=\"poster\"; filename=\"p.png\"\r\nContent-Type: image/png\r\n\r\n".to_vec();
+        multipart.extend_from_slice(&png);
+        multipart.extend_from_slice(b"\r\n--b--\r\n");
+        let mut request =
+            Request::post("/api/poster").header("content-type", "multipart/form-data; boundary=b");
+        for (key, value) in headers.iter() {
+            request = request.header(key, value);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(multipart)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// An unheld wallet RSVPs, creates, uploads and gets its avatar once read through.
+    #[tokio::test]
+    async fn a_profile_this_node_lacks_is_read_through() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let face = "https://peer.decentraland.org/content/contents/bafyremoteface";
+        let wallets = [Wallet::random(), Wallet::random(), Wallet::random()];
+        let users = wallets.each_ref().map(address);
+        let (source, calls) = profile_peer(
+            users
+                .iter()
+                .map(|user| remote_profile(user, face))
+                .collect(),
+            false,
+        )
+        .await;
+        let (app, tmp) = read_through_app(&pool, source).await;
+        let [rsvp, creator, uploader] = &wallets;
+        let user = &users[0];
+        for user in &users {
+            assert!(test_support::held_profile(&pool, user).await.is_none());
+        }
+        let event = visible_event(&pool).await;
+        let (status, body) = call(
+            &app,
+            rsvp,
+            "post",
+            &format!("/api/events/{event}/attendees"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["data"][0]["user"], *user);
+        assert_eq!(body["data"][0]["user_name"], "Remote");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(test_support::held_profile(&pool, user).await.is_some());
+        assert_eq!(
+            redirect(&app, &format!("/api/profile/{user}/face.png")).await,
+            face
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let new_event = json!({ "name": "Launch party", "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000, "x": 10, "y": -20, "description": "come" });
+        let (status, body) = call(&app, creator, "post", "/api/events", Some(&new_event)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["data"]["user"], users[1]);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let (status, body) = upload_poster(&app, uploader).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A denylisted profile is a miss whether or not the node reads through.
+    #[tokio::test]
+    async fn a_denylisted_profile_is_a_miss_with_or_without_the_read_through() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (source, calls) = profile_peer(Vec::new(), false).await;
+        let (storage, tmp) = temp_storage().await;
+        let event = visible_event(&pool).await;
+        for source in [None, Some(source)] {
+            let app = storage_app(&pool, &storage, source);
+            let wallet = Wallet::random();
+            let user = address(&wallet);
+            let entity_id = test_support::deploy_profile(
+                &pool,
+                &user,
+                json!({"snapshots": {"face256": "https://peer.decentraland.org/content/contents/bafydenied"}}),
+            )
+            .await;
+            let path = format!("/api/events/{event}/attendees");
+            let (status, body) = call(&app, &wallet, "post", &path, None).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            storage.denylist().add(&entity_id);
+            let (status, body) = call(&app, &wallet, "post", &path, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["error"], format!("Not found profile for \"{user}\""));
+            assert_eq!(
+                redirect(&app, &format!("/api/profile/{user}/face.png")).await,
+                DEFAULT_AVATAR
+            );
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// No profile anywhere, or a failing source, is the 404 and the default avatar.
+    #[tokio::test]
+    async fn a_profile_found_nowhere_or_behind_a_failing_source_is_a_miss() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let event = visible_event(&pool).await;
+        for down in [false, true] {
+            let (source, calls) = profile_peer(Vec::new(), down).await;
+            let (app, tmp) = read_through_app(&pool, source).await;
+            let wallet = Wallet::random();
+            let user = address(&wallet);
+            let (status, body) = call(
+                &app,
+                &wallet,
+                "post",
+                &format!("/api/events/{event}/attendees"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "down={down} {body}");
+            assert_eq!(body["error"], format!("Not found profile for \"{user}\""));
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            let other = address(&Wallet::random());
+            assert_eq!(
+                redirect(&app, &format!("/api/profile/{other}/face.png")).await,
+                DEFAULT_AVATAR
+            );
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+            let _ = std::fs::remove_dir_all(tmp);
+        }
     }
 
     #[test]

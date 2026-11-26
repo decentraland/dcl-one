@@ -15,8 +15,12 @@
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
-//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
+//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile`,
+//! `/admin/test-purchase-email` behind
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`); the ops dashboard's reads
+//! `/credits`, `/credit-reasons`, `/admin/ledger-stats` and
+//! `/admin/purchase-audit` behind that bearer or a wallet signature from
+//! `CREDITS_READ_ADMIN_ADDRESSES` (`handlers/reports.rs`).
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -26,8 +30,8 @@
 //!   (`pricing::LocalMarket`; a source that is unset or not ready answers 503,
 //!   a quote miss prices to `null`);
 //! - the packs, intents, orders and the Stripe webhook: local
-//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`) plus
-//!   Stripe's API;
+//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`,
+//!   `purchase_receipts`) plus Stripe's API;
 //! - the MANA top-up, the fulfilment and the escrow ops: the economy module
 //!   (`escrow::EconomyBroker`, the old HTTP hops to `/v1/payments/verify`,
 //!   `/v1/broker/buy`, `/v1/escrow/{reclaim,release}` as handler calls with
@@ -64,7 +68,11 @@
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
-//! the log either way). Not carried: the `ts-rs`
+//! the log either way), and `credits-purchase-receipts` (the receipt
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Metrics: the
+//! Prometheus families in `metrics.rs`, recorded by serve after each fact's
+//! commit (its doc maps credits-server's series to them).
+//! Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -76,24 +84,32 @@ pub mod admin_store;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
+pub mod charge;
 pub mod checkout;
 pub mod digest;
 pub mod dto;
 pub mod errors;
 pub mod escrow;
+pub mod events;
 pub mod feed;
 pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod ledger_stats;
+pub mod metrics;
 pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod purchase_audit;
 pub mod purchase_intent;
+pub mod receipts;
 pub mod reconcile;
+pub mod reports;
 pub mod settlement;
 pub mod store;
+pub mod stream;
 pub mod stripe;
 pub mod trial;
 pub mod usage;
@@ -101,6 +117,12 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod metrics_tests;
+#[cfg(test)]
+mod receipts_tests;
+#[cfg(test)]
+mod reports_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -142,6 +164,9 @@ pub struct RawSettings {
     pub writes_enabled: bool,
     /// `CATALYRST_CREDITS_ADMIN_TOKEN` (or `_FILE`): the operator bearer; unset refuses the admin routes.
     pub admin_token: Option<String>,
+    /// `CREDITS_READ_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
+    /// signed requests may read the credits reports.
+    pub read_admin_addresses: String,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
@@ -188,6 +213,10 @@ pub struct RawSettings {
     /// it returns to the Shop pair like every other surface.
     pub checkout_success_url_builder: Option<String>,
     pub checkout_cancel_url_builder: Option<String>,
+    /// `PUBLIC_URL`: the node's externally reachable base, where Stripe's
+    /// `cancel_url` lands on this node's cancel-return for the order; unset,
+    /// `cancel_url` is the surface's cancel page.
+    pub public_url: Option<String>,
     /// `CREDITS_USAGE_INDEX_ENABLED` (false): attach the CreditUsed index.
     pub usage_index_enabled: bool,
     /// `RPC_ENDPOINT_POLYGON` (or `_FILE`): the collections chain's JSON-RPC the index reads.
@@ -234,6 +263,7 @@ impl Default for RawSettings {
             goal_flags_source: goals::flags::Source::default(),
             writes_enabled: false,
             admin_token: None,
+            read_admin_addresses: String::new(),
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
             stripe_secret_key: None,
@@ -257,6 +287,7 @@ impl Default for RawSettings {
             checkout_cancel_url: String::new(),
             checkout_success_url_builder: None,
             checkout_cancel_url_builder: None,
+            public_url: None,
             usage_index_enabled: false,
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
@@ -285,6 +316,9 @@ pub struct Settings {
     pub goal_flags_source: goals::flags::Source,
     pub writes_enabled: bool,
     pub admin_token: Option<String>,
+    /// Lowercased `CREDITS_READ_ADMIN_ADDRESSES`: the wallets that may read
+    /// the credits reports with a signed request (`admin::require_read_admin`).
+    pub read_admin_addresses: Vec<String>,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
     pub stripe_secret_key: Option<String>,
@@ -308,6 +342,9 @@ pub struct Settings {
     pub checkout_cancel_url: String,
     /// Both set or neither (a half-configured pair falls back to the Shop's).
     pub checkout_builder_urls: Option<(String, String)>,
+    /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
+    /// Stripe sends an abandoning buyer to.
+    pub public_url: Option<String>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
     /// Which MANA top-up transfers are credited (`handlers::topup`).
@@ -325,6 +362,23 @@ pub struct Settings {
 
 fn non_empty(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// `CREDITS_READ_ADMIN_ADDRESSES`: blanks are skipped and an entry that is
+/// not a wallet address fails startup, so a typo can't silently lock the
+/// dashboard out or let a malformed entry stand in for an admin.
+pub fn parse_read_admin_addresses(raw: &str) -> anyhow::Result<Vec<String>> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            crate::shared::identity::Address::parse(s)
+                .map(|a| a.into_string())
+                .map_err(|_| {
+                    anyhow::anyhow!("CREDITS_READ_ADMIN_ADDRESSES: {s:?} is not a wallet address")
+                })
+        })
+        .collect()
 }
 
 pub fn parse_fulfillment_mode(raw: &str) -> anyhow::Result<String> {
@@ -547,6 +601,7 @@ impl Settings {
             goal_flags_source,
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
+            read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
             captcha_secret,
             captcha_verify_url,
             stripe_secret_key,
@@ -574,6 +629,7 @@ impl Settings {
             checkout_cancel_url: raw.checkout_cancel_url.trim().to_string(),
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
+            public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
             usage,
             topup: handlers::topup::TopupPolicy {
                 start_block: raw.topup_start_block,
@@ -603,6 +659,34 @@ impl Settings {
         }
     }
 
+    /// The `success_url` and `cancel_url` of a pack order's Stripe session, as
+    /// credits-server builds them: the surface's success page with
+    /// `order=<id>`, which the app polls the order by; and the cancel-return
+    /// of the order on this node (`PUBLIC_URL`), which retires the abandoned
+    /// checkout before sending the buyer on ([`Self::checkout_cancel_landing`]).
+    /// Without `PUBLIC_URL`, `cancel_url` is the surface's cancel page with
+    /// `order=<id>&canceled=1`: Stripe refuses a relative one.
+    pub fn checkout_session_urls(&self, source: Option<&str>, order_id: &str) -> (String, String) {
+        let (success, cancel) = self.checkout_return_urls(source);
+        let order = urlencoding::encode(order_id);
+        let cancel = match &self.public_url {
+            Some(base) => format!("{base}/shop-api/v1/pack-orders/{order}/cancel-return"),
+            None => append_query(cancel, &format!("order={order}&canceled=1")),
+        };
+        (append_query(success, &format!("order={order}")), cancel)
+    }
+
+    /// Where cancel-return sends the buyer: the order's surface cancel page
+    /// with `order=<id>&canceled=1`, the query the apps read; an unknown
+    /// order goes to the Shop's.
+    pub fn checkout_cancel_landing(&self, source: Option<&str>, order_id: &str) -> String {
+        let (_, cancel) = self.checkout_return_urls(source);
+        append_query(
+            cancel,
+            &format!("order={}&canceled=1", urlencoding::encode(order_id)),
+        )
+    }
+
     pub fn for_tests() -> Self {
         Self::parse(RawSettings {
             writes_enabled: true,
@@ -613,6 +697,18 @@ impl Settings {
         })
         .expect("the defaults parse")
     }
+}
+
+/// `url` with `query` appended after `?`, or after `&` when it has one
+/// (credits-server's `appendQuery`). A `#` fragment stays last, so the query
+/// still reaches the page's server.
+fn append_query(url: &str, query: &str) -> String {
+    if query.is_empty() {
+        return url.to_string();
+    }
+    let (base, fragment) = url.split_at(url.find('#').unwrap_or(url.len()));
+    let separator = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{separator}{query}{fragment}")
 }
 
 /// The sources a credits state is built over: the marketplace and price
@@ -652,6 +748,15 @@ pub struct State {
     /// An event failed since the last round started: the next round starts
     /// from the beginning without waiting for the reconcile interval.
     pub(crate) goal_scan_retry: std::sync::atomic::AtomicBool,
+    /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
+    /// flag reads off.
+    pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The balance streams' listener and subscribers (`stream.rs`).
+    pub(crate) balance_changes: stream::BalanceChanges,
+    /// The purchase receipt's mailer, names and links (`receipts.rs`), set
+    /// once by [`Self::start_receipts`]: `serve` builds the mailer after
+    /// this state.
+    pub receipts: std::sync::OnceLock<Arc<receipts::Sender>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -664,6 +769,7 @@ impl State {
         sources: Sources,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        let dapps_flags = sources.market.as_ref().map(|m| m.dapps_flags());
         let market: Arc<dyn pricing::Market> = Arc::new(pricing::LocalMarket {
             pool: pool.clone(),
             market: sources.market,
@@ -674,7 +780,9 @@ impl State {
             Some(economy) => Arc::new(escrow::EconomyBroker::new(economy)),
             None => Arc::new(escrow::NoBroker),
         };
-        Self::with_sources(pool, http, settings, market, broker, eip1654)
+        let mut state = Self::with_sources(pool, http, settings, market, broker, eip1654);
+        state.dapps_flags = dapps_flags;
+        state
     }
 
     /// The constructor the tests use with a fake market and broker.
@@ -768,7 +876,38 @@ impl State {
             revoker,
             feed,
             goals_chain: chain,
+            dapps_flags: None,
+            balance_changes: stream::BalanceChanges::default(),
+            receipts: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Sets the purchase receipt's sender and starts the
+    /// `credits-purchase-receipts` job (`receipts::spawn_job`). A second call
+    /// keeps the first sender and starts nothing.
+    pub fn start_receipts(
+        self: &Arc<Self>,
+        sender: receipts::Sender,
+        interval: Duration,
+        jobs: &Jobs,
+    ) {
+        if self.receipts.set(Arc::new(sender)).is_ok() {
+            receipts::spawn_job(self, interval, jobs);
+        }
+    }
+
+    /// Whether this node takes a Credits part (`creditsCents`): the market's `dapps-shop-credits-mana-split`
+    /// (`market::features::CREDITS_MANA_SPLIT`). Off without the market's flags.
+    pub fn credits_mana_split(&self) -> bool {
+        self.dapps_flags
+            .as_ref()
+            .is_some_and(|flags| flags.credits_mana_split())
+    }
+
+    /// The tests' `dapps` flags in place of the market's.
+    pub fn with_dapps_flags(mut self, flags: Arc<crate::market::features::DappsFlags>) -> Self {
+        self.dapps_flags = Some(flags);
+        self
     }
 
     /// The tests' gate in place of the chain read.
@@ -788,7 +927,16 @@ impl State {
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
     /// ledger, so it runs beside the other credits writers.
+    /// Where the revenue events go (`events.rs`), handed in by the node:
+    /// attached before the jobs start, so no settlement goes unreported.
+    pub fn attach_revenue_events(&self, events: Arc<dyn events::RevenueEvents>) -> bool {
+        self.credits.attach_revenue_events(events)
+    }
+
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        // The balance streams end with the node, so its graceful shutdown
+        // never waits on them.
+        self.balance_changes.end_on(jobs.root_token().child_token());
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
@@ -844,6 +992,8 @@ impl State {
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
         let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
+        // The pass's gauges are cleared when the lease they were set under ends.
+        let gauges = Arc::new(metrics::LeaseGauges::usage_index());
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -854,6 +1004,7 @@ impl State {
             move |ctx| {
                 let index = index.clone();
                 let gate = gate.clone();
+                gauges.arm(&ctx.cancel);
                 async move {
                     index
                         .gated_pass(Some(&ctx), &gate, writes_enabled)
@@ -893,9 +1044,23 @@ impl State {
         .await?;
         let unpaid: Vec<&str> = diffs
             .iter()
-            .filter(|d| !d.consumed)
+            .filter(|d| !d.consumed && d.kind != settlement::DEFERRED)
             .map(|d| d.credit_id.as_str())
             .collect();
+        // In this full pass a log is deferred only behind an earlier log of
+        // its credit that could not be debited, which `unpaid` reports.
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        if !deferred.is_empty() {
+            tracing::warn!(
+                count = deferred.len(),
+                credit_ids = ?deferred,
+                "reconcile: CreditUsed events left behind an earlier use of their credit that is not settled"
+            );
+        }
         if !unpaid.is_empty() {
             tracing::error!(
                 invariant = "credit_used==debited",
@@ -942,9 +1107,20 @@ pub fn router(state: SharedState) -> Router {
             "/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
+        .route("/credits", get(handlers::reports::list_credits))
+        .route("/credit-reasons", get(handlers::reports::credit_reasons))
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(
@@ -963,6 +1139,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/credits/authorize/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/credits/authorize/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/credits/orders/{order_id}/cancel",
@@ -1046,7 +1226,24 @@ pub fn shop_router(state: SharedState) -> Router {
             "/v1/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/v1/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
+        .route(
+            "/admin/credits",
+            get(handlers::reports::list_credits_canonical),
+        )
+        .route(
+            "/admin/credit-reasons",
+            get(handlers::reports::credit_reasons_canonical),
+        )
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route(
             "/v1/packs/{sku}/payment-intents",
             post(handlers::packs::create_intent),
@@ -1071,6 +1268,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/v1/credit-authorizations/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/v1/pack-orders/{order_id}/cancel",

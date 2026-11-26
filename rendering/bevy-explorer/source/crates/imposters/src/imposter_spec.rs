@@ -58,9 +58,15 @@ where
     D: Deserializer<'de>,
 {
     let string_map = HashMap::<String, ImposterSpec>::deserialize(d)?;
-    Ok(HashMap::from_iter(string_map.into_iter().map(
-        |(key, value)| (IVec2Arg::from_str(&key).unwrap().0, value),
-    )))
+    string_map
+        .into_iter()
+        .map(|(key, value)| match IVec2Arg::from_str(&key) {
+            Ok(parcel) => Ok((parcel.0, value)),
+            Err(e) => Err(<D::Error as serde::de::Error>::custom(format!(
+                "parcel key {key:?}: {e}"
+            ))),
+        })
+        .collect()
 }
 
 impl BakedScene {}
@@ -255,7 +261,7 @@ pub async fn load_imposter_remote(
         let mut indices: Vec<usize> = (0..zip.len()).collect();
         indices.sort_by_key(|&i| {
             zip.by_index_raw(i)
-                .is_ok_and(|f| f.name().ends_with("-spec.json"))
+                .is_ok_and(|f| f.name().is_ok_and(|name| name.ends_with("-spec.json")))
         });
         for i in indices {
             use futures_lite::io::AsyncWriteExt;
@@ -287,18 +293,19 @@ pub async fn load_imposter_local(
     if let Ok(mut file) = platform_fs::File::open(&path).await {
         let mut buf = Vec::default();
         if file.read_to_end(&mut buf).await.is_ok() {
-            if let Ok(baked_scene) = serde_json::from_slice::<BakedScene>(&buf) {
-                if required_crc.is_none_or(|crc| crc == baked_scene.crc) {
-                    return Some(baked_scene);
-                } else {
-                    debug!(
-                        "mismatched hash for {path:?} (expected {}, found {})",
-                        required_crc.unwrap(),
-                        baked_scene.crc
-                    );
+            match serde_json::from_slice::<BakedScene>(&buf) {
+                Ok(baked_scene) => {
+                    if required_crc.is_none_or(|crc| crc == baked_scene.crc) {
+                        return Some(baked_scene);
+                    } else {
+                        debug!(
+                            "mismatched hash for {path:?} (expected {}, found {})",
+                            required_crc.unwrap(),
+                            baked_scene.crc
+                        );
+                    }
                 }
-            } else {
-                warn!("failed to deserialize {path:?}");
+                Err(e) => warn!("failed to deserialize {path:?}: {e}"),
             }
         };
     }

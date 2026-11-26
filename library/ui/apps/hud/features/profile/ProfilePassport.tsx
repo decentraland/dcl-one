@@ -409,7 +409,6 @@ export function ProfilePassport({
   // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
   const theyBlockedYou = blockedBy && relationship !== 'blocked'
   const [menuOpen, setMenuOpen] = useState(false)
-  const [panel, setPanel] = useState<HTMLDivElement | null>(null)
   // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
   const options: ContextMenuItem[] = []
   const pick = (fn: (address: string) => void) => (): void => {
@@ -419,15 +418,17 @@ export function ProfilePassport({
   if (!isSelf && onJump != null) {
     options.push({ label: 'Jump to Location', icon: <img src={jumpInIcon} alt="" width={16} height={16} />, onClick: pick(onJump) })
   }
-  // before Block, as the reference client's menu
   if (!isSelf && onGift != null) options.push({ label: 'Gift', icon: <MaskIcon src={giftIcon} size={16} />, onClick: pick(onGift) })
-  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
-    options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
-  }
-  // after Block, as the reference client's menu
   const inviteEntry = isSelf ? null : inviteSubmenuItem(inviteItems, () => setMenuOpen(false))
   if (inviteEntry != null) options.push(inviteEntry)
-  if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  // Block and Report together at the end, past a separator, as unity-explorer's passport menu
+  const destructive: ContextMenuItem[] = []
+  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
+    destructive.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
+  }
+  if (!isSelf && onReport != null) destructive.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  if (options.length > 0 && destructive.length > 0) options.push({ kind: 'separator' })
+  options.push(...destructive)
   const menuRef = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -510,7 +511,7 @@ export function ProfilePassport({
     // The dimmed scrim + click-outside-to-close are owned by the popup layer (openPassport →
     // PopupHost); this is just the panel. stopPropagation keeps a click inside it (tabs, copy, links)
     // from reaching the scrim and closing the passport.
-    <div ref={setPanel} className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.panel} data-tab={tab} onClick={(e) => e.stopPropagation()}>
           {/* --- left: the avatar — the catalyst full-body snapshot,
                   falling back to the 2D face if the body render isn't available. --- */}
           <div className={styles.avatarCol} data-passport-avatar={tab === 'badges' && !editMode && selectedBadge != null ? undefined : ''}>
@@ -770,7 +771,6 @@ export function ProfilePassport({
                 address={profile.address}
                 isSelf={isSelf}
                 actions={photoActions}
-                viewerHost={panel}
                 empty={
                   <section className={`${styles.card} ${styles.cardFill}`}>
                     <div className={styles.emptyState}>

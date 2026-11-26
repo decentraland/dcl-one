@@ -38,17 +38,8 @@ export async function loadEventsPage(
     ? new URL(configured).origin
     : url.origin;
   const now = Date.now();
-  if (url.searchParams.get(TAB_PARAM) === "my") {
-    return wrap({
-      tab: "my" as const,
-      sid,
-      platform,
-      origin,
-      now,
-      unavailable: false,
-      dehydratedState: null,
-    });
-  }
+  // My Events is a section of the same page: Live Now, Upcoming and the calendar still render around it.
+  const tab = url.searchParams.get(TAB_PARAM) === "my" ? ("my" as const) : null;
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -77,8 +68,9 @@ export async function loadEventsPage(
     shouldDehydrateQuery: (query) => query.state.status === "success",
   });
   client.clear();
+  // Covers are rewritten against the origin the browser loaded this page from, which PUBLIC_CATALYST_URL may not be.
   return wrap(
-    { tab: null, sid, platform, origin, now, unavailable, dehydratedState },
+    { tab, sid, platform, origin, pageOrigin: url.origin, now, unavailable, dehydratedState },
     { status: unavailable ? 503 : 200 },
   );
 }

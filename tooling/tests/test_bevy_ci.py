@@ -28,6 +28,53 @@ def producers(outcome='success'):
     return [{'name': name, 'status': 'completed', 'conclusion': outcome} for name in ci.PRODUCERS.values()]
 
 
+def path_packages(source):
+    """{package name: directory} of each manifest the workspace at `source` reaches: its members and
+    every path that a dependency, a workspace dependency or a patch names, followed in turn."""
+    workspace = tomllib.loads((source / 'Cargo.toml').read_text(encoding='utf-8'))['workspace']
+    queue = [source, *(path for member in workspace.get('members', ()) for path in source.glob(member))]
+    found, seen = {}, set()
+    while queue:
+        directory = queue.pop().resolve()
+        if directory in seen or not (directory / 'Cargo.toml').is_file():
+            continue
+        seen.add(directory)
+        manifest = tomllib.loads((directory / 'Cargo.toml').read_text(encoding='utf-8'))
+        if 'package' in manifest:
+            found[manifest['package']['name']] = directory
+        tables = [manifest.get('workspace', {}).get('dependencies', {}), *manifest.get('patch', {}).values()]
+        for section in (manifest, *manifest.get('target', {}).values()):
+            tables += [section.get(kind, {}) for kind in ('dependencies', 'dev-dependencies', 'build-dependencies')]
+        queue += [directory / spec['path'] for table in tables for spec in table.values()
+                  if isinstance(spec, dict) and 'path' in spec]
+    return found
+
+
+def locked_path_dependencies(source, crate, root):
+    """The directories, relative to `root`, of `crate` and of each package without a registry or git
+    source that it reaches in `source`'s Cargo.lock: its path dependencies, for every target and
+    feature the lock resolved, a path patch included."""
+    packages = tomllib.loads((source / 'Cargo.lock').read_text(encoding='utf-8'))['package']
+
+    def locked(dependency):
+        # Cargo.lock names a dependency `name`, `name version` or `name version (source)`.
+        name, *rest = dependency.split(' ', 2)
+        match = [package for package in packages if package['name'] == name
+                 and rest[:1] in ([], [package['version']]) and rest[1:] in ([], [f'({package.get("source")})'])]
+        assert len(match) == 1, dependency
+        return match[0]
+
+    reached, queue = set(), [locked(crate)]
+    while queue:
+        package = queue.pop()
+        if 'source' not in package and package['name'] not in reached:
+            reached.add(package['name'])
+            queue += map(locked, package.get('dependencies', ()))
+    directories = path_packages(source)
+    assert reached <= directories.keys(), f'no manifest found for {sorted(reached - directories.keys())}'
+    return {directories[name].relative_to(root).as_posix() + '/' for name in reached}
+
+
 class WorkflowTest(unittest.TestCase):
 
     def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
@@ -81,7 +128,7 @@ class WorkflowTest(unittest.TestCase):
         def watched(name, path):
             patterns = re.findall(r"^ +- '?([^'\n]+)'?$", (ci.ROOT / name).read_text(), re.M)
             return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
-        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/boimp/Cargo.toml'
+        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/bevy_dui/Cargo.toml'
         # The guards, the Changes job and the Test Suite of this workflow run the tool on the series.
         for path in (tool, crate, 'rendering/bevy-explorer/patches/bevy/source.toml',
                      'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'):
@@ -118,7 +165,7 @@ class WorkflowTest(unittest.TestCase):
                      "if: steps.guards.outputs.provenance == 'true'\n        run: python3 tooling/vendor-provenance.py"):
             self.assertIn(step, source)
         # A change to only a pin, the upstream check, its tests or a provenance tool starts the run.
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('rendering/bevy-explorer/patches/winit/source.toml', 'tooling/upstream-drift.py',
@@ -307,7 +354,7 @@ class WorkflowTest(unittest.TestCase):
 
     def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
@@ -347,9 +394,8 @@ class WorkflowTest(unittest.TestCase):
         block = ''.join(lines[:next(i for i, line in enumerate(lines) if line[:1] not in (' ', '#'))])
         self.assertIn("  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', "
                       "github.event.pull_request.number) || github.ref }}\n", block)
-        # Marking a draft ready does not cancel the run whose web build the smoke job waits for.
-        self.assertIn("  cancel-in-progress: ${{ github.event.action != 'ready_for_review' && "
-                      "(github.event_name == 'pull_request' || github.ref != 'refs/heads/main') }}\n", block)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
+                      "github.ref != 'refs/heads/main' }}\n", block)
 
     def test_the_desktop_build_waits_for_the_proof_of_every_patched_source(self):
         workflow = (ci.ROOT / '.github/workflows/bevy-explorer-desktop.yml').read_text(encoding='utf-8')
@@ -403,6 +449,29 @@ class WorkflowTest(unittest.TestCase):
         # No other job may cancel a run.
         self.assertEqual(workflow.count('actions: write'), 1)
         self.assertEqual(workflow.count('gh run cancel'), 1)
+
+    def test_the_gate_requires_every_check_build_and_test(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
+        gate = jobs['gate']
+        # A path filter on pull requests would leave a required gate waiting for ever.
+        pull_request = workflow.split('\n  pull_request:\n', 1)[1].split('\n  workflow_dispatch:\n', 1)[0]
+        self.assertNotIn('paths:', pull_request)
+        self.assertIn('    name: Explorer CI gate\n', gate)
+        needs = set(re.search(r'(?m)^    needs: \[([^\]]*)\]', gate).group(1).replace(' ', '').split(','))
+        unchecked = {'gate', 'stop-builds', 'publish-web', 'rollout-web', 'headless-packages', 'web-pr-target',
+                     'preview-cleanup'}
+        self.assertEqual(needs, set(jobs) - unchecked)
+        self.assertIn('RESULTS: ${{ toJSON(needs) }}', gate)
+        # An earlier run's gate stands until the next one reports: a held draft or an unmerged close fails.
+        self.assertIn("    if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}\n",
+                      gate)
+        self.assertIn('      held: ${{ steps.plan.outputs.held }}\n', jobs['changes'])
+        self.assertIn('HELD: ${{ needs.changes.outputs.held }}', gate)
+        self.assertIn('if [ "$HELD" = true ]; then', gate)
+        self.assertIn('if [ "$ACTION" = closed ]; then', gate)
+        development = (ci.ROOT / '.github/workflows/development.yml').read_text(encoding='utf-8')
+        self.assertIn('    types: [opened, synchronize, reopened, ready_for_review]\n', development)
 
     def test_the_headless_smoke_runs_for_thirty_seconds(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -564,7 +633,7 @@ class SelectionTest(unittest.TestCase):
         self.base = self.commit()
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
                                         *args], cwd=self.root, text=True).strip()
 
     def write(self, name, value):
@@ -701,7 +770,8 @@ class SelectionTest(unittest.TestCase):
         # with the new fingerprint, or fetch-play.py finds no producer for it. Markdown is in
         # neither the fingerprint nor the selection.
         for name, lanes in (('library/hashing/src/cid.ts', {'web'}), ('library/hashing/package.json', {'web'}),
-                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set())):
+                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set()),
+                            ('apps/creator-hub/packages/zip-extract/index.js', {'web'}), ('apps/creator-hub/packages/zip-extract/README.md', set())):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -830,16 +900,19 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual([held[lane] for lane in ('clippy', 'test', 'headless', 'web', 'native-matrix')],
                          ['true', 'false', 'false', 'true', 'false'])
         self.assertIn('draft: test, headless wait until it is ready for review', held['reason'])
+        self.assertEqual(held['held'], 'true')
         for pull_request in ({'draft': False}, {'draft': True, 'labels': [{'name': 'ci:engine'}]}, {},
                              {'draft': 'true'}, {'draft': True, 'labels': 'ci:engine'}):
             values = self.run_main('plan', merge, self.base, pr, **pull_request)
             self.assertEqual([values[lane] for lane in ('clippy', 'test', 'headless', 'web')], ['true'] * 4, pull_request)
             self.assertNotIn('draft', values['reason'])
+            self.assertNotIn('held', values)
 
     def test_a_draft_with_no_held_job_selected_reports_nothing(self):
         _, pr, merge = self.pr_merge('apps/sites/main-only.ts', 'docs/only-docs.md')
         values = self.run_main('plan', merge, self.base, pr, draft=True)
         self.assertNotIn('draft', values['reason'])
+        self.assertNotIn('held', values)
 
     def test_the_draft_hold_names_jobs_on_larger_runners_and_never_the_web_job(self):
         workflow = (Path(__file__).parents[2] / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -979,7 +1052,9 @@ class SelectionTest(unittest.TestCase):
                             ('services/catalyst/Cargo.lock', True), ('services/catalyst/new/Cargo.toml', True),
                             ('services/catalyst/rust-toolchain.toml', True), ('.cargo/config.toml', True),
                             ('library/new/Cargo.toml', True), ('apps/sites/pnpm-lock.yaml', True),
-                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True)):
+                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True),
+                            ('library/ui/pnpm-lock.yaml', True), ('library/ui/package.json', True),
+                            ('library/ui/pnpm-workspace.yaml', True), ('library/ui/gallery/src/new.tsx', False)):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -1116,6 +1191,55 @@ class SelectionTest(unittest.TestCase):
                 result = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, expected)
 
+    def test_the_relay_wake_browser_test_follows_its_crates_bevy_fork_tools_and_workflow(self):
+        cases = {
+            'rendering/bevy-explorer/source/crates/dcl_wasm/src/relay_wake.rs': True,
+            'rendering/bevy-explorer/source/crates/dcl_wasm/Cargo.toml': True,
+            'rendering/bevy-explorer/source/crates/common/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/console/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/dcl_component/build.rs': True,
+            'rendering/bevy-explorer/source/crates/dcl_js/src/modules/EngineApi.js': True,
+            'rendering/bevy-explorer/source/crates/dcl_types/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/platform/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/system_api_types/src/lib.rs': True,
+            'rendering/bevy-explorer/source/crates/system_bridge/src/lib.rs': True,
+            'rendering/bevy-explorer/vendor/rpc-rust/rpc/src/lib.rs': True,
+            'library/protocol/proto/decentraland/sdk/components/transform.proto': True,
+            'rendering/bevy-explorer/patches/bevy/series/0080-web-worker.patch': True,
+            'rendering/bevy-explorer/patches/bevy/source.toml': True,
+            'rendering/bevy-explorer/source/Cargo.toml': True,
+            'rendering/bevy-explorer/source/.cargo/config.toml': True,
+            'apps/bevy-explorer/install-web-tools.py': True,
+            'apps/bevy-explorer/install-tools.sh': True,
+            'tooling/bevy-target-cache.py': True,
+            'tooling/bevy-mtimes.py': True,
+            'flake.lock': True,
+            ci.WORKFLOW: True,
+            'rendering/bevy-explorer/source/crates/scene_runner/src/lib.rs': False,
+            'rendering/bevy-explorer/source/crates/dcl_deno/src/lib.rs': False,
+            'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs': False,
+            'rendering/bevy-explorer/patches/wgpu/source.toml': False,
+            'rendering/bevy-explorer/source/deploy/web/engine/sandbox_worker.js': False,
+            'apps/bevy-explorer/build-web.py': False,
+        }
+        for path, expected in cases.items():
+            with self.subTest(path=path):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(path, 'changed')
+                self.assertEqual(ci.select(before, self.commit())['relay-wake'], expected)
+        self.assertTrue(ci.full_selection('Manual full run')['relay-wake'])
+
+    def test_on_main_the_relay_wake_browser_test_follows_the_web_baseline(self):
+        self.write('rendering/bevy-explorer/source/crates/dcl_wasm/src/lib.rs', 'relay change')
+        changed = self.commit()
+        self.write('apps/bevy-explorer/nginx.conf', 'web change')
+        head = self.commit()
+        for web, expected in ((self.base, True), (changed, False)):
+            with self.subTest(web=web):
+                baselines = {**dict.fromkeys(ci.LANES, self.base), 'web': web}
+                with patch.object(ci, 'main_baselines', return_value=baselines):
+                    self.assertEqual(ci.plan('push', self.base, head, 'example/project')['relay-wake'], expected)
+
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
                      'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py'):
@@ -1161,7 +1285,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_in_tree_crates_select_every_lane_and_rebuild_the_images(self):
         # Cargo compiles the crates tracked as exact bytes from their paths.
-        self.write('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'changed')
+        self.write('rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs', 'changed')
         head = self.commit()
         result = ci.select(self.base, head)
         self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
@@ -1172,15 +1296,15 @@ class SelectionTest(unittest.TestCase):
         for name in ('bevy', 'winit', 'old'):
             self.write(f'{pins}/{name}/source.toml', f'name = "{name}"\ncommit = "1"\n')
         self.write(f'{pins}/bevy/series/0001-one.patch', 'one')
-        self.write(f'{vendor}/boimp/src/lib.rs', 'one')
+        self.write(f'{vendor}/bevy_dui/src/lib.rs', 'one')
         before = self.commit()
         cases = [
             # A patch, a document and a file beside the pin change no pin.
             ({f'{pins}/bevy/series/0001-one.patch': 'two', f'{pins}/README.md': 'text', f'{pins}/winit/notes.toml': 'x'}, '', False),
             ({f'{pins}/winit/source.toml': 'name = "winit"\ncommit = "2"\n'}, 'winit', False),
             ({f'{pins}/bevy/source.toml': 'commit = "3"\n', f'{pins}/new/source.toml': 'commit = "1"\n'}, 'bevy new', False),
-            ({f'{vendor}/boimp/src/lib.rs': 'two'}, '', True),
-            ({f'{vendor}/boimp/upstream.lock.json': '{}'}, '', True),
+            ({f'{vendor}/bevy_dui/src/lib.rs': 'two'}, '', True),
+            ({f'{vendor}/bevy_dui/upstream.lock.json': '{}'}, '', True),
             ({'tooling/vendor-provenance.py': 'changed'}, '', True),
             ({'tooling/enet-provenance.py': 'changed'}, '', True),
             ({'tooling/upstream-drift.py': 'changed', 'rendering/bevy-explorer/source/vendor/basisu/x.c': 'x'}, '', False),
@@ -1274,6 +1398,41 @@ class SelectionTest(unittest.TestCase):
         selected = ci.select(self.base, self.commit())
         self.assertTrue(selected['scenes'])
         self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix')))
+
+
+class RelayWakeCrateDirsTest(unittest.TestCase):
+    """RELAY_WAKE_CRATE_DIRS lists by hand the directories of the crates the relay wake browser test
+    compiles. A path dependency that dcl_wasm gains, directly or through another crate, must fail here
+    until the list names it."""
+
+    def test_the_list_names_dcl_wasm_and_every_path_dependency_it_reaches(self):
+        self.assertEqual(sorted(locked_path_dependencies(ci.ROOT / ci.SOURCE, 'dcl_wasm', ci.ROOT.resolve())),
+                         sorted(ci.RELAY_WAKE_CRATE_DIRS))
+
+    def test_a_transitive_vendored_or_patched_path_dependency_is_found(self):
+        files = {
+            'source/Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n'
+                                 '[workspace.dependencies]\na = { path = "crates/a" }\nb = { path = "../vendor/b" }\n'
+                                 '[patch.crates-io]\nc = { path = "../vendor/c" }\n',
+            'source/crates/top/Cargo.toml': '[package]\nname = "top"\n[dependencies]\na = { workspace = true }\n',
+            'source/crates/a/Cargo.toml': '[package]\nname = "a"\n'
+                                          "[target.'cfg(target_arch = \"wasm32\")'.dependencies]\nb = { workspace = true }\n",
+            'source/crates/other/Cargo.toml': '[package]\nname = "other"\n',
+            'vendor/b/Cargo.toml': '[package]\nname = "b"\n[dependencies]\nc = "1"\n',
+            'vendor/c/Cargo.toml': '[package]\nname = "c"\n',
+            'source/Cargo.lock': ''.join(
+                f'[[package]]\nname = "{name}"\nversion = "{version}"\n{extra}\n' for name, version, extra in (
+                    ('top', '0.1.0', 'dependencies = ["a", "serde"]'), ('a', '0.1.0', 'dependencies = ["b"]'),
+                    ('b', '0.1.0', 'dependencies = ["c 1.0.0"]'), ('c', '1.0.0', ''), ('other', '0.1.0', ''),
+                    ('serde', '1.0.0', 'source = "registry+https://github.com/rust-lang/crates.io-index"'))),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            for path, text in files.items():
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_text(text, encoding='utf-8')
+            self.assertEqual(locked_path_dependencies(root / 'source', 'top', root),
+                             {'source/crates/top/', 'source/crates/a/', 'vendor/b/', 'vendor/c/'})
 
 
 class SceneSuiteTest(unittest.TestCase):

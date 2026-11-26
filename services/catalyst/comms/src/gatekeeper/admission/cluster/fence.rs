@@ -336,6 +336,9 @@ pub struct PgAssignmentFence {
     selected: std::sync::Arc<
         parking_lot::Mutex<std::collections::BTreeMap<String, std::sync::Arc<SelectedWallet>>>,
     >,
+    /// Exact owned rows of retired slots; slots and these rows share the selected bound.
+    /// The wallet's next selection replaces its own fresh row. Retirement writes no row.
+    retired: parking_lot::Mutex<std::collections::BTreeMap<String, RealmRow>>,
     incarnation: String,
     selected_limit: usize,
     selected_cursor: tokio::sync::Mutex<[Option<String>; 2]>,
@@ -431,6 +434,7 @@ impl PgAssignmentFence {
             pool,
             audience,
             selected: Default::default(),
+            retired: Default::default(),
             incarnation: uuid::Uuid::new_v4().to_string(),
             selected_limit: limit.max(1),
             selected_cursor: Default::default(),
@@ -491,12 +495,11 @@ impl AssignmentFence for PgAssignmentFence {
             if !desired.is_empty() {
                 targets.push((wallet.clone(), desired.clone()));
             }
-            if let Ok(state) = slot.state.try_lock() {
-                if let Some(owned) = &state.owned {
-                    if owned.session != desired {
-                        targets.push((wallet.clone(), owned.session.clone()));
-                    }
-                }
+            if let Ok(state) = slot.state.try_lock()
+                && let Some(owned) = &state.owned
+                && owned.session != desired
+            {
+                targets.push((wallet.clone(), owned.session.clone()));
             }
         }
         targets
@@ -1003,6 +1006,11 @@ impl PgAssignmentFence {
             super::metrics::selected_slot_refused();
             return Err(FenceError::Unavailable);
         }
+        let mut retired = self.retired.lock();
+        let owned = retired.remove(wallet);
+        if slots.len() + retired.len() >= self.selected_limit {
+            retired.pop_first();
+        }
         let slot = std::sync::Arc::new(SelectedWallet {
             owned_first: std::sync::atomic::AtomicBool::new(false),
             retry_at: parking_lot::Mutex::new(tokio::time::Instant::now()),
@@ -1010,7 +1018,10 @@ impl PgAssignmentFence {
                 session: session.into(),
                 ..Default::default()
             }),
-            state: tokio::sync::Mutex::new(SelectedBinding::default()),
+            state: tokio::sync::Mutex::new(SelectedBinding {
+                owned,
+                ..Default::default()
+            }),
         });
         slots.insert(wallet.into(), slot.clone());
         super::metrics::selected_slot_occupancy(slots.len());
@@ -1178,8 +1189,8 @@ impl PgAssignmentFence {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|_| FenceError::Unavailable)?;
-            let after = if unchanged {
-                let mut after = current.as_ref().unwrap().clone();
+            let after = if let Some(row) = current.as_ref().filter(|_| unchanged) {
+                let mut after = row.clone();
                 after.renewed = Some(renewed);
                 after.lapsed = false;
                 after.renewal_due = false;
@@ -1375,6 +1386,9 @@ impl PgAssignmentFence {
                 && std::sync::Arc::strong_count(&slot) == 2
             {
                 slots.remove(&wallet);
+                if let Some(owned) = state.owned.take() {
+                    self.retired.lock().insert(wallet, owned);
+                }
                 super::metrics::selected_slot_occupancy(slots.len());
             }
         }
@@ -1438,6 +1452,9 @@ impl PgAssignmentFence {
         // Only this map and this retirement operation still reference the slot.
         // Settled owned facts cease renewal; the existing finite SQL lease stays.
         slots.remove(&target.lookup.wallet);
+        if let Some(owned) = state.owned.take() {
+            self.retired.lock().insert(target.lookup.wallet, owned);
+        }
         super::metrics::selected_slot_occupancy(slots.len());
         Ok(())
     }
@@ -1846,10 +1863,10 @@ impl PgRealmLease {
             return Err(FenceError::Conflict);
         }
         lease.commit().await.map_err(|_| FenceError::Unavailable)?;
-        if let Some(slot) = selected_guard.as_mut() {
-            if let Some(attempt) = slot.attempt.take() {
-                slot.owned = Some(attempt.after.compact());
-            }
+        if let Some(slot) = selected_guard.as_mut()
+            && let Some(attempt) = slot.attempt.take()
+        {
+            slot.owned = Some(attempt.after.compact());
         }
         Ok(())
     }
@@ -2069,8 +2086,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn selected_realm_transitions_require_exact_owned_or_lapsed_predecessors() {
+    #[tokio::test]
+    async fn selected_realm_transitions_require_exact_owned_or_lapsed_predecessors() {
         let row = RealmRow {
             session: "first".into(),
             epoch: 10,
@@ -2114,6 +2131,22 @@ mod tests {
         let mut foreign = attempt.clone();
         foreign.token += 1;
         assert!(!attempt.same_fact(&foreign));
+        // A retired slot's owned row waits inside the selected bound for the wallet's next slot.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://fixture@127.0.0.1:1/unused")
+            .unwrap();
+        let fence = PgAssignmentFence::unfenced_test_with_limit(pool, "retired".into(), 2).unwrap();
+        for wallet in ["a", "b"] {
+            fence.retired.lock().insert(wallet.into(), row.clone());
+        }
+        let slot = fence.selected_slot("b", "second").unwrap();
+        let owned = slot.state.lock().await.owned.clone();
+        assert!(owned.unwrap().same_fact(&row));
+        // A live slot is never refused for a kept row: the kept row gives its place.
+        let slot = fence.selected_slot("d", "second").unwrap();
+        assert!(slot.state.lock().await.owned.is_none());
+        assert!(fence.retired.lock().is_empty());
+        assert!(fence.selected_slot("a", "second").is_err());
     }
 
     #[test]

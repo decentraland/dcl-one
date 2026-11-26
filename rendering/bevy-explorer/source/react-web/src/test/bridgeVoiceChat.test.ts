@@ -4,8 +4,11 @@ import type { ActiveCommunityVoiceChat } from '@explorer-core/engine/protocol'
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({ engine: { addSystem: vi.fn(), removeSystem: vi.fn() } }))
 const player = vi.hoisted(() => ({ current: null as { userId: string; position?: undefined } | null }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player.current }))
-const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
-vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
+const { relay, waitMs, waits } = vi.hoisted(() => {
+  const waits: { ms: number; done: () => void }[] = []
+  return { relay: vi.fn(), waits, waitMs: vi.fn((ms: number) => new Promise<void>((done) => waits.push({ ms, done }))) }
+})
+vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay, waitMs }))
 const { kernelFetch } = vi.hoisted(() => ({ kernelFetch: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
@@ -203,6 +206,37 @@ describe('a stream ending', () => {
     onUpdate({ ...update('c1', 'ended'), createdAt: 0n, endedAt: 1n })
     expect(lists(sent).at(-1)).toEqual([])
     expect(kernelFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the list again a few seconds after the user leaves their stream', async () => {
+    player.current = { userId: '0xa' }
+    waits.length = 0
+    kernelFetch.mockResolvedValue({ ok: true, body: JSON.stringify({ data: { activeChats: [chat('c1')] } }) })
+    const sent: { kind: string; chats?: { communityId: string }[] }[] = []
+    let system: (dt: number) => void = () => undefined
+    registerVoiceChat({ send: (msg) => sent.push(msg as never), on: () => undefined, push: (s) => (system = s) })
+    const onState = relay.mock.calls.find(([kind]) => kind === 'voiceChatState')?.[2] as (s: unknown) => void
+    system(0) // sign-in read
+    await settle()
+
+    onState({ kind: 'community', status: 'inCall', communityId: 'c1' })
+    await settle()
+    expect(kernelFetch).toHaveBeenCalledTimes(2)
+    expect(waits).toEqual([])
+
+    kernelFetch.mockResolvedValue({ ok: true, body: JSON.stringify({ data: { activeChats: [chat('c1')] } }) })
+    onState({ kind: 'none', status: 'idle' })
+    await settle()
+    expect(kernelFetch).toHaveBeenCalledTimes(3)
+    expect(waits.map((w) => w.ms)).toEqual([3000])
+
+    // the service dropped the stream once LiveKit reported the leave
+    kernelFetch.mockResolvedValue({ ok: true, body: JSON.stringify({ data: { activeChats: [] } }) })
+    waits[0].done()
+    await settle()
+    expect(kernelFetch).toHaveBeenCalledTimes(4)
+    expect(lists(sent).at(-1)).toEqual([])
+    kernelFetch.mockReset()
   })
 
   const update = (communityId: string, status: 'started' | 'ended') => ({

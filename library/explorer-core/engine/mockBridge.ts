@@ -26,7 +26,7 @@ import {
   type PageToScene,
   type PhotoModeSnapshot,
   type Profile,
-  type ProfileEdit,
+  type SaveProfileRequest,
   type SceneToPage,
   type Setting,
   type TextureOptimizationMessage,
@@ -398,8 +398,8 @@ const mockEquippedEmotes = (): Emote[] =>
 
 const v = (name: string): { name: string; description: string } => ({ name, description: '' })
 
-const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1 })
-const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize })
+const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1, disabled: false })
+const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize, disabled: false })
 const ON_OFF = ['Off', 'On']
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
@@ -508,7 +508,7 @@ const defaultBindings = (): BindingEntry[] => [
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
 // sticks for the rest of the session — the real bridge gets the same effect by folding the save
 // into its catalyst cache.
-const ownEdits: ProfileEdit[] = []
+const ownEdits: SaveProfileRequest[] = []
 /** The returning mock user holds two NAMEs; a guest holds none. */
 const ownedNamesOf = (o: MockOptions): string[] => (o.hasPreviousLogin ? ['Mojito', 'MojitoDCL'] : [])
 const ownProfile = (o: MockOptions): Profile =>
@@ -606,7 +606,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   const alone = mockAlone()
   fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
   // Stateful so a home set from the map is the home the lobby and the map then show.
-  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } }
+  const NO_MOCK_HOME = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false, pinnable: true }
+  let mockHome = NO_MOCK_HOME
   const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
@@ -1076,7 +1077,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
       setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
     }
-    // ?mockpins=1 → two quest pins on both maps, one with a broken icon url to show the fallback.
+    // ?mockpins=1 → two quest pins on both maps.
     if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
@@ -1088,6 +1089,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (const [ty, allowed] of [['Fetch', true], ['OpenUrl', false], ['MovePlayer', true]] as const) {
         reply({ kind: 'permissionUsed', ty, sceneName: 'Genesis Plaza', scene, realm, allowed })
       }
+      // and the scene holding the camera, for the list's "In force now"
+      reply({ kind: 'permissionUsed', ty: 'ForceCamera', sceneName: 'Genesis Plaza', scene, realm, allowed: true, inForce: true })
       setTimeout(
         () =>
           reply({
@@ -1129,11 +1132,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'setHomeScene') {
-      mockHome = { realm: msg.realm, parcel: msg.parcel }
+      mockHome = { realm: msg.realm, parcel: msg.parcel, pinned: true, pinnable: true }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'clearHomeScene') {
+      mockHome = NO_MOCK_HOME
       reply({ kind: 'homeScene', ...mockHome })
       return
     }
 
+    if (msg.kind === 'watchSkyTime') {
+      // ?mocksky=1 → a scene holds the time of day at 22:00, so the Skybox menu shows locked.
+      const held = new URLSearchParams(location.search).get('mocksky') === '1'
+      if (msg.on) reply({ kind: 'skyTime', state: held ? { hours: 22, locked: true, speed: 12, followsClock: false } : { hours: 10, locked: false, speed: 12, followsClock: true } })
+      return
+    }
     if (msg.kind === 'watchMapPlayers') {
       if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
       return
@@ -1154,6 +1168,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     // no catalyst looks or browser to open in the mock
     if (msg.kind === 'showLook' || msg.kind === 'openLegal') return
+    // the mock has no engine to decode detail tiles: the map keeps its base imagery
+    if (msg.kind === 'getSatelliteTile') {
+      reply({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
     if (msg.kind === 'openExternalUrl') {
       reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
       return
@@ -1388,12 +1407,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'engineViewport') {
       // No engine in mock mode — nothing to render into the cutout.
+      if (msg.region === 'avatarPreview' && msg.rect != null) reply({ kind: 'avatarPreviewReady' })
       return
     }
     if (msg.kind === 'interactableArea') return
     if (msg.kind === 'minimapConfig') {
       // No engine in mock mode — the Camera style has nothing to render. The DOM styles
       // are unaffected: React draws those from map tiles without the scene's help.
+      if (msg.style === 'imposters') reply({ kind: 'minimapReady' })
       return
     }
     if (msg.kind === 'previewFocus') return
@@ -1412,7 +1433,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'teleport') {
       reply({ kind: 'mapState', x: msg.x, y: msg.y })
-      if (msg.realm != null) travelResult(msg.realm, msg.travelId)
+      // a teleport inside the realm answers too when it carries an id (chat's /goto)
+      travelResult(msg.realm ?? '', msg.travelId)
       return
     }
     if (msg.kind === 'changeRealm') {
@@ -1426,7 +1448,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no engine to apply the decision in, and no editor in mock mode
-    if (msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
+    if (msg.kind === 'itemPurchaseState' || msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
     if (msg.kind === 'getPermissionRules') {
       reply({
         kind: 'permissionRules',
@@ -1759,9 +1781,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        // the mock user owns this one, so an owner or moderator can delete it from the card
+        // the mock user owns the first, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+          {
+            id: 'pl1',
+            title: 'Music Festival Main Stage',
+            thumbnail: 'https://picsum.photos/seed/mfest/420/260',
+            positions: '-66,56',
+            likeRate: 1,
+            isMine: true,
+            detail: { id: 'pl1', title: 'Music Festival Main Stage', description: '', image: 'https://picsum.photos/seed/mfest/420/260', positions: ['-66,56'], base_position: '-66,56', owner: null, like_rate: 1, user_like: true }
+          },
+          {
+            id: 'pl2',
+            title: 'Art Week World',
+            thumbnail: 'https://picsum.photos/seed/artweek/420/260',
+            positions: 'artweek.dcl.eth',
+            likeRate: 0.5,
+            detail: { id: 'pl2', title: 'Art Week World', description: '', image: 'https://picsum.photos/seed/artweek/420/260', positions: ['0,0'], owner: null, world: true, world_name: 'artweek.dcl.eth', like_rate: 0.5 }
+          }
         ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
@@ -1830,19 +1868,39 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
-      reply({
-        kind: 'galleryPhoto',
-        id: msg.id,
-        meta: {
-          userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
-          userAddress: o.userId,
-          sceneName: 'Genesis Plaza',
-          x: -9,
-          y: 14,
-          realm: 'main',
-          people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
-        }
-      })
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      // Covers a person with collectibles, one with none, and an official wallet.
+      const wearablesOf = [MOCK_COLLECTIBLE_EQUIPPED.map((w) => w.urn), [], MOCK_OFF_CATALOG_EQUIPPED.map((w) => w.urn)]
+      setTimeout(
+        () =>
+          reply({
+            kind: 'galleryPhoto',
+            id: msg.id,
+            meta: {
+              dateTime: photo?.dateTime,
+              userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
+              userAddress: o.userId,
+              sceneName: 'Genesis Plaza',
+              x: -9,
+              y: 14,
+              realm: 'main',
+              people: MOCK_NEARBY.slice(0, 3).map((m, i) => ({
+                address: m.address,
+                name: m.name || 'Guest',
+                isGuest: false,
+                wearables: wearablesOf[i],
+                official: i === 2
+              }))
+            }
+          }),
+        o.latency
+      )
+      return
+    }
+    if (msg.kind === 'getGalleryWearables') {
+      const known = [...MOCK_COLLECTIBLE_EQUIPPED, ...MOCK_OFF_CATALOG_EQUIPPED]
+      const wearables = msg.urns.map((urn) => known.find((w) => w.urn === urn)).filter((w): w is Wearable => w != null)
+      setTimeout(() => reply({ kind: 'galleryWearables', requestId: msg.requestId, ok: true, wearables }), o.latency)
       return
     }
     if (msg.kind === 'quit') return
@@ -1867,21 +1925,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveProfile') {
-      const { kind: _kind, ...edit } = msg
-      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
-      // engine rejects a deploy the same way) without needing a broken catalyst.
-      if (edit.name === 'robtfmfail') {
-        reply({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+      const { requestId, address } = msg
+      if (address !== undefined && address.toLowerCase() !== o.userId.toLowerCase()) {
+        reply({ kind: 'profileSaved', requestId, ok: false, accountChanged: true, error: 'The active account changed.' })
         return
       }
-      ownEdits.push(edit)
-      reply({ kind: 'profileSaved', ok: true })
-      reply({ kind: 'profile', profile: ownProfile(o) })
+      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
+      // engine rejects a deploy the same way) without needing a broken catalyst.
+      if (msg.name === 'robtfmfail') {
+        reply({ kind: 'profileSaved', requestId, ok: false, error: 'failed to deploy to server.', profile: ownProfile(o) })
+        return
+      }
+      ownEdits.push(msg)
+      reply({ kind: 'profileSaved', requestId, ok: true, profile: ownProfile(o) })
       return
     }
     if (msg.kind === 'getUserProfile') {
       if (msg.address.toLowerCase() === o.userId.toLowerCase()) {
-        reply({ kind: 'userProfile', address: msg.address, profile: ownProfile(o) })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: ownProfile(o) })
         return
       }
       // Resolve a real name from the nearby roster (real engine gets it from the catalyst).
@@ -1890,10 +1951,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.extras !== true) {
         // Like the engine, hold nothing for someone never seen: a friend's seeded name stays.
         const profile = member == null ? null : { address: msg.address, name, picture: member.picture, hasClaimedName: !name.includes('#'), isGuest: false }
-        reply({ kind: 'userProfile', address: msg.address, profile })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
         return
       }
-      reply({ kind: 'userProfile', address: msg.address, profile: richProfile(msg.address, name, false) })
+      reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: richProfile(msg.address, name, false) })
       return
     }
     // Slash-command effects (no engine in mock): echo a system chat line so the flow is testable in ?mock=1.

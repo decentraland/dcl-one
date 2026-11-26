@@ -38,8 +38,8 @@ PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenanc
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
-          'library/hashing', 'tooling/check-local-hashing.mjs',
+          'tooling/bevy-ci.py', 'tooling/bevy-dead-code-check.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/hashing', 'tooling/check-local-hashing.mjs', 'apps/creator-hub/packages/zip-extract',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -74,9 +74,11 @@ IMAGES_INPUTS = (
     'services/catalyst/**',
     'schemas/**',
     'library/**',
+    ':(exclude)library/js-sdk-toolchain',
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',
+    'apps/creator-hub/packages/zip-extract/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
     'tooling/ci_paths.py',
@@ -96,6 +98,8 @@ IMAGES_PACKAGING = (
     'services/catalyst/cast-bot/Cargo.lock', 'rendering/bevy-explorer/patches/client-sdk-rust/**',
     'tooling/patched-sources.py',
     'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    # The UI gallery Sites serves (infra/packages/ui-gallery.nix) pins library/ui's dependency set.
+    'library/ui/package.json', 'library/ui/pnpm-lock.yaml', 'library/ui/pnpm-workspace.yaml',
     'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
     'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
     'tooling/tests/check_hud_manifest_nix.py',
@@ -110,6 +114,20 @@ HEADLESS_JOBS = {
     'Headless packages / build (macos-amd64, darwin-x64, macos-15, x86_64-apple-darwin)',
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
+# What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
+# its crate and every path dependency it reaches, in the workspace or vendored (the selection tests
+# derive this list from Cargo.lock), the protocol that dcl_component's build script compiles, the
+# Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the fork's
+# revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
+# restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
+# main it follows the web lane's baseline.
+RELAY_WAKE_CRATE_DIRS = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+    'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
+    'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
+                     PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
+                     '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
+                     'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),
@@ -176,7 +194,7 @@ def hold_for_draft(result, pull_request):
         return result
     print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
           f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
-    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False),
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False), 'held': True,
             'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 
@@ -255,7 +273,7 @@ def ensure_commit(sha):
 
 
 def full_selection(reason):
-    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
+    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), True), 'reason': reason}
 
 
 def platform_input(path):
@@ -298,7 +316,7 @@ def select(base, head):
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
     paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
-    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), False)
     if bootstrap:
         selected['web'] = True
     for path in paths:
@@ -313,9 +331,10 @@ def select(base, head):
             affected = ('web', 'headless')
         elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
-        elif path.startswith('library/hashing/') or path == 'tooling/check-local-hashing.mjs':
-            # The bridge scene's SDK commands load library/hashing, and play-artifact.py
-            # fingerprints both paths with the web app.
+        elif path.startswith(('library/hashing/', 'apps/creator-hub/packages/zip-extract/')) or path == 'tooling/check-local-hashing.mjs':
+            # The bridge scene's SDK commands load library/hashing and its install copies
+            # Creator Hub's zip-extract (pnpm-workspace.yaml); play-artifact.py fingerprints
+            # these paths with the web app.
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
@@ -369,6 +388,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix', 'scenes')
         for lane in affected:
             selected[lane] = True
+        if path.startswith(RELAY_WAKE_INPUTS):
+            selected['relay-wake'] = True
     names = [name for name, enabled in selected.items() if enabled]
     return {**selected, 'base': base,
             'reason': 'Selected: ' + ', '.join(names) if names else 'Inputs unchanged; integrity checks only'}
@@ -388,6 +409,7 @@ def plan(event, base, head, repo):
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
             result['native-matrix'] = result['test']
+            result['relay-wake'] = selections[baselines.get('web')]['relay-wake']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):

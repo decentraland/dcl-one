@@ -3,7 +3,7 @@ import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NavBar, type NavBarProps } from '../../index'
 
 describe('when NavBar accepts app-owned composition controls', () => {
@@ -35,6 +35,10 @@ describe('when NavBar accepts app-owned composition controls', () => {
     }
   })
 
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
   it('should recover unclaimed outside focus while respecting an explicitly consumed key', async () => {
     render(
       <>
@@ -57,42 +61,59 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
   })
 
-  it('should cycle through native summary while excluding closed disclosure content', async () => {
-    render(
-      <NavBar
-        {...props}
-        accountControl={
+  describe('and the account control is a closed native disclosure', () => {
+    beforeEach(() => {
+      props = {
+        ...props,
+        accountControl: (
           <details>
             <summary>Wallet options</summary>
             <button>Hidden wallet action</button>
           </details>
-        }
-      />
-    )
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    screen.getByRole('link', { name: 'Decentraland home' }).focus()
-    await user.tab({ shift: true })
-    expect(screen.getByText('Wallet options')).toHaveFocus()
-    await user.tab()
-    expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+        )
+      }
+    })
+
+    it('should cycle through native summary while excluding closed disclosure content', async () => {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      screen.getByRole('link', { name: 'Decentraland home' }).focus()
+      await user.tab({ shift: true })
+      expect(screen.getByText('Wallet options')).toHaveFocus()
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+    })
   })
 
-  it('should release the reduced-motion observer when the open menu leaves', async () => {
-    const reduced = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
-    const desktop = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
-    vi.stubGlobal('matchMedia', (query: string) =>
-      query.includes('prefers-reduced-motion') ? reduced : desktop
-    )
-    try {
+  describe('and the reduced-motion preference is observed', () => {
+    type MediaQueryStub = {
+      matches: boolean
+      addEventListener: ReturnType<typeof vi.fn>
+      removeEventListener: ReturnType<typeof vi.fn>
+    }
+    let reduced: MediaQueryStub
+    let desktop: MediaQueryStub
+
+    beforeEach(() => {
+      reduced = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      desktop = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+      vi.stubGlobal('matchMedia', (query: string) =>
+        query.includes('prefers-reduced-motion') ? reduced : desktop
+      )
+    })
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('should release the reduced-motion observer after the open menu leaves', async () => {
       render(<NavBar {...props} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       expect(reduced.addEventListener).toHaveBeenCalledOnce()
       const listener = reduced.addEventListener.mock.calls[0]![1]
       await user.click(screen.getByRole('button', { name: 'Close menu' }))
       expect(reduced.removeEventListener).toHaveBeenCalledExactlyOnceWith('change', listener)
-    } finally {
-      vi.unstubAllGlobals()
-    }
+    })
   })
 
   it('should keep the one real header inside the open menu modal ownership', async () => {
@@ -123,12 +144,18 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(onConnect).toHaveBeenCalledOnce()
   })
 
-  it('should accept explicitly supplied controls for a signed-out account without showing numeric balances', () => {
-    render(<NavBar {...props} account={undefined} signIn={{ href: '/sign-in' }} />)
-    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Get credits' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeInTheDocument()
-    expect(screen.queryByText('2')).not.toBeInTheDocument()
+  describe('and the account is signed out', () => {
+    beforeEach(() => {
+      props = { ...props, account: undefined, signIn: { href: '/sign-in' } }
+    })
+
+    it('should accept explicitly supplied controls without showing numeric balances', () => {
+      render(<NavBar {...props} />)
+      expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Get credits' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeInTheDocument()
+      expect(screen.queryByText('2')).not.toBeInTheDocument()
+    })
   })
 
   it('should render secondary navigation only inside an open mobile dialog', async () => {
@@ -172,34 +199,34 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(document.querySelectorAll('#wallet-control')).toHaveLength(1)
   })
 
-  it('should tolerate absent or boolean slots and preserve explicit zero content', () => {
-    const { rerender } = render(
-      <NavBar
-        sections={[]}
-        signIn={{ href: '/sign-in' }}
-        balanceAction={false}
-        accountControl={null}
-        mobileSecondaryNavigation={undefined}
-      />
-    )
-    expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
-    rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} balanceAction={0} />)
-    expect(screen.getByText('0')).toBeInTheDocument()
+  describe('and the slots are absent, boolean or zero', () => {
+    let emptySlotProps: NavBarProps
+    let zeroSlotProps: NavBarProps
+
+    beforeEach(() => {
+      emptySlotProps = {
+        sections: [],
+        signIn: { href: '/sign-in' },
+        balanceAction: false,
+        accountControl: null,
+        mobileSecondaryNavigation: undefined
+      }
+      zeroSlotProps = { sections: [], signIn: { href: '/sign-in' }, balanceAction: 0 }
+    })
+
+    it('should tolerate absent or boolean slots and preserve explicit zero content', () => {
+      const { rerender } = render(<NavBar {...emptySlotProps} />)
+      expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
+      rerender(<NavBar {...zeroSlotProps} />)
+      expect(screen.getByText('0')).toBeInTheDocument()
+    })
   })
 
-  it('should server-render injected controls without a dialog or nested interactive wrappers', () => {
-    const container = document.createElement('div')
-    container.innerHTML = renderToString(<NavBar {...props} />)
-    expect(container.querySelector('#credit-control')).not.toBeNull()
-    expect(container.querySelector('#wallet-control')).not.toBeNull()
-    expect(container.querySelector('button button, a button, button a, a a')).toBeNull()
-    expect(container.querySelector('[role="dialog"]')).toBeNull()
-  })
-  it('should wrap through app inputs while skipping hidden, disabled and untabbable controls', async () => {
-    render(
-      <NavBar
-        {...props}
-        accountControl={
+  describe('and the account control holds app inputs and untabbable controls', () => {
+    beforeEach(() => {
+      props = {
+        ...props,
+        accountControl: (
           <>
             <label>
               Wallet network
@@ -231,68 +258,65 @@ describe('when NavBar accepts app-owned composition controls', () => {
             </div>
             <input type="hidden" />
           </>
-        }
-      />
-    )
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    const drawer = screen.getByRole('dialog', { name: 'Menu' })
-    const first = within(drawer).getByRole('link', { name: 'Decentraland home' })
-    const note = within(drawer).getByRole('textbox', { name: 'Wallet note' })
-    note.focus()
-    await user.tab()
-    expect(first).toHaveFocus()
-    await user.tab({ shift: true })
-    expect(note).toHaveFocus()
-    await user.tab({ shift: true })
-    expect(within(drawer).getByRole('combobox', { name: 'Wallet network' })).toHaveFocus()
+        )
+      }
+    })
+
+    it('should wrap through app inputs while skipping hidden, disabled and untabbable controls', async () => {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      const drawer = screen.getByRole('dialog', { name: 'Menu' })
+      const first = within(drawer).getByRole('link', { name: 'Decentraland home' })
+      const note = within(drawer).getByRole('textbox', { name: 'Wallet note' })
+      note.focus()
+      await user.tab()
+      expect(first).toHaveFocus()
+      await user.tab({ shift: true })
+      expect(note).toHaveFocus()
+      await user.tab({ shift: true })
+      expect(within(drawer).getByRole('combobox', { name: 'Wallet network' })).toHaveFocus()
+    })
   })
 
-  it('should preserve app-owned loading and callback updates in either control location', async () => {
-    const { rerender } = render(
-      <NavBar
-        {...props}
-        balanceAction={
+  describe('and the app-owned balance action moves from loading to ready', () => {
+    let loadingProps: NavBarProps
+    let readyProps: NavBarProps
+
+    beforeEach(() => {
+      loadingProps = {
+        ...props,
+        balanceAction: (
           <button type="button" aria-busy="true" disabled>
             Loading credits
           </button>
-        }
-      />
-    )
-    expect(screen.getByRole('button', { name: 'Loading credits' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    expect(
-      within(screen.getByRole('dialog')).getByRole('button', { name: 'Loading credits' })
-    ).toHaveAttribute('aria-busy', 'true')
-    rerender(
-      <NavBar
-        {...props}
-        balanceAction={
+        )
+      }
+      readyProps = {
+        ...props,
+        balanceAction: (
           <button type="button" onClick={onConnect}>
             Buy credits
           </button>
-        }
-      />
-    )
-    await user.click(
-      within(screen.getByRole('dialog')).getByRole('button', { name: 'Buy credits' })
-    )
-    expect(onConnect).toHaveBeenCalledOnce()
+        )
+      }
+    })
+
+    it('should preserve app-owned loading and callback updates in either control location', async () => {
+      const { rerender } = render(<NavBar {...loadingProps} />)
+      expect(screen.getByRole('button', { name: 'Loading credits' })).toBeDisabled()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('button', { name: 'Loading credits' })
+      ).toHaveAttribute('aria-busy', 'true')
+      rerender(<NavBar {...readyProps} />)
+      await user.click(
+        within(screen.getByRole('dialog')).getByRole('button', { name: 'Buy credits' })
+      )
+      expect(onConnect).toHaveBeenCalledOnce()
+    })
   })
 
-  it('should hydrate the public component with one instance of each supplied control', async () => {
-    const container = document.createElement('div')
-    container.innerHTML = renderToString(<NavBar {...props} />)
-    document.body.append(container)
-    render(<NavBar {...props} />, { container, hydrate: true })
-    expect(container.querySelectorAll('#credit-control')).toHaveLength(1)
-    expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    expect(
-      within(screen.getByRole('dialog')).getByRole('link', { name: 'Photos' })
-    ).toBeInTheDocument()
-    expect(container.querySelectorAll('#credit-control')).toHaveLength(1)
-  })
-  it('should leave Escape and Tab ownership with an app-owned modal opened from a slot', async () => {
+  describe('and a slot opens an app-owned modal', () => {
     function WalletControl() {
       const [open, setOpen] = useState(false)
       return (
@@ -323,132 +347,175 @@ describe('when NavBar accepts app-owned composition controls', () => {
         </>
       )
     }
-    render(<NavBar {...props} accountControl={<WalletControl />} />)
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    await user.click(
-      within(screen.getByRole('dialog', { name: 'Menu' })).getByRole('button', {
-        name: 'Wallet dialog'
-      })
-    )
-    const walletAccount = within(screen.getByRole('dialog', { name: 'Wallet' })).getByRole(
-      'button',
-      { name: 'Wallet account' }
-    )
-    expect(walletAccount).toHaveFocus()
-    await user.tab()
-    expect(walletAccount).toHaveFocus()
-    await user.keyboard('{Escape}')
-    expect(screen.queryByRole('dialog', { name: 'Wallet' })).not.toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+
+    beforeEach(() => {
+      props = { ...props, accountControl: <WalletControl /> }
+    })
+
+    it('should leave Escape and Tab ownership with the app-owned modal', async () => {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      await user.click(
+        within(screen.getByRole('dialog', { name: 'Menu' })).getByRole('button', {
+          name: 'Wallet dialog'
+        })
+      )
+      const walletAccount = within(screen.getByRole('dialog', { name: 'Wallet' })).getByRole(
+        'button',
+        { name: 'Wallet account' }
+      )
+      expect(walletAccount).toHaveFocus()
+      await user.tab()
+      expect(walletAccount).toHaveFocus()
+      await user.keyboard('{Escape}')
+      expect(screen.queryByRole('dialog', { name: 'Wallet' })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    })
   })
   for (const value of [null, undefined]) {
-    it(`should restore standard account and sign-in controls for ${String(value)} overrides`, async () => {
-      const { rerender } = render(
-        <NavBar
-          {...props}
-          accountControl={value}
-          accountActions={[{ label: 'Profile', href: '/profile' }]}
-        />
-      )
-      expect(screen.getByRole('button', { name: 'Account: Ada' })).toBeInTheDocument()
-      await user.click(screen.getByRole('button', { name: 'Open menu' }))
-      await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
-      expect(within(screen.getByRole('dialog')).getByText('Ada')).toBeVisible()
-      expect(
-        within(screen.getByRole('dialog')).getByRole('link', { name: 'Profile' })
-      ).toBeInTheDocument()
-      await user.keyboard('{Escape}')
-      expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
-      await user.keyboard('{Escape}')
-      rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} accountControl={value} />)
-      expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
-      await user.click(screen.getByRole('button', { name: 'Open menu' }))
-      expect(
-        within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' })
-      ).toBeInTheDocument()
+    describe(`and the account control override is ${String(value)}`, () => {
+      let signedInProps: NavBarProps
+      let signedOutProps: NavBarProps
+
+      beforeEach(() => {
+        signedInProps = {
+          ...props,
+          accountControl: value,
+          accountActions: [{ label: 'Profile', href: '/profile' }]
+        }
+        signedOutProps = { sections: [], signIn: { href: '/sign-in' }, accountControl: value }
+      })
+
+      it(`should restore standard account and sign-in controls for ${String(value)} overrides`, async () => {
+        const { rerender } = render(<NavBar {...signedInProps} />)
+        expect(screen.getByRole('button', { name: 'Account: Ada' })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Open menu' }))
+        await user.click(screen.getByRole('button', { name: 'Account: Ada' }))
+        expect(within(screen.getByRole('dialog')).getByText('Ada')).toBeVisible()
+        expect(
+          within(screen.getByRole('dialog')).getByRole('link', { name: 'Profile' })
+        ).toBeInTheDocument()
+        await user.keyboard('{Escape}')
+        expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+        await user.keyboard('{Escape}')
+        rerender(<NavBar {...signedOutProps} />)
+        expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: 'Open menu' }))
+        expect(
+          within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' })
+        ).toBeInTheDocument()
+      })
     })
   }
 
-  it('should treat false as an explicit replacement rather than restoring default account controls', async () => {
-    const { rerender } = render(
-      <NavBar
-        {...props}
-        accountControl={false}
-        accountActions={[{ label: 'Profile', href: '/profile' }]}
-      />
-    )
-    expect(screen.queryByRole('button', { name: 'Account: Ada' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    const drawer = screen.getByRole('dialog')
-    expect(within(drawer).queryByText('Ada')).not.toBeInTheDocument()
-    expect(within(drawer).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument()
-    expect(within(drawer).getByText('0')).toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} accountControl={false} />)
-    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    expect(
-      within(screen.getByRole('dialog')).queryByRole('link', { name: 'Sign in' })
-    ).not.toBeInTheDocument()
+  describe('and the account control override is false', () => {
+    let signedInProps: NavBarProps
+    let signedOutProps: NavBarProps
+
+    beforeEach(() => {
+      signedInProps = {
+        ...props,
+        accountControl: false,
+        accountActions: [{ label: 'Profile', href: '/profile' }]
+      }
+      signedOutProps = { sections: [], signIn: { href: '/sign-in' }, accountControl: false }
+    })
+
+    it('should treat false as an explicit replacement rather than restoring default account controls', async () => {
+      const { rerender } = render(<NavBar {...signedInProps} />)
+      expect(screen.queryByRole('button', { name: 'Account: Ada' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      const drawer = screen.getByRole('dialog')
+      expect(within(drawer).queryByText('Ada')).not.toBeInTheDocument()
+      expect(within(drawer).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument()
+      expect(within(drawer).getByText('0')).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      rerender(<NavBar {...signedOutProps} />)
+      expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(
+        within(screen.getByRole('dialog')).queryByRole('link', { name: 'Sign in' })
+      ).not.toBeInTheDocument()
+    })
   })
 
-  it('should let secondary navigation callbacks close the drawer and use the latest app state', async () => {
-    const renderTabs =
-      (label: string) =>
-      ({ closeDrawer }: { closeDrawer: () => void }) => (
-        <nav aria-label="Profile tabs">
-          <a
-            href="/profile/photos"
-            onClick={(event) => {
-              event.preventDefault()
-              onConnect()
-              closeDrawer()
-            }}
-          >
-            {label}
-          </a>
-        </nav>
+  describe('and the secondary navigation is a render callback', () => {
+    let oldTabsProps: NavBarProps
+    let currentTabsProps: NavBarProps
+
+    beforeEach(() => {
+      const renderTabs =
+        (label: string) =>
+        ({ closeDrawer }: { closeDrawer: () => void }) => (
+          <nav aria-label="Profile tabs">
+            <a
+              href="/profile/photos"
+              onClick={(event) => {
+                event.preventDefault()
+                onConnect()
+                closeDrawer()
+              }}
+            >
+              {label}
+            </a>
+          </nav>
+        )
+      oldTabsProps = { ...props, mobileSecondaryNavigation: renderTabs('Old photos') }
+      currentTabsProps = { ...props, mobileSecondaryNavigation: renderTabs('Current photos') }
+    })
+
+    it('should let secondary navigation callbacks close the drawer and use the latest app state', async () => {
+      const { rerender } = render(<NavBar {...oldTabsProps} />)
+      expect(screen.queryByRole('navigation', { name: 'Profile tabs' })).not.toBeInTheDocument()
+      const menu = screen.getByRole('button', { name: 'Open menu' })
+      await user.click(menu)
+      rerender(<NavBar {...currentTabsProps} />)
+      expect(screen.queryByRole('link', { name: 'Old photos' })).not.toBeInTheDocument()
+      await user.click(
+        within(screen.getByRole('dialog')).getByRole('link', { name: 'Current photos' })
       )
-    const { rerender } = render(
-      <NavBar {...props} mobileSecondaryNavigation={renderTabs('Old photos')} />
-    )
-    expect(screen.queryByRole('navigation', { name: 'Profile tabs' })).not.toBeInTheDocument()
-    const menu = screen.getByRole('button', { name: 'Open menu' })
-    await user.click(menu)
-    rerender(<NavBar {...props} mobileSecondaryNavigation={renderTabs('Current photos')} />)
-    expect(screen.queryByRole('link', { name: 'Old photos' })).not.toBeInTheDocument()
-    await user.click(
-      within(screen.getByRole('dialog')).getByRole('link', { name: 'Current photos' })
-    )
-    expect(onConnect).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(menu).toHaveFocus()
-    expect(document.querySelectorAll('#wallet-control')).toHaveLength(1)
+      expect(onConnect).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(menu).toHaveFocus()
+      expect(document.querySelectorAll('#wallet-control')).toHaveLength(1)
+    })
   })
 
-  it('should allow a secondary navigation callback to render nothing', async () => {
-    render(<NavBar {...props} mobileSecondaryNavigation={() => null} />)
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    expect(screen.queryByRole('navigation', { name: 'Profile sections' })).not.toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  describe('and the secondary navigation callback renders nothing', () => {
+    beforeEach(() => {
+      props = { ...props, mobileSecondaryNavigation: () => null }
+    })
+
+    it('should open the drawer without secondary navigation', async () => {
+      render(<NavBar {...props} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(screen.queryByRole('navigation', { name: 'Profile sections' })).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
   })
-  it('should preserve a noninteractive balance action without inventing absent numeric balances', async () => {
-    render(
-      <NavBar
-        {...props}
-        balances={undefined}
-        balanceAction={<span id="iap-status">IAP credits</span>}
-      />
-    )
-    expect(screen.queryByText('0')).not.toBeInTheDocument()
-    expect(screen.queryByText('2')).not.toBeInTheDocument()
-    expect(screen.getByText('IAP credits').closest('a,button')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Open menu' }))
-    const drawer = screen.getByRole('dialog')
-    expect(within(drawer).getByText('IAP credits').closest('a,button')).toBeNull()
-    expect(within(drawer).queryByText('0')).not.toBeInTheDocument()
-    expect(document.querySelectorAll('#iap-status')).toHaveLength(1)
+
+  describe('and the balance action is noninteractive without numeric balances', () => {
+    beforeEach(() => {
+      props = {
+        ...props,
+        balances: undefined,
+        balanceAction: <span id="iap-status">IAP credits</span>
+      }
+    })
+
+    it('should preserve a noninteractive balance action without inventing absent numeric balances', async () => {
+      render(<NavBar {...props} />)
+      expect(screen.queryByText('0')).not.toBeInTheDocument()
+      expect(screen.queryByText('2')).not.toBeInTheDocument()
+      expect(screen.getByText('IAP credits').closest('a,button')).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      const drawer = screen.getByRole('dialog')
+      expect(within(drawer).getByText('IAP credits').closest('a,button')).toBeNull()
+      expect(within(drawer).queryByText('0')).not.toBeInTheDocument()
+      expect(document.querySelectorAll('#iap-status')).toHaveLength(1)
+    })
   })
+
   it('should default to the standard surface and expose an explicit overlay surface without changing content', () => {
     const { rerender } = render(<NavBar {...props} />)
     expect(screen.getByRole('navigation', { name: 'Main' })).toHaveAttribute(
@@ -463,36 +530,71 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeInTheDocument()
   })
 
-  it('should server-render the owner-selected overlay surface', () => {
-    const container = document.createElement('div')
-    container.innerHTML = renderToString(<NavBar {...props} surface="overlay" />)
-    expect(container.querySelector('nav')).toHaveAttribute('data-surface', 'overlay')
-    expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
-  })
-  for (const surface of ['solid', 'overlay'] as const) {
-    it(`should server-render the default account and one 44px balance control on ${surface}`, () => {
-      const container = document.createElement('div')
-      container.innerHTML = renderToString(
-        <NavBar
-          {...props}
-          accountControl={undefined}
-          surface={surface}
-          balanceAction={
-            <a
-              id="ssr-credit-action"
-              href="/shop/credits"
-              style={{ display: 'inline-flex', height: 44 }}
-            >
-              0
-            </a>
-          }
-        />
-      )
-      expect(container.querySelector('nav')).toHaveAttribute('data-surface', surface)
-      expect(container.querySelectorAll('#ssr-credit-action')).toHaveLength(1)
-      expect(container.querySelector('#ssr-credit-action')).toHaveAttribute('href', '/shop/credits')
-      expect(container.querySelector('button[aria-label="Account: Ada"]')).not.toBeNull()
+  describe('and the markup is server-rendered', () => {
+    let container: HTMLElement
+
+    beforeEach(() => {
+      container = document.createElement('div')
+    })
+
+    it('should server-render injected controls without a dialog or nested interactive wrappers', () => {
+      container.innerHTML = renderToString(<NavBar {...props} />)
+      expect(container.querySelector('#credit-control')).not.toBeNull()
+      expect(container.querySelector('#wallet-control')).not.toBeNull()
+      expect(container.querySelector('button button, a button, button a, a a')).toBeNull()
       expect(container.querySelector('[role="dialog"]')).toBeNull()
     })
-  }
+
+    it('should hydrate the public component with one instance of each supplied control', async () => {
+      container.innerHTML = renderToString(<NavBar {...props} />)
+      document.body.append(container)
+      render(<NavBar {...props} />, { container, hydrate: true })
+      expect(container.querySelectorAll('#credit-control')).toHaveLength(1)
+      expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('link', { name: 'Photos' })
+      ).toBeInTheDocument()
+      expect(container.querySelectorAll('#credit-control')).toHaveLength(1)
+    })
+
+    it('should server-render the owner-selected overlay surface', () => {
+      container.innerHTML = renderToString(<NavBar {...props} surface="overlay" />)
+      expect(container.querySelector('nav')).toHaveAttribute('data-surface', 'overlay')
+      expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
+    })
+
+    for (const surface of ['solid', 'overlay'] as const) {
+      describe(`and the default account renders with a 44px balance control on ${surface}`, () => {
+        beforeEach(() => {
+          props = {
+            ...props,
+            accountControl: undefined,
+            surface,
+            balanceAction: (
+              <a
+                id="ssr-credit-action"
+                href="/shop/credits"
+                style={{ display: 'inline-flex', height: 44 }}
+              >
+                0
+              </a>
+            )
+          }
+        })
+
+        it(`should server-render the default account and one 44px balance control on ${surface}`, () => {
+          container.innerHTML = renderToString(<NavBar {...props} />)
+          expect(container.querySelector('nav')).toHaveAttribute('data-surface', surface)
+          expect(container.querySelectorAll('#ssr-credit-action')).toHaveLength(1)
+          expect(container.querySelector('#ssr-credit-action')).toHaveAttribute(
+            'href',
+            '/shop/credits'
+          )
+          expect(container.querySelector('button[aria-label="Account: Ada"]')).not.toBeNull()
+          expect(container.querySelector('[role="dialog"]')).toBeNull()
+        })
+      })
+    }
+  })
 })

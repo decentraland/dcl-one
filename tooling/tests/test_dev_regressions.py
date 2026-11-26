@@ -20,7 +20,7 @@ spec.loader.exec_module(guard)
 def cut_shard(rows, shard=None, table="", locale="C"):
     """Runs the shard cut of tooling/catalyst-test.sh over (source, kind, executable) rows and a table."""
     script = (ROOT / "tooling/catalyst-test.sh").read_text()
-    select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+    select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('if [ "$planned" = true ]; then')]
     with tempfile.TemporaryDirectory() as logs:
         Path(logs, "binaries").write_text("".join("\t".join(row) + "\n" for row in rows))
         Path(logs, "durations").write_text(table)
@@ -206,7 +206,6 @@ class InventoryTests(unittest.TestCase):
                 "archipelago::observations::tests::refused_observations_count_every_loss_without_logging_on_the_socket_path",
                 "pulse::statistics::tests::draining_changes_releases_bytes_while_the_backlog_stays_nonempty",
                 "stats::tests::indexed_changes_preserve_order_and_rebuild_after_removal_and_recovery",
-                "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
                 "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
                 "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
                 "gatekeeper::bus::broker::tests::cancelled_terminal_heads_cannot_publish_after_a_link_rebuild",
@@ -214,8 +213,6 @@ class InventoryTests(unittest.TestCase):
                 "gatekeeper::bus::broker::tests::retained_capability_rejects_every_non_disconnect_payload",
                 "archipelago::observations::tests::shutdown_deadline_cancels_unsubmitted_disconnect_and_counts_all_forced_loss_once",
                 "gatekeeper::bus::broker::tests::retained_sdk_deadline_and_link_changes_leave_submission_unconfirmed",
-                "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
-                "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
                 "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
                 "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
                 "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
@@ -303,37 +300,6 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(normal=changed, ignored=ignored), self.assertRaises(ValueError):
                 guard.verify(required, changed, ignored, "auth diagnostics")
 
-    def test_exact_engine_inventory_requires_one_unignored_test_and_no_other_entries(self):
-        validate = getattr(guard, "verify_exact", None)
-        self.assertTrue(callable(validate), "the isolated engine process needs an exact inventory guard")
-        validate(["configured"], "configured: test\n", "", "engine")
-        for normal, ignored in [
-            ("", ""),
-            ("renamed: test\n", ""),
-            ("configured: test\nextra: test\n", ""),
-            ("configured: test\nextra: benchmark\n", ""),
-            ("configured: benchmark\n", ""),
-            ("configured: test\n", "configured: test\n"),
-            ("configured: test\n", "extra: test\n"),
-            ("configured: test\n", "extra: benchmark\n"),
-            ("configured: test\nconfigured: test\n", ""),
-        ]:
-            with self.subTest(normal=normal, ignored=ignored), self.assertRaises(ValueError):
-                validate(["configured"], normal, ignored, "engine")
-        with self.assertRaises(ValueError):
-            validate(["configured", "extra"], "configured: test\nextra: test\n", "", "engine")
-
-    def test_exact_engine_guard_reads_both_executable_inventories(self):
-        with mock.patch.object(guard, "run", side_effect=["configured: test\n", ""]) as execute:
-            guard.check_executable(["configured"], "engine", "isolated engine", exact=True)
-        self.assertEqual(execute.call_args_list, [
-            mock.call(["engine", "--list", "--format", "terse"]),
-            mock.call(["engine", "--list", "--ignored", "--format", "terse"]),
-        ])
-        with mock.patch.object(guard, "run", side_effect=["configured: test\nextra: test\n", ""]), \
-             self.assertRaises(ValueError):
-            guard.check_executable(["configured"], "engine", "isolated engine", exact=True)
-
     def test_external_result_requires_exact_success_without_skips(self):
         validate = getattr(guard, "verify_external_result", None)
         self.assertTrue(callable(validate), "provisioned tests need an exact execution-result guard")
@@ -395,12 +361,10 @@ class InventoryTests(unittest.TestCase):
             {"reason": "compiler-artifact", "executable": "root-bin", "profile": {"test": True}, "target": {"name": "catalyst", "kind": ["bin"]}},
             {"reason": "compiler-artifact", "executable": "retry", "profile": {"test": True}, "target": {"name": "retry_keeps_the_record_until_written", "kind": ["test"]}},
             {"reason": "compiler-artifact", "executable": "retry-lib", "profile": {"test": True}, "target": {"name": "retry_keeps_the_record_until_written", "kind": ["lib"]}},
-            {"reason": "compiler-artifact", "executable": "engine", "profile": {"test": True}, "target": {"name": "stats_metrics_engine", "kind": ["test"]}},
-            {"reason": "compiler-artifact", "executable": "engine-lib", "profile": {"test": True}, "target": {"name": "stats_metrics_engine", "kind": ["lib"]}},
         ]
         output = "\n".join(map(json.dumps, artifacts))
         required = {(entry["target"]["name"], entry["target"]["kind"][0]): [f"required_{index}"]
-                    for index, entry in enumerate(artifacts) if entry["executable"] not in ("root-bin", "retry-lib", "engine-lib")}
+                    for index, entry in enumerate(artifacts) if entry["executable"] not in ("root-bin", "retry-lib")}
         with mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
              mock.patch.dict(guard.os.environ, {}, clear=True), \
              mock.patch.object(guard, "external_prerequisites", return_value="nats"), \
@@ -412,10 +376,13 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in execute.call_args_list], ["unit", "socket", "socket"])
         self.assertEqual([call.args[1] for call in execute.call_args_list], [entry[2] for entry in guard.EXTERNAL])
         self.assertEqual([call.args[0] for call in mandatory.call_args_list], list(required.values()))
-        self.assertEqual([call.args[1] for call in mandatory.call_args_list], ["unit", "socket", "config", "auth", "owner", "content", "root", "retry", "engine"])
-        self.assertEqual(mandatory.call_args_list[-1].kwargs, {"exact": True})
-        self.assertEqual(build.call_args.args[0], ["cargo", "test", "--locked", *guard.SELECTION.split(), "--no-run", "--message-format=json-render-diagnostics"])
-        for absent, kind in (("content", "lib"), ("root", "lib"), ("retry", "test"), ("engine", "test")):
+        self.assertEqual([call.args[1] for call in mandatory.call_args_list], ["unit", "socket", "config", "auth", "owner", "content", "root", "retry"])
+        expected = ["cargo", "test", "--locked", *guard.SELECTION.split(), "--lib"]
+        for name, kind in sorted(set(required) | {(n, k) for n, k, _ in guard.EXTERNAL}):
+            if kind == "test":
+                expected.extend(["--test", name])
+        self.assertEqual(build.call_args.args[0], [*expected, "--no-run", "--message-format=json-render-diagnostics"])
+        for absent, kind in (("content", "lib"), ("root", "lib"), ("retry", "test")):
             incomplete = "\n".join(json.dumps(entry) for entry in artifacts if entry["executable"] != absent)
             with self.subTest(absent=absent), mock.patch.object(guard, "MANDATORY_ARCHIPELAGO", required), \
                  mock.patch.dict(guard.os.environ, {}, clear=True), \
@@ -692,41 +659,6 @@ class InventoryTests(unittest.TestCase):
                 guard.validate_runtime_script(bad)
 
 
-    def test_engine_receipt_is_emitted_once_without_unrelated_success_output(self):
-        import json
-        script = (ROOT / "tooling/catalyst-test.sh").read_text()
-        body = script.split("run() {\n", 1)[1].split("\n}\n", 1)[0]
-        with tempfile.TemporaryDirectory(prefix="matcher-receipt-") as temporary:
-            directory = Path(temporary)
-            count = directory / "executions"
-            executables = [directory / name for name in ["stats_metrics_engine-fixture", "ordinary-fixture"]]
-            for executable in executables:
-                executable.write_text(
-                    '#!/bin/sh\nprintf "%s\\n" "' + executable.name + '" >> "' + count.as_posix() + '"\n'
-                    + "printf '%s' 'test configured_stats_engine_and_http_contract ... '\n"
-                    + "printf '\\n%s\\n' 'STATS_ENGINE_RECEIPT {\"completed\":32}' "
-                    + "'private success detail' 'test result: ok. 1 passed; 0 failed'\n"
-                )
-                executable.chmod(0o755)
-            result = subprocess.run(
-                [shutil.which("bash"), "-c", 'logs="$1"; receipts="$1"; group_threads=1; socket_threads=1; shift; run() {\n' + body
-                 + '\n}; printf "%s\\n" "$@" | run 1', "_", directory.as_posix(),
-                 *(executable.as_posix() for executable in executables)],
-                capture_output=True, text=True, check=True,
-            )
-            self.assertEqual(count.read_text().splitlines(), [path.name for path in executables])
-            receipts = [line for line in result.stdout.splitlines() if line.startswith("STATS_ENGINE_RECEIPT ")]
-            self.assertEqual(len(receipts), 1)
-            self.assertEqual(json.loads(receipts[0].removeprefix("STATS_ENGINE_RECEIPT ")), {"completed": 32})
-            self.assertNotIn("private success detail", result.stdout)
-            self.assertEqual((directory / "stats-engine-receipt.log").read_text().splitlines(), receipts)
-            self.assertEqual(result.stdout.count("1 passed; 0 failed"), 2)
-            for executable in executables:
-                log = (directory / (executable.name + ".log")).read_text()
-                self.assertEqual(log.splitlines()[0], "test configured_stats_engine_and_http_contract ... ")
-                self.assertTrue(log.splitlines()[1].startswith("STATS_ENGINE_RECEIPT "))
-                self.assertIn("private success detail", log)
-
     FAILING_FIXTURE = ("printf '%s\\n' 'test a::passes ... ok' 'test a::breaks ... FAILED' "
                        "'test result: FAILED. 1 passed; 1 failed'\nexit 101\n")
     KILLED_FIXTURE = "printf '%s\\n' 'test b::slow has been running for over 60 seconds'\nkill -9 $$\n"
@@ -744,7 +676,7 @@ class InventoryTests(unittest.TestCase):
         if github_actions:
             env["GITHUB_ACTIONS"] = "true"
         return subprocess.run(
-            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; receipts="$1"; failures="$1/failures"; group_threads=1; socket_threads=1; shift; '
+            [shutil.which("bash"), "-c", 'set -euo pipefail; logs="$1"; failures="$1/failures"; group_threads=1; socket_threads=1; shift; '
              ': > "$failures"; phase="running the test binaries"; report() {\n' + report + '\n}; trap report EXIT; '
              'run() {\n' + body + '\n}; printf "%s\\n" "$@" | run 3', "_", directory.as_posix(),
              *(str(directory / name) for name in fixtures)],
@@ -795,7 +727,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_the_doc_tests_run_in_exactly_the_named_shard(self):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
-        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('cores=')]
+        select = script[script.index('shard="${CATALYST_TEST_SHARD:-1/1}"'):script.index('if [ "$planned" = true ]; then')]
         decide = script[script.index('if [ "$doc" -eq "$index" ]; then'):]
         decide = decide[:decide.index("fi\n") + 3].replace('cargo test --locked "$@" --doc', "echo doc")
 
@@ -888,8 +820,8 @@ class InventoryTests(unittest.TestCase):
         names = [[path.rsplit("/", 1)[1] for path in shard] for shard in shards]
         # Greedy longest first: 4 at once, then the socket binaries; one of each group per shard.
         # The binary without a time keeps its byte-order place (7th of 11: shard 1 of 2) and runs first.
-        self.assertEqual(names, [["new", "a", "node_2", "sockets_2"],
-                                 ["node_1", "b", "c", "d", "sockets_1", "e", "f"]])
+        self.assertEqual(names, [["new", "node_1", "b", "c", "d", "sockets_1", "e", "f"],
+                                 ["a", "node_2", "sockets_2"]])
         self.assertEqual(sorted(sum(names, [])), sorted(path.rsplit("/", 1)[1] for _, _, path in rows))
 
     def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):

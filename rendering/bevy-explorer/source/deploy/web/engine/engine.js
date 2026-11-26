@@ -1,12 +1,12 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, engine_set_scene_loop_mode, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
 import { installContentCachePageFunctions, requestPersistentStorage } from "./content_cache.js";
 
 // Re-export for main.js
-export { engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash };
+export { engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, engine_set_scene_loop_mode, gpu_cache_hash };
 
 // Spawns the render worker ahead of start(), so gpu_cache.js warms its device there (src/web.rs
 // engine_render_setup) while the user is still on the login screen; resolves once it has.
@@ -374,6 +374,16 @@ export function start(options = {}) {
     return new Promise((resolve) => resolve(page.command.run(page.rest)));
   };
 
+  // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
+  // when it is empty or holds a double quote or whitespace as the engine counts it (Unicode's
+  // White_Space: `\s` lacks U+0085). A command that takes the rest of the line (`rest`) is split
+  // on whitespace alone, quotes kept, and a page command splits its own line, so their words go
+  // unquoted.
+  const quoteWord = (word) =>
+    word === "" || /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"]/.test(word)
+      ? `"${word.replace(/[\\"]/g, "\\$&")}"`
+      : word;
+
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
     try {
@@ -381,6 +391,7 @@ export function start(options = {}) {
         cmd,
         args: command.args,
         help: command.help,
+        rest: true,
       }));
       const api = JSON.parse(json).concat(pageApi);
       window.engine = {};
@@ -392,14 +403,15 @@ export function start(options = {}) {
         const body = [
           `var parts = [${JSON.stringify(cmd.cmd)}];`,
           `var defs = ${JSON.stringify(cmd.args)};`,
+          `var word = ${cmd.rest ? 'String' : 'quoteWord'};`,
           `for (var i = 0; i < defs.length; i++) {`,
           `  var val = arguments[i];`,
           `  if (val === undefined) { if (!defs[i].optional) throw new Error(${JSON.stringify(jsName)} + ": missing arg '" + defs[i].name + "'"); break; }`,
-          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : String(val));`,
+          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : word(String(val)));`,
           `}`,
           `return window.engine_console_command(parts.join(' ')).then(function(r) { try { return JSON.parse(r); } catch(e) { return r; } });`,
         ].join('\n');
-        const fn = new Function(...paramNames, body);
+        const fn = new Function('quoteWord', `return function (${paramNames.join(', ')}) {\n${body}\n};`)(quoteWord);
         const sig = cmd.args.map(a => {
           const name = a.kind === 'json' ? `${a.name}: object` : a.name;
           return a.optional ? `[${name}]` : `<${name}>`;

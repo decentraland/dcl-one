@@ -1,4 +1,4 @@
-import { Coords } from '@dcl/ecs/dist-cjs'
+import type { Coords } from '@dcl/ecs/dist-cjs'
 
 /**
  * Parses a string-based set of coordinates.

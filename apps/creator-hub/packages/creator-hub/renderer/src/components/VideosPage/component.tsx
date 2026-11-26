@@ -1,8 +1,8 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 
-import { misc } from '#preload';
+import { openLearnResource } from '/@/lib/openLearnResource';
 
 import { Container } from '../Container';
 import { Navbar, NavbarItem } from '../Navbar';
@@ -42,7 +42,7 @@ function Video(props: { id: string; list: string; title: string }) {
   return (
     <div
       className="video"
-      onClick={() => misc.openExternal(url)}
+      onClick={() => openLearnResource('videos', 'video', props.title, url)}
       title={props.title}
     >
       <Image

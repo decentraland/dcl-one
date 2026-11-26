@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
@@ -96,7 +97,7 @@ impl Room {
     }
 
     pub fn metadata(&self) -> String {
-        self.metadata.lock().unwrap().clone()
+        self.metadata.lock_ignore_poison().clone()
     }
 
     pub fn local_participant(&self) -> LocalParticipant {

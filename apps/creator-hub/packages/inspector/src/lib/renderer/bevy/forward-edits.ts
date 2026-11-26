@@ -5,6 +5,13 @@ import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer';
 import type { EngineWindow } from './console';
 import { consoleCommand } from './console';
 import type { BevySceneContext } from './BevySceneContext';
+import type { EngineSceneState } from './engine-scene-state';
+import {
+  SCENE_LIGHTING_COMPONENTS,
+  emptyEngineSceneState,
+  findPlayerAttachments,
+  parseEngineSceneState,
+} from './engine-scene-state';
 
 /**
  * Forward edit bridge: inspector ECS changes → engine console commands.
@@ -139,15 +146,26 @@ export interface ForwardEditBridgeOptions {
   /**
    * Whether the scene is currently frozen (paused). Read when forwarding arms so
    * animations that loaded playing are paused to match the editor's default-frozen
-   * state (#1382), and to decide whether editor Placeholders are shown (only while
-   * frozen). Defaults to frozen (the editor boots static).
+   * state (#1382). Defaults to frozen (the editor boots static).
    */
   isFrozen?: () => boolean;
   /**
-   * Whether entities attached to the scene's camera (`engine.CameraEntity` and its
-   * descendants) should be hidden. While you edit with the free camera, the
-   * engine's camera entity IS the editor's fly-camera, so anything the scene
-   * parents to it would hang in front of the editor's view. Defaults to never.
+   * Whether the scene is frozen at its initial state: since it loaded or was
+   * stopped, before any Play. While stopped the viewport keeps the editor's
+   * lighting (see applySceneLighting) and shows editor Placeholders; a Pause is
+   * frozen but not stopped, so it keeps what Play showed. Defaults to `isFrozen`.
+   */
+  isStopped?: () => boolean;
+  /**
+   * Whether entities attached to the local player or its camera should be hidden
+   * (see `findPlayerAttachments`: a Transform parent chain reaching
+   * `engine.CameraEntity` or `engine.PlayerEntity`, or an AvatarAttach on the
+   * local player, and their descendants). While you edit with the free camera,
+   * the engine's camera entity IS the editor's fly-camera, so anything the scene
+   * parents to it would hang in front of the editor's view, and the player's
+   * avatar is hidden, so what rides on it would float at the spawn point. Hiding
+   * also switches off a LightSource on them: the engine lights only entities that
+   * are visible. Defaults to never.
    */
   hideCameraAttachments?: () => boolean;
 }
@@ -178,13 +196,24 @@ export interface ForwardEditBridge {
   /** Apply the scene run/freeze toggle to what the engine renders: pause
    * (frozen=true) or resume (false) time-based playback by forwarding each
    * Animator/video/audio/particle component with its paused override or the
-   * authored value (#1382), and show editor Placeholders only while frozen, so
-   * Play shows the scene as players will see it. */
+   * authored value (#1382). Play also swaps editor Placeholders for what the scene
+   * has, so it shows the scene as players will see it, and a Pause keeps that. */
   setSceneFrozen(frozen: boolean): void;
+  /** Run the day clock again when the scene is running. Call once the editor agent
+   * is ready: its boot pins the clock at noon, also under a scene that is playing
+   * (an engine reboot while playing, or a Play pressed while the agent logged in). */
+  syncSceneClock(): void;
   /** Re-evaluate which camera-attached entities are hidden (see
    * `hideCameraAttachments`). Call when its inputs change: the camera mode or the
    * run state. */
   refreshCameraAttachments(): void;
+  /** Re-read the engine's copy of the scene (entities its code created, its root
+   * lighting) while it is stopped. Call when the engine's entity set changes, e.g.
+   * once the scene's `main()` has run after load. */
+  refreshEngineScene(): void;
+  /** A scene reload (Stop, or a reload before Play) was just requested. Edits made
+   * from here until `reconcileAfterReload` are not in the bundle it reloads. */
+  noteReloadStarted(): void;
   /** Re-establish editor overrides after a scene reload (Stop/#1376), which
    * re-creates the engine entities: marks existing entities instantiated (no
    * re-`new_entity` → no id collision) and replays placeholder/visibility/pickable/
@@ -196,6 +225,7 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   const { context, engineWindow } = options;
   // Default frozen — the editor boots static (see setSceneFrozen / #1382).
   const isFrozen = options.isFrozen ?? (() => true);
+  const isStopped = options.isStopped ?? isFrozen;
   const hideCameraAttachments = options.hideCameraAttachments ?? (() => false);
   // Guard every send behind a disposed flag: once the bridge is disconnected (a
   // Bevy iframe reboot swaps `engineWindow`, or the renderer unmounts), queued
@@ -240,9 +270,10 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         }
       }
     }
-    // A reloaded or rebooted engine has no placeholder GLTFs, so a running scene
-    // needs nothing removed.
-    if (isFrozen()) {
+    // A reloaded or rebooted engine has no placeholder GLTFs, so a scene that is
+    // running or paused needs nothing removed.
+    placeholdersShown = false;
+    if (isStopped()) {
       for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
         forwardPlaceholder(entity, false);
       }
@@ -256,6 +287,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     const gltf = context.getForwardableComponent(GLTF_CONTAINER);
     if (gltf) {
       for (const [entity, current] of context.engine.getEntitiesWith(gltf)) {
+        // The placeholder forwarded above stands in for this model while frozen.
+        if (shownPlaceholderSrc(entity) != null) continue;
         enqueue(entity, async () => {
           await ensureInstantiated(entity);
           await forwardSet(entity, 'GltfContainer', current);
@@ -279,6 +312,15 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     // playing — pause them to match the frozen state (setPlaybackFrozen forwards
     // playing:false; the toolbar toggle later resumes/re-pauses).
     if (isFrozen()) setPlaybackFrozen(true);
+    // The scene's code ran again from the saved composite: from here on, a parent
+    // or AvatarAttach that differs from these is an edit made in the inspector.
+    captureLoadedAttachments();
+    // What the scene's code made in main() (camera attachments, root lighting) is
+    // only in the engine. The first load and a Stop both land here, so both keep
+    // the editor's lighting and hide the attachments the same way.
+    void scanEngineScene();
+    // A Play pressed before forwarding armed never reached the clock.
+    syncSceneClock();
   };
 
   // Arm after a delay so the initial CRDT load burst is not forwarded (see
@@ -365,30 +407,41 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // GLTF that stands in for an otherwise-invisible item (e.g. a Trigger Area) so
   // it can be seen/selected in the editor but NOT in preview. The engine has no
   // Placeholder component, so translate it to a `GltfContainer` pointed at the
-  // placeholder src. Only forward it when the entity has no AUTHORED GltfContainer
-  // (a real model already renders; the placeholder is for model-less items) — else
-  // we'd clobber the real model. Editor-only: the CRDT keeps just the Placeholder
-  // component, so preview (which ignores editor components) never shows it — and
-  // neither does Play: the placeholder shows only while the scene is frozen.
+  // placeholder src. Editor-only: the CRDT keeps just the Placeholder component,
+  // so preview (which ignores editor components) never shows it — and neither
+  // does Play or a Pause, which keeps what Play showed: the placeholder shows only
+  // while the scene is stopped.
+  //
+  // An entity can also carry an AUTHORED GltfContainer: the invisible smart items
+  // pair a collider-only model (nothing to see, so nothing to click) with a
+  // Placeholder. The engine holds one GltfContainer per entity, so while stopped
+  // the placeholder replaces the authored model, and Play forwards the authored
+  // model back, colliders included. A Pause changes nothing: the invisible wall
+  // stays invisible and keeps blocking the player.
   const GLTF_CONTAINER = 'core::GltfContainer';
-  const forwardPlaceholder = (entity: Entity, deleted: boolean, frozen = isFrozen()) => {
-    const authoredGltf = context.getForwardableComponent(GLTF_CONTAINER) as {
-      getOrNull?: (e: Entity) => unknown;
+  // Whether the engine may hold placeholder GLTFs that the next Play must swap out.
+  let placeholdersShown = false;
+  const shownPlaceholderSrc = (entity: Entity, stopped = isStopped()): string | null => {
+    if (!stopped) return null;
+    const placeholder = context.editorComponents.Placeholder.getOrNull(entity) as {
+      src?: string;
     } | null;
-    // A real authored model wins — never override it with a placeholder. This
-    // only sees the editor's data: a GltfContainer that scene code adds to a
-    // Placeholder entity at runtime is replaced on Pause and removed on the next
-    // Play, until Stop reloads the scene. Placeholder items are model-less, so
-    // their scripts don't do that.
-    if (authoredGltf?.getOrNull?.(entity) != null) return;
-    const placeholder =
-      deleted || !frozen
-        ? null
-        : (context.editorComponents.Placeholder.getOrNull(entity) as { src?: string } | null);
+    return placeholder?.src || null;
+  };
+  const forwardPlaceholder = (entity: Entity, deleted: boolean, stopped = isStopped()) => {
+    const src = deleted ? null : shownPlaceholderSrc(entity, stopped);
+    if (src) placeholdersShown = true;
     enqueue(entity, async () => {
       await ensureInstantiated(entity);
-      if (placeholder?.src) {
-        await forwardSet(entity, 'GltfContainer', { src: placeholder.src });
+      const authored = (
+        context.getForwardableComponent(GLTF_CONTAINER) as {
+          getOrNull?: (e: Entity) => unknown;
+        } | null
+      )?.getOrNull?.(entity);
+      if (src) {
+        await forwardSet(entity, 'GltfContainer', { src });
+      } else if (authored != null) {
+        await forwardSet(entity, 'GltfContainer', authored);
       } else {
         fire(`delete_component ${entity} GltfContainer`, 'delete_component', [
           String(entity),
@@ -398,36 +451,74 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     });
   };
 
-  // Camera attachments: entities whose Transform parent chain reaches
-  // engine.CameraEntity. While hidden (hideCameraAttachments), each one is
-  // forwarded invisible through forwardEditorVisibility. Every entity in the chain
+  // Camera attachments: entities that follow the local player or its camera (see
+  // findPlayerAttachments). While hidden (hideCameraAttachments), each one is
+  // forwarded invisible through forwardEditorVisibility, which also switches off
+  // its LightSource. Hiding, rather than dropping the attachment, never leaves a
+  // light or model behind at the entity's own Transform. Every entity in the chain
   // gets its own value because the engine only inherits a parent's visibility
   // when that parent opts in with propagate_to_children.
+  //
+  // The editor's ECS only holds the authored composite; entities the scene's code
+  // creates (a flashlight parented to the camera in main()) exist only in the
+  // engine, so their parents and attachments come from its snapshot
+  // (engineScene, refreshed by scanEngineScene). The scene's code can also attach
+  // an authored entity (main() parents a torch from the composite to the camera),
+  // so where both know an entity the engine's data is used, unless the entity's
+  // parent or AvatarAttach was edited in the inspector since the scene loaded:
+  // the frozen snapshot does not show that edit yet (loadedAttachments).
   let hiddenCameraAttachments = new Set<Entity>();
   // Each entity's Transform parent as of the last scan, so a Transform write that
   // keeps its parent (a move) skips the rescan. Empty while not hiding.
   let knownParents = new Map<Entity, Entity | undefined>();
-  const findCameraAttachments = (): Set<Entity> => {
+  let engineScene: EngineSceneState = emptyEngineSceneState();
+  const AVATAR_ATTACH = 'core::AvatarAttach';
+  const isEditorEntity = (entity: Entity) =>
+    context.Name.getOrNull(entity) != null || context.Transform.getOrNull(entity) != null;
+  const editorLocalAvatarAttached = (): Set<Entity> => {
     const attached = new Set<Entity>();
+    const avatarAttach = context.getForwardableComponent(AVATAR_ATTACH);
+    if (!avatarAttach) return attached;
+    for (const [entity, value] of context.engine.getEntitiesWith(avatarAttach)) {
+      if ((value as { avatarId?: string } | null)?.avatarId == null) attached.add(entity);
+    }
+    return attached;
+  };
+  // The editor's parents and local AvatarAttach entities as of the last scene load.
+  let loadedAttachments = {
+    parents: new Map<Entity, Entity | undefined>(),
+    localAvatarAttached: new Set<Entity>(),
+  };
+  const captureLoadedAttachments = () => {
     const parents = new Map<Entity, Entity | undefined>();
-    knownParents = parents;
-    if (!hideCameraAttachments()) return attached;
     for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
       parents.set(entity, transform.parent);
     }
-    for (const entity of parents.keys()) {
-      const visited = new Set<Entity>([entity]);
-      let parent = parents.get(entity);
-      while (parent !== undefined && !visited.has(parent)) {
-        if (parent === context.engine.CameraEntity) {
-          attached.add(entity);
-          break;
-        }
-        visited.add(parent);
-        parent = parents.get(parent);
-      }
+    loadedAttachments = { parents, localAvatarAttached: editorLocalAvatarAttached() };
+  };
+  const findCameraAttachments = (): Set<Entity> => {
+    const parents = new Map<Entity, Entity | undefined>();
+    knownParents = parents;
+    if (!hideCameraAttachments()) return new Set();
+    for (const [entity, parent] of engineScene.parents) parents.set(entity, parent);
+    for (const [entity, transform] of context.engine.getEntitiesWith(context.Transform)) {
+      const edited =
+        !loadedAttachments.parents.has(entity) ||
+        loadedAttachments.parents.get(entity) !== transform.parent;
+      if (edited || !engineScene.parents.has(entity)) parents.set(entity, transform.parent);
     }
-    return attached;
+    const editorAttached = editorLocalAvatarAttached();
+    const localAvatarAttached = new Set<Entity>(editorAttached);
+    for (const entity of engineScene.localAvatarAttached) {
+      const edited =
+        loadedAttachments.localAvatarAttached.has(entity) !== editorAttached.has(entity);
+      if (!isEditorEntity(entity) || !edited) localAvatarAttached.add(entity);
+    }
+    return findPlayerAttachments(
+      parents,
+      localAvatarAttached,
+      new Set([context.engine.CameraEntity, context.engine.PlayerEntity]),
+    );
   };
   // Forward visibility for every entity whose camera-attachment state changed, or
   // for every current attachment when `all` is set (after a reload).
@@ -452,30 +543,152 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
     return knownParents.get(entity) !== transform?.parent;
   };
 
-  // A Pause hides camera attachments over whatever visibility the running scene
-  // last gave them. Read that value from the engine before the hide lands (a
-  // frozen scene's console reads see its last tick, not our queued writes), so
-  // the next Play restores it instead of forcing them visible. A scene that hasn't
-  // run since it loaded has nothing of its own to keep: the editor rule applies.
-  let hasRunSinceLoad = false;
+  // Attachments are hidden only while the scene is stopped, and its main() may have
+  // given them a visibility: the snapshot that found them holds that value, so Play
+  // restores it instead of forcing the entity visible. An entity only the engine
+  // knows was made by the scene's code, so its snapshot value is the scene's. For
+  // an authored entity the snapshot value counts only when it differs from the
+  // composite's: main() changed it (a flashlight that starts off). When they match,
+  // the editor's rule stands (#1377: visible while editing).
   const runtimeVisibility = new Map<Entity, boolean>();
+  const authoredVisibility = (entity: Entity): boolean => {
+    const component = context.getForwardableComponent('core::VisibilityComponent') as {
+      getOrNull?: (e: Entity) => unknown;
+    } | null;
+    const value = component?.getOrNull?.(entity) as { visible?: boolean } | null | undefined;
+    return value?.visible !== false;
+  };
   const captureRuntimeVisibility = (entity: Entity) => {
-    if (!hasRunSinceLoad) return;
-    enqueue(entity, async () => {
-      try {
-        const reply = await send('inspect_component', [String(entity), 'VisibilityComponent']);
-        const visible = (JSON.parse(reply) as { visible?: unknown } | null)?.visible;
-        if (typeof visible === 'boolean') runtimeVisibility.set(entity, visible);
-      } catch {
-        // No VisibilityComponent (the engine replies with an error) means visible.
-      }
-    });
+    const visible = engineScene.visibility.get(entity) ?? true;
+    if (isEditorEntity(entity)) {
+      if (visible !== authoredVisibility(entity)) runtimeVisibility.set(entity, visible);
+      return;
+    }
+    if (engineScene.visibility.has(entity)) runtimeVisibility.set(entity, visible);
   };
 
   const forgetEntity = (entity: Entity) => {
     instantiated.delete(entity);
     hiddenCameraAttachments.delete(entity);
     runtimeVisibility.delete(entity);
+  };
+
+  // Scene lighting (SCENE_LIGHTING_COMPONENTS on the root entity): while the scene
+  // is stopped the viewport keeps the editor's lighting, so a night scene stays
+  // editable; Play shows the scene's own, and a Pause keeps it. Stopped: remove
+  // each from the engine's copy and pin the editor clock at noon. Play: put back
+  // exactly what the scene has (a configured value, a disabled LightSource as
+  // disabled, and nothing for a component it never set) and run the clock again,
+  // which hands the time of day back to the scene's SkyboxTime or scene.json fixed
+  // time. A scene's time beats the engine's clock unless `/time` is given `--force`,
+  // so the pin passes it; any later `/time` that sets a time or a speed ends it.
+  // Pause holds the clock at the time the sky shows (see holdSceneClock) and leaves
+  // the scene's lighting in place.
+  //
+  // The scene's values come from the engine snapshot (scene code writes most of
+  // them in main()). A root lighting component edited in the inspector since load
+  // uses the editor's value, or stays unset if it was removed: such an edit is
+  // saved at once, but while stopped it only reaches the viewport on Play.
+  const ROOT_ENTITY = 0 as Entity;
+  const EDITOR_CLOCK = ['12', '0', '--force'];
+  // Each edited component with the serial of its last edit. A reload clears the
+  // marks of edits made before it started: they were saved by then, so the
+  // reloaded scene starts from them and its code may set its own on top. An edit
+  // made while the reload runs is not in the bundle it reloads, so it keeps its mark.
+  const editedRootLighting = new Map<string, number>();
+  let lightingEditSerial = 0;
+  let reloadStartSerial: number | null = null;
+  const isRootLighting = (entity: Entity, engineName: string) =>
+    entity === ROOT_ENTITY && SCENE_LIGHTING_COMPONENTS.includes(engineName);
+  const sceneLightingValue = (engineName: string): unknown => {
+    if (editedRootLighting.has(engineName)) {
+      const component = context.getForwardableComponent(`core::${engineName}`) as {
+        getOrNull?: (e: Entity) => unknown;
+      } | null;
+      return component?.getOrNull?.(ROOT_ENTITY) ?? null;
+    }
+    return engineScene.rootLighting.get(engineName) ?? null;
+  };
+  let editorLightingShown = false;
+  const applySceneLighting = (frozen: boolean) => {
+    editorLightingShown = frozen;
+    enqueue(ROOT_ENTITY, async () => {
+      for (const engineName of SCENE_LIGHTING_COMPONENTS) {
+        const value = sceneLightingValue(engineName);
+        if (frozen) {
+          if (value == null && !engineScene.rootLighting.has(engineName)) continue;
+          try {
+            await send('delete_component', [String(ROOT_ENTITY), engineName]);
+          } catch (error) {
+            onError(`delete_component ${ROOT_ENTITY} ${engineName}`, error);
+          }
+        } else if (value != null) {
+          await forwardSet(ROOT_ENTITY, engineName, value);
+        }
+      }
+      try {
+        await send('time', frozen ? EDITOR_CLOCK : ['--resume']);
+      } catch (error) {
+        onError('time', error);
+      }
+    });
+  };
+
+  // Play from a Pause: the scene's lighting is still in place (the running scene
+  // may have changed it since the last scan, so re-forwarding the scanned values
+  // would undo that); only the clock runs again.
+  const resumeSceneClock = () => {
+    enqueue(ROOT_ENTITY, async () => {
+      try {
+        await send('time', ['--resume']);
+      } catch (error) {
+        onError('time', error);
+      }
+    });
+  };
+  // The agent's boot pins the clock at noon (pinSkyboxTime). When that lands under
+  // a scene that is already running, nothing else would start the clock again.
+  const syncSceneClock = () => {
+    if (isStopped() || isFrozen()) return;
+    editorLightingShown = false;
+    resumeSceneClock();
+  };
+  // Pause: stop the day cycle where the sky is. `/time` with no arguments replies
+  // with the current time in seconds (`elapsed: <s>`), and speed 0 holds it there.
+  // A scene's own fixed time keeps the sky, at that same value, unless the player's "Allow
+  // overriding scene controls" setting is on: the stopped clock then holds it, at that value too.
+  const holdSceneClock = () => {
+    enqueue(ROOT_ENTITY, async () => {
+      try {
+        const reply = await send('time', []);
+        const seconds = Number(/elapsed: (-?[\d.]+)/.exec(reply)?.[1]);
+        if (!Number.isFinite(seconds)) return;
+        await send('time', [String(seconds / 3600), '0']);
+      } catch (error) {
+        onError('time', error);
+      }
+    });
+  };
+
+  // Re-read the engine's copy of the scene while it is stopped: the entities its
+  // code made that follow the player or camera, and its root lighting. A frozen
+  // scene's snapshot is its last tick, never the editor overrides queued since,
+  // so it always holds the scene's own values. Only the latest scan applies, and
+  // only while still stopped (a Play can land while the read is in flight).
+  let scanSerial = 0;
+  const scanEngineScene = async (): Promise<void> => {
+    if (!isStopped()) return;
+    const serial = ++scanSerial;
+    let scanned: EngineSceneState | null = null;
+    try {
+      scanned = parseEngineSceneState(await send('crdt_snapshot', []));
+    } catch {
+      // No scene pinned yet: keep what was known, a later scan fills it in.
+    }
+    if (disposed || serial !== scanSerial || !isStopped()) return;
+    if (scanned) engineScene = scanned;
+    refreshCameraAttachments();
+    applySceneLighting(true);
   };
 
   const MESH_COLLIDER = 'core::MeshCollider';
@@ -563,6 +776,10 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
             // VisibilityComponent is decided by the editor, not the authored value
             // (see forwardEditorVisibility) — forward it separately, below.
             if (engineName === 'VisibilityComponent') continue;
+            // A shown placeholder stands in for the authored model (forwarded below).
+            if (engineName === 'GltfContainer' && shownPlaceholderSrc(entity) != null) continue;
+            // Stopped, the viewport keeps the editor's lighting (applySceneLighting).
+            if (isStopped() && isRootLighting(entity, engineName)) continue;
             const c = context.getForwardableComponent(ecsName) as {
               getOrNull?: (e: Entity) => unknown;
             } | null;
@@ -573,9 +790,9 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
         // Always assert the editor's effective visibility for a new entity (visible
         // unless Hidden) — overriding any authored VisibilityComponent{false}.
         forwardEditorVisibility(entity);
-        // A new entity that carries a Placeholder (and no authored model) — render
-        // its placeholder GLTF (a dropped Trigger Area etc.) while frozen.
-        if (isFrozen() && context.editorComponents.Placeholder.getOrNull(entity) != null) {
+        // A new entity that carries a Placeholder — render its placeholder GLTF (a
+        // dropped Trigger Area, an invisible wall etc.) while stopped.
+        if (isStopped() && context.editorComponents.Placeholder.getOrNull(entity) != null) {
           forwardPlaceholder(entity, false);
         }
         return;
@@ -611,11 +828,25 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       // Deferred (custom/schema) components: skip rather than mis-address them.
       if (!engineName) return;
 
-      // A reparent can move a subtree onto or off the camera.
+      // While stopped a placeholder stands in for the authored model; Play forwards
+      // the authored value as it is then (see forwardPlaceholder).
+      if (engineName === 'GltfContainer' && shownPlaceholderSrc(entity) != null) return;
+
+      // Root lighting: saved as always, but while stopped the viewport keeps the
+      // editor's lighting and Play applies the edit (see applySceneLighting).
+      if (isRootLighting(entity, engineName)) {
+        editedRootLighting.set(engineName, ++lightingEditSerial);
+        if (isStopped()) return;
+      }
+
+      // A reparent, or an AvatarAttach added or removed, can move a subtree onto or
+      // off the player or its camera.
+      const hiding = hiddenCameraAttachments.size > 0 || hideCameraAttachments();
       if (
-        component.componentName === context.Transform.componentName &&
-        (hiddenCameraAttachments.size > 0 || hideCameraAttachments()) &&
-        parentChanged(entity, op, value)
+        hiding &&
+        ((component.componentName === context.Transform.componentName &&
+          parentChanged(entity, op, value)) ||
+          component.componentName === AVATAR_ATTACH)
       ) {
         refreshCameraAttachments();
       }
@@ -799,10 +1030,23 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   };
 
   const setSceneFrozen = (frozen: boolean) => {
-    if (!frozen) hasRunSinceLoad = true;
     setPlaybackFrozen(frozen);
-    for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
-      forwardPlaceholder(entity, false, frozen);
+    // Play swaps the placeholders a stopped scene showed for what the scene has. A
+    // Pause, and a Play that follows one, leave the models as they are.
+    if (frozen ? isStopped() : placeholdersShown) {
+      for (const [entity] of context.engine.getEntitiesWith(context.editorComponents.Placeholder)) {
+        forwardPlaceholder(entity, false, frozen);
+      }
+      if (!frozen) placeholdersShown = false;
+    }
+    if (!shouldForward()) return;
+    if (!frozen) {
+      if (editorLightingShown) applySceneLighting(false);
+      else resumeSceneClock();
+    } else if (isStopped()) {
+      void scanEngineScene();
+    } else {
+      holdSceneClock();
     }
   };
 
@@ -816,8 +1060,21 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   //  - the fresh entities lost the forwarded overrides (placeholder GLTF, editor
   //    visibility, pointer-pickable mask, animation pause) — replay them.
   const reconcileAfterReload = () => {
-    hasRunSinceLoad = false;
     runtimeVisibility.clear();
+    // The reload re-ran the scene's code: what it made before is gone, and what
+    // it makes now is found by the scan at the end of the reconcile.
+    engineScene = emptyEngineSceneState();
+    // Root lighting edits made before the reload started were saved, so the
+    // reloaded scene starts from them and its code may set its own on top: the
+    // next scan holds the scene's values. Later edits keep their marks.
+    const clearUpTo = reloadStartSerial ?? lightingEditSerial;
+    reloadStartSerial = null;
+    for (const [name, serial] of editedRootLighting) {
+      if (serial <= clearUpTo) editedRootLighting.delete(name);
+    }
+    for (const entity of hiddenCameraAttachments) {
+      if (!isEditorEntity(entity)) hiddenCameraAttachments.delete(entity);
+    }
     for (const [entity] of context.engine.getEntitiesWith(context.Name)) {
       instantiated.add(entity);
     }
@@ -835,9 +1092,16 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
       instantiated.clear();
     },
     setSceneFrozen,
+    syncSceneClock,
     refreshCameraAttachments: () => {
       // Before arming, the arm reconcile applies it once the scene is loaded.
       if (shouldForward()) refreshCameraAttachments();
+    },
+    refreshEngineScene: () => {
+      if (shouldForward()) void scanEngineScene();
+    },
+    noteReloadStarted: () => {
+      reloadStartSerial = lightingEditSerial;
     },
     reconcileAfterReload,
   };

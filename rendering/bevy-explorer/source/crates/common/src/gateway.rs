@@ -330,6 +330,7 @@ mod gateway_tests {
             (Service::DclLists, "dcl-lists"),
             (Service::ArchipelagoStats, "archipelago-ea-stats"),
             (Service::BuilderApi, "builder-api"),
+            (Service::FeatureFlags, "feature-flags"),
         ] {
             let direct_path = match service {
                 Service::Catalyst => String::new(),

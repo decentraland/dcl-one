@@ -21,7 +21,8 @@ use crate::jobs::JobContext;
 
 use crate::shared::feature_flags::BODY_CAP;
 pub use crate::shared::feature_flags::{
-    Snapshot, clear_local_flag, fetch_document, set_local_flag, validate, with_local_overrides,
+    Snapshot, clear_local_flag, fetch_document, fetch_document_with, set_local_flag, validate,
+    with_local_overrides,
 };
 
 pub const MIRROR: &str = "feature-flags";
@@ -39,6 +40,7 @@ pub async fn reload(snapshot: &Snapshot, pool: &PgPool, app: &str) -> sqlx::Resu
             .bind(app)
             .fetch_optional(pool)
             .await?;
+    let sourced = row.is_some();
     let doc = row.map(|(d,)| d).unwrap_or_else(|| {
         if app == "explorer" {
             embedded_document()
@@ -47,7 +49,7 @@ pub async fn reload(snapshot: &Snapshot, pool: &PgPool, app: &str) -> sqlx::Resu
         }
     });
     let doc = with_local_overrides(pool, app, doc).await?;
-    snapshot.replace(doc);
+    snapshot.replace_sourced(doc, sourced);
     Ok(())
 }
 
@@ -64,16 +66,6 @@ pub async fn store(pool: &PgPool, app: &str, doc: &Value, etag: Option<&str>) ->
     .execute(pool)
     .await?;
     Ok(())
-}
-
-/// The sibling document of the same feature-flags service: the source names
-/// one `<app>.json`; `events.json` lives beside it.
-fn sibling_document(url: &str, app: &str) -> Option<String> {
-    let (dir, file) = url.rsplit_once('/')?;
-    if dir.is_empty() || !file.ends_with(".json") {
-        return None;
-    }
-    Some(format!("{dir}/{app}.json"))
 }
 
 /// One document: fetched with the referer strategy header, validated and
@@ -140,41 +132,49 @@ pub async fn refresh_app(
     Ok(())
 }
 
-/// One pass: the explorer document (served by this mirror's routes) and the
-/// `events` document beside it, which `events::foundation` reads for the
-/// Foundation display names (upstream `refreshFoundationAddresses` fetched
-/// `events.json` itself; review architecture-1 explore-change-4). Either
-/// document failing fails the pass.
+/// One pass of the explorer document, served by this mirror's routes.
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let app = state.settings.feature_flags_app.as_str();
         let url = state.settings.sources.feature_flags.as_str();
         let etag = mirror_document(state, app, url).await?;
-        // The explorer document is served from memory: reloaded as soon as
-        // it is stored, before the events sibling can fail the pass.
         reload(&state.flags, &state.pool, app)
             .await
             .context("reloading the feature flags")?;
-        let mut items = count_entries(&state.flags.document());
-        let events_app = crate::events::foundation::APP;
-        if events_app != app
-            && let Some(events_url) = sibling_document(url, events_app)
-        {
-            mirror_document(state, events_app, &events_url).await?;
-            let (events_doc,): (Value,) =
-                sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = $1")
-                    .bind(events_app)
-                    .fetch_one(&state.pool)
-                    .await
-                    .context("reading the stored events flags")?;
-            items += count_entries(&events_doc);
-        }
         Ok(mirror::PassOutcome {
-            items,
+            items: count_entries(&state.flags.document()),
             cursor: etag,
         })
     })
     .await
+}
+
+/// The job that keeps the `events` document `events::foundation` reads.
+pub const EVENTS_JOB: &str = "events-foundation-flags";
+const EVENTS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// The site the `events` flags are asked for (the service answers by Referer).
+const EVENTS_REFERER: &str = "https://decentraland.org";
+
+/// One read of `<EVENTS_FEATURE_FLAGS_URL>/events.json`, stored as the `events`
+/// row. The service answers the Foundation variant only to the decentraland.org
+/// Referer; `X-Address-Hash` is added when a user id is set. A failure leaves
+/// the stored row as it was.
+pub async fn refresh_events(state: &Shared) -> anyhow::Result<()> {
+    let app = crate::events::foundation::APP;
+    let url = format!("{}/{app}.json", state.settings.events_flags_url);
+    let target = state
+        .settings
+        .guarded_url(&url)
+        .context("EVENTS_FEATURE_FLAGS_URL")?;
+    let mut headers = vec![("referer", EVENTS_REFERER)];
+    if let Some(id) = state.settings.events_flags_user_id.as_deref() {
+        headers.push(("x-address-hash", id));
+    }
+    let doc = fetch_document_with(&state.http, target, &headers, EVENTS_TIMEOUT).await?;
+    store(&state.pool, app, &doc, None)
+        .await
+        .context("storing the events feature flags")?;
+    Ok(())
 }
 
 fn count_entries(doc: &Value) -> i64 {
@@ -216,26 +216,4 @@ async fn get_flag(State(state): State<Shared>, Path(name): Path<String>) -> Resp
         Json(json!({ "error": "flag_not_found", "name": name })),
     )
         .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::sibling_document;
-
-    #[test]
-    fn the_events_document_sits_beside_the_explorer_one() {
-        assert_eq!(
-            sibling_document(
-                "https://feature-flags.decentraland.org/explorer.json",
-                "events"
-            ),
-            Some("https://feature-flags.decentraland.org/events.json".into())
-        );
-        assert_eq!(
-            sibling_document("http://127.0.0.1:9/flags/explorer.json", "events"),
-            Some("http://127.0.0.1:9/flags/events.json".into())
-        );
-        assert_eq!(sibling_document("explorer.json", "events"), None);
-        assert_eq!(sibling_document("https://x.example/flags", "events"), None);
-    }
 }

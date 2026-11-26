@@ -1,8 +1,10 @@
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
+
+import { misc } from '#preload';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
@@ -63,6 +65,7 @@ describe('RouteErrorBoundary', () => {
     crash.enabled = true;
     crash.home = false;
     vi.mocked(captureException).mockClear();
+    vi.mocked(misc.logRendererError).mockReset().mockResolvedValue(undefined);
     // React logs every caught render error; keep the run's output readable.
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -92,6 +95,15 @@ describe('RouteErrorBoundary', () => {
           tags: { source: 'error-boundary', boundary: 'routes' },
         }),
       );
+    });
+
+    it('should write the error and where it happened to the app log', async () => {
+      await vi.waitFor(() => expect(misc.logRendererError).toHaveBeenCalled());
+      expect(misc.logRendererError).toHaveBeenCalledWith({
+        boundary: 'routes',
+        error: expect.stringContaining('render failed'),
+        componentStack: expect.stringContaining('Crashing'),
+      });
     });
 
     describe('and the user clicks Try again once the cause is gone', () => {

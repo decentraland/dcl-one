@@ -5,13 +5,23 @@
 
 import { useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../../components/Modal";
 import { shortAddress } from "@shop/model/address";
 import { chainLabel } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import { contractAt } from "../chain/contracts";
-import type { ShopAuthorization } from "../lib/authorizations";
+import { TxPendingError } from "../chain/wallet";
+import {
+  ExactGrantUnavailableError,
+  GrantCancelledError,
+  GrantInProgressElsewhereError,
+  GrantNotInEffectError,
+  GrantNotRecordedError,
+  GrantUncheckedError,
+  isAuthorizationPending,
+  type ShopAuthorization,
+} from "../lib/authorizations";
 import { friendlyError, isRejection } from "../lib/errors";
 import "./authorizestep.css";
 
@@ -39,7 +49,21 @@ export default function AuthorizeStep({ auth, step, requiredWei, grant, onAuthor
       await grant();
       onAuthorized();
     } catch (e) {
-      setError(isRejection(e) ? "You declined the approval in your wallet." : friendlyError(e, "The approval didn't go through. Try again."));
+      setError(
+        isRejection(e)
+          ? "You declined the approval in your wallet."
+          : e instanceof GrantInProgressElsewhereError
+            ? e.message
+            : isAuthorizationPending(e) || e instanceof TxPendingError
+              ? "Your approval was sent and is still confirming. Try again in a moment: no second approval goes out until it lands."
+              : e instanceof GrantNotRecordedError ||
+                  e instanceof ExactGrantUnavailableError ||
+                  e instanceof GrantCancelledError ||
+                  e instanceof GrantNotInEffectError ||
+                  e instanceof GrantUncheckedError
+                ? e.message
+                : friendlyError(e, "The approval didn't go through. Try again."),
+      );
       setBusy(false);
     }
   }
@@ -72,10 +96,10 @@ export default function AuthorizeStep({ auth, step, requiredWei, grant, onAuthor
           </p>
         ) : null}
         <div className="shop-authorize__actions">
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button size="md" variant="outline" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={() => void authorize()} disabled={busy} data-testid="authorize-step-action">
+          <Button size="md" onClick={() => void authorize()} disabled={busy} data-testid="authorize-step-action">
             {busy ? "Confirm in your wallet…" : "Approve"}
           </Button>
         </div>

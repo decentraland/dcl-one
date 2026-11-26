@@ -73,14 +73,19 @@ which then count twice with the imported facts. Rows upstream does not list
   `world_deployment_position_watermarks` (upstream ingestion state), `users`
   (admins come from `PLACES_ADMIN_ADDRESSES`), and the `content_ratings`
   history.
-- `explore.moderators` is written by the events import (events moderators).
+- `explore.moderators` (events moderators) is seeded by `catalyst explore moderators-add`, not by an import.
   Upstream places has no report table, so `explore.place_reports` gets nothing.
 
 ## Left to the node
 
 - `explore.place_removal_pending` / `place_removal_state`: the catalogue
-  triggers fill them. A moderation-disabled place enqueues one removal, as
-  the schema's own seed does for an existing disabled catalogue.
+  triggers fill them. An imported place that arrives already
+  moderation-disabled, in a catalogue leg that did not hold it and with no
+  row in the other leg, enqueues one removal with `notify=false`, as the
+  schema's own seed does for an existing disabled catalogue: its credentials
+  and grants are cleaned up, but nobody is notified of that historical
+  removal. A later disable (an UPDATE, including one re-importing an enabled
+  place as disabled) or a deletion notifies normally.
 - `explore.place_indexed` (view), `mirror_state`, `signed_actions`,
   `seen_nonces`.
 
@@ -90,3 +95,13 @@ The `place` load deletes only overlays it wrote whose upstream decision is
 gone. Rows that disappear upstream are not detected. That includes
 unfavorites, a world losing its last scene, and a place becoming
 overwritten. Run the final pass with upstream writes stopped.
+
+The `place` load initializes `removal_admin_keys` empty for new rows and
+preserves existing local evidence on re-import. Identity import alone never
+clears that evidence; a backing world scene insertion does.
+
+Identity updates and retirements also write `explore.world_scene_binding`
+through its schema trigger. Exact displaced `(world_name, entity_id, identity)`
+facts survive replay, retirement and deletion; imports never clear them.
+These facts support deferred legacy streaming notices without assigning
+a sibling scene or inferring authority from parcel overlap.

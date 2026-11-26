@@ -25,7 +25,7 @@ pub(super) fn imposters_bake_settings(config: &Config) -> explore::imposters::Ra
 /// The six write switches as `GET /writes` reports them.
 pub(super) fn write_switches(config: &Config) -> shared::writes::Switches {
     shared::writes::Switches {
-        content: config.writes.content_writes_enabled,
+        content: config.writes.content_writes(),
         create: config.create.create_writes_enabled,
         data: config.writes.data_writes_enabled,
         social: config.writes.social_writes_enabled,
@@ -47,6 +47,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         },
         writes_enabled: config.ops.ops_writes_enabled,
         admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
+        read_admin_addresses: config.shop.credits_read_admin_addresses.clone(),
         captcha_secret: non_empty(&config.shop.credits_captcha_secret),
         captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
         stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
@@ -75,6 +76,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         checkout_cancel_url: config.shop.credits_checkout_cancel_url.clone(),
         checkout_success_url_builder: non_empty(&config.shop.credits_checkout_success_url_builder),
         checkout_cancel_url_builder: non_empty(&config.shop.credits_checkout_cancel_url_builder),
+        public_url: config.node.public_url.clone(),
         usage_index_enabled: config.shop.credits_usage_index_enabled,
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
         usage_chain_id: config.economy.collections_chain_id as i64,
@@ -116,6 +118,8 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         gatekeeper_auth_token: non_empty(&config.social.comms_gatekeeper_auth_token),
         land_operators_url: non_empty(&config.social.comms_land_operators_url),
         lease_authorizations_url: Some(config.social.lease_authorizations_url.clone()),
+        lease_dev_entries: crate::chain_index::registries::land_network(&config.node.eth_network)
+            == Some(crate::chain_index::registries::LAND_SEPOLIA),
         voice_connection_interrupted_ttl_ms: config.social.voice_chat_connection_interrupted_ttl_ms,
         voice_initial_connection_ttl_ms: config.social.voice_chat_initial_connection_ttl_ms,
         community_voice_no_moderator_ttl_ms: config.social.community_voice_chat_no_moderator_ttl_ms,
@@ -123,6 +127,8 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         report_evidence_daily_mib: config.social.report_evidence_daily_mib,
         cast2_url: config.social.cast2_url.clone(),
         commit_hash: config.node.commit_hash.clone(),
+        allow_local_preview: config.social.allow_local_preview,
+        realm_name: non_empty(&config.node.realm_name),
     })
     .context("LIVEKIT_* / COMMS_* configuration")
 }
@@ -180,5 +186,37 @@ pub(super) fn referral_settings(config: &Config) -> communities::referral::Setti
         .into_iter()
         .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
         .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::comms_settings;
+    use crate::config::Config;
+
+    #[test]
+    fn dev_only_lease_entries_count_only_on_a_test_network() {
+        for (network, dev_entries) in [
+            (None, false),
+            (Some("mainnet"), false),
+            (Some("Mainnet"), false),
+            (Some("ethereum"), false),
+            (Some("ethereum-mainnet"), false),
+            (Some("polygon"), false),
+            (Some("sepolia"), true),
+            (Some("Ethereum-Sepolia"), true),
+        ] {
+            let mut vars = vec![
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("LIVEKIT_ALLOW_DEV_CREDS", "true"),
+            ];
+            vars.extend(network.map(|network| ("ETH_NETWORK", network)));
+            let config = Config::parse_env_for_tests(vars).unwrap();
+            assert_eq!(
+                comms_settings(&config).unwrap().lease_dev_entries,
+                dev_entries,
+                "{network:?}"
+            );
+        }
     }
 }

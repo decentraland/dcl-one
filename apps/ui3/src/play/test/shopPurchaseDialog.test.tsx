@@ -10,7 +10,19 @@ const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits:
 const name = { kind: 'name' as const, name: 'Mojito', creator: '', rarity: '', credits: 94 }
 
 function show(view: ShopPurchaseStep) {
-  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
+  const handlers = {
+    onClose: vi.fn(),
+    onConfirm: vi.fn(),
+    onBuyCredits: vi.fn(),
+    onBackpack: vi.fn(),
+    onPreview: vi.fn(),
+    onRetry: vi.fn(),
+    onSwitchNetwork: vi.fn(),
+    onSignIn: vi.fn(),
+    onPay: vi.fn(),
+    onAuthorize: vi.fn(),
+    onCheckAgain: vi.fn()
+  }
   render(<ShopPurchaseDialog view={view} {...handlers} />)
   return handlers
 }
@@ -20,7 +32,7 @@ describe('the purchase dialog', () => {
     vi.useFakeTimers()
     const h = show({ step: 'confirm', items: [item], balance: 700 })
     const dialog = screen.getByRole('dialog', { name: 'Buy Item' })
-    expect(dialog.textContent).toContain('Your Credits Balance:700')
+    expect(dialog.textContent).toContain('Your Balance:700')
     expect(dialog.textContent).toContain('Golden Armor')
     expect(dialog.textContent).toContain('Aurora')
     expect(dialog.textContent).toContain('500')
@@ -74,6 +86,16 @@ describe('the purchase dialog', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
+  it('the Error modal offers CANCEL and SWITCH TO … AND RETRY, in place of TRY AGAIN, when the wallet must move', () => {
+    const h = show({ step: 'failed', message: 'Your wallet has to send it on Polygon.', retry: true, switchTo: 'Polygon' })
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to Polygon and retry' }))
+    expect(h.onSwitchNetwork).toHaveBeenCalledTimes(1)
+    expect(h.onRetry).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(h.onClose).toHaveBeenCalled()
+  })
+
   it('Buy N Items: every unit a row, counted in the title, the list scrolling past two', () => {
     const items = [item, { ...item, name: 'Silver Boots' }, { ...item, name: 'Silver Boots' }]
     show({ step: 'confirm', items, balance: 7000 })
@@ -94,27 +116,95 @@ describe('the purchase dialog', () => {
     expect(screen.getByRole('dialog', { name: 'Insufficient Funds' }).textContent).toContain('You will need to buy 1,300 Credits to purchase these items.')
   })
 
+  it('says which payment of several it is processing, and nothing for one', () => {
+    show({ step: 'processing', balance: null, count: 2, progress: { at: 2, of: 3 } })
+    expect(screen.getByRole('dialog', { name: 'Buy 2 Items' }).textContent).toContain('Payment 2 of 3')
+    cleanup()
+    show({ step: 'processing', balance: null, count: 2, progress: { at: 1, of: 1 } })
+    expect(screen.getByRole('dialog', { name: 'Buy 2 Items' }).textContent).not.toContain('Payment')
+  })
+
   it('counts the units while loading and processing', () => {
     show({ step: 'loading', count: 3 })
     expect(screen.getByRole('dialog', { name: 'Buy 3 Items' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Buy items' })).toBeDisabled()
   })
 
-  it('Purchase successful: three of what was bought in view, the rest a scroll away, each tagged NEW', () => {
-    show({ step: 'success', items: [item, item, item] })
+  it('Purchase successful: two rows of three of what was bought in view, the rest a scroll away, each tagged NEW', () => {
+    const named = (n: number) => Array.from({ length: n }, (_, i) => ({ ...item, name: `Item ${i + 1}` }))
+    show({ step: 'success', items: named(6) })
     expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.getAllByText('New')).toHaveLength(6)
     cleanup()
-    show({ step: 'success', items: [item, item, item, item, item] })
-    const row = screen.getByRole('list', { name: '5 items bought' })
-    expect(row.querySelectorAll('[data-rarity]')).toHaveLength(5)
-    expect(screen.getAllByText('New')).toHaveLength(5)
+    show({ step: 'success', items: named(7) })
+    const list = screen.getByRole('list', { name: '7 items bought' })
+    expect(list.querySelectorAll('[data-rarity]')).toHaveLength(7)
+    expect(screen.getAllByText('New')).toHaveLength(7)
+  })
+
+  it('Purchase successful, scrolling: a card of several units says how many in its label', () => {
+    const keyed = Array.from({ length: 7 }, (_, i) => ({ ...item, name: `Item ${i + 1}`, key: `k${i}` }))
+    show({ step: 'success', items: [keyed[0], ...keyed] })
+    expect(screen.getByRole('listitem', { name: 'Item 1 x2' })).toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: 'Item 2' })).toBeInTheDocument()
+  })
+
+  it('Purchase successful: units of one item as one card with their amount, a smart wearable with its badge', () => {
+    show({ step: 'success', items: [{ ...item, smart: true, key: 'a' }, { ...item, smart: true, key: 'a' }, { ...item, name: 'Silver Boots', key: 'b' }] })
+    const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
+    expect(dialog.querySelectorAll('[data-rarity]')).toHaveLength(2)
+    expect(dialog.textContent).toContain('x2')
+    expect(within(dialog).getAllByText('SMART')).toHaveLength(1)
+  })
+
+  it('Purchase successful: two items drawn alike stay two cards, and so do items with no identity', () => {
+    show({ step: 'success', items: [{ ...item, key: 'a' }, { ...item, key: 'b' }, item, item] })
+    const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
+    expect(dialog.querySelectorAll('[data-rarity]')).toHaveLength(4)
+    expect(dialog.textContent).not.toContain('x2')
+  })
+
+  it('shows the creator’s picture beside their name when it is known', () => {
+    show({ step: 'confirm', items: [{ ...item, creatorFace: 'https://example.com/face.png' }], balance: 700 })
+    expect(screen.getByRole('dialog', { name: 'Buy Item' }).querySelector('img[src="https://example.com/face.png"]')).not.toBeNull()
+  })
+
+  it('Confirm in your wallet: what to do, and nothing to press while the wallet asks', () => {
+    show({ step: 'wallet' })
+    const dialog = screen.getByRole('dialog', { name: 'Confirm in your wallet' })
+    expect(dialog.textContent).toContain('Sign the transaction in your wallet to complete the purchase. Keep this window open.')
+    expect(within(dialog).getByRole('status', { name: 'Waiting for your wallet' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button')).toBeNull()
+  })
+
+  it('Confirm in your wallet keeps the way out of the step it covers: its CANCEL leaves it', () => {
+    const h = show({ step: 'wallet', close: 'Cancel' })
+    const dialog = screen.getByRole('dialog', { name: 'Confirm in your wallet' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(h.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('Insufficient Funds where MANA is offered: neither is enough, both ways shown off, and BUY CREDITS', () => {
+    const MANA = 10n ** 18n
+    const h = show({ step: 'insufficient', items: [item, item], balance: 200, need: 800, mana: { price: 100n * MANA, balance: 15n * MANA } })
+    const dialog = screen.getByRole('dialog', { name: 'Insufficient Funds' })
+    expect(dialog.textContent).toContain('Your Balance:20015')
+    expect(dialog.textContent).toContain('Your Credits and MANA are not enough for these items. Buy Credits or add MANA to continue.')
+    const boxes = within(dialog).getAllByRole('radio') as HTMLInputElement[]
+    expect(boxes.map((b) => [b.disabled, b.checked])).toEqual([
+      [true, false],
+      [true, false]
+    ])
+    expect(dialog.textContent).toContain('Total: 2 Items1,000')
+    fireEvent.click(screen.getByRole('button', { name: 'Buy credits' }))
+    expect(h.onBuyCredits).toHaveBeenCalled()
   })
 
   it('Buy Name: the balance, the NAME and its price, then CANCEL or BUY NAME', () => {
     vi.useFakeTimers()
     const h = show({ step: 'confirm', items: [name], balance: 700 })
     const dialog = screen.getByRole('dialog', { name: 'Buy Name' })
-    expect(dialog.textContent).toContain('Your Credits Balance:700')
+    expect(dialog.textContent).toContain('Your Balance:700')
     expect(dialog.textContent).toContain('Mojito')
     expect(dialog.textContent).toContain('Decentraland Name')
     expect(dialog.textContent).toContain('94')
@@ -221,6 +311,362 @@ describe('the purchase dialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
     expect(h.onSignIn).toHaveBeenCalled()
   })
+
+  describe('Buy Item with its payment options', () => {
+    const MANA = 10n ** 18n
+    const credits = { price: 500, balance: 700, pays: true }
+    const mana = { price: 5000n * MANA, balance: 7000n * MANA, pays: true }
+    const box = (name: RegExp) => screen.getByRole('radio', { name }) as HTMLInputElement
+    const option = (name: RegExp) => box(name).closest('label')?.textContent
+    const buy = (label = 'Buy item') => screen.getByRole('button', { name: label }) as HTMLButtonElement
+    const arm = () => act(() => void vi.advanceTimersByTime(ARM_MS))
+
+    afterEach(() => vi.useRealTimers())
+
+    it('shows the balance, the item, an option per currency with what it pays, the Credits picked first, and BUY pays with the one picked', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits, mana })
+      const dialog = screen.getByRole('dialog', { name: 'Buy Item' })
+      expect(dialog.textContent).toContain('Your Balance:7007,000')
+      expect(dialog.textContent).toContain('Golden Armor')
+      expect(screen.getByRole('radiogroup', { name: 'Payment method' })).toBeInTheDocument()
+      expect(option(/^Credits/)).toBe('CreditsCredits Balance:700500')
+      expect(option(/^MANA/)).toBe('MANAMANA Balance:7,0005,0001 Credit = 10 MANA')
+      // A single item has no total under its options.
+      expect(dialog.textContent).not.toContain('Total:')
+      expect(box(/^Credits/).checked).toBe(true)
+      fireEvent.click(box(/^MANA/))
+      expect(box(/^MANA/).checked).toBe(true)
+      expect(box(/^Credits/).checked).toBe(false)
+      // Armed as BUY ITEM: a click the moment it appears pays nothing.
+      fireEvent.click(buy())
+      expect(h.onPay).not.toHaveBeenCalled()
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledTimes(1)
+      expect(h.onPay).toHaveBeenCalledWith('mana')
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('offers the options as radios, one picked at a time: picking the picked one again keeps it', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits, mana })
+      expect(screen.getByRole('radiogroup', { name: 'Payment method' })).toBeInTheDocument()
+      arm()
+      fireEvent.click(box(/^Credits/))
+      expect(box(/^Credits/).checked).toBe(true)
+      expect(box(/^MANA/).checked).toBe(false)
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledWith('credits')
+    })
+
+    it('adds a cart’s total under its options, in the currency picked', () => {
+      show({ step: 'method', items: [item, item], credits: { ...credits, price: 1000 }, mana: { ...mana, price: 10000n * MANA, balance: 20000n * MANA } })
+      const dialog = screen.getByRole('dialog', { name: 'Buy 2 Items' })
+      expect(dialog.textContent).toContain('Total: 2 Items1,000')
+      fireEvent.click(box(/^MANA/))
+      expect(dialog.textContent).toContain('Total: 2 Items10,000')
+      expect(buy('Buy items')).toBeInTheDocument()
+    })
+
+    it('shows a Credits balance short of the price off, and picks MANA', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits: { price: 500, balance: 200, pays: false }, mana })
+      expect(box(/^Credits/).disabled).toBe(true)
+      expect(option(/^Credits/)).toBe('CreditsCredits Balance:200500')
+      expect(box(/^MANA/).checked).toBe(true)
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledWith('mana')
+    })
+
+    it('shows the Credits off with no amount, and MANA with no rate, when the Credits can’t price it', () => {
+      show({ step: 'method', items: [item], credits: { price: null, balance: 700, pays: false }, mana })
+      expect(box(/^Credits/).disabled).toBe(true)
+      expect(option(/^Credits/)).toBe('CreditsCredits Balance:700')
+      expect(option(/^MANA/)).toBe('MANAMANA Balance:7,0005,000')
+    })
+
+    describe('Credits and MANA together', () => {
+      // The design's case: a 50-credit item, 20 credits held, 3,400 MANA; the balance pays 20 and MANA the other 300.
+      const short = { price: 50, balance: 20, pays: false }
+      const enough = { price: 500n * MANA, balance: 3400n * MANA, pays: true }
+      const split = { credits: 20, mana: 300n * MANA }
+      // Where both may go together the options are real checkboxes, each its own.
+      const box = (name: RegExp) => screen.getByRole('checkbox', { name }) as HTMLInputElement
+      const option = (name: RegExp) => box(name).closest('label')?.textContent
+      const radio = (name: RegExp) => screen.getByRole('radio', { name }) as HTMLInputElement
+
+      it('ticks both by default, each with its part, and BUY pays with both', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: enough, split })
+        expect(box(/^Credits/).checked).toBe(true)
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(option(/^Credits/)).toBe('CreditsCredits Balance:2020')
+        expect(option(/^MANA/)).toBe('MANAMANA Balance:3,4003001 Credit = 10 MANA')
+        arm()
+        fireEvent.click(buy())
+        expect(h.onPay).toHaveBeenCalledWith('split')
+      })
+
+      it('says why the split changed over the options, as a status, and nothing when it wasn’t read anew', () => {
+        const notice = 'Your Credits balance changed, so the split was updated.'
+        const { rerender } = render(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits: short, mana: enough, split }} onClose={vi.fn()} />)
+        expect(screen.queryByRole('status')).toBeNull()
+        rerender(<ShopPurchaseDialog view={{ step: 'method', items: [item], credits: short, mana: enough, split, notice }} onClose={vi.fn()} />)
+        expect(screen.getByRole('status').textContent).toBe(notice)
+        // Over the options, so it is read before them.
+        expect(screen.getByRole('status').compareDocumentPosition(box(/^Credits/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      })
+
+      it('ticks each box on its own: Credits alone that can’t pay holds BUY, MANA alone pays its whole price', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: enough, split })
+        arm()
+        fireEvent.click(box(/^MANA/))
+        expect(box(/^Credits/).checked).toBe(true)
+        expect(box(/^MANA/).checked).toBe(false)
+        expect(option(/^Credits/)).toBe('CreditsCredits Balance:2050')
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(box(/^MANA/))
+        fireEvent.click(box(/^Credits/))
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(option(/^MANA/)).toBe('MANAMANA Balance:3,4005001 Credit = 10 MANA')
+        fireEvent.click(buy())
+        expect(h.onPay).toHaveBeenCalledWith('mana')
+      })
+
+      it('lets MANA that can’t pay alone be ticked as the rest of a split, and holds BUY while it is alone', () => {
+        vi.useFakeTimers()
+        const h = show({ step: 'method', items: [item], credits: short, mana: { ...enough, balance: 400n * MANA, pays: false }, split })
+        arm()
+        expect(box(/^MANA/).disabled).toBe(false)
+        fireEvent.click(box(/^Credits/))
+        expect(box(/^MANA/).checked).toBe(true)
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(buy())
+        expect(h.onPay).not.toHaveBeenCalled()
+      })
+
+      it('drops both when a new read no longer offers them together, and doesn’t tick them back', () => {
+        vi.useFakeTimers()
+        const onPay = vi.fn()
+        const view = (offered: boolean): ShopPurchaseStep => ({ step: 'method', items: [item], credits: short, mana: { ...enough, balance: 200n * MANA, pays: false }, ...(offered ? { split } : {}) })
+        const { rerender } = render(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+        arm()
+        rerender(<ShopPurchaseDialog view={view(false)} onClose={vi.fn()} onPay={onPay} />)
+        // Not together any more: radios again, none picked.
+        expect(radio(/^Credits/).checked || radio(/^MANA/).checked).toBe(false)
+        rerender(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked || box(/^MANA/).checked).toBe(false)
+        expect(buy().disabled).toBe(true)
+      })
+
+      it('drops a lone tick that can’t pay when the view is sent again, and keeps one that pays', () => {
+        vi.useFakeTimers()
+        const onPay = vi.fn()
+        // The same split read again: a new view object, as each balance read sends.
+        const view = (): ShopPurchaseStep => ({ step: 'method', items: [item], credits: { ...short }, mana: { ...enough }, split: { ...split } })
+        const { rerender } = render(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        arm()
+        // Credits alone, mid-way to another pick: it doesn't pay, so the new view drops it and BUY waits.
+        fireEvent.click(box(/^MANA/))
+        rerender(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked || box(/^MANA/).checked).toBe(false)
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(box(/^Credits/))
+        fireEvent.click(box(/^MANA/))
+        fireEvent.click(buy())
+        expect(onPay).toHaveBeenLastCalledWith('split')
+        // MANA alone pays the whole price, so the new view keeps it.
+        fireEvent.click(box(/^Credits/))
+        rerender(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked).toBe(false)
+        expect(box(/^MANA/).checked).toBe(true)
+        fireEvent.click(buy())
+        expect(onPay).toHaveBeenLastCalledWith('mana')
+      })
+
+      it('keeps one pick at a time, as radios, where they aren’t offered together', () => {
+        show({ step: 'method', items: [item], credits, mana })
+        expect(screen.queryByRole('checkbox')).toBeNull()
+        fireEvent.click(radio(/^MANA/))
+        expect(radio(/^Credits/).checked).toBe(false)
+        expect(radio(/^MANA/).checked).toBe(true)
+      })
+    })
+
+    it('shows no Credits price on an item only MANA buys, never "0"', () => {
+      show({ step: 'method', items: [{ ...item, credits: 0 }], credits: { price: null, balance: 700, pays: false }, mana })
+      expect(screen.queryByTitle('0 Credits')).toBeNull()
+      expect(screen.getByText('Golden Armor')).toBeTruthy()
+    })
+
+    it('shows no Credits price on any row of a cart only MANA buys, nor a Credits total', () => {
+      show({ step: 'method', items: [{ ...item, credits: 0, key: 'a' }, { ...item, name: 'Silver Boots', credits: 0, key: 'b' }], credits: { price: null, balance: 700, pays: false }, mana: { ...mana, price: 10000n * MANA, balance: 20000n * MANA } })
+      expect(screen.queryByTitle('0 Credits')).toBeNull()
+      // Only the balance speaks of Credits: no row price, no total.
+      expect(screen.queryAllByTitle(/ Credits$/).map((el) => el.title)).toEqual(screen.queryAllByTitle('700 Credits').map((el) => el.title))
+      expect(screen.getByText('Silver Boots')).toBeTruthy()
+    })
+
+    it('shows MANA that can’t pay off, with what it would cost', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits, mana: { ...mana, balance: 3n * MANA, pays: false } })
+      expect(box(/^MANA/).disabled).toBe(true)
+      expect(option(/^MANA/)).toBe('MANAMANA Balance:35,0001 Credit = 10 MANA')
+      expect(box(/^Credits/).checked).toBe(true)
+      arm()
+      fireEvent.click(buy())
+      expect(h.onPay).toHaveBeenCalledWith('credits')
+    })
+
+    it('holds BUY while neither way pays', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'method', items: [item], credits: { ...credits, balance: 200, pays: false }, mana: { ...mana, pays: false } })
+      arm()
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(h.onPay).not.toHaveBeenCalled()
+    })
+
+    it('picks the buyer’s earlier pick again while it pays, and the Credits once it doesn’t', () => {
+      show({ step: 'method', items: [item], credits, mana, initial: 'mana' })
+      expect(box(/^MANA/).checked).toBe(true)
+      cleanup()
+      show({ step: 'method', items: [item], credits, mana: { ...mana, pays: false }, initial: 'mana' })
+      expect(box(/^Credits/).checked).toBe(true)
+    })
+
+    // A pick that stops paying is dropped, never moved: the same BUY must not spend another way than the buyer picked.
+    it.each([
+      { picked: 'credits' as const, other: 'mana' as const, picks: /^Credits/, otherOption: /^MANA/ },
+      { picked: 'mana' as const, other: 'credits' as const, picks: /^MANA/, otherOption: /^Credits/ }
+    ])('drops a $picked pick that stopped paying, with BUY armed, and spends only what the buyer picks next', ({ picked, other, picks, otherOption }) => {
+      vi.useFakeTimers()
+      const onPay = vi.fn()
+      const view = (pays: boolean): ShopPurchaseStep => ({
+        step: 'method',
+        items: [item],
+        credits: { ...credits, pays: picked === 'credits' ? pays : true },
+        mana: { ...mana, pays: picked === 'mana' ? pays : true }
+      })
+      const { rerender } = render(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      // Picked by the buyer, the other option first, so the pick is theirs and not the step's opening one.
+      fireEvent.click(box(otherOption))
+      fireEvent.click(box(picks))
+      arm()
+      rerender(<ShopPurchaseDialog view={view(false)} onClose={vi.fn()} onPay={onPay} />)
+      expect(box(/^Credits/).checked).toBe(false)
+      expect(box(/^MANA/).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(onPay).not.toHaveBeenCalled()
+      // Paying again later doesn't pick it back.
+      rerender(<ShopPurchaseDialog view={view(true)} onClose={vi.fn()} onPay={onPay} />)
+      expect(box(picks).checked).toBe(false)
+      expect(buy().disabled).toBe(true)
+      fireEvent.click(buy())
+      expect(onPay).not.toHaveBeenCalled()
+      fireEvent.click(box(otherOption))
+      fireEvent.click(buy())
+      expect(onPay).toHaveBeenCalledTimes(1)
+      expect(onPay).toHaveBeenCalledWith(other)
+    })
+  })
+
+  describe('Authorize MANA', () => {
+    const view = { step: 'authorize' as const, venue: 'the Marketplace', network: 'Polygon', required: 12n * 10n ** 18n + 5n * 10n ** 17n }
+
+    afterEach(() => vi.useRealTimers())
+
+    it('names what may spend the MANA, where, and how much this purchase needs, and that the allowance is unlimited and stays', () => {
+      vi.useFakeTimers()
+      const h = show({ ...view, state: 'ready' })
+      const text = screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent
+      expect(text).toContain('To buy with MANA, allow the Marketplace on Polygon to spend MANA from your wallet. This purchase needs 12.5 MANA.')
+      expect(text).toContain('The allowance is unlimited and stays after this purchase, so buying there again won’t ask for it.')
+      // It appears where BUY was: a click meant for that one doesn't authorize.
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize' }))
+      expect(h.onAuthorize).not.toHaveBeenCalled()
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Authorize' }))
+      expect(h.onAuthorize).toHaveBeenCalledTimes(1)
+    })
+
+    it('says an exact allowance is that amount, never unlimited, and what stays when the purchase doesn’t go through', () => {
+      show({ ...view, venue: 'Decentraland Credits', state: 'ready', allowance: 'exact' })
+      const text = screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent
+      expect(text).toContain('allow Decentraland Credits on Polygon to spend MANA')
+      expect(text).toContain('The allowance is exactly 12.5 MANA. If this purchase doesn’t go through, what it leaves unspent stays allowed until a purchase you sign uses it, a new approval replaces it, or you revoke it.')
+      expect(text).not.toContain('for this purchase')
+      expect(text).not.toContain('asks again')
+      expect(text).not.toContain('unlimited')
+    })
+
+    it('says which payment of several it authorizes', () => {
+      show({ ...view, state: 'ready', progress: { at: 2, of: 2 } })
+      expect(screen.getByRole('dialog', { name: 'Authorize MANA' }).textContent).toContain('Payment 2 of 2')
+    })
+
+    it('waits for the authorization with AUTHORIZE held and CANCEL still live', () => {
+      const h = show({ ...view, state: 'waiting' })
+      expect(screen.getByRole('dialog', { name: 'Authorize MANA' }).getAttribute('aria-busy')).toBe('true')
+      expect((screen.getByRole('button', { name: 'Authorizing...' }) as HTMLButtonElement).disabled).toBe(true)
+      expect(screen.getByRole('status', { name: 'Waiting for the authorization to confirm' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('says why it didn’t go through, and TRY AGAIN authorizes again', () => {
+      vi.useFakeTimers()
+      const h = show({ ...view, state: 'failed', message: 'You declined the authorization in your wallet.' })
+      expect(screen.getByRole('alert').textContent).toBe('You declined the authorization in your wallet.')
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(h.onAuthorize).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('a purchase still being confirmed', () => {
+    it('says it was sent, with nothing to check, by default', () => {
+      show({ step: 'pending' })
+      expect(screen.getByRole('dialog', { name: 'Purchase in progress' }).textContent).toContain('Your purchase was sent and is still being confirmed.')
+      expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
+    })
+
+    it('says what is known in its own words, and offers CHECK AGAIN', () => {
+      const h = show({ step: 'pending', message: 'We can’t tell yet whether your purchase went out.', check: 'ready' })
+      expect(screen.getByRole('dialog', { name: 'Purchase in progress' }).textContent).toContain('We can’t tell yet whether your purchase went out.')
+      fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+      expect(h.onCheckAgain).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Continue shopping' }))
+      expect(h.onClose).toHaveBeenCalled()
+    })
+
+    it('offers an armed RETRY in place of CHECK AGAIN when it may be retried', () => {
+      vi.useFakeTimers()
+      try {
+        const h = show({ step: 'pending', message: 'You can retry this same purchase fee-free. It can complete only once.', retry: true, check: 'ready' })
+        // Announced: RETRY opens on a dialog that has been up for minutes.
+        expect(screen.getByRole('status').textContent).toBe('You can retry this same purchase fee-free. It can complete only once.')
+        expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        expect(h.onRetry).not.toHaveBeenCalled()
+        act(() => void vi.advanceTimersByTime(ARM_MS))
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+        expect(h.onRetry).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('holds CHECK AGAIN while it looks', () => {
+      show({ step: 'pending', check: 'checking' })
+      expect((screen.getByRole('button', { name: 'Checking...' }) as HTMLButtonElement).disabled).toBe(true)
+    })
+  })
 })
 
 describe('the purchase dialog over the app', () => {
@@ -292,12 +738,12 @@ describe('the purchase dialog over the app', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('reaches a success row that scrolls with Tab, after the first focus lands on CONTINUE SHOPPING', async () => {
+  it('reaches a success list that scrolls with Tab, after the first focus lands on CONTINUE SHOPPING', async () => {
     const ui = createShopOverlay(vi.fn())
-    const many = Array.from({ length: 5 }, (_, i) => ({ ...item, name: `Item ${i + 1}` }))
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...item, name: `Item ${i + 1}` }))
     await act(async () => ui.show({ step: 'success', items: many }, { onClose: vi.fn(), onBackpack: vi.fn() }))
-    const row = screen.getByRole('list', { name: '5 items bought' })
-    expect(screen.getAllByRole('listitem').map((el) => el.getAttribute('aria-label'))).toEqual(['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5'])
+    const row = screen.getByRole('list', { name: '7 items bought' })
+    expect(screen.getAllByRole('listitem').map((el) => el.getAttribute('aria-label'))).toEqual(['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5', 'Item 6', 'Item 7'])
     expect(document.activeElement?.textContent).toBe('Continue shopping')
     const visited: (string | null)[] = []
     for (let i = 0; i < 3; i++) {
@@ -307,6 +753,47 @@ describe('the purchase dialog over the app', () => {
     // The order is the dialog's: the row (it comes first), then the buttons again.
     expect(visited).toContain('row')
     expect(new Set(visited)).toEqual(new Set(['row', 'Continue shopping', 'Go to backpack']))
+  })
+
+  it('Buy Item with its payment options: the first focus on CANCEL, and Tab stops once at the options, on the picked one', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const MANA = 10n ** 18n
+    const view = { step: 'method' as const, items: [item], credits: { price: 500, balance: 700, pays: true }, mana: { price: 12n * MANA, balance: 40n * MANA, pays: true } }
+    await act(async () => ui.show(view, { onClose: vi.fn(), onPay: vi.fn() }))
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    const credits = screen.getByRole('radio', { name: /^Credits/ })
+    expect(document.activeElement).toBe(cancel)
+    const visited = new Set<Element | null>()
+    for (let i = 0; i < 4; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.add(document.activeElement)
+    }
+    // A radio group is one stop, its picked radio (the arrow keys move within it).
+    expect(visited).toEqual(new Set([credits, cancel, screen.getByRole('button', { name: 'Buy item' })]))
+  })
+
+  it('skips an option that can’t pay, and a held BUY, when tabbing', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const MANA = 10n ** 18n
+    const view = { step: 'method' as const, items: [item], credits: { price: 500, balance: 200, pays: false }, mana: { price: 12n * MANA, balance: 4n * MANA, pays: false } }
+    await act(async () => ui.show(view, { onClose: vi.fn(), onPay: vi.fn() }))
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    cancel.focus()
+    const visited = new Set<Element | null>()
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.add(document.activeElement)
+    }
+    expect(visited).toEqual(new Set([cancel]))
+  })
+
+  it('lets Escape cancel Authorize MANA while it confirms', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const onClose = vi.fn()
+    await act(async () => ui.show({ step: 'authorize', venue: 'the Marketplace', network: 'Polygon', required: 10n ** 18n, state: 'waiting' }, { onClose, onAuthorize: vi.fn() }))
+    expect(document.activeElement?.textContent).toBe('Cancel')
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('keeps Tab within the dialog', async () => {

@@ -2,6 +2,30 @@
 
 use clap::Args;
 
+/// `CAST_PRESENTER_PUBLIC_URL` as upstream reads its `PUBLIC_BASE_URL`
+/// (`decentraland/cast-presenter-server` @ cae78612,
+/// `src/logic/presentation-manager/component.ts:181-187`): `https://`, or
+/// `http://` on this host, no credentials, query or fragment; the trailing
+/// `/` goes. A blank value stays blank: `Config::non_empty` reads it as unset.
+fn cast_presenter_public_url(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let url = url::Url::parse(raw).map_err(|e| e.to_string())?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    let plain = url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !plain || !(url.scheme() == "https" || url.scheme() == "http" && local) {
+        return Err(
+            "must be an https:// URL (http:// only for localhost) with no credentials, query or fragment"
+                .into(),
+        );
+    }
+    Ok(url.as_str().trim_end_matches('/').into())
+}
+
 // @well-known-components/env-config-provider getNumber uses parseFloat,
 // including numeric prefixes and Infinity, and rejects NaN.
 fn source_number(raw: &str) -> Result<f64, String> {
@@ -82,8 +106,12 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
             }
         } else if value.abs() >= 1e21 || value.abs() < 1e-6 {
             let scientific = format!("{value:e}");
-            let (mantissa, exponent) = scientific.split_once('e').unwrap();
-            let exponent: i32 = exponent.parse().unwrap();
+            let (mantissa, exponent) = scientific
+                .split_once('e')
+                .expect("`{:e}` always writes an exponent");
+            let exponent: i32 = exponent
+                .parse()
+                .expect("an f64 exponent is a small integer");
             format!("{mantissa}e{exponent:+}")
         } else {
             value.to_string()
@@ -207,13 +235,11 @@ pub struct SocialConfig {
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,
 
-    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL.
+    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL. Emitted URLs carry
+    /// `?v=<hash>` and are long-cached: a caching CDN here must key on the `v` parameter only
+    /// and strip other query parameters.
     #[arg(long, env = "COMMUNITIES_CDN_URL")]
     pub communities_cdn_url: Option<String>,
-
-    /// Archipelago stats base URL for the onlyOnline member filter; unset renders everyone offline.
-    #[arg(long, env = "ARCHIPELAGO_STATS_URL")]
-    pub archipelago_stats_url: Option<String>,
 
     /// Require places added to a community to be owned by the caller per the mirrored places catalogue
     /// (on by default, as upstream always checks; `false` skips the check).
@@ -439,18 +465,6 @@ pub struct SocialConfig {
     #[arg(long, env = "CURRENT_VERSION")]
     pub social_rpc_current_version: Option<String>,
 
-    /// Legacy uWS metrics path; unset/empty uses /metrics under /social-rpc.
-    #[arg(long, env = "WKC_METRICS_PUBLIC_PATH")]
-    pub wkc_metrics_public_path: Option<String>,
-
-    /// Legacy metrics Bearer; unset/empty permits scrapes.
-    #[arg(long, env = "WKC_METRICS_BEARER_TOKEN", hide_env_values = true)]
-    pub wkc_metrics_bearer_token: Option<String>,
-
-    /// Source opt-in reset flag. Shared-recorder reset parity remains a known gap.
-    #[arg(long, env = "WKC_METRICS_RESET_AT_NIGHT")]
-    pub wkc_metrics_reset_at_night: Option<String>,
-
     // comms::gatekeeper: the comms gatekeeper (LiveKit token minting, scene and
     // platform moderation, voice presence). The LiveKit media server is a
     // separate process reached over the network.
@@ -487,12 +501,25 @@ pub struct SocialConfig {
     #[arg(long, env = "MAX_CONCURRENT_PRESENTATIONS", default_value_t = 10)]
     pub max_concurrent_presentations: usize,
 
+    /// The Cast presenter's routes as clients reach them. With it, a
+    /// presentation serves its slides as pictures there and its bot names the
+    /// current one, for clients that compose: the Unity Explorer fetches only
+    /// from `https://cast-presenter-service.<its base domain>`. Unset or
+    /// blank, clients show the bot's slide track.
+    #[arg(long, env = "CAST_PRESENTER_PUBLIC_URL", value_parser = cast_presenter_public_url)]
+    pub cast_presenter_public_url: Option<String>,
+
     #[arg(
         long,
         env = "PRIVATE_MESSAGES_ROOM_ID",
         default_value = "private-messages"
     )]
     pub private_messages_room_id: String,
+
+    /// Give a local preview scene (a `b64-` id or a `preview`/`localpreview`
+    /// realm) a Genesis scene token without a deployed scene behind it.
+    #[arg(long, env = "ALLOW_LOCAL_PREVIEW", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_local_preview: bool,
 
     /// The one wallet that may mint the authoritative-server host token; unset refuses /get-server-scene-adapter.
     #[arg(long, env = "AUTHORITATIVE_SERVER_ADDRESS")]
@@ -502,7 +529,8 @@ pub struct SocialConfig {
     #[arg(long, env = "MODERATOR_TOKEN", hide_env_values = true)]
     pub moderator_token: Option<String>,
 
-    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch.
+    /// Comma/space-separated wallets allowed on the user-moderation routes by signed fetch,
+    /// only while no `platform_user_moderators` flag document (`FF_URL`) is held.
     #[arg(long, env = "PLATFORM_USER_MODERATORS", default_value = "")]
     pub platform_user_moderators: String,
 
@@ -531,13 +559,18 @@ pub struct SocialConfig {
     pub comms_gatekeeper_auth_token: Option<String>,
 
     /// Lambdas base whose `/parcels/{x}/{y}/operators` protects LAND
-    /// owners/operators from scene bans (old LAMBDAS_URL); unset protects none.
+    /// owners/operators from scene bans (old LAMBDAS_URL), read only by a
+    /// permission core without the land-authz index. `catalyst serve` always
+    /// attaches the index, whose published fold is then the only LAND
+    /// authority, so the URL is not read there.
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
-    /// The linker-server lease document (`[{addresses, plots}]`) whose
-    /// holders administer the scenes on their plots (the mirror posture's:
-    /// Decentraland's published list); empty lists no lease holder.
+    /// The linker-server lease document (`[{addresses, plots, startDate?,
+    /// endDate?, onlyDev?}]`) whose holders administer the scenes on their
+    /// plots while an entry is within its dates (`onlyDev` entries only on a
+    /// Sepolia `ETH_NETWORK`; the mirror posture's: Decentraland's published
+    /// list); empty lists no lease holder.
     #[arg(long, env = "LEASE_AUTHORIZATIONS_URL", default_value = "")]
     pub lease_authorizations_url: String,
 
@@ -1115,6 +1148,34 @@ mod tests {
     const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
 
     #[test]
+    fn the_cast_presenter_public_url_is_secure_and_plain() {
+        let read = super::cast_presenter_public_url;
+        for (raw, base) in [
+            ("https://Cast.example.org:443/", "https://cast.example.org"),
+            ("https://example.org/cast//", "https://example.org/cast"),
+            ("http://127.0.0.1:5141/x", "http://127.0.0.1:5141/x"),
+            ("http://localhost:5141", "http://localhost:5141"),
+            ("http://[::1]:5141", "http://[::1]:5141"),
+        ] {
+            assert_eq!(read(raw).as_deref(), Ok(base));
+        }
+        for raw in [
+            "http://example.org",
+            "https://user@example.org",
+            "https://example.org/?a=1",
+            "https://example.org/#slides",
+            "ftp://localhost",
+            "example.org",
+        ] {
+            assert!(read(raw).is_err(), "{raw}");
+        }
+        for blank in ["", " "] {
+            let set = social(&[("CAST_PRESENTER_PUBLIC_URL", blank)]).unwrap();
+            assert_eq!(Config::non_empty(&set.cast_presenter_public_url), None);
+        }
+    }
+
+    #[test]
     fn http_body_cap_uses_executed_source_boot_rules() {
         let source:serde_json::Value=serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-body-limit.json"))).unwrap();
         let default = social(&[]).unwrap().social_http_max_request_body_bytes;
@@ -1441,30 +1502,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_uws_status_and_metrics_keep_raw_source_strings() {
-        let config = social(&[
-            ("CURRENT_VERSION", ""),
-            ("WKC_METRICS_PUBLIC_PATH", ""),
-            ("WKC_METRICS_BEARER_TOKEN", "  "),
-            ("WKC_METRICS_RESET_AT_NIGHT", "TRUE"),
-        ])
-        .unwrap();
-        assert_eq!(config.social_rpc_current_version.as_deref(), Some(""));
-        assert_eq!(config.wkc_metrics_public_path.as_deref(), Some(""));
-        assert_eq!(config.wkc_metrics_bearer_token.as_deref(), Some("  "));
-        assert_eq!(config.wkc_metrics_reset_at_night.as_deref(), Some("TRUE"));
-        let config = social(&[
-            ("CURRENT_VERSION", "source-version"),
-            ("WKC_METRICS_PUBLIC_PATH", "/custom"),
-            ("WKC_METRICS_RESET_AT_NIGHT", "true"),
-        ])
-        .unwrap();
-        assert_eq!(
-            config.social_rpc_current_version.as_deref(),
-            Some("source-version")
-        );
-        assert_eq!(config.wkc_metrics_public_path.as_deref(), Some("/custom"));
-        assert_eq!(config.wkc_metrics_reset_at_night.as_deref(), Some("true"));
+    fn social_rpc_status_keeps_raw_version_strings() {
+        for version in ["", "source-version"] {
+            let config = social(&[("CURRENT_VERSION", version)]).unwrap();
+            assert_eq!(config.social_rpc_current_version.as_deref(), Some(version));
+        }
     }
 
     #[test]

@@ -28,16 +28,19 @@ import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
+import { travelToPhoto } from './features/gallery/reelActions'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import type { PassportTab } from './features/profile/ProfilePassport'
 import { openWorldVisit } from './components/WorldVisitModal'
+import { confirmOpenLink, confirmTeleport } from './features/chat/chatLinkPrompts'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
 import { openWorldPasswordDialog } from './features/worldAccess/WorldPasswordDialog'
 import { PopupHost, ToastHost, showDialog } from './design'
 import { SessionProvider } from './features/session/SessionContext'
+import type { PurchaseSceneItem } from './features/itemPurchase/answer'
 import { bootMode, hostEntryParams, isNativeHud, unrecognisedEntryParams, untrustedLaunchParams } from '@hud-host'
 import { FpsMeter } from './features/debug/FpsMeter'
 import { DebugPanelHost } from './features/debug/DebugPanel'
@@ -146,6 +149,9 @@ export interface HudAppHost {
   createBridgeClient(): LoginDriver
   /** The host's Shop page. */
   ShopPage: ComponentType<HudShopProps>
+  /** Opens the host's purchase confirmation for one collection item a scene asked to sell, and
+   *  resolves with how it ended. Absent where the host cannot buy: such a request is unavailable. */
+  purchaseSceneItem?: PurchaseSceneItem
   /** After the Shop surface crashed, before it opens again. */
   onShopCrash?(): void
   /** Providers around the whole HUD (/play's query client). */
@@ -251,7 +257,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const session = useEngineSession(createDriver)
+  const session = useEngineSession(createDriver, { purchaseSceneItem: host.purchaseSceneItem })
   // The tip emote once the host says a tip was sent (Donate, where the host can sign one).
   useTipEmote(session.emotes.play)
   // The signed-in account the places discovery reads for its favourites, once the profile names it.
@@ -436,7 +442,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
         <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
       </SurfaceBoundary>
       <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onJumpIn={(place) => travelToPhoto(place, session.map)} onViewProfile={(u) => openPassport(u.address)} />
       </SurfaceBoundary>
     </>
   )
@@ -448,8 +454,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  // photo mode shows only its own overlay (and the reticle) over the world
-  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
+  // photo mode shows only its own overlay (and the reticle) over the world; the HideUi key hides
+  // the chrome and the reticle and keeps the scene's own UI
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active && !session.hudHidden
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -485,7 +492,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor="lobby" />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal />
           </SurfaceBoundary>
           {discoveryPages}
         </>
@@ -509,7 +516,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
-          {!pageOpen && editorMode !== 'edit' && (
+          {!pageOpen && editorMode !== 'edit' && !session.hudHidden && (
             <Pointer
               hover={session.hover}
               locked={session.cursorLocked}
@@ -520,8 +527,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             chat={session.chat}
             hidden={session.friends.open || !chrome}
             me={session.profile.data}
-            onTeleport={(x, y) => session.map.teleport(x, y)}
+            onTeleport={(x, y) => void confirmTeleport(x, y, session.minimap.linkRealm, session.map.teleport)}
             onVisitWorld={(name) => openWorldVisit({ worldName: name, onConfirm: () => session.map.changeRealm(name) })}
+            onOpenUrl={(url) => void confirmOpenLink(url, session.openExternalUrl)}
             onOpenSettings={session.settings.toggle}
           />
           <SurfaceBoundary name="Friends" open={session.friends.open} onCrash={session.closeAllPanels}>
@@ -546,7 +554,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
             />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
-            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal={session.lobbyPage.open} />
+            <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} previewReady={session.avatarPreviewReady} initialTab={backpackTab} modal={session.lobbyPage.open} />
           </SurfaceBoundary>
           {discoveryPages}
           <SurfaceBoundary

@@ -21,6 +21,7 @@ pub mod chain;
 pub mod executions;
 pub mod facts;
 pub mod feed_rate;
+pub(crate) mod history;
 pub mod quote;
 pub mod tracker;
 pub mod venues;
@@ -49,7 +50,7 @@ use crate::types::ChainId;
 pub struct Settings {
     /// `DATA_WRITES_ENABLED`.
     pub writes_enabled: bool,
-    /// Between two tracker passes (the market indexes' cadence by default).
+    /// Between two tracker passes (`MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS`).
     pub track_interval: Duration,
     /// `COLLECTIONS_CHAIN_ID`: which book of venues the process settles on
     /// ([`settlement_book`]).
@@ -106,7 +107,8 @@ fn settlement_book_for(
         ChainId::POLYGON => Ok(venues::Book::production(rpc)),
         ChainId::AMOY => {
             anyhow::ensure!(
-                market.settings.eth_network.trim() != "mainnet",
+                crate::shared::network::ChainPair::from_eth_network(&market.settings.eth_network)
+                    != Some(crate::shared::network::ChainPair::Mainnet),
                 "COLLECTIONS_CHAIN_ID is Amoy (80002) but ETH_NETWORK is mainnet: \
                  the Shop's testnet venues need a testnet node"
             );
@@ -220,7 +222,8 @@ impl State {
         .await
     }
 
-    /// The signer of a write, as an address; 401 with the lambdas envelope otherwise.
+    /// The signer of a write, as an address; 401 with the lambdas envelope
+    /// otherwise, or 429 when the client source's contract-wallet checks are spent.
     pub async fn require_signer(
         &self,
         headers: &HeaderMap,
@@ -236,6 +239,12 @@ impl State {
                     "the signer is not an address",
                 )
             }),
+            // The client source spent its contract-wallet checks: retry later.
+            Err(e @ signed_fetch::SignedFetchError::RateLimited) => Err(error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                &e.to_string(),
+            )),
             Err(e) => {
                 tracing::debug!(error = %e, "auth chain verification failed on a mana route");
                 Err(error(

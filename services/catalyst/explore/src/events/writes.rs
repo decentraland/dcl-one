@@ -370,7 +370,7 @@ async fn answer_admin(
 /// `POST /api/events` (`Event/routes/index.ts:76`, `createEvent.ts:46-271`):
 /// a signed fetch (the admin bearer is not honoured here; fixture
 /// `events.create.bearer_not_accepted`) by a wallet whose profile this node
-/// holds (`withAuthProfile()`, 404 `Not found profile for "<user>"`); the
+/// holds or reads through (`withAuthProfile()`, 404 `Not found profile for "<user>"`); the
 /// body null-defaulted (`:61-79`), validated against `newEventSchema` (the
 /// ajv 400 echoes the defaulted body), then upstream's checks in its order
 /// (`moderation::create_as`). `schedules` are always stored `[]` (`:260`); a
@@ -385,7 +385,7 @@ pub async fn create_event(
 ) -> Result<Json<ApiData<Value>>, ApiError> {
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), uri.path()).await?;
-    super::profiles::require_profile(&state.pool, &signer).await?;
+    super::profiles::require_profile(&state, &signer).await?;
     let mut data = match serde_json::from_slice::<Value>(&body) {
         Ok(Value::Object(map)) => map,
         _ => Map::new(),
@@ -903,17 +903,9 @@ async fn update_event(
         .copied()
         .filter(|k| *k != "rejected")
         .collect();
-    // dcl-one: another reviewer's rejection holds the event for its owner.
-    // While it stands the owner's `rejected` and `approved` stay as stored,
-    // so neither the owner, their `approve_own_event` grant nor their
-    // `edit_any_event` grant can clear it (updateEvent.ts:196-220 let the
-    // grants re-approve over it); an `approve_any_event` grant is a reviewer
-    // and may. A mirrored row never reaches here: its edit answers 409 above.
-    let held = !admin
-        && is_owner
-        && !permissions.approve_any
-        && flag(&before, "rejected")
-        && !text(&before, "rejected_by").is_some_and(|by| by.eq_ignore_ascii_case(&user));
+    // The owner's branch picks `rejected` whoever rejected the event, so an
+    // owner's `rejected: false` sends it back to pending (updateEvent.ts:196-202).
+    // A mirrored row never reaches here: its edit answers 409 above.
     if admin {
         pick(&body, &edit_without_rejected, &mut updated);
         pick(&before, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
@@ -921,25 +913,16 @@ async fn update_event(
         pick(&before, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
     } else if is_owner {
-        if held {
-            pick(&body, &edit_without_rejected, &mut updated);
-        } else {
-            pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
-        }
+        pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
         pick(&before, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
-        if (moderator || permissions.approve_own) && !held {
+        if moderator || permissions.approve_own {
             pick(&before, APPROVE_EVENT_ATTRIBUTES, &mut updated);
             pick(&body, APPROVE_EVENT_ATTRIBUTES, &mut updated);
         }
     }
     if !admin && permissions.edit_any {
-        let editable = if held {
-            edit_without_rejected.as_slice()
-        } else {
-            EDIT_EVENT_ATTRIBUTES
-        };
-        pick(&body, editable, &mut updated);
+        pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
         pick(&before, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
     }
@@ -1388,8 +1371,8 @@ pub async fn delete_event(
 
 /// `EventAttendee/routes.ts:61-85`: a signed fetch, `getEvent` (400
 /// non-UUID, 404 missing or hidden; the bearer is not mounted here), the RSVP
-/// row and the list. The POST needs the signer's profile
-/// (`withAuthProfile()`, 404 `Not found profile for "<user>"`), whose name
+/// row and the list. The POST needs the signer's profile, held or read
+/// through (`withAuthProfile()`, 404 `Not found profile for "<user>"`), whose name
 /// is the row's `user_name`.
 async fn rsvp(
     state: SharedState,
@@ -1402,7 +1385,7 @@ async fn rsvp(
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), path).await?;
     let user_name = if going {
-        let (_, metadata) = super::profiles::local_profile(&state.pool, &signer)
+        let (_, metadata) = super::profiles::profile(&state, &signer)
             .await?
             .ok_or_else(|| ApiError::not_found(format!("Not found profile for \"{signer}\"")))?;
         metadata
@@ -1639,16 +1622,15 @@ mod tests {
     /// Uploads through `POST /api/poster[-vertical]` as the test wallet, which
     /// needs a profile this node holds (`withAuthProfile()`); the old envelope's
     /// `data.url` is absolute on the events mount, and the event routes store
-    /// its router-local path, which is what this answers.
+    /// its router-local path, which this answers along with `data.url`.
     async fn upload_native_poster(
         pool: &sqlx::PgPool,
         app: &axum::Router,
         vertical: bool,
         public_base: Option<&str>,
-    ) -> (String, Vec<u8>) {
-        if super::super::profiles::local_profile(pool, &address())
+    ) -> (String, String, Vec<u8>) {
+        if super::super::profiles::test_support::held_profile(pool, &address())
             .await
-            .unwrap()
             .is_none()
         {
             super::super::profiles::test_support::deploy_profile(pool, &address(), json!({})).await;
@@ -1680,19 +1662,89 @@ mod tests {
         assert_eq!(status, StatusCode::CREATED, "{body}");
         let filename = body["data"]["filename"].as_str().unwrap();
         let local = format!("/{filename}");
+        let url = body["data"]["url"].as_str().unwrap().to_owned();
         assert_eq!(
-            body["data"]["url"],
-            format!("{}/events-assets-099ac00{local}", public_base.unwrap_or(""))
+            url,
+            format!(
+                "{}/{}{local}",
+                public_base.unwrap_or(""),
+                crate::api::posters::HOST_PREFIX
+            )
         );
-        (local, png)
+        (local, url, png)
+    }
+
+    /// The `data.url` an upload answers is served by the routes serve merges
+    /// at the root (#1614).
+    #[tokio::test]
+    async fn an_uploaded_poster_is_served_at_the_url_the_upload_returns() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        struct TempDir(std::path::PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = TempDir(
+            std::env::temp_dir().join(format!("poster-roundtrip-{}", uuid::Uuid::new_v4())),
+        );
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir.0).await.unwrap());
+        let content = Arc::new(crate::content::ContentState::new(
+            pool.clone(),
+            crate::content::Settings::for_tests(),
+            storage.clone(),
+        ));
+        let api = crate::api::State::new(
+            crate::api::Settings::for_tests(crate::api::Sources::defaults()),
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            content,
+        )
+        .await
+        .unwrap();
+        for public_url in [None, Some("http://localhost:8080")] {
+            let settings = Settings {
+                configured_public_base: Settings::configured_public_base_for(public_url),
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            };
+            let app = router(Arc::new(
+                ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
+            ))
+            .merge(crate::api::router(api.clone()));
+            for vertical in [false, true] {
+                let (local, url, png) =
+                    upload_native_poster(&pool, &app, vertical, public_url).await;
+                let path = url
+                    .strip_prefix(public_url.unwrap_or(""))
+                    .unwrap()
+                    .to_owned();
+                assert_eq!(
+                    path,
+                    format!("/{}{local}", crate::api::posters::HOST_PREFIX)
+                );
+                let response = app
+                    .clone()
+                    .oneshot(Request::get(&path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "{path}");
+                assert_eq!(response.headers()["content-type"], "image/png");
+                let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                assert_eq!(body.as_ref(), png.as_slice(), "{path}");
+            }
+        }
     }
 
     /// `withAuthProfile()`: the test wallet needs a profile this node holds to
     /// create events and RSVP.
     async fn ensure_profile(pool: &sqlx::PgPool) {
-        if super::super::profiles::local_profile(pool, &address())
+        if super::super::profiles::test_support::held_profile(pool, &address())
             .await
-            .unwrap()
             .is_none()
         {
             super::super::profiles::test_support::deploy_profile(pool, &address(), json!({})).await;
@@ -2780,8 +2832,8 @@ mod tests {
             let app = router(Arc::new(
                 ExploreState::new(pool.clone(), settings, None).with_storage(storage.clone()),
             ));
-            let (uploaded, _) = upload_native_poster(&pool, &app, false, public_url).await;
-            let (vertical, _) = upload_native_poster(&pool, &app, true, public_url).await;
+            let (uploaded, _, _) = upload_native_poster(&pool, &app, false, public_url).await;
+            let (vertical, _, _) = upload_native_poster(&pool, &app, true, public_url).await;
             let mounted =
                 |key: &str| format!("{}/events-assets-099ac00{key}", public_url.unwrap_or(""));
             for (key, vertical_key, image, image_vertical) in [
@@ -2869,8 +2921,8 @@ mod tests {
         let app = router(Arc::new(
             ExploreState::new(pool.clone(), settings.clone(), None).with_storage(storage.clone()),
         ));
-        let (poster, bytes) = upload_native_poster(&pool, &app, false, None).await;
-        let (vertical, _) = upload_native_poster(&pool, &app, true, None).await;
+        let (poster, _, bytes) = upload_native_poster(&pool, &app, false, None).await;
+        let (vertical, _, _) = upload_native_poster(&pool, &app, true, None).await;
         let cid: String = sqlx::query_scalar(
             "SELECT blob_cid FROM explore.poster WHERE kind='poster' AND file=$1",
         )
@@ -3252,7 +3304,7 @@ mod tests {
             )
             .with_storage(storage),
         ));
-        let (poster, _) = upload_native_poster(&pool, &app, false, None).await;
+        let (poster, _, _) = upload_native_poster(&pool, &app, false, None).await;
         let mut event = new_event();
         event["x"] = json!(41);
         event["y"] = json!(42);
@@ -3443,7 +3495,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{moved}");
         assert!(moved["data"]["image"].is_null());
-        let (uploaded, _) = upload_native_poster(&pool, &app, false, None).await;
+        let (uploaded, _, _) = upload_native_poster(&pool, &app, false, None).await;
         let (status, poster) = call(
             &app,
             "PATCH",
@@ -3789,16 +3841,80 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{owner_edit}");
         assert_eq!(
-            owner_edit["data"]["rejected"], true,
-            "another reviewer's rejection holds: the owner's `rejected` is not picked while it stands"
+            owner_edit["data"]["rejected"], false,
+            "the owner's edit sends a moderator-rejected event back to pending (updateEvent.ts:196-202)"
         );
-        assert_eq!(owner_edit["data"]["rejected_by"], rejecting_actor);
+        assert_eq!(owner_edit["data"]["approved"], false);
+        assert_eq!(
+            owner_edit["data"]["rejected_by"], rejecting_actor,
+            "the rejection's actor and reason stay as stored (updateEvent.ts:485-491)"
+        );
         assert_eq!(owner_edit["data"]["rejection_reason"], "Moderator decision");
         assert_eq!(
             owner_edit["data"]["details"], "Owner instructions",
             "the rest of the edit applies"
         );
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("patch-review-admin"),
+            Some(json!({"rejected":true,"reason":"Moderator decision"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, unsent) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &owner,
+            json!({"details":"Second note"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{unsent}");
+        assert_eq!(
+            unsent["data"]["rejected"], true,
+            "an owner edit that does not send `rejected` keeps the stored one"
+        );
+        let stranger = alloy::signers::local::PrivateKeySigner::random();
+        let (status, refused) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &stranger,
+            json!({"name":"Stranger title","rejected":false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "another creator's rejected event reads as missing (getEvent.ts:61-79): {refused}"
+        );
+        let stored: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT raw->>'rejected', raw->>'name' FROM explore.event WHERE id=$1")
+                .bind(&event)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored,
+            (Some("true".into()), Some("Changed public title".into())),
+            "a refused edit leaves the rejected row unchanged"
+        );
         sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"edit_any_event\"]')").bind(&editor_address).execute(&pool).await.unwrap();
+        let (status, moderated) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &editor,
+            json!({"name":"Moderator title"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{moderated}");
+        assert_eq!(
+            moderated["data"]["rejected"], true,
+            "a moderator's edit keeps the rejection"
+        );
         let (status, edited) = call_as(
             &app,
             "PATCH",
@@ -3808,6 +3924,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{edited}");
+        assert_eq!(edited["data"]["rejected"], false);
         assert_eq!(edited["data"]["rejected_by"], rejecting_actor);
         assert_eq!(edited["data"]["rejection_reason"], "Moderator decision");
         sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"edit_any_event\",\"approve_any_event\"]' WHERE \"user\"=$1").bind(&editor_address).execute(&pool).await.unwrap();
@@ -4251,7 +4368,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn self_approval_cannot_clear_a_moderator_rejection_but_approve_any_can() {
+    async fn an_owner_lifts_any_rejection_and_self_approval_needs_the_rejection_lifted() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
@@ -4325,38 +4442,47 @@ mod tests {
         )
         .await;
         let actor = rejected["data"]["rejected_by"].clone();
-        // Another reviewer's rejection holds the event: the owner's branch
-        // picks neither `approved` nor `rejected` while it stands, whatever
-        // the body sends; `rejection_reason` is never theirs to set.
-        for body in [
-            json!({"approved":true}),
-            json!({"rejected":false}),
-            json!({"approved":true,"rejected":false,"rejection_reason":"Forged reason"}),
+        // A standing rejection wins over an approval alone
+        // (updateEvent.ts:445-450).
+        let (status, still) =
+            call_as(&app, "PATCH", &path, &wallet, json!({"approved":true})).await;
+        assert_eq!(status, StatusCode::CREATED, "{still}");
+        assert_eq!(still["data"]["approved"], false);
+        assert_eq!(still["data"]["rejected"], true);
+        // The owner's `rejected: false` lifts another reviewer's rejection
+        // as it lifts their own: back to pending, with `approve_own_event`
+        // re-approving in the same edit (updateEvent.ts:196-210).
+        // `rejection_reason` is never theirs to set.
+        for (body, approved) in [
+            (json!({"rejected":false}), false),
+            (
+                json!({"approved":true,"rejected":false,"rejection_reason":"Forged reason"}),
+                true,
+            ),
         ] {
-            let (status, held) = call_as(&app, "PATCH", &path, &wallet, body).await;
-            assert_eq!(status, StatusCode::CREATED, "{held}");
-            assert_eq!(held["data"]["approved"], false);
-            assert_eq!(held["data"]["rejected"], true);
-            assert_eq!(held["data"]["rejected_by"], actor);
-            assert_eq!(held["data"]["rejection_reason"], "Moderator hold");
+            call(
+                &app,
+                "PATCH",
+                &path,
+                Some("rejection-reviewer"),
+                Some(json!({"rejected":true,"reason":"Moderator hold"})),
+            )
+            .await;
+            let (status, lifted) = call_as(&app, "PATCH", &path, &wallet, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{lifted}");
+            assert_eq!(lifted["data"]["rejected"], false, "{lifted}");
+            assert_eq!(lifted["data"]["approved"], approved, "{lifted}");
+            assert_eq!(lifted["data"]["rejected_by"], actor);
+            assert_eq!(lifted["data"]["rejection_reason"], "Moderator hold");
         }
-        // An owner who also holds `edit_any_event` edits as the owner they
-        // are: the hold stands for them too (the grant picks `rejected` for
-        // a non-owner as `updateEvent.ts:214-217` does).
-        sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"approve_own_event\",\"edit_any_event\"]' WHERE \"user\"=$1").bind(&owner).execute(&pool).await.unwrap();
-        for body in [
-            json!({"rejected":false}),
-            json!({"approved":true,"rejected":false}),
-        ] {
-            let (status, held) = call_as(&app, "PATCH", &path, &wallet, body).await;
-            assert_eq!(status, StatusCode::CREATED, "{held}");
-            assert_eq!(
-                held["data"]["rejected"], true,
-                "edit_any_event does not lift another reviewer's hold for the owner: {held}"
-            );
-            assert_eq!(held["data"]["approved"], false);
-            assert_eq!(held["data"]["rejected_by"], actor);
-        }
+        call(
+            &app,
+            "PATCH",
+            &path,
+            Some("rejection-reviewer"),
+            Some(json!({"rejected":true,"reason":"Moderator hold"})),
+        )
+        .await;
         sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"approve_any_event\"]' WHERE \"user\"=$1").bind(&owner).execute(&pool).await.unwrap();
         let (status, cleared) = call_as(
             &app,

@@ -12,14 +12,16 @@ It reads from the sources (sessions are read-only) and writes only to the
 target. It needs `psql` and libpq 16 or later (`sslrootcert=system`) and Python 3.11 or later
 (`tomllib`), nothing else; `blobs --from-s3` also needs `boto3`.
 
-Out of scope: the Catalyst content servers (`content.*` comes from peer sync),
+Out of scope: the Catalyst content servers (`content.*` comes from peer sync;
+their operator denylist file has its own import, below),
 transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
 rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
 tables it leaves to the node. `blobs` copies the blobs of the sources it knows
-(`worlds-content-server` and `camera-reel-service`), and `blobs badges` the badge art into the node's
-`BADGES_ASSETS_DIR`; the others need an external copy that fills the same
-records.
+(`worlds-content-server` and `camera-reel-service`), `blobs badges` the badge art into the node's
+`BADGES_ASSETS_DIR`, and `blobs social-service-ea` the imported communities' thumbnails, and
+`blobs events` the imported events' posters; the others need an external copy
+that fills the same records.
 
 Known limitations after a cutover: MANA-denominated credits stay spendable
 on-chain until they expire but are in no node balance, and credits from Apple
@@ -46,6 +48,20 @@ in-app purchases cannot be clawed back by a later Apple refund
   every texture the imported catalog's `assets` name from upstream's CDN (or
   `--from-dir`, a local copy laid out by path) into the node's badge art
   directory; `--verify` lists the ones it lacks (`sources/badges/MAPPING.md`).
+- **Community thumbnails.** After `run social-service-ea`, `migrate.py blobs social-service-ea
+  --to "$STORAGE_ROOT_FOLDER"` reads each imported community's picture from upstream's CDN
+  (`social/communities/<id>/raw-thumbnail.png` under `https://assets-cdn.decentraland.org/`, or
+  `--from-url`, or `--from-dir` laid out by path) into the store and records it
+  in `social.community_thumbnails`, as the node's own upload does. Communities upstream has no
+  picture for keep none, and a thumbnail the node already holds stays. A re-run retries only the
+  communities still without one (`sources/social-service-ea/MAPPING.md`).
+- **Event posters.** After `run events`, `migrate.py blobs events --to "$STORAGE_ROOT_FOLDER"`
+  reads each poster the node's events name (`/poster[-vertical]/<file>`) from upstream's bucket
+  (`https://events-assets-099ac00.decentraland.org/`, or `--from-url`, or `--from-dir` laid out
+  by path) into the store and indexes it in `explore.poster`. The node's poster read-through
+  stops with `EVENTS_MIRROR_UPSTREAM`, so run it before events API traffic switches to the node,
+  then `blobs events --verify` (`services/catalyst/docs/events.md`, "Cutover by import";
+  `sources/events/MAPPING.md`).
 - **Badge schema.** The badges steps need the badge catalog schema
   (publication columns, `criteria_steps`, the progress document,
   `social.presence_badges`) and stop without it.
@@ -53,7 +69,10 @@ in-app purchases cannot be clawed back by a later Apple refund
   (`PLACES_MIRROR_UPSTREAM`, `EVENTS_MIRROR_UPSTREAM`,
   `COMMUNITIES_MIRROR_UPSTREAM`, `WORLDS_MIRROR_UPSTREAM`, ...) before its
   import, or the next mirror pass turns imported rows back into mirrored ones.
-  The per-source `MAPPING.md` says which mirror applies.
+  The per-source `MAPPING.md` says which mirror applies. The events import is
+  the exception: the mirror never overwrites the imported (local) rows, so it
+  can stay on while the import repeats, and goes off at cutover
+  (`services/catalyst/docs/events.md`, "Cutover by import").
 - **Freeze writers and scheduled jobs before the authoritative snapshot.**
   Re-runs do not see upstream deletes (except the `whole` reconcile steps a
   manifest declares). Freezing only before `run --since last` does not remove
@@ -66,6 +85,58 @@ in-app purchases cannot be clawed back by a later Apple refund
   media need its documented external transfer; Camera uses the offline filename
   copy described in `sources/camera-reel-service/MAPPING.md`. Database
   rows alone are not a complete service migration.
+- **Content denylist file.** An old content server also hides the ids listed
+  in `<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on its host (`denylist.txt`
+  by default); the node reads only `content.denylist`. Copy that file and
+  import it, with `DATABASE_URL` set, before the node serves content:
+
+  ```sh
+  catalyst content import-denylist --file denylist.txt --added-by 0x<operator wallet>
+  ```
+
+  The old server matched those ids only as entity ids and content hashes,
+  so only lines that are one (an IPFS CIDv0 `Qm...` or CIDv1 `ba...`) are
+  imported. Any other line, a pointer such as `0,0` included, is skipped
+  and counted in `skipped_not_a_hash`, with the first 50 line numbers in
+  `skipped_not_a_hash_lines`. Each new id becomes a console row with that
+  wallet as `added_by`, and a `content`/`denylist.add` audit row whose actor
+  is `cli:<wallet>`, since the wallet is not a signed-in session. An id
+  already listed is left alone, so a re-run imports nothing. A line that is
+  not an id (not UTF-8, longer than 512 bytes, or holding whitespace or a
+  control character, such as `id # note`, after the same trim as JS
+  `String.prototype.trim`) imports nothing; the first 50 are named by number:
+  fix the copy and run again. A file larger than 60 MB, or one that would
+  take the table past 100,000 ids, imports nothing.
+
+  Imported ids are public, as console entries are: the Registry
+  `GET /denylist` lists every `content.denylist` row, with the importing
+  wallet as its `created_by`. As a console entry does, an imported content
+  hash also refuses a local deploy that references it.
+
+  The command prints `lines`, `blank`, `comments`, `duplicates`,
+  `skipped_not_a_hash`, `skipped_not_a_hash_lines`, `distinct`, `imported`
+  and `already_present`, where `distinct` counts the file's distinct entity
+  ids and hashes. Verify that `imported + already_present = distinct`, and
+  that none of the ids the command reads from the file is missing from the
+  table. `--print-ids` prints those ids, one a line, and writes nothing:
+
+  ```sh
+  catalyst content import-denylist --file denylist.txt --print-ids > denylist.ids
+  wc -l < denylist.ids    # = distinct
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+    -c 'CREATE TEMP TABLE f (id text)' -c '\copy f FROM denylist.ids' \
+    -c 'SELECT count(*) AS missing FROM f WHERE id NOT IN (SELECT id FROM content.denylist)'   # 0
+  ```
+
+  A running `serve` hides the new ids within about 65 seconds (its 60-second
+  denylist reload, then up to 5 seconds while cached `/pointer-changes` and
+  `/deployments` answers expire), a starting one at boot. The remote lists
+  (`DENYLIST_URLS`) are not imported: the node fetches them itself.
+- **Events moderators.** The events import brings no admins: the old
+  service read them from its `ADMIN_ADDRESSES` setting. Seed
+  `explore.moderators` from that value with `catalyst explore moderators-add`
+  (`services/catalyst/docs/events.md`, "Events moderators"); the node's own
+  `ADMIN_ADDRESSES` is the console's list, not this one.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 
@@ -86,6 +157,7 @@ python3 tooling/migration/migrate.py run places --since last
 python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir DIR --to "$STORAGE_ROOT_FOLDER"
 python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "$STORAGE_ROOT_FOLDER"
 python3 tooling/migration/migrate.py blobs badges --to "$BADGES_ASSETS_DIR"   # after `run badges`
+python3 tooling/migration/migrate.py blobs events --to "$STORAGE_ROOT_FOLDER"  # after `run events`
 python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb 100
 python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run   # one-off, see the worlds MAPPING.md
 ```

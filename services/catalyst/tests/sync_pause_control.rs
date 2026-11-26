@@ -31,8 +31,7 @@ use catalyst::content::sync_deployer::{DEFAULT_FLUSH_CONCURRENCY, LiveSyncDeploy
 use catalyst::storage::Storage;
 use serde_json::json;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const POLL_MS: u64 = 100;
 
@@ -82,7 +81,7 @@ async fn a_pause_stops_a_running_pointer_changes_stream_at_its_next_poll() {
     let storage = Arc::new(Storage::from_config(&temp).await.unwrap());
     let status = Arc::new(SyncStatus::default());
     let repo = Arc::new(LiveDeploymentRepository::new(pool.clone(), status.clone()));
-    let client = reqwest::Client::new();
+    let client = catalyst::content::sync::test_sync_client(reqwest::Client::new());
     let mut bloom = BloomFilter::with_capacity(1_000);
     repo.seed_deployed_entity_ids(&mut bloom).await.unwrap();
     let deployer = Arc::new(BatchDeployer::new(
@@ -92,6 +91,7 @@ async fn a_pause_stops_a_running_pointer_changes_stream_at_its_next_poll() {
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),

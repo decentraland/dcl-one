@@ -912,7 +912,9 @@ pub async fn put_files(
 
 /// `PUT .../blobs/{hash}`: the raw bytes, accepted when they hash to the
 /// CIDv1 the path names; stored in the ONE store and recorded in
-/// `uploaded_contents` (idempotent). Answers the size.
+/// `uploaded_contents` (idempotent), both under the store lock's shared side
+/// (`drafts::lock_store_shared`, 503 past its wait), so a blob found stored is not unlinked before
+/// its row commits. Answers the size.
 pub async fn accept_blob(
     pool: &PgPool,
     blobs: &Storage,
@@ -935,6 +937,8 @@ pub async fn accept_blob(
         .into());
     }
     let size = bytes.len() as i64;
+    let mut tx = pool.begin().await?;
+    crate::drafts::lock_store_shared(&mut tx).await?;
     if !blobs
         .exist(hash)
         .await
@@ -952,8 +956,9 @@ pub async fn accept_blob(
     .bind(hash)
     .bind(size)
     .bind(owner)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(size)
 }
 

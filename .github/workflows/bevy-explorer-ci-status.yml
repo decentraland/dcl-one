@@ -84,26 +84,21 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/actions/bevy-explorer-ci-status
           sparse-checkout-cone-mode: false
-      - name: Set the build section to pending
+      - name: Compose the pending sections
+        run: |
+          mkdir -p pending
+          printf '%s\n\n%s\n' \
+            "[![Build](https://img.shields.io/badge/Build-Pending!-yellow?logo=webassembly&logoColor=white&style=for-the-badge)]($RUN_URL)" \
+            "A new [run]($RUN_URL) is building the explorer; its products land here when they are built." > pending/build.md
+          printf '%s\n\n%s\n' \
+            "[![Tests](https://img.shields.io/badge/Tests-Pending!-yellow?logo=rust&logoColor=white&style=for-the-badge)]($RUN_URL)" \
+            "A new [run]($RUN_URL) is testing the explorer; its results land here when the tests end." > pending/tests.md
+      - name: Set the build and tests sections to pending
         uses: ./.github/actions/bevy-explorer-ci-status
         with:
           pr-number: ${{ needs.resolve.outputs.pr }}
-          section: build
+          sections-dir: pending
           github-token: ${{ github.token }}
-          body: |-
-            [![Build](https://img.shields.io/badge/Build-Pending!-yellow?logo=webassembly&logoColor=white&style=for-the-badge)](${{ env.RUN_URL }})
-
-            A new [run](${{ env.RUN_URL }}) is building the explorer; its products land here when they are built.
-      - name: Set the tests section to pending
-        uses: ./.github/actions/bevy-explorer-ci-status
-        with:
-          pr-number: ${{ needs.resolve.outputs.pr }}
-          section: tests
-          github-token: ${{ github.token }}
-          body: |-
-            [![Tests](https://img.shields.io/badge/Tests-Pending!-yellow?logo=rust&logoColor=white&style=for-the-badge)](${{ env.RUN_URL }})
-
-            A new [run](${{ env.RUN_URL }}) is testing the explorer; its results land here when the tests end.
   tests-ended:
     name: Tests ended
     needs: [resolve, pending]
@@ -174,9 +169,15 @@ jobs:
           mkdir -p sections
           bash .github/actions/bevy-explorer-ci-status/explorer-ci-sections.sh
           cat sections/tests.md
-      - name: Check that the run still matches the PR head
+      - name: Check that the run goes on and still matches the PR head
         id: current
         run: |
+          state=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')
+          if [ "$state" = completed ]; then
+            echo "::notice::Run $RUN_ID has ended: its report writes the tests section."
+            echo "write=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           live=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
           if [ "$live" = "$HEAD_SHA" ]; then
             echo "write=true" >> "$GITHUB_OUTPUT"
@@ -270,7 +271,8 @@ jobs:
         id: current
         run: |
           # After the run ends its report links the preview, and this section must not replace it.
-          if [ "$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')" = completed ]; then
+          state=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')
+          if [ "$state" = completed ]; then
             echo "::notice::Run $RUN_ID has ended: its report writes the build section."
             echo "write=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -352,19 +354,11 @@ jobs:
             echo "::notice::The run for ${HEAD_SHA:0:7} is older than #$PR_NUMBER's head ${live:0:7}."
             echo "write=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Update the build section
+      - name: Update the build and tests sections
         if: steps.current.outputs.write == 'true'
         uses: ./.github/actions/bevy-explorer-ci-status
         with:
           pr-number: ${{ needs.resolve.outputs.pr }}
-          section: build
           github-token: ${{ github.token }}
-          body-file: sections/build.md
-      - name: Update the tests section
-        if: steps.current.outputs.write == 'true' && hashFiles('sections/tests.md') != ''
-        uses: ./.github/actions/bevy-explorer-ci-status
-        with:
-          pr-number: ${{ needs.resolve.outputs.pr }}
-          section: tests
-          github-token: ${{ github.token }}
-          body-file: sections/tests.md
+          # build.md, and tests.md when explorer-ci-sections.sh wrote one.
+          sections-dir: sections

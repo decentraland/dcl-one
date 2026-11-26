@@ -54,6 +54,7 @@ import type {
 } from "./types";
 
 type Opts = Pick<RequestInput, "signal" | "headers">;
+type SignedOpts = Opts & Pick<RequestInput, "metadata">;
 type Q = QueryParams;
 
 export function createShopClient(options: ShopApiOptions | ShopApi) {
@@ -176,8 +177,9 @@ export function createShopClient(options: ShopApiOptions | ShopApi) {
       paymentIntent: <T = PackIntentOut>(sku: string, o?: Opts) => get<T>(E.packPaymentIntent, { params: { sku }, ...o }),
     },
     authorizations: {
-      authorize: (line: CreditLineRequest, o?: Opts) => get<CreditAuthorization>(E.authorizeCredit, { body: line, ...o }),
-      authorizeGroup: (body: CreditBatchRequest, o?: Opts) => get<CreditBatchAuthorization>(E.authorizeCreditBatch, { body, ...o }),
+      /** `metadata` is signed with the request: a Credits part is judged on the session it states (`walletKind`). */
+      authorize: (line: CreditLineRequest, o?: SignedOpts) => get<CreditAuthorization>(E.authorizeCredit, { body: line, ...o }),
+      authorizeGroup: (body: CreditBatchRequest, o?: SignedOpts) => get<CreditBatchAuthorization>(E.authorizeCreditBatch, { body, ...o }),
       cancel: (body: CancelCreditsRequest, o?: Opts) => get<CancelCreditsResult>(E.cancelCreditAuthorizations, { body, ...o }),
       submitted: (body: CreditSubmissionRequest, o?: Opts) => get<CreditSubmissionResult>(E.reportCreditSubmission, { body, ...o }),
       publication: <T = unknown>(body: unknown, o?: Opts) => get<T>(E.authorizePublication, { body, ...o }),

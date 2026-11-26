@@ -1,0 +1,33 @@
+.subnav {
+  position: sticky;
+  /* Under Sites' top bar. */
+  top: var(--site-header-h, 92px);
+  z-index: 10;
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+/* On the landing, Sites' top bar overlays the page. The section's violet field fills the room of the two bars
+   at the top of the page and scrolls away with it, so they read violet until the page scrolls under them. */
+.field {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(var(--site-header-h, 92px) + 44px);
+  /* Figma "Radial BG" page field, sized to the viewport so the bars match the section's other pages. */
+  background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
+  background-size: 100% 100vh;
+
+  @media (min-width: 768px) {
+    height: calc(var(--site-header-h, 92px) + 64px);
+  }
+}
+
+.topBarSpace {
+  height: var(--site-header-h, 92px);
+}
+
+/* The landing's hero leaves the top bar's height above itself. The tabs already hold that room, so it is taken back. */
+.heroOffset {
+  margin-bottom: calc(-1 * var(--site-header-h, 92px));
+}

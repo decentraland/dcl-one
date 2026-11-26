@@ -21,8 +21,9 @@ pub use recovery::RecoveryFailure;
 #[cfg(test)]
 mod recovery_tests;
 
-const PUBLIC_TTL: Duration = Duration::from_secs(90);
+pub(crate) const PUBLIC_TTL: Duration = Duration::from_secs(90);
 const ADMISSION_TTL: Duration = Duration::from_secs(5);
+const AUTHORITATIVE_SERVER_IDENTITY: &str = "authoritative-server";
 
 #[derive(Debug, Clone, Copy)]
 pub struct CommsStats {
@@ -31,8 +32,8 @@ pub struct CommsStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("wallet has memberships in several distinct worlds")]
-pub struct AmbiguousWorld;
+#[error("world presence observation is unavailable or stale")]
+pub struct PresenceUnavailable;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) enum Scope {
@@ -62,14 +63,18 @@ impl Scope {
             return owner.key() == world;
         }
         let room = room.to_lowercase();
-        ["world-scene-room-", "world-", "scene-"]
-            .iter()
-            .any(|prefix| {
-                room.strip_prefix(prefix).is_some_and(|rest| {
-                    rest.strip_prefix(world)
-                        .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
-                })
+        [
+            crate::rooms::LEGACY_WORLD_SCENE_ROOM_PREFIX,
+            crate::rooms::WORLD_ROOM_PREFIX,
+            "scene-",
+        ]
+        .iter()
+        .any(|prefix| {
+            room.strip_prefix(prefix).is_some_and(|rest| {
+                rest.strip_prefix(world)
+                    .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
             })
+        })
     }
 }
 
@@ -96,6 +101,7 @@ struct RecoveredRoom {
     sid: String,
     realm: String,
     is_world: bool,
+    legacy: bool,
     scene: Option<String>,
     participants: Vec<crate::shared::livekit::OccupancyParticipant>,
     observed: Observation,
@@ -116,6 +122,15 @@ struct Complete {
     refused: Vec<String>,
     observed: Option<Observation>,
     unknown_generation: u64,
+}
+impl Complete {
+    fn uncertain_for(&self, scope: &Scope) -> bool {
+        self.refused.iter().any(|room| scope.may_hold(room))
+            || self
+                .rooms
+                .iter()
+                .any(|room| room.legacy && scope.may_hold(&room.name))
+    }
 }
 struct AdmissionSample {
     count: i64,
@@ -139,7 +154,14 @@ pub struct Presence {
     admission_flight: tokio::sync::Semaphore,
     waiters: tokio::sync::Semaphore,
     dirty: tokio::sync::Notify,
+    // Social's online view: World room events and every read's World participants.
+    topology: std::sync::OnceLock<Arc<crate::topology::Topology>>,
+    // The World participants the background read in flight has listed so far.
+    partial: Mutex<Option<PartialRead>>,
 }
+
+/// A read's start and the `(sid, identity)` World participants it has listed.
+type PartialRead = (Instant, Vec<(String, String)>);
 impl Default for Presence {
     fn default() -> Self {
         Self {
@@ -149,12 +171,14 @@ impl Default for Presence {
             admission_flight: tokio::sync::Semaphore::new(1),
             waiters: tokio::sync::Semaphore::new(64),
             dirty: tokio::sync::Notify::new(),
+            topology: std::sync::OnceLock::new(),
+            partial: Mutex::new(None),
         }
     }
 }
 
 pub(crate) fn counts_as_player(identity: &str) -> bool {
-    identity != "authoritative-server"
+    identity != AUTHORITATIVE_SERVER_IDENTITY
 }
 
 impl Presence {
@@ -179,6 +203,48 @@ impl Presence {
         self.dirty.notify_one();
     }
 
+    /// Feeds World room events and every complete observation's World participants
+    /// to `topology` (once).
+    pub fn attach_topology(&self, topology: Arc<crate::topology::Topology>) {
+        if self.topology.set(topology).is_ok() {
+            let complete = self.complete();
+            if let Some(observed) = &complete.observed {
+                self.observe_world(&complete.rooms, observed.mono, true);
+            }
+        }
+    }
+
+    /// One verified World join or leave, from this replica's webhook or another's.
+    /// Genesis presence comes from Pulse islands, so other rooms are ignored.
+    pub fn apply_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent) {
+        use crate::protocol::bus::room_events::{RoomEventKind, RoomType};
+        let Some(topology) = self.topology.get() else {
+            return;
+        };
+        let joined = match RoomEventKind::try_from(event.kind) {
+            Ok(RoomEventKind::Joined) => true,
+            Ok(RoomEventKind::Left) => false,
+            _ => return,
+        };
+        if event.room_type == RoomType::World as i32 && counts_as_player(&event.identity) {
+            topology.apply_world_event(&event.participant_sid, &event.identity, joined);
+        }
+    }
+
+    /// A complete read of every World room that started at `started`.
+    fn observe_world(&self, rooms: &[RecoveredRoom], started: Instant, complete: bool) {
+        let Some(topology) = self.topology.get() else {
+            return;
+        };
+        let participants = rooms
+            .iter()
+            .filter(|r| r.is_world && !r.legacy)
+            .flat_map(|r| &r.participants)
+            .filter(|p| counts_as_player(&p.identity))
+            .map(|p| (p.sid.as_str(), p.identity.as_str()));
+        topology.observe_world(started, participants, complete);
+    }
+
     fn complete(&self) -> Arc<Complete> {
         self.state.lock().complete.clone()
     }
@@ -190,56 +256,45 @@ impl Presence {
             .unwrap_or(chrono::DateTime::UNIX_EPOCH)
             .to_rfc3339_opts(SecondsFormat::Millis, true)
     }
-    fn visible(&self) -> Arc<Complete> {
+    fn visible(&self) -> Result<Arc<Complete>, PresenceUnavailable> {
         let complete = self.complete();
         if complete
             .observed
             .as_ref()
             .is_some_and(|o| o.fresh(PUBLIC_TTL))
         {
-            complete
+            Ok(complete)
         } else {
-            Arc::new(Complete::default())
+            Err(PresenceUnavailable)
         }
     }
-    /// The world of the wallet's latest join, as upstream's peers registry
-    /// keeps the last join; memberships in several worlds joined at the same
-    /// instant (or with no join time) are undecided.
-    pub fn get_peer_world(&self, wallet: &str) -> Result<Option<String>, AmbiguousWorld> {
-        if !counts_as_player(wallet) {
+    /// The world of the wallet's latest join. Equal join times, including
+    /// missing timestamps, select the first world in name order.
+    pub fn get_peer_world(&self, wallet: &str) -> Result<Option<String>, PresenceUnavailable> {
+        let view = self.visible()?;
+        if wallet.eq_ignore_ascii_case(AUTHORITATIVE_SERVER_IDENTITY) {
             return Ok(None);
         }
-        let view = self.visible();
-        let mut latest: HashMap<&str, i64> = HashMap::new();
-        for room in view.rooms.iter().filter(|r| r.is_world) {
-            for p in &room.participants {
-                if counts_as_player(&p.identity) && p.identity.eq_ignore_ascii_case(wallet) {
-                    let at = latest.entry(room.realm.as_str()).or_insert(i64::MIN);
-                    *at = (*at).max(p.joined_at_ms);
-                }
-            }
-        }
-        let Some(newest) = latest.values().copied().max() else {
-            return Ok(None);
-        };
-        let mut winners = latest.into_iter().filter(|(_, at)| *at == newest);
-        let (world, _) = winners.next().expect("the maximum is one of the values");
-        if winners.next().is_some() {
-            return Err(AmbiguousWorld);
-        }
-        Ok(Some(world.to_owned()))
+        Ok(view
+            .rooms
+            .iter()
+            .filter(|room| room.is_world)
+            .flat_map(|room| {
+                room.participants
+                    .iter()
+                    .filter(|p| {
+                        counts_as_player(&p.identity) && p.identity.eq_ignore_ascii_case(wallet)
+                    })
+                    .map(|p| (p.joined_at_ms, std::cmp::Reverse(room.realm.as_str())))
+            })
+            .max()
+            .map(|(_, world)| world.0.to_owned()))
     }
     pub fn world_counts(&self) -> Vec<(String, i64)> {
-        Self::counts_of(&self.complete())
+        self.visible()
+            .map_or_else(|_| Vec::new(), |view| Self::counts_of(&view))
     }
     fn counts_of(complete: &Complete) -> Vec<(String, i64)> {
-        if !complete
-            .observed
-            .as_ref()
-            .is_some_and(|o| o.fresh(PUBLIC_TTL))
-        {
-            return vec![];
-        }
         let mut counts = HashMap::new();
         for room in &complete.rooms {
             if room.is_world && room.scene.is_none() && room.count() > 0 {
@@ -251,9 +306,12 @@ impl Presence {
         out
     }
     pub fn comms_stats(&self) -> CommsStats {
-        let view = self.visible();
+        let Ok(view) = self.visible() else {
+            return CommsStats { rooms: 0, users: 0 };
+        };
+        let rooms = view.rooms.iter().filter(|r| r.is_world && !r.legacy);
         let mut identities = HashSet::new();
-        for room in view.rooms.iter().filter(|r| r.is_world) {
+        for room in rooms.clone() {
             for p in &room.participants {
                 if counts_as_player(&p.identity) {
                     identities.insert(p.identity.as_str());
@@ -261,11 +319,7 @@ impl Presence {
             }
         }
         CommsStats {
-            rooms: view
-                .rooms
-                .iter()
-                .filter(|r| r.is_world && r.count() > 0)
-                .count() as i64,
+            rooms: rooms.filter(|r| r.count() > 0).count() as i64,
             users: identities.len() as i64,
         }
     }
@@ -287,15 +341,9 @@ impl Presence {
         realm: &str,
         scene: Option<&str>,
     ) -> Option<(chrono::DateTime<chrono::Utc>, HashSet<String>)> {
-        let view = self.visible();
-        view.observed.as_ref()?;
+        let view = self.visible().ok()?;
         let realm = realm.to_lowercase();
-        if scene.is_none()
-            && view
-                .refused
-                .iter()
-                .any(|r| Scope::Lobby(realm.clone()).may_hold(r))
-        {
+        if scene.is_none() && view.uncertain_for(&Scope::Lobby(realm.clone())) {
             return None;
         }
         let rooms: Vec<_> = view
@@ -319,6 +367,26 @@ impl Presence {
             .collect();
         Some((read_at, wallets))
     }
+    /// Positive evidence of a specific session from a fresh, complete
+    /// LiveKit roster. Webhook invalidation makes an older roster unusable.
+    pub fn session_observed_at(
+        &self,
+        room: &str,
+        participant_sid: &str,
+        wallet: &str,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let state = self.state.lock();
+        let roster = state.complete.rooms.iter().find(|r| r.name == room)?;
+        (roster.observed.fresh(PUBLIC_TTL)
+            && state.complete.unknown_generation == state.unknown_generation
+            && state.generations.get(room) == Some(&roster.generation)
+            && roster
+                .participants
+                .iter()
+                .any(|p| p.sid == participant_sid && p.identity.eq_ignore_ascii_case(wallet)))
+        .then_some(roster.observed.utc)
+    }
+
     fn admission_count(&self, scope: &Scope) -> Option<i64> {
         let state = self.state.lock();
         if let Some(sample) = state.admission.get(scope).filter(|sample| {
@@ -333,7 +401,7 @@ impl Presence {
         }
         let complete = &state.complete;
         if complete.unknown_generation != state.unknown_generation
-            || complete.refused.iter().any(|room| scope.may_hold(room))
+            || complete.uncertain_for(scope)
             || !complete
                 .observed
                 .as_ref()
@@ -383,6 +451,7 @@ impl Presence {
                     sid: format!("fixture:{room}"),
                     realm: world.to_lowercase(),
                     is_world: true,
+                    legacy: false,
                     scene: scene.then(|| "fixture-scene".into()),
                     participants: vec![],
                     observed: observed.clone(),
@@ -401,6 +470,9 @@ impl Presence {
         }
         view.observed = Some(observed);
         state.generations.entry(room.into()).or_insert(0);
+        let complete = state.complete.clone();
+        drop(state);
+        self.observe_world(&complete.rooms, Instant::now(), true);
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn peer_left(&self, identity: &str, room: &str, _: bool) {
@@ -409,6 +481,11 @@ impl Presence {
             if r.name == room {
                 r.participants.retain(|p| p.identity != identity);
             }
+        }
+        let complete = state.complete.clone();
+        drop(state);
+        if complete.observed.is_some() {
+            self.observe_world(&complete.rooms, Instant::now(), true);
         }
     }
 }
@@ -433,14 +510,16 @@ pub async fn connected_world(
     State(presence): State<Arc<Presence>>,
     Path(wallet): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    match presence.get_peer_world(&wallet).map_err(|_| {
-        ApiError::service_unavailable("Connected world could not be decided; retry shortly.")
-    })? {
+    match presence.get_peer_world(&wallet).map_err(unavailable)? {
         Some(world) => Ok(Json(json!({ "wallet": wallet, "world": world }))),
         None => Err(ApiError::not_found(format!(
             "Wallet {wallet} is not connected to any world"
         ))),
     }
+}
+
+fn unavailable(_: PresenceUnavailable) -> ApiError {
+    ApiError::service_unavailable("World presence is unavailable. Retry shortly.")
 }
 
 /// One world's instantaneous occupancy. `worldName` is camelCase on the wire
@@ -476,28 +555,30 @@ pub struct LiveDataResponse {
 }
 
 /// GET /live-data
-pub async fn live_data(State(presence): State<Arc<Presence>>) -> Json<LiveDataResponse> {
+pub async fn live_data(
+    State(presence): State<Arc<Presence>>,
+) -> Result<Json<LiveDataResponse>, ApiError> {
     // Capture membership and source clock from the same immutable generation.
-    let complete = presence.complete();
+    let complete = presence.visible().map_err(unavailable)?;
     let counts = Presence::counts_of(&complete);
     let last_updated = complete
         .observed
         .as_ref()
-        .map(|o| o.utc)
-        .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+        .ok_or_else(|| unavailable(PresenceUnavailable))?
+        .utc
         .to_rfc3339_opts(SecondsFormat::Millis, true);
     let total: i64 = counts.iter().map(|(_, c)| c).sum();
     let per_world = counts
         .into_iter()
         .map(|(world_name, users)| WorldOccupancy { world_name, users })
         .collect();
-    Json(LiveDataResponse {
+    Ok(Json(LiveDataResponse {
         data: LiveDataPayload {
             total_users: total,
             per_world,
         },
         last_updated,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -535,6 +616,34 @@ mod occupants_tests {
             .room_occupants("party.dcl.eth", Some("bafyscene"))
             .unwrap();
         assert!(none.is_empty(), "no Genesis scene room of that realm");
+    }
+
+    #[test]
+    fn session_proof_requires_the_exact_participant_and_current_room_generation() {
+        let presence = Presence::new();
+        let room = "world-party.dcl.eth";
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", room, false);
+        let (session, at) = {
+            let mut state = presence.state.lock();
+            let roster = &state.complete.rooms[0];
+            let session = roster.participants[0].sid.clone();
+            let at = roster.observed.utc;
+            let generation = roster.generation;
+            state.generations.insert(room.to_owned(), generation);
+            (session, at)
+        };
+        assert_eq!(
+            presence.session_observed_at(room, &session, "0xab"),
+            Some(at)
+        );
+        assert_eq!(
+            presence.session_observed_at(room, "wrong-session", "0xab"),
+            None
+        );
+        assert_eq!(presence.session_observed_at(room, &session, "0xcd"), None);
+        presence.invalidate_room(room);
+        assert_eq!(presence.session_observed_at(room, &session, "0xab"), None);
     }
 
     #[test]

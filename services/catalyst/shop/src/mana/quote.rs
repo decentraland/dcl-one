@@ -509,6 +509,10 @@ pub async fn quote_line(
             _ => None,
         },
         mana,
+        splittable: crate::policy::offered_splittable(
+            state.market.credits_mana_split(),
+            &authoritative,
+        ),
     }))
 }
 
@@ -797,6 +801,27 @@ mod tests {
             execution.allowance.as_ref().map(|a| a.amount.get()),
             Some(U256::from(1_530_000_000_000_000_000u128))
         );
+
+        // Once the collections index owns Polygon, a withdrawn publication
+        // is the index's unavailability, never an incomplete registry fact.
+        use crate::market::catalogue::owning;
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        assert!(
+            facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+                .await
+                .is_ok()
+        );
+        owning::rewind(&pool, "matic").await;
+        let refused = facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused,
+            facts::ResolveError::IndexNotReady {
+                index: "collections-index"
+            }
+        );
+        assert_eq!(line_error(0, refused).source, Some("collections-index"));
         db.drop().await;
     }
 }

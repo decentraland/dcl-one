@@ -27,6 +27,7 @@ import type {
   OptimizeScanResult,
   OptimizeToolsInfo,
 } from './optimizer';
+import type { RecordingResult, RecordingStartResult, RecordingToolsStatus } from './recording';
 
 export type IpcResult<T> = {
   success: true;
@@ -62,14 +63,31 @@ export type SceneBuildEvent = { kind: 'rebuild'; file: string } | { kind: 'bundl
 
 export type BevyRealmBuildEvent = SceneBuildEvent & { path: string };
 
-export const BEVY_REALM_EXIT_EVENT = 'bevyRealm.exit';
+// What main does about the Bevy realm of a project after an unexpected stop (bevy-realm.ts).
+// Main owns the restart and its retry cap; the editor shows the outcome and reloads the
+// inspector on the new realm.
+export const BEVY_REALM_SUPERVISION_EVENT = 'bevyRealm.supervision';
 
-export type BevyRealmExitEvent = {
-  path: string;
-  message: string;
-  /** How long the realm had been serving before it exited. */
-  uptimeMs: number;
-};
+/**
+ * `realm`: the realm process stopped. `server`: only its Multiplayer Server did; the realm
+ * still serves the editor. `restart`: an automatic restart failed to start a new realm.
+ */
+export type BevyRealmStopCause = 'realm' | 'server' | 'restart';
+
+export type BevyRealmSupervisionEvent =
+  | {
+      kind: 'stopped';
+      path: string;
+      cause: BevyRealmStopCause;
+      message: string;
+      /** Delay before main restarts the realm, or null when it gave up. */
+      restartInMs: number | null;
+      /** The Multiplayer Server cannot run on this machine; the realm goes on without it. */
+      unavailable?: boolean;
+    }
+  /** The realm is being replaced now; its URLs stop working. */
+  | { kind: 'restarting'; path: string }
+  | { kind: 'restarted'; path: string; url: string; wsUrl: string };
 
 // Asset files added/changed/removed in a project's `assets/` tree from OUTSIDE the editor
 // (main → renderer → the inspector, which re-fetches its asset catalog). Lets the project
@@ -177,6 +195,7 @@ export interface MobileDebugBroadcastResult {
 export interface Ipc {
   'electron.getEnvOverride': () => Env | null;
   'electron.getUserDataPath': () => string;
+  'electron.getDefaultScenesPath': () => string;
   'electron.getAppVersion': () => Promise<string>;
   'updater.getDownloadedVersion': () => string | null;
   'updater.setupUpdaterEvents': () => void;
@@ -202,15 +221,37 @@ export interface Ipc {
   'sceneExport.cancel': (entityId: string) => Promise<void>;
   'landUnpublish.prepare': (parcel: string) => Promise<EmptySceneDraft>;
   'landUnpublish.deploy': (request: EmptySceneDeploy) => Promise<void>;
+  'electron.fetchAuthIdentity': (
+    url: string,
+    id: string,
+    verifier: string,
+  ) => Promise<{ status: number; body: string }>;
   'electron.openExternal': (url: string) => Promise<void>;
+  'electron.openDeepLink': (url: string) => Promise<boolean>;
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
+  'electron.logRendererError': (entry: RendererErrorLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
+  // Bring the calling window to the front (a dialog opened there from another window).
+  'electron.focusWindow': () => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
   'optimizer.run': (path: string, options: OptimizeOptions) => Promise<OptimizeResult>;
   'optimizer.revert': (path: string) => Promise<{ restored: number }>;
   'optimizer.tools': () => Promise<OptimizeToolsInfo>;
   'optimizer.installTools': (path: string) => Promise<OptimizeToolsInfo>;
+  'recording.start': (
+    projectPath: string,
+    projectTitle: string,
+    language: string,
+  ) => Promise<RecordingStartResult>;
+  'recording.stop': (sessionId: string) => Promise<RecordingResult>;
+  'recording.abort': (sessionId: string) => Promise<void>;
+  'recording.cancel': (sessionId: string) => Promise<void>;
+  'recording.skipTranscription': (sessionId: string) => Promise<void>;
+  'recording.toolsStatus': (language: string) => Promise<RecordingToolsStatus>;
+  'recording.installTools': (language: string) => Promise<void>;
+  'recording.discard': (dir: string) => Promise<void>;
+  'recording.combinedContext': (dirs: string[]) => Promise<string>;
   'metrics.request': (request: MetricsRequest) => Promise<MetricsResponse>;
 
   // Opt-in AI conversation sharing: the on-disk queue of redacted turn records. Main fills it;
@@ -231,6 +272,7 @@ export interface Ipc {
   'inspector.detachSceneDebugger': (path: string) => void;
   'bevyRealm.start': (path: string) => Promise<{ url: string; wsUrl: string }>;
   'bevyRealm.kill': (path: string) => Promise<void>;
+  'bevyRealm.ensure': (path: string) => Promise<{ url: string; wsUrl: string }>;
   // Watch a project's assets/ tree for out-of-editor file changes, pushing
   // PROJECT_ASSETS_CHANGED_EVENT when one lands (#512). Idempotent per path.
   'projectWatcher.start': (path: string) => Promise<void>;
@@ -357,3 +399,12 @@ export type DeploymentLogEntry =
       baseParcel: string;
     }
   | { outcome: 'failed'; error: string };
+
+/** An error a screen crashed on, written to main.log so a user's log shows it. */
+export type RendererErrorLogEntry = {
+  /** The error boundary that caught it. */
+  boundary: string;
+  /** The error's stack, or its message when it has none. */
+  error: string;
+  componentStack?: string;
+};

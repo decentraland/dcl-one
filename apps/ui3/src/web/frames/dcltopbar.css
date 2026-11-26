@@ -319,3 +319,5 @@
 }
 
 html[data-embed="1"] .dtb { display: none; }
+
+.dtb__mobile-sections { padding: 20px 0 var(--dcl-space-8); }

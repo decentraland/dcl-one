@@ -32,11 +32,13 @@ pub const PREFIX: &str = "/shop-api";
 /// web `PackOut` shape), `GET /credits/wallet/{address}/balance` and
 /// `POST /v1/payments/verify`.
 pub const ALIASES: &[&str] = &[
+    "GET /shop-api/v1/rates/mana-usd /marketplace-api/v1/rates/mana-usd",
     "POST /shop-api/v1/users /credits/users",
     "DELETE /shop-api/v1/users/{address} /credits/users/{address}",
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
     "GET /shop-api/v1/users/{address}/progress /credits/users/{address}/progress",
     "GET /shop-api/v1/users/{address}/credits /credits/users/{address}/credits",
+    "GET /shop-api/v1/users/{address}/credits/stream /credits/users/{address}/credits/stream",
     "GET /shop-api/v1/users/{address}/purchases /credits/users/{address}/purchases",
     "GET /shop-api/v1/users/{address}/credit-orders /credits/users/{address}/credit-orders",
     "GET /shop-api/v1/packs /credits/credits/packs",
@@ -50,6 +52,7 @@ pub const ALIASES: &[&str] = &[
     "POST /shop-api/v1/credit-authorizations/batch /credits/credits/authorize/batch",
     "POST /shop-api/v1/credit-authorizations/cancel /credits/credits/authorize/cancel",
     "POST /shop-api/v1/credit-authorizations/submitted /credits/credits/authorize/submitted",
+    "GET /shop-api/v1/credit-authorizations/{salt} /credits/credits/authorize/{salt}",
     "GET /shop-api/v1/names/credit-route /credits/credits-name-route",
     "GET /shop-api/v1/credit-usage-index/status /credits/usage-index/status",
     "POST /shop-api/v1/credit-topups/mana /credits/topup/mana",
@@ -81,11 +84,16 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/admin/purchases /credits/admin/purchases",
     "GET /shop-api/admin/checkouts /credits/admin/checkouts",
     "GET /shop-api/admin/credits/ledger /credits/admin/ledger",
+    "GET /shop-api/admin/credits /credits/credits",
+    "GET /shop-api/admin/credit-reasons /credits/credit-reasons",
+    "GET /shop-api/admin/ledger-stats /credits/admin/ledger-stats",
+    "GET /shop-api/admin/purchase-audit /credits/admin/purchase-audit",
     "POST /shop-api/admin/checkouts/{id}/refund /credits/admin/checkouts/{id}/refund",
     "POST /shop-api/admin/checkouts/{id}/force-fulfill /credits/admin/checkouts/{id}/force-fulfill",
     "POST /shop-api/admin/grants/{escrow_ref}/reclaim /credits/admin/grants/{escrow_ref}/reclaim",
     "POST /shop-api/admin/grants/{escrow_ref}/release /credits/admin/grants/{escrow_ref}/release",
     "GET /shop-api/admin/credits/reconcile /credits/admin/reconcile",
+    "POST /shop-api/admin/credits/test-purchase-email /credits/admin/test-purchase-email",
     "POST /shop-api/admin/broker/approve-mana /v1/admin/collections/approve-mana /transactions-api/v1/admin/collections/approve-mana",
     "POST /shop-api/admin/names/approve-mana /v1/admin/names/approve-mana /transactions-api/v1/admin/names/approve-mana",
     "GET /shop-api/admin/moderation/flags /marketplace-api/v1/admin/moderation/flags",
@@ -343,7 +351,7 @@ pub(crate) mod tests {
             pool.clone(),
             Arc::new(storage),
             outfits::Settings {
-                creators: Vec::new(),
+                creators: None,
                 writes_enabled: true,
             },
             None,
@@ -415,6 +423,78 @@ pub(crate) mod tests {
             }
         }
         out
+    }
+
+    /// A signed request's preflight to the relay, waitlist, outfits and rentals routes, at each
+    /// mount, answers 204 to a Decentraland origin with that origin, credentials and the requested
+    /// `x-identity-*` headers, and grants any other origin no allow-origin, method or header.
+    #[tokio::test]
+    async fn signed_preflights_answer_the_decentraland_origins_only() {
+        let root =
+            std::env::temp_dir().join(format!("catalyst-shop-cors-{}", uuid::Uuid::new_v4()));
+        let credits = Arc::new(credits::State::new(
+            lazy_pool(),
+            Outbound::for_tests(),
+            credits::Settings::for_tests(),
+            credits::Sources {
+                market: None,
+                price: None,
+                economy: None,
+            },
+            None,
+        ));
+        let app = mounted_with_credits(&root, credits).await;
+        let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-metadata,x-identity-timestamp";
+        for path in [
+            "/v1/transactions",
+            "/transactions-api/v1/transactions",
+            "/shop-api/v1/outfits",
+            "/shop-api/v1/outfits/thumbnails",
+            "/shop-api/v1/notify-requests",
+            "/v1/rentals-listings",
+            "/signatures-api/v1/rentals-listings",
+            "/shop-api/v1/rentals-listings",
+        ] {
+            for (origin, listed) in [
+                ("https://decentraland.org", true),
+                ("https://example.org", false),
+            ] {
+                let preflight = Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri(path)
+                    .header("origin", origin)
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", requested)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = app.clone().oneshot(preflight).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{path} {origin}");
+                let h = resp.headers();
+                assert_eq!(
+                    h.get("access-control-allow-headers")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(requested),
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-methods"),
+                    listed,
+                    "{path} {origin}"
+                );
+                assert_eq!(
+                    h.get("access-control-allow-origin")
+                        .map(|v| v.to_str().unwrap()),
+                    listed.then_some(origin),
+                    "{path}"
+                );
+                assert_eq!(
+                    h.contains_key("access-control-allow-credentials"),
+                    listed,
+                    "{path} {origin}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

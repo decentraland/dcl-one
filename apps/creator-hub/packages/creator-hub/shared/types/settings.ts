@@ -1,4 +1,5 @@
 import type { AiSharingConsentByWallet, AiSharingPendingByWallet } from './ai-sharing';
+import type { AnalyticsWatchlistByWallet } from './analytics-watchlist';
 export enum DEPENDENCY_UPDATE_STRATEGY {
   AUTO_UPDATE = 'auto_update',
   NOTIFY = 'notify',
@@ -57,6 +58,9 @@ export type AppSettings = {
   renderer: RENDERER;
   aiAssistant: boolean;
   aiAssistantPromoted?: boolean;
+  // Marker for the one-time move of `scenesPath` off the hidden app data folder — see
+  // `promoteScenesPath`.
+  scenesPathPromoted?: boolean;
   // Opt-in: let AI agents running OUTSIDE the app (Claude Code in a terminal or VS Code,
   // Codex, Claude Desktop…) use the Creator Hub MCP server. While on, its URL + token are shown
   // in settings and written to the app data folder as `mcp-server.json` and into the open scene
@@ -72,6 +76,9 @@ export type AppSettings = {
   // The creator ticked "don't show this again" on the Optimize tools disclosure. Per machine;
   // the install screen still says when tools are being downloaded.
   optimizerConsentAcknowledged?: boolean;
+  // The creator has seen the session recorder's explanation (what Record captures) once; the
+  // Record button starts right away from then on. Per machine.
+  recordingConsentAcknowledged?: boolean;
   // Dev/QA only: point the inspector's smart-item catalog at the development CDN
   // (builder-items.decentraland.zone) instead of production, so assets uploaded from a PR via
   // `/upload-assets` can be tested before merge. The toggle is shown and honored ONLY in
@@ -82,6 +89,9 @@ export type AppSettings = {
   aiDataSharing?: AiSharingConsentByWallet;
   // Erasures and ratings for the sharing service that haven't reached it yet, per wallet.
   aiSharingPending?: AiSharingPendingByWallet;
+  // Places pinned to the Analytics watchlist, per wallet. Not in DEFAULT_CONFIG: absent reads as
+  // no pins (`watchlistFor`). Written only by `setAnalyticsWatchlist`, like the AI sharing keys.
+  analyticsWatchlist?: AnalyticsWatchlistByWallet;
 };
 
 export interface ReleaseNotes {

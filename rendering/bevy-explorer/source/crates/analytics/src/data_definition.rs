@@ -8,7 +8,7 @@ const PLATFORM: &str = std::env::consts::OS;
 const PLATFORM: &str = "web";
 
 /// Mobile's wallet value before a sign-in, and after a sign-out.
-const UNAUTHENTICATED: &str = "unauthenticated";
+pub(crate) const UNAUTHENTICATED: &str = "unauthenticated";
 
 #[derive(Serialize)]
 pub struct SegmentMetricEventBody {
@@ -25,6 +25,34 @@ pub struct SegmentMetricEventBody {
     #[serde(rename = "messageId")]
     message_id: String,
     properties: serde_json::Value,
+    // The identity the node's client-event webhook verifies (Segment `context`).
+    context: SegmentEventContext,
+}
+
+/// Segment `context`: the identity the node's client-event webhook reads (`dcl_eth_address`,
+/// `auth_chain`, `realm`, `session_id`, `dcl_renderer_type`).
+#[derive(Serialize)]
+pub struct SegmentEventContext {
+    dcl_eth_address: String,
+    // Only on the events the node stores; absent for a guest, which has no delegation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth_chain: Option<String>,
+    realm: String,
+    session_id: String,
+    dcl_renderer_type: String,
+}
+
+/// The events the node's webhook turns into client-event rows for badges.
+pub(crate) const CLIENT_EVENTS: [&str; 5] = [
+    "move_to_parcel",
+    "used_emote",
+    "passport_opened",
+    "walked_distance",
+    "vertical_height_reached",
+];
+
+pub(crate) fn is_client_event(name: &str) -> bool {
+    CLIENT_EVENTS.iter().any(|e| e.eq_ignore_ascii_case(name))
 }
 
 #[derive(Serialize, Clone)]
@@ -53,6 +81,9 @@ pub struct SegmentEventCommonExplorerFields {
     // A scene being developed (the sdk's or an editor's preview, a local dev server's realm), as
     // the desktop client flags it: not a visit, the warehouse filters on it.
     pub is_local_scene: bool,
+    // The login's `[SIGNER, ECDSA_EPHEMERAL]` chain as JSON, for `context` only.
+    #[serde(skip)]
+    pub auth_chain: Option<String>,
 }
 
 impl SegmentEventCommonExplorerFields {
@@ -71,12 +102,14 @@ impl SegmentEventCommonExplorerFields {
             environment: crate::segment_system::environment().to_owned(),
             campaign_anon_user_id,
             is_local_scene: false,
+            auth_chain: None,
         }
     }
 
     pub fn reset_identity(&mut self) {
         self.dcl_eth_address = UNAUTHENTICATED.into();
         self.dcl_is_guest = false;
+        self.auth_chain = None;
     }
 }
 
@@ -92,6 +125,12 @@ pub enum SegmentEvent {
     ScreenViewed(SegmentEventScreenViewed),
     OpenCamera(SegmentEventOpenCamera),
     TakePhoto(SegmentEventTakePhoto),
+    MoveToParcel(SegmentEventMoveToParcel),
+    UsedEmote(SegmentEventUsedEmote),
+    WalkedDistance(SegmentEventWalkedDistance),
+    VerticalHeightReached(SegmentEventVerticalHeightReached),
+    FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
+    ReactSituation(SegmentEventReactSituation),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -135,6 +174,16 @@ impl SegmentEvent {
             SegmentEvent::ScreenViewed(event) => ("Screen Viewed", serde_json::to_value(event)),
             SegmentEvent::OpenCamera(event) => ("open_camera", serde_json::to_value(event)),
             SegmentEvent::TakePhoto(event) => ("take_photo", serde_json::to_value(event)),
+            SegmentEvent::MoveToParcel(event) => ("move_to_parcel", serde_json::to_value(event)),
+            SegmentEvent::UsedEmote(event) => ("used_emote", serde_json::to_value(event)),
+            SegmentEvent::WalkedDistance(event) => ("walked_distance", serde_json::to_value(event)),
+            SegmentEvent::VerticalHeightReached(event) => {
+                ("vertical_height_reached", serde_json::to_value(event))
+            }
+            SegmentEvent::FeatureFlagsResolved(event) => {
+                ("Feature Flags Resolved", serde_json::to_value(event))
+            }
+            SegmentEvent::ReactSituation(event) => ("react_situation", serde_json::to_value(event)),
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -220,6 +269,17 @@ pub struct SegmentGpuFrameTimes {
     pub gpu_p90_frame_time: f32,
     pub gpu_p95_frame_time: f32,
     pub gpu_p99_frame_time: f32,
+}
+
+/// The session's rollout flags once the read settled.
+#[derive(Serialize)]
+pub struct SegmentEventFeatureFlagsResolved {
+    /// The flags that are on, as an `--ff` / `?ff=` value that reproduces them.
+    pub feature_flags: String,
+    /// The launch option's own overrides, empty without any.
+    pub feature_flags_override: String,
+    /// `service`, `unavailable`, `ignored` or `other-domain`.
+    pub feature_flags_source: String,
 }
 
 #[derive(Serialize)]
@@ -335,7 +395,7 @@ pub fn build_segment_event_batch_item(
     event_data: &SegmentEvent,
     queued_at: DateTime<Utc>,
     message_id: String,
-) -> SegmentMetricEventBody {
+) -> Result<SegmentMetricEventBody, serde_json::Error> {
     let mut timestamp = queued_at.to_rfc3339_opts(SecondsFormat::Millis, true);
     let override_position = match event_data {
         SegmentEvent::ExplorerMoveToParcel(current_position, _) => Some(current_position.clone()),
@@ -355,7 +415,7 @@ pub fn build_segment_event_batch_item(
             .expect("the engine's events are named above"),
     };
 
-    let mut properties = serde_json::to_value(common).unwrap();
+    let mut properties = serde_json::to_value(common)?;
     // merge specific event properties with common properties
     for (k, v) in event_properties.as_object().unwrap().iter() {
         properties[k] = v.clone();
@@ -365,14 +425,105 @@ pub fn build_segment_event_batch_item(
         properties["position"] = serde_json::Value::String(position);
     }
 
-    SegmentMetricEventBody {
+    let context = SegmentEventContext {
+        dcl_eth_address: common.dcl_eth_address.clone(),
+        auth_chain: common
+            .auth_chain
+            .clone()
+            .filter(|_| is_client_event(&event_name)),
+        realm: common.realm.clone(),
+        session_id: common.session_id.clone(),
+        dcl_renderer_type: common.dcl_renderer_type.clone(),
+    };
+
+    Ok(SegmentMetricEventBody {
         r#type: "track".to_string(),
         event: event_name,
         user_id,
         timestamp,
         message_id,
         properties,
+        context,
+    })
+}
+
+/// A parcel as `(x, y)`, which the node strips to an `x,y` pointer.
+fn parcel_text(parcel: bevy::math::IVec2) -> String {
+    format!("({}, {})", parcel.x, parcel.y)
+}
+
+/// `move_to_parcel`; `is_empty_scene` and `is_empty_parcel` agree, the node's traveler reads the
+/// latter.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct SegmentEventMoveToParcel {
+    pub old_parcel: String,
+    pub new_parcel: String,
+    // The scene's entity id; null while the parcel is unresolved or empty.
+    pub scene_hash: Option<String>,
+    pub is_empty_scene: Option<bool>,
+    pub is_empty_parcel: Option<bool>,
+}
+
+impl SegmentEventMoveToParcel {
+    /// `scene`: `None` unresolved, `Some(None)` an empty parcel, `Some(Some(hash))` a scene.
+    pub fn new(
+        old: Option<bevy::math::IVec2>,
+        new: bevy::math::IVec2,
+        scene: Option<Option<String>>,
+    ) -> Self {
+        let empty = scene.as_ref().map(Option::is_none);
+        Self {
+            old_parcel: old.map_or_else(|| "(NaN, NaN)".to_owned(), parcel_text),
+            new_parcel: parcel_text(new),
+            scene_hash: scene.flatten(),
+            is_empty_scene: empty,
+            is_empty_parcel: empty,
+        }
     }
+}
+
+/// `used_emote`; `name` and `emote_index` are not known here and go empty and -1.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct SegmentEventUsedEmote {
+    pub item_id: String,
+    pub is_base: bool,
+    pub name: String,
+    pub emote_index: i32,
+    pub source: String,
+}
+
+impl SegmentEventUsedEmote {
+    /// `source`: `self` for the player's own (HUD, console), `scene` for a scene's.
+    pub fn new(urn: &str, source: &str) -> Self {
+        let on_chain = urn.starts_with("urn:") && !urn.starts_with("urn:decentraland:off-chain:");
+        Self {
+            item_id: urn.to_owned(),
+            is_base: !on_chain,
+            name: String::new(),
+            emote_index: -1,
+            source: source.to_owned(),
+        }
+    }
+}
+
+/// `walked_distance`: the steps since the last report.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct SegmentEventWalkedDistance {
+    pub step_count: u64,
+}
+
+/// `vertical_height_reached`, once per login; `height` is the elevation gain in metres, which the
+/// node's vertical voyager compares with its threshold.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct SegmentEventVerticalHeightReached {
+    pub height: f32,
+}
+
+/// The local user reacted with an emoji over their avatar: `reaction_id` is the emoji's index
+/// on the wire. Named and shaped as the desktop client's.
+#[derive(Serialize)]
+pub struct SegmentEventReactSituation {
+    pub reaction_id: i32,
 }
 
 /// Photo mode opened, from the key or a button.
@@ -419,5 +570,146 @@ impl SegmentEventTakePhoto {
                 .collect(),
             source: source.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::IVec2;
+
+    fn item(common: &SegmentEventCommonExplorerFields, event: SegmentEvent) -> serde_json::Value {
+        let body =
+            build_segment_event_batch_item("user".into(), common, &event, Utc::now(), "m".into())
+                .unwrap();
+        serde_json::to_value(body).unwrap()
+    }
+
+    fn signed_in() -> SegmentEventCommonExplorerFields {
+        let mut common = SegmentEventCommonExplorerFields::new("s-1".into(), "1.0".into(), None);
+        common.dcl_eth_address = "0xabc".into();
+        common.realm = "https://peer.decentraland.org/".into();
+        common.auth_chain = Some(r#"[{"type":"SIGNER","payload":"0xabc","signature":""}]"#.into());
+        common
+    }
+
+    // The node reads the identity from `context`; the chain rides only on the events it stores,
+    // and never in `properties`, which keep their warehouse shape.
+    #[test]
+    fn the_context_carries_the_identity_and_the_chain_only_for_client_events() {
+        let common = signed_in();
+        let moved = item(
+            &common,
+            SegmentEvent::WalkedDistance(SegmentEventWalkedDistance { step_count: 12 }),
+        );
+        assert_eq!(moved["type"], "track");
+        assert_eq!(moved["event"], "walked_distance");
+        assert_eq!(moved["context"]["dcl_eth_address"], "0xabc");
+        assert_eq!(
+            moved["context"]["auth_chain"],
+            common.auth_chain.clone().unwrap()
+        );
+        assert_eq!(moved["context"]["realm"], "https://peer.decentraland.org/");
+        assert_eq!(moved["context"]["session_id"], "s-1");
+        assert!(moved["context"]["dcl_renderer_type"]
+            .as_str()
+            .is_some_and(|t| t.starts_with("dao-bevy-")));
+        assert_eq!(moved["properties"]["step_count"], 12);
+        assert!(moved["properties"].get("auth_chain").is_none());
+        assert_eq!(moved["properties"]["dcl_eth_address"], "0xabc");
+
+        let page = |name: &str| SegmentEvent::Page {
+            name: name.into(),
+            properties: serde_json::json!({ "receiver_id": "0xdef" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            timestamp: "2026-07-02T13:38:08.243Z".into(),
+        };
+        let passport = item(&common, page("passport_opened"));
+        assert_eq!(
+            passport["context"]["auth_chain"],
+            moved["context"]["auth_chain"]
+        );
+        assert_eq!(passport["properties"]["receiver_id"], "0xdef");
+        let screen = item(&common, page("Screen Viewed"));
+        assert_eq!(screen["context"]["dcl_eth_address"], "0xabc");
+        assert!(screen["context"].get("auth_chain").is_none());
+
+        let mut guest = common.clone();
+        guest.auth_chain = None;
+        let walked = item(
+            &guest,
+            SegmentEvent::WalkedDistance(SegmentEventWalkedDistance { step_count: 1 }),
+        );
+        assert!(walked["context"].get("auth_chain").is_none());
+    }
+
+    // Parcel text the node strips to a pointer; the first parcel of a run comes from nowhere, and
+    // an unresolved parcel says nothing about its scene.
+    #[test]
+    fn move_to_parcel_names_the_parcels_and_the_scene() {
+        let common = signed_in();
+        let first = item(
+            &common,
+            SegmentEvent::MoveToParcel(SegmentEventMoveToParcel::new(
+                None,
+                IVec2::new(-10, 3),
+                Some(Some("bafkscene".into())),
+            )),
+        );
+        assert_eq!(first["event"], "move_to_parcel");
+        let p = &first["properties"];
+        assert_eq!(p["old_parcel"], "(NaN, NaN)");
+        assert_eq!(p["new_parcel"], "(-10, 3)");
+        assert_eq!(p["scene_hash"], "bafkscene");
+        assert_eq!(p["is_empty_scene"], false);
+        assert_eq!(p["is_empty_parcel"], false);
+        assert!(first["context"]["auth_chain"].is_string());
+
+        let empty =
+            SegmentEventMoveToParcel::new(Some(IVec2::new(-10, 3)), IVec2::new(-11, 3), Some(None));
+        assert_eq!(empty.old_parcel, "(-10, 3)");
+        assert_eq!(empty.scene_hash, None);
+        assert_eq!(empty.is_empty_parcel, Some(true));
+        let unknown = SegmentEventMoveToParcel::new(None, IVec2::ZERO, None);
+        assert_eq!(unknown.is_empty_scene, None);
+        assert_eq!(unknown.scene_hash, None);
+    }
+
+    // Base and other off-chain emotes count as base; collection emotes do not.
+    #[test]
+    fn used_emote_tells_base_from_on_chain() {
+        let common = signed_in();
+        let base = item(
+            &common,
+            SegmentEvent::UsedEmote(SegmentEventUsedEmote::new(
+                "urn:decentraland:off-chain:base-emotes:wave",
+                "self",
+            )),
+        );
+        assert_eq!(base["event"], "used_emote");
+        assert_eq!(
+            base["properties"]["item_id"],
+            "urn:decentraland:off-chain:base-emotes:wave"
+        );
+        assert_eq!(base["properties"]["is_base"], true);
+        assert_eq!(base["properties"]["name"], "");
+        assert_eq!(base["properties"]["emote_index"], -1);
+        assert_eq!(base["properties"]["source"], "self");
+        assert!(SegmentEventUsedEmote::new("wave", "scene").is_base);
+        assert!(
+            !SegmentEventUsedEmote::new("urn:decentraland:matic:collections-v2:0xabc:0", "scene")
+                .is_base
+        );
+
+        let height = item(
+            &common,
+            SegmentEvent::VerticalHeightReached(SegmentEventVerticalHeightReached {
+                height: 500.5,
+            }),
+        );
+        assert_eq!(height["event"], "vertical_height_reached");
+        assert_eq!(height["properties"]["height"], 500.5);
     }
 }

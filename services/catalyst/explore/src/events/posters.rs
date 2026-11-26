@@ -1,7 +1,7 @@
 //! `POST /api/poster` and `/api/poster-vertical` (multipart, field
 //! `poster`, a signed fetch, behind `DATA_WRITES_ENABLED`): an event poster
 //! the events form uploads before it creates the event. The signer needs a
-//! profile this node holds (the old `withAuthProfile()`, 404 `Not found
+//! profile this node holds or reads through (the old `withAuthProfile()`, 404 `Not found
 //! profile for "<user>"`; `Poster/routes.ts:67-80`). The bytes must be one
 //! of the accepted image types (sniffed, and equal to the part's declared
 //! type), at most 500 KiB; they land in the ONE blob store and in
@@ -22,8 +22,8 @@ use crate::shared::errors::ApiError;
 use crate::{Settings, SharedState};
 
 pub const MAX_POSTER_BYTES: usize = 500 * 1024;
+pub use crate::node_assets::DEFAULT_EVENT_IMAGE;
 use crate::node_assets::{self, PosterInput};
-pub use crate::node_assets::{DEFAULT_EVENT_IMAGE, absolute_default_image};
 const POSTER_FILE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const POSTER_VERTICAL_FILE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image/webp"];
 
@@ -235,7 +235,7 @@ async fn upload(
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), path).await?;
-    super::profiles::require_profile(&state.pool, &signer).await?;
+    super::profiles::require_profile(&state, &signer).await?;
     if !POSTER_UPLOADS.try_acquire(&[(
         signer.to_ascii_lowercase().as_str(),
         POSTER_UPLOADS_PER_HOUR,
@@ -265,13 +265,16 @@ async fn upload(
             .await
             .map_err(|e| ApiError::internal(format!("poster hash task: {e}")))?
     };
-    let stored = async {
-        if !storage.exist(&cid).await? {
-            storage.store(&cid, poster.data.clone()).await?;
-        }
-        Ok::<_, crate::storage::StorageError>(())
+    // Stored under the store lock's shared side, held until the row commits:
+    // an unlink batch either ran before the existence check or sees the row.
+    let mut tx = state.pool.begin().await?;
+    let stored =
+        crate::storage::gc::store_for_row(&mut tx, &storage, &cid, poster.data.clone()).await;
+    if let Err(crate::storage::gc::GcError::LockTimeout) = stored {
+        return Err(ApiError::service_unavailable(
+            "The content store is being collected; retry shortly",
+        ));
     }
-    .await;
     if let Err(e) = stored {
         tracing::error!(error = %e, "poster blob store failed");
         return Err(bucket_unavailable(
@@ -291,8 +294,9 @@ async fn upload(
     .bind(&cid)
     .bind(mime)
     .bind(size as i64)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(poster_response(
         state.settings.configured_public_base.as_deref(),
         kind,

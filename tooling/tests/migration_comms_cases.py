@@ -1,4 +1,4 @@
-"""Comms moderation imports use runtime scene identities, never Places UUID keys."""
+"""Comms moderation imports use the runtime keys: the place for admins and Genesis bans, the world base for world bans."""
 
 
 class CommsMigrationCases:
@@ -11,7 +11,7 @@ class CommsMigrationCases:
         self.sql(db, '''
             INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,
                 entity_timestamp,entity_pointers,local_timestamp,auth_chain)
-            VALUES ('owner','v3','scene','genesis-entity',now(),'{0,0}',now(),'[]');
+            VALUES ('owner','v3','scene','genesis-entity',now(),'{"0,0"}',now(),'[]');
             INSERT INTO content.active_pointers VALUES ('0,0','genesis-entity','scene');
             INSERT INTO explore.place(id,base_position,raw) VALUES
                 ('11111111-1111-4111-8111-111111111111','0,0','{"deployment_id":"genesis-entity"}');
@@ -35,11 +35,29 @@ class CommsMigrationCases:
         db = self.comms_fixture()
         for step in ('scene_admin','scene_ban'):
             self.sql(db, 'BEGIN;\n' + self.comms_stage(step) + self.comms_load(step) + '\nCOMMIT;')
-        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_admins ORDER BY place_id;').strip(), 'genesis-entity\nworld-entity')
-        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), 'genesis-entity\ntest.eth:10,0')
+        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_admins ORDER BY place_id;').strip(), '0,0\n22222222-2222-4222-8222-222222222222')
+        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), '0,0\ntest.eth:10,0')
         self.sql(db, "DELETE FROM social.scene_bans; UPDATE worlds.world_scenes SET entity='{}';")
         self.sql(db, 'BEGIN;\n' + self.comms_stage('scene_ban') + self.comms_load('scene_ban') + '\nCOMMIT;')
-        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), 'genesis-entity\ntest.eth:2,0')
+        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), '0,0\ntest.eth:2,0')
+
+    def test_comms_moderation_keys_a_genesis_scene_on_its_stored_declared_base(self):
+        # Content stores metadata as {"v": metadata}; the declared base is not the least parcel.
+        db = self.comms_fixture()
+        place = '44444444-4444-4444-8444-444444444444'
+        self.sql(db, '''
+            INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,
+                entity_timestamp,entity_pointers,local_timestamp,auth_chain)
+            VALUES ('owner','v3','scene','genesis-declared','{"v":{"scene":{"base":"5,6","parcels":["5,5","5,6"]}}}',
+                    now(),'{"5,5","5,6"}',now(),'[]');
+            INSERT INTO content.active_pointers VALUES ('5,5','genesis-declared','scene'),('5,6','genesis-declared','scene');
+            INSERT INTO explore.place(id,base_position,raw) VALUES
+                ('%s','5,6','{"deployment_id":"genesis-declared"}');
+        ''' % place)
+        for step, table in (('scene_admin', 'scene_admins'), ('scene_ban', 'scene_bans')):
+            with self.subTest(step=step):
+                self.sql(db, 'BEGIN;\n' + self.comms_stage(step, place) + self.comms_load(step) + '\nCOMMIT;')
+                self.assertEqual(self.sql(db, f'SELECT place_id FROM social.{table};').strip(), '5,6')
 
     def test_comms_moderation_aborts_on_unresolved_or_ambiguous_identity(self):
         from tooling.tests import migration_harness as harness
@@ -98,9 +116,9 @@ class CommsMigrationCases:
                                             '--batch-size', '1', sources_dir=harness.migrate.SOURCES)
                 self.assertEqual(code, 0, output)
         self.assertEqual(self.sql(db, 'SELECT place_id, active, added_by FROM social.scene_admins;').strip(),
-                         'genesis-entity\tt\tactive')
+                         '0,0\tt\tactive')
         self.assertEqual(self.sql(db, 'SELECT place_id, banned_by FROM social.scene_bans;').strip(),
-                         'genesis-entity\tearliest')
+                         '0,0\tlater')
 
     # ── re-runs keep moderation and credential changes made on the node ──
 
@@ -231,6 +249,43 @@ class CommsMigrationCases:
                                          self.stream_row(upstream, '2026-02-01Z')))
         self.assertEqual(self.stream_state(db), '5555\tf\n6666\tt')
         self.assertEqual(self.cleanups(db), '5555\tingress-5555\tt')
+
+    def test_comms_stream_access_import_preserves_native_notification_progress(self):
+        db = self.catalyst_db('comms_stream_notice_progress')
+        identity = '55555555-5555-4555-8555-555555555555'
+        expired = self.stream_row(identity, '2026-01-01Z', active=False)[:-len('false,false)')] + 'true,true)'
+        load = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS, expired)
+        self.sql(db, load)
+        self.assertEqual(self.sql(db, 'SELECT cardinality(recipients), recipients_resolved, recipient_cursor '
+                                     'FROM social.scene_stream_cleanup;').strip(), '0\tf\t0')
+        self.sql(db, "UPDATE social.scene_stream_cleanup SET recipient='0x" + 'a'*40 + "', "
+                     "recipients=ARRAY['0x" + 'a'*40 + "','0x" + 'b'*40 + "'], "
+                     "recipients_resolved=true, recipient_cursor=1;")
+        self.sql(db, load)
+        self.assertEqual(self.sql(db, 'SELECT recipient=recipients[1], cardinality(recipients), '
+                                     'recipients_resolved, recipient_cursor '
+                                     'FROM social.scene_stream_cleanup;').strip(), 't\t2\tt\t1')
+
+    def test_comms_stream_access_replay_keeps_historical_creation_times(self):
+        db = self.catalyst_db('comms_stream_created_at')
+        identity = '55555555-5555-4555-8555-555555555555'
+        run = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
+                             self.stream_row(identity, '2026-01-01Z', active=False))
+        for _ in range(2):
+            self.sql(db, run)
+        self.assertEqual(self.sql(db, "SELECT count(*) FROM social.scene_stream_access "
+                                 "WHERE place_id='place' AND created_at > timezone('UTC',now())-interval '1 hour';").strip(), '0')
+        self.assertEqual(self.sql(db, "SELECT created_at='2026-01-01'::timestamp, active "
+                                 "FROM social.scene_stream_access;").strip(), 't\tf')
+
+    def test_comms_stream_access_reimport_preserves_native_admin_namespace(self):
+        db = self.catalyst_db('comms_stream_admin_namespace')
+        identity = '55555555-5555-4555-8555-555555555555'
+        run = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS, self.stream_row(identity, '2026-01-01Z'))
+        self.sql(db, run)
+        self.sql(db, "UPDATE social.scene_stream_access SET admin_place_key='10,20';")
+        self.sql(db, run)
+        self.assertEqual(self.sql(db, "SELECT DISTINCT admin_place_key FROM social.scene_stream_access;").strip(), '10,20')
 
     def test_comms_stream_access_rerun_keeps_newer_node_streaming_state(self):
         db = self.catalyst_db('comms_stream_version')

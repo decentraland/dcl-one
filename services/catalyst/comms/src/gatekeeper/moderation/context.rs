@@ -8,9 +8,7 @@ use crate::gatekeeper::CommsState;
 use crate::gatekeeper::admission::scene::{PlaceInfo, PlaceLookup};
 use crate::gatekeeper::errors::{ApiError, service_unavailable};
 use crate::rooms::{ResolveError, RoomRequest};
-use crate::world_identity::{
-    Parcel, RealmId, SceneId, WorldName, is_world_realm_name, realm_url_world,
-};
+use crate::world_identity::{Parcel, RealmId, SceneId, WorldName, signed_realm_name};
 
 fn invalid() -> ApiError {
     ApiError::bad_request("Invalid signed scene context")
@@ -49,7 +47,10 @@ pub(in crate::gatekeeper) struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+    /// The realm the signed metadata names ([`signed_realm_name`]): a world by
+    /// its realm name or by the realm URL or worlds host signed beside it, else
+    /// a shared realm. `node_realm` is this node's `REALM_NAME`.
+    pub fn signed_realm(metadata: &Value, node_realm: &str) -> Result<RealmId, ApiError> {
         let nested = match metadata.get("realm") {
             Some(realm) if realm.is_object() => Some(required(realm, "serverName")?),
             Some(_) => return Err(invalid()),
@@ -70,7 +71,7 @@ impl<'a> Context<'a> {
         if parsed_name.display() != realm_name || realm_name.contains(':') {
             return Err(invalid());
         }
-        let (hostname_world, path_world) = match metadata.pointer("/realm/hostname") {
+        let hostname = match metadata.pointer("/realm/hostname") {
             Some(Value::String(hostname)) => {
                 // Explorer metadata carries a bare hostname; existing target
                 // callers also use an absolute realm URL.
@@ -89,24 +90,16 @@ impl<'a> Context<'a> {
                 {
                     return Err(invalid());
                 }
-                (
-                    url.host_str()
-                        .is_some_and(|host| host.contains("worlds-content-server")),
-                    realm_url_world(hostname),
-                )
+                Some(hostname.as_str())
             }
             Some(_) => return Err(invalid()),
-            None => (false, None),
+            None => None,
         };
-        // A world published on this node advertises its realm name without
-        // `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`) or as its owner's
-        // override, so the explorer signs that name; the realm URL it also
-        // signs (`<host>/world/<name>`) still names the world.
-        let realm = match path_world {
-            Some(world) if !is_world_realm_name(realm_name) => RealmId::World(world),
-            _ if hostname_world || is_world_realm_name(realm_name) => RealmId::World(parsed_name),
-            _ => RealmId::Shared(realm_name.to_owned()),
-        };
+        RealmId::parse(&signed_realm_name(realm_name, hostname, node_realm)).map_err(|_| invalid())
+    }
+
+    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+        let realm = Self::signed_realm(metadata, &state.settings.realm_name)?;
         let raw_scene = required(metadata, "sceneId")?;
         let scene = SceneId::parse(raw_scene).map_err(|_| invalid())?;
         if scene.as_str() != raw_scene || (!realm.is_world() && raw_scene.contains(':')) {
@@ -130,14 +123,12 @@ impl<'a> Context<'a> {
             Some(_) => return Err(invalid()),
             None => None,
         };
-        let request = match &realm {
-            RealmId::World(_) if scene.is_world_shaped() && supplied_parcel.is_some() => {
-                RoomRequest::Parcel {
-                    realm: &realm,
-                    parcel: supplied_parcel.unwrap(),
-                }
-            }
-            RealmId::World(world) if !scene.is_world_shaped() => RoomRequest::WorldScene {
+        let request = match (&realm, supplied_parcel) {
+            (RealmId::World(_), Some(parcel)) if scene.is_world_shaped() => RoomRequest::Parcel {
+                realm: &realm,
+                parcel,
+            },
+            (RealmId::World(world), _) if !scene.is_world_shaped() => RoomRequest::WorldScene {
                 world,
                 scene: &scene,
             },
@@ -202,7 +193,12 @@ impl<'a> Context<'a> {
             room: current.room,
             footprint: info.clone(),
             world_scene,
-            place: PlaceLookup::resolved(state, deployment.scene_id.as_str(), info),
+            place: PlaceLookup::resolved(
+                state,
+                deployment.scene_id.as_str(),
+                info,
+                &current_deployment.place_key(),
+            ),
             ban_key,
             rooms,
             place_title: current_deployment
@@ -389,7 +385,8 @@ mod tests {
     }
 
     /// A world published here advertises `title` (no `.dcl.eth`) or an owner's
-    /// override; the signed realm URL `<host>/world/<name>` names the world.
+    /// override; the signed realm URL `<host>/world/<name>` names the world, as
+    /// does `title` beside the worlds host alone (the Unity client).
     #[tokio::test]
     async fn a_stripped_realm_name_resolves_in_the_world_its_signed_realm_url_names() {
         let world = WorldName::parse("title.dcl.eth").unwrap();
@@ -421,6 +418,7 @@ mod tests {
                 "https://node.example/worlds-content-server/world/title.dcl.eth/",
             ),
             ("Custom-Realm", "node.example/world/title.dcl.eth"),
+            ("title", "worlds-content-server.node.example"),
         ] {
             let context = Context::resolve(
                 &state,

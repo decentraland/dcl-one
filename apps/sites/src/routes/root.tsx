@@ -8,35 +8,44 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteLoaderData,
-  useLocation,
+  useMatches,
 } from "react-router";
 
 // The shared tokens, not foundations.css: the Inter faces are the app's own (@ui/atoms/inter.css, through primitives.css).
 import "@dcl/one-ui/foundations/colors/colors.css";
 import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
+import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+import {
+  dclLogoUrl as logo,
+  StatusPage,
+  SitesLocaleContext,
+  sitesLanguage,
+  type SitesLocale,
+  type SitesLocaleHandle,
+  ThumbnailPublicBase,
+} from "@dcl/one-ui";
 
-import SignInModalHost from "@/features/components/auth/SignInModalHost";
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
-import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
+import { sessionChangePending, useSessionChangeRevalidation } from "@/data/lib/auth/session-change";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
-import StatusPage from "@ui/components/StatusPage";
-import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
-import { ThumbnailPublicBase } from "@ui/data/thumbnail";
+import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
+import { isShopPath } from "@ui/shop/native-contract";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
-import { pageSid, parseCookies, publicResponseContext, sessionMiddleware } from "@/core/lib/telemetry/session";
-import { SitesLocaleContext, sitesLanguage, type SitesLocale } from "@ui/web/frames/sites-locale";
+import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";
+import { sitesSegmentPublicConfig } from "@/core/lib/telemetry/public-config.server";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
 import { serverShopApiMode } from "@/data/lib/shop/mode";
+import { homeMeta, notFoundMeta } from "./lib/social-meta";
 import type { Route } from "./+types/root";
 
 /** Reads or mints the session id once per request, before every loader, and sets its cookie once. */
@@ -49,8 +58,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const magicApiKey = process.env.MAGIC_API_KEY || "";
   // The public Segment write key and the optional first-party proxy host
   // (core/lib/telemetry/track.ts); unset, the client's track() is a no-op.
-  const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
-  const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
+  const { segmentWriteKey, segmentApiHost } = sitesSegmentPublicConfig();
+  // The Shop's own public write key (no fallback to Sites'); unset, Shop events are a no-op.
+  const shopSegmentWriteKey = process.env.SHOP_SEGMENT_WRITE_KEY || process.env.VITE_SHOP_SEGMENT_WRITE_KEY || "";
   const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
   const commitHash = (typeof process !== "undefined" && process.env.COMMIT_HASH) || "";
   const pulseServer = (typeof process !== "undefined" && process.env.PUBLIC_PULSE_SERVER) || "";
@@ -59,7 +69,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const forwardedScheme = request.headers.get("x-forwarded-proto");
   if (forwardedScheme === "http" || forwardedScheme === "https") requestUrl.protocol = forwardedScheme + ":";
   const shopApiMode = serverShopApiMode();
-  const wallet = readWallet(request);
+  // A response a shared cache may store names no visitor: the nav reads the account on the client after hydration.
+  const shared = context.get(publicResponseContext);
+  const wallet = shared ? null : readWallet(request);
   // Only the Creator Hub reads the committee seat: other pages do not ask the node for the curation committee.
   const committee = wallet && isCreatorPath(requestUrl.pathname)
     ? await isCommitteeMember(wallet, request.signal).catch(() => false)
@@ -70,27 +82,40 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     magicApiKey,
     segmentWriteKey,
     segmentApiHost,
+    shopSegmentWriteKey,
     docsBase,
     commitHash,
     pulseServer,
     catalystBase,
-    thumbnailBase: catalystBase || requestUrl.origin,
+    publicPageBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
-    locale: context.get(publicResponseContext)
-      ? undefined
-      : sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
+    locale: shared ? undefined : sitesLanguage(parseCookies(request.headers.get("cookie")).lang).code,
     /** The curation committee seat; read only for a Creator Hub path, false on every other path. */
     committee,
     /**
      * The session id, also on a first visit, for a page whose own loader does not run on a client
-     * navigation. Null on a response a shared cache may store (the docs).
+     * navigation. Null on a response a shared cache may store (the docs, the cart's shared document).
      */
     sid: pageSid(request, context),
+    /**
+     * Segment's `userId`: the wallet the server verified (`dcl_wallet_verified`), never the display
+     * cookie `wallet` comes from, which the browser writes. Null when none, and on a shared-cacheable response.
+     */
+    analyticsUserId: shared ? null : readVerifiedWallet(request),
   };
 }
 
-const CREATOR_PATH = /^\/(create|creator-hub)(\/|$)/;
+/** Root's data on this page came from a response a shared cache may store, so it names no visitor. */
+let rootNamesNoVisitor = false;
+
+/** App gives root's session id here: null only on a response a shared cache may store (`pageSid`). */
+export function noteRootSid(sid: string | null | undefined): void {
+  rootNamesNoVisitor = sid === null;
+}
+
+// Case-insensitive, as React Router matches routes.
+const CREATOR_PATH = /^\/(create|creator-hub)(\/|$)/i;
 function isCreatorPath(pathname: string): boolean {
   return CREATOR_PATH.test(pathname);
 }
@@ -101,6 +126,11 @@ export function shouldRevalidate({
   formMethod,
   defaultShouldRevalidate,
 }: ShouldRevalidateFunctionArgs) {
+  // The verified wallet changed (a sign-in or sign-out posted to /auth/callback): root's data, the
+  // page views' userId included, is read again, whatever else this navigation is.
+  if (sessionChangePending()) {
+    return true;
+  }
   if (formMethod) {
     return defaultShouldRevalidate;
   }
@@ -111,34 +141,70 @@ export function shouldRevalidate({
   if (currentUrl.pathname === nextUrl.pathname) {
     return false;
   }
+  // Leaving a publicly cacheable page (the docs) for one that is not: root's data there has no
+  // session, which page views need, so it is read again.
+  if (isPublicResponsePath(currentUrl.pathname) && !isPublicResponsePath(nextUrl.pathname)) {
+    return true;
+  }
+  // The same after the cart's shared document (shared-cart.ts), also on a move to another Shop page.
+  if (rootNamesNoVisitor) {
+    return true;
+  }
   // Entering the Creator Hub reads the committee seat the page before it did not.
   if (isCreatorPath(nextUrl.pathname) && !isCreatorPath(currentUrl.pathname)) {
     return true;
   }
+  // Shop pages read root's data only as a first-render seed, so a move between them waits for no server request.
+  if (isShopPath(currentUrl.pathname) && isShopPath(nextUrl.pathname)) {
+    return false;
+  }
+  // Single fetch gives true on every navigation that is not after an action (react-router
+  // dom/ssr/single-fetch.js), so a move out of the Shop reads root's data again.
   return defaultShouldRevalidate;
 }
 
-export function meta(_args: Route.MetaArgs) {
-  return [
-    { title: "Decentraland" },
-    { name: "description", content: "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop." },
-  ];
+/**
+ * The shell card for every page without a head of its own, without a canonical: naming the home page
+ * there would tell search engines those pages duplicate it. The 404 of an unknown path has no card.
+ */
+export function meta({ error }: Route.MetaArgs) {
+  if (isRouteErrorResponse(error) && error.status === 404) return notFoundMeta();
+  return homeMeta(undefined);
+}
+
+/** A route's inline script for the document head: it runs while the document parses, before the page's code. */
+export type HeadScriptHandle = { headScript?: string };
+
+/**
+ * The matched routes' head scripts. Only the document that the server sends runs them: React makes a script that a
+ * client render adds through `innerHTML`, so the browser does not run it. Thus a route gives the browser bundle an
+ * empty text, and hydration keeps the server's text in the element.
+ */
+export function RouteHeadScripts() {
+  return useMatches().map(({ id, handle }) => {
+    const script = (handle as HeadScriptHandle | undefined)?.headScript;
+    return script === undefined ? null : (
+      // eslint-disable-next-line react/no-danger
+      <script key={id} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: script }} />
+    );
+  });
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; shopSegmentWriteKey?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
   const locale = selectedLocale ?? homeData?.locale ?? data?.locale ?? "en";
-  const { pathname } = useLocation();
+  const localized = useMatches().some(({ handle }) => (handle as SitesLocaleHandle | undefined)?.sitesLocalized === true);
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
     magicApiKey: data?.magicApiKey ?? "",
     SEGMENT_WRITE_KEY: data?.segmentWriteKey ?? "",
     SEGMENT_API_HOST: data?.segmentApiHost ?? "",
+    SHOP_SEGMENT_WRITE_KEY: data?.shopSegmentWriteKey ?? "",
     docsBase: data?.docsBase ?? "",
     commitHash: data?.commitHash ?? "",
     pulseServer: data?.pulseServer ?? "",
@@ -151,7 +217,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     // The docs theme boot script sets data-docs-theme* on <html> before hydration.
-    <html lang={pathname === "/" ? locale : "en"} suppressHydrationWarning>
+    <html lang={localized ? locale : "en"} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -171,13 +237,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: NAV_PENDING_SCRIPT }}
         />
+        <RouteHeadScripts />
         <link rel="icon" type="image/svg+xml" href={logo} />
         <Meta />
         <Links />
       </head>
       <body>
         <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
-          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+          <ThumbnailPublicBase.Provider value={data?.publicPageBase ?? ""}>
             {children}
           </ThumbnailPublicBase.Provider>
         </SitesLocaleContext.Provider>
@@ -307,6 +374,10 @@ export default function App() {
   // (ui3/src/data/hooks); one client per request on the server, one per page
   // in the browser, so SSR never shares a cache between visitors.
   const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
+  useRoutePageView();
+  useSessionChangeRevalidation();
+  const rootSid = (useRouteLoaderData("root") as { sid?: string | null } | undefined)?.sid;
+  useEffect(() => noteRootSid(rootSid), [rootSid]);
   useEffect(() => {
     appHydrated = true;
     document.documentElement.removeAttribute("data-nav-loading");
@@ -322,8 +393,6 @@ export default function App() {
           <RoutePending />
           <Outlet />
           <EmbedBridge />
-          <SignInModalHost />
-          <SyncEngineBridge />
         </ChromeNavBridge>
       </ChromeAuthBridge>
     </QueryClientProvider>
@@ -333,6 +402,7 @@ export default function App() {
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const isRouteError = isRouteErrorResponse(error);
   const routeStatus = isRouteError ? error.status : 0;
+  useNotFoundPageView(routeStatus === 404);
 
   let name = "Error";
   let message = "An unexpected error occurred.";
@@ -389,13 +459,11 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     }
   }, [isRouteError, routeStatus, name, message, stack]);
 
-  if (isRouteError) {
-    return <RouteErrorView error={error} />;
-  }
-
-  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
-  // alike); the trace goes to the client-error report above.
-  return <StatusPage status={500} />;
+  return (
+    <div lang="en">
+      {isRouteError ? <RouteErrorView error={error} /> : <StatusPage status={500} />}
+    </div>
+  );
 }
 
 function RouteErrorView({

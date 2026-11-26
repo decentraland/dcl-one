@@ -10,18 +10,19 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::structs::{
-    AppConfig, FogSetting, LandscapeDistance, PrimaryCamera, SceneLoadDistance, SessionGraphics,
-    StageLight, TimeOfDay,
+    AppConfig, FogSetting, LandscapeDistance, LensFlare, PrimaryCamera, SceneLoadDistance,
+    SessionGraphics, StageLight, TimeOfDay,
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
+    lens_flare::{LensFlareSettings, DAY_FLARE},
     shell_texturing::{Ground, ParcelGrass},
     sky_envmap::{SkyAmbient, SkyEnvmapSettings},
     trees::Tree,
     upscale::{Compositor, SceneTarget},
-    user_cover, CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
+    CloudCover, FogDensity, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
 /// The Lighting section's action that puts the fog density back to the sky preset's.
@@ -187,8 +188,8 @@ impl Plugin for VisualsDebugPanelPlugin {
                     kind: DebugInputKind::Select(&[
                         ("512", "512"),
                         ("1024", "1024"),
-                        ("2048", "2048"),
-                        ("4096 (default)", "4096"),
+                        ("2048 (default)", "2048"),
+                        ("4096", "4096"),
                     ]),
                 },
                 slider(
@@ -212,60 +213,48 @@ impl Plugin for VisualsDebugPanelPlugin {
         .add_debug_section(DebugSection {
             title: "Skybox",
             query: "/sky_state",
-            fields: &[],
+            fields: &[
+                ("Time set by", "timeSource"),
+                ("Held by the scene (menu locked)", "sceneLocked"),
+                ("Allow overriding scene controls", "overrideAllowed"),
+            ],
             actions: &[("Resume sky clock", "/time --resume")],
             inputs: &[
-                slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
+                slider(
+                    "Fixed hour",
+                    "hour",
+                    "/time {value} 0 --force",
+                    0.0,
+                    23.99,
+                    0.01,
+                ),
                 slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
                 slider(
-                    "Cloud density",
-                    "density",
-                    "/clouddensity {value}",
-                    0.01,
-                    3.0,
-                    0.01,
-                ),
-                slider(
-                    "Cloud shadows",
-                    "shadow",
-                    "/cloudshadow {value}",
+                    "Cloud speed",
+                    "speed",
+                    "/cloud --speed {value}",
                     0.0,
-                    1.0,
+                    4.0,
                     0.01,
-                ),
-                slider(
-                    "Cloud scale",
-                    "scale",
-                    "/cloudscale {value}",
-                    0.01,
-                    10.0,
-                    0.01,
-                ),
-                slider(
-                    "Cloud march steps",
-                    "steps",
-                    "/cloudsteps {value}",
-                    1.0,
-                    128.0,
-                    1.0,
-                ),
-                slider(
-                    "Cloud octave frequency",
-                    "lacunarity",
-                    "/cloudlacunarity {value}",
-                    1.0,
-                    5.0,
-                    0.01,
-                ),
-                slider(
-                    "Cloud edge sharpness",
-                    "sharpness",
-                    "/cloudsharp {value}",
-                    0.0,
-                    100.0,
-                    1.0,
                 ),
             ],
+        })
+        .add_console_command::<LensFlareCommand, _>(lens_flare_command)
+        .add_debug_section(DebugSection {
+            title: "Lens flare",
+            query: "/lens_flare",
+            fields: &[
+                ("Flare (day / night)", "flare"),
+                ("Intensity by time of day", "intensity"),
+                ("Light elevation (degrees)", "elevation"),
+                ("Light from view direction (degrees)", "fromView"),
+            ],
+            actions: &[],
+            inputs: &[toggle(
+                "Lens flare (this session)",
+                "enabled",
+                "/lens_flare {value}",
+            )],
         });
         if app
             .world()
@@ -313,6 +302,55 @@ impl Plugin for VisualsDebugPanelPlugin {
             inputs: if culling { &inputs } else { &[] },
         });
     }
+}
+
+/// Read the lens flare, or turn it on or off on the player's camera for this session (the Lens
+/// Flare setting applies again to a new camera).
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/lens_flare")]
+struct LensFlareCommand {
+    enabled: Option<bool>,
+}
+
+fn lens_flare_command(
+    mut cmd: ConsoleCommand<LensFlareCommand>,
+    mut commands: Commands,
+    settings: Res<LensFlareSettings>,
+    camera: Query<(Entity, &GlobalTransform, Has<LensFlare>), With<PrimaryCamera>>,
+) {
+    let Some(Ok(command)) = cmd.take() else {
+        return;
+    };
+    let camera = camera.single().ok();
+    let mut enabled = camera.is_some_and(|(_, _, flare)| flare);
+    if let (Some(set), Some((entity, _, _))) = (command.enabled, camera) {
+        if set {
+            commands.entity(entity).try_insert(LensFlare);
+        } else {
+            commands.entity(entity).remove::<LensFlare>();
+        }
+        enabled = set;
+    }
+    let toward = settings.toward_light;
+    let elevation = toward.y.clamp(-1.0, 1.0).asin().to_degrees();
+    let from_view = camera.map(|(_, transform, _)| {
+        transform
+            .forward()
+            .dot(toward)
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees()
+    });
+    let flare = if std::ptr::eq(settings.elements, DAY_FLARE.as_slice()) {
+        "day"
+    } else {
+        "night"
+    };
+    cmd.reply_ok(
+        json!({"enabled": enabled, "flare": flare, "intensity": settings.intensity,
+            "elevation": elevation, "fromView": from_view})
+        .to_string(),
+    );
 }
 
 #[derive(Resource)]
@@ -395,11 +433,24 @@ fn apply_landscape_visibility(
 #[command(name = "/sky_state")]
 struct SkyState;
 
-fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Res<CloudCover>) {
+fn sky_state(
+    mut cmd: ConsoleCommand<SkyState>,
+    time: Res<TimeOfDay>,
+    clouds: Res<CloudCover>,
+    hold: Single<&crate::day_night::SkyHold>,
+    config: Res<AppConfig>,
+) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"hour":time.time / 3600., "cover":user_cover(clouds.cover), "density":clouds.density_cap,
-            "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());
+        let mut state = sky_state_json(time.time, &clouds);
+        state["timeSource"] = hold.source.name().into();
+        state["sceneLocked"] = time.locked.into();
+        state["overrideAllowed"] = config.allow_scene_control_override.into();
+        cmd.reply_ok(state.to_string());
     }
+}
+
+fn sky_state_json(clock_secs: f32, clouds: &CloudCover) -> serde_json::Value {
+    json!({"hour": clock_secs / 3600., "cover": clouds.cover, "speed": clouds.speed})
 }
 
 /// Read the render scale in effect, the resolution the world is drawn at, and whether the FSR
@@ -605,6 +656,19 @@ fn render_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sky_state_reports_cover_and_speed() {
+        let clouds = CloudCover {
+            cover: 0.25,
+            speed: 2.0,
+        };
+        let state = sky_state_json(7.5 * 3600.0, &clouds);
+        assert_eq!(state["hour"], 7.5);
+        assert_eq!(state["cover"], 0.25);
+        assert_eq!(state["speed"], 2.0);
+        assert_eq!(state.as_object().unwrap().len(), 3);
+    }
 
     #[test]
     fn restore_action_carries_the_preset_fog_density() {

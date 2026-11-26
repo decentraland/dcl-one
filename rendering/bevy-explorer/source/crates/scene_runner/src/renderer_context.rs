@@ -9,7 +9,7 @@ use common::{
 use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
 use dcl_types::{
     interface::{CrdtStore, CrdtType},
-    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters,
+    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters, SceneWake,
 };
 use scene_material::{BoundRegion, SceneBounds};
 
@@ -180,9 +180,27 @@ impl RendererSceneContext {
         matches!(self.state, SceneState::Broken)
     }
 
+    /// The scene's content is on screen: it has run past its first ticks with nothing blocking
+    /// it (its glTFs loaded), or it is broken or frozen and never will. Its stand-ins (an
+    /// imposter tile, a near LOD) go when this holds.
+    pub fn content_shown(&self) -> bool {
+        self.broken()
+            || self.blocked.contains(FROZEN_BLOCK)
+            || (self.tick_number > 5 && self.blocked.is_empty())
+    }
+
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
         match &self.state {
             SceneState::Live { handle, .. } => Some(&handle.sender),
+            _ => None,
+        }
+    }
+
+    /// Whether the engine wakes the scene's runtime when it sends it something, while the scene
+    /// runs.
+    pub(crate) fn wake(&self) -> Option<&SceneWake> {
+        match &self.state {
+            SceneState::Live { handle, .. } => Some(&handle.wake),
             _ => None,
         }
     }

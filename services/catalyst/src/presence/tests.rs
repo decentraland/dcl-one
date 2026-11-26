@@ -859,8 +859,12 @@ mod module_sources {
                 ..Default::default()
             },
         );
-        let deployer =
-            LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::Content(Arc::new(sources)));
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            SyncValidation::Content(Arc::new(sources)),
+        );
         deployer
             .deploy_entity(
                 raw.as_bytes(),
@@ -921,20 +925,15 @@ mod module_sources {
             async fn probe(&self, _: bool) -> stats::http::Lifecycle {
                 Default::default()
             }
-            async fn metrics(&self) -> Result<String, stats::content::Error> {
-                Ok(String::new())
-            }
             async fn diagnostics(&self) -> Result<String, stats::content::Error> {
                 Ok(String::new())
             }
-            fn observe(&self, _: stats::http::Observation) {}
         }
         let app = stats::http::standalone(stats::http::State::new(
             reader,
             source,
             Arc::new(Hooks),
             Default::default(),
-            stats::http::test_support::matcher(),
         ));
         async fn request(
             app: axum::Router,
@@ -1106,7 +1105,7 @@ mod module_sources {
         assert_eq!(scene.creator, None);
         assert_eq!(scene.description, None);
         use stats::content::Source;
-        let docs = source.fetch(&[pointer.clone()]).await.unwrap();
+        let docs = source.fetch(std::slice::from_ref(&pointer)).await.unwrap();
         let http = stats::content::hot_scenes(&docs, &[(pointer, 1)], "").unwrap();
         assert!(http.contains(r#""name":{"z":1,"a":2}"#));
         assert!(http.contains(r#""usersTotalCount":2"#));
@@ -1656,4 +1655,58 @@ fn the_schema_carries_the_snapshot_relations() {
             "{table}"
         );
     }
+}
+
+#[tokio::test]
+async fn current_bundle_retains_children_when_retention_commits_between_reads() {
+    let _lock = DB_LOCK.lock().await;
+    let Some(state) = state(FakeSources::default(), true).await else {
+        return;
+    };
+    let id = store_snapshot(&state.pool, &sample(now())).await.unwrap();
+    let mut retention = state.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE presence.scene_occupancy IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *retention)
+        .await
+        .unwrap();
+    let reader = tokio::spawn({
+        let state = state.clone();
+        async move { state.queries.current_bundle().await.unwrap() }
+    });
+    // The header has been read when the child SELECT blocks on this lock.
+    assert!(
+        crate::shared::test_wait::until(async || {
+            sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(blocker)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap()
+        })
+        .await
+    );
+    sqlx::query("DELETE FROM presence.snapshots WHERE id=$1")
+        .bind(id)
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    retention.commit().await.unwrap();
+    let bundle = reader.await.unwrap();
+    assert_eq!(bundle.current.as_ref().unwrap().snapshot_id, id);
+    assert_eq!(bundle.scenes.len(), 2);
+    assert_eq!(bundle.worlds.len(), 2);
+    assert_eq!(
+        count_where(
+            &state.pool,
+            "SELECT count(*) FROM presence.snapshots WHERE id=$1",
+            id
+        )
+        .await,
+        0
+    );
 }

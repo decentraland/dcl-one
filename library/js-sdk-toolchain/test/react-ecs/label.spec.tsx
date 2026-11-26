@@ -1,14 +1,8 @@
-import { Entity, TextAlignMode, TextWrap, Font, IEngine, YGUnit } from '../../packages/@dcl/ecs'
+import type { Entity, IEngine } from '../../packages/@dcl/ecs'
+import { TextAlignMode, TextWrap, Font, YGUnit } from '../../packages/@dcl/ecs'
 import { components } from '../../packages/@dcl/ecs/src'
-import {
-  ReactEcs,
-  Label,
-  UiEntity,
-  UiFontType,
-  TextAlignType,
-  scaleFontSize,
-  UiTextWrapType
-} from '../../packages/@dcl/react-ecs/src'
+import type { UiFontType, TextAlignType, UiTextWrapType } from '../../packages/@dcl/react-ecs/src'
+import { ReactEcs, Label, UiEntity, scaleFontSize } from '../../packages/@dcl/react-ecs/src'
 import {
   getScaleAndUnit,
   getScaleCtx,
@@ -17,7 +11,7 @@ import {
 } from '../../packages/@dcl/react-ecs/src/components/utils'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'
 import { parseSize } from '../../packages/@dcl/react-ecs/src/components/uiTransform/utils'
-import { Color4 } from '../../packages/@dcl/sdk/math'
+import type { Color4 } from '../../packages/@dcl/sdk/math'
 import { setupEngine, WHOLE_SCREEN } from './utils'
 import { getFontSize } from '../../packages/@dcl/react-ecs/src/components/Label/utils'
 

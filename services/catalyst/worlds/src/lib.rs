@@ -90,6 +90,9 @@ pub struct Settings {
     /// worlds published here so a stock client does not resolve them against
     /// Decentraland's registry. Mirrored worlds keep it either way.
     pub realm_name_strip_ens: bool,
+    /// `REALM_NAME`: this node's Genesis City realm (default `main`), which a
+    /// realm name signed beside the worlds host never stands for a world in.
+    pub realm_name: String,
     pub map_parcel_view_url: String,
     /// `MAP_ESTATE_VIEW_URL`.
     pub map_estate_view_url: String,
@@ -125,12 +128,16 @@ fn non_empty(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `REALM_NAME`, trimmed, `main` when unset or blank (as the gatekeeper reads it).
+pub fn node_realm_name(config: &Config) -> String {
+    non_empty(config.node.realm_name.as_deref())
+        .unwrap_or_else(|| crate::comms::world_identity::GENESIS_CITY_REALM.to_string())
+}
+
 /// `NETWORK_ID` as the old worlds service read it, derived from `ETH_NETWORK`.
 pub fn network_id_for(eth_network: &str) -> i64 {
-    match eth_network.trim().to_ascii_lowercase().as_str() {
-        "sepolia" => 11_155_111,
-        _ => 1,
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network)
+        .map_or(1, |pair| pair.chain_ids().0)
 }
 
 impl Settings {
@@ -157,6 +164,7 @@ impl Settings {
             network_id: network_id_for(&config.node.eth_network),
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
+            realm_name: node_realm_name(config),
             map_parcel_view_url: content.map_parcel_view_url,
             map_estate_view_url: "http://127.0.0.1:5162/v1/estatemap.png".to_string(),
             commit_hash: content.commit_hash,
@@ -208,6 +216,7 @@ impl Settings {
             network_id: 1,
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_estate_view_url: "http://127.0.0.1:5162/v1/estatemap.png".to_string(),
             commit_hash: None,

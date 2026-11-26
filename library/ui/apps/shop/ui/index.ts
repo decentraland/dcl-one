@@ -12,11 +12,22 @@ export { ShopCardActions } from './ShopCardActions'
 export { ShopItemPanel, type ShopItemHide, type ShopItemPanelProps } from './ShopItemPanel'
 export { CreditsPill } from './CreditsPill'
 export { ShopItemTile, type ShopItemTileProps } from './ShopItemTile'
-export { ShopModal, ShopModalGap, type ShopModalProps } from './ShopModal'
+export { ShopModal, ShopModalHeader, type ShopModalProps } from './ShopModal'
+export { ShopItemCard, type ShopItemCardProps } from './ShopItemCard'
 export { ShopNameCard, type ShopNameCardProps } from './ShopNameCard'
 export { ShopNameTile, type ShopNameTileProps } from './ShopNameTile'
 export { ShopNames, type ShopNameStatus, type ShopNamesProps, type ShopNamesTab } from './ShopNames'
 export { pressedWith, type PressedWith } from './pressedWith'
-export { ShopPurchaseDialog, type ShopPurchaseDialogProps, type ShopPurchaseItem, type ShopPurchaseStep } from './ShopPurchaseDialog'
+export {
+  ShopPurchaseDialog,
+  shopStepLeave,
+  type ShopCreditsChoice,
+  type ShopManaChoice,
+  type ShopPaymentMethod,
+  type ShopPaymentProgress,
+  type ShopPurchaseDialogProps,
+  type ShopPurchaseItem,
+  type ShopPurchaseStep
+} from './ShopPurchaseDialog'
 export { CreditsIcon } from './CreditsIcon'
 export { ShopCart, ShopCartBadge, ShopCartToast, type ShopCartLine, type ShopCartProps } from './ShopCart'

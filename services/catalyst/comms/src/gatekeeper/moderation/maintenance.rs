@@ -1,42 +1,36 @@
 //! Periodic removal cleanup and room metadata reconciliation.
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
-use crate::gatekeeper::streaming::notifications::{notification, owner};
-use crate::gatekeeper::{CommsState, admission::scene, errors::ApiError};
+use crate::gatekeeper::streaming::notifications::{
+    Scope, notification, owner, place_info as info, recipients,
+};
+use crate::gatekeeper::{CommsState, SharedState, admission::scene, errors::ApiError, streaming};
 use crate::interfaces::StreamingNotificationKind;
 use serde_json::{Value, json};
 
 #[cfg(test)]
 use crate::interfaces::StreamingNotification;
 #[cfg(test)]
-use crate::{
-    Address,
-    world_identity::{Parcel, WorldName},
-};
+use crate::world_identity::WorldName;
+#[cfg(test)]
+use crate::{Address, world_identity::Parcel};
 #[cfg(test)]
 use chrono::NaiveDateTime;
 
-fn info(context: &PlaceContext) -> scene::PlaceInfo {
-    scene::PlaceInfo {
-        world: context.world,
-        world_name: context.world_name.clone(),
-        base_position: Some(context.base_position.clone()),
-        positions: context
-            .positions
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![context.base_position.clone()]),
-    }
-}
 async fn cleanup(
-    state: &CommsState,
+    state: &SharedState,
     feed: &RemovedPlaces,
     event: &RemovedPlace,
 ) -> Result<(), ApiError> {
+    let mut tx = state.pool.begin().await?;
+    // Serialize safety cleanup for this event.
+    let Some(mut event): Option<RemovedPlace> =
+        sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE event_id=$1 FOR UPDATE")
+            .bind(event.event_id)
+            .fetch_optional(&mut *tx)
+            .await?
+    else {
+        return Ok(());
+    };
     let context = PlaceContext {
         place_id: event.place_id.clone(),
         owner_address: event.owner_address.clone(),
@@ -45,54 +39,156 @@ async fn cleanup(
         base_position: event.base_position.clone(),
         positions: event.positions.clone(),
     };
-    let recipient = owner(state, &context).await;
-    if let Ok(recipient) = &recipient {
-        feed.save_owner(event.event_id, recipient.as_str()).await?;
+    let mut admin_keys = event.admin_keys.clone();
+    if event.world {
+        let current: Vec<String> = sqlx::query_scalar("SELECT identity::text FROM explore.world_scene_place WHERE world_name=lower($1) AND active")
+            .bind(&event.world_name).fetch_all(&mut *tx).await?;
+        admin_keys.extend(current);
     }
+    let mut ended = Vec::new();
     if event.cleaned_at.is_none() {
-        let accesses: Vec<(uuid::Uuid, Option<String>)> = sqlx::query_as(
-            "SELECT id, ingress_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
-        )
-        .bind(&event.place_id)
-        .fetch_all(&state.pool)
-        .await?;
-        let ingresses: Vec<&str> = accesses
-            .iter()
-            .filter_map(|(_, ingress)| ingress.as_deref().filter(|id| !id.is_empty()))
-            .collect();
-        if !ingresses.is_empty() && !state.livekit.configured {
+        // A removed world ends the key of each of its scenes, by its key as
+        // `WorldName` spells it. A name no world can have names no scene room:
+        // the key under its catalogue place still ends, and the cleanup commits.
+        let world = event.world.then(|| {
+            let name = event.world_name.as_deref().unwrap_or_default();
+            name.trim().to_lowercase()
+        });
+        let world = world.as_deref();
+        let ingress =
+            streaming::removed_place_has_ingress(&mut *tx, &event.place_id, world).await?;
+        if ingress && !state.livekit.configured {
             return Err(ApiError::http(503, "LiveKit ingress unavailable"));
         }
-        for ingress in ingresses {
-            state
-                .ingress()
-                .delete_ingress(ingress)
-                .await
-                .map_err(|_| ApiError::http(503, "LiveKit ingress revocation failed"))?;
+        // Bans are on the `<world>:<base>` keys of a world's scenes, or on a
+        // Genesis base parcel, where they end with the last enabled place
+        // based there. A ban made after the removal stays.
+        let (bans, key) = if event.world {
+            (
+                "left(place_id, length($2) + 1) = $2 || ':' \
+                 AND strpos(substr(place_id, length($2) + 2), ':') = 0",
+                event
+                    .world_name
+                    .as_deref()
+                    .unwrap_or(&event.place_id)
+                    .to_lowercase(),
+            )
+        } else {
+            (
+                "place_id = $2 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE disabled IS FALSE AND world IS FALSE AND base_position = $2)",
+                event.base_position.clone(),
+            )
+        };
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM social.scene_bans WHERE banned_at <= $3 AND (place_id = $1 OR ({bans}))"
+        )))
+        .bind(&event.place_id)
+        .bind(key)
+        .bind(event.removed_at)
+        .execute(&mut *tx)
+        .await?;
+        // Freeze each World admin this cleanup ends with its granter: a later
+        // re-grant overwrites the row's granter and lifts its `removed_at`.
+        if event.world {
+            sqlx::query("UPDATE explore.place_removal_pending SET admin_grants=(SELECT COALESCE(jsonb_agg(DISTINCT g),'[]'::jsonb) FROM (SELECT jsonb_array_elements(admin_grants) AS g UNION SELECT jsonb_build_array(lower(btrim(admin_address)),lower(btrim(added_by))) FROM social.scene_admins WHERE active AND added_at <= $2 AND place_id=ANY($3::text[])) grants) WHERE event_id=$1")
+                .bind(event.event_id).bind(event.removed_at).bind(&admin_keys)
+                .execute(&mut *tx).await?;
         }
-        let access_ids: Vec<uuid::Uuid> = accesses.iter().map(|(id, _)| *id).collect();
-        let mut tx = state.pool.begin().await?;
-        sqlx::query("DELETE FROM social.scene_bans WHERE place_id = $1")
-            .bind(&event.place_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE social.scene_admins SET active = false, removed_at = $2 WHERE place_id = $1 AND active").bind(&event.place_id).bind(event.removed_at).execute(&mut *tx).await?;
-        sqlx::query("UPDATE social.scene_stream_access SET active = false, streaming = false WHERE id = ANY($1) AND active").bind(&access_ids).execute(&mut *tx).await?;
+        // Include exact retired namespaces saved before catalogue removal.
+        // A shared Genesis base keeps its live grant, but its affected admin
+        // remains eligible for notification regardless of whether revocation is appropriate.
+        sqlx::query("UPDATE social.scene_admins SET active=false,removed_at=$2 WHERE active AND added_at <= $2 AND (($3 AND place_id=ANY($4::text[])) OR (NOT $3 AND place_id=$1 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE disabled IS FALSE AND world IS FALSE AND base_position=$1)))")
+            .bind(&event.base_position).bind(event.removed_at).bind(event.world).bind(&admin_keys)
+            .execute(&mut *tx).await?;
+        ended =
+            streaming::end_removed_place(&mut tx, &event.place_id, world, event.removed_at).await?;
         RemovedPlaces::mark_cleaned(&mut tx, event.event_id).await?;
-        tx.commit().await?;
     }
-    let recipient = recipient?;
+    tx.commit().await?;
+    for id in ended {
+        streaming::settle_cleanup(state, id, &event.place_id);
+    }
+    if !event.notify {
+        feed.acknowledge(event.event_id).await?;
+        return Ok(());
+    }
+    if !event.recipients_resolved {
+        // External calls occur only after the safety transaction has committed.
+        // The grants this removal ended keep its `removed_at`, so the retained
+        // rule (`Scope::Removal`) still finds them; the trigger freezes Genesis
+        // admins (they need no granter check) and the exact world scene places.
+        let grants = if event.world {
+            let saved: Option<Value> = sqlx::query_scalar(
+                "SELECT admin_grants FROM explore.place_removal_pending WHERE event_id=$1",
+            )
+            .bind(event.event_id)
+            .fetch_optional(&state.pool)
+            .await?;
+            streaming::notifications::grant_pairs(saved.as_ref())
+        } else {
+            Vec::new()
+        };
+        let scope = Scope::Removal {
+            revoked_at: event.removed_at,
+            admin_keys: &admin_keys,
+            grants: &grants,
+        };
+        let (resolved_owner, all) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let owner = owner(state, &context).await?;
+                let all = recipients(state, &context, owner.clone(), scope).await?;
+                Ok::<_, ApiError>((owner, all))
+            })
+            .await
+            .map_err(|_| ApiError::http(503, "place notification authority timed out"))??;
+        feed.save_owner(event.event_id, resolved_owner.as_str())
+            .await?;
+        let mut resolved: Vec<crate::Address> = if event.world {
+            Vec::new()
+        } else {
+            event.recipients.clone()
+        };
+        resolved.extend(all);
+        resolved.sort();
+        resolved.dedup();
+        let saved:Option<(Vec<crate::Address>,i32)>=sqlx::query_as("UPDATE explore.place_removal_pending SET recipients=$2,recipients_resolved=true WHERE event_id=$1 AND NOT recipients_resolved RETURNING recipients,recipient_cursor")
+            .bind(event.event_id).bind(&resolved).fetch_optional(&state.pool).await?;
+        if let Some((recipients, cursor)) = saved {
+            event.recipients = recipients;
+            event.recipient_cursor = cursor;
+        } else {
+            let Some((recipients,cursor)):Option<(Vec<crate::Address>,i32)>=sqlx::query_as("SELECT recipients,recipient_cursor FROM explore.place_removal_pending WHERE event_id=$1 AND recipients_resolved")
+                .bind(event.event_id).fetch_optional(&state.pool).await? else {return Ok(())};
+            event.recipients = recipients;
+            event.recipient_cursor = cursor;
+        }
+    }
+    let cursor = usize::try_from(event.recipient_cursor)
+        .map_err(|_| ApiError::internal("invalid place notification cursor"))?;
+    if cursor > event.recipients.len() {
+        return Err(ApiError::internal("invalid place notification cursor"));
+    }
     let key = format!("place-removed-{}", event.event_id);
-    state
-        .social
-        .notify_streaming_notification(&notification(
+    for (index, recipient) in event.recipients.iter().enumerate().skip(cursor) {
+        let notice = notification(
             &context,
-            recipient,
+            recipient.clone(),
             &key,
             StreamingNotificationKind::PlaceUpdated,
             event.removed_at,
-        ))
-        .await?;
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            state.social.notify_streaming_notification(&notice),
+        )
+        .await
+        .map_err(|_| ApiError::http(503, "place notification delivery timed out"))??;
+        let changed=sqlx::query("UPDATE explore.place_removal_pending SET recipient_cursor=$3 WHERE event_id=$1 AND recipient_cursor=$2 AND recipients_resolved")
+            .bind(event.event_id).bind(index as i32).bind(index as i32+1).execute(&state.pool).await?;
+        if changed.rows_affected() == 0 {
+            return Err(ApiError::internal("place notification checkpoint changed"));
+        }
+    }
     feed.acknowledge(event.event_id).await?;
     Ok(())
 }
@@ -114,10 +210,12 @@ fn metadata_batch(mut rooms: Vec<String>, after: Option<&str>) -> (Vec<String>, 
     (batch, next)
 }
 
+/// The scene behind `room`, with the key its explicit admins are granted on
+/// and the key its bans live under.
 async fn metadata_scene_context(
     state: &CommsState,
     room: &str,
-) -> Result<Option<PlaceContext>, ApiError> {
+) -> Result<Option<(PlaceContext, String, crate::access::SceneBanKey)>, ApiError> {
     use crate::rooms::{ParsedRoom, parse_room, resolve_room_name};
     let resolved = match parse_room(room) {
         Some(ParsedRoom::WorldScene(_)) => resolve_room_name(state.scenes.as_ref(), room)
@@ -131,21 +229,25 @@ async fn metadata_scene_context(
             // background exclusion even if its CID also exists in Genesis.
             None
         }
-        Some(ParsedRoom::Local(identity)) if identity.scene_id.is_some() => {
+        Some(ParsedRoom::Local(crate::rooms::ResolvedRoom {
+            realm,
+            scene_id: Some(scene),
+            ..
+        })) => {
             // Adapter lookup also serves historical deployments. Metadata needs
             // the scene currently standing at its base, including after local
             // unpublish tombstones/repoints without setting a deleter.
             let resolved = state
                 .scenes
                 .resolve(crate::rooms::RoomRequest::Adapter {
-                    realm: &identity.realm,
-                    scene: identity.scene_id.as_ref().unwrap(),
+                    realm: &realm,
+                    scene: &scene,
                 })
                 .await
                 .map_err(|_| ApiError::http(503, "Room identity is temporarily unavailable"))?;
             if resolved.room != room
-                || resolved.realm != identity.realm
-                || resolved.scene_id != identity.scene_id
+                || resolved.realm != realm
+                || resolved.scene_id.as_ref() != Some(&scene)
             {
                 return Ok(None);
             }
@@ -155,7 +257,7 @@ async fn metadata_scene_context(
             let current = match state
                 .scenes
                 .resolve(crate::rooms::RoomRequest::Parcel {
-                    realm: &identity.realm,
+                    realm: &realm,
                     parcel: deployment.base,
                 })
                 .await
@@ -170,11 +272,10 @@ async fn metadata_scene_context(
                 }
             };
             (current.room == room
-                && current.realm == identity.realm
-                && current.scene_id == identity.scene_id
+                && current.realm == realm
+                && current.scene_id.as_ref() == Some(&scene)
                 && current.deployment.as_ref().is_some_and(|current| {
-                    Some(&current.scene_id) == identity.scene_id.as_ref()
-                        && current.parcels.contains(&deployment.base)
+                    current.scene_id == scene && current.parcels.contains(&deployment.base)
                 }))
             .then_some(current)
         }
@@ -194,7 +295,7 @@ async fn metadata_scene_context(
     if &deployment.scene_id != scene {
         return Ok(None);
     }
-    Ok(Some(PlaceContext {
+    let context = PlaceContext {
         place_id: scene.as_str().to_owned(),
         // Current policy is authoritative for the owner. A Places snapshot
         // cannot replace scene-keyed rows, owner or active parcel authority.
@@ -203,14 +304,18 @@ async fn metadata_scene_context(
         world_name: resolved.realm.world().map(|world| world.key().to_owned()),
         base_position: deployment.base.canonical(),
         positions: json!(deployment.parcels.canonical()),
-    }))
+    };
+    let Some(ban_key) = resolved.ban_key() else {
+        return Ok(None);
+    };
+    Ok(Some((context, deployment.place_key(), ban_key)))
 }
 
 async fn room_metadata_fields(
     state: &CommsState,
     room: &str,
 ) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
-    let Some(context) = metadata_scene_context(state, room).await? else {
+    let Some((context, admin_key, ban_key)) = metadata_scene_context(state, room).await? else {
         return Ok(None);
     };
     let mut admins = scene::try_get_extra_addresses(state, &info(&context)).await?;
@@ -222,27 +327,21 @@ async fn room_metadata_fields(
     }
     for admin in state
         .moderation
-        .list_active_admins(&context.place_id, None)
+        .list_active_admins(&admin_key, None)
         .await?
     {
         admins.insert(admin.admin);
     }
-    let ban_key = match (&context.world_name, context.world) {
-        (Some(world), true) => format!("{}:{}", world, context.base_position),
-        _ => context.place_id.clone(),
-    };
     let bans: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
     )
-    .bind([ban_key, context.place_id.clone()].as_slice())
+    .bind([ban_key.as_str().to_owned(), context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
-    Ok(Some(
-        json!({"sceneAdmins": admins, "bannedAddresses": bans})
-            .as_object()
-            .unwrap()
-            .clone(),
-    ))
+    Ok(Some(serde_json::Map::from_iter([
+        ("sceneAdmins".to_owned(), json!(admins)),
+        ("bannedAddresses".to_owned(), json!(bans)),
+    ])))
 }
 
 // Retired world rooms have no current role authority. Only reconcile their
@@ -275,12 +374,10 @@ async fn retired_room_ban_fields(
     .bind(&keys)
     .fetch_all(&state.pool)
     .await?;
-    Ok(Some(
-        json!({"bannedAddresses": bans})
-            .as_object()
-            .unwrap()
-            .clone(),
-    ))
+    Ok(Some(serde_json::Map::from_iter([(
+        "bannedAddresses".to_owned(),
+        json!(bans),
+    )])))
 }
 
 async fn refresh_room(state: &CommsState, room: &str) -> Result<(), ApiError> {
@@ -337,7 +434,7 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
+pub async fn run_once(state: &SharedState) -> anyhow::Result<()> {
     if let Err(error) = crate::gatekeeper::revocation::sweep(state).await {
         tracing::warn!(%error, "world access revocation sweep retained for retry");
     }
@@ -427,6 +524,12 @@ mod tests {
             _: &WorldName,
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
 
@@ -602,14 +705,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let event = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1").bind(&id).fetch_one(&pool).await.unwrap();
+        let event = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE place_id = $1").bind(&id).fetch_one(&pool).await.unwrap();
         (state, directory, event)
     }
     #[tokio::test]
     async fn failed_revocation_sweep_does_not_block_cleanup_or_metadata_inventory() {
         use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
         use std::sync::atomic::AtomicUsize;
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        // A database of its own: `run_once` takes every pending removal, and
+        // would clean those of the tests that share the scratch database.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let (mut state, _, event) = setup(pool.clone()).await;
@@ -627,7 +732,7 @@ mod tests {
         state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
         state.livekit.configured = true;
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        run_once(&state).await.unwrap();
+        run_once(&Arc::new(state)).await.unwrap();
         server.abort();
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -718,14 +823,14 @@ mod tests {
                 }),
                 ..Default::default()
             });
-            let context = metadata_scene_context(&state, &room)
+            let (context, _, _) = metadata_scene_context(&state, &room)
                 .await
                 .unwrap()
                 .unwrap();
             assert_eq!(
                 context.place_id,
                 scene.as_str(),
-                "explicit admins/bans use original scene ID, never a Places UUID/world key"
+                "Genesis bans use original scene ID, never a Places UUID/world key"
             );
             assert_eq!(
                 context.owner_address, None,
@@ -1110,8 +1215,855 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_fanout_removal_enrichment_failure_follows_safety_commit() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, _, event) = setup(pool.clone()).await;
+        sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by,added_at) VALUES ('0,0','0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','owner',$1)")
+            .bind(event.removed_at-chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        sqlx::raw_sql("ALTER TABLE social.scene_admins RENAME TO test_scene_admins; \
+            CREATE FUNCTION social.fail_admin_read(text) RETURNS text LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'notification read unavailable'; END $$; \
+            CREATE VIEW social.scene_admins AS SELECT place_id,social.fail_admin_read(admin_address) AS admin_address,added_by,added_at,active,removed_at FROM social.test_scene_admins")
+            .execute(&pool).await.unwrap();
+        let state = Arc::new(state);
+        let feed = RemovedPlaces::new(pool.clone());
+        assert!(cleanup(&state, &feed, &event).await.is_err());
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            cleaned,
+            "a notification-only SQL error must follow the safety commit"
+        );
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.test_scene_admins WHERE place_id='0,0'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!active);
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_removed_place_preserves_admins_during_authority_outage() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, directory, event) = setup(pool.clone()).await;
+        let admin = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,added_at) VALUES ('0,0',$1,$1,$2)")
+            .bind(admin).bind(event.removed_at-chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        let feed = RemovedPlaces::new(pool.clone());
+        let mut state = Arc::new(state);
+        assert_eq!(cleanup(&state, &feed, &event).await.unwrap_err().code, 503);
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.scene_admins WHERE place_id='0,0' AND admin_address=$1",
+        )
+        .bind(admin)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !active,
+            "unknown external authority must not prevent revocation"
+        );
+        // The grant row can change before notification authority recovers.
+        sqlx::query("UPDATE social.scene_admins SET active=true,removed_at=NULL,added_at=$2 WHERE place_id='0,0' AND admin_address=$1")
+            .bind(admin).bind(event.removed_at+chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        Arc::get_mut(&mut state).unwrap().policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                operator: Some("0xcccccccccccccccccccccccccccccccccccccccc".into()),
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        let saved:RemovedPlace=sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE event_id=$1")
+            .bind(event.event_id).fetch_one(&pool).await.unwrap();
+        assert!(saved.cleaned_at.is_some());
+        cleanup(&state, &feed, &saved).await.unwrap();
+        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        let actual: std::collections::BTreeSet<_> =
+            notices.iter().map(|n| n.recipient.as_str()).collect();
+        assert_eq!(
+            actual,
+            [
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                admin,
+                "0xcccccccccccccccccccccccccccccccccccccccc"
+            ]
+            .into_iter()
+            .collect(),
+            "the pre-revocation admin must survive an authority outage and a grant rewrite"
+        );
+        assert_eq!(notices.len(), 3);
+        assert!(
+            notices
+                .iter()
+                .all(|n| n.kind == StreamingNotificationKind::PlaceUpdated)
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_removal_keeps_admin_regranted_before_first_maintenance() {
+        for world in [false, true] {
+            let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+                return;
+            };
+            let (mut state, directory, old_event) = setup(pool.clone()).await;
+            sqlx::query("DELETE FROM explore.place_removal_pending WHERE event_id=$1")
+                .bind(old_event.event_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let place = &old_event.place_id;
+            let admin = "0XBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+            let owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            let admin_key = if world {
+                let identity = uuid::Uuid::new_v4();
+                sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ('readd.eth',$1,'readd',ARRAY['0,0'])")
+                    .bind(identity).execute(&pool).await.unwrap();
+                identity.to_string()
+            } else {
+                "0,0".to_owned()
+            };
+            let raw = json!({"world":world,"world_name":if world {Some("readd.eth")} else {None},"owner":owner,"positions":["0,0"]});
+            sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES ($1,'0,0',$2)")
+                .bind(place)
+                .bind(&raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+            for value in [admin, "invalid-historical-admin"] {
+                sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by,added_at) VALUES ($1,$2,$3,timezone('UTC',clock_timestamp())-interval '1 second')")
+                    .bind(&admin_key).bind(value).bind(owner).execute(&pool).await.unwrap();
+            }
+            sqlx::query("DELETE FROM explore.place WHERE id=$1")
+                .bind(place)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let event: RemovedPlace =
+                sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE place_id=$1")
+                    .bind(place)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES ($1,'0,0',$2)")
+                .bind(place)
+                .bind(raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+            // A grant upsert replaces its prior added_at before maintenance has
+            // captured any local recipients. The queued event must own them.
+            sqlx::query("UPDATE social.scene_admins SET active=true,removed_at=NULL,added_at=$3 WHERE place_id=$1 AND admin_address=$2")
+                .bind(&admin_key).bind(admin).bind(event.removed_at+chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+            state.policy = if world {
+                let owner = Address::parse(owner).unwrap();
+                Arc::new(
+                    crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                        owner: owner.clone(),
+                        wide: Default::default(),
+                        protected: [owner].into_iter().collect(),
+                    },
+                )
+            } else {
+                Arc::new(StubPolicy {
+                    land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                        owner: owner.into(),
+                        operator: None,
+                        update_operator: None,
+                        update_managers: vec![],
+                        approved_for_all: vec![],
+                    })))),
+                    ..Default::default()
+                })
+            };
+            cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
+                .await
+                .unwrap();
+            {
+                let notices = directory.stub.streaming_notifications.lock().unwrap();
+                assert_eq!(
+                    notices.len(),
+                    2,
+                    "world={world}: queued recipients survive pre-maintenance regrant"
+                );
+                assert!(
+                    notices
+                        .iter()
+                        .any(|notice| notice.recipient.as_str() == admin.to_lowercase())
+                );
+            }
+            let active: bool = sqlx::query_scalar(
+                "SELECT active FROM social.scene_admins WHERE place_id=$1 AND admin_address=$2",
+            )
+            .bind(&admin_key)
+            .bind(admin)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(active, "a grant added after removal remains active");
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_world_removal_keeps_original_granter_after_regrant_and_retirement() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, old_event) = setup(pool.clone()).await;
+        sqlx::query("DELETE FROM explore.place_removal_pending WHERE event_id=$1")
+            .bind(old_event.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let place = &old_event.place_id;
+        let owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let admin = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let unauthorized = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let stranger = "0xdddddddddddddddddddddddddddddddddddddddd";
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ('regrant.eth',$1,'regrant',ARRAY['0,0'])")
+            .bind(identity).execute(&pool).await.unwrap();
+        let key = identity.to_string();
+        let raw =
+            json!({"world":true,"world_name":"regrant.eth","owner":owner,"positions":["0,0"]});
+        sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES ($1,'0,0',$2)")
+            .bind(place)
+            .bind(&raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The owner granted `admin`; `unauthorized` was granted by a wallet
+        // without the world-wide authority, so it is never told.
+        for (value, granter) in [(admin, owner), (unauthorized, stranger)] {
+            sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by,added_at) VALUES ($1,$2,$3,timezone('UTC',clock_timestamp())-interval '1 second')")
+                .bind(&key).bind(value).bind(granter).execute(&pool).await.unwrap();
+        }
+        sqlx::query("DELETE FROM explore.place WHERE id=$1")
+            .bind(place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace =
+            sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE place_id=$1")
+                .bind(place)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let frozen: Value = sqlx::query_scalar(
+            "SELECT admin_grants FROM explore.place_removal_pending WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            frozen.as_array().unwrap().contains(&json!([admin, owner])),
+            "the event froze the original pair: {frozen}"
+        );
+        // Before maintenance: the scene retires and a wallet without authority
+        // re-grants `admin`, overwriting the row's granter and time.
+        sqlx::query(
+            "UPDATE explore.world_scene_place SET active=false, entity_id=NULL WHERE identity=$1",
+        )
+        .bind(identity)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE social.scene_admins SET added_by=$3,added_at=$4,active=true,removed_at=NULL WHERE place_id=$1 AND admin_address=$2")
+            .bind(&key).bind(admin).bind(stranger).bind(event.removed_at+chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        let owner_address = Address::parse(owner).unwrap();
+        state.policy = Arc::new(
+            crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                owner: owner_address.clone(),
+                wide: Default::default(),
+                protected: [owner_address].into_iter().collect(),
+            },
+        );
+        cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        let told: Vec<String> = directory
+            .stub
+            .streaming_notifications
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|notice| notice.recipient.as_str().to_owned())
+            .collect();
+        assert!(
+            told.iter().any(|r| r == admin),
+            "the frozen original granter still qualifies the re-granted admin: {told:?}"
+        );
+        assert!(
+            !told.iter().any(|r| r == unauthorized),
+            "an admin whose granter lacks authority stays excluded: {told:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_place_removal_retries_all_genesis_manager_roles() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: wallet(1).to_string(),
+                operator: Some(wallet(3).to_string()),
+                update_operator: Some(wallet(4).to_string()),
+                update_managers: vec![wallet(5).to_string()],
+                approved_for_all: vec![wallet(6).to_string()],
+            })))),
+            ..Default::default()
+        });
+        for (admin, active) in [(wallet(2), true), (wallet(3), true), (wallet(7), false)] {
+            sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,added_at,active,removed_at) VALUES ('0,0',$1,$1,$2,$3,CASE WHEN $3 THEN NULL ELSE $2 END)")
+                .bind(admin).bind(event.removed_at-chrono::Duration::seconds(1)).bind(active).execute(&pool).await.unwrap();
+        }
+        *directory.stub.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        let feed = RemovedPlaces::new(pool.clone());
+        let mut state = Arc::new(state);
+        assert!(
+            cleanup(&state, &feed, &event).await.is_err(),
+            "second-recipient failure must keep the remaining fanout pending"
+        );
+        assert_eq!(
+            directory.stub.streaming_notifications.lock().unwrap().len(),
+            1
+        );
+        Arc::get_mut(&mut state).unwrap().policy = Arc::new(StubPolicy::default());
+        cleanup(&state, &feed, &event).await.unwrap();
+        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        assert_eq!(notices.len(), 6);
+        assert_eq!(
+            notices
+                .iter()
+                .map(|n| n.recipient.clone())
+                .collect::<std::collections::BTreeSet<_>>(),
+            (1..=6).map(wallet).collect()
+        );
+        assert!(
+            notices
+                .iter()
+                .all(|n| n.kind == StreamingNotificationKind::PlaceUpdated
+                    && n.metadata["address"] == n.recipient.as_str())
+        );
+        assert_eq!(
+            *directory.stub.streaming_attempts.lock().unwrap(),
+            [1, 2, 2, 3, 4, 5, 6].map(wallet)
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_live_disable_freezes_keys_before_later_retirement() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES ('disabled-first.eth')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES ('disabled-first.eth','live','[]','{}','owner',ARRAY['1,2'],0)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ('disabled-first.eth',$1,'live',ARRAY['1,2'])")
+            .bind(identity).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO explore.place(id,base_position,raw) VALUES ('disabled-first','1,2',$1)",
+        )
+        .bind(json!({"world":true,"world_name":"disabled-first.eth"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE explore.place SET disabled=true WHERE id='disabled-first'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name='disabled-first.eth'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE explore.world_scene_place SET active=false,entity_id=NULL WHERE identity=$1",
+        )
+        .bind(identity)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let keys: Vec<String> = sqlx::query_scalar(
+            "SELECT admin_keys FROM explore.place_removal_pending WHERE place_id='disabled-first'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(keys, vec![identity.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_scene_readd_locks_identity_before_catalogue() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES ('lock-order.eth')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ('lock-order.eth',$1,'bound',ARRAY['1,2'])").bind(identity).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place(id,base_position,raw,removal_admin_keys) VALUES ('lock-order','1,2',$1,ARRAY['saved'])")
+            .bind(json!({"world":true,"world_name":"lock-order.eth"})).execute(&pool).await.unwrap();
+        let mut ranking = pool.begin().await.unwrap();
+        sqlx::query("SELECT identity FROM explore.world_scene_place WHERE identity=$1 FOR UPDATE")
+            .bind(identity)
+            .execute(&mut *ranking)
+            .await
+            .unwrap();
+        let mut publication = pool.begin().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *publication)
+            .await
+            .unwrap();
+        let publish = tokio::spawn(async move {
+            sqlx::query("INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES ('lock-order.eth','bound','[]','{}','owner',ARRAY['1,2'],0)").execute(&mut *publication).await.unwrap();
+            publication.commit().await.unwrap();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')").bind(pid).fetch_one(&pool).await.unwrap();
+            if waiting {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "publication did not reach identity lock"
+            );
+            tokio::task::yield_now().await;
+        }
+        // Publication must still be waiting on the identity, so ranking can
+        // acquire the catalogue lock without forming the opposite lock cycle.
+        sqlx::query("SELECT id FROM explore.place WHERE id='lock-order' FOR UPDATE NOWAIT")
+            .execute(&mut *ranking)
+            .await
+            .unwrap();
+        ranking.rollback().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), publish)
+            .await
+            .unwrap()
+            .unwrap();
+        let empty: bool = sqlx::query_scalar(
+            "SELECT cardinality(removal_admin_keys)=0 FROM explore.place WHERE id='lock-order'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(empty);
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_retired_world_admins_survive_catalogue_delay_and_readd() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, _) = setup(pool.clone()).await;
+        let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+        state.policy = Arc::new(
+            crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                owner: wallet(1),
+                wide: Default::default(),
+                protected: [wallet(1), wallet(4)].into_iter().collect(),
+            },
+        );
+        let name = "retired-admins.dcl.eth";
+        let ids = [
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        ];
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES ($1)")
+            .bind(name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (index, entity) in ["first", "second"].iter().enumerate() {
+            sqlx::query("INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES ($1,$2,'[]','{}','owner',ARRAY[$3],0)")
+                .bind(name).bind(entity).bind(if index==0 {"10,20"} else {"30,40"}).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ($1,$2,$3,ARRAY[$4])")
+                .bind(name).bind(ids[index]).bind(entity).bind(if index==0 {"10,20"} else {"30,40"}).execute(&pool).await.unwrap();
+        }
+        // Ancient inactive identities must never be mistaken for this removal.
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels,active) VALUES ($1,$2,NULL,ARRAY['10,20'],false)")
+            .bind(name).bind(ids[2]).execute(&pool).await.unwrap();
+        for (index, id) in ids.iter().enumerate() {
+            sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by) VALUES ($1,$2,$3)")
+                .bind(id.to_string()).bind(wallet(if index==2 {9} else {index as u8+2})).bind(wallet(1)).execute(&pool).await.unwrap();
+        }
+        for local in [false, true] {
+            let id = "retired-place";
+            if local {
+                sqlx::query("INSERT INTO explore.place_world_local(id,base_position,world,world_name,raw) VALUES ($1,'10,20',true,$2,$3)")
+                    .bind(id).bind(name).bind(json!({"owner":wallet(1).as_str(),"positions":["10,20","30,40"]})).execute(&pool).await.unwrap();
+            } else {
+                sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES ($1,'10,20',$2)")
+                    .bind(id).bind(json!({"world":true,"world_name":name,"owner":wallet(1).as_str(),"positions":["10,20","30,40"]})).execute(&pool).await.unwrap();
+            }
+        }
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name=$1")
+            .bind(name)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.world_scene_place SET active=false,entity_id=NULL WHERE world_name=$1 AND active").bind(name).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        for table in ["explore.place", "explore.place_world_local"] {
+            let keys: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT removal_admin_keys FROM {table} WHERE world_name=$1"
+            )))
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                keys.into_iter().collect::<std::collections::BTreeSet<_>>(),
+                ids[..2].iter().map(ToString::to_string).collect()
+            );
+        }
+        // Identity-first import must retain the snapshot until a real scene returns.
+        sqlx::query("INSERT INTO explore.world_scene_place(world_name,identity,entity_id,parcels) VALUES ($1,$2,'replacement',ARRAY['50,60'])")
+            .bind(name).bind(uuid::Uuid::new_v4()).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE explore.place SET disabled=true WHERE id='retired-place'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.place_world_local SET disabled=true WHERE id='retired-place'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let events: Vec<RemovedPlace> = sqlx::query_as(
+            "SELECT * FROM explore.place_removal_pending WHERE world_name=$1 ORDER BY place_id",
+        )
+        .bind(name)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events.iter().all(|event| {
+            ids[..2]
+                .iter()
+                .all(|id| event.admin_keys.contains(&id.to_string()))
+                && !event.admin_keys.contains(&ids[2].to_string())
+        }));
+        sqlx::query("INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES ($1,'replacement','[]','{}','owner',ARRAY['50,60'],0)")
+            .bind(name).execute(&pool).await.unwrap();
+        let remaining: i64 = sqlx::query_scalar("SELECT cardinality(removal_admin_keys)::bigint FROM explore.place WHERE id='retired-place'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "real scene re-add clears only catalogue evidence"
+        );
+        let feed = RemovedPlaces::new(pool.clone());
+        let state = Arc::new(state);
+        for event in events {
+            cleanup(&state, &feed, &event).await.unwrap();
+        }
+        {
+            let notices = directory.stub.streaming_notifications.lock().unwrap();
+            assert_eq!(notices.len(), 4);
+            for key in notices
+                .iter()
+                .map(|notice| &notice.event_key)
+                .collect::<std::collections::BTreeSet<_>>()
+            {
+                assert_eq!(
+                    notices
+                        .iter()
+                        .filter(|notice| &notice.event_key == key)
+                        .map(|notice| notice.recipient.clone())
+                        .collect::<std::collections::BTreeSet<_>>(),
+                    (1..=4).map(wallet).collect()
+                );
+            }
+        }
+        // The unrelated ancient grant remains active and receives no notice.
+        let ancient_active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE place_id=$1")
+                .bind(ids[2].to_string())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(ancient_active);
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_shared_genesis_base_notifies_without_revoking_live_grant() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        let admin = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        sqlx::query(
+            "INSERT INTO explore.place(id,base_position,raw) VALUES ('still-live','0,0','{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for address in [admin, "invalid-historical-admin"] {
+            sqlx::query("INSERT INTO social.scene_admins(place_id,admin_address,added_by,added_at) VALUES ('0,0',$1,$1,$2)")
+                .bind(address).bind(event.removed_at-chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        }
+        cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE admin_address=$1")
+                .bind(admin)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(active);
+        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        assert_eq!(notices.len(), 2);
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.recipient.as_str() == admin)
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_imported_disabled_place_is_cleaned_without_notices() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, directory, unused) = setup(pool.clone()).await;
+        sqlx::query("DELETE FROM explore.place_removal_pending WHERE event_id=$1")
+            .bind(unused.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tag = uuid::Uuid::new_v4();
+        let raw = json!({"owner":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","positions":["0,0"]});
+        let notify = |place: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT notify FROM explore.place_removal_pending WHERE place_id=$1",
+                )
+                .bind(place)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        // An import (places' place.load.sql) inserting an already-disabled place.
+        let imported = format!("imported-{tag}");
+        sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,added_at) VALUES ('0,0','0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',timezone('UTC',now())-interval '1 hour')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO explore.place (id,base_position,disabled,raw) VALUES ($1,'0,0',true,$2)",
+        )
+        .bind(&imported)
+        .bind(&raw)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !notify(imported.clone()).await,
+            "an imported historical removal is silent"
+        );
+        // An upgraded catalogue: an enabled place with no state row, disabled later.
+        let upgraded = format!("upgraded-{tag}");
+        sqlx::query("INSERT INTO explore.place (id,base_position,raw) VALUES ($1,'5,5',$2)")
+            .bind(&upgraded)
+            .bind(&raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_removal_state WHERE place_id=$1")
+            .bind(&upgraded)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.place SET disabled=true WHERE id=$1")
+            .bind(&upgraded)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(notify(upgraded).await, "a live disable notifies");
+        // A disabled local row newly overriding an enabled catalogue row.
+        let overridden = format!("overridden-{tag}");
+        sqlx::query("INSERT INTO explore.place (id,base_position,raw) VALUES ($1,'6,6',$2)")
+            .bind(&overridden)
+            .bind(&raw)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.place_world_local (id,base_position,disabled,raw) VALUES ($1,'6,6',true,$2)")
+            .bind(&overridden).bind(&raw).execute(&pool).await.unwrap();
+        assert!(
+            notify(overridden).await,
+            "a local override of a live place notifies"
+        );
+
+        let event: RemovedPlace =
+            sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE place_id=$1")
+                .bind(&imported)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        assert!(
+            directory
+                .stub
+                .streaming_notifications
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE place_id='0,0'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!active, "historical cleanup still revokes the grant");
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_historical_cleanup_suppresses_notices() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, directory, unused) = setup(pool.clone()).await;
+        sqlx::query("DELETE FROM explore.place_removal_pending WHERE event_id=$1")
+            .bind(unused.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let place = format!("historical-removal-{}", uuid::Uuid::new_v4());
+        sqlx::query(
+            "INSERT INTO explore.place (id,base_position,disabled,raw) VALUES ($1,'0,0',true,$2)",
+        )
+        .bind(&place)
+        .bind(json!({"owner":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","positions":["0,0"]}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Reproduce first feed activation against an already populated catalogue.
+        sqlx::query("DELETE FROM explore.place_removal_pending WHERE place_id=$1")
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_removal_state WHERE place_id=$1")
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for statement in crate::db::schema_migrate::statements(crate::db::SCHEMA_SQL) {
+            if statement.starts_with("INSERT INTO explore.place_removal_pending")
+                || statement.starts_with("INSERT INTO explore.place_removal_state")
+            {
+                // Statements come only from this binary's embedded schema.
+                sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        }
+        let event:RemovedPlace=sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE place_id=$1")
+            .bind(&place).fetch_one(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,added_at) VALUES ('0,0','0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',$1)")
+            .bind(event.removed_at-chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
+        let feed = RemovedPlaces::new(pool.clone());
+        let mut state = Arc::new(state);
+        cleanup(&state, &feed, &event)
+            .await
+            .expect("historical cleanup must not need notification authority");
+        assert!(
+            directory
+                .stub
+                .streaming_notifications
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE place_id='0,0'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            !active,
+            "suppressing historical notifications must preserve admin cleanup"
+        );
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM explore.place_removal_pending WHERE place_id=$1)",
+        )
+        .bind(&place)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!pending);
+        sqlx::query("UPDATE explore.place SET disabled=false WHERE id=$1")
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.place SET disabled=true WHERE id=$1")
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let later:RemovedPlace=sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE place_id=$1")
+            .bind(&place).fetch_one(&pool).await.unwrap();
+        assert_ne!(later.event_id, event.event_id);
+        Arc::get_mut(&mut state).unwrap().policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        cleanup(&state, &feed, &later).await.unwrap();
+        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        assert_eq!(
+            notices.len(),
+            1,
+            "a later genuine removal must still notify"
+        );
+        assert_eq!(notices[0].kind, StreamingNotificationKind::PlaceUpdated);
+    }
+
+    #[tokio::test]
     async fn notification_failure_keeps_checkpoint_and_readd_writes_survive_retry() {
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        // A database of its own: the place's base parcel holds only this
+        // test's grants.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let (mut state, directory, event) = setup(pool.clone()).await;
@@ -1128,15 +2080,18 @@ mod tests {
             ..Default::default()
         });
         let wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        // A scene admin on the base parcel, whose grant this cleanup revokes.
+        let admin = "0xdddddddddddddddddddddddddddddddddddddddd";
+        grant_before(&pool, &event, admin).await;
         sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)").bind(&event.place_id).bind(wallet).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         directory.fail.store(true, Ordering::SeqCst);
-        let feed = RemovedPlaces::new(pool.clone());
+        let (feed, state) = (RemovedPlaces::new(pool.clone()), Arc::new(state));
         assert_eq!(
             cleanup(&state, &feed, &event).await.unwrap_err().code,
             500,
             "the injected notification failure must follow successful LAND resolution"
         );
-        let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
+        let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
         assert!(
             saved.cleaned_at.is_some(),
             "cleanup commit survived notification failure"
@@ -1159,9 +2114,69 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 0, "ack follows successful notification");
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2",
+        )
+        .bind(&event.base_position)
+        .bind(admin)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!active, "the first pass revoked the grant");
         let notifications = directory.stub.streaming_notifications.lock().unwrap();
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].recipient.as_str(), land_owner);
+        let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
+        told.sort();
+        assert_eq!(
+            told,
+            [land_owner, admin],
+            "the retry still tells the revoked admin"
+        );
+    }
+
+    async fn grant_before(pool: &sqlx::PgPool, event: &RemovedPlace, admin: &str) {
+        sqlx::query("INSERT INTO social.scene_admins (place_id, admin_address, added_by, added_at) VALUES ($1, $2, $2, $3)")
+            .bind(&event.base_position)
+            .bind(admin)
+            .bind(event.removed_at - chrono::Duration::seconds(1))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_removal_notice_reaches_the_owner_operators_and_admins_of_the_place() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        let (owner, operator, admin) = (
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "0xdddddddddddddddddddddddddddddddddddddddd",
+        );
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: owner.into(),
+                operator: Some(operator.into()),
+                update_operator: None,
+                update_managers: vec![admin.into()],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        grant_before(&pool, &event, admin).await;
+        let state = Arc::new(state);
+        cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
+        told.sort();
+        assert_eq!(told, [owner, admin, operator], "once each");
+        assert!(notifications.iter().all(|n| {
+            n.kind == StreamingNotificationKind::PlaceUpdated
+                && n.metadata["address"] == n.recipient.as_str()
+        }));
     }
     #[tokio::test]
     async fn unknown_owner_does_not_block_cleanup_and_notification_remains_pending() {
@@ -1177,9 +2192,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')").bind(&event.place_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2)").bind(&event.place_id).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         assert_eq!(
-            cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
                 .await
                 .unwrap_err()
                 .code,
@@ -1210,6 +2225,230 @@ mod tests {
         );
     }
 
+    /// The place of a world published here has the world name as its id; the
+    /// admins are granted on the places of the world's scenes.
+    #[tokio::test]
+    async fn a_removed_local_world_place_revokes_the_admins_of_its_scenes() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let state = Arc::new(setup(pool.clone()).await.0);
+        let world = format!("removed-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'bafy', '{\"0,0\"}')")
+            .bind(&world).bind(identity).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place_world_local (id, base_position, raw, world_name, world) VALUES ($1, '0,0', '{}', $1, true)")
+            .bind(&world).execute(&pool).await.unwrap();
+        let admin = Address::parse("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let grant = identity.to_string();
+        state
+            .moderation
+            .add_admin(&grant, &admin, &admin)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_world_local WHERE id = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE place_id = $1").bind(&world).fetch_one(&pool).await.unwrap();
+        assert!(event.world);
+        // Bans of the world's scenes end; a later ban and another world's stay.
+        for (key, at) in [
+            (
+                format!("{world}:0,0"),
+                event.removed_at - chrono::Duration::seconds(1),
+            ),
+            (
+                format!("{world}:1,1"),
+                event.removed_at + chrono::Duration::seconds(1),
+            ),
+            (
+                format!("{world}x:0,0"),
+                event.removed_at - chrono::Duration::seconds(1),
+            ),
+        ] {
+            sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)")
+                .bind(key).bind(admin.as_str()).bind(at).execute(&pool).await.unwrap();
+        }
+        // Each scene's key ends; another world's key stays.
+        let parsed = WorldName::parse(&world).unwrap();
+        let other = WorldName::parse(&format!("x{world}")).unwrap();
+        let scene_room = |world: &WorldName, scene: &str| {
+            crate::rooms::worlds_service_scene_room(
+                world,
+                &crate::world_identity::SceneId::parse(scene).unwrap(),
+            )
+        };
+        let mut keys = Vec::new();
+        for (place, room) in [
+            (grant.clone(), scene_room(&parsed, "bafy")),
+            (format!("{world}-b"), scene_room(&parsed, "bafyb")),
+            (format!("{world}-c"), scene_room(&other, "bafy")),
+        ] {
+            let id: uuid::Uuid = sqlx::query_scalar("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', $2, '', $3, 'test', $4) RETURNING id")
+                .bind(place).bind(uuid::Uuid::new_v4().to_string()).bind(room)
+                .bind(event.removed_at - chrono::Duration::seconds(1))
+                .fetch_one(&pool).await.unwrap();
+            keys.push(id);
+        }
+        // A grant made after the removal, before a late cleanup: it stays.
+        let later = Address::parse("0xcccccccccccccccccccccccccccccccccccccccc").unwrap();
+        state
+            .moderation
+            .add_admin(&grant, &later, &admin)
+            .await
+            .unwrap();
+        // The owner is unknown to the stub: the cleanup commits, the notice waits.
+        let _ = cleanup(&state, &RemovedPlaces::new(pool.clone()), &event).await;
+        let active =
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 ORDER BY admin_address";
+        let active: Vec<bool> = sqlx::query_scalar(active)
+            .bind(&grant)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(active, [false, true]);
+        let bans: Vec<String> =
+            sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE place_id LIKE $1 || '%' ORDER BY place_id")
+                .bind(&world)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bans, [format!("{world}:1,1"), format!("{world}x:0,0")]);
+        let mut still = Vec::new();
+        for id in &keys {
+            let active: bool =
+                sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            still.push(active);
+        }
+        assert_eq!(still, [false, false, true], "the world's scene keys end");
+    }
+
+    /// A world event whose name no world can have is still cleaned: the key
+    /// under its catalogue place ends, whatever room it streams into.
+    #[tokio::test]
+    async fn a_world_removal_without_a_valid_name_is_cleaned() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (state, _, event) = setup(pool.clone()).await;
+        sqlx::query("UPDATE explore.place_removal_pending SET world = true, world_name = 'not a world' WHERE event_id = $1")
+            .bind(event.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let room = crate::rooms::worlds_service_scene_room(
+            &WorldName::parse("unnamed.dcl.eth").unwrap(),
+            &crate::world_identity::SceneId::parse("bafy").unwrap(),
+        );
+        let key: uuid::Uuid = sqlx::query_scalar("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', $2, '', $3, 'test', $4) RETURNING id")
+            .bind(&event.place_id).bind(uuid::Uuid::new_v4().to_string()).bind(room)
+            .bind(event.removed_at - chrono::Duration::seconds(1))
+            .fetch_one(&pool).await.unwrap();
+        // Only the notice may fail; the cleanup commits first.
+        let _ = cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event).await;
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id = $1",
+        )
+        .bind(event.event_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(true);
+        assert!(cleaned);
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!active);
+    }
+
+    #[tokio::test]
+    async fn a_retried_world_removal_notice_reaches_the_owner_granted_scene_admin() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, _) = setup(pool.clone()).await;
+        let owner = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let parcel_grantee = Address::parse("0xcccccccccccccccccccccccccccccccccccccccc").unwrap();
+        state.policy = Arc::new(
+            crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                owner: owner.clone(),
+                wide: Default::default(),
+                protected: [owner.clone(), parcel_grantee.clone()].into(),
+            },
+        );
+        let world = format!("removed-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'bafy', '{\"0,0\"}')")
+            .bind(&world).bind(identity).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place_world_local (id, base_position, raw, world_name, world) VALUES ($1, '0,0', '{}', $1, true)")
+            .bind(&world).execute(&pool).await.unwrap();
+        let (admin, skipped) = (
+            Address::parse("0xdddddddddddddddddddddddddddddddddddddddd").unwrap(),
+            Address::parse("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").unwrap(),
+        );
+        let grant = identity.to_string();
+        state
+            .moderation
+            .add_admin(&grant, &admin, &owner)
+            .await
+            .unwrap();
+        state
+            .moderation
+            .add_admin(&grant, &skipped, &parcel_grantee)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_world_local WHERE id = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace =
+            sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE place_id = $1")
+                .bind(&world)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let (feed, state) = (RemovedPlaces::new(pool.clone()), Arc::new(state));
+        directory.fail.store(true, Ordering::SeqCst);
+        assert!(cleanup(&state, &feed, &event).await.is_err());
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2",
+        )
+        .bind(&grant)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!active, "the first pass revoked the grant");
+        let saved: RemovedPlace =
+            sqlx::query_as("SELECT * FROM explore.place_removal_pending WHERE event_id = $1")
+                .bind(event.event_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // The scene leaves before the retry.
+        sqlx::query("UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE identity = $1")
+            .bind(identity).execute(&pool).await.unwrap();
+        directory.fail.store(false, Ordering::SeqCst);
+        cleanup(&state, &feed, &saved).await.unwrap();
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let told: std::collections::BTreeSet<&str> =
+            notifications.iter().map(|n| n.recipient.as_str()).collect();
+        assert_eq!(
+            told,
+            [owner.as_str(), parcel_grantee.as_str(), admin.as_str()].into()
+        );
+    }
+
     #[tokio::test]
     async fn ingress_unavailability_retains_uncleaned_removal_and_sends_no_notification() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -1219,7 +2458,7 @@ mod tests {
         state.livekit.configured = false;
         sqlx::query("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', 'test-key', 'test-ingress', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2)").bind(&event.place_id).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         assert_eq!(
-            cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
                 .await
                 .unwrap_err()
                 .code,

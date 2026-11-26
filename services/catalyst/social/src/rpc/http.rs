@@ -206,7 +206,7 @@ pub(crate) async fn instrument_metrics(
         } else {
             handler.unwrap_or("")
         };
-        metrics::histogram!("http_request_size_bytes", "method" => super::metrics::http_method_label(&method), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
+        dcl_metrics::histogram!("http_request_size_bytes", "method" => super::metrics::http_method_label(&method), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
         super::metrics::http_finished(method, handler, code.as_u16(), started);
     }
     response
@@ -296,7 +296,7 @@ async fn signer(
 ) -> Result<String, CommError> {
     let path = signed_path(original, local);
     Ok(
-        auth::require_signer(headers, method, &path, state.eip1654.as_deref())
+        auth::require_signer(headers, method, &path, state.eip1654.as_ref())
             .await?
             .into_string(),
     )
@@ -1051,17 +1051,15 @@ async fn update_social_settings(
         &[],
         1,
     )?;
-    let row = state
-        .ctx
-        .db()
-        .upsert_social_settings(
-            &me,
-            text(&object, "privateMessagesPrivacy"),
-            text(&object, "blockedUsersMessagesVisibility"),
-            text(&object, "showSituationReactions"),
-        )
-        .await
-        .map_err(failed)?;
+    let row = ops::update_social_settings(
+        &state.ctx,
+        &me,
+        text(&object, "privateMessagesPrivacy"),
+        text(&object, "blockedUsersMessagesVisibility"),
+        text(&object, "showSituationReactions"),
+    )
+    .await
+    .map_err(failed)?;
     data(StatusCode::OK, settings(&row))
 }
 

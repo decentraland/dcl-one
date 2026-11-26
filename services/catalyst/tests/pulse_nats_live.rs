@@ -6,10 +6,8 @@
 //! receives bytes that decode as the vendored `PeerClusterChange`, and that the topology and
 //! discovery subjects carry archipelago's shapes. The tracker's publish decisions are asserted
 //! against the in-process fake instead, which needs no broker at all.
-#[path = "support/gate.rs"]
-mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::gate;
+use crate::nats_broker;
 use std::sync::Arc;
 use std::time::Duration;
 

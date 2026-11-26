@@ -28,8 +28,8 @@ use common::{
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
         EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, ForeignAvatar, MoveKind,
-        OneShotAudio, PlayerModifiers, PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback,
-        SceneDrivenAnimationFeedbackState,
+        OneShotAudio, PlayerEmoteTriggered, PlayerModifiers, PrimaryUser, SceneDrivenAnim,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationFeedbackState,
     },
     util::TryPushChildrenEx,
 };
@@ -42,7 +42,10 @@ use ipfs::IpfsAssetServer;
 #[cfg(feature = "explorer")]
 use scene_runner::{asset_preload::plugin::PreloadedGltf, permissions::Permission};
 
-use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
+use crate::{
+    hover_glow::{can_glow, set_hover_glows},
+    process_avatar, upload_cpu_mesh, AvatarDefinition, AvatarShape,
+};
 
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
@@ -155,6 +158,7 @@ pub struct AvatarAnimationPlugin;
 
 impl Plugin for AvatarAnimationPlugin {
     fn build(&self, app: &mut App) {
+        app.add_event::<PlayerEmoteTriggered>();
         app.add_systems(
             Update,
             (
@@ -169,6 +173,8 @@ impl Plugin for AvatarAnimationPlugin {
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
+                // after the filing, so a preloaded emote's first request has the player as owner
+                preload_equipped_emotes.after(file_emote_downloads),
             )
                 .in_set(SceneSets::PostLoop),
         );
@@ -186,7 +192,8 @@ impl Plugin for AvatarAnimationPlugin {
 }
 
 /// File each avatar's emote downloads under the avatar, as its wearables are: the entity hashes
-/// of the emotes it plays (the full-body one and the upper-body request) go on the avatar as
+/// of the emotes it plays (the full-body one and the upper-body request), and for the player
+/// the emotes they have equipped (`preload_equipped_emotes`), go on the avatar as
 /// `PartitionedEmoteDownloads`, so the request slots rank an emote's definition, model and
 /// sounds in the avatar tier at this avatar's partition. With no owner they rank after every
 /// scene in range. A scene emote downloads under its scene's hash and a built-in one does not
@@ -199,18 +206,27 @@ pub(crate) fn file_emote_downloads(
             &ActiveEmote,
             Option<&MaskedEmote>,
             Option<&PartitionedEmoteDownloads>,
+            Option<&AvatarShape>,
+            Has<PrimaryUser>,
         ),
         With<AvatarAnimPlayer>,
     >,
     mut emote_loader: CollectibleManager<Emote>,
 ) {
-    for (entity, active, masked, filed) in &avatars {
+    for (entity, active, masked, filed, shape, is_player) in &avatars {
         let masked = masked
             .and_then(|masked| masked.request.as_ref())
             .map(|request| &request.urn);
-        let hashes = emote_download_hashes(std::iter::once(&active.urn).chain(masked), |urn| {
-            emote_loader.get_hash(urn).ok()
-        });
+        let equipped = shape
+            .filter(|_| is_player)
+            .into_iter()
+            .flat_map(|shape| shape.0.emotes.iter())
+            .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
+            .collect::<Vec<_>>();
+        let hashes = emote_download_hashes(
+            std::iter::once(&active.urn).chain(masked).chain(&equipped),
+            |urn| emote_loader.get_hash(urn).ok(),
+        );
         match (filed, hashes.is_empty()) {
             (None, true) => {}
             (Some(filed), false) if filed.0 == hashes => {}
@@ -235,28 +251,103 @@ pub(crate) fn emote_download_hashes<'a>(
     urns: impl IntoIterator<Item = &'a EmoteUrn>,
     resolve: impl FnMut(&'a EmoteUrn) -> Option<String>,
 ) -> Vec<String> {
-    let mut hashes: Vec<String> = urns
-        .into_iter()
-        .filter(|urn| urn.scene_emote().is_none())
-        .filter_map(resolve)
-        .collect();
-    hashes.sort();
-    hashes.dedup();
-    hashes
+    common::partition::resolved_hashes(
+        urns.into_iter().filter(|urn| urn.scene_emote().is_none()),
+        resolve,
+    )
 }
 
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
+
+/// The body shape and equipped emote urns whose clips have all loaded, on the player. Present
+/// only while it matches what they have equipped; `preload_equipped_emotes` stops asking while it
+/// does.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub(crate) struct EquippedEmotesLoaded {
+    pub(crate) body_shape: String,
+    pub(crate) urns: Vec<String>,
+}
+
+/// Loads the local player's equipped emotes once their avatar is built, so the first press of
+/// each plays at once instead of waiting on the pointer, entity and clip fetches. Loaded emotes
+/// stay in the collectible cache, so this stops asking once every equipped clip has loaded or its
+/// GLB has failed to load, and asks again when the equipped set or the body shape changes.
+/// `file_emote_downloads` files the equipped emotes under the player, so their downloads rank
+/// with the player's own.
+pub(crate) fn preload_equipped_emotes(
+    mut commands: Commands,
+    player: Query<
+        (
+            Entity,
+            &AvatarShape,
+            &Children,
+            Option<&EquippedEmotesLoaded>,
+        ),
+        With<PrimaryUser>,
+    >,
+    definitions: Query<&AvatarDefinition>,
+    mut emote_loader: CollectibleManager<Emote>,
+    gltfs: Res<Assets<Gltf>>,
+    asset_server: Res<AssetServer>,
+) {
+    let Ok((player, shape, children, loaded)) = player.single() else {
+        return;
+    };
+    let Some(definition) = children.iter().flat_map(|c| definitions.get(c).ok()).next() else {
+        return;
+    };
+    let bodyshape = &definition.render.body_shape;
+    let equipped = &shape.0.emotes;
+    if loaded.is_some_and(|loaded| &loaded.body_shape == bodyshape && &loaded.urns == equipped) {
+        return;
+    }
+
+    let mut pending = false;
+    for urn in equipped
+        .iter()
+        .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
+    {
+        match emote_loader.get_representation(&urn, bodyshape) {
+            // a GLB that failed to load never yields a clip, so it is settled too
+            Ok(emote) => {
+                pending |=
+                    emote.avatar_animation(&gltfs).is_err() && !emote.load_failed(&asset_server)
+            }
+            Err(CollectibleError::Loading) => pending = true,
+            // missing, failed or not made for this body shape: playing it fails the same way
+            Err(_) => {}
+        }
+    }
+
+    if !pending {
+        commands.entity(player).try_insert(EquippedEmotesLoaded {
+            body_shape: bodyshape.clone(),
+            urns: equipped.clone(),
+        });
+    } else if loaded.is_some() {
+        commands.entity(player).try_remove::<EquippedEmotesLoaded>();
+    }
+}
 
 #[cfg(feature = "explorer")]
 fn handle_trigger_emotes(
     mut commands: Commands,
     mut emote_cmds: EventReader<RpcCallEvent>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
-    mut perms: Permission<EmoteCommand>,
+    mut perms: Permission<(EmoteCommand, &'static str)>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     let Ok((player, maybe_prev)) = player.single() else {
         return;
+    };
+    // the HUD plays the player's own emotes through a super-user system scene
+    let source = |perms: &Permission<(EmoteCommand, &'static str)>, hash: &str| {
+        if perms.is_system_scene(hash) {
+            "self"
+        } else {
+            "scene"
+        }
     };
     let timestamp = maybe_prev
         .map(|prev| prev.timestamp + 1)
@@ -266,25 +357,40 @@ fn handle_trigger_emotes(
         // a stop is an empty command; `animate` reports the interruption
         let (scene, command) = match (&ev.origin, &ev.call) {
             (
-                RpcOrigin::Scene { entity: scene, .. },
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
+                },
                 RpcCall::TriggerEmote { urn, r#loop, mask },
             ) => (
                 scene,
-                EmoteCommand {
-                    urn: urn.clone(),
-                    r#loop: *r#loop,
-                    timestamp,
-                    mask: *mask,
-                },
+                (
+                    EmoteCommand {
+                        urn: urn.clone(),
+                        r#loop: *r#loop,
+                        timestamp,
+                        mask: *mask,
+                    },
+                    source(&perms, hash),
+                ),
             ),
-            (RpcOrigin::Scene { entity: scene, .. }, RpcCall::StopEmote) => (
-                scene,
-                EmoteCommand {
-                    urn: String::new(),
-                    r#loop: false,
-                    timestamp,
-                    mask: EmoteMask::FullBody,
+            (
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
                 },
+                RpcCall::StopEmote,
+            ) => (
+                scene,
+                (
+                    EmoteCommand {
+                        urn: String::new(),
+                        r#loop: false,
+                        timestamp,
+                        mask: EmoteMask::FullBody,
+                    },
+                    source(&perms, hash),
+                ),
             ),
             _ => continue,
         };
@@ -297,8 +403,14 @@ fn handle_trigger_emotes(
         );
     }
 
-    for emote in perms.drain_success(common::structs::PermissionType::PlayEmote) {
-        commands.entity(player).try_insert(emote.clone());
+    for (emote, source) in perms.drain_success(common::structs::PermissionType::PlayEmote) {
+        if !emote.urn.is_empty() {
+            triggered.write(PlayerEmoteTriggered {
+                urn: emote.urn.clone(),
+                source,
+            });
+        }
+        commands.entity(player).try_insert(emote);
     }
 
     for _ in perms.drain_fail(common::structs::PermissionType::PlayEmote) {}
@@ -1070,8 +1182,16 @@ struct PlayParams<'w, 's> {
     sounds: Res<'w, Assets<bevy_kira_audio::AudioSource>>,
     emitters: Query<'w, 's, &'static mut AudioEmitter>,
     prop_details: Query<'w, 's, (Option<&'static Name>, &'static Transform, &'static ChildOf)>,
-    prop_meshes: Query<'w, 's, &'static Mesh3d>,
+    prop_meshes: Query<
+        'w,
+        's,
+        (
+            &'static Mesh3d,
+            Option<&'static MeshMaterial3d<StandardMaterial>>,
+        ),
+    >,
     meshes: ResMut<'w, Assets<Mesh>>,
+    std_materials: Res<'w, Assets<StandardMaterial>>,
     #[cfg(feature = "explorer")]
     preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
@@ -1272,8 +1392,13 @@ fn ensure_prop(
     if fresh {
         for spawned_ent in params.scene_spawner.iter_instance_entities(instance) {
             // a scene's preloaded glb keeps its meshes cpu-side for GltfContainer to upload
-            if let Ok(mesh) = params.prop_meshes.get(spawned_ent) {
+            if let Ok((mesh, material)) = params.prop_meshes.get(spawned_ent) {
                 upload_cpu_mesh(&mut params.meshes, mesh);
+                // the hover glow follows the wearables' rule: blended meshes stay unlit
+                let glows = material
+                    .and_then(|material| params.std_materials.get(material))
+                    .is_some_and(|material| can_glow(material.alpha_mode));
+                set_hover_glows(&mut commands.entity(spawned_ent), glows);
             }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
                 // Reference, base and mask geometry is not part of the visible prop.
@@ -2189,6 +2314,7 @@ fn emote_console_command(
     mut input: ConsoleCommand<EmoteConsoleCommand>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
     profile: Res<CurrentUserProfile>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     if let Some(Ok(command)) = input.take() {
         if let Ok((player, maybe_prev)) = player.single() {
@@ -2207,6 +2333,10 @@ fn emote_console_command(
             info!("anim {} -> {}", command.urn, urn);
             let timestamp = maybe_prev.map(|p| p.timestamp + 1).unwrap_or_default();
 
+            triggered.write(PlayerEmoteTriggered {
+                urn: urn.clone(),
+                source: "self",
+            });
             commands.entity(player).try_insert(EmoteCommand {
                 urn: urn.clone(),
                 timestamp,

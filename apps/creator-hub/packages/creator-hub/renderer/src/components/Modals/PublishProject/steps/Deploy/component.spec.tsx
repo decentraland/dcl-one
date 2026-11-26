@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestProviders } from '../../../../../../tests/utils/TestProviders';
@@ -370,16 +370,38 @@ describe('Deploy step', () => {
       expect(screen.getByText(/jump\?position=20,2$/)).toBeTruthy();
     });
 
-    describe('and the user jumps in', () => {
-      beforeEach(() => {
+    describe('and the user jumps in with the desktop client installed', () => {
+      beforeEach(async () => {
+        vi.mocked(misc.openDeepLink).mockResolvedValue(true);
         fireEvent.click(
           screen.getByRole('button', { name: 'modal.publish_project.deploy.success.jump_in' }),
         );
+        await vi.waitFor(() => expect(misc.openDeepLink).toHaveBeenCalled());
       });
 
       it('should open the deployed parcel in the desktop client', () => {
-        expect(misc.openExternal).toHaveBeenCalledWith(
+        expect(misc.openDeepLink).toHaveBeenCalledWith(
           expect.stringMatching(/^decentraland:\/\/\?position=20,2&/),
+        );
+      });
+
+      it('should not open the web link too', () => {
+        expect(misc.openExternal).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('and the user jumps in without the desktop client', () => {
+      beforeEach(async () => {
+        vi.mocked(misc.openDeepLink).mockResolvedValue(false);
+        fireEvent.click(
+          screen.getByRole('button', { name: 'modal.publish_project.deploy.success.jump_in' }),
+        );
+        await vi.waitFor(() => expect(misc.openExternal).toHaveBeenCalled());
+      });
+
+      it('should open the deployed parcel on the web', () => {
+        expect(misc.openExternal).toHaveBeenCalledWith(
+          expect.stringMatching(/jump\?position=20,2$/),
         );
       });
     });

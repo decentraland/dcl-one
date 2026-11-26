@@ -20,7 +20,7 @@ describe("rollout flags for a page the server did not render", () => {
     await primeDappsFlags();
     await primeDappsFlags();
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledWith("/internal/dapps-flags?variants=1", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/internal/feature-flags?variants=1", expect.anything());
     expect(remoteFlag(REMOTE_FLAG.creatorSales)).toBe(true);
     expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list);
   });

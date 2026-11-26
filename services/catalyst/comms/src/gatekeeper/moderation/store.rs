@@ -148,6 +148,24 @@ impl Moderation {
             .collect())
     }
 
+    /// The admins of `place_id` with their granters: those active, and those
+    /// whose grant a place removal at `revoked_at` ended (that cleanup stamps
+    /// its `removed_at`).
+    pub async fn notice_admins(
+        &self,
+        place_id: &str,
+        revoked_at: Option<NaiveDateTime>,
+    ) -> Result<Vec<(String, String)>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT admin_address, added_by FROM social.scene_admins \
+             WHERE place_id = $1 AND (active OR removed_at = $2)",
+        )
+        .bind(place_id)
+        .bind(revoked_at)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     /// Re-adding a removed admin flips the same row back to active.
     pub async fn add_admin(
         &self,
@@ -181,6 +199,22 @@ impl Moderation {
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected())
+    }
+
+    /// Who granted `admin` on `place_id`, while that grant is active.
+    pub async fn active_admin_granter(
+        &self,
+        place_id: &str,
+        admin: &Address,
+    ) -> Result<Option<Address>, sqlx::Error> {
+        let granter: Option<String> = sqlx::query_scalar(
+            "SELECT added_by FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2 AND active",
+        )
+        .bind(place_id)
+        .bind(admin)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(granter.and_then(|granter| Address::parse(&granter).ok()))
     }
 
     /// A database fault is an undetermined authority, not "not an admin".
@@ -331,13 +365,13 @@ impl Moderation {
     pub async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
         self.ban_at(
             actor,
-            scene.map(crate::world_identity::SceneId::as_str),
+            scene.map(crate::access::SceneBanKey::as_str),
             device,
             now,
         )
@@ -431,23 +465,38 @@ impl Moderation {
         }
     }
 
+    /// Upstream's `getActiveBanForConnection({ address })` as its status
+    /// handler answers it: the wallet's own in-force ban with its record,
+    /// else an in-force ban of the device recorded for the wallet, whose
+    /// record (another player's row) is withheld.
     pub async fn ban_status(&self, address: &Address) -> Result<BanStatus, ApiError> {
         let row = sqlx::query_as::<_, BanRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {BAN_SELECT_FIELDS} FROM social.user_bans \
-             WHERE banned_address = $1 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > $2) \
-             ORDER BY banned_at DESC LIMIT 1"
+            "SELECT {BAN_SELECT_FIELDS} FROM social.user_bans ub \
+             WHERE (ub.banned_address = $1 \
+                    OR ub.banned_device_id = (SELECT NULLIF(p.device_id, '') \
+                                              FROM social.player_connections p \
+                                              WHERE p.address = $1)) \
+               AND ub.lifted_at IS NULL AND (ub.expires_at IS NULL OR ub.expires_at > $2) \
+             ORDER BY (ub.banned_address = $1) DESC, ub.banned_at DESC LIMIT 1"
         )))
         .bind(address)
         .bind(now_utc())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(match row {
-            Some(row) => BanStatus {
+        Ok(match row.map(ban_from_row) {
+            Some(ban) if ban.banned_address == address.as_str() => BanStatus {
                 is_banned: true,
-                ban: Some(ban_from_row(row).into()),
+                matched_on: Some("address"),
+                ban: Some(ban.into()),
+            },
+            Some(_) => BanStatus {
+                is_banned: true,
+                matched_on: Some("device"),
+                ban: None,
             },
             None => BanStatus {
                 is_banned: false,
+                matched_on: None,
                 ban: None,
             },
         })
@@ -475,7 +524,10 @@ impl Moderation {
         snapshot_device: bool,
     ) -> Result<UserBan, BanWriteError> {
         let now = now_utc();
-        let expires_at = input.duration_ms.map(|d| now + Duration::milliseconds(d));
+        // A duration past what a timestamp holds is a ban that never expires.
+        let expires_at = input
+            .duration_ms
+            .and_then(|d| Duration::try_milliseconds(d).and_then(|d| now.checked_add_signed(d)));
         let banned_device_id = input.banned_device_id.filter(|s| !s.is_empty());
         let mut txn = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
@@ -767,6 +819,11 @@ pub struct UserWarning {
 pub struct BanStatus {
     #[serde(rename = "isBanned")]
     pub is_banned: bool,
+    /// `address` for the wallet's own ban, `device` for a ban of its
+    /// recorded device (the record is then withheld).
+    #[serde(rename = "matchedOn", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "\"address\" | \"device\""))]
+    pub matched_on: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub ban: Option<PublicUserBan>,
@@ -881,7 +938,7 @@ impl super::BanStatus for Moderation {
     async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
@@ -938,10 +995,22 @@ mod tests {
         let at = Utc.timestamp_opt(1_718_900_000, 0).unwrap();
         let status = BanStatus {
             is_banned: true,
+            matched_on: Some("address"),
             ban: Some(ban_at(at, None, Some("dev-1")).into()),
         };
         let v = serde_json::to_value(status).unwrap();
         assert_eq!(v["isBanned"], true);
+        assert_eq!(v["matchedOn"], "address");
+        // A device match withholds the record: it is another player's row.
+        assert_eq!(
+            serde_json::to_value(BanStatus {
+                is_banned: true,
+                matched_on: Some("device"),
+                ban: None,
+            })
+            .unwrap(),
+            serde_json::json!({ "isBanned": true, "matchedOn": "device" })
+        );
         let ban = &v["ban"];
         assert!(ban.get("bannedDeviceId").is_none());
         assert_eq!(ban["bannedAddress"], "0xabc");
@@ -951,6 +1020,7 @@ mod tests {
         assert_eq!(list[0].as_object().unwrap().len(), 11);
         let none = serde_json::to_value(BanStatus {
             is_banned: false,
+            matched_on: None,
             ban: None,
         })
         .unwrap();

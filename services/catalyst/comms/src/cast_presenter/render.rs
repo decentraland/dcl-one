@@ -26,6 +26,7 @@ use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit};
 use hayro::{RenderCache, RenderSettings, render_into};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 
 use super::wire::{Geometry, SlideVideo};
 
@@ -33,12 +34,27 @@ const FULL_HD_LONG_SIDE: f64 = 1920.0;
 const FULL_HD_SHORT_SIDE: f64 = 1080.0;
 const MIN_SIDE: u32 = 2;
 
+/// A slide's PNG under its content hash.
+pub type Picture = (String, bytes::Bytes);
+
 /// One rendered slide: straight RGBA, `width * height * 4` bytes.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Frame {
     pub rgba: Arc<Vec<u8>>,
     pub width: u32,
     pub height: u32,
+}
+
+impl Frame {
+    /// The frame as a PNG, and its name: the first 16 hex characters of the
+    /// PNG's SHA-256 (upstream's `src/logic/slide-image.ts`).
+    pub fn picture(&self) -> Result<Picture, String> {
+        let png = tiny_skia::PixmapRef::from_bytes(&self.rgba, self.width, self.height)
+            .ok_or("Invalid frame size")?
+            .encode_png()
+            .map_err(|e| e.to_string())?;
+        Ok((hex::encode(&Sha256::digest(&png)[..8]), png.into()))
+    }
 }
 
 impl std::fmt::Debug for Frame {
@@ -73,10 +89,11 @@ pub fn fit_render_size(page_width: f64, page_height: f64) -> Result<(f64, u32, u
 pub fn is_media_url(url: &str) -> bool {
     static VIDEO: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"youtube\.com|youtu\.be|drive\.google\.com|docs\.google\.com/file|vimeo\.com")
-            .unwrap()
+            .expect("literal regex is valid")
     });
-    static MEDIA: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\.gif($|\?)|\.mp4($|\?)|\.webm($|\?)").unwrap());
+    static MEDIA: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\.gif($|\?)|\.mp4($|\?)|\.webm($|\?)").expect("literal regex is valid")
+    });
     VIDEO.is_match(url) || MEDIA.is_match(url)
 }
 

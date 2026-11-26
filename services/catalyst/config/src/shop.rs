@@ -16,17 +16,15 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
-    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
-    /// and lands answer the 503 envelope; profiles and outfits claim no name.
+    /// L1 marketplace subgraph (LAND before the indexes publish, and DCL
+    /// NAMEs on a node that does not walk the nft index);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. A node that walks the
+    /// index reads its NAMEs there and never asks it. Without either, the
+    /// NAME routes answer the 503 envelope, profiles and outfits claim no
+    /// name, and `WORLDS_WRITES_ENABLED=true` refuses to start unless
+    /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
-
-    /// Land-manager subgraph: parcel operators, permissions and
-    /// update-operator lookups before the land-authz index is published;
-    /// unset answers the envelope (lamb2's 500 on the permissions route).
-    #[arg(long, env = "LAND_SUBGRAPH_URL")]
-    pub land_subgraph_url: Option<String>,
 
     /// The marketplace API `/v1/trades` list to mirror; unset attaches no job.
     #[arg(long, env = "TRADES_SYNC_UPSTREAM_URL")]
@@ -63,14 +61,18 @@ pub struct MarketUpstreamsConfig {
 
     /// Merge this node's active escrow grants (`shop.usage_grants`) into the
     /// explorer backpack's on-chain items. lamb2 lists chain-owned tokens
-    /// only, so the mirror posture turns it off.
-    #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// only, so it is off by default and under every posture, island and
+    /// journey included; an operator opts in by setting it to `true`,
+    /// together with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, which
+    /// lets profile and outfits deploys wear the same leases; startup warns
+    /// when the two differ.
+    #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub explorer_escrow_grants_enabled: bool,
 
     /// Take this node's extended filters on `/lambdas/collections/wearables`
     /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
-    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
-    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    /// `direction`). Off by default to match lamb2.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub lambdas_catalog_extensions_enabled: bool,
 }
 
@@ -119,6 +121,15 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_trade_events_index_enabled: bool,
 
+    /// Walk Polygon MANA transfers, which confirm tip forwards. Forwards answer
+    /// 503 coded `tip-index-unavailable` when no walk can confirm them: no
+    /// cursor (off, or on but none five minutes after this API process
+    /// starts), a cursor without its whole history (an overridden start
+    /// block), or one not advanced for three hours (nothing walks it, or it is
+    /// held at a stop block). They answer 503 with `Retry-After` while a
+    /// whole-history walk lags or pauses, here or in another process, and while
+    /// on for the first five minutes after this API process starts, before the
+    /// walk's first pass creates its cursor.
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 
@@ -137,12 +148,43 @@ pub struct MarketplaceConfig {
     /// Tip forwards waiting for the MANA transfer index, across every sender.
     #[arg(long, env = "MARKETPLACE_TIP_MAX_PENDING", default_value_t = 2_000)]
     pub marketplace_tip_max_pending: u64,
-    /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
+    /// Walk Polygon store mints and bids, and Ethereum accepted bids and NAME purchase fees.
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
+    /// Walk the Polygon Committee contracts' MemberSet logs (builder's curation committee)
+    /// over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`.
+    #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_committee_index_enabled: bool,
+
+    /// Walk the Polygon Third Party Registry for approved providers and publishing slots.
+    #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_third_party_registry_index_enabled: bool,
+
+    /// Walk the Polygon collection factories and their collections' events into
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_collections_index_enabled: bool,
+
+    /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
+    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
+    pub marketplace_collections_index_owns: String,
+
+    /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
+    /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
+    /// (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
+
+    /// Pause between two passes of the MANA executions tracker. A pass reads receipts only for
+    /// the executions still open, so an idle one costs a database query and no RPC call.
+    #[arg(
+        long,
+        env = "MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS",
+        default_value_t = 5
+    )]
+    pub marketplace_executions_track_interval_secs: u64,
 
     /// eth_getLogs calls one network's pass may make; the catch-up backpressure.
     #[arg(
@@ -178,13 +220,62 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_STOP_BLOCK_MATIC")]
     pub marketplace_index_stop_block_matic: Option<u64>,
 
-    /// The chain the trade-events walk of each network reads: its mainnet, or
-    /// its testnet (11155111, 80002) on a stack that trades there.
+    /// The chains the NFT and trade-events walks read. A catalogue node serves
+    /// Ethereum and Polygon mainnet (1/137) or Sepolia and Amoy (11155111/80002).
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
     pub marketplace_index_chain_id_ethereum: i64,
 
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
     pub marketplace_index_chain_id_matic: i64,
+
+    /// `rpc` (default), `shadow` or `portal`. In shadow, each window the RPC
+    /// walk accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in
+    /// the background and compared; the walk still reads and commits RPC data
+    /// only. In portal, the logs of the windows and addresses chain-lake's
+    /// coverage answer admits are read from the portal, and everything else
+    /// (the other logs, headers, heads) from the RPC.
+    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow", "portal"])]
+    pub chain_logs_source: String,
+
+    /// In portal mode, how long one window's coverage read and portal pages
+    /// (limiter waits included) may take before it is read from the RPC
+    /// (1 to 600).
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_DEADLINE_SECS", default_value_t = 20)]
+    pub chain_logs_portal_deadline_secs: u64,
+
+    /// The origin of a portal speaking the SQD portal protocol (the SQD
+    /// portal, or chain-lake's): https, or http on loopback; no path.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_URL")]
+    pub chain_logs_portal_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "CHAIN_LOGS_PORTAL_DATASET_ETHEREUM",
+        default_value = "ethereum-mainnet"
+    )]
+    pub chain_logs_portal_dataset_ethereum: String,
+
+    #[arg(
+        long,
+        env = "CHAIN_LOGS_PORTAL_DATASET_MATIC",
+        default_value = "polygon-mainnet"
+    )]
+    pub chain_logs_portal_dataset_matic: String,
+
+    /// Sent as `x-api-key` to the portal origin only (or
+    /// CHAIN_LOGS_PORTAL_API_KEY_FILE).
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_API_KEY", hide_env_values = true)]
+    pub chain_logs_portal_api_key: Option<String>,
+
+    /// Requests per second to the portal origin (at least 0.01), shared by
+    /// every reader of it in the process, burst one.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_MAX_RPS", default_value_t = 1.0)]
+    pub chain_logs_portal_max_rps: f64,
+
+    /// Report the portal as holding every log of its datasets: an operator
+    /// assertion, labelled as such, never a measurement.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_ASSERT_FULL_HISTORY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub chain_logs_portal_assert_full_history: bool,
 
     /// Between two rebuilds of the co-ownership neighbours (min 600).
     #[arg(
@@ -248,7 +339,7 @@ pub struct EconomyConfig {
     /// The collections chain's JSON-RPC (the old RPC_URL; public https, or
     /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path); the
     /// content validator's L2 deploy access checks read it too (https only).
-    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content
+    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=dcl-one
     /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "RPC_ENDPOINT_POLYGON", hide_env_values = true)]
     pub rpc_endpoint_polygon: Option<String>,
@@ -290,7 +381,8 @@ pub struct EconomyConfig {
     #[arg(long, env = "RELAYER_PRIVATE_KEY", hide_env_values = true)]
     pub relayer_private_key: Option<String>,
 
-    /// The upstream transactions-api the relay forwards to when it has no signer of its own (public https).
+    /// The upstream transactions-api a testnet relay forwards to when it has no signer of its own (public
+    /// https). A Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137) refuses to start with it.
     #[arg(long, env = "TRANSACTIONS_UPSTREAM_URL")]
     pub transactions_upstream_url: Option<String>,
 
@@ -348,6 +440,13 @@ pub struct ShopConfig {
     /// The credits operator bearer (or `_FILE`); unset refuses the admin routes.
     #[arg(long, env = "CATALYRST_CREDITS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_credits_admin_token: Option<String>,
+
+    /// Wallets whose signed requests may read the credits reports (the
+    /// cross-wallet credits list and its grant reasons), comma-separated: the
+    /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
+    /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_read_admin_addresses: String,
 
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
@@ -469,15 +568,25 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_BUYERS", hide_env_values = true)]
     pub credits_trial_buyers: Option<String>,
 
+    /// Under CREDITS_TRIAL_MODE, the relay pays gas for every wallet's meta-transactions instead
+    /// of CREDITS_TRIAL_BUYERS' alone. New credits still go to those buyers only, and the relay
+    /// keeps its own capped signer and the per-address daily quota. Ignored outside a trial.
+    #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_trial_relay_all_wallets: bool,
+
+    /// The Shop's page a paid pack order returns to, with `order=<id>` appended.
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
 
+    /// The Shop's page an abandoned pack order lands on, with
+    /// `order=<id>&canceled=1`: Stripe sends the buyer to the order's
+    /// cancel-return under `PUBLIC_URL` first, or straight here without one.
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL", default_value = "")]
     pub credits_checkout_cancel_url: String,
 
     // The shop-server fold (src/shop/{outfits,subscriptions,treasury}).
-    /// The outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); empty refuses every outfit write.
+    /// A local override of the outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); blank reads the `dapps-shop-outfit-creators` flag variant per request, and a set value with no valid wallet lets no one author.
     #[arg(long, env = "SHOP_OUTFIT_CREATORS", default_value = "")]
     pub shop_outfit_creators: String,
 
@@ -511,9 +620,14 @@ pub struct ShopConfig {
     #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
     pub shop_feature_flags_refresh_secs: u64,
 
-    /// The availability alert outbox worker's cadence.
+    /// The cadence of the Shop's email outboxes: the availability alerts and the purchase receipts.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
+
+    /// Where the purchase receipt's images are served from; empty uses `SHOP_BASE_URL/email`, the
+    /// Shop app's `public/email`.
+    #[arg(long, env = "SHOP_EMAIL_ASSETS_URL", default_value = "")]
+    pub shop_email_assets_url: String,
 
     /// How often the watcher compares the waited-for items against the items mirror.
     #[arg(long, env = "SHOP_NOTIFY_WATCH_INTERVAL_SECS", default_value_t = 60)]
@@ -652,6 +766,10 @@ mod tests {
             c.economy.names_signer_enabled,
             "the NAMEs chain signer is on unless turned off"
         );
+        assert!(
+            !c.shop.credits_trial_relay_all_wallets,
+            "a trial relays for its buyers alone unless told otherwise"
+        );
         assert!(c.economy.mana_usd_aggregator_address.is_none());
         assert_eq!(
             (
@@ -663,7 +781,10 @@ mod tests {
         assert!(
             !c.marketplace.marketplace_nft_index_enabled
                 && !c.marketplace.marketplace_trade_events_index_enabled
-                && !c.marketplace.marketplace_sales_index_enabled,
+                && !c.marketplace.marketplace_sales_index_enabled
+                && !c.marketplace.marketplace_committee_index_enabled
+                && !c.marketplace.marketplace_third_party_registry_index_enabled
+                && !c.marketplace.marketplace_collections_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(
@@ -671,9 +792,10 @@ mod tests {
                 c.marketplace.marketplace_index_interval_secs,
                 c.marketplace.marketplace_index_requests_per_pass,
                 c.marketplace.marketplace_index_window_blocks,
-                c.marketplace.marketplace_index_address_chunk
+                c.marketplace.marketplace_index_address_chunk,
+                c.marketplace.marketplace_executions_track_interval_secs
             ),
-            (5, 100, 10_000, 1_000)
+            (5, 100, 10_000, 1_000, 5)
         );
         assert!(
             c.marketplace

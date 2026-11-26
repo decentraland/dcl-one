@@ -47,6 +47,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     sid,
     story: STORY,
     variant: assignment.variant,
+    requestUserAgent: request.headers.get("user-agent"),
   };
 
   track("cast_not_found_shown", { from, reason }, trackCtx);

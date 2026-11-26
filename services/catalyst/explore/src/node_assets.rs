@@ -34,13 +34,25 @@ pub(crate) fn event_image_url(
     )
 }
 
-/// Expand the bundled default for consumers that render a stored event.
-pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
+/// The bundled default on the events asset mount; anything else as stored.
+fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     if image == DEFAULT_EVENT_IMAGE {
         format!("{}{image}", events_asset_base.trim_end_matches('/'))
     } else {
         image.to_owned()
     }
+}
+
+/// A notice's image as the read projection serves it, without its
+/// `asset_rewrite_base` mapping of upstream asset URLs to this node; empty
+/// when the read side drops it.
+pub fn notice_image_url(
+    image: &str,
+    configured_public_base: Option<&str>,
+    events_asset_base: &str,
+) -> String {
+    crate::events::project_event_image(image, None, configured_public_base, events_asset_base)
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +65,31 @@ pub(crate) enum PosterInput<'a> {
 
 fn mounted_path(path: &str) -> Option<&str> {
     path.strip_prefix('/')?.strip_prefix(HOST_PREFIX)
+}
+
+/// Recognizes public event artwork by its catalogue URL. The caller enforces its source policy.
+pub fn is_event_poster_url(image: &str, node: Option<&Url>) -> bool {
+    let Some((url, path)) = parse_asset_url(image) else {
+        return false;
+    };
+    if url.query().is_some() {
+        return false;
+    }
+    if url.scheme() == "https"
+        && url.port().is_none()
+        && url.host_str() == Some(POSTER_BUCKET)
+        && poster_path(path).is_some()
+    {
+        return true;
+    }
+    let Some(relative) = node
+        .filter(|base| base.origin() == url.origin())
+        .and_then(|base| path.strip_prefix(base.path().trim_end_matches('/')))
+    else {
+        return false;
+    };
+    relative.strip_prefix("/events") == Some(DEFAULT_EVENT_IMAGE)
+        || mounted_path(relative).and_then(poster_path).is_some()
 }
 
 /// Parses authoring inputs using the same poster keys and mount as the read projection.
@@ -236,6 +273,38 @@ mod tests {
     const D: &str = "https://node.example";
 
     #[test]
+    fn native_posters_follow_the_public_mount_and_the_canonical_bucket() {
+        let base = url::Url::parse("https://node.example/base").unwrap();
+        let root = url::Url::parse("https://node.example/").unwrap();
+        for mount in [&root, &base] {
+            for path in [
+                "/events-assets-099ac00/poster/night.webp",
+                "/events-assets-099ac00/poster-vertical/art.png",
+                "/events/assets/event-default.webp",
+            ] {
+                let url = format!("{}{path}", mount.as_str().trim_end_matches('/'));
+                assert!(super::is_event_poster_url(&url, Some(mount)), "{url}");
+                assert!(!super::is_event_poster_url(&url, None), "{url}");
+            }
+        }
+        assert!(super::is_event_poster_url(
+            "https://events-assets-099ac00.decentraland.org/poster/night.webp",
+            None
+        ));
+        for path in [
+            "https://other.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/assets/event-default.webp",
+            "https://node.example/base/events-assets-099ac00/poster/a%2Fb.webp",
+            "https://node.example/base/events-assets-099ac00/poster/night.webp?version=1",
+            "https://user@node.example/base/events-assets-099ac00/poster/night.webp",
+            "https://node.example/base/events-assets-099ac00/poster/../poster/night.webp",
+        ] {
+            assert!(!super::is_event_poster_url(path, Some(&base)), "{path}");
+        }
+    }
+
+    #[test]
     fn poster_projection_uses_inputs_the_upload_policy_recognizes() {
         use super::{DEFAULT_EVENT_IMAGE, PosterInput, event_image_url, event_poster_input};
         use crate::Settings;
@@ -364,6 +433,34 @@ mod tests {
         ] {
             assert_eq!(event_poster_input(url, &settings, "poster"), None, "{url}");
         }
+    }
+
+    #[test]
+    fn notice_posters_match_the_read_projection_under_a_prefixed_public_url() {
+        let public_url = "https://node.example.org/prefix/";
+        let rewrite = crate::Settings::asset_rewrite_base_for(Some(public_url));
+        let public = crate::Settings::configured_public_base_for(Some(public_url));
+        let assets = crate::Settings::events_asset_base_for(public_url);
+        for image in ["/poster/a.webp", "/poster-vertical/a.webp"] {
+            assert_eq!(
+                super::notice_image_url(image, public.as_deref(), &assets),
+                super::event_image_url(image, rewrite.as_deref(), public.as_deref(), &assets),
+                "{image}"
+            );
+        }
+        assert_eq!(
+            super::notice_image_url(super::DEFAULT_EVENT_IMAGE, public.as_deref(), &assets),
+            "https://node.example.org/prefix/events/assets/event-default.webp"
+        );
+        // Sanitized as on read: padding is trimmed, and what read drops is left out.
+        assert_eq!(
+            super::notice_image_url(" /poster/a.webp ", public.as_deref(), &assets),
+            super::notice_image_url("/poster/a.webp", public.as_deref(), &assets)
+        );
+        assert_eq!(
+            super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
+            ""
+        );
     }
 
     #[test]

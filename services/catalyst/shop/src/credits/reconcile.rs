@@ -16,8 +16,6 @@
 //! `ready`, and `writes_disabled` when `OPS_WRITES_ENABLED` is off (the
 //! fold debits the ledger, so it does not run).
 
-use std::collections::HashSet;
-
 use serde::Serialize;
 use serde_json::json;
 use sqlx::Row;
@@ -87,7 +85,9 @@ pub struct CreditUsageDiff {
     pub replayed: bool,
     #[serde(rename = "newBalance")]
     pub new_balance: String,
-    /// `purchase` (the group's charged cents) or `remainder` (a later use of the same credit).
+    /// `purchase` (the group's charged cents), `remainder` (a later use of the
+    /// same credit) or `deferred` (an earlier use of the credit is not settled
+    /// yet; a pass covering it settles both in order).
     pub kind: String,
 }
 
@@ -470,45 +470,18 @@ impl Credits {
              FROM credits.fulfillment_outbox o \
              JOIN credits.checkouts c ON c.id = o.checkout_id \
              WHERE o.status = 'confirmed' AND o.external_ref IS NOT NULL \
+               AND NOT EXISTS (SELECT 1 FROM shop.usage_grants g WHERE g.escrow_ref = o.external_ref) \
              ORDER BY o.id LIMIT $1",
         )
         .bind(RECONCILE_LIMIT)
         .fetch_all(&self.pool)
         .await?;
 
-        if confirmed.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let refs: Vec<String> = {
-            let mut seen = HashSet::new();
-            confirmed
-                .iter()
-                .filter_map(|r| {
-                    let er: String = r.get("external_ref");
-                    seen.insert(er.clone()).then_some(er)
-                })
-                .collect()
-        };
-
-        let existing: HashSet<String> = sqlx::query(
-            "SELECT DISTINCT escrow_ref FROM shop.usage_grants WHERE escrow_ref = ANY($1)",
-        )
-        .bind(&refs)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(|r| r.get::<String, _>("escrow_ref"))
-        .collect();
-
         Ok(confirmed
             .into_iter()
-            .filter_map(|r| {
+            .map(|r| {
                 let escrow_ref: String = r.get("external_ref");
-                if existing.contains(&escrow_ref) {
-                    return None;
-                }
-                Some(EscrowGrantDiff {
+                EscrowGrantDiff {
                     checkout_id: r.get("checkout_id"),
                     outbox_id: r.get("outbox_id"),
                     address: r.get("address"),
@@ -517,7 +490,7 @@ impl Credits {
                     collection: Some(r.get("collection")),
                     escrow_ref,
                     unit_price_credits: r.get("unit_price_credits"),
-                })
+                }
             })
             .collect())
     }
@@ -545,5 +518,31 @@ impl Credits {
             }
         }
         Ok(holdings)
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn missing_escrow_grants_are_filtered_before_the_batch_limit() {
+        let Some(db) = crate::test_db::OwnDatabase::create("missing_grants").await else {
+            return;
+        };
+        sqlx::query("INSERT INTO credits.checkouts (idempotency_key, address) VALUES ('test', '0x0000000000000000000000000000000000000001')").execute(&db.pool).await.unwrap();
+        sqlx::query("INSERT INTO credits.fulfillment_outbox (checkout_id, item_id, collection, urn, unit_price_credits, mode, status, external_ref) SELECT 1, n::text, '0x0000000000000000000000000000000000000001', 'urn:' || n, 1, 'primary', 'confirmed', 'escrow:' || n FROM generate_series(1, 501) n").execute(&db.pool).await.unwrap();
+        let credits = Credits::new(db.pool.clone());
+        assert_eq!(credits.reconcile_escrow_grants().await.unwrap().len(), 500);
+        sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, escrow_ref, unlock_at) SELECT '0x0000000000000000000000000000000000000001', 'urn:' || n, 'wearable', 'escrow:' || n, timezone('UTC', now()) FROM generate_series(1, 500) n").execute(&db.pool).await.unwrap();
+        let missing = credits.reconcile_escrow_grants().await.unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].outbox_id, 501);
+        sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, category, escrow_ref, unlock_at) VALUES ('0x0000000000000000000000000000000000000001', 'different-asset', 'wearable', 'escrow:501', timezone('UTC', now()))").execute(&db.pool).await.unwrap();
+        assert!(
+            credits.reconcile_escrow_grants().await.unwrap().is_empty(),
+            "the existing contract is any grant for the escrow reference"
+        );
+        db.drop().await;
     }
 }

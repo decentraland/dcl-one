@@ -8,8 +8,12 @@ import { rendererExpose } from '../preload/expose-plugin.js';
 const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
 const UI3_SRC = join(PACKAGE_ROOT, '../../../../ui3/src').replaceAll('\\', '/');
-// The ui3 LAND map imports the shared Shop model through ui3's `@shop` alias.
 const SHOP_SRC = join(PACKAGE_ROOT, '../../../../../library/shop').replaceAll('\\', '/');
+const WEB_CORE_SRC = join(PACKAGE_ROOT, '../../../../../library/web-core').replaceAll('\\', '/');
+const TOOLTIP_SRC = join(PACKAGE_ROOT, '../../../../../library/ui/components/Tooltip').replaceAll(
+  '\\',
+  '/',
+);
 
 // The renderer tests run in UTC, so a date that code makes in local time does not depend on the
 // zone of the machine. This file runs before Vitest starts a worker, which is where Vitest says to
@@ -25,14 +29,23 @@ const config = {
   root: PACKAGE_ROOT,
   envDir: PACKAGE_DIR,
   resolve: {
-    alias: {
-      '/@/': join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/',
-      '/shared/': join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
-      '/assets/': join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/',
-      '#store': join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
-      '@ui': UI3_SRC,
-      '@shop': SHOP_SRC,
-    },
+    alias: [
+      { find: '/@/', replacement: join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/' },
+      {
+        find: '/shared/',
+        replacement: join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
+      },
+      { find: '/assets/', replacement: join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/' },
+      {
+        find: '#store',
+        replacement: join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
+      },
+      { find: '@ui', replacement: UI3_SRC },
+      { find: '@shop', replacement: SHOP_SRC },
+      { find: '@web-core', replacement: WEB_CORE_SRC },
+      // This React 18 host supports only Tooltip. Extend the host types and tracked inputs with any new export.
+      { find: /^@dcl\/one-ui$/, replacement: join(TOOLTIP_SRC, 'Tooltip.tsx') },
+    ],
     // The ui3 sources sit outside this workspace and must use the React installed here.
     dedupe: ['react', 'react-dom'],
   },
@@ -40,7 +53,7 @@ const config = {
   server: {
     fs: {
       strict: true,
-      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC],
+      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC, WEB_CORE_SRC, TOOLTIP_SRC],
     },
   },
   build: {

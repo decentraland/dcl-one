@@ -9,8 +9,7 @@ use catalyst::content::failed_deployments_store::prune_failed_deployments;
 use catalyst::content::sync::{AuthChain, AuthLink, AuthLinkType};
 use catalyst::content::sync::{FailedDeployment, FailureReason};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 fn auth_chain() -> AuthChain {
     vec![AuthLink {
@@ -698,10 +697,11 @@ async fn bench_retry_cycle_shapes_over_a_populated_backlog() {
                     max_retries,
                     ..Default::default()
                 },
-                reqwest::Client::new(),
-                storage,
+                catalyst::content::sync::test_sync_client(reqwest::Client::new()),
+                storage.clone(),
                 Arc::new(LiveSyncDeployer::new(
                     pool.clone(),
+                    storage.clone(),
                     1,
                     catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
                 )),

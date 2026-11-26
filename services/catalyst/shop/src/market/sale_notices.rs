@@ -13,10 +13,11 @@
 //! store's `Bought`), an ERC721BidV2
 //! `BidAccepted` tells its bidder "Bid Accepted" (events-notifier's bids
 //! poller) and its seller "Item Sold". A zero-price sale is no sale there,
-//! so it sells nothing here. A sale of an item the items mirror lacks holds
-//! its cursor until the item appears or a complete pass `ITEM_WAIT_SECS`
-//! after the sale, as the badge processor's do. The Ethereum ERC721Bid was
-//! never polled.
+//! so it sells nothing here. A sale of an item the catalogue lacks holds its
+//! cursor until the item appears, or a complete items mirror pass
+//! `ITEM_WAIT_SECS` after the sale (on a network the collections index owns:
+//! its publication covering the sale's block), as the badge processor's do
+//! ([`ItemWait`]). The Ethereum ERC721Bid was never polled.
 //!
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
@@ -34,6 +35,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::MarketplaceState;
+use super::catalogue::{self, ItemWait};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta, StoredTrade};
@@ -75,7 +77,7 @@ const BID_ACCEPTED_FIELDS: &[&str] = &[
     "network",
 ];
 
-use crate::shared::collections::{ITEM_SHIFT, item_awaited};
+use crate::shared::collections::ITEM_SHIFT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Source {
@@ -196,6 +198,21 @@ pub struct Links {
     pub land_images: String,
     /// Whether the items mirror runs: a sale waits for its item only then.
     pub items_mirror_enabled: bool,
+    /// The chains the trade-events walk reads, `(ethereum, matic)`
+    /// (`MARKETPLACE_INDEX_CHAIN_ID_*`): a trade source is published only on
+    /// its own. The other sources read mainnet only.
+    pub trade_chains: (i64, i64),
+}
+
+impl Links {
+    /// The chain `source` must be published on for `net`.
+    fn chain(&self, source: Source, net: ChainNet) -> i64 {
+        match (source, net) {
+            (Source::Traded, ChainNet::Ethereum) => self.trade_chains.0,
+            (Source::Traded, ChainNet::Matic) => self.trade_chains.1,
+            _ => net.chain_id(),
+        }
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -289,7 +306,7 @@ struct Metas {
 
 impl Metas {
     async fn fetch(
-        pool: &PgPool,
+        conn: &mut sqlx::PgConnection,
         links: &Links,
         source: Source,
         net: ChainNet,
@@ -306,10 +323,18 @@ impl Metas {
         let network = net.db_name();
         let mut metas = Metas::default();
         if !nfts.is_empty() {
-            metas.nfts = trade_events::nft_metas(pool, &links.land_images, network, &nfts).await?;
+            metas.nfts = trade_events::nft_metas(
+                &mut *conn,
+                &links.land_images,
+                network,
+                links.chain(source, net),
+                &nfts,
+            )
+            .await?;
         }
         if !items.is_empty() {
-            metas.items = trade_events::item_metas(pool, network, &items).await?;
+            metas.items =
+                trade_events::item_metas(conn, network, links.chain(source, net), &items).await?;
         }
         Ok(metas)
     }
@@ -509,16 +534,26 @@ async fn drain(
             txn.rollback().await?;
             break;
         }
-        let metas = Metas::fetch(pool, links, source, net, &rows).await?;
-        let items_pass = match source {
-            Source::Mint | Source::BidAccepted => items_pass(&mut txn, net).await?,
-            _ => None,
+        // The assets' descriptions and the item wait from one snapshot, so a
+        // publication that covers a sale's block never meets an older copy
+        // of its item.
+        let (metas, wait) = {
+            let mut snap = catalogue::read_snapshot(pool).await?;
+            let metas = Metas::fetch(&mut snap, links, source, net, &rows).await?;
+            let wait = ItemWait::read(
+                &mut snap,
+                net,
+                links.chain(source, net),
+                DateTime::from_timestamp(now, 0).unwrap_or_default(),
+            )
+            .await?;
+            (metas, wait)
         };
         let mut batch: Vec<NewNotification> = Vec::with_capacity(rows.len());
         let mut done: Option<(i64, i32)> = None;
         let mut held = false;
         for row in &rows {
-            if waits_for_item(source, row, &metas, items_pass, links, now) {
+            if waits_for_item(source, row, &metas, wait, links, now) {
                 tracing::debug!(
                     source = source.db_name(),
                     block = row.block_number,
@@ -572,36 +607,34 @@ async fn drain(
     Ok(emitted)
 }
 
-/// The items mirror's last complete pass on `net`, unix seconds.
-async fn items_pass(conn: &mut sqlx::PgConnection, net: ChainNet) -> sqlx::Result<Option<i64>> {
-    Ok(sqlx::query_scalar(
-        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-         WHERE mirror = 'items' AND network = $1",
-    )
-    .bind(net.db_name())
-    .fetch_optional(conn)
-    .await?
-    .flatten())
-}
-
-/// A sales-index row whose item the mirror lacks waits, as the badge
-/// processor's do, while [`item_awaited`].
+/// A row waits while [`ItemWait::awaited`]: under the mirrors, a
+/// sales-index row whose item they lack, as the badge processor's do; on a
+/// network the collections index owns, every row with an asset the
+/// publication does not cover yet, since its description (a mint's creator
+/// is its recipient) must come from a published row.
 fn waits_for_item(
     source: Source,
     row: &LogRow,
     metas: &Metas,
-    items_pass: Option<i64>,
+    wait: ItemWait,
     links: &Links,
     now: i64,
 ) -> bool {
-    if !matches!(source, Source::Mint | Source::BidAccepted) {
-        return false;
-    }
     let Some((nft, contract, value)) = wanted(source, row) else {
         return false;
     };
-    metas.get(nft, contract, value).is_none()
-        && item_awaited(links.items_mirror_enabled, items_pass, row.block_time, now)
+    let described = metas.get(nft, contract, value).is_some();
+    let waits_under_mirror = matches!(source, Source::Mint | Source::BidAccepted);
+    match wait {
+        ItemWait::Mirror(_) if !waits_under_mirror => false,
+        _ => wait.awaited(
+            links.items_mirror_enabled,
+            described,
+            row.block_number,
+            row.block_time,
+            now,
+        ),
+    }
 }
 
 /// One pass's result: notifications inserted and the indexes not published yet.
@@ -616,7 +649,8 @@ pub async fn run_once(pool: &PgPool, links: &Links, now: DateTime<Utc>) -> anyho
     let mut pass = Pass::default();
     for source in Source::ALL {
         for net in source.networks() {
-            match chain_walk::ready_cursor(pool, source.indexer(), *net, now).await {
+            let chain = links.chain(source, *net);
+            match chain_walk::ready_cursor_on(pool, source.indexer(), *net, chain, now).await {
                 Some(c) => {
                     let published = c.folded_block.unwrap_or(c.last_block);
                     pass.emitted +=
@@ -637,6 +671,10 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &crate::jobs::Jobs) {
         marketplace: state.settings.market.marketplace_base_url.clone(),
         land_images: state.settings.land_image_base_url.clone(),
         items_mirror_enabled: state.settings.market.mirrors_enabled,
+        trade_chains: (
+            state.settings.market.indexes.chain_id(ChainNet::Ethereum),
+            state.settings.market.indexes.chain_id(ChainNet::Matic),
+        ),
     };
     let ix = &state.settings.market.indexes;
     tracing::info!(
@@ -743,8 +781,8 @@ mod tests {
 
     async fn publish(pool: &PgPool, indexer: &str, block: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-             VALUES ($1, 'matic', 1, $2, $2, $2, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, $2, $2, $2, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $2, fold_through = $2, folded_block = $2, folded_at = timezone('UTC', now())",
         )
         .bind(indexer)
@@ -829,6 +867,7 @@ mod tests {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
             items_mirror_enabled: true,
+            trade_chains: (1, 137),
         };
         let mana = "0x0000000000000000000000000000000000000ffa";
         let item = || json!([asset(ASSET_TYPE_COLLECTION_ITEM, COLLECTION, "0")]);
@@ -842,6 +881,19 @@ mod tests {
 
         publish(&pool, INDEXER_TRADE_EVENTS, 100).await;
         publish(&pool, INDEXER_NFT, 100).await;
+        // A node whose trade-events walk reads the testnets: the Polygon
+        // mainnet cursors lend nothing to its trade sources.
+        let testnet = Links {
+            trade_chains: (11_155_111, 80_002),
+            ..links.clone()
+        };
+        let pass = run_once(&pool, &testnet, Utc::now()).await.unwrap();
+        assert_eq!(pass.emitted, 0);
+        assert!(
+            pass.waiting.iter().any(|w| w == "trade_events matic"),
+            "{:?}",
+            pass.waiting
+        );
         assert_eq!(
             run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
             0,
@@ -1072,8 +1124,8 @@ mod tests {
 
     async fn publish_sales(pool: &PgPool, block: i64) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history) \
-             VALUES ('sales', 'matic', 1, $1, $1, $1, timezone('UTC', now()), true) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 1, $1, $1, $1, timezone('UTC', now()), true, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, fold_through = $1, folded_block = $1, folded_at = timezone('UTC', now())",
         )
         .bind(block)
@@ -1117,6 +1169,152 @@ mod tests {
         .unwrap()
     }
 
+    /// On a network the collections index owns, a sale of an item the
+    /// catalogue lacks holds the cursor until the index's publication covers
+    /// the sale's block, whatever the items mirror's recorded pass says:
+    /// every item added by then is in the catalogue, so a missing one never
+    /// comes, and the sale passes without a notification.
+    #[tokio::test]
+    async fn on_an_owned_network_a_sale_waits_for_the_publication_over_its_block() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        seed_assets(&pool).await;
+        let links = Links {
+            marketplace: "https://market.example".into(),
+            land_images: "https://api.example".into(),
+            items_mirror_enabled: true,
+            trade_chains: (1, 137),
+        };
+        let missing = ((alloy_primitives::U256::from(5u32) << 216usize)
+            | alloy_primitives::U256::from(1u32))
+        .to_string();
+        publish_sales(&pool, 100).await;
+        run_once(&pool, &links, Utc::now()).await.unwrap();
+        // The items mirror's pass, recorded two hours after the sale: under
+        // the mirrors it would pass the sale.
+        let sale = Ev {
+            time: Utc::now().timestamp() - 600,
+            ..mint(110, 0, COLLECTION, &missing, "5", Some("7"), 1)
+        };
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             VALUES ('items', 'matic', 'https://items.example', to_timestamp($1::bigint + 7200) AT TIME ZONE 'UTC') \
+             ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at",
+        )
+        .bind(sale.time)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sale_event(&pool, sale).await;
+        publish_sales(&pool, 120).await;
+
+        // Owned, published below the sale's block, then rewound: held.
+        owning::own(&pool, "matic", 137, 109, 60).await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0
+        );
+        assert_eq!(
+            sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
+            (100, i32::MAX),
+            "held below the sale"
+        );
+        owning::own(&pool, "matic", 137, 115, 60).await;
+        owning::rewind(&pool, "matic").await;
+        run_once(&pool, &links, Utc::now()).await.unwrap();
+        assert_eq!(
+            sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
+            (100, i32::MAX),
+            "held while the index refuses"
+        );
+
+        // Published through the sale's block: passed without effect.
+        owning::own(&pool, "matic", 137, 110, 60).await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0
+        );
+        assert_eq!(
+            sales_cursor(&pool, notice_cursor::SALES_MINT_MATIC).await,
+            (110, 0),
+            "passed"
+        );
+    }
+
+    /// On a network the collections index owns, a rewind leaves the item
+    /// rows in place while it withdraws the publication. A store mint whose
+    /// row names creator A then waits; republished with creator B, B alone
+    /// hears of the sale.
+    #[tokio::test]
+    async fn on_an_owned_network_a_withdrawn_row_never_picks_the_recipient() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        const OTHER_CREATOR: &str = "0x00000000000000000000000000000000000000c9";
+        let links = Links {
+            marketplace: "https://market.example".into(),
+            land_images: "https://api.example".into(),
+            items_mirror_enabled: true,
+            trade_chains: (1, 137),
+        };
+        let token = ((alloy_primitives::U256::from(5u32) << 216usize)
+            | alloy_primitives::U256::from(1u32))
+        .to_string();
+        publish_sales(&pool, 100).await;
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        run_once(&pool, &links, Utc::now()).await.unwrap();
+        add_item(&pool, COLLECTION, 5, CREATOR, "wearable_v2", "7", "Cap").await;
+        sale_event(
+            &pool,
+            mint(
+                110,
+                0,
+                COLLECTION,
+                &token,
+                "5",
+                Some("7000000000000000000"),
+                1,
+            ),
+        )
+        .await;
+        publish_sales(&pool, 120).await;
+        let recipients = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT address FROM social.notifications WHERE type = $1 ORDER BY address",
+            )
+            .bind(KIND_ITEM_SOLD)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Published through 110, then rewound: the row stays, the mint waits.
+        owning::own(&pool, "matic", 137, 110, 60).await;
+        owning::rewind(&pool, "matic").await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0
+        );
+        assert!(recipients().await.is_empty(), "held while withdrawn");
+
+        // The new branch's fold names another creator.
+        sqlx::query("UPDATE shop.items SET creator = $1 WHERE contract_address = $2")
+            .bind(OTHER_CREATOR)
+            .bind(COLLECTION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        owning::own(&pool, "matic", 137, 110, 60).await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            1
+        );
+        assert_eq!(recipients().await, [OTHER_CREATOR]);
+    }
+
     /// The sales index's store mints tell each creator once per transaction
     /// at the price the store charged (none for a free or unpriced mint); a
     /// BidV2 acceptance tells its bidder "Bid Accepted" and, when paid, its
@@ -1148,6 +1346,7 @@ mod tests {
             marketplace: "https://market.example".into(),
             land_images: "https://api.example".into(),
             items_mirror_enabled: true,
+            trade_chains: (1, 137),
         };
         let token = |item: u32, issued: u32| {
             ((alloy_primitives::U256::from(item) << 216usize)
@@ -1354,6 +1553,7 @@ mod tests {
         // With the items mirror off nothing waits.
         let off_links = Links {
             items_mirror_enabled: false,
+            trade_chains: (1, 137),
             ..links.clone()
         };
         assert_eq!(

@@ -14,8 +14,11 @@
 //! the cursor when the chain still has that block, or to the start block
 //! otherwise, deletes the log past the rewind and the rights it decided,
 //! and the next passes re-index and refold. Readers
-//! trust the fold through [`index_ready`]: `folded_block = last_block` and
-//! `folded_at` at most [`READY_WINDOW`] old, the old server's rule.
+//! trust the fold ([`observation_ready`]) while `folded_at` is at most
+//! [`READY_WINDOW`] old and the fold is current: `folded_block = last_block`
+//! (the old server's rule, [`index_ready`]), or no authorization event walked
+//! past `folded_block`, so a pass between its walk and its publish does not
+//! take every LAND check down.
 //!
 //! The fold is deterministic over the log (DATABASE.md rule 5): every leg is
 //! decided by the single latest event that touches its key, so a rebuild is
@@ -30,7 +33,10 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::events::{ALL_TOPICS, AuthzEvent, DecodeError, decode_log};
+use super::events::{
+    ALL_TOPICS, AuthzEvent, DecodeError, EstateDataEvent, decode_estate_data, decode_log,
+    is_data_topic,
+};
 use super::{KIND_ADD_LAND, KIND_REMOVE_LAND, LandAuthzState, Settings};
 use crate::jobs::JobContext;
 
@@ -40,9 +46,11 @@ use crate::chain_index::rpc::{Rpc, RpcError};
 impl From<RpcError> for IndexError {
     fn from(error: RpcError) -> Self {
         match error {
+            RpcError::Counted { source, .. } => Self::from(*source),
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
-            RpcError::Rpc(message) => Self::Rpc(message),
+            RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
+            RpcError::Provider(error) => Self::Transport(error.to_string()),
         }
     }
 }
@@ -59,7 +67,7 @@ pub const HEAD_LAG_BLOCKS: u64 = 25;
 /// since. A reorg that also replaced the checkpoint block rewinds to the
 /// start block: a full replay.
 pub const CHECKPOINT_DEPTH_BLOCKS: u64 = 128;
-/// How old a published fold may be before readers fall back (a stopped indexer).
+/// How old a published fold may be before LAND rights become unavailable (a stopped indexer).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 /// Rows per `INSERT ... UNNEST` statement.
 const INSERT_CHUNK: usize = 1_000;
@@ -189,6 +197,10 @@ pub fn decode_logs(logs: &[RpcLog]) -> Result<Vec<AuthzEvent>, IndexError> {
             .ok_or_else(|| {
                 IndexError::Rpc(format!("missing or invalid block timestamp at {block}"))
             })?;
+        // data documents are read by [`decode_estate_data_logs`]
+        if log.topics.first().is_some_and(|t| is_data_topic(t)) {
+            continue;
+        }
         match decode_log(&log.address, &log.topics, &log.data, block, index, time) {
             Ok(ev) => events.push(ev),
             Err(DecodeError::UnhandledTopic(t)) => {
@@ -204,6 +216,66 @@ pub fn decode_logs(logs: &[RpcLog]) -> Result<Vec<AuthzEvent>, IndexError> {
         }
     }
     Ok(events)
+}
+
+/// The Estate registry's data documents among `logs`
+/// ([`decode_estate_data`]); every other log, and a document that does not
+/// parse, is skipped.
+pub fn decode_estate_data_logs(logs: &[RpcLog], estate_registry: &str) -> Vec<EstateDataEvent> {
+    logs.iter()
+        .filter_map(|log| {
+            decode_estate_data(
+                estate_registry,
+                &log.address,
+                &log.topics,
+                &log.data,
+                hex_to_i64(&log.block_number)?,
+                hex_to_i64(&log.log_index)? as i32,
+            )
+        })
+        .collect()
+}
+
+/// Whether a log of the range is kept: a data document only from the
+/// Estate registry (the LAND registry's parcel `Update` shares its topic).
+fn kept_log(log: &RpcLog, estate_registry: &str) -> bool {
+    !log.topics.first().is_some_and(|t| is_data_topic(t))
+        || log.address.eq_ignore_ascii_case(estate_registry)
+}
+
+/// Appends Estate data documents; a row already kept stays.
+pub async fn insert_estate_data(
+    conn: &mut PgConnection,
+    events: &[EstateDataEvent],
+) -> Result<usize, sqlx::Error> {
+    let mut written = 0usize;
+    for chunk in events.chunks(INSERT_CHUNK) {
+        let blocks: Vec<i64> = chunk.iter().map(|e| e.block_number).collect();
+        let indexes: Vec<i32> = chunk.iter().map(|e| e.log_index).collect();
+        let addrs: Vec<&str> = chunk.iter().map(|e| e.token_address.as_str()).collect();
+        let estates: Vec<&str> = chunk.iter().map(|e| e.estate_id.as_str()).collect();
+        let names: Vec<Option<&str>> = chunk.iter().map(|e| e.name.as_deref()).collect();
+        let descriptions: Vec<Option<&str>> =
+            chunk.iter().map(|e| e.description.as_deref()).collect();
+        written += sqlx::query(
+            "INSERT INTO land_authz.estate_data_event \
+                 (block_number, log_index, token_address, estate_id, name, description) \
+             SELECT b, i, a, e::numeric, n, d \
+             FROM UNNEST($1::bigint[], $2::int[], $3::text[], $4::text[], $5::text[], $6::text[]) \
+                  AS u(b, i, a, e, n, d) \
+             ON CONFLICT (block_number, log_index) DO NOTHING",
+        )
+        .bind(&blocks)
+        .bind(&indexes)
+        .bind(&addrs)
+        .bind(&estates)
+        .bind(&names)
+        .bind(&descriptions)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as usize;
+    }
+    Ok(written)
 }
 
 fn valid_header_time(time: i64) -> bool {
@@ -352,8 +424,11 @@ async fn repair_timestamps(
             .iter()
             .map(|n| headers[&(*n as u64)].timestamp)
             .collect();
-        sqlx::query("UPDATE land_authz.authz_event e SET block_time = b.time FROM unnest($1::bigint[], $2::bigint[]) b(number, time) WHERE e.block_number = b.number AND e.block_time <= 0 AND e.token_address IN ($3, $4)")
-            .bind(&repaired).bind(&times).bind(&settings.land_registry).bind(&settings.estate_registry).execute(pool).await?;
+        // One statement: the log's rewrite count moves with the times it
+        // rewrote, so a reader comparing it sees the change (`rewrites`).
+        sqlx::query("WITH fixed AS (UPDATE land_authz.authz_event e SET block_time = b.time FROM unnest($1::bigint[], $2::bigint[]) b(number, time) WHERE e.block_number = b.number AND e.block_time <= 0 AND e.token_address IN ($3, $4) RETURNING 1) \
+                     UPDATE land_authz.index_cursor SET rewrites = rewrites + 1 WHERE network = $5 AND EXISTS (SELECT 1 FROM fixed)")
+            .bind(&repaired).bind(&times).bind(&settings.land_registry).bind(&settings.estate_registry).bind(&settings.network).execute(pool).await?;
     }
 }
 
@@ -451,6 +526,11 @@ pub struct CursorObservation {
     #[sqlx(flatten)]
     pub cursor: Cursor,
     pub observed_at: NaiveDateTime,
+    /// Whether any authorization event past the published fold is in the
+    /// log, read in the same statement: a pass commits its walk before it
+    /// folds and publishes, so the fold names every token's current rights
+    /// only while there is none.
+    pub events_past_fold: bool,
 }
 
 pub async fn cursor_observed<'e, E>(
@@ -461,7 +541,10 @@ where
     E: sqlx::PgExecutor<'e>,
 {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at FROM land_authz.index_cursor WHERE network = $1"
+        "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at, \
+                EXISTS (SELECT 1 FROM land_authz.authz_event e \
+                        WHERE e.block_number > COALESCE(index_cursor.folded_block, -1)) AS events_past_fold \
+         FROM land_authz.index_cursor WHERE network = $1"
     ))).bind(network).fetch_optional(executor).await
 }
 
@@ -488,12 +571,24 @@ pub async fn ready_snapshot(
     land_registry: &str,
     estate_registry: &str,
 ) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    ready_snapshot_within(pool, network, land_registry, estate_registry, READY_WINDOW).await
+}
+
+pub(crate) async fn ready_snapshot_within(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
     Ok(match cursor_observed(&mut *tx, network).await? {
-        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+        Some(observation)
+            if observation_ready_within(&observation, land_registry, estate_registry, max_age) =>
+        {
             Some(ReadySnapshot {
                 cursor: observation.cursor,
                 tx,
@@ -579,8 +674,8 @@ pub async fn set_cursor(
 }
 
 /// Rewinds durably before a repair scan, and clears the publish marker at
-/// once (readers fall back to the subgraph until the repaired history is
-/// folded at chain head). On the same registries `last_block` never moves
+/// once (LAND rights are unavailable until the repaired history is folded
+/// at chain head). On the same registries `last_block` never moves
 /// forward, so a later rewind cannot skip an earlier gap. A rewind to the
 /// start block records the full replay [`mark_folded`] requires and may
 /// switch registries: the new registries' log then starts exactly at `from`,
@@ -719,6 +814,7 @@ const REWIND_SET: &str = "last_block = CASE WHEN $6 THEN $4 ELSE LEAST(c.last_bl
      full_replay_started = c.full_replay_started OR $5, \
      history_timestamps_ready = c.history_timestamps_ready AND NOT $6, \
      land_registry = $2, estate_registry = $3, \
+     rewrites = c.rewrites + 1, \
      updated_at = timezone('UTC', now())";
 
 /// What [`begin_replay`] did.
@@ -824,13 +920,17 @@ pub async fn mark_folded(
 /// is recent. Production passes the database observation time; unit tests
 /// can inject a clock without affecting production readiness authority.
 pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
+    index_ready_within(cursor, now, READY_WINDOW)
+}
+
+fn index_ready_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
     let Some(folded_at) = cursor.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
     cursor.folded_block == Some(cursor.last_block)
         && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+        && age <= max_age
 }
 
 /// Whether a reader of `land_registry` and `estate_registry` may answer from
@@ -846,14 +946,39 @@ pub fn observation_ready(
     land_registry: &str,
     estate_registry: &str,
 ) -> bool {
+    observation_ready_within(observation, land_registry, estate_registry, READY_WINDOW)
+}
+
+pub(crate) fn observation_ready_within(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> bool {
+    let now = observation.observed_at.and_utc();
     observation.cursor.land_registry == land_registry
         && observation.cursor.estate_registry == estate_registry
-        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+        && (index_ready_within(&observation.cursor, now, max_age)
+            || (!observation.events_past_fold
+                && fold_published_within(&observation.cursor, now, max_age)))
+}
+
+/// A published fold no older than `max_age`. With no authorization event
+/// walked past it, it is every token's current state even while the cursor
+/// has walked on (a pass between its walk and its publish, a paused pass, a
+/// head that moved on after the fold): readers answer from it rather than
+/// refusing every LAND check for that window.
+fn fold_published_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
+    let Some(folded_at) = cursor.folded_at else {
+        return false;
+    };
+    let age = now.naive_utc().signed_duration_since(folded_at);
+    cursor.folded_block.is_some() && age >= ChronoDuration::zero() && age <= max_age
 }
 
 /// `Some(cursor)` when the local index of these registries may answer on the
 /// database clock ([`observation_ready`]). A database error reads as not
-/// ready (the fallback, never a grant).
+/// ready (unavailable, never a grant).
 pub async fn ready_cursor(
     pool: &PgPool,
     network: &str,
@@ -868,7 +993,7 @@ pub async fn ready_cursor(
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; using the fallback reader");
+            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; LAND rights are unavailable");
             None
         }
     }
@@ -1185,6 +1310,9 @@ pub async fn sync_range(
             }
             Err(error) => return Err(error),
         };
+        // The LAND registry's parcel data documents are not indexed: drop
+        // them before their timestamps are fetched.
+        logs.retain(|log| kept_log(log, &state.settings.estate_registry));
         // Cap hydration at one batch and commit only that verified prefix.
         // If log retries used the budget, keep their narrowed hint for the
         // next pass; no cursor advance can outrun its mandatory timestamps.
@@ -1227,6 +1355,7 @@ pub async fn sync_range(
             logs.retain(|log| hex_to_i64(&log.block_number).is_some_and(|n| n < unresolved as i64));
         }
         let events = decode_logs(&logs)?;
+        let documents = decode_estate_data_logs(&logs, &state.settings.estate_registry);
         // The cursor block's hash, recorded with the advance: the next pass
         // compares it with the chain ([`check_cursor_block`]). A changed
         // last block, or a log of the cursor block from another fork, means
@@ -1256,6 +1385,7 @@ pub async fn sync_range(
         }
         let mut tx = state.pool.begin().await?;
         let written = insert_events(&mut tx, &events).await?;
+        insert_estate_data(&mut tx, &documents).await?;
         set_cursor(&mut tx, &state.settings, reached as i64, Some(&header.hash)).await?;
         tx.commit().await?;
         outcome.events_written += written;
@@ -1380,8 +1510,8 @@ async fn check_cursor_block(
 
 /// Undoes the log past `to` after a reorg, in one transaction: the cursor
 /// moves back to `to` with `to_hash` (the verified checkpoint's hash, or
-/// `None` at the start block), no checkpoint and no publish marker (readers
-/// fall back until the refold publishes), the configured registries'
+/// `None` at the start block), no checkpoint and no publish marker (LAND
+/// rights are unavailable until the refold publishes), the configured registries'
 /// events past `to` are deleted, and so are the rights rows those events
 /// decided. The next fold is the rebuild (`folded_block` is NULL), which
 /// writes back every key a remaining event touches; a key whose events
@@ -1429,9 +1559,17 @@ pub async fn rewind_reorg(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
+        "DELETE FROM land_authz.estate_data_event WHERE block_number > $1 AND token_address = $2",
+    )
+    .bind(to)
+    .bind(&settings.estate_registry)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
         "UPDATE land_authz.index_cursor SET last_block = $2, last_block_hash = $3, \
              checkpoint_block = NULL, checkpoint_hash = NULL, \
-             folded_block = NULL, folded_at = NULL, updated_at = timezone('UTC', now()) \
+             folded_block = NULL, folded_at = NULL, rewrites = rewrites + 1, \
+             updated_at = timezone('UTC', now()) \
          WHERE network = $1",
     )
     .bind(&settings.network)
@@ -1541,7 +1679,7 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         row = cursor(pool, &settings.network)
             .await?
             .context("cursor row after the replay rewind")?;
-        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
+        tracing::warn!(network = %settings.network, from, "land-authz: replay started; LAND rights are unavailable until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
     }
     let rpc = Rpc::at(&state.http, rpc_url);
     if let Some(to) = check_cursor_block(state, &rpc, row.last_block)

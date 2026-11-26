@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   addDependencyOverrides,
+  clearTemplateDescription,
   ensureEditorFilesNotDeployed,
   ensureGitignored,
   upsertMcpServer,
@@ -178,6 +179,40 @@ describe('addDependencyOverrides', () => {
       addDependencyOverrides(dir);
 
       expect(fs.readFileSync(pkgFile(), 'utf8')).toBe('{ not json');
+    });
+  });
+});
+
+describe('clearTemplateDescription', () => {
+  const sceneFile = () => path.join(dir, 'scene.json');
+  const read = () => JSON.parse(fs.readFileSync(sceneFile(), 'utf8'));
+
+  describe('when the scene still has the empty template description', () => {
+    beforeEach(() => {
+      fs.writeFileSync(
+        sceneFile(),
+        JSON.stringify({ display: { title: 'Trees', description: 'Empty Scene Template' } }),
+      );
+      clearTemplateDescription(dir);
+    });
+
+    it('should clear the description and keep the rest', () => {
+      expect(read()).toEqual({ display: { title: 'Trees', description: '' } });
+    });
+
+    it('should end the file with a newline', () => {
+      expect(fs.readFileSync(sceneFile(), 'utf8').endsWith('}\n')).toBe(true);
+    });
+  });
+
+  describe('when the creator wrote their own description', () => {
+    it('should leave the file as it is', () => {
+      const written = JSON.stringify({ display: { description: 'My forest' } });
+      fs.writeFileSync(sceneFile(), written);
+
+      clearTemplateDescription(dir);
+
+      expect(fs.readFileSync(sceneFile(), 'utf8')).toBe(written);
     });
   });
 });

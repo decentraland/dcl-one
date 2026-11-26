@@ -1,9 +1,8 @@
 import { Engine } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity, IEntityContainer } from '../../packages/@dcl/ecs/src/engine/entity'
 import {
-  Entity,
   EntityState,
   EntityUtils,
-  IEntityContainer,
   RESERVED_STATIC_ENTITIES,
   createEntityContainer
 } from '../../packages/@dcl/ecs/src/engine/entity'

@@ -20,6 +20,10 @@
 //!   `{"type":"presentation:state", ...state}` (`component.ts:320-335`), and
 //!   `{"type":"presentation:stopped","id":<id>}` on stop
 //!   (`component.ts:1405`). Numbers print as `JSON.stringify` prints them.
+//! - Client composition (`component.ts:1450-1476`): after `overlay`, `slide`,
+//!   `presenterIdentity`, and `playingVideoIndex`, `videoPositionMs` and
+//!   `videoPositionAt`. This node plays no video: those three are `null`, and
+//!   `slideVideos` entries carry no `source`.
 
 use prost::Message;
 use serde::Serialize;
@@ -266,7 +270,28 @@ pub enum VideoState {
     Idle,
 }
 
-/// `PresentationState` with client composition off (`types.ts:35-64`).
+/// The current slide as a picture clients fetch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Slide {
+    /// `<public URL>/presentations/<id>/slides/<hash>.png`.
+    pub url: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// What a client needs to draw the presentation itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Composition {
+    pub slide: Slide,
+    /// The participant whose camera clients draw over the slide.
+    pub presenter_identity: Option<String>,
+    pub playing_video_index: (),
+    pub video_position_ms: (),
+    pub video_position_at: (),
+}
+
+/// `PresentationState` (`types.ts:35-64`).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PresentationState {
@@ -278,6 +303,9 @@ pub struct PresentationState {
     pub slide_videos: Vec<SlideVideo>,
     pub video_state: VideoState,
     pub overlay: Overlay,
+    /// None with client composition off.
+    #[serde(flatten)]
+    pub composition: Option<Composition>,
 }
 
 #[derive(Serialize)]
@@ -304,6 +332,28 @@ pub fn state_message(state: &PresentationState) -> String {
         body: state,
     })
     .expect("state serializes")
+}
+
+/// Upstream's `broadcastError` for a play that failed:
+/// `{"type":"presentation:error","code":"video-playback-failed","message":..,"videoIndex":..}`.
+pub fn video_unavailable_message(video_index: Option<u64>) -> String {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Failure {
+        code: &'static str,
+        message: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        video_index: Option<u64>,
+    }
+    serde_json::to_string(&Typed {
+        kind: "presentation:error",
+        body: &Failure {
+            code: "video-playback-failed",
+            message: "Video playback is not available on this server",
+            video_index,
+        },
+    })
+    .expect("error serializes")
 }
 
 /// `{"type":"presentation:stopped","id":<id>}`.
@@ -356,8 +406,13 @@ pub enum Command {
     GetState,
     Stop,
     Overlay(OverlayPatch),
-    /// `presentation:video:*` and `presentation:presenter:claim`: known to
-    /// upstream, not acted on here (no video playback, no client composition).
+    /// `presentation:video:play` with its `videoIndex`: this node plays no
+    /// video, and says so with upstream's error event.
+    VideoPlay(Option<u64>),
+    /// `presentation:presenter:claim`: the sender's camera is the presenter's.
+    Claim,
+    /// The other `presentation:video:*`: known to upstream, not acted on
+    /// here (no video playback).
     Unsupported(String),
 }
 
@@ -387,10 +442,13 @@ pub fn parse_command(message: &serde_json::Map<String, Value>) -> Option<Command
             let patch = parse_overlay_update(message)?;
             (!patch.is_empty()).then_some(Command::Overlay(patch))
         }
-        kind @ ("presentation:video:play"
-        | "presentation:video:pause"
-        | "presentation:video:stop"
-        | "presentation:presenter:claim") => Some(Command::Unsupported(kind.to_string())),
+        "presentation:video:play" => Some(Command::VideoPlay(
+            message.get("videoIndex").and_then(Value::as_u64),
+        )),
+        "presentation:presenter:claim" => Some(Command::Claim),
+        kind @ ("presentation:video:pause" | "presentation:video:stop") => {
+            Some(Command::Unsupported(kind.to_string()))
+        }
         _ => None,
     }
 }

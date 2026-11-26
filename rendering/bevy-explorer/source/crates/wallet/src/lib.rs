@@ -65,7 +65,7 @@ impl Wallet {
     }
 
     pub fn disconnect(&mut self) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.inner = None;
         write.root_address = None;
         write.delegates.clear();
@@ -75,7 +75,7 @@ impl Wallet {
     pub fn finalize_as_guest(&mut self) {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> =
             Arc::new(PrivateKeySigner::random_with(&mut rand::thread_rng()));
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -86,7 +86,7 @@ impl Wallet {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> = Arc::new(
             PrivateKeySigner::random_with(&mut rand::rngs::StdRng::from_seed(seed)),
         );
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -100,7 +100,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -115,7 +115,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.blocking_write();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -141,18 +141,23 @@ impl Wallet {
     }
 
     pub fn address(&self) -> Option<Address> {
-        self.0.try_read().unwrap().root_address
+        self.0.blocking_read().root_address
     }
 
     pub fn is_guest(&self) -> bool {
-        self.0.try_read().unwrap().delegates.is_empty()
+        self.0.blocking_read().delegates.is_empty()
     }
 
     /// An account that was created for a guest. It signs in and keeps a profile like any
     /// other account (so `is_guest` is false), but the user holds no wallet to approve
     /// transactions with.
     pub fn is_guest_account(&self) -> bool {
-        self.0.try_read().unwrap().guest_account
+        self.0.blocking_read().guest_account
+    }
+
+    /// Either kind of guest: what a server is told as `isGuest`, as unity-explorer tells it.
+    pub fn is_any_guest(&self) -> bool {
+        self.is_guest() || self.is_guest_account()
     }
 }
 
@@ -243,12 +248,14 @@ impl SimpleAuthChain {
         Self(links)
     }
 
-    pub fn headers(&self) -> impl Iterator<Item = (String, String)> + '_ {
+    pub fn headers(
+        &self,
+    ) -> impl Iterator<Item = Result<(String, String), serde_json::Error>> + '_ {
         self.0.iter().enumerate().map(|(ix, link)| {
-            (
+            Ok((
                 format!("x-identity-auth-chain-{ix}"),
-                serde_json::to_string(&link).unwrap(),
-            )
+                serde_json::to_string(&link)?,
+            ))
         })
     }
 
@@ -413,7 +420,7 @@ async fn sign_path(
     );
     let auth_chain = wallet.sign_message(payload).await?;
 
-    let mut headers: Vec<_> = auth_chain.headers().collect();
+    let mut headers = auth_chain.headers().collect::<Result<Vec<_>, _>>()?;
     headers.push(("x-identity-timestamp".to_owned(), format!("{unix_time}")));
     headers.push(("x-identity-metadata".to_owned(), meta));
     Ok(headers)

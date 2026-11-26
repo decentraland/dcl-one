@@ -7,12 +7,16 @@ import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } 
 import { readMappingFile, type MappingLocal, type ParsedMapping } from './mapping-file.js'
 import { importSpecifier, validateAgainstFigma, validateAgainstLibrary } from './validate.js'
 import { resolveByName, setsFittingVariantProperties } from './name-identity.js'
+import { MANIFEST_FILE, orphanedSets } from './mapping-manifest.js'
 
 type ResolveContext = {
   mappingRoot?: string
   libraryRange?: string
   // Empty when no capture is available; identity is then checked against the mapping only.
   figmaSets: FigmaSet[]
+  // Set when figmaSets is the tracked mapping manifest: a mapping it does not hold is then an error even when
+  // the manifest is empty, and an entry no mapping names is reported as stale.
+  identitySource?: 'manifest'
   // Synced components promotion.include names and promotion has not written yet, with the reasons
   // promotion would skip each one (none when eligible). Any other hand-written mapping is validated.
   loadSyncedComponents?: () => Promise<Map<string, string[]>>
@@ -860,11 +864,11 @@ async function checkLoadedMappings(
     })
     if (mapping.figma) {
       const set = ctx.figmaSets.find((candidate) => candidate.setId === mapping.figma!.nodeId)
-      if (ctx.figmaSets.length > 0 && !set) {
+      if ((ctx.figmaSets.length > 0 || ctx.identitySource === 'manifest') && !set) {
         found.push(
           diagnostic(
             'identity-not-found',
-            `${rel}: Figma node ${mapping.figma.nodeId} is not in the capture`,
+            `${rel}: Figma node ${mapping.figma.nodeId} is not in the ${ctx.identitySource === 'manifest' ? 'mapping manifest' : 'capture'}`,
             { reason: 'mapping-node', file: rel, nodeId: mapping.figma.nodeId }
           )
         )
@@ -916,12 +920,30 @@ async function checkMappingsReport(ctx: ResolveContext) {
       results: []
     }
   const results = await checkLoadedMappings(ctx, source)
+  if (ctx.identitySource === 'manifest') {
+    const stale = orphanedSets(
+      ctx.figmaSets,
+      source.mappings.flatMap((mapping) => (mapping.figma ? [mapping.figma.nodeId] : []))
+    )
+    if (stale.length > 0)
+      results.push({
+        file: MANIFEST_FILE,
+        diagnostics: stale.map((set) =>
+          diagnostic(
+            'identity-not-found',
+            `${MANIFEST_FILE}: no mapping names Figma node ${set.setId} ("${set.name}"); refresh the manifest`,
+            { reason: 'manifest-orphan', nodeId: set.setId }
+          )
+        )
+      })
+  }
   const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
-  const captureChecked = ctx.figmaSets.length > 0
+  const captureChecked = ctx.figmaSets.length > 0 || ctx.identitySource === 'manifest'
   return {
     ok: failing.length === 0,
     checked: results.length,
     captureChecked,
+    ...(ctx.identitySource ? { identitySource: ctx.identitySource } : {}),
     warnings: captureChecked
       ? []
       : [

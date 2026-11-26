@@ -397,6 +397,10 @@
   font-size: 0.9375rem;
 }
 
+.recordingChip {
+  max-width: 100%;
+}
+
 .attachmentRemove.attachmentRemove {
   flex-shrink: 0;
   padding: 0;
@@ -427,6 +431,14 @@
 
 .attachButton.attachButton:disabled {
   color: var(--ctl-disabled-ink);
+}
+
+/* The Record button beside Send (or the turn's Stop). */
+.composerActions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .setupBox {
@@ -803,6 +815,14 @@
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+/* Deleting a chat is local only: a creator who shares is told where shared turns are erased. */
+.menuNote {
+  padding: 2px 16px 6px 24px;
+  color: var(--text-tone-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
 }
 
 /* The agent select: the same pill as the chat picker. */

@@ -845,6 +845,13 @@ impl<'a> RoomServiceClient<'a> {
         }
     }
 
+    /// `data` to every participant of `room`, reliably, with no sender.
+    pub async fn send_data(&self, room: &str, data: &[u8]) -> Result<(), RoomServiceError> {
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        let body = serde_json::json!({ "room": room, "data": data, "kind": "RELIABLE" });
+        self.call("SendData", room, body).await.map(drop)
+    }
+
     /// Removes a participant and requests a token cutoff (enforced by LiveKit
     /// Cloud only). An absent participant is reported, not folded into
     /// success: the island takeover counts "had already left" apart from
@@ -1050,10 +1057,15 @@ impl<'a> RoomServiceClient<'a> {
 
     pub async fn list_rooms(&self) -> Result<Vec<String>, RoomServiceError> {
         let body = self.call("ListRooms", "", serde_json::json!({})).await?;
-        Ok(room_inventory(&body)?
+        room_inventory(&body)?
             .iter()
-            .map(|room| room["name"].as_str().expect("validated name").to_owned())
-            .collect())
+            .map(|room| {
+                room["name"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(RoomServiceError::InvalidResponse)
+            })
+            .collect()
     }
 
     pub async fn get_room_info(

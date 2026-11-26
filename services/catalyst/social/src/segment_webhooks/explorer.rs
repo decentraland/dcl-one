@@ -79,10 +79,11 @@ pub(super) async fn forward(
             (row.received_at - row.reported_at).num_milliseconds() as f64 / 1000.0;
         let segment_to_webhook =
             (chrono::Utc::now() - row.received_at).num_milliseconds() as f64 / 1000.0;
-        metrics::counter!("handled_explorer_events_count", "event_type" => sub_type).increment(1);
-        metrics::histogram!("explorer_segment_event_delay_in_seconds", "event_type" => sub_type)
+        dcl_metrics::counter!("handled_explorer_events_count", "event_type" => sub_type)
+            .increment(1);
+        dcl_metrics::histogram!("explorer_segment_event_delay_in_seconds", "event_type" => sub_type)
             .record(explorer_to_segment);
-        metrics::histogram!("segment_webhook_event_delay_in_seconds", "event_type" => sub_type)
+        dcl_metrics::histogram!("segment_webhook_event_delay_in_seconds", "event_type" => sub_type)
             .record(segment_to_webhook);
     }
     reply(StatusCode::OK, json!({ "ok": true }))
@@ -300,7 +301,7 @@ fn auth_chain_is_valid(chain: Option<&AuthChain>, address: &str) -> bool {
     let Ok((_, ephemeral, _)) = parse_ephemeral_payload(&delegation.payload) else {
         return false;
     };
-    crate::auth::verify_auth_chain(chain, &ephemeral, None).is_ok()
+    crate::auth::verify_login_chain(chain, &ephemeral, None).is_ok()
 }
 
 #[cfg(test)]
@@ -504,6 +505,38 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    /// A `[SIGNER, ECDSA_EPHEMERAL]` chain whose delegation starts with
+    /// `first_line`, and its owner.
+    fn delegated_with(first_line: &str) -> (String, AuthChain) {
+        let owner = Wallet::random().unwrap();
+        let ephemeral = Wallet::random().unwrap();
+        let expiration = (chrono::Utc::now() + chrono::Duration::days(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let payload = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
+            ephemeral.address()
+        );
+        let chain = json!([
+            { "payload": owner.address(), "signature": "", "type": "SIGNER" },
+            { "payload": payload, "signature": owner.sign_message(payload.as_bytes()).unwrap(), "type": "ECDSA_EPHEMERAL" },
+        ]);
+        (owner.address(), serde_json::from_value(chain).unwrap())
+    }
+
+    #[test]
+    fn only_a_login_delegation_proves_the_owner() {
+        let (owner, chain) = delegated_with("Decentraland Login");
+        assert!(auth_chain_is_valid(Some(&chain), &owner));
+
+        let (owner, chain) = delegated_with("Decentraland Storage Delegation");
+        let ephemeral = parse_ephemeral_payload(&chain[1].payload).unwrap().1;
+        assert!(
+            crate::auth::verify_auth_chain(&chain, &ephemeral, None).is_ok(),
+            "otherwise a valid chain"
+        );
+        assert!(!auth_chain_is_valid(Some(&chain), &owner));
     }
 
     #[tokio::test]

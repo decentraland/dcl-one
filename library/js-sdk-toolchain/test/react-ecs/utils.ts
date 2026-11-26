@@ -1,8 +1,9 @@
 import { Engine } from '../../packages/@dcl/ecs/src/engine'
 import { createPointerEventsSystem } from '../../packages/@dcl/ecs/src/systems/events'
 import { createInputSystem } from '../../packages/@dcl/ecs/src/engine'
-import { createReactBasedUiSystem, UiRendererOptions } from '../../packages/@dcl/react-ecs/src'
-import { IEngine, PointerEventsSystem } from '../../packages/@dcl/ecs'
+import type { UiRendererOptions } from '../../packages/@dcl/react-ecs/src'
+import { createReactBasedUiSystem } from '../../packages/@dcl/react-ecs/src'
+import type { IEngine, PointerEventsSystem } from '../../packages/@dcl/ecs'
 
 /**
  * Renderer options for suites that assert the UI tree hanging directly off the

@@ -161,12 +161,17 @@ struct IpcResultCallback<T: DeserializeOwned + Send + 'static> {
 
 impl<T: DeserializeOwned + Send + 'static> IpcEndpoint for IpcResultCallback<T> {
     fn send(&mut self, raw_bytes: Vec<u8>) {
-        if let Ok(val) = rmp_serde::from_slice::<T>(&raw_bytes) {
-            if let Some(sx) = self.sender.take() {
-                let _ = sx.send(val);
+        match rmp_serde::from_slice::<T>(&raw_bytes) {
+            Ok(val) => {
+                if let Some(sx) = self.sender.take() {
+                    let _ = sx.send(val);
+                }
             }
-        } else {
-            let _ = rmp_serde::from_slice::<T>(&raw_bytes).unwrap();
+            // drop the sender: the channel closes without a value
+            Err(e) => {
+                error!("dropping undecodable ipc result: {e}");
+                self.sender = None;
+            }
         }
     }
 }
@@ -180,20 +185,23 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcResultSe
             panic!();
         };
 
-        let id = channel.try_write().unwrap().serialize_with(|sender| {
-            let endpoint = IpcResultCallback {
-                sender: Some(sender),
-                _cancel_on_drop: cancel.clone().drop_guard(),
-            };
-            let (id, close_sender) = ipc_register(endpoint);
-            let cancel = cancel.clone();
-            tokio::spawn(async move {
-                cancel.cancelled().await;
-                let _ = close_sender.send(id);
+        let id = channel
+            .try_write()
+            .map_err(|_| serde::ser::Error::custom("result channel is in use"))?
+            .serialize_with(|sender| {
+                let endpoint = IpcResultCallback {
+                    sender: Some(sender),
+                    _cancel_on_drop: cancel.clone().drop_guard(),
+                };
+                let (id, close_sender) = ipc_register(endpoint);
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    cancel.cancelled().await;
+                    let _ = close_sender.send(id);
+                });
+                debug!("created sender {id} -> {}", std::any::type_name::<T>());
+                id
             });
-            debug!("created sender {id} -> {}", std::any::type_name::<T>());
-            id
-        });
 
         serializer.serialize_u64(id)
     }

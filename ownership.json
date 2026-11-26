@@ -114,6 +114,7 @@
       "paths": [
         "/library/dcl-auth/",
         "/library/dcl-http/",
+        "/library/dcl-metrics/",
         "/library/catalyst-api/",
         "/services/catalyst/fed/",
         "/services/catalyst/jobs/",
@@ -144,7 +145,8 @@
       "paths": [
         "/library/js-sdk-toolchain/",
         "/library/hashing/",
-        "/.github/workflows/sdk.yml"
+        "/.github/workflows/sdk.yml",
+        "/.github/workflows/sdk-release.yml"
       ]
     },
     {
@@ -187,7 +189,8 @@
         "/services/catalyst/cast-bot/",
         "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
-        "/library/dcl-livekit-token/"
+        "/library/dcl-livekit-token/",
+        "/services/catalyst/comms-e2e/"
       ]
     },
     {
@@ -209,7 +212,11 @@
       "paths": [
         "/apps/sites/",
         "/apps/ui3/",
-        "/library/ui/"
+        "/library/ui/",
+        "/library/web-core/",
+        "/tooling/creators-e2e/",
+        "/tooling/ui-kit-ceiling.json",
+        "/tooling/ui-token-floor.json"
       ]
     },
     {
@@ -255,7 +262,6 @@
         "@decentraland/web-applications"
       ],
       "paths": [
-        "/apps/ui3/src/editor/",
         "/apps/ui3/editor-scene/",
         "/apps/creator-hub/",
         "/.github/workflows/creator-hub-*.yml",

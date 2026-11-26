@@ -1,9 +1,9 @@
-import { PBUiText } from '@dcl/ecs'
+import type { PBUiText } from '@dcl/ecs'
 
 import { parseProps } from '../utils'
 import { ReactEcs } from '../../react-ecs'
-import { EntityPropTypes } from '../types'
-import { UiLabelProps } from './types'
+import type { EntityPropTypes } from '../types'
+import type { UiLabelProps } from './types'
 import { getFont, getFontSize, getTextAlign, getTextWrap } from './utils'
 
 export { scaleFontSize } from './utils'
@@ -23,7 +23,18 @@ export { scaleFontSize } from './utils'
 
 /* @__PURE__ */
 export function Label(props: EntityPropTypes & UiLabelProps) {
-  const { uiTransform, uiBackground, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, ...uiTextProps } = props
+  const {
+    uiTransform,
+    uiBackground,
+    onMouseDown,
+    onMouseUp,
+    onMouseEnter,
+    onMouseLeave,
+    onMouseDrag,
+    onMouseDragLocked,
+    onMouseDragEnd,
+    ...uiTextProps
+  } = props
 
   const commonProps = parseProps({
     uiTransform,
@@ -31,7 +42,10 @@ export function Label(props: EntityPropTypes & UiLabelProps) {
     onMouseDown,
     onMouseUp,
     onMouseEnter,
-    onMouseLeave
+    onMouseLeave,
+    onMouseDrag,
+    onMouseDragLocked,
+    onMouseDragEnd
   })
   const { font, textAlign, fontSize, textWrap, ...textProps } = uiTextProps
   const uiText: PBUiText = {

@@ -41,7 +41,6 @@ use dcl_types::{SceneLogLevel, SceneLogMessage};
 use history::ChatHistoryPlugin;
 use input_manager::{InputManager, InputPriority};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene};
-use shlex::Shlex;
 use social::FriendshipEvent;
 use system_bridge::{ChatMessage, ChatReactionData, NativeUi, SystemApi};
 use ui_core::{
@@ -549,6 +548,34 @@ pub struct ChatInput;
 #[derive(Event)]
 pub struct PrivateChatEntered(pub String);
 
+/// Why a `/command` typed as chat did not run.
+enum CommandFault {
+    /// the line does not split: empty, or a double quote left open
+    Split(String),
+    /// the console has no such command
+    Unknown,
+}
+
+/// Run a chat line that starts with `/` as a console command, split as every console line is
+/// (`console::line`).
+fn enter_command(
+    line: &str,
+    config: &ConsoleConfiguration,
+    command_entered: &mut EventWriter<ConsoleCommandEntered>,
+) -> Result<(), CommandFault> {
+    let (command_name, args) = console::line::split(line, config).map_err(CommandFault::Split)?;
+    debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+    if !config.commands.contains_key(command_name.as_str()) {
+        return Err(CommandFault::Unknown);
+    }
+    command_entered.write(ConsoleCommandEntered {
+        command_name,
+        args,
+        responder: None,
+    });
+    Ok(())
+}
+
 fn emit_user_chat(
     mut commands: Commands,
     mut chats: EventWriter<ChatEvent>,
@@ -608,25 +635,29 @@ fn emit_user_chat(
                 message: message.clone(),
             });
 
+            // This panel's own send sound. A line sent from the HUD page is sounded by the
+            // page, which knows the notification ping setting.
+            if output.active_tab == "Nearby" && !message.starts_with('/') {
+                commands.send_event(SystemAudio(
+                    "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
+                ));
+            }
+
             if message.starts_with('/') {
-                let mut args = Shlex::new(message).collect::<Vec<_>>();
-
-                let command_name = args.remove(0);
-                debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-                let command = console_config.commands.get(command_name.as_str());
-
-                if command.is_some() {
-                    command_entered.write(ConsoleCommandEntered {
-                        command_name,
-                        args,
-                        responder: None,
-                    });
-                } else {
-                    debug!(
+                match enter_command(message, &console_config, &mut command_entered) {
+                    Ok(()) => {}
+                    Err(CommandFault::Unknown) => debug!(
                         "Command not recognized, recognized commands: `{:?}`",
                         console_config.commands.keys().collect::<Vec<_>>()
-                    );
+                    ),
+                    Err(CommandFault::Split(fault)) => {
+                        chats.write(ChatEvent {
+                            timestamp: time.elapsed_secs_f64(),
+                            sender: Entity::PLACEHOLDER,
+                            channel: "System".to_owned(),
+                            message: format!("Command not run: {fault}"),
+                        });
+                    }
                 }
             }
         }
@@ -643,7 +674,6 @@ fn emit_user_chat(
 }
 
 pub fn broadcast_nearby_chats(
-    mut commands: Commands,
     mut chat_events: EventReader<ChatEvent>,
     transports: Query<&Transport>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -658,10 +688,6 @@ pub fn broadcast_nearby_chats(
         .filter(|ev| ev.sender == player)
         .filter(|ev| !ev.message.starts_with("/"))
     {
-        commands.send_event(SystemAudio(
-            "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
-        ));
-
         // we display receive time
         let timestamp = ev.timestamp;
 
@@ -1090,28 +1116,20 @@ fn pipe_chats_from_scene(
                 message: message.clone(),
             });
 
-            let mut args = Shlex::new(&message).collect::<Vec<_>>();
-
-            let command_name = args.remove(0);
-            debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-            let command = console_config.commands.get(command_name.as_str());
-
-            if command.is_some() {
-                command_entered.write(ConsoleCommandEntered {
-                    command_name,
-                    args,
-                    responder: None,
-                });
-            } else {
+            let reply = match enter_command(&message, &console_config, &mut command_entered) {
+                Ok(()) => None,
+                Err(CommandFault::Unknown) => Some(format!(
+                    "Command not recognized, recognized commands: `{:?}`",
+                    console_config.commands.keys().collect::<Vec<_>>()
+                )),
+                Err(CommandFault::Split(fault)) => Some(format!("Command not run: {fault}")),
+            };
+            if let Some(message) = reply {
                 sender.write(ChatEvent {
                     timestamp: time.elapsed_secs_f64(),
                     sender: Entity::PLACEHOLDER,
                     channel: "System".to_owned(),
-                    message: format!(
-                        "Command not recognized, recognized commands: `{:?}`",
-                        console_config.commands.keys().collect::<Vec<_>>()
-                    ),
+                    message,
                 });
             }
         } else {

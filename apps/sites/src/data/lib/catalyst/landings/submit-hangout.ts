@@ -37,8 +37,6 @@ export type HangoutDraft = {
   imagePreviewUrl: string | null;
   verticalImagePreviewUrl: string | null;
   featuredItem?: string;
-  scheduleIds?: string[];
-  joinUrl?: string;
 };
 
 const RECURRENCE_FREQUENCIES: Record<string, string> = {
@@ -67,8 +65,6 @@ export function emptyDraft(): HangoutDraft {
     imagePreviewUrl: null,
     verticalImagePreviewUrl: null,
     featuredItem: "",
-    scheduleIds: [],
-    joinUrl: "",
   };
 }
 
@@ -79,8 +75,12 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof EventRecordSchema>, signer?: string, privileged = false) {
-  const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
+export type EventScheduleSource = Pick<EditableHangout,
+  "start_at" | "recurrent_frequency" | "recurrent_interval" | "recurrent_weekday_mask" |
+  "recurrent_month_mask" | "recurrent_monthday" | "recurrent_setpos" | "recurrent_until"
+>;
+
+export function toEventSchedule(draft: HangoutDraft, original?: EventScheduleSource) {
   let start = toIso(draft.startDate, draft.startTime);
   if (start && original?.start_at && new Date(original.start_at).toISOString().slice(0, 16) === start.slice(0, 16)) start = original.start_at;
   const frequency = RECURRENCE_FREQUENCIES[draft.recurrence] ?? null;
@@ -88,20 +88,10 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
   const until = draft.recurrent && draft.recurrentUntil
     ? original?.recurrent_until?.slice(0, 10) === draft.recurrentUntil ? original.recurrent_until : `${draft.recurrentUntil}T23:59:59.000Z`
     : null;
-  const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
-  const joinUrl = draft.joinUrl?.trim() || null;
-  const originalJoinUrl = original ? customJoinUrl(original) || null : null;
-  const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
   return {
-    name: draft.name.trim(),
-    description: draft.description.trim(),
     start_at: start,
     duration: (draft.allDay ? 24 : draft.durationHours) * 3_600_000,
     all_day: draft.allDay,
-    x: draft.location === "world" ? 0 : draft.coordX,
-    y: draft.location === "world" ? 0 : draft.coordY,
-    world: draft.location === "world",
-    server: draft.location === "world" ? draft.worldName.trim() : null,
     recurrent: draft.recurrent,
     recurrent_frequency: draft.recurrent ? frequency : null,
     recurrent_interval: sameRecurrence ? original?.recurrent_interval ?? 1 : 1,
@@ -111,6 +101,19 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     recurrent_setpos: sameRecurrence ? original?.recurrent_setpos ?? null : null,
     recurrent_count: draft.recurrent && !until ? draft.recurrentCount ?? null : null,
     recurrent_until: until,
+  };
+}
+
+export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangout, signer?: string) {
+  const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
+  return {
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    ...toEventSchedule(draft, original),
+    x: draft.location === "world" ? 0 : draft.coordX,
+    y: draft.location === "world" ? 0 : draft.coordY,
+    world: draft.location === "world",
+    server: draft.location === "world" ? draft.worldName.trim() : null,
     categories: original?.categories[0] === draft.category ? original.categories : draft.category ? [draft.category] : [],
     ...(!original || (own && (original.community_id ?? "") !== draft.communityId.trim())
       ? { community_id: draft.communityId.trim() || null } : {}),
@@ -118,8 +121,9 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     image_vertical: draft.verticalImagePreviewUrl,
     ...(!original || own ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
     featured_item: draft.featuredItem?.trim() || null,
-    ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
-    ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
+    // As decentraland.org's editor (useCreateEventForm): the owner saving a rejected event asks to send it
+    // back to review. The response says whether the event is still rejected.
+    ...(own && original?.rejected ? { rejected: false } : {}),
   };
 }
 
@@ -128,21 +132,6 @@ export type EditableHangout = z.infer<typeof EventRecordSchema>;
 
 export async function loadEditableHangout(identity: AuthIdentity, id: string, signal?: AbortSignal): Promise<EditableHangout> {
   return EventEnvelope.parse(await signedGetJSON(`/events/api/events/${encodeURIComponent(id)}`, { identity, signal })).data;
-}
-
-// Match only the exact canonical or legacy target recognized by metadata::refresh_target.
-// Other play links may be deliberate custom destinations and must remain editable.
-function customJoinUrl(event: EditableHangout): string {
-  if (!event.url) return "";
-  const server = event.world && event.server ? event.server : null;
-  const encodedWorld = server
-    ? encodeURIComponent(server).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
-    : null;
-  const generated = server
-    ? `https://decentraland.org/play/?realm=${encodedWorld}`
-    : `https://decentraland.org/play/?position=${event.x}%2C${event.y}`;
-  const legacy = server ? `https://decentraland.org/play/?realm=${server}` : null;
-  return event.url === generated || event.url === legacy ? "" : event.url;
 }
 
 export function eventToDraft(event: EditableHangout): HangoutDraft {
@@ -154,7 +143,7 @@ export function eventToDraft(event: EditableHangout): HangoutDraft {
     recurrence: Object.entries(RECURRENCE_FREQUENCIES).find(([, frequency]) => frequency === event.recurrent_frequency)?.[0] ?? event.recurrent_frequency ?? "every_week",
     recurrentUntil: event.recurrent_until?.slice(0, 10) ?? "", recurrentCount: event.recurrent_count, category: event.categories[0] ?? "", communityId: event.community_id ?? "",
     imagePreviewUrl: event.image, verticalImagePreviewUrl: event.image_vertical,
-    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "", scheduleIds: event.schedules, joinUrl: customJoinUrl(event),
+    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "",
   };
 }
 
@@ -168,7 +157,7 @@ export function buildHangoutSubmit(identitySource: () => AuthIdentity | null, or
       if (!isStepValid(step, draft)) throw new Error("Complete the hangout details, location and schedule before submitting.");
     }
     const path = original ? `/events/api/events/${encodeURIComponent(original.id)}` : "/events/api/events";
-    const response = await postJSON(path, toCreateEventBody(draft, original, identity.signer, privileged), { identity, method: original ? "PATCH" : "POST", signal });
+    const response = await postJSON(path, toCreateEventBody(draft, original, identity.signer), { identity, method: original ? "PATCH" : "POST", signal });
     return apiOkOf(SubmitResultSchema).parse(response).data;
   };
 }
@@ -234,6 +223,8 @@ export function isStepValid(step: string, draft: HangoutDraft): boolean {
 const SubmitResultSchema = z.object({
   id: z.string(),
   approved: z.boolean(),
+  /** Still true after an edit when the event did not go back to review. */
+  rejected: z.boolean().optional(),
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 

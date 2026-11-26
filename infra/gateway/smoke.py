@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -24,6 +25,21 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        # Model replica-local Engine.IO sessions across separate HTTP connections.
+        target = urlsplit(self.path)
+        if target.path == "/auth-api/socket.io/":
+            query = parse_qs(target.query)
+            sid = socket.gethostname()
+            if query.get("sid", [sid]) != [sid]:
+                self.send_error(400, "Unknown session")
+                return
+            if query.get("transport") == ["polling"]:
+                body = b"6" if "sid" in query else b"0" + json.dumps({"sid": sid}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         if self.headers.get("Upgrade", "").lower() == "websocket":
             key = self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
             self.send_response(101)
@@ -51,6 +67,8 @@ class Upstream(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -106,6 +124,16 @@ def websocket(host, path):
         stream = conn.makefile("rb")
         assert stream.read(2) == bytes([0x81, len(message)])
         assert stream.read(len(message)) == message
+
+
+def check_socket_affinity(host):
+    path = "/auth-api/socket.io/?EIO=4&transport="
+    status, packet = request(host, path + "polling")
+    assert status == 200 and packet.startswith(b"0"), (status, packet)
+    session = "&sid=" + json.loads(packet[1:])["sid"]
+    for _ in range(3):
+        assert request(host, path + "polling" + session) == (200, b"6")
+    websocket(host, path + "websocket" + session)
 
 
 def wait_ready(host, path="/_gateway/healthz"):
@@ -164,10 +192,10 @@ def client(args):
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
-                 "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
-                 "/profile/alice", "/cast", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
+                 "/internal/thirdweb-sign", "/api/screens/v1/play",
+                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
-    for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
+    for path in ["/about", "/press-release", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
                  "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
@@ -230,6 +258,8 @@ def client(args):
     print("Internal paths, admin CIDRs, normalized paths and forwarded-header trust passed.", flush=True)
 
     hit("/about", "apis", vhost="peer.example.test")
+    hit("/comms-gatekeeper/scene-admin", "apis", vhost="worlds-content-server.example.test")
+    hit("/cast-presenter-service/presentations/p/slides/s.png", "apis", vhost="realm-provider-ea.example.test")
     hit("/peer/about?x=1", "apis", vhost="gateway.example.test", target="/about?x=1")
     data = hit("/comms-gatekeeper/get-scene-adapter", "apis", vhost="gateway.example.test")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"
@@ -280,6 +310,7 @@ def client(args):
         assert request(public, path, vhost=host)[0] == 404
     assert request(public, "/", vhost="attacker.invalid")[0] == 404
     assert request(public, "/", vhost="admin.extra.example.test")[0] == 404
+    check_socket_affinity(public)
     for path in ["/ws", "/social-rpc", "/rpc/mainnet"]:
         websocket(public, path)
     for path, vhost in [
@@ -301,6 +332,7 @@ def client(args):
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
                            "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-security-policy": "sandbox",
                            "content-type": "image/png", "accept-ranges": "bytes",
                            "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
                            "access-control-expose-headers":
@@ -411,12 +443,14 @@ def smoke(args):
             storage.chmod(0o755)
             (storage / "contents/0a").mkdir(parents=True)
             (storage / "contents/0a/blob").write_bytes(b"authorized-blob")
-            containers.append(fixture)
-            docker("run", "-d", "--name", fixture, *common, "-v", f"{source}:/test:ro",
-                   "--entrypoint", "python3", image, "/test/smoke.py", "--serve")
+            replica_dns = token + "-api-pool"
+            for replica in (fixture, token + "-second-api"):
+                containers.append(replica)
+                docker("run", "-d", "--name", replica, *common, "--network-alias", replica_dns,
+                       "-v", f"{source}:/test:ro", "--entrypoint", "python3", image, "/test/smoke.py", "--serve")
             fixture_ip = json.loads(docker("inspect", fixture).stdout)[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
             cases = [
-                ("public", {}),
+                ("public", {"GATEWAY_APIS_UPSTREAMS": replica_dns + ":8081"}),
                 ("admitted", {"GATEWAY_ADMIN_CIDRS": fixture_ip + "/32"}),
                 ("untrusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32"}),
                 ("trusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32",

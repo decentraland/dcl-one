@@ -30,7 +30,7 @@ refs that a clone does not fetch.
 - **`cast-bot` owns the LiveKit connection:** `services/catalyst/cast-bot` is one
   binary, started once per session by the node at `CAST_BOT_BIN`. It connects to the
   node's own LiveKit with the bot token, publishes the frames it is given as a SCREENSHARE
-  track, and forwards the room's presenters' commands, its metadata and participant counts;
+  track (in both modes of [client composition](2026-11-20-cast-client-composition.md)), and forwards the room's presenters' commands, its metadata and participant counts;
   the rest of the scene's traffic stays in the room. It speaks JSON lines on stdio, the
   shape of upstream's sidecar IPC. The protocol is documented in `comms::cast_presenter::bot`.
 - **A workspace of its own:** `cast-bot` has its own `Cargo.lock` and is excluded from

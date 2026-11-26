@@ -13,10 +13,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 durations="$root/tooling/catalyst-test-durations.tsv"
 cd "$root/services/catalyst"
-receipts="$root/.cache/dev"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
-mkdir -p "$logs" "$receipts"
-rm -f "$receipts/stats-engine-receipt.log"
+mkdir -p "$logs"
 # Every failing binary adds one line here, so the last lines of a failed run name what failed. The
 # summary goes to stdout, the stream of the dumped logs, so it follows them.
 failures="$logs/failures"
@@ -37,14 +35,38 @@ report() {
   fi
 }
 trap report EXIT
-cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c '
+# The regression guard builds its inventory and this shard together so Cargo can schedule
+# their common prerequisites and links in one invocation.
+inventory=
+targets=(--lib --bins)
+if [ "${1:-}" = "--write-inventory" ]; then
+  usage='usage: catalyst-test.sh --write-inventory FILE [TEST ...] -- [CARGO_ARGS ...]'
+  [ -n "${2:-}" ] && [ "$2" != "--" ] || { echo "$usage" >&2; exit 2; }
+  inventory="$2"
+  shift 2
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    targets+=(--test "$1")
+    shift
+  done
+  [ "$#" -gt 0 ] || { echo "$usage" >&2; exit 2; }
+  shift
+fi
+build_targets() {
+  cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | tee "${inventory:-/dev/null}" | python3 -c '
 import json, os, sys
 for line in sys.stdin:
     artifact = json.loads(line)
     if artifact.get("executable") and artifact.get("profile", {}).get("test"):
         target = artifact["target"]
         print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\t")
-' > "$logs/binaries"
+'
+}
+planned=false
+if [ "${CATALYST_TEST_SHARD:-1/1}" != 1/1 ]; then
+  python3 "$root/tooling/catalyst-test-targets.py" plan "$@" > "$logs/binaries"
+  if [ -s "$logs/binaries" ]; then planned=true; fi
+fi
+if [ "$planned" = false ]; then build_targets "$@" > "$logs/binaries"; fi
 phase="selecting the test binaries"
 [ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }
 shard="${CATALYST_TEST_SHARD:-1/1}"
@@ -57,9 +79,10 @@ doc="${CATALYST_TEST_DOC_SHARD:-$index}"
 # sort follows the locale, so the list is in byte order of the source file and kind of each target.
 same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)
 [ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }
-# The cut reads only that list, the recorded times and n, never this machine. Longest first, each
-# binary goes to the shard it lengthens least: 4 binaries at once, then the socket ones in turn, the
-# node_* and sockets_* groups spread evenly. A binary without a time keeps the round-robin place
+# The cut reads the list, recorded times and n. Socket groups are assigned first, then other
+# binaries, longest first within each phase. The cost models four concurrent binaries followed
+# by the socket phase. Each node_* and sockets_* group is spread across shards.
+# A binary without a time keeps the round-robin place
 # (every n-th from the i-th) and runs first, as it may be long.
 LC_ALL=C sort "$logs/binaries" | python3 -c '
 import heapq, re, sys
@@ -88,13 +111,24 @@ shards = [[] for _ in range(total)]
 for number, row in enumerate(rows):
     if time(row) is None:
         shards[number % total].append(row)
-for row in sorted((row for row in rows if time(row) is not None), key=lambda row: -time(row)):
+# Reserve the serial socket phase before filling the four concurrent slots.
+for row in sorted((row for row in rows if time(row) is not None), key=lambda row: (not socket(row), -time(row))):
     taken = [sum(group(other) == group(row) for other in shard) if group(row) else 0 for shard in shards]
     best = min((i for i in range(total) if taken[i] == min(taken)), key=lambda i: (cost(shards[i] + [row]), i))
     shards[best].append(row)
 for row in order(shards[index - 1]):
     print(row[2])
 ' "$index" "$total" "$durations" > "$logs/shard"
+if [ "$planned" = true ]; then
+  phase="building the test binaries"
+  while IFS= read -r target; do
+    case "$target" in test/*) targets+=(--test "${target#test/}");; esac
+  done < "$logs/shard"
+  build_targets "$@" "${targets[@]}" > "$logs/artifacts"
+  python3 "$root/tooling/catalyst-test-targets.py" resolve "$logs/shard" "$logs/binaries" "$logs/artifacts" > "$logs/executables"
+  mv "$logs/executables" "$logs/shard"
+fi
+if [ -n "$inventory" ]; then exit 0; fi
 cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)
 jobs="${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}"
 [ "$jobs" -ge 1 ] || { echo "catalyst-test: CATALYST_TEST_JOBS must be at least 1" >&2; exit 1; }
@@ -116,8 +150,8 @@ run() {
 name=$(basename "$1")
 log="$2/$name.log"
 case "$name" in
-  node_*) RUST_TEST_THREADS="$4"; export RUST_TEST_THREADS ;;
-  sockets_*) RUST_TEST_THREADS="$5"; export RUST_TEST_THREADS ;;
+  node_*) RUST_TEST_THREADS="$3"; export RUST_TEST_THREADS ;;
+  sockets_*) RUST_TEST_THREADS="$4"; export RUST_TEST_THREADS ;;
 esac
 status=0
 "$1" > "$log" 2>&1 || status=$?
@@ -130,12 +164,7 @@ if [ "$status" -ne 0 ]; then
   echo "$line" >> "$2/failures"; exit 1
 fi
 sed -n "s|^test result|$name|p" "$log"
-case "$name" in
-  stats_metrics_engine-*)
-    sed -n "/^STATS_ENGINE_RECEIPT /p" "$log" > "$3/stats-engine-receipt.log" || exit 1
-    cat "$3/stats-engine-receipt.log" ;;
-esac
-' _ {} "$logs" "$receipts" "$group_threads" "$socket_threads"
+' _ {} "$logs" "$group_threads" "$socket_threads"
 }
 phase="running the test binaries"
 run "$jobs" < "$logs/others"

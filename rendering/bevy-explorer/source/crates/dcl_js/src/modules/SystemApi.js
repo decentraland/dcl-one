@@ -116,9 +116,16 @@ module.exports.kernelFetch = async function (body) {
 //   profileExtras?: {field: value}
 //   nameColor: Color3
 // }
-// => deployed version
+// Resolves with the saved version. An engine rejection carries its last confirmed profile.
 module.exports.setAvatar = async function(avatar) {
-    return await Deno.core.ops.op_set_avatar(avatar)
+    const owner = op_get_current_login()
+    if (!owner) throw Object.assign(new Error("No player profile to edit"), { accountChanged: true })
+    const result = await Deno.core.ops.op_set_avatar(owner, avatar)
+    if ('Err' in result) {
+        const { message, profile, accountChanged } = result.Err
+        throw Object.assign(new Error(message), { profile, accountChanged })
+    }
+    return result.Ok
 }
 
 // signs and deploys the local player's catalyst `outfits` entity; refused when `address` is not
@@ -247,6 +254,7 @@ module.exports.liveSceneInfo = async function() {
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,
+//   pinned: bool, // false = the signed-in account has no home
 // }
 module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
@@ -260,6 +268,10 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+module.exports.clearHomeScene = async function() {
+    await Deno.core.ops.op_clear_home_scene()
+}
+
 // { preset: string, layer: number, feet: Vector3 } draws the lobby's stage around the preview
 // avatar for the camera on that layer; null takes it down. Bridge (super-user) scene only.
 module.exports.setLobbyStage = async function(stage) {
@@ -270,6 +282,11 @@ module.exports.setLobbyStage = async function(stage) {
 // the engine: the service's override, else its composition from the base domain
 module.exports.getServiceUrls = async function() {
     return Object.fromEntries(await Deno.core.ops.op_get_service_urls())
+}
+
+// string[]: the official wallets the nametags mark, lowercase 0x addresses
+module.exports.getOfficialWallets = async function() {
+    return await Deno.core.ops.op_get_official_wallets()
 }
 
 // {
@@ -296,6 +313,14 @@ module.exports.acceptTerms = async function() {
 // }
 module.exports.getSatelliteView = async function() {
     return await Deno.core.ops.op_get_satellite_view()
+}
+
+// a satellite map tile as base64-encoded JPEG bytes (no `data:` prefix); rejects on any failure.
+// `path` is relative to the abgen CDN's `SatelliteMaps/`:
+// `sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2` (level 3..=8, sections below 8, tile
+// coordinates below 2^level); the engine rejects any other path without a request.
+module.exports.getSatelliteTile = async function(path) {
+    return await Deno.core.ops.op_get_satellite_tile(path)
 }
 
 // 'allowed' | 'invited' | 'denied' | 'password' | 'failed'
@@ -384,6 +409,31 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
+// get situational reactions as they play (the local user's included) as a stream
+// type Reaction = {
+//   from: string,
+//   emoji: string,
+// }
+module.exports.getReactionStream = async function() {
+  const rid = await Deno.core.ops.op_get_reaction_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_reaction_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the local user reacts with an emoji, shown over their avatar; an emoji the wire has no
+// index for does nothing
+module.exports.sendReaction = function(emoji) {
+  Deno.core.ops.op_send_reaction(emoji)
+}
+
 module.exports.quit = function() {
     Deno.core.ops.op_quit();
 }
@@ -450,6 +500,27 @@ module.exports.getPermissionUsedStream = async function() {
   return streamGenerator();
 }
 
+// stream of scene requests to open the item purchase confirmation:
+// { id, item: { contract, itemId } | null }
+module.exports.getItemPurchaseRequestStream = async function() {
+  const rid = await Deno.core.ops.op_get_item_purchase_request_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_item_purchase_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// state: 'accepted' | 'unavailable' | 'purchased' | 'dismissed' | 'failed'
+module.exports.setItemPurchaseState = function(body) {
+    Deno.core.ops.op_set_item_purchase_state(body.id, body.state);
+}
+
 module.exports.setSinglePermission = function(body) {
     Deno.core.ops.op_set_single_permission(body.id, body.allow);
 }
@@ -478,7 +549,8 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
-// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+// [{ userId: string, hideAvatar: bool, hideProfile: bool, pulseAbsent: bool }]
+// An entry can report Pulse absence with both hide flags false.
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();
 }

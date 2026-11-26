@@ -30,8 +30,34 @@ pub async fn has_world_access_permission(
     device_id: Option<&str>,
     caller: &str,
 ) -> Result<bool, ApiError> {
+    world_access(
+        state, identity, world_name, scene_id, secret, device_id, caller,
+    )
+    .await
+    .map(|access| access == WorldAccess::Allowed)
+}
+
+/// How a world answered a join: admitted, refused by a ban of the scene
+/// (its own key or a successor's, which upstream answers 403 apart from the
+/// world's 401), or refused otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldAccess {
+    Allowed,
+    SceneBanned,
+    Refused,
+}
+
+pub async fn world_access(
+    state: &CommsState,
+    identity: &Address,
+    world_name: &str,
+    scene_id: Option<&str>,
+    secret: Option<&str>,
+    device_id: Option<&str>,
+    caller: &str,
+) -> Result<WorldAccess, ApiError> {
     let Some(world) = world_of(world_name) else {
-        return Ok(false);
+        return Ok(WorldAccess::Refused);
     };
     let scene = scene_id.and_then(|id| SceneId::parse(id).ok());
     let now = chrono::Utc::now().naive_utc();
@@ -41,7 +67,7 @@ pub async fn has_world_access_permission(
         .await
         .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?;
     if !matches!(admission, WorldAdmission::Open(_)) {
-        return Ok(false);
+        return Ok(WorldAccess::Refused);
     }
     let throttle = super::super::world_mint::SecretThrottle {
         pool: &state.pool,
@@ -69,9 +95,12 @@ pub async fn has_world_access_permission(
             .await;
     }
     match access {
-        Ok(Access::Allowed(_)) => Ok(true),
-        Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => Ok(false),
-        Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(false),
+        Ok(Access::Allowed(_)) => Ok(WorldAccess::Allowed),
+        Ok(Access::Banned(crate::access::Ban::Scene)) => Ok(WorldAccess::SceneBanned),
+        Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => {
+            Ok(WorldAccess::Refused)
+        }
+        Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(WorldAccess::Refused),
         Err(why) => {
             tracing::error!(error = %why, world = %world, "world access could not be decided");
             Err(service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))
@@ -85,6 +114,61 @@ struct LeaseAuthorization {
     addresses: Vec<String>,
     #[serde(default)]
     plots: Vec<String>,
+    #[serde(default, rename = "startDate")]
+    start_date: Option<String>,
+    #[serde(default, rename = "endDate")]
+    end_date: Option<String>,
+    #[serde(default, rename = "onlyDev")]
+    only_dev: Option<bool>,
+}
+
+impl LeaseAuthorization {
+    /// Whether the entry grants at `now`, as linker-server reads it: not before `startDate`, not
+    /// after `endDate`, and `onlyDev` entries only on a development node. A date that does not
+    /// parse grants nothing.
+    fn in_force(&self, now: chrono::DateTime<chrono::Utc>, dev_entries: bool) -> bool {
+        if self.only_dev == Some(true) && !dev_entries {
+            return false;
+        }
+        let bound = |raw: &Option<String>| match raw.as_deref().map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(raw) => lease_date(raw).map(Some).ok_or(()),
+        };
+        match (bound(&self.start_date), bound(&self.end_date)) {
+            (Ok(start), Ok(end)) => {
+                start.is_none_or(|start| start <= now) && end.is_none_or(|end| end >= now)
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The document's entries that read as lease entries; a malformed one is skipped (it grants
+/// nothing) instead of failing the whole document.
+fn lease_entries(entries: Vec<serde_json::Value>) -> Vec<LeaseAuthorization> {
+    let total = entries.len();
+    let parsed: Vec<LeaseAuthorization> = entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect();
+    if parsed.len() < total {
+        tracing::warn!(
+            skipped = total - parsed.len(),
+            "lease authorizations entries skipped as malformed"
+        );
+    }
+    parsed
+}
+
+/// A lease date as JavaScript's `Date` reads the published ones: `YYYY-MM-DD` is UTC midnight,
+/// otherwise an RFC 3339 timestamp.
+fn lease_date(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(day) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        return Some(day.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Utc))
 }
 
 /// The upstream caches: the lease authorizations and the ENS names.
@@ -111,8 +195,9 @@ pub(super) fn parse_xy(s: &str) -> Option<(i32, i32)> {
 }
 
 /// The LAND manager document of a Genesis parcel through the permission
-/// core (`Policy::land_document`: the `land_authz` index once its fold is
-/// published, else `COMMS_LAND_OPERATORS_URL`). Upstream's `getLandOperators`
+/// core (`Policy::land_document`: the attached `land_authz` index alone,
+/// unavailable until its fold is published; `COMMS_LAND_OPERATORS_URL` only
+/// without an index). Upstream's `getLandOperators`
 /// re-throws on a transport error and on any non-2xx, so a source fault
 /// reaches the caller as a rejection and never as "this parcel has no
 /// operators". Without any source v2 has no LAND evidence at all: that is
@@ -130,15 +215,26 @@ pub(super) async fn try_fetch_land_operators(
         Ok(None) => {
             tracing::debug!(
                 parcel,
-                "no LAND operator source (land-authz index not ready, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
+                "no LAND operator source (no land-authz index attached, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
             );
             Ok(None)
+        }
+        // The index's own name, on a ban and on an admin listing alike.
+        Err(e) if e.is_land_index_not_ready() => {
+            tracing::warn!(error = %e, parcel, "LAND operators undetermined: land-authz index not ready");
+            Err(service_unavailable(LAND_INDEX_UNREADY_MSG))
         }
         Err(e) => {
             tracing::warn!(error = %e, parcel, "LAND operators could not be read");
             Err(service_unavailable(LAND_OPERATORS_UNAVAILABLE_MSG))
         }
     }
+}
+
+/// Whether `error` is the attached land-authz index not being published
+/// ([`try_fetch_land_operators`]).
+fn is_land_index_unready(error: &ApiError) -> bool {
+    error.code == 503 && error.message == LAND_INDEX_UNREADY_MSG
 }
 
 /// The addresses a place's other permission surfaces grant: the world's
@@ -191,17 +287,25 @@ async fn try_get_land_operator_addresses(
     Ok(BTreeSet::new())
 }
 
-/// The listing's best-effort variant: an outage reads as no extra address.
-pub async fn get_extra_addresses(state: &CommsState, place: &PlaceInfo) -> BTreeSet<String> {
-    try_get_extra_addresses(state, place)
-        .await
-        .unwrap_or_default()
+/// The listing's best-effort variant: an outage reads as no extra address,
+/// except an attached land-authz index that is not published, which is an
+/// error: an empty set would mark every Genesis admin removable.
+pub async fn get_extra_addresses(
+    state: &CommsState,
+    place: &PlaceInfo,
+) -> Result<BTreeSet<String>, ApiError> {
+    match try_get_extra_addresses(state, place).await {
+        Ok(extra) => Ok(extra),
+        Err(e) if is_land_index_unready(&e) => Err(e),
+        Err(_) => Ok(BTreeSet::new()),
+    }
 }
 
 /// Holders of a linker-server lease over any of `parcels`, from the document
 /// at `LEASE_AUTHORIZATIONS_URL` (the mirror posture's: Decentraland's
-/// linker-server-authorizations list); no URL or an unreadable document
-/// reads as no holder, as upstream.
+/// linker-server-authorizations list), counting only entries in force
+/// ([`LeaseAuthorization::in_force`]); no URL or an unreadable document reads
+/// as no holder, as upstream.
 pub async fn get_lease_holders_for_parcels(
     state: &CommsState,
     parcels: &[String],
@@ -242,9 +346,9 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
             if !resp.status().is_success() {
                 return Err(format!("lease authorizations returned {}", resp.status()));
             }
-            resp.json::<Vec<LeaseAuthorization>>()
+            resp.json::<Vec<serde_json::Value>>()
                 .await
-                .map(Arc::new)
+                .map(|entries| Arc::new(lease_entries(entries)))
                 .map_err(|e| e.to_string())
         })
         .await;
@@ -258,11 +362,13 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
         }
     };
     let parcel_set: BTreeSet<&str> = parcels.iter().map(String::as_str).collect();
+    let now = chrono::Utc::now();
     for auth in auths.iter() {
-        if auth
-            .plots
-            .iter()
-            .any(|plot| parcel_set.contains(plot.as_str()))
+        if auth.in_force(now, state.settings.lease_dev_entries)
+            && auth
+                .plots
+                .iter()
+                .any(|plot| parcel_set.contains(plot.as_str()))
         {
             holders.extend(auth.addresses.iter().map(|a| a.to_lowercase()));
         }
@@ -270,57 +376,67 @@ pub(crate) async fn try_get_lease_holders_for_parcels(
     Ok(holders)
 }
 
-/// ENS display names for a bounded set of wallets through the marketplace
-/// names reader (the old crate read the squid `ens` table). Unconfigured or
-/// failing reads answer `""`, as before.
+/// DCL NAME display names for a bounded set of wallets through the node's
+/// NAME source (the old crate read the squid `ens` table). No source or a
+/// failing read answers `""`, as before; a failure is never memoized. An
+/// answer of the nft index is read each time: the memo keeps no
+/// publication, so it could serve a name the index has since moved.
 pub async fn names_for(
     state: &CommsState,
     addresses: &[String],
 ) -> std::collections::HashMap<String, String> {
+    use crate::chain_index::names::Purpose;
     let mut out = std::collections::HashMap::new();
-    let Some(market) = state.marketplace.as_ref() else {
+    let Some(names) = state.name_authority.as_ref() else {
         for addr in addresses {
             out.insert(addr.to_lowercase(), String::new());
         }
         return out;
     };
+    // Best-effort display enrichment: a source that cannot answer shows no
+    // name (never an authorization).
+    let read = |addr: String| async move {
+        match names.owned_names(&addr, Purpose::Display).await {
+            Ok(answer) => Ok(answer
+                .value
+                .first()
+                .map(|n| n.name.clone())
+                .unwrap_or_default()),
+            Err(e) => {
+                tracing::warn!(error = %e, "names resolve failed; falling back to an empty name");
+                Err(())
+            }
+        }
+    };
     for addr in addresses {
         let addr = addr.to_lowercase();
-        let name = state
-            .caches
-            .names
-            .get_or_fetch(addr.clone(), || async {
-                match crate::chain_index::graph::owned_names(market, &addr).await {
-                    Ok(names) => Ok::<String, ()>(names.first().map(|n| n.name.clone()).unwrap_or_default()),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "names resolve failed; falling back to an empty name");
-                        Ok(String::new())
-                    }
-                }
-            })
-            .await
-            .unwrap_or_default();
-        out.insert(addr, name);
+        let name = if names.observes() {
+            read(addr.clone()).await
+        } else {
+            state
+                .caches
+                .names
+                .get_or_fetch(addr.clone(), || read(addr.clone()))
+                .await
+        };
+        out.insert(addr, name.unwrap_or_default());
     }
     out
 }
 
 /// An explicit active `scene_admins` row, else ownership of the place: the
-/// world's NAME (personal rule, the stored owner, then the name authority)
-/// for a world, the LAND (a parcel directly or through its estate) for a
-/// Genesis place, all through `Policy::is_admin`. Without a marketplace
-/// reader a non-admin caller is refused (the old crate's "only explicit
-/// scene admins can moderate" degrade); a reader that cannot be asked is
-/// 503, never "not an owner".
+/// world's NAME (personal rule, then the name authority; never the stored
+/// owner) for a world, the LAND (a parcel directly or through its estate) for a
+/// Genesis place, all through `Policy::is_admin`. Without a LAND index a
+/// non-admin caller is refused (the old crate's "only explicit scene admins
+/// can moderate" degrade); an index that cannot be read or is not published
+/// is 503, never "not an owner".
 pub async fn scene_owner_or_admin_decision(
     state: &CommsState,
     place: &PlaceLookup<'_>,
     signer: &Address,
 ) -> PermissionDecision {
     let place_id = place.place_id();
-    let Ok(scene) = SceneId::parse(place_id) else {
-        return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
-    };
     let place_row = match place.get().await {
         Ok(row) => row,
         Err(error) => {
@@ -346,10 +462,10 @@ pub async fn scene_owner_or_admin_decision(
     let scene_ref = match world.as_ref() {
         Some(world) => SceneRef::World {
             world,
-            scene: &scene,
+            place: place.admin_key(),
         },
         None => SceneRef::Genesis {
-            scene: &scene,
+            place: place.admin_key(),
             parcels: &parcels,
         },
     };
@@ -359,6 +475,38 @@ pub async fn scene_owner_or_admin_decision(
             PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG)
         }
         undetermined => undetermined,
+    }
+}
+
+/// Upstream's `isSceneOwnerOrAdmin`, the gate of every scene-signed write
+/// (admins, bans, the stream key, Cast): the owner-or-admin decision, or,
+/// failing that, an extended holder of the place (a world deployment or
+/// streaming grantee, a LAND operator or lease holder), the addresses
+/// `/scene-admin` lists beside the explicit admins. A source that cannot be
+/// read stays undetermined (503), never a refusal.
+pub async fn scene_manager_decision(
+    state: &CommsState,
+    place: &PlaceLookup<'_>,
+    signer: &Address,
+) -> PermissionDecision {
+    match scene_owner_or_admin_decision(state, place, signer).await {
+        PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {}
+        decided => return decided,
+    }
+    let undetermined = |store: &'static str, reason: String| {
+        PermissionDecision::Refused(AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store,
+            reason_for_operators: reason,
+        })
+    };
+    match place.get().await {
+        Ok(Some(row)) => match holds_extended_permission(state, row, signer).await {
+            Ok(true) => PermissionDecision::Allowed,
+            Ok(false) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
+            Err(error) => undetermined("scene permission grants", error.to_string()),
+        },
+        Ok(None) => PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG),
+        Err(error) => undetermined("explore.place", error.to_string()),
     }
 }
 
@@ -431,4 +579,60 @@ pub async fn holds_extended_permission(
         get_lease_holders_for_parcels(state, &place.positions)
     );
     Ok(operators?.contains(signer.as_str()) || leases.contains(signer.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(doc: serde_json::Value) -> LeaseAuthorization {
+        serde_json::from_value(doc).unwrap()
+    }
+
+    fn at(raw: &str) -> chrono::DateTime<chrono::Utc> {
+        lease_date(raw).unwrap()
+    }
+
+    #[test]
+    fn a_lease_entry_grants_only_within_its_dates() {
+        let dated = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"],
+            "startDate": "2024-03-01", "endDate": "2024-03-30"
+        }));
+        assert!(!dated.in_force(at("2024-02-29T23:59:59Z"), false));
+        assert!(dated.in_force(at("2024-03-01"), false));
+        assert!(dated.in_force(at("2024-03-30"), false));
+        assert!(!dated.in_force(at("2024-03-30T00:00:01Z"), false));
+        let open = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"],
+            "startDate": null, "endDate": "", "onlyDev": null
+        }));
+        assert!(open.in_force(at("2030-01-01"), false));
+        let precise = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "endDate": "2024-03-30T12:00:00+02:00"
+        }));
+        assert!(precise.in_force(at("2024-03-30T10:00:00Z"), false));
+        assert!(!precise.in_force(at("2024-03-30T10:00:01Z"), false));
+    }
+
+    #[test]
+    fn a_lease_entry_with_an_unreadable_date_grants_nothing() {
+        let unreadable = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "endDate": "next spring"
+        }));
+        assert!(!unreadable.in_force(at("2024-03-01"), true));
+    }
+
+    #[test]
+    fn a_dev_only_lease_entry_grants_only_on_a_development_node() {
+        let dev = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "onlyDev": true
+        }));
+        assert!(!dev.in_force(at("2024-03-01"), false));
+        assert!(dev.in_force(at("2024-03-01"), true));
+        let explicit = entry(serde_json::json!({
+            "addresses": ["0xa"], "plots": ["1,1"], "onlyDev": false
+        }));
+        assert!(explicit.in_force(at("2024-03-01"), false));
+    }
 }

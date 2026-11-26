@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { configSchema, type FigmaConfig } from '../config.js'
 import { rawComponentPageSchema, type RawComponentPage } from '../ir/raw-components.js'
 import type { TokenCollection } from '../ir/schemas.js'
@@ -68,7 +68,7 @@ const css = async (paints: Record<string, unknown>, excluded: string[]) => {
 
 let collections: TokenCollection[]
 
-beforeAll(async () => {
+beforeEach(async () => {
   collections = (await snapshotSource().getTokenCollections()).map((collection) =>
     collection.name === 'Primitives'
       ? {
@@ -112,32 +112,49 @@ describe('when a component is bound to an excluded primitive', () => {
     )
   })
 
-  it('should fail the promotion spec route the same way', async () => {
-    await expect(
-      loadSpecsFromSource(
-        source(collections, { fills: [solid(EXCLUDED)] }),
-        config([EXCLUDED]),
-        'promotion'
+  describe('and the spec is loaded through the promotion route', () => {
+    it('should fail the same way and name the component', async () => {
+      await expect(
+        loadSpecsFromSource(
+          source(collections, { fills: [solid(EXCLUDED)] }),
+          config([EXCLUDED]),
+          'promotion'
+        )
+      ).rejects.toThrow(
+        `Component BlueCard (1:2) on page Cards is bound to excluded primitive ${EXCLUDED}`
       )
-    ).rejects.toThrow('is bound to excluded primitive')
+    })
   })
 
-  it('should generate the binding when nothing is excluded', async () => {
-    expect(await css({ fills: [solid(EXCLUDED)] }, [])).toContain(
-      'var(--dcl-primary-primary-blue-test)'
-    )
+  describe('and nothing is excluded', () => {
+    it('should generate the binding', async () => {
+      expect(await css({ fills: [solid(EXCLUDED)] }, [])).toContain(
+        'var(--dcl-primary-primary-blue-test)'
+      )
+    })
   })
 })
 
 describe('when an unbound colour equals an excluded primitive', () => {
-  it('should not value-match the excluded primitive', async () => {
-    const output = await css({ fills: [solid()] }, [EXCLUDED])
+  describe('and the primitive is excluded', () => {
+    let output: string
 
-    expect(output).not.toContain('primary-blue-test')
-    expect(output.toLowerCase()).toContain(BLUE)
+    beforeEach(async () => {
+      output = await css({ fills: [solid()] }, [EXCLUDED])
+    })
+
+    it('should not value-match the excluded primitive', () => {
+      expect(output).not.toContain('primary-blue-test')
+    })
+
+    it('should keep the literal colour', () => {
+      expect(output.toLowerCase()).toContain(BLUE)
+    })
   })
 
-  it('should value-match it when nothing is excluded', async () => {
-    expect(await css({ fills: [solid()] }, [])).toContain('var(--dcl-primary-primary-blue-test)')
+  describe('and nothing is excluded', () => {
+    it('should value-match the primitive', async () => {
+      expect(await css({ fills: [solid()] }, [])).toContain('var(--dcl-primary-primary-blue-test)')
+    })
   })
 })

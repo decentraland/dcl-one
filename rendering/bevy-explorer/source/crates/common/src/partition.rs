@@ -5,6 +5,12 @@ use bevy::math::{FloatOrd, IVec2, Vec2, Vec3, Vec3Swizzles};
 
 pub const PARCEL_SIZE: f32 = 16.0;
 
+pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
+    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+        .floor()
+        .as_ivec2()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartitionData {
     /// squared distance from the player to the nearest point of the scene's nearest parcel, or
@@ -49,6 +55,9 @@ pub enum Tier {
     Avatar,
     /// the other scenes in range, nearest first
     Scene,
+    /// a scene's stand-in: the scene's files while no live scene holds its hash, after every
+    /// live scene's
+    Lod,
     /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives
     Other,
     /// a scene that has left while its downloads wait
@@ -110,6 +119,14 @@ impl LoadPriority {
     /// The bottom of the avatar tier: an avatar that has no partition yet.
     pub const AVATAR_PENDING: Self = Self {
         tier: Tier::Avatar,
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::MAX),
+    };
+
+    /// The bottom of the LOD tier: a stand-in that has no partition yet.
+    pub const LOD_PENDING: Self = Self {
+        tier: Tier::Lod,
         parcel_distance: u16::MAX,
         is_behind: true,
         sqr_distance: FloatOrd(f32::MAX),
@@ -193,9 +210,9 @@ pub fn point_partition(origin: Vec3, camera: Option<(Vec3, Vec3)>, point: Vec3) 
 
 /// The content hashes behind a set of collectible urns, each once, sorted: `resolve` gives a
 /// urn's hash once its pointer is known. What an avatar's downloads are filed under.
-pub fn resolved_hashes<'a>(
-    urns: impl IntoIterator<Item = &'a str>,
-    resolve: impl FnMut(&'a str) -> Option<String>,
+pub fn resolved_hashes<U>(
+    urns: impl IntoIterator<Item = U>,
+    resolve: impl FnMut(U) -> Option<String>,
 ) -> Vec<String> {
     let mut hashes: Vec<String> = urns.into_iter().filter_map(resolve).collect();
     hashes.sort();

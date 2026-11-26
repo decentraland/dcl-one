@@ -1,28 +1,36 @@
 // Buy now's dialog over the cart's own fakes (checkout/demo): the screens upstream's BuyModal shows, and that the
 // purchase goes through the cart's checkout without ever touching the buyer's cart.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
 import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
 import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, type FakeHandlers } from "../../checkout/fakes";
+import { batchAuthorization, relayedApproval, type FakeHandlers } from "../../checkout/fakes";
+import { evmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
+import { usdCents } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
 import { BOOK, storeMint } from "@shop/payment/fixtures";
+import type { OfferFetcher } from "../../cart/revalidate";
 import BuyModal, { resetBuyNowCarts, splitReason } from "./BuyModal";
-import { readSentSplit, SENT_HOLD_MS } from "./CombinedBuy";
+import { readSplitHold, SPLIT_EXPIRY_CONFIRM_MS, SPLIT_HOLD_MS, splitHoldLine } from "../../checkout/purchase/splitHold";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   resetBuyNowCarts();
 });
 afterEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   resetBuyNowCarts();
 });
 
@@ -31,13 +39,18 @@ type Opts = {
   strict?: boolean;
   tweak?: (demo: ReturnType<typeof createDemo>) => void;
   onResumeUsed?: () => void;
+  /** When the server quoted the offer the page showed (epoch ms); the fixture's is long ago. */
+  seenAt?: number;
+  /** More pages the dialog may lead to. */
+  routes?: Record<string, ReactNode>;
 };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const demo = createDemo({ ...s, lines: [{ offer: (x) => storeMint(x), name: "Rainbow Hat", rarity: "epic", category: "wearable" }] });
   opts.tweak?.(demo);
   const first = demo.lines[0]!;
-  const line: CartAddInput = { asset: first.asset, listing: first.listing, display: first.display, seen: first.seen };
+  const seen = first.seen && opts.seenAt !== undefined ? { ...first.seen, quotedAt: opts.seenAt } : first.seen;
+  const line: CartAddInput = { asset: first.asset, listing: first.listing, display: first.display, seen };
   // The buyer's own cart holds nothing, and Buy now never puts anything in it.
   demo.cart.clear();
   const opened: string[] = [];
@@ -45,22 +58,27 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   let closed = 0;
   const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
-    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
+    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p>, ...opts.routes }}>
       <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onClose={() => (closed += 1)} />
     </DemoShell>
   );
   const view = render(opts.strict ? <StrictMode>{dialog}</StrictMode> : dialog);
-  return { demo, opened, closed: () => closed, lineId: first.id, unmount: view.unmount, line };
+  return { demo, opened, closed: () => closed, lineId: first.id, holdLine: splitHoldLine(first.asset), unmount: view.unmount, line };
 }
 
 const holdMana = (wei: bigint) => (d: ReturnType<typeof createDemo>) => void d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, wei);
 
 /** The one credit the split's credits leg takes, signed for the Shop's own manager. */
+// The node's answer for a Credits part of the demo's 2.3 MANA mint: the part's share of its MANA,
+// floor(2.3 MANA * creditsCents / usdPriceCents), charged at the part's cents.
+const STORE_PRICE_WEI = 2_300n * 10n ** 15n;
 const singleCredit: NonNullable<FakeHandlers["authorizeCredit"]> = ({ body }) => {
-  const cents = (body as { usdPriceCents: number }).usdPriceCents;
+  const { usdPriceCents, creditsCents } = body as { usdPriceCents: number; creditsCents?: number };
+  const cents = creditsCents ?? usdPriceCents;
+  const value = ((STORE_PRICE_WEI * BigInt(cents)) / BigInt(usdPriceCents)).toString();
   const one = batchAuthorization([{ usdPriceCents: cents }]);
-  const credit = { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000" };
-  return { ...one, credit, maxCreditedValue: "1000000000000000000", usdCents: cents };
+  const credit = { ...one.credit, amount: value, availableAmount: value };
+  return { ...one, credit, maxCreditedValue: value, usdCents: cents };
 };
 
 async function settledDialog(): Promise<HTMLElement> {
@@ -77,7 +95,128 @@ async function pressBuy(dialog: HTMLElement) {
   await act(async () => fireEvent.click(buy));
 }
 
+/** The dialog's price check, answered only when the test says so. */
+function heldOffers() {
+  let answer: (offers: Record<string, PurchaseOffer | null>) => void = () => {};
+  const fetchOffers = vi.fn<OfferFetcher>(() => new Promise((resolve) => (answer = resolve)));
+  return { fetchOffers, answer: (offers: Record<string, PurchaseOffer | null>) => act(async () => answer(offers)) };
+}
+
+const phaseOf = (dialog: HTMLElement) => dialog.querySelector("[data-phase]")?.getAttribute("data-phase");
+
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPaymentForTests(true);
+});
+afterEach(() => undoSplit());
+
 describe("Buy now's dialog", () => {
+  it("the offer the page showed moments ago shows the price at once; Buy waits for the check", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(check.fetchOffers).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole("heading", { name: "Buy Item" })).toBeTruthy();
+    expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("Rainbow Hat");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("price-changed")).toBeNull();
+  });
+
+  it("opened again later with the page's fresh offer, it shows the price at once: the line holds that offer before the check starts", async () => {
+    // A first open, long after its offer was quoted: the dialog waits for the check.
+    const first = renderBuy({ session: "web2" }, { seenAt: Date.now() - 60_000 });
+    await settledDialog();
+    first.unmount();
+
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await screen.findByTestId("buy-modal");
+    await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+  });
+
+  describe("opened again with a different price than the earlier open", () => {
+    /** The fixture's offer with its Credits quote at `cents`. */
+    const pricedAt = (offer: NonNullable<CartAddInput["seen"]>, cents: number) => ({
+      ...offer,
+      quotes: offer.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(cents) } : q)),
+    });
+    /** A first open at 12 Credits long ago, then a second with the page's fresh 6-Credit offer and the check held. */
+    async function reopenAtSix() {
+      const first = renderBuy({ session: "web2" }, { seenAt: Date.now() - 60_000 });
+      await settledDialog();
+      const twelve = first.line.seen!;
+      first.unmount();
+      const check = heldOffers();
+      const { lineId } = renderBuy(
+        { session: "web2" },
+        {
+          seenAt: Date.now(),
+          tweak: (d) => {
+            d.services.fetchOffers = check.fetchOffers;
+            Object.assign(d.lines[0]!, { seen: pricedAt(d.lines[0]!.seen!, 60) });
+          },
+        },
+      );
+      const dialog = await screen.findByTestId("buy-modal");
+      await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+      expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("6");
+      return { dialog, check, lineId, twelve };
+    }
+
+    it("the server pricing it at the earlier open's 12 Credits is a change from the 6 on screen: the notice shows", async () => {
+      const { dialog, check, lineId, twelve } = await reopenAtSix();
+      await check.answer({ [lineId]: twelve });
+      expect(await within(dialog).findByTestId("price-changed")).toBeTruthy();
+      expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("12");
+    });
+
+    it("the server confirming the 6 on screen is no change: Buy, no notice", async () => {
+      const { dialog, check, lineId, twelve } = await reopenAtSix();
+      await check.answer({ [lineId]: pricedAt(twelve, 60) });
+      await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+      expect(within(dialog).queryByTestId("price-changed")).toBeNull();
+    });
+  });
+
+  it("a check still running after a moment says why Buy waits, and the notice goes with the answer", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toHaveTextContent("Checking prices and availability…");
+    expect(within(dialog).getByTestId("buy-modal-buy")).toBeDisabled();
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
+  it("a check that finds the price changed turns the shown price to the change notice", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(135) } : q)) } });
+    expect(await within(dialog).findByTestId("price-changed")).toBeTruthy();
+    expect(within(dialog).getByTestId("buy-modal-asset")).toHaveTextContent("14");
+  });
+
+  it("an offer the page showed long ago waits for the check", async () => {
+    const check = heldOffers();
+    const { line, lineId } = renderBuy({ session: "web2" }, { tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await screen.findByTestId("buy-modal");
+    await waitFor(() => expect(check.fetchOffers).toHaveBeenCalledTimes(1));
+    expect(phaseOf(dialog)).toBe("loading");
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(phaseOf(dialog)).toBe("ready"));
+  });
+
   it("short on Credits with no MANA to pay: Buy Credits and Item, the shortfall, the packs that finish it, and Stripe", async () => {
     const { demo, opened, lineId } = renderBuy({ session: "web2", balanceCents: 30 });
     const dialog = await settledDialog();
@@ -101,6 +240,56 @@ describe("Buy now's dialog", () => {
     expect(takeTopUpReturn(Date.now(), "order-pack_10")?.path).toBe(`${PATH}?buy=resume`);
     expect(takeBuyNowReturn(PATH, BOOK.buyer, "order-pack_10")).toMatchObject({ lineId, credits: 12, orderId: "order-pack_10" });
     expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("short on Credits by the page's offer: no pack is bought until the check confirms the shortfall", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByRole("heading", { name: "Buy Credits and Item" })).toBeTruthy();
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(await within(dialog).findByTestId("buy-modal-quoting")).toBeTruthy();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+    // Still short at the checked price: the packs can be bought.
+    await check.answer({ [lineId]: line.seen! });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-quoting")).toBeNull();
+  });
+
+  it("a pack picked during the check that the checked shortfall no longer offers is not bought: the buyer picks again", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getAllByTestId("credit-pack")[0]).toHaveAttribute("aria-pressed", "true");
+    // The checked price leaves 57 Credits short: the 40-Credit pack the buyer picked is no longer offered.
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(600) } : q)) } });
+    await waitFor(() => expect(within(dialog).getAllByTestId("credit-pack").map((p) => p.textContent)).toEqual(["100($11.99)", "260($29.99)", "540($59.99)"]));
+    expect(within(dialog).getAllByTestId("credit-pack").some((p) => p.getAttribute("aria-pressed") === "true")).toBe(false);
+    const topUp = within(dialog).getByTestId("buy-modal-topup");
+    expect(topUp).toBeDisabled();
+    fireEvent.click(topUp);
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getAllByTestId("credit-pack")[0]!);
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeEnabled();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    await waitFor(() => expect(demo.shop.log.filter((r) => r.name === "createPackOrder").map((r) => r.body)).toEqual([expect.objectContaining({ packId: "pack_10" })]));
+  });
+
+  it("short by the page's offer but not at the checked price: the dialog turns to Buy, no pack offered", async () => {
+    const check = heldOffers();
+    const { demo, line, lineId } = renderBuy({ session: "web2", balanceCents: 30 }, { seenAt: Date.now(), tweak: (d) => void (d.services.fetchOffers = check.fetchOffers) });
+    const dialog = await settledDialog();
+    expect(within(dialog).getByTestId("buy-modal-topup")).toBeDisabled();
+    const seen = line.seen!;
+    await check.answer({ [lineId]: { ...seen, quotes: seen.quotes.map((q) => (q.method === "credits" ? { ...q, quoted: usdCents(25) } : q)) } });
+    await waitFor(() => expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled());
+    expect(within(dialog).queryByTestId("buy-modal-topup")).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "createPackOrder")).toHaveLength(0);
   });
 
   it("focus stays where the buyer put it while the dialog re-renders: ticking MANA keeps it on that row", async () => {
@@ -239,9 +428,37 @@ describe("Buy now's dialog", () => {
     expect(screen.getByRole("heading", { name: "Purchase complete!" })).toBeTruthy();
     const single = demo.shop.log.filter((r) => r.name === "authorizeCredit");
     expect(single).toHaveLength(1);
-    expect(single[0]!.body).toMatchObject({ usdPriceCents: 30 });
+    // The whole price is what the node checks; the credit is for the 3 Credits alone.
+    expect(single[0]!.body).toMatchObject({ usdPriceCents: 115, creditsCents: 30 });
     expect(authorizations(demo)).toHaveLength(0);
     expect(demo.relay.posts.length).toBeGreaterThan(0);
+    // The manager is approved exactly the 1.7 MANA shown, never an unlimited allowance.
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([{ owner: BOOK.buyer.toLowerCase(), spender: manager, amount: 17n * 10n ** 17n }]);
+  });
+
+  it("Buy now offers the split only while the page's rollout says so; off, short Credits are a top-up", async () => {
+    // Without the tests' switch: only the page's rollout (`dapps-shop-credits-mana-split`) can offer it.
+    undoSplit();
+    const offered = async (flags: Record<string, boolean>) => {
+      primeRemoteFlags(flags);
+      renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+      const dialog = await settledDialog();
+      const phase = dialog.querySelector("[data-phase]")?.getAttribute("data-phase");
+      const step = within(dialog).queryByTestId("payment-method-step");
+      const ticked = (name: RegExp) => (step ? within(step).queryByRole("checkbox", { name })?.getAttribute("aria-checked") === "true" : false);
+      const both = ticked(/^Credits/) && ticked(/^Polygon MANA/);
+      cleanup();
+      resetBuyNowCarts();
+      return { phase, both };
+    };
+    try {
+      expect(await offered({})).toEqual({ phase: "nofunds", both: false });
+      expect(await offered({ "dapps-shop-credits-mana-split": false })).toEqual({ phase: "nofunds", both: false });
+      expect(await offered({ "dapps-shop-credits-mana-split": true })).toEqual({ phase: "ready", both: true });
+    } finally {
+      primeRemoteFlags(null);
+    }
   });
 
   it("the split with the wallet on another account: Buy waits, and the step says why with the cart's way back", async () => {
@@ -286,6 +503,32 @@ describe("Buy now's dialog", () => {
     expect(authorizations(demo)).toHaveLength(1);
   });
 
+  it("a split held back by another item's purchase names that item, with a link to its page, and asks for nothing", async () => {
+    const { demo, line } = renderBuy(
+      { session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n), routes: { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> } },
+    );
+    // Another item's split, from another tab, its credit still spendable.
+    const other = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ab".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${other}`,
+      JSON.stringify({ at: Date.now(), attempt: "another", txHash: null, chainId: 137, creditId: `0x${"0f".repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 300, itemName: "Neon Visor" }),
+    );
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    expect(await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("Your purchase of Neon Visor with Credits and MANA is still confirming.");
+    const itemId = line.asset.token.kind === "item" ? line.asset.token.itemId : "";
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveTextContent("Open Neon Visor");
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+    // It opens that page within the Shop.
+    await act(async () => fireEvent.click(within(dialog).getByTestId("buy-error-link")));
+    expect(await screen.findByText("THE OTHER ITEM'S PAGE")).toBeTruthy();
+  });
+
   it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {
     const { demo, closed } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
@@ -301,18 +544,36 @@ describe("Buy now's dialog", () => {
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
-  it("an approval that lands after the dialog is gone buys nothing", async () => {
+  it("an approval signed after the dialog is gone is neither recorded nor sent, and nothing is bought", async () => {
     const { demo, unmount } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
     const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
+    // The wallet holds its signature until the dialog is gone.
+    let sign!: () => void;
+    const signing = new Promise<void>((resolve) => (sign = resolve));
+    const request = demo.wallet.request.bind(demo.wallet);
+    let asked = 0;
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_signTypedData_v4") {
+        asked++;
+        await signing;
+      }
+      return request(args);
+    }) as typeof demo.wallet.request;
     await act(async () => fireEvent.click(confirm));
     fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
     unmount();
-    // The approval lands after the dialog is gone: the allowance is granted on chain, and nothing goes on to buy.
+    // The wallet signs once the dialog is gone: that approval goes no further, and no grant is left to reconcile.
+    await act(async () => {
+      sign();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
-    await waitFor(() => expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBeGreaterThan(0n), { timeout: 5000 });
-    await act(async () => {});
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([]);
+    expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBe(0n);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
@@ -363,13 +624,21 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 })));
     await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 8000 });
-    const sent = readSentSplit(BOOK.buyer, first.lineId);
+    const sent = readSplitHold(BOOK.buyer, first.holdLine);
     expect(sent?.txHash).toBeTruthy();
     expect(sent?.creditId).toBeTruthy();
+    // The relayed transaction the chain carries for it, which a dialog opened later reads to tell it is this split.
+    const tx = first.demo.chain.transactions.get(sent!.txHash!.toLowerCase())!;
+    expect(tx).toBeTruthy();
     first.unmount();
     resetBuyNowCarts();
-    return { ...sent!, lineId: first.lineId };
+    return { ...sent!, lineId: first.holdLine, tx };
   }
+  /** The chain a dialog opened later reads: the split's own transaction, mined as `status`. */
+  const mined = (demo: ReturnType<typeof createDemo>, sent: Awaited<ReturnType<typeof sendSplitThatStaysPending>>, status: "success" | "reverted") => {
+    demo.chain.transactions.set(sent.txHash!.toLowerCase(), sent.tx);
+    demo.chain.receipts.set(sent.txHash!.toLowerCase(), status);
+  };
 
   it("a split still confirming is remembered: opened again, the dialog shows it confirming and offers no second one", async () => {
     const sent = await sendSplitThatStaysPending();
@@ -381,41 +650,77 @@ describe("Buy now's dialog", () => {
     // Not confirmed yet: Check again reads no receipt and leaves it confirming, still held.
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(within(again).getByTestId("buy-modal-pending")).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, sent.lineId)).not.toBeNull();
+    expect(readSplitHold(BOOK.buyer, sent.lineId)).not.toBeNull();
   });
 
   it("Check again on a remembered split reads its receipt: confirmed completes it and releases the item", async () => {
     const sent = await sendSplitThatStaysPending();
-    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
+    mined(demo, sent, "success");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
-    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
-  it("Check again on a remembered split that reverted says so and releases the item", async () => {
+  it("a split that provably sent nothing, whose record the storage keeps, says what happened beside the notice: never that it is still being confirmed", async () => {
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    // The relay refuses it as not sent, and the buyer declines it in the wallet: nothing left.
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "reject";
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    try {
+      const dialog = await settledDialog();
+      const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      await act(async () => fireEvent.click(confirm));
+      const pending = await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+      expect(pending).toHaveTextContent("You cancelled the request in your wallet. Nothing was charged.");
+      expect(pending).not.toHaveTextContent("Your purchase is still being confirmed");
+      expect(screen.getByTestId("buy-modal-check-notice")).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+    } finally {
+      stuck.mockRestore();
+    }
+  });
+
+  it("Check again on a remembered split whose own bytes reverted keeps it held, no credit retired, until the node settles its credit", async () => {
     const sent = await sendSplitThatStaysPending();
-    const { demo, lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
-    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "reverted");
+    const listed: { status: "PENDING" | "SETTLED"; txHash: string | null } = { status: "PENDING", txHash: null };
+    const userPurchases = () => ({ purchases: [{ id: `${sent.creditId}:0`, status: listed.status, usdCents: 30, createdAt: 1, txHash: listed.txHash }], total: 1 });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const modal = await screen.findByTestId("buy-modal");
+    const pending = await within(modal).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    mined(demo, sent, "reverted");
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-    // The credit it reserved went into nothing that mined: retired now, that one and no other. Retired Credits come back
-    // with the expiry sweep, which is what the copy says.
-    expect(await screen.findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent(
-      "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.",
-    );
-    const cancels = demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations");
-    expect(cancels.at(-1)?.body).toEqual({ salts: [sent.creditId] });
-    expect(readSentSplit(BOOK.buyer, lineId)).toBeNull();
+    // That invocation failed, but a sibling of the same terms may have run: still confirming, its credit not given back.
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
+    // One had: the node settles the credit by it, and Check again completes the purchase.
+    const sibling = `0x${"ab".repeat(32)}`;
+    demo.chain.transactions.set(sibling, sent.tx);
+    demo.chain.receipts.set(sibling, "success");
+    Object.assign(listed, { status: "SETTLED", txHash: sibling });
+    const again = within(within(modal).getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" });
+    await waitFor(() => expect(again).toBeEnabled());
+    await act(async () => fireEvent.click(again));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
   });
 
   it("past the hold, Check again still reads the receipt: a split that mined meanwhile completes, never offered again", async () => {
     const sent = await sendSplitThatStaysPending();
     const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    demo.chain.receipts.set(sent.txHash!.toLowerCase(), "success");
-    const later = Date.now() + SENT_HOLD_MS + 1;
+    mined(demo, sent, "success");
+    const later = Date.now() + SPLIT_HOLD_MS + 1;
     const clock = vi.spyOn(Date, "now").mockReturnValue(later);
     try {
       await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
@@ -425,14 +730,39 @@ describe("Buy now's dialog", () => {
     }
   });
 
-  it("past the hold with no receipt, Check again lets the item go", async () => {
-    await sendSplitThatStaysPending();
-    renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
-    const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + SENT_HOLD_MS + 1);
+  it("past the hold with no receipt, time lets nothing go: the node's record of its credit does, once that credit has expired", async () => {
+    const sent = await sendSplitThatStaysPending();
+    const listed: { status: "PENDING" | "EXPIRED" | null } = { status: null };
+    const userPurchases = () => ({
+      purchases: listed.status ? [{ id: `${sent.creditId}:0`, status: listed.status, usdCents: 30, createdAt: 1, txHash: null }] : [],
+      total: listed.status ? 1 : 0,
+    });
+    const { demo, holdLine: lineId } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit, userPurchases } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const modal = await screen.findByTestId("buy-modal");
+    await within(modal).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+    const checkAgain = async () => {
+      await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
+      // Done reading once the button is back on.
+      await waitFor(() => expect(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })).toBeEnabled());
+    };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Math.max(Date.now() + SPLIT_HOLD_MS, sent.creditExpiresAt! * 1000) + 1);
     try {
-      await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
-      expect(await within(screen.getByTestId("buy-modal")).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+      // Not mined, and its credit not listed, then still reserved: nothing says what became of it, so it stays held.
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+      listed.status = "PENDING";
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-pending")).toBeTruthy();
+      expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
+      // Released unspent: seen so first (still held, and said), then let go once that has lasted the whole grace.
+      listed.status = "EXPIRED";
+      await checkAgain();
+      expect(within(modal).getByTestId("buy-modal-check-notice")).toHaveTextContent(/expired unspent/);
+      expect(readSplitHold(BOOK.buyer, lineId)).not.toBeNull();
+      clock.mockReturnValue(Math.max(Date.now() + SPLIT_HOLD_MS, sent.creditExpiresAt! * 1000) + SPLIT_EXPIRY_CONFIRM_MS + 2);
+      await act(async () => fireEvent.click(within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" })));
+      expect(await within(modal).findByTestId("payment-method-step", undefined, { timeout: 5000 })).toBeTruthy();
+      expect(demo.shop.log.filter((r) => r.name === "userPurchases").length).toBeGreaterThanOrEqual(4);
     } finally {
       clock.mockRestore();
     }
@@ -441,17 +771,17 @@ describe("Buy now's dialog", () => {
   it("a split held without a transaction to read shows it confirming with Check again off, until the hold runs out", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { lineId } = renderBuy({ session: "web2" });
+      const { holdLine: lineId } = renderBuy({ session: "web2" });
       cleanup();
       resetBuyNowCarts();
       // The first format's record: a bare timestamp, no hash.
-      sessionStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
+      localStorage.setItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`, String(Date.now()));
       renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
       const pending = await within(await screen.findByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
       expect(within(pending).getByRole("button", { name: "Check again" })).toBeDisabled();
       // The hold runs out while the dialog is open: Check again comes on and lets the item go.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(SENT_HOLD_MS + 10);
+        await vi.advanceTimersByTimeAsync(SPLIT_HOLD_MS + 10);
       });
       const check = within(screen.getByTestId("buy-modal-pending")).getByRole("button", { name: "Check again" });
       expect(check).toBeEnabled();
@@ -703,10 +1033,10 @@ describe("why the split cannot be bought", () => {
 describe("the record of a split still confirming", () => {
   const key = (lineId: string) => `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${lineId}`;
   it("holds for fifteen minutes from when it was sent, and never for a time that has not come yet", () => {
-    sessionStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
-    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
-    expect(readSentSplit(BOOK.buyer, "line-7", 1_000 + SENT_HOLD_MS)).toBeNull();
+    localStorage.setItem(key("line-7"), JSON.stringify({ at: 1_000, txHash: "0xabc", chainId: 137 }));
+    expect(readSplitHold(BOOK.buyer, "line-7", 1_000 + SPLIT_HOLD_MS - 1)).toMatchObject({ txHash: "0xabc", chainId: 137 });
+    expect(readSplitHold(BOOK.buyer, "line-7", 1_000 + SPLIT_HOLD_MS)).toBeNull();
     // A clock set back after the split was sent does not stretch the hold.
-    expect(readSentSplit(BOOK.buyer, "line-7", 999)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, "line-7", 999)).toBeNull();
   });
 });

@@ -131,6 +131,14 @@ export function serverOffer(spec: Spec, session: Session): PurchaseOffer {
     settlement,
     available: spec.available ?? null,
     quotedAt: 0,
+    // As the node's `split_price`: a MANA price, no NAME, no bundle, and a session that may pay both ways.
+    ...("manaWei" in spec.price &&
+    spec.sale !== "primaryNameRegistration" &&
+    !bundle &&
+    eligibility.allowed.includes("credits") &&
+    eligibility.allowed.includes("mana")
+      ? { splittable: true }
+      : {}),
   };
 }
 

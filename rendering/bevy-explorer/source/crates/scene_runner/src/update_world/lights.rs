@@ -14,7 +14,7 @@ use common::{
     sets::SceneSets,
     sky_preset::{
         day_fraction, sample_keys, sample_ramp, time_to_phase, DIRECTIONAL_COLOR_RAMP,
-        LIGHT_INTENSITY_BY_TIME,
+        LIGHT_INTENSITY_BY_TIME, LIGHT_UNIT_LUX,
     },
     structs::{
         AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
@@ -271,11 +271,6 @@ impl From<PbGlobalLight> for GlobalLight {
     }
 }
 
-/// One light unit of the sky preset and of scene light intensities: the directional light that
-/// lights a facing white surface to 1. bevy divides illuminance by pi and multiplies by the view
-/// exposure, so the lux that land at 1 are `pi / exposure`; the explorer leaves every camera on
-/// bevy's default exposure (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
-pub const LIGHT_UNIT_LUX: f32 = PI * 1.2 * 831.7465;
 /// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
 pub const NOON_ILLUMINANCE: f32 = 1.2 * LIGHT_UNIT_LUX;
 /// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).
@@ -389,7 +384,7 @@ const SUNRISE: f32 = 6.422;
 const SUNSET: f32 = 18.828;
 
 /// Unity's moonrise and moonset (hours): the moon is up for six and a half hours around 00:45.
-const MOONRISE: f32 = 21.504;
+pub const MOONRISE: f32 = 21.504;
 const MOONSET: f32 = 4.008;
 
 /// Unity's moon arc leans this far from the zenith, so the moon stays low for long shadows.
@@ -426,12 +421,27 @@ pub fn moon_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, MOONRISE, MOONSET, MOON_TILT_DEGREES)
 }
 
+/// How far a body is along its circle at `day_fraction`: 0 at moonrise to 1 at moonset above the
+/// horizon, then 1 to 2 below it until the next moonrise. The moon's disc and colour ramp follow
+/// it, so they track the moon's own arc rather than the time of day.
+pub fn moon_progress(day_fraction: f32) -> f32 {
+    const MIN_ARC_FRACTION: f32 = 1e-4;
+    let (rise, set) = (MOONRISE / 24.0, MOONSET / 24.0);
+    let above = (set - rise).rem_euclid(1.0).max(MIN_ARC_FRACTION);
+    let since_rise = (day_fraction - rise).rem_euclid(1.0);
+    if since_rise < above {
+        since_rise / above
+    } else {
+        1.0 + (since_rise - above) / (1.0 - above).max(MIN_ARC_FRACTION)
+    }
+}
+
 /// The directional light's colour at phase 0.5, the ramp's noon key (sRGB).
 pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.98, 0.94);
 
 /// The fraction of a day over which the light swings from the sun's arc to the moon's before
 /// moonrise, and back after moonset.
-const MOON_SWAP_DURATION: f32 = 0.042;
+pub const MOON_SWAP_DURATION: f32 = 0.042;
 /// How far the light dims mid-swing to hide the move.
 const SWAP_INTENSITY_DIP: f32 = 0.99;
 
@@ -1247,5 +1257,18 @@ mod tests {
         // night: a blue-violet moon
         let night = colour(0.0);
         assert!(night.z > night.x && night.x < 0.5);
+    }
+
+    #[test]
+    fn moon_progress_spans_rise_to_set() {
+        let (rise, set) = (MOONRISE / 24.0, MOONSET / 24.0);
+        assert!(moon_progress(rise).abs() < 1e-5);
+        // halfway between moonrise and moonset, across midnight
+        let mid = (rise + (set - rise).rem_euclid(1.0) / 2.0).rem_euclid(1.0);
+        assert!((moon_progress(mid) - 0.5).abs() < 1e-5);
+        assert!((moon_progress(set) - 1.0).abs() < 1e-5);
+        // by day the moon is below the horizon, past 1
+        let noon = moon_progress(0.5);
+        assert!(noon > 1.0 && noon < 2.0, "{noon}");
     }
 }

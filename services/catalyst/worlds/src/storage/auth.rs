@@ -115,6 +115,8 @@ pub enum AuthChainError {
     InvalidSignature(String),
     EipNotImplemented,
     CatalystUnavailable(String),
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    RateLimited,
     /// The whole `Invalid metadata content: …` message.
     SceneSignerRejected(String),
 }
@@ -129,6 +131,7 @@ impl AuthChainError {
             | Self::SceneSignerRejected(_) => 400,
             Self::Expired(_) | Self::InvalidSignature(_) => 401,
             Self::EipNotImplemented | Self::CatalystUnavailable(_) => 503,
+            Self::RateLimited => 429,
         }
     }
 
@@ -143,6 +146,9 @@ impl AuthChainError {
             Self::InvalidSignature(detail) => format!("Invalid signature: {detail}"),
             Self::EipNotImplemented => "EIP-1654 chains need an RPC validator".to_string(),
             Self::CatalystUnavailable(detail) => format!("Error connecting to catalyst: {detail}"),
+            Self::RateLimited => {
+                "Too many contract-wallet signature checks; retry later".to_string()
+            }
         }
     }
 }
@@ -164,6 +170,7 @@ impl From<SignedFetchError> for AuthChainError {
             SignedFetchError::InvalidSignature(d) => Self::InvalidSignature(d),
             SignedFetchError::EipNotImplemented => Self::EipNotImplemented,
             SignedFetchError::CatalystUnavailable(d) => Self::CatalystUnavailable(d),
+            SignedFetchError::RateLimited => Self::RateLimited,
         }
     }
 }
@@ -184,6 +191,7 @@ fn map_auth_error(err: AuthError) -> AuthChainError {
         | AuthError::Eip1654Rejected { .. } => AuthChainError::InvalidSignature(err.to_string()),
         AuthError::Eip1654NotImplemented => AuthChainError::EipNotImplemented,
         AuthError::Eip1654ValidationFailed(d) => AuthChainError::CatalystUnavailable(d),
+        AuthError::Eip1654RateLimited => AuthChainError::RateLimited,
     }
 }
 
@@ -332,7 +340,7 @@ async fn chain_authority(
     now_ms: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<String, AuthChainError> {
-    match crate::auth::verify_auth_chain_async(chain, probe, Some(now_ms), validator).await {
+    match crate::auth::verify_login_chain_async(chain, probe, Some(now_ms), validator).await {
         Ok(()) => Ok(probe.to_string()),
         Err(AuthError::FinalAuthorityMismatch { actual, .. }) => Ok(actual),
         Err(e) => Err(map_auth_error(e)),
@@ -758,6 +766,63 @@ mod tests {
         (result, validator.calls.into_inner())
     }
 
+    /// The node's validator (`eip1654_budget`) refuses a client source's
+    /// contract-wallet checks past its pre-auth budget before the RPC:
+    /// world-storage answers 429, and another source keeps its own budget.
+    #[tokio::test]
+    async fn a_spent_contract_wallet_budget_is_a_429_before_any_rpc_call() {
+        use crate::shared::eip1654_budget::{SourceBudgeted, with_source};
+        use crate::shared::limits::PREAUTH_PER_MINUTE;
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let inner = std::sync::Arc::new(CountingValidator {
+            valid: false,
+            calls: Default::default(),
+        });
+        let validator = SourceBudgeted::new(inner.clone());
+        let headers = contract_wallet_headers(
+            |ts| build_payload_v6("get", "/values/k", ts, METADATA),
+            3_600_000,
+        );
+        let paths = paths();
+        let verify = |source: &str| {
+            with_source(
+                Some(source.to_string()),
+                verify_request(&headers, "get", &paths, Some(&validator)),
+            )
+        };
+        let started = std::time::Instant::now();
+        let mut refused = 0;
+        let tripped = loop {
+            let err = verify("203.0.113.61").await.err().expect("refused");
+            if err.status_code() == 429 {
+                break err;
+            }
+            assert_eq!(err.status_code(), 401, "{err:?}");
+            refused += 1;
+            assert!(
+                refused <= 2 * PREAUTH_PER_MINUTE,
+                "the source's budget trips"
+            );
+        };
+        assert_eq!(tripped, AuthChainError::RateLimited);
+        let spent = inner.calls.load(SeqCst);
+        let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+        assert!(admitted.contains(&spent), "{spent}, {admitted:?}");
+        let again = verify("203.0.113.61").await.err().expect("refused");
+        assert_eq!(again.status_code(), 429);
+        assert_eq!(inner.calls.load(SeqCst), spent, "no call past the budget");
+        assert_eq!(
+            verify("198.51.100.61")
+                .await
+                .err()
+                .expect("refused")
+                .status_code(),
+            401,
+            "another source keeps its own budget"
+        );
+    }
+
     #[tokio::test]
     async fn a_rejected_contract_link_is_asked_once_across_every_candidate() {
         let headers = contract_wallet_headers(
@@ -826,5 +891,52 @@ mod tests {
                 assert_eq!(result.unwrap().signer.to_string(), CONTRACT);
             }
         }
+    }
+
+    /// SIGNER (wallet) -> ECDSA ephemeral whose first line is `first_line`
+    /// -> the 6.x payload for `/values/k`.
+    fn delegated_headers(first_line: &str) -> HeaderMap {
+        let owner = crate::auth::wallet::Wallet::random().unwrap();
+        let ephemeral = crate::auth::wallet::Wallet::random().unwrap();
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let delegation = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        let payload = build_payload_v6("get", "/values/k", &timestamp, METADATA);
+        let links = [
+            serde_json::json!({"type": "SIGNER", "payload": owner.address(), "signature": ""}),
+            serde_json::json!({"type": "ECDSA_EPHEMERAL", "payload": delegation,
+                "signature": owner.sign_message(delegation.as_bytes()).unwrap()}),
+            serde_json::json!({"type": "ECDSA_SIGNED_ENTITY", "payload": payload,
+                "signature": ephemeral.sign_message(payload.as_bytes()).unwrap()}),
+        ];
+        let mut headers = HeaderMap::new();
+        for (index, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+                link.to_string().parse().unwrap(),
+            );
+        }
+        headers.insert(AUTH_TIMESTAMP_HEADER, timestamp.parse().unwrap());
+        headers.insert(AUTH_METADATA_HEADER, METADATA.parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn only_a_login_delegation_signs_a_storage_request() {
+        let login = delegated_headers("Decentraland Login");
+        assert!(verify_request(&login, "get", &paths(), None).await.is_ok());
+
+        let other = delegated_headers("Decentraland Storage Delegation");
+        let Err(err @ AuthChainError::InvalidSignature(_)) =
+            verify_request(&other, "get", &paths(), None).await
+        else {
+            panic!("another delegation purpose verified")
+        };
+        assert!(
+            err.raw_message().contains("Invalid ephemeral payload"),
+            "{err:?}"
+        );
     }
 }

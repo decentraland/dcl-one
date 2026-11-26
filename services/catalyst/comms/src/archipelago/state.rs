@@ -24,7 +24,6 @@ crate::shared::send_sync_once! {
         pub enforcement: Arc<Enforcement>,
         pub statistics: Arc<crate::stats::Reader>,
         pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
-        pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
         pub observations: super::observations::Observations,
         pub started_at: std::time::Instant,
         pub started: std::sync::atomic::AtomicBool,
@@ -45,6 +44,13 @@ crate::shared::send_sync_once! {
 }
 
 pub type AppState = Arc<AppStateInner>;
+
+impl AppStateInner {
+    /// The serve listener has started and has not begun draining.
+    pub fn listener_ready(&self) -> bool {
+        self.started.load(std::sync::atomic::Ordering::Acquire) && !self.restart.is_cancelled()
+    }
+}
 
 /// A socket's hold on the pending-handshake share, global and per source; released at the
 /// welcome or when the socket ends.

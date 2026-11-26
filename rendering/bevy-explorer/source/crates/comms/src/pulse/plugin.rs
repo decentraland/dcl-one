@@ -53,7 +53,8 @@ use super::transport::{
 };
 use super::{LocalEmote, PulseCtx, PulseDecoder, PulseEvent, PulseParcelGrid};
 use crate::global_crdt::{
-    CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage, PlayerUpdate, SceneRealms,
+    process_transport_updates, CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage,
+    PlayerUpdate, SceneRealms,
 };
 use crate::profile::CurrentUserProfile;
 use crate::room_connection::{FailureKind, RealmRoom, RoomRecovery};
@@ -572,7 +573,9 @@ impl Plugin for PulsePlugin {
                 // re-announce that `follow_realm` may send can't carry the previous realm's one.
                 resolve_lsd_realm,
                 follow_realm,
-                pump_pulse,
+                // On the threaded executor, the drain could empty the channel between a join
+                // and its snapshot. Finish pumping before applying membership.
+                pump_pulse.before(process_transport_updates),
                 drain_pulse_outbox,
             )
                 .chain()
@@ -2241,7 +2244,8 @@ async fn build_auth_chain(wallet: &Wallet, server_id: &str) -> Result<Vec<u8>, S
         .map_err(|e| e.to_string())?;
 
     let mut dict = serde_json::Map::new();
-    for (key, value) in auth_chain.headers() {
+    for header in auth_chain.headers() {
+        let (key, value) = header.map_err(|e| e.to_string())?;
         dict.insert(key, serde_json::Value::String(value));
     }
     dict.insert(

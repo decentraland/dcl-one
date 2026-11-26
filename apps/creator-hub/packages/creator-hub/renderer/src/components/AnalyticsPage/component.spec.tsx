@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { settings as settingsPreload } from '#preload';
 import { AuthServerProvider } from '/@/lib/auth';
+import type { LocationMetrics } from '/@/lib/metricsApi';
 import { fetchAnalytics as fetchAnalyticsSnapshot } from '/@/lib/placeAnalytics';
 import { useAuth } from '/@/hooks/useAuth';
 
@@ -37,6 +39,12 @@ vi.mock('/@/modules/store/land', async importOriginal => ({
   }),
 }));
 
+/** With a wallet the page also refreshes its names; that request is not what these tests check. */
+vi.mock('/@/modules/store/ens', async importOriginal => ({
+  ...(await importOriginal<object>()),
+  fetchENSList: vi.fn(() => () => Promise.resolve()),
+}));
+
 describe('AnalyticsPage', () => {
   let store: TestStore;
   const signIn = vi.fn();
@@ -47,8 +55,8 @@ describe('AnalyticsPage', () => {
     </Provider>
   );
 
-  const setAuth = (isSignedIn: boolean, isSigningIn = false) =>
-    vi.mocked(useAuth).mockReturnValue({ isSignedIn, isSigningIn, signIn } as any);
+  const setAuth = (isSignedIn: boolean, isSigningIn = false, wallet?: string) =>
+    vi.mocked(useAuth).mockReturnValue({ isSignedIn, isSigningIn, signIn, wallet } as any);
 
   beforeEach(() => {
     store = createTestStore();
@@ -114,6 +122,59 @@ describe('AnalyticsPage', () => {
 
       await waitFor(() => expect(store.getState().placeAnalytics.status).toBe('succeeded'));
       expect(fetchAnalyticsSnapshot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('when the signed-in wallet has pinned places stored', () => {
+    const WALLET = '0x00000000000000000000000000000000000000AA';
+    const PINNED = 'world:pinned.dcl.eth@0,0';
+    const OTHER = 'world:other.dcl.eth@0,0';
+    const metrics = {
+      location_key: 'unused',
+      x: 0,
+      y: 0,
+      builder_project_id: null,
+      metrics: { unique_visits_60d: [{ series: 'all', period: null, value: 1 }] },
+    } as LocationMetrics;
+    const place = (placeId: string, name: string) => ({
+      placeId,
+      name,
+      thumbnail: 'thumb.png',
+      location: { world: name, x: 0, y: 0 },
+      publishedIn: name,
+      lastUpdatedAt: null,
+    });
+
+    const rowNames = (container: HTMLElement) =>
+      [...container.querySelectorAll('tbody tr')].map(row => row.getAttribute('aria-label'));
+
+    beforeEach(() => {
+      setAuth(true, false, WALLET);
+      vi.mocked(AuthServerProvider.getAccount).mockReturnValue(WALLET);
+      vi.mocked(fetchAnalyticsSnapshot).mockResolvedValue({
+        exportedAt: '2026-08-12T00:17:01.099Z',
+        places: [place(OTHER, 'a-other.dcl.eth'), place(PINNED, 'z-pinned.dcl.eth')],
+        metricsByPlaceId: { [OTHER]: metrics, [PINNED]: metrics },
+      });
+    });
+
+    it("should read that wallet's pins and list them first", async () => {
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockResolvedValue([PINNED]);
+
+      const { container } = render(<AnalyticsPage />, { wrapper });
+
+      await waitFor(() => expect(rowNames(container)).toHaveLength(2));
+      expect(settingsPreload.getAnalyticsWatchlist).toHaveBeenCalledWith(WALLET.toLowerCase());
+      expect(rowNames(container)).toEqual(['z-pinned.dcl.eth', 'a-other.dcl.eth']);
+    });
+
+    it('should still show the list when the stored pins cannot be read', async () => {
+      vi.mocked(settingsPreload.getAnalyticsWatchlist).mockRejectedValue(new Error('no config'));
+
+      const { container } = render(<AnalyticsPage />, { wrapper });
+
+      await waitFor(() => expect(rowNames(container)).toHaveLength(2));
+      expect(store.getState().placeAnalytics.watchlist.status).toBe('failed');
     });
   });
 });

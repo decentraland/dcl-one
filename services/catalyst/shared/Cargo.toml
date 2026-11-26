@@ -17,7 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 tracing.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 futures.workspace = true
@@ -49,3 +49,6 @@ test-support = ["dep:alloy", "dep:tower"]
 alloy.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+
+[lints.clippy]
+unwrap_used = "deny"

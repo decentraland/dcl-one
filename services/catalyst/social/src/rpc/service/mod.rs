@@ -20,6 +20,7 @@ mod blocks;
 mod community_voice;
 mod domain;
 mod friends;
+pub(crate) use friends::announce_accepted_connectivity;
 mod helpers;
 mod metrics_json;
 mod private_voice;
@@ -46,7 +47,9 @@ pub(crate) mod ops {
         accept_private_voice_chat_with_id, end_private_voice_chat_with_id, incoming_not_found,
         reject_private_voice_chat_with_id, start_private_voice_chat,
     };
-    pub(crate) use super::settings::{MAX_USER_ADDRESSES, private_messages_settings};
+    pub(crate) use super::settings::{
+        MAX_USER_ADDRESSES, private_messages_settings, update_social_settings,
+    };
 }
 
 pub const MODULE_NAME: &str = "SocialService";
@@ -182,7 +185,7 @@ macro_rules! server_stream {
                     .server_context
                     .try_subscription(context.transport_id, $name)
                 else {
-                    metrics::counter!("subscription_duplicates_total", "event" => $event).increment(1);
+                    dcl_metrics::counter!("subscription_duplicates_total", "event" => $event).increment(1);
                     let (generator, yielder) = Generator::create();
                     let notice = $update {
                         stream_closed: Some(SubscriptionStreamClosed {

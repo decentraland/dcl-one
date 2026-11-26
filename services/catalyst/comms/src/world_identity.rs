@@ -197,8 +197,8 @@ pub enum SceneIdError {
 }
 
 /// A scene entity id: the content hash of one deployment. It identifies a
-/// version of a scene, so it names rooms and moderation rows (comms keys
-/// `social.scene_admins`/`scene_bans` on it) but never a storage scope.
+/// version of a scene, so it names rooms and Genesis ban rows
+/// (`social.scene_bans`) but never a storage scope or a scene admin grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct SceneId(String);
@@ -271,17 +271,45 @@ pub fn realm_url_world(hostname: &str) -> Option<WorldName> {
         .filter(|world| world.display() == name)
 }
 
+/// The `.dcl.eth` world a bare realm name stands for: `/about` names a world
+/// published here by its label, and the Unity explorer signs that name alone.
+/// `None` for a name that is a world name already, for the names of the
+/// shared realms (Genesis City, the previews, and `node_realm`: this node's
+/// configured `REALM_NAME`) and for a name that is not the label of a DCL
+/// NAME.
+pub fn bare_world(name: &str, node_realm: &str) -> Option<WorldName> {
+    let shared = [GENESIS_CITY_REALM, "preview", "localpreview", node_realm];
+    if is_world_realm_name(name) || shared.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+        return None;
+    }
+    WorldName::parse(&format!("{name}{DCL_ETH_SUFFIX}"))
+        .ok()
+        .filter(|world| world.display().starts_with(name))
+}
+
 /// The realm a scene's signed metadata stands in, from its signed realm name.
 /// A world published on this node advertises its `/about` realm name without
 /// `.dcl.eth` (`WORLDS_REALM_NAME_STRIP_ENS`) or as its owner's override, and
 /// the explorer signs that name; when such a non-world name is signed beside
 /// a realm URL (`realm.hostname`) naming a world, the request stands in that
-/// world. Any other name is returned as signed, so Genesis City and every
-/// `.eth` name keep their reading.
-pub fn signed_realm_name(signed: &str, hostname: Option<&str>) -> String {
-    match hostname.and_then(realm_url_world) {
-        Some(world) if !is_world_realm_name(signed) => world.display().to_string(),
-        _ => signed.to_string(),
+/// world. The Unity client signs the host alone beside a name that is no ENS
+/// name: on the worlds host (with or without a scheme and a trailing `/`)
+/// that name is a world's label ([`bare_world`]), unless it is this node's
+/// realm (`node_realm`, `REALM_NAME`). Any other name is returned as signed,
+/// so Genesis City and every `.eth` name keep their reading.
+pub fn signed_realm_name(signed: &str, hostname: Option<&str>, node_realm: &str) -> String {
+    let url = hostname
+        .filter(|_| !is_world_realm_name(signed))
+        .unwrap_or_default();
+    let host = url.rsplit_once("://").map_or(url, |(_, host)| host);
+    let host = host.trim_end_matches('/');
+    match realm_url_world(url) {
+        Some(world) => world.display().to_string(),
+        None if host.starts_with("worlds-content-server.") && !host.contains('/') => {
+            bare_world(signed, node_realm)
+                .map_or(signed.to_string(), |world| world.display().to_string())
+        }
+        None => signed.to_string(),
     }
 }
 
@@ -835,5 +863,47 @@ mod tests {
         );
         assert!(genesis.is_shared_realm());
         assert_eq!(genesis.to_string(), "main:10,-25");
+    }
+
+    /// The Unity client signs a world's label beside the worlds host alone.
+    /// This node's own realm (`REALM_NAME`) and the shared names keep their
+    /// shared reading, and a host with a scheme or a trailing `/` is the
+    /// worlds host still.
+    #[test]
+    fn a_label_on_the_worlds_host_is_a_world_but_the_node_realm_is_not() {
+        let unity = Some("worlds-content-server.node.example");
+        assert_eq!(signed_realm_name("foo", unity, "main"), "foo.dcl.eth");
+        assert_eq!(signed_realm_name("isla", unity, "isla"), "isla");
+        assert_eq!(signed_realm_name("Isla", unity, "isla"), "Isla");
+        assert_eq!(signed_realm_name("main", unity, "isla"), "main");
+        assert_eq!(signed_realm_name("foo", unity, "isla"), "foo.dcl.eth");
+        for host in [
+            "worlds-content-server.node.example/",
+            "https://worlds-content-server.node.example",
+            "https://worlds-content-server.node.example/",
+        ] {
+            assert_eq!(
+                signed_realm_name("foo", Some(host), "main"),
+                "foo.dcl.eth",
+                "{host}"
+            );
+            assert_eq!(
+                signed_realm_name("isla", Some(host), "isla"),
+                "isla",
+                "{host}"
+            );
+        }
+        assert_eq!(
+            signed_realm_name("foo", Some("worlds-content-server.node.example/x"), "main"),
+            "foo"
+        );
+        assert_eq!(bare_world("isla", "isla"), None);
+        assert_eq!(bare_world("ISLA", "isla"), None);
+        assert_eq!(
+            bare_world("foo", "isla")
+                .map(|w| w.key().to_string())
+                .as_deref(),
+            Some("foo.dcl.eth")
+        );
     }
 }

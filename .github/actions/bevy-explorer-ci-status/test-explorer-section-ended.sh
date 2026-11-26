@@ -24,6 +24,7 @@ case "$path" in
   */jobs*) kind=jobs ;;
   *)       kind=run ;;
 esac
+if [ "$kind" = run ] && [ -n "${GH_FAIL_RUN_EXIT:-}" ]; then exit "$GH_FAIL_RUN_EXIT"; fi
 counter="$SCENARIO/.calls.$kind"
 n=1
 [ -f "$counter" ] && n=$(( $(cat "$counter") + 1 ))
@@ -71,7 +72,7 @@ new_scenario() {
 # expect <name> <expected-stdout> <expected-exit>
 expect() {
   local name="$1" want="$2" want_code="$3" got code=0
-  got=$(SECTION="${SECTION:-tests}" RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=30 \
+  got=$(SECTION="${SECTION:-tests}" RUN_ID=42 REPO=o/r WAIT_SECONDS="${WAIT:-0}" POLL_SECONDS=120 \
         bash "$PROBE" 2>"$SCENARIO/stderr") || code=$?
   if [ "$got" = "$want" ] && [ "$code" -eq "$want_code" ]; then
     echo "  ok   $name"
@@ -103,14 +104,19 @@ new_scenario tests-ended-run-goes-on
 jobs_json 'Changes:completed:success' 'Test Suite (macos-15):completed:success' \
   'Test Suite (ubuntu-24.04):completed:success' 'Test Suite (windows-2025):completed:success' \
   'Headless Smoke:completed:success' 'Web engine, HUD and bridge scene:in_progress:' > "$SCENARIO/jobs.1.json"
-echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 expect "tests ended, the run goes on => true" true 0
+expect_calls "an open job elsewhere answers without a read of the run" run 0
+
+new_scenario tests-ended-every-job-idle
+jobs_json 'Test Suite (macos-15):completed:success' 'Headless Smoke:completed:success' > "$SCENARIO/jobs.1.json"
+echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
+expect "every job ended, the run still in progress => true" true 0
+expect_calls "no open job: the run is read before the answer" run 1
 
 # 2. A failed test job is an ended test job.
 new_scenario a-test-failed
 jobs_json 'Test Suite (macos-15):completed:failure' 'Test Suite (ubuntu-24.04):completed:success' \
   'Headless Smoke:completed:cancelled' 'APIs + Sites / build (amd64, ubuntu-26.04):queued:' > "$SCENARIO/jobs.1.json"
-echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 expect "a failed test job and the run goes on => true" true 0
 
 # 3. One platform still runs: without a wait budget the answer is no.
@@ -153,6 +159,19 @@ jobs_json 'Integration guards:completed:failure' 'Changes:completed:cancelled' >
 echo '{"status":"completed"}' > "$SCENARIO/run.1.json"
 WAIT=600 expect "the run ended before its tests were listed => false, at once" false 0
 expect_calls "an ended run ends the wait on the first read" jobs 1
+expect_calls "an idle incomplete list reads the run once" run 1
+
+new_scenario no-jobs-yet
+echo '{"jobs":[]}' > "$SCENARIO/jobs.1.json"
+echo '{"status":"queued"}' > "$SCENARIO/run.1.json"
+expect "no job listed yet, no budget => false" false 0
+expect_calls "an empty job list is idle: the run is read" run 1
+
+new_scenario jobs-not-json
+echo 'upstream error' > "$SCENARIO/jobs.1.json"
+echo '{"status":"completed"}' > "$SCENARIO/run.1.json"
+expect "an unreadable job list => false" false 0
+expect_calls "without proof of an open job the run is read" run 1
 
 # 9. The wait: nothing listed, then running, then ended while the image build goes on.
 new_scenario waits-for-the-tests
@@ -167,12 +186,12 @@ jobs_json 'Test Suite (macos-15):completed:success' 'Test Suite (ubuntu-24.04):c
   'Headless Smoke:completed:success' 'APIs + Sites / build (amd64, ubuntu-26.04):in_progress:' > "$SCENARIO/jobs.6.json"
 echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 WAIT=2400 expect "waits until the last test job ends => true" true 0
-if [ "$(tr '\n' ' ' < "$SCENARIO/.sleeps")" != '5 10 20 30 30 ' ]; then
+if [ "$(tr '\n' ' ' < "$SCENARIO/.sleeps")" != '60 120 120 120 120 ' ]; then
   echo "FAIL: the pauses between reads changed: $(tr '\n' ' ' < "$SCENARIO/.sleeps")"
   exit 1
 fi
 expect_calls "one read of the job list for each pause, and the first" jobs 6
-expect_calls "the run is read for the incomplete list and before the answer" run 2
+expect_calls "the run is read only for the incomplete list with no job open" run 1
 
 # 10. Out of wait budget with a test job still running: the completed run reports.
 new_scenario open-past-deadline
@@ -186,8 +205,12 @@ SMOKE='Headless Smoke:completed:success'
 new_scenario build-ended-publish-goes-on
 jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:in_progress:' \
   'Test Suite (ubuntu-24.04):in_progress:' > "$SCENARIO/jobs.1.json"
-echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 SECTION=build expect "build: the products ended, the publication runs => true" true 0
+
+new_scenario build-ended-publish-waiting
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:waiting:' > "$SCENARIO/jobs.1.json"
+SECTION=build expect "build: the publication waits for approval => true" true 0
+expect_calls "a waiting job is open: no read of the run" run 0
 
 # 12. The publish job is not listed yet: the section cannot tell whether a preview comes.
 new_scenario build-publish-not-listed
@@ -195,11 +218,15 @@ jobs_json "$WEB" "$PACKAGE" "$SMOKE" > "$SCENARIO/jobs.1.json"
 echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 SECTION=build expect "build: the publish job not listed, no budget => false" false 0
 
+new_scenario build-publish-not-listed-job-open
+jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Test Suite (ubuntu-24.04):in_progress:' > "$SCENARIO/jobs.1.json"
+SECTION=build expect "build: the publish job not listed while a job runs => false" false 0
+expect_calls "an incomplete list with an open job needs no read of the run" run 0
+
 # 13. No preview (a fork) and the image build goes on.
 new_scenario build-no-preview
 jobs_json "$WEB" "$PACKAGE" "$SMOKE" 'Publish the web package:completed:skipped' \
   'APIs + Sites / build (amd64, ubuntu-26.04):in_progress:' > "$SCENARIO/jobs.1.json"
-echo '{"status":"in_progress"}' > "$SCENARIO/run.1.json"
 SECTION=build expect "build: a skipped publication and the run goes on => true" true 0
 
 # 14. The web package still runs.
@@ -223,6 +250,18 @@ new_scenario github-read-failed
 export GH_FAIL_EXIT=41
 expect "unexpected GitHub read failure remains a hard error" "" 41
 unset GH_FAIL_EXIT
+
+new_scenario run-read-failed
+jobs_json 'Test Suite (macos-15):completed:success' 'Headless Smoke:completed:success' > "$SCENARIO/jobs.1.json"
+export GH_FAIL_RUN_EXIT=42
+expect "a failed read of the run is a hard error, not an answer" "" 42
+unset GH_FAIL_RUN_EXIT
+
+new_scenario run-read-failed-incomplete-list
+jobs_json 'Changes:completed:success' > "$SCENARIO/jobs.1.json"
+export GH_FAIL_RUN_EXIT=42
+expect "a failed read of the run for an incomplete list is a hard error" "" 42
+unset GH_FAIL_RUN_EXIT
 
 echo
 if [ "$FAILURES" -gt 0 ]; then
