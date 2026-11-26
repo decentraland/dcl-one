@@ -41,9 +41,9 @@ describe('CommunityCreate', () => {
       const name = screen.getByRole('textbox', { name: 'Community name' })
       const description = screen.getByRole('textbox', { name: 'Description' })
       expect(name).toBeRequired()
-      expect(name).toHaveAttribute('maxLength', '30')
+      expect(name).toHaveProperty('maxLength', 30)
       expect(description).not.toBeRequired()
-      expect(description).toHaveAttribute('maxLength', '240')
+      expect(description).toHaveProperty('maxLength', 240)
     })
 
     it('should focus a field when its visible label is clicked', async () => {
