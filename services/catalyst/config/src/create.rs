@@ -11,8 +11,10 @@ pub struct CreateConfig {
     pub create_writes_enabled: bool,
 
     /// Polygon JSON-RPC (https to a public host) that verifies publication
-    /// receipts and reads the rarities' MANA prices; unset, publication
-    /// begin/claim/verify and the rarities routes answer 503.
+    /// receipts, reads the rarities' MANA prices and tells whether a
+    /// collection's stored address holds its contract; unset, publication
+    /// begin/claim/verify, the rarities routes and every write that needs
+    /// to know answer 503.
     #[arg(long, env = "BUILDER_POLYGON_RPC_URL", hide_env_values = true)]
     pub builder_polygon_rpc_url: Option<String>,
 

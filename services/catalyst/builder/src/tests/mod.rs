@@ -7,6 +7,7 @@ pub(crate) mod support;
 mod access_matrix;
 mod cells;
 mod chain_state;
+mod collection_writes;
 mod cors;
 mod curation_auth;
 mod curation_auth_fuzz;
