@@ -255,9 +255,9 @@ State, in every build:
   on the player, nearest first, so part of the crowd is behind the camera.
   `seed <n>` gives the avatar at each position the same look in every session of one build, so
   two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
-  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
-  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range (1 to 100), and
+  `cap all` sets no cap, as the player's Unlimited Avatars setting does, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars and Unlimited Avatars settings, which it neither changes nor saves, until `cap` alone goes back
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
@@ -451,6 +451,12 @@ On the web only:
 - `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
   reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
   each relay at its next step. The reply names the mode; an unknown name fails with the list.
+
+Movement:
+
+- `/movement_state`: the active locomotion settings, the last completed movement step's
+  `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
+  and its height over it (the debug panel's Locomotion section).
 
 The HUD and input:
 

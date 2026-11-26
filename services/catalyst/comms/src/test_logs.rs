@@ -5,7 +5,8 @@
 //! and caches "never", hiding the event from every capture. A [`Capture`] keeps a second live
 //! dispatcher beside its subscriber, so every first hit asks all of them.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 /// A capture in force: this thread's subscriber, and a second live dispatcher beside it.
 pub(crate) struct Capture {
@@ -29,7 +30,7 @@ pub(crate) struct LogBuffer(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for LogBuffer {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        self.0.lock().extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
@@ -54,7 +55,7 @@ impl LogBuffer {
     }
 
     pub(crate) fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        String::from_utf8(self.0.lock().clone()).unwrap()
     }
 }
 

@@ -519,3 +519,23 @@ pub(crate) const NOW_FOR_DB: i64 = NOW;
 pub(crate) fn fixture_for_db() -> (CouponCreation, String) {
     signed(body("0x0000000000000000000000000000000000000000"), 77)
 }
+
+/// A coupon an owned network's collections index cannot authorize yet
+/// answers 503 with `Retry-After`, as the catalogue's other refusals do.
+#[test]
+fn a_coupon_the_index_cannot_authorize_yet_says_when_to_retry() {
+    let response = super::coupon_error_response(CouponError::CatalogueUnavailable(
+        "the index is rewinding".into(),
+    ));
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::RETRY_AFTER)
+            .unwrap(),
+        "60"
+    );
+}
