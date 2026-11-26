@@ -1791,6 +1791,37 @@ checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
+## Daily MANA/USD closes
+
+Shop stores one row per UTC day from July 8, 2021 in `shop.mana_usd_daily`.
+The writer uses each UTC day's last Polygon MANA/USD observation, with one
+finalized block hash per pass. Phase selection follows marketplace-server at
+`9c3683cb`, using the latest phase with a first round by that day's close. A phase can
+start producing rounds before the proxy switches to it. Each recorded observation keeps its
+phase-aware round ID and exact decimal rate. The day stores a null rate when
+its last observation is non-positive or the oracle made no observation
+during that UTC day. A round that repeats an older round's answer counts as
+unpriced.
+
+The mainnet sales index process runs one leased writer. Each pass reads at most
+fourteen consecutive days and commits each completed day. A failed read
+resumes at the first unrecorded day. Once caught up, the job adds one row a day.
+
+The rate endpoint scans the date key over at most fifteen years (approximately
+5,500 rows) and returns only priced days, matching the legacy response. Seller
+summaries join the days of their sales by the same key. They sum gross MANA at
+historical rates, round to six decimal places, and count sales with no rate.
+`royaltiesWei` totals settled royalty legs on resales by other sellers. It
+returns null when creator attribution or a required payment split lacks
+proof. Ethereum v1 attribution reads the item and collection fields saved by
+their respective last completed Ethereum mirror passes. The database refreshes
+each small attribution table with the pass marker in one transaction, keeping
+proven values available during a new catalogue sweep. The first completed pass
+after the schema object pass installs these tables seeds each copy. The
+resale count and volume describe sales attributed to the creator, including
+their own. The sales publication and all these inputs are read in the same
+transaction.
+
 ## Shop open-trades reads that name a contract
 
 Workload: the item page's listing read and the checkout's store-mint and

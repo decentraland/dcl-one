@@ -18,6 +18,12 @@ graph query or a graph response without usable block metadata.
 after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
 responses and accompanies the error log for the configured RPC.
 
+For Ethereum v1 royalty attribution, a local PostgreSQL fixture saved 64
+collections and 1,000 items. The tables and indexes occupied 32 KiB and
+168 KiB. Publishing an unchanged full sweep took 0.56 ms for collections
+and 1.89 ms for items on the measured run. The publication leaves unchanged
+attribution rows in place and replaces the rows a completed sweep changes.
+
 ## Published sales reads
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
