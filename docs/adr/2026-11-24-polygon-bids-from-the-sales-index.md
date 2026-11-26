@@ -31,13 +31,12 @@ It checks:
   (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`), out of quarantine. As for the nft
   index's readers, `folded_block` is not compared with `last_block`, which
   every pass advances before it folds;
-- the bid book holds that published fold, by a marker the fold writes with
-  its rows: the walk publishes a fold only after it commits and reads the
-  head, and a read in between answers the envelope rather than rows past the
-  published block. A change to the book invalidates the changed network's
-  marker in the write transaction. A current fold writes the marker after
-  its rows. An older writer leaves the changed network's book unavailable
-  until a current writer folds and publishes again;
+- the bid book holds that published fold. The shared `shop.projection_write`
+  triggers mark changed bid rows pending in the writer's transaction and
+  acknowledge them when the sales cursor publishes. This includes legacy
+  writers and writes at an unchanged height. A walk advance without book
+  writes keeps serving. A pending write returns `sales-index` 503 until
+  publication and increments `catalyst_shop_bid_book_unpublished_fold_reads_total`;
 - the nft index is fresh on Polygon, on that same chain;
 - the catalogue supplying Polygon membership has published. The reader
   uses the native collections fold while it owns Polygon and waits for a

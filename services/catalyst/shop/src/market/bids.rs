@@ -493,6 +493,15 @@ fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     c.indexer == INDEXER_SALES && chain_walk::fresh_fold_on(c, chain_id, now).is_some()
 }
 
+/// Bid-book reads refused while the sales fold's writes await publication.
+const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_bid_book_unpublished_fold_reads_total",
+    "Bid-book reads refused because the sales index has not published the fold, by network.",
+    Some(dcl_metrics::Unit::Count),
+    &["network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
+
 /// What a network's bid sellers are read against on a [`bids_snapshot`].
 pub(super) struct SellerBounds {
     net: ChainNet,
@@ -603,7 +612,7 @@ pub(super) async fn bids_snapshot(
         let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, net)
             .await
             .map_err(db)?;
-        let Some(sales) = sales.filter(|c| sales_published(c, chain, now)) else {
+        if !sales.is_some_and(|c| sales_published(&c, chain, now)) {
             return Err(unavailable(
                 Source::SalesIndex,
                 &format!(
@@ -611,17 +620,14 @@ pub(super) async fn bids_snapshot(
                     net.db_name()
                 ),
             ));
-        };
-        // The book's rows are the fold its marker names, written with them;
-        // the walk publishes that fold only after its head reads, which can
-        // stall.
-        let book: Option<i64> =
-            sqlx::query_scalar("SELECT folded_through FROM shop.nft_bid_cursor WHERE network = $1")
-                .bind(net.db_name())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
-        if !chain_walk::holds_published_fold(book, &sales) {
+        }
+        // Every write to the network's book, by any binary, waits for the
+        // sales index's next publication (`chain_walk::rows_published_on`).
+        if !chain_walk::rows_published_on(&mut tx, INDEXER_SALES, net, &["nft_bid"])
+            .await
+            .map_err(read_error)?
+        {
+            UNPUBLISHED_FOLD_READS.handle([net.db_name()]).increment(1);
             return Err(unavailable(
                 Source::SalesIndex,
                 &format!(

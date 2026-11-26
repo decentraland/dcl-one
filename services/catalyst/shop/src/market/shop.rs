@@ -21,9 +21,8 @@
 //! holdings and the request's seeds (`neighbours`, built from the nft
 //! index), with the trending floor filling the rest and answering alone
 //! until a build exists (`personalized: false`). Coupons are stored and
-//! served by `/v1/coupons` (`coupons`). `/v3/catalog/trending` and the
-//! browse reads of `/v3/catalog/unified` are memoized 30 s; item pages and
-//! checkout name their item and read fresh.
+//! served by `/v1/coupons` (`coupons`). Listing pages read current proofs
+//! from their own snapshot.
 
 #[path = "shop_queries.rs"]
 mod queries;
@@ -56,7 +55,6 @@ pub use recommendations::{aggregate_sales, rank_trending};
 use crate::content::Denylist;
 use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -1340,56 +1338,12 @@ fn names_its_rows(f: &UnifiedCatalogFilters) -> bool {
         || b.search.is_some()
 }
 
-/// The largest page the 30 s memo keeps: the overview's rails ask for 12 rows and the browse
-/// grid's default page is [`SHOP_DEFAULT_PAGE_SIZE`].
-const MEMO_MAX_ROWS: i64 = SHOP_DEFAULT_PAGE_SIZE;
-
-/// Whether a read's filters are the rails' own shape, which the memo keeps: none of the free
-/// text a client can vary at will (a category, rarities, wearable categories or genders, price
-/// bounds, emote filters). Every other value is an enum or a flag, so the keys stay few.
-fn rail_filters(b: &ShopCatalogFilters) -> bool {
-    b.category.is_none()
-        && b.rarities.is_empty()
-        && b.wearable_categories.is_empty()
-        && b.wearable_genders.is_empty()
-        && b.min_price_credits.is_none()
-        && b.max_price_credits.is_none()
-        && !b.is_smart
-        && b.emote_loop.is_none()
-        && !b.emote_has_sound
-        && !b.emote_has_geometry
-}
-
-/// The memo key of a browse read (the overview rails), built from the parsed filters with the
-/// page size clamped, so that parameter order, spelling and unknown keys share one entry. Only a
-/// first page of at most [`MEMO_MAX_ROWS`] rows over [`rail_filters`] has one: another page,
-/// size or filter reads fresh, so a client cannot fill the memo with full-size pages under keys
-/// it makes up. A read that names a collection, an item, a creator or a search (item pages,
-/// checkout, creator pages, typed searches) has no key either.
-fn unified_browse_key(group_by: UnifiedGroupBy, f: &UnifiedCatalogFilters) -> Option<String> {
-    let b = &f.base;
-    let named = names_its_rows(f);
-    let rows = b
-        .first
-        .unwrap_or(SHOP_DEFAULT_PAGE_SIZE)
-        .clamp(SHOP_MIN_PAGE_SIZE, SHOP_MAX_PAGE_SIZE);
-    let first_page = b.skip.unwrap_or(0) <= 0;
-    if named || !first_page || rows > MEMO_MAX_ROWS || !rail_filters(b) {
-        return None;
-    }
-    let mut keyed = f.clone();
-    (keyed.base.first, keyed.base.skip) = (Some(rows), None);
-    Some(format!("unified:{group_by:?}:{keyed:?}"))
-}
-
 fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
     serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// A browse read (one that names none of its rows) carries its creators' profiles, added to each
-/// response under the content denylist as it stands (never memoized); the rails' shapes are also
-/// served from a 30 s memo ([`unified_browse_key`]). The readiness gates and the MANA rate read
-/// still run per request, while a memo hit keeps the prices it was built with (at most 30 s old).
+/// A grouped browse read carries creator profiles, added after the
+/// listing snapshot is released.
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1402,53 +1356,27 @@ pub async fn get_unified_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let browse_key = unified_browse_key(group_by, &filters);
-    // Every browse read carries its creators' profiles, memoized or not; a read that names its
-    // rows never waits on the creator directory.
     let with_profiles = !names_its_rows(&filters) && group_by == UnifiedGroupBy::Item;
-    // The browse memo holds the read only in the request that fetches it;
-    // one that waits drops it first, and starts again if that fetch failed.
-    let (result, sources) = loop {
-        let read = match priced_preflight(&state, None).await {
-            Ok(read) => read,
-            Err(r) => return r,
-        };
-        let (copy, stamp, sources) = (read.key(), read.stamp(), read.sources());
-        let mut held = Some(read);
-        let page = async |read: &mut CatalogueRead| match group_by {
-            UnifiedGroupBy::Item => unified_items(&state, read, &filters, rate)
-                .await
-                .and_then(|(data, total)| body_of(DataTotal { data, total })),
-            UnifiedGroupBy::Listing => unified_listings(&state, read, &filters, rate)
-                .await
-                .and_then(|(data, total)| body_of(DataTotal { data, total })),
-        };
-        let fetched = match &browse_key {
-            Some(key) => {
-                memoized_holding(&state, Ttl::S30, format!("{key}:{copy}"), &mut held, page).await
-            }
-            None => match held.as_mut() {
-                Some(read) => page(read).await.map(|body| Some(Arc::new(body))),
-                None => unreachable!("a read nobody waited for is still held"),
-            },
-        };
-        match fetched {
-            Ok(Some(body)) => {
-                // Released before the directory, which may read the pool.
-                drop(held);
-                stamp.note(&state);
-                break (Ok(body), sources);
-            }
-            Ok(None) => continue,
-            Err(e) => break (Err(e), sources),
-        }
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
+        Err(r) => return r,
     };
+    let sources = read.sources();
+    let result = match group_by {
+        UnifiedGroupBy::Item => unified_items(&state, &mut read, &filters, rate)
+            .await
+            .and_then(|(data, total)| body_of(DataTotal { data, total })),
+        UnifiedGroupBy::Listing => unified_listings(&state, &mut read, &filters, rate)
+            .await
+            .and_then(|(data, total)| body_of(DataTotal { data, total })),
+    };
+    drop(read);
     let directory = match with_profiles && result.is_ok() {
         true => directory_snapshot(&state, &sources).await,
         false => None,
     };
     match result {
-        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), None),
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref()),
         Err(e) => e.into_response(),
     }
 }
@@ -1523,8 +1451,7 @@ pub async fn get_related_catalog(
     Json(RelatedResponseBody { data }).into_response()
 }
 
-/// Served from a 30 s memo per clamped request, with its creators' profiles added to each response
-/// as in [`get_unified_catalog`]; the readiness gates still run per request.
+/// Read listing proofs on the snapshot that supplies the trending page.
 pub async fn get_trending_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1539,104 +1466,46 @@ pub async fn get_trending_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
-    let key_of = |copy: String| {
-        rail_filters(&req.filters.base)
-            .then(|| format!("trending:{first}:{days}:{:?}:{copy}", req.filters))
+    // Refuse unavailable trades before asking the sales reader. The page
+    // checks again after the external read and uses one snapshot.
+    match priced_preflight(&state, None).await {
+        Ok(read) => drop(read),
+        Err(r) => return r,
+    }
+    let sales = match recent_sales(&state, days).await {
+        Ok(sales) => sales,
+        Err(r) => return r,
     };
-    // The gate and the page memo first, on a short read: a refusal or a warm
-    // page answers without waiting on the sales reader's subgraph call.
-    let read = match priced_preflight(&state, None).await {
+    let mut read = match priced_read(&state, None).await {
         Ok(read) => read,
         Err(r) => return r,
     };
-    let (key, sources) = (key_of(read.key()), read.sources());
-    let warm = key
-        .as_deref()
-        .and_then(|key| state.readers.fresh(Ttl::S30, key));
-    if warm.is_some() {
-        // A warm page answers from this read's copy, so its stamp is this one.
-        read.note(&state);
-    }
+    let data = trending_items(&state, &mut read, Some(first), &sales, &req.filters, rate).await;
+    let sources = read.sources();
     drop(read);
-    let (body, directory) = match warm {
-        Some(body) => (Ok(body), directory_snapshot(&state, &sources).await),
-        None => {
-            // A miss: the sales without a connection, then the read again,
-            // rechecked, and the page filed under the copy it read.
-            let sales = match recent_sales(&state, days).await {
-                Ok(sales) => sales,
-                Err(r) => return r,
-            };
-            // The page memo holds the read only in the request that fetches
-            // it; one that waits drops it first, and starts again if that
-            // fetch failed.
-            loop {
-                let read = match priced_preflight(&state, None).await {
-                    Ok(read) => read,
-                    Err(r) => return r,
-                };
-                let (key, stamp, sources) = (key_of(read.key()), read.stamp(), read.sources());
-                let mut held = Some(read);
-                let page = async |read: &mut CatalogueRead| {
-                    let data =
-                        trending_items(&state, read, Some(first), &sales, &req.filters, rate)
-                            .await?;
-                    body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
-                };
-                let fetched = match key {
-                    Some(key) => memoized_holding(&state, Ttl::S30, key, &mut held, page).await,
-                    None => match held.as_mut() {
-                        Some(read) => page(read).await.map(|body| Some(Arc::new(body))),
-                        None => unreachable!("a read nobody waited for is still held"),
-                    },
-                };
-                match fetched {
-                    Ok(Some(body)) => {
-                        // Released before the directory, which may read the
-                        // pool.
-                        drop(held);
-                        stamp.note(&state);
-                        break (Ok(body), directory_snapshot(&state, &sources).await);
-                    }
-                    Ok(None) => continue,
-                    Err(r) => return r,
-                }
-            }
-        }
+    let body = match data.and_then(|data| {
+        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+    }) {
+        Ok(body) => body,
+        Err(e) => return e.into_response(),
     };
-    match body {
-        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
-        Err(r) => r,
-    }
+    let directory = directory_snapshot(&state, &sources).await;
+    with_creator_profiles(&state, body, directory.as_deref())
 }
 
-/// A feed body (`{"data": [row, ...]}`, each row naming its `creator`) as this response serves it:
-/// with each row's `creatorProfile` from the creator directory under the content denylist as it
-/// stands now, so a profile denylisted since the body was memoized leaves it at once. A body that
-/// carries a profile is sent `no-cache` (no copy is used without revalidation); without the
-/// directory it goes as it is, under `cacheable` when given.
+/// Apply the current profile denylist and revalidate every listing page.
 fn with_creator_profiles(
     state: &MarketplaceState,
-    body: Arc<Value>,
+    mut body: Value,
     directory: Option<&Value>,
-    cacheable: Option<HeaderMap>,
 ) -> Response {
-    let Some(directory) = directory else {
-        return match cacheable {
-            Some(headers) => (headers, Json(body.as_ref())).into_response(),
-            None => Json(body.as_ref()).into_response(),
-        };
-    };
-    let mut body = Arc::unwrap_or_clone(body);
-    name_creators(&mut body, directory, &state.denylist);
+    if let Some(directory) = directory {
+        name_creators(&mut body, directory, &state.denylist);
+    }
     (profiles_revalidate(), Json(body)).into_response()
 }
 
-/// The `Cache-Control` of a trending or top-creators answer sent without the creator directory (a
-/// cold node, a feed that did not lead the directory's read, or a failing read): kept briefly, so
-/// a CDN does not hold an answer without profiles, whose cards each ask `/lambdas/profiles`, for
-/// the hour these feeds were cached before they carried profiles.
+/// Short cache for top creators while the profile directory is refreshing.
 fn brief_cache() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -1960,85 +1829,6 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
-    }
-
-    #[test]
-    fn browse_reads_share_one_memo_key_and_named_reads_have_none() {
-        let key = |q: &[(&str, &str)]| {
-            let p = pairs(q);
-            unified_browse_key(parse_unified_group_by(&p), &parse_unified_filters(&p))
-        };
-        let newest = key(&[
-            ("first", "12"),
-            ("sortBy", "newest"),
-            ("listingType", "primary"),
-            ("groupBy", "item"),
-        ]);
-        assert!(newest.is_some());
-        assert_eq!(
-            newest,
-            key(&[
-                ("groupBy", "item"),
-                ("utm_source", "x"),
-                ("listingType", "primary"),
-                ("sortBy", "newest"),
-                ("first", "12")
-            ]),
-            "order and unknown keys do not split the entry"
-        );
-        assert_ne!(
-            newest,
-            key(&[
-                ("first", "12"),
-                ("sortBy", "discount"),
-                ("discounted", "true"),
-                ("listingType", "primary"),
-                ("groupBy", "item")
-            ])
-        );
-        assert_ne!(
-            newest,
-            key(&[
-                ("first", "12"),
-                ("sortBy", "newest"),
-                ("listingType", "primary")
-            ]),
-            "grouped by listing"
-        );
-        assert_eq!(
-            key(&[("groupBy", "item")]),
-            key(&[("groupBy", "item"), ("first", "48"), ("skip", "0")]),
-            "the default page and an explicit one share the entry"
-        );
-        // Only the rails' shapes are kept: a larger page, a later page or free text reads fresh,
-        // so a client cannot fill the memo with full-size pages under made-up keys.
-        for fresh in [
-            vec![("first", "49")],
-            vec![("first", "1000")],
-            vec![("first", "5095")],
-            vec![("first", "12"), ("skip", "12")],
-            vec![("first", "12"), ("category", "wearable")],
-            vec![("first", "12"), ("rarity", "mythic")],
-            vec![("first", "12"), ("wearableCategory", "hat")],
-            vec![("first", "12"), ("wearableGender", "female")],
-            vec![("first", "12"), ("minPriceCredits", "1")],
-            vec![("first", "12"), ("isSmart", "true")],
-            vec![("first", "12"), ("emoteHasSound", "true")],
-        ] {
-            assert_eq!(key(&fresh), None, "{fresh:?}");
-        }
-        let c = "0x1111111111111111111111111111111111111111";
-        let item = format!("{c}-1");
-        for named in [
-            ("contractAddress", c),
-            ("contractAddress", "junk"),
-            ("itemId", "1"),
-            ("items", item.as_str()),
-            ("creator", c),
-            ("search", "hat"),
-        ] {
-            assert_eq!(key(&[("first", "5"), named]), None, "{named:?}");
-        }
     }
 
     #[test]

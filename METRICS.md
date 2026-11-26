@@ -57,6 +57,26 @@ A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum 
 
 Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
 
+### LAND and Estate transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 1.05M `land_authz.authz_event` rows over blocks 4.9M to 20.65M. A third of them were transfers: 280,000 LAND and 70,000 Estate among 60,000 wallets, a tenth of them mints. 109,500 of the transfers settled a priced MANA sale in their transaction. The heavy wallet had 2,500 transfers on each side, and 90% of them were sales. The table took 293 MB.
+
+| Index | Size | Concurrent build |
+| --- | ---: | ---: |
+| `authz_event_transfer_from_idx` | 32 MB | 0.48 s |
+| `authz_event_transfer_to_idx` | 32 MB | 0.46 s |
+| `authz_event_transfer_unrepaired_idx`, every transfer due (right after the step) | 7.5 MB | 0.22 s |
+| `authz_event_transfer_unrepaired_idx`, none due | 8 kB | 0.14 s |
+
+| LAND read, both sides capped at 500 | Rows | First run | Repeated |
+| --- | ---: | ---: | ---: |
+| 23 transfers | 15 | 6.5 ms | 0.9 ms |
+| 5,000 transfers, 90% of them sales | 500 | 94 ms | 17 to 30 ms |
+
+On the heavy wallet each side read its 2,500 rows through its index (a bitmap scan and a sort at that size) and made one `sale_asset_pkey` probe per row. The readiness probe (`EXISTS` over the due set) took 0.05 ms.
+
+The repair, with every transfer due: the next due row took 4.1 ms; one 50,000-block window's `UPDATE` of 1,111 rows took 20 ms; the check for an unfilled row took 0.4 ms. The fixture's history is about 322 windows. Each costs two header reads and at least one `eth_getLogs`. At the defaults (`LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` 50, which counts the repair's header reads, a pass every 120 s), an idle pass leaves room for about 15 windows. The repair then takes about 22 passes, some 45 minutes, unless the endpoint narrows the ranges. That estimate is not a measurement against a real endpoint. Other agents' builds were running during these measurements.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
@@ -79,6 +99,16 @@ The 525,000 resulting rows took 518 MB, with the primary key and the two seconda
 
 Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
 
+## Credits metrics snapshot
+
+The `credits-settlement` pass sets the settlement gauges (`credits_pledges_live`, `credits_pledged_usd_cents`, `credits_usages_unpaid`, `credits_revocations_pending`) from one statement, `shop::credits::metrics::SNAPSHOT_SQL`, every `CHECKOUT_WORKER_INTERVAL_SECS` (30 s by default). It was measured on a synthetic seed on a laptop with PostgreSQL 17.6, three runs of `EXPLAIN (ANALYZE, BUFFERS)`:
+
+| Rows | Live pledges | Unpaid uses | Pending revocations | Time |
+| --- | ---: | ---: | ---: | ---: |
+| 100,000 authorizations, 90,000 indexed uses (all but 25 settled), 90,000 revocations | 2,000 | 25 | 9,000 | 42 to 45 ms |
+
+The live pledges and their cents are read through the partial `authorizations_expiry_idx` (2,000 rows), and the pending revocations through `revocations_due_idx`. Each is bounded by what is live, not by the table. The unpaid count costs most of the time: a parallel hash anti-join of every indexed use at or below the fold against `usage_settlements`, then a primary key probe of the authorization for each unsettled use. It grows linearly with the uses the index has stored, about 0.5 ms per 1,000.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
@@ -100,6 +130,26 @@ custom and generic prepared plans. The upper-bound query went from 44 buffers
 to three with a custom plan and from 2,015 to three with a generic plan.
 The new index occupied 424 KiB. These synthetic plans measure read work and
 index size. Production cardinalities and write costs remain unmeasured.
+
+## Credit studio budget reads
+
+A local PostgreSQL 17 database held the studio tables as `schemas/60_ops.sql`
+defines them, with 200 studios, 800 operators and 200,000 budget entries over
+365 UTC days (one deposit in ten, the rest grants naming a ledger row). Each
+figure is one warm `EXPLAIN (ANALYZE, BUFFERS)` run after `ANALYZE`.
+
+| Query | Plan | Work |
+| --- | --- | --- |
+| The day's new budget (the ceiling, under the deposits lock) | Bitmap scan of `studio_budget_entries_inflow_idx`, 55 rows | 39 buffers, 0.06 ms |
+| A studio's balance or history total (1,000 entries) | Index-only scan of `studio_budget_entries_studio_idx` | 659 buffers before `VACUUM` (1,000 heap fetches), 16 after; 0.2 ms |
+| A studio's history page of 50, newest first, with each grant's recipient | Backward scan of `studio_budget_entries_studio_idx`, incremental sort on the id tie-break, the ledger key per row | 250 buffers, 0.19 ms |
+| An idempotency probe | `studio_budget_entries_idempotency_uidx` | 9 buffers, 0.03 ms |
+| The studio list (every studio's figures) | Parallel sequential scan and aggregate of every entry | 3,840 buffers, 14 to 18 ms |
+
+The studio and idempotency indexes occupied 13 MB each, the ledger index
+4.9 MB and the inflow index 648 kB, beside a 30 MB table. The list reads every
+entry, so its cost grows with the ledger; it is an operator route. Write
+costs, production cardinalities and latency are unmeasured.
 
 ## Seasonal photo progress
 

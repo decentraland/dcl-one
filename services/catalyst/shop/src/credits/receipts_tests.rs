@@ -25,7 +25,7 @@ use crate::subscriptions::delivery::Outcome;
 const ADMIN_TOKEN: &str = "receipts-admin";
 
 #[derive(Debug, Clone)]
-struct Mail {
+pub(super) struct Mail {
     to: String,
     subject: String,
     html: String,
@@ -35,21 +35,21 @@ struct Mail {
 
 /// A mailer that records every send, or answers the queued failures first.
 #[derive(Default)]
-struct Recorder {
+pub(super) struct Recorder {
     configured: bool,
     sent: Mutex<Vec<Mail>>,
     failures: Mutex<Vec<SendFailure>>,
 }
 
 impl Recorder {
-    fn configured() -> Arc<Self> {
+    pub(super) fn configured() -> Arc<Self> {
         Arc::new(Self {
             configured: true,
             ..Self::default()
         })
     }
 
-    fn failing(failures: Vec<SendFailure>) -> Arc<Self> {
+    pub(super) fn failing(failures: Vec<SendFailure>) -> Arc<Self> {
         Arc::new(Self {
             configured: true,
             failures: Mutex::new(failures),
@@ -57,7 +57,7 @@ impl Recorder {
         })
     }
 
-    fn sent(&self) -> Vec<Mail> {
+    pub(super) fn sent(&self) -> Vec<Mail> {
         self.sent.lock().unwrap().clone()
     }
 }
@@ -112,7 +112,7 @@ fn links() -> Links {
     )
 }
 
-fn sender(mailer: Arc<Recorder>) -> Sender {
+pub(super) fn sender(mailer: Arc<Recorder>) -> Sender {
     Sender {
         mailer,
         names: None,
@@ -122,7 +122,11 @@ fn sender(mailer: Arc<Recorder>) -> Sender {
 
 /// A credits state that takes signed webhooks and, with `stripe_url`, reads
 /// sessions there; its receipts go through `mailer`.
-fn receipts_state(pool: &PgPool, stripe_url: Option<String>, mailer: Arc<Recorder>) -> SharedState {
+pub(super) fn receipts_state(
+    pool: &PgPool,
+    stripe_url: Option<String>,
+    mailer: Arc<Recorder>,
+) -> SharedState {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         usage_chain_id: super::usage::CHAIN_POLYGON,
@@ -151,7 +155,13 @@ fn receipts_state(pool: &PgPool, stripe_url: Option<String>, mailer: Arc<Recorde
 }
 
 /// A settled Checkout Session event for the fixture's 500-cent order.
-fn session_event(kind: &str, session: &str, pi: &str, paid: bool, email: Option<&str>) -> String {
+pub(super) fn session_event(
+    kind: &str,
+    session: &str,
+    pi: &str,
+    paid: bool,
+    email: Option<&str>,
+) -> String {
     let mut object = json!({
         "id": session,
         "payment_status": if paid { "paid" } else { "unpaid" },
@@ -165,7 +175,7 @@ fn session_event(kind: &str, session: &str, pi: &str, paid: bool, email: Option<
     json!({ "id": unique("evt_receipt"), "type": kind, "data": { "object": object } }).to_string()
 }
 
-fn intent_succeeded(pi: &str) -> String {
+pub(super) fn intent_succeeded(pi: &str) -> String {
     json!({ "id": unique("evt_receipt_pi"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string()
 }
 
