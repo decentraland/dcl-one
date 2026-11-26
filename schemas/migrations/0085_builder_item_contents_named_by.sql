@@ -7,6 +7,7 @@ SET named_by = COALESCE((
             UNION ALL SELECT 2, c.eth_address WHERE c.third_party_id IS NOT NULL
             UNION ALL SELECT 3, COALESCE(lower(chain.creator), c.eth_address) WHERE c.id IS NOT NULL AND c.third_party_id IS NULL
             UNION ALL SELECT 4, lower(m) FROM unnest(chain.managers) m WHERE c.third_party_id IS NULL
+            UNION ALL SELECT 5, u.uploaded_by FROM builder.uploaded_contents u WHERE u.hash = f.hash
         ) w
         WHERE EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = f.hash AND u.uploaded_by = w.wallet)
         ORDER BY w.rank, w.wallet

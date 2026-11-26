@@ -1558,6 +1558,14 @@ release and the item import refuses to load; item reads, listings and
 deletes keep working. A node asks the database once per write until the
 release holds and then stops asking.
 
+Steps `0085_builder_item_contents_named_by` and
+`0086_builder_item_video_named_by` give each stored name and kept video the
+wallet that wrote it. They run before the release, while
+`uploaded_contents` keeps one uploader per hash: the item's owner when it
+holds that upload, else the first of the collection's provider, its chain
+creator and its managers that does, else the uploader the node holds (the
+upload an earlier binary published the file from), else the owner.
+
 Rollout, in order:
 
 1. Deploy the binary on every replica with creator writes closed
