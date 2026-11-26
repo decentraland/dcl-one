@@ -1039,7 +1039,6 @@ mod stream_access {
         STREAM_ACCESS_NOT_FOUND_MSG,
     };
     use catalyst::comms::gatekeeper::{CommsState, LiveKit, Settings, SharedState, router};
-    use catalyst::comms::interfaces::StreamingNotificationKind;
     use catalyst::http::Outbound;
     use catalyst::shared::test_keys::{address_of, random_key, signed};
     use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
@@ -1530,7 +1529,7 @@ mod stream_access {
         let recipients =
             std::collections::BTreeSet::from([land_owner.clone(), admin.clone(), granted.clone()]);
         {
-            let notifications = directory.streaming_notifications.lock().unwrap();
+            let notifications = directory.streaming_notifications.lock();
             let told: std::collections::BTreeSet<_> =
                 notifications.iter().map(|n| n.recipient.clone()).collect();
             assert_eq!(notifications.len(), 3);
@@ -1651,7 +1650,7 @@ mod stream_access {
             ["IN_1".to_string(), "IN_2".to_string()]
         );
         {
-            let notifications = directory.streaming_notifications.lock().unwrap();
+            let notifications = directory.streaming_notifications.lock();
             assert_eq!(notifications.len(), 6);
             for recipient in &recipients {
                 assert_eq!(

@@ -9,10 +9,10 @@ use collectibles::{
     Collectibles, Emote,
 };
 use common::{
-    structs::{EmoteMask, PrimaryUser},
+    structs::{EmoteMask, PlayerAddress, PrimaryUser},
     util::AsH160,
 };
-use comms::{global_crdt::ForeignPlayer, profile::UserProfile};
+use comms::global_crdt::ForeignPlayer;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_runner::{initialize_scene::SuperUserScene, SceneEntity};
 use serde_json::{json, Value};
@@ -274,10 +274,10 @@ fn avatar_state_cmd(
         Option<&PreviousAvatar>,
         Option<(&ActiveEmote, &MaskedEmote)>,
         Has<PrimaryUser>,
-        Option<&ForeignPlayer>,
+        Has<ForeignPlayer>,
+        Option<&PlayerAddress>,
         Option<&SceneEntity>,
         Has<BoothAvatar>,
-        Option<&UserProfile>,
         Has<crate::RetryRenderAvatar>,
         Option<&AvatarLoadFailures>,
     )>,
@@ -315,31 +315,30 @@ fn avatar_state_cmd(
         previous,
         emote,
         is_primary,
-        foreign,
+        is_foreign,
+        address,
         scene_entity,
         is_booth,
-        profile,
         resolving,
         failures,
     ) in &avatars
     {
-        let (kind, address) = if is_primary {
-            let address = profile.and_then(|profile| profile.content.eth_address.as_h160());
-            (Kind::Player, address)
-        } else if let Some(foreign) = foreign {
-            (Kind::OtherPlayer, Some(foreign.address))
+        let kind = if is_primary {
+            Kind::Player
+        } else if is_foreign {
+            Kind::OtherPlayer
         } else if let Some(scene_entity) = scene_entity {
-            let kind = if super_user_scenes.contains(scene_entity.root) {
+            if super_user_scenes.contains(scene_entity.root) {
                 Kind::Preview
             } else {
                 Kind::SceneAvatar
-            };
-            (kind, None)
+            }
         } else if is_booth {
-            (Kind::Preview, None)
+            Kind::Preview
         } else {
-            (Kind::Other, None)
+            Kind::Other
         };
+        let address = address.map(|&PlayerAddress(address)| address);
         if !target.selects(kind, address) {
             continue;
         }

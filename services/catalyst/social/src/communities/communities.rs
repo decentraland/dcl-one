@@ -1099,14 +1099,15 @@ pub async fn update_community(
             json!({"community_id":id,"requests_ids":accepted_request_ids}),
         );
     }
-    let detail = match queries::get_by_id(
-        &state.pool,
-        uuid,
-        Some(&signer),
-        state.voice_presence_config(),
-    )
-    .await
-    {
+    let detail = match map_db(
+        queries::get_by_id(
+            &state.pool,
+            uuid,
+            Some(&signer),
+            state.voice_presence_config(),
+        )
+        .await,
+    ) {
         Ok(Some(mut obj)) => {
             if obj.has_thumbnail {
                 obj.thumbnail_url = Some(state.thumbnail_url(uuid));
@@ -1114,7 +1115,7 @@ pub async fn update_community(
             obj
         }
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "Community not found"),
-        Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
+        Err(refusal) => return *refusal,
     };
     let mut data = json!({
         "id": detail.id, "name": detail.name, "description": detail.description,
