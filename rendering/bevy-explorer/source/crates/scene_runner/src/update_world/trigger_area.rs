@@ -115,7 +115,7 @@ struct OverlapInputs {
 
 /// What `update_triggers` reports one overlap kind with, for one trigger area this frame.
 struct TriggerReport<'a, 'w, 's> {
-    triggers: &'a Query<'w, 's, (&'static MeshCollider<CtTrigger>, &'static GlobalTransform)>,
+    transforms: &'a Query<'w, 's, &'static GlobalTransform>,
     container: &'a ContainerEntity,
     translation: Vec3,
     rotation: Quat,
@@ -124,33 +124,43 @@ struct TriggerReport<'a, 'w, 's> {
 }
 
 impl TriggerReport<'_, '_, '_> {
-    fn trigger(&self, colliders: &SceneColliderData, collider_id: &ColliderId) -> Trigger {
-        colliders
-            .get_collider_entity(collider_id)
-            .and_then(|e| self.triggers.get(e).ok())
-            .map(|(collider, gt)| {
-                let (s, r, t) = gt.to_scale_rotation_translation();
-                Trigger {
-                    entity: collider_id.entity.as_proto_u32().unwrap(),
-                    layers: collider.collision_mask,
-                    position: Some(Vector3::world_vec_from_vec3(&t)),
-                    rotation: Some(r.into()),
-                    scale: Some(Vector3::abs_vec_from_vec3(&s)),
-                }
-            })
-            .unwrap_or_else(|| Trigger {
-                entity: collider_id.entity.as_proto_u32().unwrap(),
-                layers: 0,
-                position: None,
-                rotation: None,
-                scale: None,
-            })
+    /// The entity that entered, stayed or left: its collider's layers, and the world transform of
+    /// the entity that holds the collider. For a scene collider (`from_scene`) that is the scene
+    /// entity, which for a glTF collider is the container rather than the mesh node; otherwise it
+    /// is the collider's own entity, the avatar for an avatar collider. A collider that is gone
+    /// by an exit leaves them empty.
+    fn trigger(
+        &self,
+        scene: &RendererSceneContext,
+        colliders: &SceneColliderData,
+        from_scene: bool,
+        collider_id: &ColliderId,
+    ) -> Trigger {
+        let layers = colliders
+            .get_collider(collider_id)
+            .map_or(0, |collider| collider.collision_groups().memberships.bits());
+        let holder = if from_scene {
+            scene.bevy_entity(collider_id.entity)
+        } else {
+            colliders.get_collider_entity(collider_id)
+        };
+        let transform = holder
+            .and_then(|entity| self.transforms.get(entity).ok())
+            .map(GlobalTransform::to_scale_rotation_translation);
+        Trigger {
+            entity: collider_id.entity.as_proto_u32().unwrap(),
+            layers,
+            position: transform.map(|(_, _, t)| Vector3::world_vec_from_vec3(&t)),
+            rotation: transform.map(|(_, r, _)| r.into()),
+            scale: transform.map(|(s, _, _)| Vector3::abs_vec_from_vec3(&s)),
+        }
     }
 
     fn send(
         &self,
         scene: &mut Mut<RendererSceneContext>,
         colliders: &SceneColliderData,
+        from_scene: bool,
         collider_id: &ColliderId,
         ty: TriggerAreaEventType,
     ) {
@@ -160,7 +170,7 @@ impl TriggerReport<'_, '_, '_> {
             triggered_entity_rotation: Some(self.rotation.into()),
             event_type: ty as i32,
             timestamp: self.timestamp.next_timestamp(),
-            trigger: Some(self.trigger(colliders, collider_id)),
+            trigger: Some(self.trigger(scene, colliders, from_scene, collider_id)),
         };
         scene.update_crdt(
             SceneComponentId::TRIGGER_AREA_RESULT,
@@ -171,10 +181,12 @@ impl TriggerReport<'_, '_, '_> {
     }
 
     /// Exits and stays for `previous` (reported at `previous_tick`), then enters, against `current`.
+    /// `from_scene`: the colliders are the scene's own, see [`Self::trigger`].
     fn events(
         &self,
         scene: &mut Mut<RendererSceneContext>,
         colliders: &SceneColliderData,
+        from_scene: bool,
         previous: &[ColliderId],
         previous_tick: u32,
         current: &[ColliderId],
@@ -186,6 +198,7 @@ impl TriggerReport<'_, '_, '_> {
                     self.send(
                         scene,
                         colliders,
+                        from_scene,
                         prev_collider,
                         TriggerAreaEventType::TaetStay,
                     );
@@ -194,6 +207,7 @@ impl TriggerReport<'_, '_, '_> {
                 self.send(
                     scene,
                     colliders,
+                    from_scene,
                     prev_collider,
                     TriggerAreaEventType::TaetExit,
                 );
@@ -205,6 +219,7 @@ impl TriggerReport<'_, '_, '_> {
                 self.send(
                     scene,
                     colliders,
+                    from_scene,
                     new_collider,
                     TriggerAreaEventType::TaetEnter,
                 );
@@ -234,7 +249,7 @@ fn update_triggers(
     )>,
     mut scenes: Query<(&mut RendererSceneContext, &mut SceneColliderData)>,
     mut avatar_colliders: ResMut<AvatarColliders>,
-    triggers: Query<(&'static MeshCollider<CtTrigger>, &'static GlobalTransform)>,
+    transforms: Query<&'static GlobalTransform>,
     pointer_ray: Res<PointerRay>,
     timestamp: Res<MonotonicTimestamp<PbTriggerAreaResult>>,
 ) {
@@ -278,7 +293,7 @@ fn update_triggers(
 
         let (_, rotation, translation) = gt.to_scale_rotation_translation();
         let report = TriggerReport {
-            triggers: &triggers,
+            transforms: &transforms,
             container,
             translation,
             rotation,
@@ -291,6 +306,7 @@ fn update_triggers(
         report.events(
             &mut scene,
             &colliders,
+            true,
             &previous.scene,
             previous.tick,
             new_colliders.as_deref().unwrap_or(&previous.scene),
@@ -307,6 +323,7 @@ fn update_triggers(
             report.events(
                 &mut scene,
                 &avatar_colliders.collider_data,
+                false,
                 &previous.avatars,
                 previous.tick,
                 new_avatars.as_deref().unwrap_or(&previous.avatars),
@@ -320,6 +337,8 @@ fn update_triggers(
         let new_pointers = match inputs.pointer_ray {
             Some(ray) => {
                 let new_pointers = (!pointer_known).then(|| {
+                    // the pointer is in the area when the area is the first thing on the pointer
+                    // layer that the ray hits, trigger areas included
                     let pointer_hit = colliders.cast_ray_nearest(
                         ray.origin,
                         ray.direction.as_vec3(),
@@ -327,9 +346,9 @@ fn update_triggers(
                         POINTER_LAYER,
                         false,
                         true,
-                        Some(&collider.0),
+                        None,
                     );
-                    if pointer_hit.is_some() {
+                    if pointer_hit.is_some_and(|hit| hit.id == collider.0) {
                         vec![ColliderId::default()]
                     } else {
                         Vec::new()
@@ -338,6 +357,7 @@ fn update_triggers(
                 report.events(
                     &mut scene,
                     &colliders,
+                    false,
                     &previous.pointer,
                     previous.tick,
                     new_pointers.as_deref().unwrap_or(&previous.pointer),
@@ -372,5 +392,232 @@ fn update_triggers(
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::update_world::mesh_collider::regions_of_parcels;
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_component::{DclReader, FromDclReader, SceneEntityId};
+    use dcl_types::SceneId;
+    use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+    use scene_material::SceneBounds;
+
+    const TRIGGER_ID: SceneEntityId = SceneEntityId {
+        id: 512,
+        generation: 0,
+    };
+    const AREA_CENTRE: Vec3 = Vec3::new(8.0, 1.0, -8.0);
+
+    fn groups(layers: u32) -> InteractionGroups {
+        let layers = Group::from_bits_truncate(layers);
+        InteractionGroups::new(layers, layers, InteractionTestMode::And)
+    }
+
+    /// A world with one scene in parcel (0, 0) holding a 4 m trigger area at `AREA_CENTRE` that
+    /// reacts to `mask`.
+    fn world_with_trigger_area(mask: u32) -> (World, Entity) {
+        let regions = regions_of_parcels(&[(0, 0)]);
+        let context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "scene".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            [IVec2::ZERO].into_iter().collect(),
+            regions.clone(),
+            SceneBounds::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        let mut world = World::new();
+        let scene = world
+            .spawn((context, SceneColliderData::for_regions(&regions, 1)))
+            .id();
+        world.init_resource::<AvatarColliders>();
+        world.init_resource::<PointerRay>();
+        world.init_resource::<MonotonicTimestamp<PbTriggerAreaResult>>();
+
+        let area = world.spawn_empty().id();
+        let id = ColliderId::new(TRIGGER_ID, None, 0);
+        let collider = ColliderBuilder::cuboid(2.0, 2.0, 2.0)
+            .sensor(true)
+            .collision_groups(groups(mask))
+            .build();
+        let transform = GlobalTransform::from_translation(AREA_CENTRE);
+        let mut colliders = world.get_mut::<SceneColliderData>(scene).unwrap();
+        colliders.set_collider(&id, collider, Some(area));
+        colliders.update_collider_transform(&id, &transform);
+        world.entity_mut(area).insert((
+            ContainerEntity {
+                container: area,
+                root: scene,
+                container_id: TRIGGER_ID,
+            },
+            MeshCollider::<CtTrigger> {
+                collision_mask: mask,
+                ..Default::default()
+            },
+            HasCollider::<CtTrigger>::new(id),
+            transform,
+        ));
+        (world, scene)
+    }
+
+    /// Adds a solid scene collider (a 1 m cube) on `layers` and returns its scene entity.
+    fn add_scene_collider(
+        world: &mut World,
+        scene: Entity,
+        index: u16,
+        layers: u32,
+        position: Vec3,
+    ) -> SceneEntityId {
+        let scene_entity = SceneEntityId {
+            id: 513 + index,
+            generation: 0,
+        };
+        let entity = world
+            .spawn(GlobalTransform::from_translation(position))
+            .id();
+        world
+            .get_mut::<RendererSceneContext>(scene)
+            .unwrap()
+            .associate_bevy_entity(scene_entity, entity);
+        let id = ColliderId::new(scene_entity, None, 0);
+        let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+            .collision_groups(groups(layers))
+            .build();
+        let mut colliders = world.get_mut::<SceneColliderData>(scene).unwrap();
+        colliders.set_collider(&id, collider, Some(entity));
+        colliders.update_collider_transform(&id, &GlobalTransform::from_translation(position));
+        scene_entity
+    }
+
+    fn point_pointer_ray_at_area(world: &mut World, from_x: f32) {
+        world.insert_resource(PointerRay(Some(Ray3d::new(
+            Vec3::new(from_x, 1.0, -1.0),
+            Dir3::NEG_Z,
+        ))));
+    }
+
+    fn results(world: &mut World, scene: Entity) -> Vec<PbTriggerAreaResult> {
+        world.run_system_once(update_triggers).unwrap();
+        let context = world.get::<RendererSceneContext>(scene).unwrap();
+        context
+            .crdt_store
+            .go
+            .get(&SceneComponentId::TRIGGER_AREA_RESULT)
+            .and_then(|state| state.0.get(&TRIGGER_ID))
+            .into_iter()
+            .flatten()
+            .map(|entry| {
+                PbTriggerAreaResult::from_reader(&mut DclReader::new(&entry.data)).unwrap()
+            })
+            .collect()
+    }
+
+    fn event_types(results: &[PbTriggerAreaResult]) -> Vec<i32> {
+        results.iter().map(|result| result.event_type).collect()
+    }
+
+    #[test]
+    fn a_pointer_trigger_area_is_entered_when_the_pointer_ray_hits_it_first() {
+        let pointer = ColliderLayer::ClPointer as u32;
+        let (mut world, scene) = world_with_trigger_area(pointer);
+        add_scene_collider(&mut world, scene, 0, pointer, Vec3::new(8.0, 1.0, -14.0));
+        point_pointer_ray_at_area(&mut world, 8.0);
+
+        let results = results(&mut world, scene);
+
+        assert_eq!(
+            event_types(&results),
+            [TriggerAreaEventType::TaetEnter as i32]
+        );
+    }
+
+    #[test]
+    fn a_pointer_trigger_area_is_not_entered_when_another_pointer_collider_is_in_front() {
+        let pointer = ColliderLayer::ClPointer as u32;
+        let (mut world, scene) = world_with_trigger_area(pointer);
+        add_scene_collider(&mut world, scene, 0, pointer, Vec3::new(8.0, 1.0, -3.0));
+        point_pointer_ray_at_area(&mut world, 8.0);
+
+        assert!(results(&mut world, scene).is_empty());
+    }
+
+    #[test]
+    fn a_pointer_trigger_area_is_not_entered_when_the_pointer_ray_only_hits_another_collider() {
+        let pointer = ColliderLayer::ClPointer as u32;
+        let (mut world, scene) = world_with_trigger_area(pointer);
+        add_scene_collider(&mut world, scene, 0, pointer, Vec3::new(13.0, 1.0, -8.0));
+        point_pointer_ray_at_area(&mut world, 13.0);
+
+        assert!(results(&mut world, scene).is_empty());
+    }
+
+    #[test]
+    fn an_avatar_entering_a_trigger_area_reports_its_layers_and_position() {
+        let (mut world, scene) = world_with_trigger_area(ColliderLayer::ClPlayer as u32);
+        let avatar = world
+            .spawn(GlobalTransform::from_translation(AREA_CENTRE))
+            .id();
+        let layers = ColliderLayer::ClPlayer as u32 | ColliderLayer::ClMainPlayer as u32;
+        let id = ColliderId::new(SceneEntityId::PLAYER, None, 0);
+        let mut avatar_colliders = world.resource_mut::<AvatarColliders>();
+        avatar_colliders.collider_data.set_collider(
+            &id,
+            ColliderBuilder::capsule_y(0.5, 0.25)
+                .collision_groups(groups(layers))
+                .build(),
+            Some(avatar),
+        );
+        avatar_colliders
+            .collider_data
+            .update_collider_transform(&id, &GlobalTransform::from_translation(AREA_CENTRE));
+
+        let results = results(&mut world, scene);
+
+        assert_eq!(
+            event_types(&results),
+            [TriggerAreaEventType::TaetEnter as i32]
+        );
+        let trigger = results[0].trigger.as_ref().unwrap();
+        assert_eq!(trigger.layers, layers);
+        assert_eq!(
+            trigger.position,
+            Some(Vector3::world_vec_from_vec3(&AREA_CENTRE))
+        );
+    }
+
+    #[test]
+    fn a_scene_collider_entering_a_trigger_area_reports_its_layers_and_its_entitys_position() {
+        let physics = ColliderLayer::ClPhysics as u32;
+        let layers = physics | ColliderLayer::ClPointer as u32;
+        let (mut world, scene) = world_with_trigger_area(physics);
+        let position = AREA_CENTRE + Vec3::X;
+        let entered = add_scene_collider(&mut world, scene, 0, layers, position);
+
+        let results = results(&mut world, scene);
+
+        assert_eq!(
+            event_types(&results),
+            [TriggerAreaEventType::TaetEnter as i32]
+        );
+        let trigger = results[0].trigger.as_ref().unwrap();
+        assert_eq!(trigger.entity, entered.as_proto_u32().unwrap());
+        assert_eq!(trigger.layers, layers);
+        assert_eq!(
+            trigger.position,
+            Some(Vector3::world_vec_from_vec3(&position))
+        );
     }
 }

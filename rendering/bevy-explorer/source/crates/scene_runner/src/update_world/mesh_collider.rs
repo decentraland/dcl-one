@@ -1780,6 +1780,13 @@ fn update_scene_collider_data(
 #[derive(Component)]
 pub struct HasCollider<T: ColliderType>(pub ColliderId, PhantomData<fn() -> T>);
 
+impl<T: ColliderType> HasCollider<T> {
+    #[cfg(test)]
+    pub(crate) fn new(id: ColliderId) -> Self {
+        Self(id, PhantomData)
+    }
+}
+
 // collider state component
 #[derive(Component)]
 pub struct HasTrigger(pub ColliderId);
