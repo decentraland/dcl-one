@@ -51,6 +51,7 @@ use crate::subscriptions::delivery::{
     LEASE, Outcome, PassSummary, RenderedEmail, escape_html, outcome_after,
 };
 
+use super::metrics;
 use super::stripe::StripeClient;
 
 pub const JOB_NAME: &str = "credits-purchase-receipts";
@@ -277,13 +278,13 @@ pub async fn claim(pool: &PgPool, now: NaiveDateTime, limit: i64) -> sqlx::Resul
 
 /// Records an outcome, guarded on the claim (still `pending`, same attempt):
 /// a row another worker claimed after this lease ended is left to it. A
-/// terminal row drops its address.
+/// terminal row drops its address. True when this claim's outcome landed.
 pub async fn record(
     pool: &PgPool,
     claimed: &Claimed,
     now: NaiveDateTime,
     outcome: &Outcome,
-) -> sqlx::Result<()> {
+) -> sqlx::Result<bool> {
     let query = match outcome {
         Outcome::Sent(message_id) => sqlx::query(
             "UPDATE credits.purchase_receipts SET status = 'sent', sent_at = $3, provider_message_id = $4, \
@@ -323,8 +324,7 @@ pub async fn record(
             .bind(error)
         }
     };
-    query.execute(pool).await?;
-    Ok(())
+    Ok(query.execute(pool).await?.rows_affected() == 1)
 }
 
 /// Where the receipt goes: the address on the row (the settling session
@@ -466,7 +466,14 @@ pub async fn run_pass(
             }
             Outcome::Retry { .. } => {}
         }
-        record(pool, row, now_utc(), &outcome).await?;
+        if record(pool, row, now_utc(), &outcome).await? {
+            match &outcome {
+                Outcome::Sent(_) => metrics::receipt("sent"),
+                Outcome::Skipped(_) => metrics::receipt("skipped"),
+                Outcome::Failed(_) => metrics::receipt("failed"),
+                Outcome::Retry { .. } => {}
+            }
+        }
     }
     Ok(summary)
 }

@@ -15,6 +15,7 @@ use chrono::NaiveDateTime;
 use sqlx::Row;
 
 use super::errors::ApiError;
+use super::metrics::{self, Pledge};
 use super::store::{Credits, now};
 use crate::types::{ManaUsdRate, ManaWei, UsdCents};
 
@@ -419,6 +420,7 @@ impl Credits {
             .await?;
         }
         tx.commit().await?;
+        metrics::pledges(Pledge::Authorized, 1);
         Ok(Ok(ReserveOutcome {
             id: g.id.to_string(),
             amount_wei: g.amount_wei.to_string(),
@@ -453,15 +455,18 @@ impl Credits {
     /// tick runs these same CTEs (`alerts::expiry_ctes`).
     pub async fn expire_stale_authorizations(&self) -> Result<u64, ApiError> {
         let sql = format!(
-            "WITH {} SELECT count(*) FROM expired",
+            "WITH {} SELECT status FROM expired",
             super::alerts::expiry_ctes("$1", "$2")
         );
-        let expired: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        let statuses: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(now())
             .bind(self.usage_chain)
-            .fetch_one(&self.pool)
+            .fetch_all(&self.pool)
             .await?;
-        Ok(expired as u64)
+        let released = statuses.iter().filter(|s| *s == "released").count() as u64;
+        metrics::pledges(Pledge::Released, released);
+        metrics::pledges(Pledge::Expired, statuses.len() as u64 - released);
+        Ok(statuses.len() as u64)
     }
 
     pub async fn insert_authorization(&self, a: &NewAuthorization<'_>) -> Result<(), ApiError> {
@@ -481,6 +486,7 @@ impl Credits {
         .bind(a.expires_at)
         .execute(&self.pool)
         .await?;
+        metrics::pledges(Pledge::Authorized, 1);
         Ok(())
     }
 
@@ -502,6 +508,7 @@ impl Credits {
         .bind(now())
         .fetch_all(&self.pool)
         .await?;
+        metrics::pledges(Pledge::Retired, rows.len() as u64);
         let latest = rows
             .iter()
             .map(|r| r.get::<NaiveDateTime, _>("expires_at"))

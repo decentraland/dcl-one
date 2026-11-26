@@ -149,7 +149,7 @@ pub(crate) fn expiry_ctes(now: &str, chain: &str) -> String {
         "expired AS ( \
              UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
              WHERE status IN ('authorized', 'retired') AND expires_at <= {bound} \
-             RETURNING id, address, usd_cents, amount_wei, submitted_tx_hash, contract_address, item_id, created_at \
+             RETURNING id, status, address, usd_cents, amount_wei, submitted_tx_hash, contract_address, item_id, created_at \
          ), submitted_unconsumed AS ( \
              INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
              SELECT '{SUBMITTED_UNCONSUMED}', e.id, \

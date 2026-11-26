@@ -24,6 +24,7 @@ use sqlx::Row;
 
 use super::errors::ApiError;
 use super::escrow::{Broker, BrokerError, BuyRequest};
+use super::metrics::{self, Pledge};
 use super::pricing::{
     Pricing, TradeLookup, charge_is_positive, payment_is_positive, split_validated_decimal,
 };
@@ -108,7 +109,8 @@ const OUTBOX_TICK_REST: &str = "purged AS ( \
                  AND b.status IN ('sent', 'bought', 'forwarding', 'confirmed')))) \
          ORDER BY o.id LIMIT 50 \
      ) \
-     SELECT 'expired' AS kind, count(*)::bigint AS id, NULL::text AS address FROM expired \
+     SELECT 'expired' AS kind, count(*) FILTER (WHERE status = 'expired')::bigint AS id, NULL::text AS address FROM expired \
+     UNION ALL SELECT 'released', count(*) FILTER (WHERE status = 'released')::bigint, NULL FROM expired \
      UNION ALL SELECT 'alerted', (SELECT count(*) FROM submitted_unconsumed) + (SELECT count(*) FROM repeated_expiry), NULL \
      UNION ALL SELECT 'captcha_purged', count(*)::bigint, NULL FROM purged \
      UNION ALL SELECT 'reversing', id, address FROM reversing \
@@ -172,6 +174,7 @@ impl OutboxWorker {
             .await?;
         let mut expired = 0i64;
         let mut alerted = 0i64;
+        let mut released = 0i64;
         let mut captcha_purged = 0i64;
         let mut reversing: Vec<(i64, String)> = Vec::new();
         let mut candidates: Vec<i64> = Vec::new();
@@ -179,13 +182,20 @@ impl OutboxWorker {
             match r.get::<String, _>("kind").as_str() {
                 "expired" => expired = r.get("id"),
                 "alerted" => alerted = r.get("id"),
+                "released" => released = r.get("id"),
                 "captcha_purged" => captcha_purged = r.get("id"),
                 "reversing" => reversing.push((r.get("id"), r.get("address"))),
                 _ => candidates.push(r.get("id")),
             }
         }
-        if expired > 0 {
-            tracing::info!(expired, "swept stale credit authorizations to 'expired'");
+        metrics::pledges(Pledge::Expired, expired.max(0) as u64);
+        metrics::pledges(Pledge::Released, released.max(0) as u64);
+        if expired > 0 || released > 0 {
+            tracing::info!(
+                expired,
+                released,
+                "swept stale credit authorizations to 'expired' and 'released'"
+            );
         }
         if alerted > 0 {
             tracing::warn!(alerted, "the expiry sweep queued credits alerts");

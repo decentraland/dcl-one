@@ -69,7 +69,10 @@
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
 //! the log either way), and `credits-purchase-receipts` (the receipt
-//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Not carried: the `ts-rs`
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Metrics: the
+//! Prometheus families in `metrics.rs`, recorded by serve after each fact's
+//! commit (its doc maps credits-server's series to them).
+//! Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -95,6 +98,7 @@ pub mod goals;
 pub mod handlers;
 pub mod history;
 pub mod ledger_stats;
+pub mod metrics;
 pub mod money;
 pub mod orders;
 pub mod packs;
@@ -115,6 +119,8 @@ pub mod writes;
 
 #[cfg(test)]
 mod alerts_tests;
+#[cfg(test)]
+mod metrics_tests;
 #[cfg(test)]
 mod receipts_tests;
 #[cfg(test)]
@@ -1007,6 +1013,8 @@ impl State {
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
         let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
+        // The pass's gauges are cleared when the lease they were set under ends.
+        let gauges = Arc::new(metrics::LeaseGauges::usage_index());
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -1017,6 +1025,7 @@ impl State {
             move |ctx| {
                 let index = index.clone();
                 let gate = gate.clone();
+                gauges.arm(&ctx.cancel);
                 async move {
                     index
                         .gated_pass(Some(&ctx), &gate, writes_enabled)

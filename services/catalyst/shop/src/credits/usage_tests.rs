@@ -114,7 +114,7 @@ pub(super) fn salt() -> String {
     format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2))
 }
 
-fn usage_settings(
+pub(super) fn usage_settings(
     rpc: &str,
     chain_id: i64,
     contract: &str,
