@@ -36,17 +36,17 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let registry = FakeRegistry::up();
-    let state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         Some(registry_index(&committee, &registry).await),
         crate::Settings {
             writes_enabled: true,
             ..settings
         },
+        |_| {},
     )
     .await;
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
     let app = match state.registry_indexed() {
         true => registry.published(&pool, app),
         false => app,
@@ -1389,6 +1389,7 @@ async fn a_save_queued_behind_the_approval_leaves_the_approved_content() {
     let (id, item, urn) = submitted(&w).await;
     let reviewed = newest_curation(&w, item).await.1;
     let mut holder = w.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .execute(&mut *holder)
@@ -1406,13 +1407,19 @@ async fn a_save_queued_behind_the_approval_leaves_the_approved_content() {
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&w.pool, holding, 1).await,
+        "the approval waits for the collection"
+    );
     let w = Arc::new(w);
     let saving = {
         let w = w.clone();
         tokio::spawn(async move { edit(&w, id, item, &urn, "edited while approving").await })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&w.pool, holding, 2).await,
+        "the save queues behind the approval"
+    );
     holder.commit().await.unwrap();
     assert_eq!(approve.await.unwrap().0, 200);
     let edited = saving.await.unwrap();
@@ -1617,6 +1624,7 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
             .await
             .unwrap();
     let mut holder = w.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .execute(&mut *holder)
@@ -1673,7 +1681,8 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
             })
         }),
     ];
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let queued =
+        super::support::blocked_by(&w.pool, holding, i64::try_from(writes.len()).unwrap()).await;
     let ran: Vec<&str> = writes
         .iter()
         .filter(|(_, write)| write.is_finished())
@@ -1684,7 +1693,7 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
         write.await.unwrap();
     }
     assert!(
-        ran.is_empty(),
+        queued && ran.is_empty(),
         "{ran:?} ran while another write held the collection"
     );
 }

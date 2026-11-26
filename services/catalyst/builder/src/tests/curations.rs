@@ -10,13 +10,19 @@ use super::support::scratch_pool;
 
 const OWNER: &str = "0x1111111111111111111111111111111111111111";
 const CURATOR: &str = "0x2222222222222222222222222222222222222222";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:curations";
+/// A provider id of the calling test's own.
+fn provider() -> String {
+    format!(
+        "urn:decentraland:matic:collections-thirdparty:curations-{}",
+        Uuid::new_v4().simple()
+    )
+}
 
 fn content_hash() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-async fn collection(pool: &PgPool, third_party: bool) -> Uuid {
+async fn collection(pool: &PgPool, provider: Option<&str>) -> Uuid {
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) \
@@ -24,8 +30,8 @@ async fn collection(pool: &PgPool, third_party: bool) -> Uuid {
     )
     .bind(id)
     .bind(OWNER)
-    .bind(third_party.then_some(PROVIDER))
-    .bind(third_party.then(|| format!("{PROVIDER}:{}", id.simple())))
+    .bind(provider)
+    .bind(provider.map(|p| format!("{p}:{}", id.simple())))
     .execute(pool)
     .await
     .unwrap();
@@ -87,7 +93,7 @@ async fn a_collection_curation_keeps_its_review_and_refuses_what_upstream_never_
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, false).await;
+    let c = collection(&pool, None).await;
     let insert = |values: &str| {
         format!(
             "INSERT INTO builder.collection_curations \
@@ -173,10 +179,11 @@ async fn a_collection_curation_keeps_its_review_and_refuses_what_upstream_never_
 
 #[tokio::test]
 async fn an_item_curation_names_the_reviewed_content_once_per_instant() {
+    let provider = provider();
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let i = item(&pool, collection(&pool, true).await).await;
+    let i = item(&pool, collection(&pool, Some(&provider)).await).await;
     let insert = |status: &str, hash: &str, at: &str| {
         format!(
             "INSERT INTO builder.item_curations (id, item_id, status, content_hash, is_mapping_complete, created_at, updated_at) \
@@ -217,7 +224,7 @@ async fn a_collection_event_is_one_of_upstreams_and_a_verdict_is_recorded_once()
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, false).await;
+    let c = collection(&pool, None).await;
     let insert = |kind: &str, actor: &str, address: &str, payload: &str| {
         format!(
             "INSERT INTO builder.collection_events (id, collection_id, type, actor, actor_address, payload) \
@@ -306,16 +313,17 @@ async fn a_collection_event_is_one_of_upstreams_and_a_verdict_is_recorded_once()
 
 #[tokio::test]
 async fn a_slot_cheque_is_a_signed_unused_salt_of_its_collections_provider() {
+    let provider = provider();
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let salt = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let signature = format!("0x{}1b", "ab".repeat(64));
     let insert = |salt: &str, signature: &str, qty: i32| {
         format!(
             "INSERT INTO builder.slot_usage_cheques (id, collection_id, third_party_id, signature, salt, qty) \
-             VALUES ('{}', '{c}', '{PROVIDER}', '{signature}', '{salt}', {qty})",
+             VALUES ('{}', '{c}', '{provider}', '{signature}', '{salt}', {qty})",
             Uuid::new_v4()
         )
     };
@@ -349,10 +357,11 @@ async fn a_slot_cheque_is_a_signed_unused_salt_of_its_collections_provider() {
 
 #[tokio::test]
 async fn a_deleted_collection_takes_its_curations_and_events_and_keeps_a_cheque() {
+    let provider = provider();
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let i = item(&pool, c).await;
     accepted(
         &pool,
@@ -398,12 +407,12 @@ async fn a_deleted_collection_takes_its_curations_and_events_and_keeps_a_cheque(
         "a collection's curations and events go with it"
     );
 
-    let cheque = collection(&pool, true).await;
+    let cheque = collection(&pool, Some(&provider)).await;
     accepted(
         &pool,
         &format!(
             "INSERT INTO builder.slot_usage_cheques (id, collection_id, third_party_id, signature, salt, qty) \
-             VALUES ('{}', '{cheque}', '{PROVIDER}', '0x{}1c', '0x{}{}', 1)",
+             VALUES ('{}', '{cheque}', '{provider}', '0x{}1c', '0x{}{}', 1)",
             Uuid::new_v4(),
             "cd".repeat(64),
             Uuid::new_v4().simple(),
@@ -419,7 +428,7 @@ async fn a_deleted_collection_takes_its_curations_and_events_and_keeps_a_cheque(
     let kept: Vec<Option<Uuid>> = sqlx::query_scalar(
         "SELECT collection_id FROM builder.slot_usage_cheques WHERE third_party_id = $1",
     )
-    .bind(PROVIDER)
+    .bind(&provider)
     .fetch_all(&pool)
     .await
     .unwrap();
@@ -434,7 +443,7 @@ async fn a_forum_link_is_an_https_url_and_a_forum_id_comes_with_one() {
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, false).await;
+    let c = collection(&pool, None).await;
     let set = |link: &str, id: &str| {
         format!(
             "UPDATE builder.collections SET forum_link = {link}, forum_id = {id} WHERE id = '{c}'"
@@ -484,7 +493,7 @@ async fn a_collection_contract_address_is_stored_lowercase() {
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, false).await;
+    let c = collection(&pool, None).await;
     let contract = format!("0x{}abcdef01", c.simple());
     let set = |address: &str| {
         format!("UPDATE builder.collections SET contract_address = '{address}' WHERE id = '{c}'")
@@ -503,7 +512,7 @@ async fn a_forum_claim_is_held_only_by_a_collection_without_a_link() {
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, false).await;
+    let c = collection(&pool, None).await;
     let set = |link: &str, claim: &str| {
         format!(
             "UPDATE builder.collections SET forum_link = {link}, forum_claimed_at = {claim} WHERE id = '{c}'"
@@ -577,14 +586,15 @@ fn linked_release() -> String {
 
 #[tokio::test]
 async fn the_linked_publications_release_keeps_each_submitted_cheque_and_repeats() {
+    let provider = provider();
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
         return;
     };
     legacy_linked_publications(&pool, false).await;
-    let submitted = collection(&pool, true).await;
-    let authorized = collection(&pool, true).await;
-    let prepared = collection(&pool, true).await;
-    let standard = collection(&pool, false).await;
+    let submitted = collection(&pool, Some(&provider)).await;
+    let authorized = collection(&pool, Some(&provider)).await;
+    let prepared = collection(&pool, Some(&provider)).await;
+    let standard = collection(&pool, None).await;
     let salt = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
     let signature = format!("0x{}00", "AB".repeat(64));
     for (id, status, cheque) in [
@@ -653,7 +663,7 @@ async fn the_linked_publications_release_keeps_each_submitted_cheque_and_repeats
         cheques,
         [(
             submitted,
-            PROVIDER.to_string(),
+            provider.clone(),
             format!("0x{}1b", "ab".repeat(64)),
             salt(1),
             2,
@@ -670,11 +680,12 @@ async fn the_linked_publications_release_keeps_each_submitted_cheque_and_repeats
 /// signature is refused by name, and the release changes nothing.
 #[tokio::test]
 async fn the_linked_publications_release_refuses_a_cheque_missing_a_field() {
+    let provider = provider();
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
         return;
     };
     legacy_linked_publications(&pool, false).await;
-    let submitted = collection(&pool, true).await;
+    let submitted = collection(&pool, Some(&provider)).await;
     let salt = format!("0x{}", "01".repeat(32));
     let signature = format!("0x{}1b", "ab".repeat(64));
     for cheque in [
@@ -758,11 +769,12 @@ async fn the_linked_publications_release_needs_its_step_and_the_forum_release() 
 
 #[tokio::test]
 async fn a_linked_forum_release_preserves_links_and_repeats_without_a_second_source() {
+    let provider = provider();
     let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
         return;
     };
-    let copied = collection(&pool, true).await;
-    let kept = collection(&pool, true).await;
+    let copied = collection(&pool, Some(&provider)).await;
+    let kept = collection(&pool, Some(&provider)).await;
     legacy_linked_publications(&pool, true).await;
     for id in [copied, kept] {
         sqlx::query("INSERT INTO builder.linked_collection_publications (collection_id, preparation, snapshot, salt, status, forum_url) VALUES ($1, '{\"revision\":\"revision\"}', '{}', '0x' || replace($1::text, '-', '') || replace($1::text, '-', ''), 'prepared', 'https://forum.example.org/t/linked/7')")
@@ -923,6 +935,7 @@ async fn admin_patch(
 
 #[tokio::test]
 async fn the_operators_status_patch_decides_the_newest_curation_of_a_submitted_item() {
+    let provider = provider();
     let Some(pool) = scratch_pool(4).await else {
         return;
     };
@@ -937,7 +950,7 @@ async fn the_operators_status_patch_decides_the_newest_curation_of_a_submitted_i
     )
     .await;
     let app = crate::router(state);
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let (submitted, unsubmitted) = (item(&pool, c).await, item(&pool, c).await);
     sqlx::query("UPDATE builder.items SET local_content_hash = $2 WHERE collection_id = $1")
         .bind(c)
@@ -987,7 +1000,7 @@ async fn the_operators_status_patch_decides_the_newest_curation_of_a_submitted_i
     assert_eq!(statuses(&pool, submitted).await, ["approved", "approved"]);
     assert_eq!(statuses(&pool, unsubmitted).await, Vec::<String>::new());
 
-    let other = collection(&pool, true).await;
+    let other = collection(&pool, Some(&provider)).await;
     let anchor = item(&pool, other).await;
     curate(&pool, anchor, "approved", "2025-01-01").await;
     let (status, _) = admin_patch(
@@ -1005,10 +1018,11 @@ async fn the_operators_status_patch_decides_the_newest_curation_of_a_submitted_i
 
 #[tokio::test]
 async fn a_recorded_item_curation_is_the_items_newest_even_twice_in_one_transaction() {
+    let provider = provider();
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let i = item(&pool, collection(&pool, true).await).await;
+    let i = item(&pool, collection(&pool, Some(&provider)).await).await;
     curate(&pool, i, "approved", "2999-01-01").await;
     let mut tx = pool.begin().await.unwrap();
     crate::curation::record_item_curation(&mut tx, i, "pending", &content_hash(), false)
@@ -1026,11 +1040,12 @@ async fn a_recorded_item_curation_is_the_items_newest_even_twice_in_one_transact
 
 #[tokio::test]
 async fn a_collection_is_mapping_complete_only_while_no_item_curation_says_otherwise() {
+    let provider = provider();
     let Some(store) = super::support::scratch_component().await else {
         return;
     };
     let pool = store.pool().clone();
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let i = item(&pool, c).await;
     sqlx::query("UPDATE builder.items SET mappings = '{\"mainnet\": {}}' WHERE id = $1")
         .bind(i)
@@ -1079,16 +1094,20 @@ async fn a_collection_is_mapping_complete_only_while_no_item_curation_says_other
 
 #[tokio::test]
 async fn an_address_listing_of_published_collections_counts_a_curated_third_party_one() {
+    let provider = provider();
     let Some(store) = super::support::scratch_component().await else {
         return;
     };
     let pool = store.pool().clone();
-    let (curated, uncurated) = (collection(&pool, true).await, collection(&pool, true).await);
+    let (curated, uncurated) = (
+        collection(&pool, Some(&provider)).await,
+        collection(&pool, Some(&provider)).await,
+    );
     let i = item(&pool, curated).await;
     item(&pool, curated).await;
     item(&pool, uncurated).await;
     curate(&pool, i, "pending", "2025-01-01").await;
-    let wallet = crate::access::granted::managing(OWNER, &[PROVIDER]);
+    let wallet = crate::access::granted::managing(OWNER, &[provider.as_str()]);
     let listed = async |q: &str| -> Vec<String> {
         let query = crate::collections::listing::ListQuery::parse(Some(q));
         let request = crate::collections::listing::OwnListing::new(&wallet, &query).unwrap();
@@ -1120,10 +1139,11 @@ fn scans(plan: &serde_json::Value, alias: &str) -> f64 {
 
 #[tokio::test]
 async fn a_list_of_curated_items_reads_each_items_curation_once_and_its_collection_never() {
+    let provider = provider();
     let Some(pool) = scratch_pool(2).await else {
         return;
     };
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let mut ids = Vec::new();
     for n in 0..40 {
         let i = item(&pool, c).await;
@@ -1159,17 +1179,18 @@ async fn a_list_of_curated_items_reads_each_items_curation_once_and_its_collecti
 
 #[tokio::test]
 async fn every_read_of_an_items_newest_curation_takes_the_last_created_one() {
+    let provider = provider();
     let Some(store) = super::support::scratch_component().await else {
         return;
     };
     let pool = store.pool().clone();
-    let c = collection(&pool, true).await;
+    let c = collection(&pool, Some(&provider)).await;
     let i = item(&pool, c).await;
     sqlx::query(
         "UPDATE builder.items SET mappings = '{\"mainnet\": {}}', urn_suffix = $2 || ':hat' WHERE id = $1",
     )
     .bind(i)
-    .bind(format!("{PROVIDER}:{}", c.simple()))
+    .bind(format!("{provider}:{}", c.simple()))
     .execute(&pool)
     .await
     .unwrap();
@@ -1228,11 +1249,12 @@ async fn created(pool: &PgPool, table: &str, key: &str, id: Uuid) -> Vec<chrono:
 
 #[tokio::test]
 async fn collection_curations_recorded_together_are_each_newer_than_the_last() {
+    let provider = provider();
     let Some(pool) = scratch_pool(4).await else {
         return;
     };
-    let c = collection(&pool, true).await;
-    let grant = crate::access::granted::third_party_publish(OWNER, c, PROVIDER);
+    let c = collection(&pool, Some(&provider)).await;
+    let grant = crate::access::granted::third_party_publish(OWNER, c, &provider);
     accepted(
         &pool,
         &format!(
@@ -1297,11 +1319,12 @@ async fn writers_queue(
 
 #[tokio::test]
 async fn concurrent_writers_of_one_collections_curations_queue_behind_its_lock() {
+    let provider = provider();
     let Some(pool) = scratch_pool(4).await else {
         return;
     };
-    let c = collection(&pool, true).await;
-    let grant = crate::access::granted::third_party_publish(OWNER, c, PROVIDER);
+    let c = collection(&pool, Some(&provider)).await;
+    let grant = crate::access::granted::third_party_publish(OWNER, c, &provider);
     writers_queue(
         &pool,
         "collection_curations",

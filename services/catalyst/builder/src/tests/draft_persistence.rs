@@ -405,6 +405,7 @@ async fn a_name_another_save_is_claiming_is_refused_once_that_save_commits() {
     let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
     let name = format!("Claimed {}", &first.simple().to_string()[..8]);
     let mut claim = store.pool().begin().await.unwrap();
+    let claimer = super::support::backend_pid(&mut claim).await;
     sqlx::query(
         "SELECT pg_advisory_xact_lock(hashtextextended('builder.collections name:' || lower($1), 0))",
     )
@@ -421,8 +422,10 @@ async fn a_name_another_save_is_claiming_is_refused_once_that_save_commits() {
             save_collection(&store, OTHER, json!({ "id": second, "name": name })).await
         })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(!waiting.is_finished(), "the second save waits for the name");
+    assert!(
+        super::support::blocked_by(store.pool(), claimer, 1).await && !waiting.is_finished(),
+        "the second save waits for the name"
+    );
     sqlx::query("INSERT INTO builder.collections (id, name, eth_address) VALUES ($1, $2, $3)")
         .bind(first)
         .bind(&name)

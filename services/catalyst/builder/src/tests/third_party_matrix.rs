@@ -153,24 +153,18 @@ async fn world() -> Option<World> {
     .execute(&pool)
     .await
     .unwrap();
-    let mut state = crate::State::new(
-        pool.clone(),
+    let super::support::Node { pool, state, .. } = super::support::node_over(
+        pool,
         storage.clone(),
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
-        dcl_http::Outbound::for_tests(),
         Some(registry_index(&committee, &registry).await),
-        None,
-        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: true,
             validator_secret: Some("example-validator-secret-0123456789abcdef".into()),
             ..crate::Settings::default()
         },
+        |state| state.limits = crate::limits::Limits::unbounded(),
     )
-    .unwrap();
-    state.limits = crate::limits::Limits::unbounded();
-    let state = Arc::new(state);
+    .await;
     let app = registry.published(&pool, crate::root_router(state.clone()));
     Some(World {
         pool,
