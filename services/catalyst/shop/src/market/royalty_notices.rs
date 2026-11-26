@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
-use super::catalogue::{self, ItemWait};
+use super::catalogue::{self, ItemWait, Waited};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use crate::jobs::{Jobs, PeriodicCfg};
@@ -270,25 +270,42 @@ async fn drain(
                 .map(SaleRow::from_row)
                 .collect::<Result<Vec<_>, _>>()?
         };
-        // A sale holds the cursor while `ItemWait::awaited`: under the
+        // A sale holds the cursor while `ItemWait::decide` says so: under the
         // mirrors, a bid sale of an item they lack, as the badge processor's
         // do; on an owned network, any sale the publication does not cover
         // yet, since its item row picks the recipient. The wait comes from
         // the statement that joined the items.
         let wait = ItemWait::from_row(first, NET.chain_id(), now)?;
-        let held = rows.iter().position(|row| {
-            wait.awaited(
-                items_mirror_enabled && venue == Venue::Bids,
-                row.mirrored,
-                row.block_number,
-                row.block_time,
-                now.timestamp(),
-            )
-        });
+        let decisions: Vec<Waited> = rows
+            .iter()
+            .map(|row| {
+                wait.decide(
+                    items_mirror_enabled && venue == Venue::Bids,
+                    row.mirrored,
+                    row.block_number,
+                    row.block_time,
+                    now.timestamp(),
+                )
+            })
+            .collect();
+        let held = decisions.iter().position(|d| *d == Waited::Hold);
         let ready = &rows[..held.unwrap_or(rows.len())];
+        for (row, _) in ready
+            .iter()
+            .zip(&decisions)
+            .filter(|(_, d)| **d == Waited::Skip)
+        {
+            tracing::warn!(
+                block = row.block_number,
+                log = row.log_index,
+                "royalties_earned: the collections index has not covered this sale for a day; it is not announced"
+            );
+        }
         let batch: Vec<NewNotification> = ready
             .iter()
-            .filter_map(|row| {
+            .zip(&decisions)
+            .filter(|(_, d)| **d == Waited::Describe)
+            .filter_map(|(row, _)| {
                 let cut = row.cut.as_deref().filter(|c| *c != "0")?;
                 let collector = row
                     .collector
@@ -632,9 +649,61 @@ mod tests {
         .unwrap();
     }
 
-    /// An ERC721BidV2 acceptance pays its item's beneficiary (else creator)
-    /// the pinned cut, also when they sold it themselves; only after the sales
-    /// index publishes, never for history, never twice.
+    /// On a network the collections index owns, a sale the publication has
+    /// not covered for a day passes without a notice: the hold never lasts
+    /// past it, and a row read while the index refuses never picks the
+    /// collector.
+    #[tokio::test]
+    async fn on_an_owned_network_a_sale_past_the_hold_passes_without_a_notice() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        let token = |item: u32| (alloy_primitives::U256::from(item) << 216usize).to_string();
+        let seller = "0x00000000000000000000000000000000000000aa";
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        run_bids_once(&pool, BASE, true).await.unwrap();
+        item(&pool, 7, &token(7), Some(BENEFICIARY)).await;
+        bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
+        sqlx::query(
+            "UPDATE shop.sale_event SET block_time = extract(epoch FROM now())::bigint - $1 - 60 WHERE block_number = 105",
+        )
+        .bind(crate::shared::collections::ITEM_HOLD_MAX_SECS)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 110, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        owning::rewind(&pool, "matic").await;
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        let (block, _): (i64, i32) = sqlx::query_as(
+            "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(block >= 105, "passed: {block}");
+        let stored: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.notifications WHERE type = 'royalties_earned'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, 0, "without a notice");
+    }
+
     /// On a network the collections index owns, a rewind leaves the item
     /// rows in place while it withdraws the publication. A sale whose item
     /// row names beneficiary A then waits; republished with beneficiary B, B
@@ -756,6 +825,9 @@ mod tests {
         assert_eq!(cursor().await, (106, i32::MAX), "passed without effect");
     }
 
+    /// An ERC721BidV2 acceptance pays its item's beneficiary (else creator)
+    /// the pinned cut, also when they sold it themselves; only after the sales
+    /// index publishes, never for history, never twice.
     #[tokio::test]
     async fn published_bid_sales_notify_their_royalty_collector_once() {
         let Ok(base_url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {

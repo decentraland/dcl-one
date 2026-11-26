@@ -1874,6 +1874,23 @@ fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescriptio
 /// The source SQL that describes `contract`'s tokens; a LAND or estate
 /// registry of any network reads that network's rows.
 fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
+    let (catalogue, registry) = registry_of(net, contract, chain_id);
+    match registry {
+        Some(Registry::Land(land)) => land_source(Some(land), false, false, LastSale::default()),
+        Some(Registry::Names) => names_source(catalogue, LastSale::default()),
+        None => collection_source(net, catalogue, LastSale::default()),
+    }
+}
+
+/// A registry whose tokens another source than the catalogue describes.
+enum Registry {
+    Land(LandNetwork),
+    Names,
+}
+
+/// The catalogue `chain_id` names on `net`, and the registry `contract` is
+/// on it, if it is one: a LAND registry or the NAME registrar.
+fn registry_of(net: ChainNet, contract: &str, chain_id: i64) -> (Catalogue, Option<Registry>) {
     let catalogue = if chain_id == net.testnet_chain_id() {
         Catalogue::Testnet
     } else {
@@ -1883,13 +1900,22 @@ fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
         if let Some(land) = land_network_of_registry(contract)
             && Catalogue::from_land(land) == catalogue
         {
-            return land_source(Some(land), false, false, LastSale::default());
+            return (catalogue, Some(Registry::Land(land)));
         }
         if contract == catalogue.registrar() {
-            return names_source(catalogue, LastSale::default());
+            return (catalogue, Some(Registry::Names));
         }
     }
-    collection_source(net, catalogue, LastSale::default())
+    (catalogue, None)
+}
+
+/// Whether the catalogue (`shop.collections`, `shop.items`) describes
+/// `contract`'s tokens on `net`, as [`asset_metas`] reads them: every
+/// contract but the LAND registries and the NAME registrar.
+pub(crate) fn described_by_catalogue(net: ChainNet, contract: &str, chain_id: i64) -> bool {
+    registry_of(net, &contract.to_ascii_lowercase(), chain_id)
+        .1
+        .is_none()
 }
 
 /// [`asset_meta`] of many `(contract, token_id)` at once, one query per
