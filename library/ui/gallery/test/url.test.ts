@@ -95,6 +95,54 @@ describe('when an export shown on another page is requested by its own name', ()
   })
 })
 
+describe('when the components Showcase is one of the pages', () => {
+  const withShowcase = [...components, 'Showcase']
+
+  it('should open it by name at the requested width, in the components canvas', () => {
+    expect(parseRoute('?component=Showcase&width=375', withShowcase, foundations)).toEqual({
+      source: 'runtime',
+      view: 'component',
+      name: 'Showcase',
+      width: 375
+    })
+    expect(canvasHref('component', 'Showcase')).toBe('frame.html?component=Showcase')
+    expect(galleryHref({ component: 'Showcase', width: 1280 })).toBe(
+      '?component=Showcase&width=1280'
+    )
+  })
+
+  it('should keep opening the first component page for a bare or unknown link', () => {
+    expect(parseRoute('', withShowcase, foundations)).toMatchObject({ name: components[0] })
+    expect(parseRoute('?component=Nope', withShowcase, foundations)).toMatchObject({
+      name: components[0],
+      missing: 'Nope'
+    })
+  })
+
+  it('should keep every earlier link opening the page it opened', () => {
+    for (const name of components)
+      expect(parseRoute(`?component=${name}`, withShowcase, foundations)).toEqual(
+        parseRoute(`?component=${name}`, components, foundations)
+      )
+    expect(
+      parseRoute('?hud=Showcase', withShowcase, foundations, {}, { pages: ['Showcase'] })
+    ).toMatchObject({ view: 'hud', name: 'Showcase' })
+    expect(parseRoute('?source=generated&component=Showcase', withShowcase, foundations)).toEqual({
+      source: 'generated',
+      query: 'component=Showcase'
+    })
+  })
+
+  it('should prefer the page over an export that another page shows under the same name', () => {
+    expect(
+      parseRoute('?component=Showcase', withShowcase, foundations, { Showcase: 'Button' })
+    ).toMatchObject({ name: 'Showcase' })
+    expect(
+      parseRoute('?component=Showcase', components, foundations, { Showcase: 'Button' })
+    ).toMatchObject({ name: 'Button', alias: 'Showcase' })
+  })
+})
+
 describe('when a section of the HUD Showcase is requested', () => {
   const hud = { pages: ['Showcase', 'Button', 'MenuPanel'], aliases: { MenuRow: 'MenuPanel' } }
 

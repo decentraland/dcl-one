@@ -274,7 +274,8 @@ check. `test/client-login-storage.test.ts` checks the browser queue's transactio
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
-Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
+Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer,
+and that the chat's `Reactions` button plays a reaction (`/reaction_state`) and keeps its bar open.
 
 `specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
 and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the

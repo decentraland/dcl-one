@@ -31,7 +31,7 @@ pub const SECTION: DebugSection = DebugSection {
         ("With a scene's plate", "plates"),
         ("Hidden", "hidden"),
         ("Glyph atlas (distance field / colour px)", "atlas"),
-        ("Chat bubbles", "bubbles"),
+        ("Chat bubbles and reactions", "bubbles"),
     ],
     actions: &[(
         "Show a test bubble",
