@@ -49,9 +49,12 @@ class CiLocalTest(unittest.TestCase):
     def test_clippy_runs_from_the_catalyst_folder_and_lints_scene_cli_only_changes(self):
         steps = {s.name: s.command for s in ci.pre_push_steps({'services/catalyst/src/lib.rs'})}
         self.assertTrue(steps['catalyst clippy'].startswith('cd services/catalyst && cargo clippy --locked --workspace '))
+        self.assertEqual(steps['catalyst clippy (ts)'], 'cd services/catalyst && cargo clippy --locked '
+                         '--workspace --all-targets --features catalyst/ts -- -D warnings')
         self.assertNotIn('scene cli clippy', steps)
         steps = {s.name: s.command for s in ci.pre_push_steps({'apps/dcl-scene-cli/src/main.rs'})}
         self.assertNotIn('catalyst clippy', steps)
+        self.assertNotIn('catalyst clippy (ts)', steps)
         self.assertEqual(steps['scene cli clippy'],
                          'cd services/catalyst && cargo clippy --locked -p dcl-scene-cli --all-targets -- -D warnings')
 
