@@ -398,6 +398,7 @@ impl Delivery {
         credits: &Credits,
         now: chrono::NaiveDateTime,
     ) -> Result<PassOutcome, ApiError> {
+        let lease_until = now + LEASE;
         let mut claimed: Vec<Claimed> = sqlx::query(
             "UPDATE credits.alerts a SET attempts = a.attempts + 1, next_attempt_at = $2 \
              WHERE a.id IN (SELECT id FROM credits.alerts WHERE status = 'pending' AND next_attempt_at <= $1 \
@@ -405,7 +406,7 @@ impl Delivery {
              RETURNING a.id, a.kind, a.payload, a.attempts, a.created_at",
         )
         .bind(now)
-        .bind(now + LEASE)
+        .bind(lease_until)
         .bind(BATCH)
         .fetch_all(&credits.pool)
         .await?
@@ -461,8 +462,16 @@ impl Delivery {
         for (alerts, text) in messages {
             if let Some(until) = held_until {
                 for alert in &alerts {
-                    retry(credits, alert.id, until, "held while Slack rate limits").await?;
-                    outcome.retried += 1;
+                    let rescheduled = retry(
+                        credits,
+                        alert.id,
+                        lease_until,
+                        until,
+                        "held while Slack rate limits",
+                        true,
+                    )
+                    .await?;
+                    outcome.retried += rescheduled;
                 }
                 continue;
             }
@@ -478,14 +487,16 @@ impl Delivery {
                     let until = clock(now) + wait.unwrap_or_else(|| backoff(attempts));
                     tracing::warn!(attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
                     for alert in &alerts {
-                        retry(
+                        let rescheduled = retry(
                             credits,
                             alert.id,
+                            lease_until,
                             until,
                             "Slack answered 429 Too Many Requests",
+                            false,
                         )
                         .await?;
-                        outcome.retried += 1;
+                        outcome.retried += rescheduled;
                     }
                     held_until = Some(until);
                 }
@@ -493,14 +504,16 @@ impl Delivery {
                     let failed_at = clock(now);
                     for alert in &alerts {
                         tracing::warn!(kind = alert.kind, attempts = alert.attempts, %error, "a credits alert was not delivered; retried with backoff");
-                        retry(
+                        let rescheduled = retry(
                             credits,
                             alert.id,
+                            lease_until,
                             failed_at + backoff(alert.attempts),
                             &error,
+                            false,
                         )
                         .await?;
-                        outcome.retried += 1;
+                        outcome.retried += rescheduled;
                     }
                 }
             }
@@ -538,7 +551,9 @@ impl Delivery {
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.trim().parse::<i64>().ok())
-                .map(|seconds| chrono::Duration::seconds(seconds.max(1)).min(MAX_BACKOFF));
+                .map(|seconds| {
+                    chrono::Duration::seconds(seconds.clamp(1, MAX_BACKOFF.num_seconds()))
+                });
             Err(Refusal::RateLimited(wait))
         } else {
             Err(Refusal::Failed(format!("Slack answered {status}")))
@@ -560,22 +575,27 @@ fn clock(now: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     now.max(super::store::now())
 }
 
-/// Schedules `id`'s next attempt at `at`, keeping why this one failed.
+/// Reschedules this pass's claim, undoing the attempt for an unposted alert.
 async fn retry(
     credits: &Credits,
     id: i64,
+    lease_until: chrono::NaiveDateTime,
     at: chrono::NaiveDateTime,
     error: &str,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3 WHERE id = $1 AND status = 'pending'",
+    unposted: bool,
+) -> Result<usize, ApiError> {
+    let result = sqlx::query(
+        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3, attempts = attempts - $4 \
+         WHERE id = $1 AND status = 'pending' AND next_attempt_at = $5",
     )
     .bind(id)
     .bind(at)
     .bind(error)
+    .bind(i32::from(unposted))
+    .bind(lease_until)
     .execute(&credits.pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() as usize)
 }
 
 async fn finish(
@@ -1152,6 +1172,42 @@ mod unit_tests {
     fn a_batch_of_posts_fits_in_the_lease() {
         let posts = POST_TIMEOUT * BATCH as u32;
         assert!(posts < LEASE.to_std().unwrap(), "{posts:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stale_retry_leaves_the_new_claim_intact() {
+        let Some(db) = crate::test_db::OwnDatabase::create("alerts_stale_retry").await else {
+            return;
+        };
+        let credits = Credits::new(db.pool.clone());
+        let old_lease = now();
+        let new_lease = old_lease + LEASE;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO credits.alerts (kind, dedupe_key, payload, attempts, next_attempt_at) \
+             VALUES ($1, 'stale', '{}'::jsonb, 2, $2) RETURNING id",
+        )
+        .bind(SUBMITTED_UNCONSUMED)
+        .bind(new_lease)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+
+        let rescheduled = retry(&credits, id, old_lease, old_lease + BACKOFF, "held", true)
+            .await
+            .unwrap();
+        assert_eq!(rescheduled, 0);
+
+        let still_claimed: bool = sqlx::query_scalar(
+            "SELECT attempts = 2 AND last_error IS NULL AND next_attempt_at = $2 \
+             FROM credits.alerts WHERE id = $1",
+        )
+        .bind(id)
+        .bind(new_lease)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert!(still_claimed);
+        db.drop().await;
     }
 
     #[test]
