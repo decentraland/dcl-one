@@ -361,27 +361,27 @@
   --lobby-black-60: var(--dcl-transparencies-black-60);
   --lobby-black-80: rgba(0, 0, 0, 0.8);
   --lobby-black-95: rgba(0, 0, 0, 0.95);
-  --lobby-snow: rgb(252, 252, 252);
-  --lobby-silver: rgb(160, 155, 168);
-  --lobby-shadow: rgb(22, 21, 24);
-  --lobby-subtitle: rgb(207, 205, 212);
-  --lobby-grip: rgb(113, 107, 124);
-  --lobby-accent: rgb(255, 45, 85);
+  --lobby-snow: var(--dcl-neutrals-snow);
+  --lobby-silver: var(--dcl-neutrals-silver);
+  --lobby-shadow: var(--dcl-neutrals-shadow);
+  --lobby-subtitle: var(--dcl-neutrals-gray);
+  --lobby-grip: var(--dcl-neutrals-cloudy-sky);
+  --lobby-accent: var(--dcl-primary-primary);
   --lobby-accent-hover: rgb(255, 77, 111);
   --lobby-accent-pressed: rgb(200, 35, 67);
   --lobby-accent-tint: rgb(255, 230, 235);
-  --lobby-view-all-arrow: rgb(204, 29, 44);
-  --lobby-outline-to: rgb(198, 64, 205);
+  --lobby-view-all-arrow: var(--dcl-system-red-dark-2);
+  --lobby-outline-to: var(--dcl-brand-lavender);
   --lobby-live-red: rgb(255, 0, 0);
   --lobby-online-green: rgb(48, 205, 0);
-  --lobby-status-online: rgb(52, 206, 119);
+  --lobby-status-online: var(--dcl-system-green);
   --lobby-status-away: rgb(255, 162, 90);
-  --lobby-friend-hover: rgb(37, 33, 42);
+  --lobby-friend-hover: var(--dcl-neutrals-charcoal);
   --lobby-menu-border: rgb(34, 33, 36);
   --lobby-menu-separator: rgb(42, 41, 44);
-  --lobby-menu-pressed: rgb(45, 42, 51);
+  --lobby-menu-pressed: var(--dcl-neutrals-onix-dark-1);
   --lobby-remove-hover: rgb(43, 42, 46);
-  --lobby-drop-valid: rgb(52, 206, 119);
+  --lobby-drop-valid: var(--dcl-system-green);
   --lobby-drop-valid-edge: rgba(52, 206, 119, 0.5);
   --lobby-drop-valid-fill: rgba(52, 206, 119, 0.1);
   --lobby-drop-invalid-edge: rgba(255, 45, 85, 0.5);
@@ -399,7 +399,7 @@
 
   /* The welcome and guest start pages' panel over the stage. */
   --lobby-card: rgba(20, 20, 26, 0.84);
-  --lobby-ink: rgb(252, 252, 252);
+  --lobby-ink: var(--dcl-neutrals-snow);
   --lobby-ink-dim: rgb(191, 191, 199);
   --rail-dot: var(--dcl-transparencies-white-60);
   --rail-dot-active: rgb(255, 51, 153);
@@ -466,7 +466,7 @@
   /* Transparencies/Overlay 80, kept as the raw design alpha on purpose (not converted like the
      values above): the parcels map's age label matches the web Shop's LAND map label, which a
      browser draws with this value. */
-  --map-age: rgba(38, 38, 38, 0.8);
+  --map-age: var(--dcl-transparencies-overlay-80);
   --map-button-hover: #e7e7e7;
   --map-button-press: #c8c8c8;
   --map-chip-hover: #e0e0e0;
@@ -588,48 +588,48 @@
 [data-rarity='common'] {
   --rm: #73d3d3;
   --rl: #b5fff6;
-  --rarity: #73d3d3;
-  --rarity-light: #acf8f8;
+  --rarity: var(--dcl-rarities-common);
+  --rarity-light: var(--dcl-rarities-common-light);
 }
 [data-rarity='uncommon'] {
   --rm: #ff8362;
   --rl: #ffe0c8;
-  --rarity: #ff8362;
-  --rarity-light: #ffe0b2;
+  --rarity: var(--dcl-rarities-uncommon);
+  --rarity-light: var(--dcl-rarities-uncommon-light);
 }
 [data-rarity='rare'] {
   --rm: #34ce76;
   --rl: #9bf3c2;
-  --rarity: #34ce76;
-  --rarity-light: #73ffaf;
+  --rarity: var(--dcl-rarities-rare);
+  --rarity-light: var(--dcl-rarities-rare-light);
 }
 [data-rarity='epic'] {
   --rm: #438fff;
   --rl: #a9d4ff;
-  --rarity: #438fff;
-  --rarity-light: #81e1ff;
+  --rarity: var(--dcl-rarities-epic);
+  --rarity-light: var(--dcl-rarities-epic-light);
 }
 [data-rarity='legendary'] {
   --rm: #b058ff;
   --rl: #e0c0ff;
-  --rarity: #a14bf3;
-  --rarity-light: #e8b9ff;
+  --rarity: var(--dcl-rarities-legendary);
+  --rarity-light: var(--dcl-rarities-legendary-light);
 }
 [data-rarity='mythic'] {
   --rm: #ff4bec;
   --rl: #ffb0f3;
-  --rarity: #ff4bed;
-  --rarity-light: #f6c1ff;
+  --rarity: var(--dcl-rarities-mythic);
+  --rarity-light: var(--dcl-rarities-mythic-light);
 }
 [data-rarity='unique'] {
   --rm: #ffc747;
   --rl: #ffe6a8;
-  --rarity: #fea217;
-  --rarity-light: #fff280;
+  --rarity: var(--dcl-rarities-unique);
+  --rarity-light: var(--dcl-rarities-unique-light);
 }
 [data-rarity='exotic'] {
   --rm: #a5e242;
   --rl: #d6f59a;
-  --rarity: #9cd71e;
-  --rarity-light: #dbf0ad;
+  --rarity: var(--dcl-rarities-exotic);
+  --rarity-light: var(--dcl-rarities-exotic-light);
 }
