@@ -317,9 +317,10 @@ State, in every build:
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/reaction_state`: the situational reactions, as JSON: `world` (the Chat bubbles and
-  reactions setting lets them show over avatars), `outbox` (the local user's picks not yet
-  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send:
-  none with no room to carry it),
+  reactions setting lets them show over avatars), `picked` (the local user's picks that played,
+  which no peer's reaction moves), `outbox` (the local user's picks not yet sent),
+  `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none with
+  no room to carry it),
   `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
   waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
   frame, and waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
@@ -329,9 +330,9 @@ State, in every build:
   being drawn over their player: no avatar or a hidden one, far from the camera, or the local
   user in first person) and `noGlyphs` (reactions that played with no particle, their emoji not
   laid out or with no glyph in colour). The counts are of the session.
-  `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
-  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
-  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_send <emoji>` reacts as the local user, the way the HUD's Reactions button does: the
+  reaction is sent to the players nearby and reported to analytics, and an emoji the wire has no
+  index for does nothing. The debug panel's "React with a heart" runs it.
   `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
   had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
   replies with the `target` taken and the emoji's wire `index`.

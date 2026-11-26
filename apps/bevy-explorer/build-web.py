@@ -39,6 +39,11 @@ def executable(name):
     return git_bash() if name == 'bash' else shutil.which(name) or name
 
 
+def pnpm():
+    # A shell with pnpm on its PATH sets PNPM=pnpm (nix develop .#wasm does), as the justfile reads it.
+    return tuple(os.environ.get('PNPM', '').split()) or ('corepack', 'pnpm@12.21.0')
+
+
 def run(*args, cwd=SOURCE, env=None):
     started = time.monotonic()
     subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True)
@@ -118,9 +123,9 @@ def web(no_opt=False, engine_cache=None, shared_build=False, performance_profile
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
         installations = [
-            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+            pool.submit(run, *pnpm(), '--dir', 'react-web',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
-            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+            pool.submit(run, *pnpm(), '--dir', 'react-web/bridge-scene',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
         ]
         engine = prepare_engine(no_opt, engine_cache, shared_build, features, env)
@@ -137,16 +142,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False, performance_profile
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build', env=web_env)
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+    run(*pnpm(), '--dir', 'react-web', 'run', 'build', env=web_env)
+    run(*pnpm(), '--dir', 'react-web/bridge-scene',
         '--filter', '@dcl/hashing', 'build', env=web_env)
     run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
         str(SOURCE / 'react-web/bridge-scene'), env=web_env)
     # Node 25+ ships a localStorage global (empty without --localstorage-file) that
     # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
     node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
+    run(*pnpm(), '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
+    run(*pnpm(), '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)

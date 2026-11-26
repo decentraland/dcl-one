@@ -425,11 +425,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
-- **Situational reactions.** An emoji a player reacts with rises over the avatar with
-  unity-explorer's numbers (lifetimes, speeds, sizes, the follow, the sway, the size curve) and
-  travels as its rfc4 `Reaction`, with these differences. The particle fades by alpha, as it is
-  drawn in the blended pass; unity-explorer dithers. It is drawn over blended meshes too, so its
-  place against the nametag does not flip as it sways. As in unity-explorer it is drawn over
+- **Situational reactions.** An emoji picked from the chat's Reactions button rises over the
+  avatar with unity-explorer's numbers (lifetimes, speeds, sizes, the follow, the sway, the size
+  curve) and travels as its rfc4 `Reaction`, with these differences. The particle fades by alpha,
+  as it is drawn in the blended pass; unity-explorer dithers. It is drawn over blended meshes
+  too, so its place against the nametag does not flip as it sways. As in unity-explorer it is drawn over
   solid geometry with no depth test, so a player who reacts behind a wall shows where they
   stand; other players' are drawn within 25 m of the camera and the local player's at any
   distance. None is drawn over an avatar that is hidden (by a scene, by the avatar limit, by a
@@ -449,7 +449,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   takes their waiting reactions with them; unity-explorer plays them out. A sender's reactions
   play 0.2 s apart whichever messages they came in; unity-explorer starts the gap afresh for a
   message that finds none of theirs waiting, which lets a sender of one-reaction messages play
-  twenty a second.
+  twenty a second. In the HUD, Cancel closes the bar, the full picker takes the bar's place
+  while it is open, and a pick with no index still becomes a recent emoji.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
