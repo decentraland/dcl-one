@@ -9318,6 +9318,123 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
 }
 
 #[tokio::test]
+async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publication() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    use crate::land_authz::LAND_MAINNET;
+
+    super::trade_events::tests::publish_cursors(pool).await;
+    let app = market_router(state);
+    for (contract, token, owner, x, y) in [
+        (
+            LAND_MAINNET.land_registry,
+            77i64,
+            WALLET_A,
+            Some(0),
+            Some(77),
+        ),
+        (LAND_MAINNET.estate_registry, 500, WALLET_B, None, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+             VALUES ($1, $2::bigint, $3, $4, $5, 100, 0)",
+        )
+        .bind(contract)
+        .bind(token)
+        .bind(x)
+        .bind(y)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+        // A row under the LAND registry must not displace the LAND owner.
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, \
+                                   transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2::bigint, $3, 10, 10, 100, 0, 100)",
+        )
+        .bind(contract)
+        .bind(token)
+        .bind(CREATOR)
+        .execute(pool)
+        .await
+        .unwrap();
+        let (trade, _) = insert_trade_on(
+            pool,
+            "ETHEREUM",
+            1,
+            "bid",
+            CREATOR,
+            Asset {
+                asset_type: 1,
+                contract: "0x2222222222222222222222222222222222222222".into(),
+                value: "100".into(),
+            },
+            Asset {
+                asset_type: 3,
+                contract: contract.into(),
+                value: token.to_string(),
+            },
+        )
+        .await;
+        let url = format!("/v1/bids?network=ETHEREUM&contractAddress={contract}&seller={owner}");
+        let (status, body) = get(app.clone(), &url).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], 1, "{body}");
+        assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+        assert_eq!(body["data"]["results"][0]["seller"], owner, "{body}");
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn orders_and_bids_use_the_statement_timeout_for_the_trades_pass_marker() {
+    let graph = serve_empty_graph().await;
+    let Some(own) = super::tests::support::OwnDb::create("trade_pass_timeout").await else {
+        return;
+    };
+    let mut settings = market_settings(&graph, &graph, true);
+    settings.trades_sync_upstream_url = Some(graph.clone());
+    settings.trades_serve_partial = false;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    let app = market_router(state);
+    let routes = ["/v1/orders?network=MATIC", "/v1/bids?network=MATIC"];
+    for route in routes {
+        let (status, body) = get(app.clone(), route).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "trades-mirror", "{body}");
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "ALTER TABLE shop.trades_mirror RENAME TO saved_trades_mirror;
+         CREATE FUNCTION shop.trades_pass_error() RETURNS timestamp LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
+         $$;
+         CREATE VIEW shop.trades_mirror AS
+           SELECT 1 AS id, '{graph}'::text AS upstream_url, shop.trades_pass_error() AS completed_at;"
+    )))
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    for route in routes {
+        let (status, body) = get(app.clone(), route).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let message = body["message"].as_str().unwrap();
+        assert!(message.contains("statement bound"), "{body}");
+        assert!(!message.contains("private fixture detail"), "{body}");
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn a_mirrored_token_bid_waits_for_its_sellers_nft_publication() {
     let graph = serve_empty_graph().await;
     let Some((state, own)) = state_with_the_bid_book(&graph).await else {
@@ -9798,7 +9915,7 @@ async fn the_bids_legs_read_the_snapshot_their_readiness_checked() {
     .execute(&pool)
     .await
     .unwrap();
-    let rows = super::bids::trades_rows(&mut tx, &state, &f, now)
+    let rows = super::bids::trades_rows(&mut tx, &state, &f, now, None)
         .await
         .unwrap();
     tx.rollback().await.unwrap();

@@ -22,6 +22,22 @@ use crate::shared::cache::TtlMap;
 use super::graph::{self, Network};
 use super::{MarketplaceState, Source, unavailable};
 
+/// Index snapshot SQL errors use the statement-bound 503 or a sanitized 500.
+pub(super) fn index_read_error(e: sqlx::Error) -> Response {
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        super::wire::ApiError::from(e).into_response()
+    }
+}
+
+pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
+    match e {
+        super::owned_items::ReadError::Db(e) => index_read_error(e),
+        super::owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
+}
+
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ttl {

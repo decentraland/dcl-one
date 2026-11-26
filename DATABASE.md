@@ -5425,8 +5425,10 @@ from an item row of the trade's chain, verified there on a testnet. On a
 node that does not walk the indexes, the trades readiness and the mirror's
 bids are one short read-only snapshot, released before the subgraph is
 awaited, whose instant the subgraph's filter takes. On an NFT walker, a
-mirrored ERC721 bid in the request's scope requires a fresh NFT ownership
-publication for the served chain. The check runs before any seller filter or pagination, so
+mirrored ERC721 bid that reads `shop.nft` requires a fresh NFT ownership
+publication for the served chain. LAND and Estate sellers come from
+`land_authz.token_right` independently of NFT publication. NFT-index 503s
+are counted by network in `catalyst_shop_bid_nft_unavailable_reads_total`. The check runs before any seller filter or pagination, so
 a pending owner change cannot move bids between seller pages or totals.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
@@ -5448,6 +5450,10 @@ few bids it reads and compared each with the whole catalogue (180 ms):
 These timings cover a book with no pending seller recheck. A pending recheck
 also inspects bids created past its start, whose stored sellers may have
 changed. That case can scan a larger part of the book and is unmeasured.
+The native Polygon bid reads are uncached. `shop.nft_bid` has no dedicated
+index for bidder, seller, expiry, creation time or price filters. Watch the
+seller-filtered page and count as the book grows. At 60,000 synthetic bids
+they took 48 ms and 46 ms respectively.
 
 ## Legacy Marketplace orders
 
