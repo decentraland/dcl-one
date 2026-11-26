@@ -1463,8 +1463,7 @@ pub(crate) async fn confirm_item_save(
                 .with_data(with_id(intent.path_id.as_deref(), json!({}))));
         }
         let UrnField::ThirdParty(urn) = &intent.urn else {
-            return Err(ApiError::http(
-                200,
+            return Err(ApiError::thrown_without_status(
                 "The given item URN is not TP compliant",
             ));
         };

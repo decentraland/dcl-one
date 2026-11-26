@@ -51,7 +51,7 @@ pub async fn post_newsletter(
     }
     let body = axum::body::to_bytes(request.into_body(), MAX_BODY)
         .await
-        .map_err(|_| ApiError::http(413, "Request body too large"))?;
+        .map_err(|_| ApiError::too_large("Request body too large"))?;
     let body: NewsletterBody = if body.is_empty() {
         NewsletterBody::default()
     } else {

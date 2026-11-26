@@ -52,7 +52,7 @@ impl Drop for Admission {
 
 /// A refused place: 429 at once, with a `Retry-After`.
 pub fn busy(error: &str) -> Response {
-    retry_later(ApiError::http(429, error))
+    retry_later(ApiError::too_many(error))
 }
 
 /// `refusal` with the `Retry-After` of a refused place.

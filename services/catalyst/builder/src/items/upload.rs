@@ -64,7 +64,7 @@ fn store_collected() -> ApiError {
 }
 
 pub(crate) fn too_large() -> ApiError {
-    ApiError::http(413, "The upload is too large").with_data(json!({ "maxBytes": MAX_BYTES }))
+    ApiError::too_large("The upload is too large").with_data(json!({ "maxBytes": MAX_BYTES }))
 }
 
 /// The files of `multipart`, each verified against the hash it was sent

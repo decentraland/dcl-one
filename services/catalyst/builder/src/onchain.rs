@@ -129,7 +129,7 @@ pub fn configured(market: Option<&ChainIndex>) -> bool {
 
 fn upstream(e: String) -> ApiError {
     tracing::warn!(error = %e, "collections subgraph read failed");
-    ApiError::http(502, MARKETPLACE_DOWN)
+    ApiError::bad_gateway(MARKETPLACE_DOWN)
 }
 
 #[derive(Debug)]

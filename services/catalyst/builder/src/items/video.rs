@@ -332,18 +332,15 @@ fn not_mp4() -> ApiError {
 
 /// 413 for a video past `max_bytes`.
 pub(crate) fn too_large(max_bytes: u64) -> ApiError {
-    ApiError::http(413, "The video is too large").with_data(json!({ "maxBytes": max_bytes }))
+    ApiError::too_large("The video is too large").with_data(json!({ "maxBytes": max_bytes }))
 }
 
 fn timed_out() -> ApiError {
-    ApiError::http(408, "The upload timed out")
+    ApiError::timed_out("The upload timed out")
 }
 
 fn yielded() -> ApiError {
-    ApiError::http(
-        408,
-        "The upload gave its place to another while the node was busy",
-    )
+    ApiError::timed_out("The upload gave its place to another while the node was busy")
 }
 
 async fn within<T>(

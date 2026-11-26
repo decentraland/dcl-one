@@ -102,8 +102,7 @@ impl PublicationChain<'_> {
             ApiError::not_found("Prepare this collection before submitting its transaction")
         })?;
         if state.tx_hash.as_deref().is_some_and(|saved| saved != hash) {
-            return Err(ApiError::http(
-                409,
+            return Err(ApiError::conflict(
                 "Another transaction is already recorded for this publication",
             ));
         }
