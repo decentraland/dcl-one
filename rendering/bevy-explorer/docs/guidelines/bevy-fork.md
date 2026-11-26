@@ -246,8 +246,17 @@ across workers:
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
     containers hidden until `update_ready_gltfs` has processed them, a node at a time within the
     same slice.
-- `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
-  twice per frame (the explorer's early pass plus bevy's own).
+- Transform propagation (`mark_dirty_trees`, `propagate_parent_transforms`,
+  `sync_simple_transforms`) is its own schedule, `PropagateTransforms`, which
+  `TransformPropagate` runs with `propagate_transforms`. The explorer's early pass runs the same
+  schedule, so each run walks only the trees changed since the previous one; two instances of
+  the systems would each walk every tree the other had already walked. Tests in
+  `bevy_transform`'s `plugins.rs` run both passes and check the globals and which trees each
+  pass writes.
+- `mark_dirty_trees` keys its early-out on this run's tick. With the single
+  `PropagateTransforms` instance this behaves like upstream's `is_changed() && !is_added()`; it
+  stays as a guard, because with a second instance of the systems upstream's check stops each
+  instance at the other's marks, and a subtree changed between the passes is never propagated.
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale
   component becomes `f32::EPSILON` and non-finite parts fall back to identity. A singular
   affine decomposes to a NaN rotation, which reached colliders as NaN AABBs and crashed parry's

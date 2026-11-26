@@ -62,11 +62,12 @@
 //! ([`USD_PEGGED_ALLOWANCE_BUFFER_PCT`]).
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 
 use crate::credits::feed::{FeedReading, MarketplaceFeed};
 use crate::types::ManaUsdRate;
@@ -224,7 +225,7 @@ impl RateSlot {
     ) {
         match read {
             Ok(reading) => {
-                *self.good.write().unwrap() = Some(Good {
+                *self.good.write() = Some(Good {
                     reading,
                     started,
                     started_wall,
@@ -245,7 +246,7 @@ impl RateSlot {
     }
 
     fn good(&self) -> Option<Good> {
-        *self.good.read().unwrap()
+        *self.good.read()
     }
 
     /// The rate to show at `now`.

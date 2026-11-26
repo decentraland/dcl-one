@@ -27,7 +27,9 @@ pub struct Analytics(Arc<Inner>);
 
 struct Inner {
     http: crate::http::Outbound,
-    transport: std::sync::OnceLock<Result<crate::http::Outbound, String>>,
+    /// Shared by every context view of this client (`with_context`), so
+    /// they set up one transport between them.
+    transport: Arc<std::sync::OnceLock<Result<crate::http::Outbound, String>>>,
     context: String,
     url: String,
     token: String,
@@ -57,7 +59,7 @@ impl Analytics {
         let timeout = request_timeout(settings.request_timeout_ms);
         Ok(Some(Self(Arc::new(Inner {
             http: http.clone(),
-            transport: std::sync::OnceLock::new(),
+            transport: Arc::default(),
             context,
             url,
             token,
@@ -66,18 +68,24 @@ impl Analytics {
         }))))
     }
 
-    /// The same client posting under another `context`.
+    /// The same client posting under another `context`: one transport
+    /// between them.
     pub fn with_context(&self, context: &str) -> Self {
         let inner = &self.0;
         Self(Arc::new(Inner {
             http: inner.http.clone(),
-            transport: std::sync::OnceLock::new(),
+            transport: inner.transport.clone(),
             context: context.to_owned(),
             url: inner.url.clone(),
             token: inner.token.clone(),
             environment: inner.environment.clone(),
             timeout: inner.timeout,
         }))
+    }
+
+    /// Whether `other` is a context view of this client, on the same transport.
+    pub fn shares_transport_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0.transport, &other.0.transport)
     }
 
     pub fn fire_event(&self, event: &str, mut properties: Value) {

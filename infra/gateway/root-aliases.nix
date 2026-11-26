@@ -336,6 +336,15 @@
     ];
   }
   {
+    key = "= /v1/rates/mana-usd";
+    to = "/marketplace-api$uri";
+    probe = [
+      "GET"
+      "/v1/rates/mana-usd"
+      "/marketplace-api/v1/rates/mana-usd"
+    ];
+  }
+  {
     key = "^~ /v1/prices";
     to = "/marketplace-api$uri";
     probe = [

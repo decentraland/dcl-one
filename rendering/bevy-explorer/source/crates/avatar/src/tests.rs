@@ -1171,6 +1171,117 @@ fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRender
     }
 }
 
+/// a wearable material derives an avatar material that culls its back faces, double-sided or
+/// not, and emits 12.5 times its emissive factor
+#[test]
+fn derived_materials_cull_back_faces_and_emit_their_factor() {
+    let mut standard_materials = Assets::<StandardMaterial>::default();
+    let mut scene_materials = Assets::<SceneMaterial>::default();
+    let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
+    let def = render_definition(true, false);
+    let mat = StandardMaterial {
+        emissive: LinearRgba::rgb(0.25, 0.25, 0.25),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    };
+    let h_mat = MeshMaterial3d(standard_materials.add(mat.clone()));
+    let loaded = AvatarLoaded {
+        body_instance: SceneSpawner::default().spawn(Handle::default()),
+        wearable_instances: Vec::new(),
+        skin_materials: default(),
+        hair_materials: default(),
+    };
+    let handle = derived_scene_material(
+        &mat,
+        &h_mat,
+        &def,
+        &loaded,
+        0.0,
+        &bounds_bits(&def.bounds),
+        0.0,
+        &mut mat_cache,
+        &mut scene_materials,
+    );
+    let base = &scene_materials.get(&handle).unwrap().base;
+    assert_eq!(base.cull_mode, Some(Face::Back));
+    assert!(!base.double_sided);
+    assert_eq!(base.emissive.to_vec3(), Vec3::splat(3.125));
+}
+
+/// the glTF loader's copy of a material for a mirrored node is found from the material, has its
+/// emissive strength divided out with it and culls its front-wound faces
+#[test]
+fn a_mirrored_copy_culls_front_faces_and_drops_the_emissive_strength() {
+    use bevy::gltf::GltfAssetLabel;
+
+    let mut app = app_with_avatar_scenes();
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let label = |is_scale_inverted| GltfAssetLabel::Material {
+        index: 0,
+        is_scale_inverted,
+    };
+    // never loaded (no loader for the extension): only the paths matter
+    let material: Handle<StandardMaterial> = asset_server.load(label(false).from_asset("w.glb"));
+    let mirrored: Handle<StandardMaterial> = asset_server.load(label(true).from_asset("w.glb"));
+    let lone: Handle<StandardMaterial> = asset_server.load(label(false).from_asset("lone.glb"));
+
+    assert!(is_mirrored_material(&mirrored));
+    assert!(!is_mirrored_material(&material));
+    let ids = |h: &Handle<StandardMaterial>| -> Vec<_> {
+        material_and_mirrored(h, &asset_server)
+            .map(|h| h.id())
+            .collect()
+    };
+    assert_eq!(ids(&material), vec![material.id(), mirrored.id()]);
+    assert_eq!(ids(&lone), vec![lone.id()]);
+
+    let def = render_definition(true, false);
+    let loaded = AvatarLoaded {
+        body_instance: SceneSpawner::default().spawn(Handle::default()),
+        wearable_instances: Vec::new(),
+        skin_materials: default(),
+        hair_materials: default(),
+    };
+    let copies = [(&material, Face::Back), (&mirrored, Face::Front)];
+    for double_sided in [false, true] {
+        let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+        for (handle, cull) in copies {
+            // as the glTF loader builds it: the factor 0.25 times the strength 4
+            materials.insert(
+                handle.id(),
+                StandardMaterial {
+                    emissive: LinearRgba::rgb(1.0, 1.0, 1.0),
+                    double_sided,
+                    cull_mode: (!double_sided).then_some(cull),
+                    ..default()
+                },
+            );
+        }
+        divide_emissive(&mut materials, &material, 4.0, &asset_server);
+
+        let mut scene_materials = Assets::<SceneMaterial>::default();
+        let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
+        for (handle, cull) in copies {
+            let derived = derived_scene_material(
+                materials.get(handle).unwrap(),
+                &MeshMaterial3d(handle.clone()),
+                &def,
+                &loaded,
+                0.0,
+                &bounds_bits(&def.bounds),
+                0.0,
+                &mut mat_cache,
+                &mut scene_materials,
+            );
+            let base = &scene_materials.get(&derived).unwrap().base;
+            let case = format!("{:?} double-sided {double_sided}", handle.path());
+            assert_eq!(base.cull_mode, Some(cull), "{case}");
+            assert_eq!(base.emissive.to_vec3(), Vec3::splat(3.125), "{case}");
+        }
+    }
+}
+
 /// the face masks carry the body's tag, so they are outlined and faded by the camera dither
 /// exactly when the body is, plus the face-feature tag that lights them by the ambient alone
 #[test]

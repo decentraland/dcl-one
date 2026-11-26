@@ -27,11 +27,11 @@
 //! when no event does and the read is at or below the block it folds to.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_sol_types::{SolCall, SolEvent, SolValue, sol};
 use anyhow::{Context, ensure};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
@@ -453,7 +453,7 @@ impl CollectionsIndex {
 
     /// The hinted and walked collections, read once per pass.
     async fn load(&self, pool: &PgPool) -> anyhow::Result<Vec<Known>> {
-        if let Some(known) = self.addresses.lock().unwrap().clone() {
+        if let Some(known) = self.addresses.lock().clone() {
             return Ok(known);
         }
         let known: Vec<Known> = sqlx::query_as(
@@ -466,13 +466,13 @@ impl CollectionsIndex {
         .bind(ChainNet::Matic.db_name())
         .fetch_all(pool)
         .await?;
-        *self.addresses.lock().unwrap() = Some(known.clone());
+        *self.addresses.lock() = Some(known.clone());
         Ok(known)
     }
 
     fn reset(&self) {
-        *self.addresses.lock().unwrap() = None;
-        self.filter.lock().unwrap().clear();
+        *self.addresses.lock() = None;
+        self.filter.lock().clear();
     }
 }
 
@@ -561,7 +561,7 @@ impl ChainIndex for CollectionsIndex {
     ) -> anyhow::Result<Vec<LogGroup>> {
         let known = self.load(pool).await?;
         let (groups, filter) = groups_for(to, &known);
-        *self.filter.lock().unwrap() = filter;
+        *self.filter.lock() = filter;
         Ok(groups)
     }
 
@@ -583,7 +583,7 @@ impl ChainIndex for CollectionsIndex {
             }
         }
         {
-            let filter = self.filter.lock().unwrap();
+            let filter = self.filter.lock();
             if let Some(missed) = rows
                 .iter()
                 .find(|r| r.kind == KIND_PROXY_CREATED && !filter.contains(&r.contract_address))
