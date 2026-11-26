@@ -70,6 +70,18 @@ run completed in up to 2.97 s. These are synthetic measurements without
 HTTP transport time. The current request path uses the indexes and batching
 without a book-result cache.
 
+## Catalog legacy listing aggregation
+
+A PostgreSQL 17.6 fixture held 1,000,000 legacy orders, including 18,867
+open ones with seller ownership on Ethereum and Polygon, and 20,000 items
+over 2,000 collections. The local aggregation joined ownership and item
+identity, computed prices and counts, and sorted and capped the page at 20.
+`EXPLAIN (ANALYZE, BUFFERS)` took 859 ms on the first broad read and 158
+to 171 ms on the next two. The one-contract read took 1.11 ms, then 0.43
+and 0.32 ms. These measurements cover the legacy SQL leg and item join.
+V3 trades, readiness and HTTP transport are outside the measurements.
+The workload uses the existing order and catalogue indexes.
+
 ## Ethereum collections-v1 first walk
 
 On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).

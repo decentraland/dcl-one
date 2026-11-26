@@ -112,6 +112,16 @@ impl CatalogueRead {
         self.owned.iter().any(|(n, _)| *n == network)
     }
 
+    /// Whether this read admitted item metadata on this network.
+    pub(super) fn covers_items(&self, net: ChainNet) -> bool {
+        self.owned.iter().any(|(n, _)| n.db_name() == net.db_name())
+            || self.mirror.as_ref().is_some_and(|copy| {
+                copy.passes.iter().any(|(mirror, network, _)| {
+                    *mirror == Mirror::Items && network == net.db_name()
+                })
+            })
+    }
+
     /// The identity of what was read, for a memo key: every mirror pass on
     /// every network the read takes from the mirrors (not only the oldest,
     /// which a newer network's pass does not move), and each owned network's

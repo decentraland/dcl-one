@@ -3938,6 +3938,20 @@ meanwhile never splits an answer. A reader that joins the open trades
 snapshot, at the read's instant. That instant also decides the rows' open
 trades, trade floor and coupon window, on every page of the read.
 
+Catalog v1 and v2 pages with resale fields also admit the legacy order book
+on the catalogue snapshot. The book must stand at the published NFT fold and
+have no queued refold or unacknowledged writes to orders or ownership. The
+page, its total and readiness use one clock. Rows must belong to the served
+chain, be open and unexpired, and still belong to the order's seller. The
+item is the NFT's folded item ID on Polygon and the collection URN plus the
+Issue's wearable ID on Ethereum v1. Each requested item takes the count,
+minimum and maximum price and newest listing time from its legacy orders.
+V2 combines those values with its backed v3 resales. Explicit contract or
+item ID scopes limit the legacy aggregation. Listing pages read the book
+on every request so a change of owner or expiry can take effect immediately.
+A node without a local book returns the `nft-index` readiness response for
+these pages. Mint-only requests skip the legacy book.
+
 The statement is uncached and probes primary keys only:
 `collection_projection (network)`, `chain_cursor (indexer, network)`,
 `mirror_state (mirror, network)`, the first row of `collections` and of
@@ -5614,7 +5628,7 @@ at whatever height. Reads refused that way are counted by
 between a fold's commit and its publication. The denominator is
 `catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
 attempted network's publication check. Both counters use `network` and
-`route` labels. The route is `orders`, `open_by_items` or `activity`.
+`route` labels. The route is `orders`, `open_by_items`, `activity` or `catalog`.
 Each activity page takes its own book snapshot and counts its checks.
 
 ### Fold-written projections and their publication

@@ -412,6 +412,7 @@ pub(super) enum BookRoute {
     Orders,
     OpenByItems,
     Activity,
+    Catalog,
 }
 
 impl BookRoute {
@@ -420,6 +421,7 @@ impl BookRoute {
             Self::Orders => "orders",
             Self::OpenByItems => "open_by_items",
             Self::Activity => "activity",
+            Self::Catalog => "catalog",
         }
     }
 }
@@ -552,10 +554,32 @@ pub(super) async fn book_snapshot(
         let chain = state.settings.catalogue().chain_id(ChainNet::Ethereum);
         readers::require_land_on(&mut tx, state, chain).await?;
     }
+    require_published_book(state, &mut tx, &nets, now, route).await?;
+    if trades {
+        super::trades::ready_checked_for_networks_on(state, &mut tx, &nets, now)
+            .await
+            .map_err(|error| error.into_response(read_error))?;
+    }
+    Ok(BookRead {
+        tx,
+        now,
+        nets,
+        land,
+    })
+}
+
+/// The legacy book and its ownership fold must stand on this read's snapshot.
+pub(super) async fn require_published_book(
+    state: &MarketplaceState,
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    now: DateTime<Utc>,
+    route: BookRoute,
+) -> Result<(), Response> {
     owned_items::check(
-        &mut tx,
+        conn,
         state.settings.catalogue(),
-        &nets,
+        nets,
         Rule::Fresh,
         false,
         now,
@@ -566,11 +590,11 @@ pub(super) async fn book_snapshot(
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
-    for &net in &nets {
+    for &net in nets {
         let labels = [net.db_name(), route.label()];
         FOLD_READ_CHECKS.handle(labels).increment(1);
         if !super::chain_walk::rows_published_on(
-            &mut tx,
+            conn,
             super::chain_walk::INDEXER_NFT,
             net,
             projections,
@@ -585,8 +609,8 @@ pub(super) async fn book_snapshot(
             )));
         }
     }
-    for &net in &nets {
-        if !super::legacy_orders::caught_up(&mut tx, net)
+    for &net in nets {
+        if !super::legacy_orders::caught_up(conn, net)
             .await
             .map_err(read_error)?
         {
@@ -596,17 +620,7 @@ pub(super) async fn book_snapshot(
             )));
         }
     }
-    if trades {
-        super::trades::ready_checked_for_networks_on(state, &mut tx, &nets, now)
-            .await
-            .map_err(|error| error.into_response(read_error))?;
-    }
-    Ok(BookRead {
-        tx,
-        now,
-        nets,
-        land,
-    })
+    Ok(())
 }
 
 fn reads_trades(f: &OrderFilters) -> bool {
@@ -893,7 +907,7 @@ fn book_from(
 /// never served as open. Without `land` no open LAND or estate order is
 /// read ([`reads_land`]); one would read `transferred`, having no
 /// `shop.nft` row.
-fn book_status(land: bool) -> String {
+pub(super) fn book_status(land: bool) -> String {
     let moved = if land {
         "(CASE WHEN o.network = 'ethereum' AND o.contract_address IN ($1, $2) \
                THEN tr.token_id IS NULL OR tr.owner IS DISTINCT FROM o.seller \
