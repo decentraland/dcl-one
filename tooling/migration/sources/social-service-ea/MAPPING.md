@@ -182,8 +182,9 @@ undeployed), which the places import skips, so it is reported too.
 
 The communities load records each source ID in `social.community_imports`, including when a newer
 local edit wins. With `COMMUNITIES_MIRROR_THUMBNAIL_URL` set, the raw-thumbnail route can redirect
-these IDs to the upstream CDN until local bytes are available. Schema migration recognizes older
-imports from readable member or ranking import records. When those records are unavailable, replay
+these IDs to the upstream CDN until local bytes are available. When schema migration creates the
+import table, it seeds older IDs once from readable member or ranking import records. To register
+older IDs if those records were unavailable when the table was created, replay
 `run social-service-ea --step communities --restart` with the source and target database connections
 to register the IDs. Communities created only on the node keep their local thumbnail or return 404.
 

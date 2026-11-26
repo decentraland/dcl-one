@@ -296,19 +296,27 @@ pub async fn get_raw_thumbnail(
     let Some(hash) = hash else {
         return missing_thumbnail(&state, id, has_upstream);
     };
-    let mut blob = match state.storage.open(&hash).await {
-        Ok(Some(blob)) => blob,
+    let versioned = get_first(&pairs, super::THUMBNAIL_VERSION_PARAM).as_deref() == Some(&hash);
+    match local_thumbnail(&state.storage, &hash, versioned, &request_headers).await {
+        Ok(Some(response)) => response,
         Ok(None) if state.storage.withholds(&hash) => {
-            return thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found");
+            thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found")
         }
-        Ok(None) => return missing_thumbnail(&state, id, has_upstream),
+        Ok(None) => missing_thumbnail(&state, id, has_upstream),
         Err(e) => {
             tracing::error!(error = %e, hash = %hash, "raw-thumbnail: blob store error");
-            return thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error");
+            thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error")
         }
-    };
+    }
+}
+
+async fn local_thumbnail(
+    storage: &crate::storage::Storage,
+    hash: &str,
+    versioned: bool,
+    request_headers: &HeaderMap,
+) -> Result<Option<Response>, crate::storage::StorageError> {
     let mut headers = HeaderMap::new();
-    let versioned = get_first(&pairs, super::THUMBNAIL_VERSION_PARAM).as_deref() == Some(&hash);
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(if versioned {
@@ -328,25 +336,23 @@ pub async fn get_raw_thumbnail(
             .map(|t| t.trim().trim_start_matches("W/"))
             .any(|t| t == "*" || t.as_bytes() == etag.as_bytes());
         if matches {
-            return (StatusCode::NOT_MODIFIED, headers).into_response();
+            return Ok(storage
+                .file_info(hash)
+                .await?
+                .map(|_| (StatusCode::NOT_MODIFIED, headers).into_response()));
         }
     }
-    match blob.read_range(0, blob.size.saturating_sub(1)).await {
-        Ok(bytes) => {
-            let content_type = detect_image_mime_type(&bytes)
-                .map(|m| m.as_str())
-                .unwrap_or("image/png");
-            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            if let Ok(v) = HeaderValue::from_str(&bytes.len().to_string()) {
-                headers.insert(header::CONTENT_LENGTH, v);
-            }
-            (StatusCode::OK, headers, bytes).into_response()
-        }
-        Err(e) => {
-            tracing::error!(error = %e, hash = %hash, "raw-thumbnail: blob store error");
-            thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error")
-        }
+    let Some(bytes) = storage.retrieve(hash).await? else {
+        return Ok(None);
+    };
+    let content_type = detect_image_mime_type(&bytes)
+        .map(|m| m.as_str())
+        .unwrap_or("image/png");
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(v) = HeaderValue::from_str(&bytes.len().to_string()) {
+        headers.insert(header::CONTENT_LENGTH, v);
     }
+    Ok(Some((StatusCode::OK, headers, bytes).into_response()))
 }
 
 fn selected_community(pairs: &[(String, String)]) -> Result<Option<CommunityId>, CommError> {

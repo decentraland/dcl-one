@@ -1868,7 +1868,7 @@ mod tests {
             INSERT INTO dcl_migration.social_community_member_loaded SELECT id FROM social.communities WHERE name = 'members';
             INSERT INTO dcl_migration.social_community_ranking_loaded SELECT id FROM social.communities WHERE name = 'ranking';")
             .execute(&db.pool).await.unwrap();
-        for _ in 0..2 {
+        for expected in [vec!["members", "ranking"], vec!["ranking"]] {
             migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
                 .await
                 .unwrap();
@@ -1879,7 +1879,9 @@ mod tests {
             .fetch_all(&db.pool)
             .await
             .unwrap();
-            assert_eq!(marked, ["members", "ranking"]);
+            assert_eq!(marked, expected);
+            sqlx::query("DELETE FROM social.community_imports WHERE community_id = '00000000-0000-4000-8000-000000000001'")
+                .execute(&db.pool).await.unwrap();
         }
         db.drop().await;
     }

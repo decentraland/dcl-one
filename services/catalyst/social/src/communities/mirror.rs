@@ -164,11 +164,33 @@ pub fn upstream_thumbnail(base: &MirrorSource, id: Uuid) -> String {
 }
 
 /// This base is sent to clients in Location, so it must be a public, credential-free base URL.
-pub fn thumbnail_source(raw: &str, local: &[&str]) -> Result<Option<MirrorSource>> {
-    if raw.trim().is_empty() {
+pub fn thumbnail_source(
+    raw: &str,
+    local: &[&str],
+    mirroring: bool,
+) -> Result<Option<MirrorSource>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        anyhow::ensure!(
+            !mirroring,
+            "an upstream thumbnail URL is required when mirroring communities"
+        );
         return Ok(None);
     }
-    let url = url::Url::parse(raw.trim())?;
+    match public_thumbnail_base(raw, local) {
+        Ok(base) => Ok(Some(base)),
+        Err(_) if !mirroring => {
+            tracing::warn!(
+                "invalid COMMUNITIES_MIRROR_THUMBNAIL_URL: community thumbnail redirects are disabled"
+            );
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn public_thumbnail_base(raw: &str, local: &[&str]) -> Result<MirrorSource> {
+    let url = url::Url::parse(raw)?;
     anyhow::ensure!(
         url.username().is_empty()
             && url.password().is_none()
@@ -176,7 +198,7 @@ pub fn thumbnail_source(raw: &str, local: &[&str]) -> Result<Option<MirrorSource
             && url.fragment().is_none(),
         "community thumbnail redirects require a public base URL without user information, query or fragment"
     );
-    MirrorSource::checked(raw, local).map(Some)
+    MirrorSource::checked(raw, local)
 }
 
 /// Communities copied in: inserted new, or updated only where the row is

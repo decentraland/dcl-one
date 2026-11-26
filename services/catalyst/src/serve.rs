@@ -1192,6 +1192,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         communities::mirror::thumbnail_source(
             &config.social.communities_mirror_thumbnail_url,
             &local,
+            config.social.communities_mirror_upstream,
         )
         .context("COMMUNITIES_MIRROR_THUMBNAIL_URL")?,
     )?;

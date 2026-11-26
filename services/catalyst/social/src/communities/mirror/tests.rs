@@ -594,13 +594,30 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
 #[test]
 fn thumbnail_redirect_base_is_optional_and_public() {
     let local = ["https://node.example.org"];
-    assert!(super::thumbnail_source("", &local).unwrap().is_none());
+    assert!(
+        super::thumbnail_source("", &local, false)
+            .unwrap()
+            .is_none()
+    );
+    assert!(super::thumbnail_source("", &local, true).is_err());
+    for mirroring in [false, true] {
+        let base =
+            super::thumbnail_source("  https://cdn.example.org/assets/  ", &local, mirroring)
+                .unwrap()
+                .unwrap();
+        assert_eq!(base.base(), "https://cdn.example.org/assets");
+    }
     for value in [
         "https://node.example.org/assets",
         "https://user:password@cdn.example.org",
         "https://cdn.example.org/assets?token=secret",
         "https://cdn.example.org/assets#private",
     ] {
-        assert!(super::thumbnail_source(value, &local).is_err());
+        assert!(super::thumbnail_source(value, &local, true).is_err());
+        assert!(
+            super::thumbnail_source(value, &local, false)
+                .unwrap()
+                .is_none()
+        );
     }
 }

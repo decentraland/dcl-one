@@ -2620,6 +2620,7 @@ async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
         thumbnail_upstream: super::mirror::thumbnail_source(
             "https://upstream.example.org/assets",
             &[],
+            false,
         )
         .unwrap(),
         ..Settings::for_tests()
@@ -2726,6 +2727,32 @@ async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    for (active, suspended) in [(false, false), (true, true)] {
+        sqlx::query("UPDATE social.communities SET active = $2 WHERE id = $1")
+            .bind(imported)
+            .bind(active)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+        super::queries::set_suspended(&rig.pool, imported, suspended, "moderator", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            get(imported, false).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    super::queries::set_suspended(&rig.pool, imported, false, "moderator", None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE social.community_thumbnails SET thumbnail_hash = '../invalid' WHERE community_id = $1")
+        .bind(imported).execute(&rig.pool).await.unwrap();
+    for conditional in [false, true] {
+        let response = get(imported, conditional).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(response.headers().get(header::LOCATION).is_none());
+    }
 }
 
 /// The raw thumbnail's caching: long only for the current hash's URL, short
