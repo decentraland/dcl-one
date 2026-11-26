@@ -37,8 +37,9 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
 - **Per scene, nothing shared:** a Blob store per runtime; deno_web registers the lock manager
   and broadcast ops, and the runtime disables them (`DISABLED_OPS`), so a call fails. The
   native BroadcastChannel stays our own bridge shim. deno_web's native classes are not installed.
-- **Upstream ops that panic on scene input:** `op_compile_function`, `op_serialize` and
-  `op_deserialize` are disabled (nothing the runtime loads calls them), and `op_structured_clone`
+- **Upstream ops that panic on scene input:** `op_compile_function`, `op_serialize`,
+  `op_deserialize` and `op_urlpattern_process_match_input` are disabled (nothing the runtime
+  loads calls them), and `op_structured_clone`
   (`performance.mark` and `measure` reach it) is replaced by a serializer with no host-object path
   (`structured_clone.rs`). `op_drain_pending_rejections` returns nothing (`rejections.rs`):
   upstream holds the rejection queue's borrow while a scene's `Array.prototype` setter can run,
@@ -46,12 +47,13 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   hands rejections to the same handler.
 - **Op results** are ordinary objects (`JsPlain<T>`): serde_v8 builds them with a null
   prototype, so `String(result)` would throw.
-- **Clock:** `performance.now()` and deno_core's timer clock (`op_timer_now`, which timers store
-  on objects a prototype setter can read) keep a 2 ms resolution on one clock (`clock.rs`).
-  deno_core still fires timers on its own raw clock and writes it into its timer lists'
-  `expiry`; a setter on `Object.prototype` (for example on `msecs`) captures a list, and the
-  scene reads `expiry` from it. `Date` is not coarsened either. Closing both needs a change in
-  deno_core or scene timers of our own.
+- **Clock:** `performance.now()` keeps a 2 ms resolution (`clock.rs`). deno_core's timer clock
+  is not coarsened: a client scene reads it from `Deno.core.ops.op_timer_now`, and any scene
+  reads it from a timer list's `expiry`, by capturing the list with a setter on
+  `Object.prototype` (for example on `msecs`). Overriding `op_timer_now` alone would close
+  neither path and would fire timers late, because deno_core compares the stored time with its
+  own clock. `Date` is not coarsened either. Closing these needs a change in deno_core or scene
+  timers of our own.
 - **V8 platform:** `JsRuntime::init_platform` on the sidecar's main thread; only `dcl_deno`'s own
   tests use the unprotected platform, under `cfg(test)`, never through a Cargo feature that
   could unify into a shipped binary. Each scene thread enters its tokio runtime before it creates

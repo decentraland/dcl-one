@@ -46,12 +46,14 @@ mod structured_clone;
 pub mod websocket;
 
 /// Upstream ops scenes do not get: the lock manager and BroadcastChannel are not part of the
-/// scene runtime, `op_compile_function` unwraps its parameters, and `op_deserialize` unwraps a
-/// host object's deserializer (nothing loaded calls it or `op_serialize`).
+/// scene runtime, `op_compile_function` unwraps its parameters, `op_deserialize` unwraps a
+/// host object's deserializer (nothing loaded calls it or `op_serialize`), and
+/// `op_urlpattern_process_match_input` writes past a short buffer (nothing loaded calls it).
 const DISABLED_OPS: &[&str] = &[
     "op_compile_function",
     "op_serialize",
     "op_deserialize",
+    "op_urlpattern_process_match_input",
     "op_lock_manager_request",
     "op_lock_manager_await_lock",
     "op_lock_manager_await_steal",

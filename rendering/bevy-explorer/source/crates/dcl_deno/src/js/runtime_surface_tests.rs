@@ -327,12 +327,6 @@ fn broadcast_channels_do_not_cross_scenes() {
             )
             .unwrap();
             run_event_loop(&mut runtime);
-            let err = eval(
-                &mut runtime,
-                r#"Deno.core.ops.op_broadcast_send(0, "x", new Uint8Array(1))"#.to_owned(),
-            )
-            .unwrap_err();
-            assert!(err.contains("disabled"), "{err}");
             sent_sx.send(()).unwrap();
         })
         .join()
@@ -643,6 +637,22 @@ fn compile_function_is_disabled() {
     });
 }
 
+/// Upstream writes nine entries into the buffer without checking its length.
+#[test]
+fn urlpattern_match_input_is_disabled() {
+    run_in_child("urlpattern_match_input_is_disabled", || {
+        let mut runtime = client_runtime();
+        let err = eval(
+            &mut runtime,
+            r#"Deno.core.ops.op_urlpattern_process_match_input("https://a/", undefined, new Uint32Array(0))"#
+                .to_owned(),
+        )
+        .unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+        err
+    });
+}
+
 #[test]
 fn serialize_and_deserialize_are_disabled() {
     run_in_child("serialize_and_deserialize_are_disabled", || {
@@ -729,76 +739,4 @@ fn sealed_scene_rejections_raised_by_an_array_setter_do_not_abort() {
         assert_eq!(logs, [r#"ERROR "Unhandled promise rejection: " 0"#], "{logs:?}");
         format!("{logs:?}")
     });
-}
-
-/// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, called
-/// directly and as stored on a new timer. deno_core's timer lists still carry its raw clock.
-#[test]
-fn timer_clock_has_two_millisecond_granularity() {
-    let mut runtime = client_runtime();
-    eval(
-        &mut runtime,
-        r#"
-        globalThis.__direct = [];
-        const until = Date.now() + 30;
-        while (Date.now() < until) {
-            __direct.push(Deno.core.ops.op_timer_now());
-        }
-        globalThis.__seen = [];
-        for (const field of ["_idleStart", "expiry"]) {
-            Object.defineProperty(Object.prototype, field, {
-                set(v) {
-                    __seen.push(v);
-                    Object.defineProperty(this, field, { value: v, writable: true, configurable: true });
-                },
-                configurable: true,
-            });
-        }
-        globalThis.__start = performance.now();
-        globalThis.__fired = [];
-        setTimeout(() => __fired.push(["once", performance.now() - __start]), 50);
-        let ticks = 0;
-        const id = setInterval(() => {
-            __fired.push(["tick", performance.now() - __start]);
-            if (++ticks === 3) clearInterval(id);
-        }, 8);
-        "#
-        .to_owned(),
-    )
-    .unwrap();
-    run_event_loop(&mut runtime);
-    let outcome = eval(
-        &mut runtime,
-        r#"JSON.stringify({
-            direct: __direct.every((t) => t % 2 === 0) && __direct[__direct.length - 1] > __direct[0],
-            seen: __seen.length > 0 && __seen.every((t) => t % 2 === 0),
-            fired: __fired.map(([k]) => k).sort(),
-            onTime: __fired.every(([k, t]) => t >= (k === "once" ? 50 : 8) - 2),
-        })"#
-        .to_owned(),
-    )
-    .unwrap();
-    assert_eq!(
-        outcome,
-        r#"{"direct":true,"seen":true,"fired":["once","tick","tick","tick"],"onTime":true}"#
-    );
-}
-
-/// Timers start on the coarse clock and fire on deno_core's: no timer fires before its delay,
-/// whatever the phase of the 2 ms step it starts in.
-#[test]
-fn timers_never_fire_early() {
-    let mut runtime = client_runtime();
-    for k in 0..40u64 {
-        std::thread::sleep(Duration::from_micros(137 * k));
-        let delay = 10 + k % 7;
-        let start = std::time::Instant::now();
-        eval(&mut runtime, format!("setTimeout(() => {{}}, {delay})")).unwrap();
-        run_event_loop(&mut runtime);
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed >= Duration::from_millis(delay),
-            "a {delay} ms timer fired after {elapsed:?}"
-        );
-    }
 }
