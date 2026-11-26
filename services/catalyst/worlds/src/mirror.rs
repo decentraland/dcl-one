@@ -986,14 +986,8 @@ mod tests {
             let pool = pool.clone();
             let world = world.clone();
             async move {
-                super::mirror_reconcile::retire_confirmed_empty(
-                    &pool,
-                    "https://up.example",
-                    &world,
-                    &[],
-                    &["old".into()],
-                )
-                .await
+                retire_confirmed_empty(&pool, "https://up.example", &world, &[], &["old".into()])
+                    .await
             }
         });
         // Wait for actual lock contention, not a scheduler sleep that could
