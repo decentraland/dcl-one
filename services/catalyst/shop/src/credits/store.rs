@@ -181,6 +181,13 @@ impl Credits {
         &self,
         address: &str,
     ) -> Result<(bool, Option<WalletRow>), ApiError> {
+        Self::user_progress_on(&self.pool, address).await
+    }
+
+    pub(super) async fn user_progress_on<'e>(
+        executor: impl sqlx::PgExecutor<'e>,
+        address: &str,
+    ) -> Result<(bool, Option<WalletRow>), ApiError> {
         let row = sqlx::query(
             "SELECT COALESCE(w.has_started_program, false) AS started, \
                     w.address IS NOT NULL AS has_credits, \
@@ -194,7 +201,7 @@ impl Credits {
         )
         .bind(address)
         .bind(crate::types::UsdCents::CENTS_PER_CREDIT)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await?;
         let blocked: bool = row.get("is_blocked_for_claiming");
         let credits = (row.get::<bool, _>("has_credits") || blocked).then(|| WalletRow {

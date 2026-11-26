@@ -15,7 +15,7 @@
 //!   so these rows are not claimed as the operator's grants;
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
-//! - a goal credit (`credits.goal_grants`): a MANA row with its season,
+//! - a claimed goal credit (`credits.goal_grants` with `claimed_at`): a MANA row with its season,
 //!   contract, signature and expiry, source `goal`, and the MANA its salt
 //!   has consumed on chain (`credits.usages`).
 //!
@@ -128,7 +128,8 @@ fn credit_rows() -> String {
            NULL::text, NULL::text, NULL::text, \
            COALESCE((SELECT SUM(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), \
            'goal'::text, g.goal_id \
-    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id"
+    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id \
+    WHERE g.claimed_at IS NOT NULL"
     )
 }
 
@@ -263,9 +264,15 @@ impl Credits {
 
     /// A REPEATABLE READ, READ ONLY transaction: every statement in it reads
     /// the same snapshot, and nothing in it can write.
-    async fn read_snapshot(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    pub(super) async fn read_snapshot(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        // Each report statement is bounded, as the market's reads are.
+        sqlx::query("SET LOCAL statement_timeout = '10s'")
             .execute(&mut *tx)
             .await?;
         Ok(tx)

@@ -32,6 +32,7 @@ pub const PREFIX: &str = "/shop-api";
 /// web `PackOut` shape), `GET /credits/wallet/{address}/balance` and
 /// `POST /v1/payments/verify`.
 pub const ALIASES: &[&str] = &[
+    "GET /shop-api/v1/rates/mana-usd /marketplace-api/v1/rates/mana-usd",
     "POST /shop-api/v1/users /credits/users",
     "DELETE /shop-api/v1/users/{address} /credits/users/{address}",
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
@@ -82,6 +83,10 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/admin/purchases /credits/admin/purchases",
     "GET /shop-api/admin/checkouts /credits/admin/checkouts",
     "GET /shop-api/admin/credits/ledger /credits/admin/ledger",
+    "GET /shop-api/admin/credits /credits/credits",
+    "GET /shop-api/admin/credit-reasons /credits/credit-reasons",
+    "GET /shop-api/admin/ledger-stats /credits/admin/ledger-stats",
+    "GET /shop-api/admin/purchase-audit /credits/admin/purchase-audit",
     "POST /shop-api/admin/checkouts/{id}/refund /credits/admin/checkouts/{id}/refund",
     "POST /shop-api/admin/checkouts/{id}/force-fulfill /credits/admin/checkouts/{id}/force-fulfill",
     "POST /shop-api/admin/grants/{escrow_ref}/reclaim /credits/admin/grants/{escrow_ref}/reclaim",
