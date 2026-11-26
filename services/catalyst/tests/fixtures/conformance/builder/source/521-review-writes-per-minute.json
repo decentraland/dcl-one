@@ -1,5 +1,5 @@
 {
-  "description": "POST /collections/{id}/validations signed by a wallet with no role, after 30 such requests within the minute, with the review flow off. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "description": "POST /collections/{id}/validations signed by the creator wallet, which has no role on that collection, after 30 such requests within the minute, with the review flow off. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
   "request": {
     "method": "POST",
     "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/validations",

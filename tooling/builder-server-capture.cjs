@@ -621,7 +621,7 @@ const EDGE_CASES = [
   { name: '518-cors-preflight-listed', description: 'OPTIONS /collections/{id}, the preflight of a signed PUT from an origin CORS_ORIGIN lists', method: 'OPTIONS', path: OWNED_DRAFT, send: preflight(LISTED_ORIGIN), keep: PREFLIGHT_KEPT },
   { name: '519-cors-preflight-foreign', description: 'OPTIONS /collections/{id}, the preflight of a signed PUT from an origin CORS_ORIGIN does not list', method: 'OPTIONS', path: OWNED_DRAFT, send: preflight(FOREIGN_ORIGIN), keep: PREFLIGHT_KEPT },
   { name: '520-cors-info-any-origin', description: 'GET /info from an origin CORS_ORIGIN does not list, a route that answers every origin', method: 'GET', path: '/v1/info', send: { origin: FOREIGN_ORIGIN }, keep: CORS_KEPT },
-  { name: '521-review-writes-per-minute', description: 'POST /collections/{id}/validations signed by a wallet with no role, after 30 such requests within the minute, with the review flow off', method: 'POST', path: reviewOf('302', 'validations'), signer: 'creator', repeat: 30, repeat_status: 404, keep: ['retry-after', 'ratelimit', 'ratelimit-policy'] }
+  { name: '521-review-writes-per-minute', description: 'POST /collections/{id}/validations signed by the creator wallet, which has no role on that collection, after 30 such requests within the minute, with the review flow off', method: 'POST', path: reviewOf('302', 'validations'), signer: 'creator', repeat: 30, repeat_status: 404, status: 429, keep: ['retry-after', 'ratelimit', 'ratelimit-policy'] }
 ]
 
 const OWNER_COLLECTIONS = '/v1/0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e/collections'
@@ -3599,6 +3599,7 @@ async function record(req, base, signers, volatileFields, item, bucket, latestSt
     redirect: 'manual',
     signal: AbortSignal.timeout(5000)
   })
+  if (item.status !== undefined && response.status !== item.status) fail(`${item.name}: request ${(item.repeat ?? 0) + 1} answered ${response.status}, not ${item.status}`)
   const bytes = Buffer.from(bucketNamed(Buffer.from(await response.arrayBuffer()).toString('latin1'), bucket), 'latin1')
   const kept = {}
   for (const name of [...KEPT_RESPONSE_HEADERS, ...(item.keep ?? [])]) {
@@ -3761,4 +3762,4 @@ if (require.main === module) {
   main().then(() => process.exit(0), failed)
 }
 
-module.exports = { initializeCalldata, EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, useUpstreamEnvironment, installFailureHandlers, selected }
+module.exports = { record, initializeCalldata, EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, useUpstreamEnvironment, installFailureHandlers, selected }
