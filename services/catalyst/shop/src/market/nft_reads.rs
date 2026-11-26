@@ -185,7 +185,14 @@ pub(super) async fn names_page_if_admitted(
         return Ok(None);
     }
     if needs_orders(f) {
-        super::trades::ready_on(state, &mut conn, now).await?;
+        super::trades::ready_checked_for_networks_on(
+            state,
+            &mut conn,
+            &page_networks(f, sources),
+            now,
+        )
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     }
     let (data, total) = list_page_at(
         state,
@@ -1523,7 +1530,14 @@ pub(super) async fn land_page_snapshot(
         super::rentals::require_sepolia_listings(&mut conn).await?;
     }
     if needs_orders(f) {
-        super::trades::ready_on(state, &mut conn, now).await?;
+        super::trades::ready_checked_for_networks_on(
+            state,
+            &mut conn,
+            &page_networks(f, sources),
+            now,
+        )
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     }
     Ok(conn)
 }
@@ -1544,7 +1558,7 @@ pub(super) async fn indexed_page(
         );
     }
     let mut sources = sources_for(f);
-    if super::owned_items::walks_here(state)
+    if (super::owned_items::walks_here(state) || needs_orders(f))
         && f.category.is_none()
         && !f.contract_addresses.is_empty()
         && f.contract_addresses
@@ -1595,7 +1609,14 @@ pub(super) async fn indexed_page(
         }
     };
     if needs_orders(f) {
-        super::trades::ready_on(state, &mut conn, now).await?;
+        super::trades::ready_checked_for_networks_on(
+            state,
+            &mut conn,
+            &page_networks(f, sources),
+            now,
+        )
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     }
     let (data, total) = list_page_on(state, f, first, skip, sources, &mut conn, now).await?;
     Ok((data, total, conn))

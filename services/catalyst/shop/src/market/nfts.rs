@@ -482,7 +482,7 @@ pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
     match f.is_on_sale {
         Some(true) => {
             w["searchOrderStatus"] = json!("open");
-            w["searchOrderExpiresAt_gt"] = json!(now_ms.to_string());
+            w["or"] = super::orders::graph_unexpired("searchOrderExpiresAt", now_ms);
         }
         Some(false) => w["searchOrderStatus_not"] = json!("open"),
         None => {}
@@ -727,7 +727,7 @@ pub async fn list_nfts(
         return Ok((vec![], 0));
     }
     let mut snapshot = None;
-    if super::owned_items::walks_here(state)
+    if (super::owned_items::walks_here(state) || super::nft_reads::needs_orders(f))
         && let Some(land) = state.land_network()
         && let Some(sources) = super::nft_reads::land_page_sources(f, land)
     {
@@ -802,12 +802,13 @@ pub async fn list_nfts(
     // owner, as its order, so a client sees it on sale (and relists by
     // cancelling that trade). A node with no source of trades has no such
     // listing. A single token's read (the sell and relist flow) is strict,
-    // as `/v1/orders` is: unavailable until the trades mirror is ready, an
-    // error if the read fails, never the token shown as unlisted. A list
-    // page serves its legacy orders and logs when the mirror cannot answer.
+    // as `/v1/orders` is. A page filtered or sorted by orders also needs
+    // its v3 rows. An ordinary list page serves its legacy orders and
+    // logs when the mirror cannot answer.
     let has_trades =
         state.settings.trades_sync_upstream_url.is_some() || state.settings.data_writes_enabled;
-    let single_token = f.contract_addresses.len() == 1 && f.token_id.is_some();
+    let strict_orders = (f.contract_addresses.len() == 1 && f.token_id.is_some())
+        || super::nft_reads::needs_orders(f);
     let unlisted: Vec<(String, String, String, String)> = data
         .iter()
         .filter(|r| has_trades && r.order.is_none())
@@ -842,7 +843,7 @@ pub async fn list_nfts(
                         .await
                         .map_err(super::nft_reads::read_error)
                 };
-                if single_token || rental_assets.is_empty() {
+                if strict_orders || rental_assets.is_empty() {
                     return load(conn).await;
                 }
                 // An optional order statement must leave the snapshot usable
@@ -863,7 +864,7 @@ pub async fn list_nfts(
         };
         match read.await {
             Ok(orders) => orders,
-            Err(response) if single_token => return Err(response),
+            Err(response) if strict_orders => return Err(response),
             Err(response) => {
                 tracing::warn!(status = %response.status(), "/v1/nfts: the open v3 listings could not be read; serving legacy orders only");
                 Default::default()
@@ -1001,7 +1002,11 @@ async fn list_page(
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {
-        Some(page) if is_land_routed(f) && f.search.is_none() => page,
+        Some(page)
+            if is_land_routed(f) && f.search.is_none() && !super::nft_reads::needs_orders(f) =>
+        {
+            page
+        }
         _ => {
             let (first, skip) = index_page(f);
             let (data, total, conn) =
@@ -1009,7 +1014,8 @@ async fn list_page(
             return Ok((data, total, Some(conn)));
         }
     };
-    // Shallow NAME queries and LAND queries on non-walkers use the configured graph.
+    // Shallow NAME and non-walking LAND pages without order filters or
+    // sorts may still use the configured graph.
     let now_ms = now.timestamp_millis();
     let where_ = graph_where(f, now_ms);
     let (order_by, direction) = graph_sort(f.sort_by);
@@ -1161,7 +1167,13 @@ mod tests {
         assert_eq!(w["owner"], "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
         assert_eq!(w["category"], "wearable");
         assert_eq!(w["searchOrderStatus"], "open");
-        assert_eq!(w["searchOrderExpiresAt_gt"], "5000");
+        assert_eq!(
+            w["or"],
+            json!([
+                {"searchOrderExpiresAt_gt":"5","searchOrderExpiresAt_lt":"100000000000"},
+                {"searchOrderExpiresAt_gt":"5000","searchOrderExpiresAt_gte":"100000000000"}
+            ])
+        );
         assert_eq!(w["searchWearableRarity_in"], json!(["epic"]));
         assert_eq!(
             w["searchWearableBodyShapes_contains"],

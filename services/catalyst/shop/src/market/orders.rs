@@ -116,7 +116,7 @@ pub struct Keyed {
 }
 
 pub fn from_seconds_to_milliseconds(time: f64) -> i64 {
-    if time < 1e11_f64 {
+    if time < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD as f64 {
         (time * 1000.0).round() as i64
     } else {
         time.round() as i64
@@ -1016,6 +1016,17 @@ async fn book_total(
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
 
+/// Compare the two raw expiry encodings on the Graph before paging.
+/// The boundary matches the NFT walk's `expires_ms` conversion.
+pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
+    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
+    let gt = format!("{field}_gt");
+    json!([
+        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
+        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
+    ])
+}
+
 fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     let mut w = json!({});
     if let Some(v) = &f.marketplace_address {
@@ -1036,10 +1047,10 @@ fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     match f.status.as_deref() {
         Some("open") => {
             w["status"] = json!("open");
-            w["expiresAt_gt"] = json!(now_ms.to_string());
+            w["or"] = graph_unexpired("expiresAt", now_ms);
         }
         Some(s) => w["status"] = json!(s),
-        None => w["expiresAt_gt"] = json!(now_ms.to_string()),
+        None => w["or"] = graph_unexpired("expiresAt", now_ms),
     }
     if let Some(v) = &f.item_id {
         let composite = if v.contains('-') {
@@ -1070,7 +1081,7 @@ fn legacy_order_by(sort_by: Option<OrderSortBy>) -> (&'static str, &'static str)
 pub fn order_from_graph(o: &Value, network: Network) -> Order {
     let ms = |key: &str| {
         let raw = readers::int_of(o, key);
-        if raw != 0 && raw < 100_000_000_000 {
+        if raw != 0 && raw < super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD {
             seconds_to_ms(raw)
         } else {
             raw
@@ -1582,7 +1593,13 @@ mod tests {
         let w = legacy_where(&f, 1_000);
         assert_eq!(w["nftAddress"], "0xabc");
         assert_eq!(w["item"], "0xabc-12");
-        assert_eq!(w["expiresAt_gt"], "1000");
+        assert_eq!(
+            w["or"],
+            json!([
+                {"expiresAt_gt":"1","expiresAt_lt":"100000000000"},
+                {"expiresAt_gt":"1000","expiresAt_gte":"100000000000"}
+            ])
+        );
         assert_eq!(legacy_order_by(f.sort_by), ("price", "asc"));
         let sql = trades_leg_sql(" AND u.signer = $3");
         assert!(

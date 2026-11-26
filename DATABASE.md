@@ -2704,7 +2704,7 @@ See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) f
 
 `sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
 
-A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked once, at the request's clock, and the page's values and order use that answer. The page reads the graph when the names index or those latest sales are not ready, and answers the error when the check cannot run. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked at the request's clock, and the page's values and order use that answer. An ordinary shallow page can read the graph when the names index or the latest sales are not ready. A page filtered or sorted by orders uses the native page even when the latest-sale display is unavailable, and returns the named readiness response if its required listing sources cannot answer. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
 
 ### Badge processor
 
@@ -5199,6 +5199,8 @@ commits in between is never half-seen:
   orders"). The v3 proof uses the published land-authz fold for LAND and
   Estates and the published NFT fold for other tokens. Nodes using the
   configured graph for legacy orders use that same proof for v3 listings.
+  The Graph legacy leg tests raw seconds and milliseconds in disjoint
+  ranges in the same filter for pages and counts, using one request clock.
   Both routes emit `x-listings-owner-check: checked`.
 
 Queries, all bounded by one owner or one batch:
@@ -5236,8 +5238,13 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
   131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
   names leg when no category is named).
 
-On a configured NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
-publication and the required NFT publications in one repeatable-read snapshot.
+A LAND or estate `/v1/nfts` page on a configured NFT walker reads the LAND
+publication and any required NFT publications in one repeatable-read snapshot.
+An order-dependent LAND or estate page also uses this snapshot on a node
+that reads publications without running the walkers. The sale filter joins
+backed v3 listings and open legacy orders before counting and paging. An
+order-dependent NAME page uses the published NFT and trade sources on its
+page snapshot.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
 browsing, search, sale filters and sorting. A missing required publication returns its source's 503

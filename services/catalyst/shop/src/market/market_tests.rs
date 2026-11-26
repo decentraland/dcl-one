@@ -4,6 +4,8 @@
 //! it; the favorites, admin and signed-trade flows run over the local tables.
 //! Without `CATALYST_TEST_DATABASE_URL` the database tests skip.
 
+mod nft_listings;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -246,7 +248,7 @@ impl FakeGraph {
                 let where_ = vars.get("where").cloned().unwrap_or(json!({}));
                 let id_gt = s(&where_, "id_gt");
                 let skip = vars.get("skip").and_then(Value::as_i64).unwrap_or(0) as usize;
-                let matches = |r: &Value| {
+                fn matches(r: &Value, where_: &Value) -> bool {
                     where_.as_object().into_iter().flatten().all(|(key, want)| {
                         let field = |name: &str| match r.get(name) {
                             Some(Value::Object(o)) => {
@@ -271,7 +273,11 @@ impl FakeGraph {
                         let bound = ["_lte", "_gte", "_lt", "_gt"]
                             .iter()
                             .find_map(|op| key.strip_suffix(op).map(|name| (name, *op)));
-                        if let Some(name) = key.strip_suffix("_in") {
+                        if key == "or" {
+                            want.as_array().is_some_and(|branches| {
+                                branches.iter().any(|branch| matches(r, branch))
+                            })
+                        } else if let Some(name) = key.strip_suffix("_in") {
                             want.as_array()
                                 .is_some_and(|list| list.iter().any(|w| same(&field(name), w)))
                         } else if let Some((name, op)) = bound.filter(|(name, _)| *name != "id") {
@@ -290,10 +296,10 @@ impl FakeGraph {
                             same(&field(key), want)
                         }
                     })
-                };
+                }
                 let mut rows: Vec<Value> = all
                     .into_iter()
-                    .filter(|r| (id_gt.is_empty() || s(r, "id") > id_gt) && matches(r))
+                    .filter(|r| (id_gt.is_empty() || s(r, "id") > id_gt) && matches(r, &where_))
                     .collect();
                 let ident = |after: &str| {
                     query.find(after).map(|i| {
