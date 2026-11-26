@@ -445,3 +445,156 @@ describe("a mount that stays silent", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 });
+
+describe("ambient playback", () => {
+  const controls = (posted: { mock: { calls: unknown[][] } }) =>
+    posted.mock.calls
+      .map(([message]) => message as { type?: string; payload?: { namespace?: string; method?: string } })
+      .filter((message) => message.type === "controller_request")
+      .map((message) => `${message.payload?.namespace}.${message.payload?.method}`);
+
+  test("mutes each scene it draws and plays its emote again each time it ends", () => {
+    render(<PreviewFrame options={{ urns: [HOODIE], emote: "fashion" }} ambient onLoad={vi.fn()} onError={vi.fn()} />);
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    expect(controls(posted)).toEqual([]);
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(controls(posted)).toEqual(["emote.disableSound"]);
+    fromPreview({ type: "emote_event", payload: { type: "animation_loop" } });
+    expect(controls(posted)).toEqual(["emote.disableSound"]);
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    expect(controls(posted)).toEqual(["emote.disableSound", "emote.play", "emote.play"]);
+  });
+
+  test("an emote ending in another preview on the page plays nothing here", () => {
+    render(<PreviewFrame options={{ urns: [HOODIE] }} ambient onLoad={vi.fn()} onError={vi.fn()} />);
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "emote_event", payload: { type: "animation_end" } }, source: window, origin: MAINNET }));
+    });
+    expect(controls(posted)).toEqual([]);
+  });
+
+  test("off by default: a scene keeps its sound and its emote plays once", () => {
+    const { onLoad } = mount({ urns: [HOODIE] });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    expect(onLoad).toHaveBeenCalledWith("babylon");
+    expect(controls(posted)).toEqual([]);
+  });
+});
+
+describe("the Bevy avatar preview", () => {
+  const BEVY = () => window.location.origin;
+  const fromBevy = (data: unknown) => fromPreview(data, BEVY());
+
+  test("mounts this site's /avatar-preview/ with the same options, Unity's mode among them, and not the renderer switch", () => {
+    mount({ urns: [HOODIE], profile: "default", unityMode: "builder", bevy: true });
+    const src = new URL(frame().src);
+    expect(`${src.origin}${src.pathname}`).toBe(`${BEVY()}/avatar-preview/`);
+    expect(params().getAll("urn")).toEqual([HOODIE]);
+    expect(params().get("mode")).toBe("builder");
+    expect(params().has("bevy")).toBe(false);
+    expect(params().has("unity")).toBe(false);
+    expect(params().has("env")).toBe(false);
+  });
+
+  test("testnet items go to the same page told to read testnet, and moving between networks mounts again", () => {
+    const { change } = mount({ urns: [TESTNET_HAT], bevy: true });
+    expect(new URL(frame().src).origin).toBe(BEVY());
+    expect(params().get("env")).toBe("dev");
+    const first = frame().contentWindow;
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HAT], bevy: true });
+    expect(frame().contentWindow).not.toBe(first);
+    expect(params().has("env")).toBe(false);
+  });
+
+  test("its answers count from this site's origin, and name Bevy", () => {
+    const { onLoad } = mount({ urns: [HOODIE], bevy: true });
+    fromPreview({ type: "load", payload: { renderer: "bevy" } }, MAINNET);
+    expect(onLoad).not.toHaveBeenCalled();
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(onLoad).toHaveBeenCalledWith("bevy");
+  });
+
+  test("an update goes whole, and scenes go one at a time: the answer for one the page left is not passed on", () => {
+    const { onLoad, change } = mount({ urns: [HOODIE], disableFadeEffect: true, bevy: true });
+    const win = frame().contentWindow!;
+    const posted = vi.spyOn(win, "postMessage");
+    const updates = () => posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update").map(([message]) => (message as { payload: { options: Record<string, unknown> } }).payload.options);
+    fromBevy({ type: "ready" });
+    change({ urns: [HAT], disableFadeEffect: true, bevy: true });
+    // Before the first scene answers, nothing is sent: its answer could not be told from the change's.
+    expect(updates()).toEqual([]);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0]).toMatchObject({ urns: [HAT], disableFadeEffect: true });
+    expect(Object.keys(updates()[0]!)).not.toContain("bevy");
+
+    change({ urns: [HOODIE, HAT], disableFadeEffect: true, bevy: true });
+    expect(updates()).toHaveLength(1);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(updates()).toHaveLength(2);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    expect(frame().contentWindow).toBe(win);
+  });
+
+  test("a start that fails is reported whatever the page changed meanwhile, and nothing more is sent to it", () => {
+    const { onError, change } = mount({ urns: [HOODIE], bevy: true });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromBevy({ type: "ready" });
+    change({ urns: [HAT], bevy: true });
+    fromBevy({ type: "error", payload: { message: "renderer failed to start" } });
+    expect(onError).toHaveBeenCalledWith("renderer failed to start");
+    expect(posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update")).toEqual([]);
+  });
+
+  test("an error answering a scene the page has left may be the renderer dying: the latest options go to a fresh iframe with its own deadline", () => {
+    vi.useFakeTimers();
+    const { onError, change } = mount({ urns: [HOODIE], bevy: true }, 45_000);
+    const first = frame().contentWindow;
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HAT], bevy: true });
+    change({ urns: [HOODIE, HAT], bevy: true });
+    fromBevy({ type: "error", payload: { message: "the renderer panicked" } });
+    expect(frame().contentWindow).not.toBe(first);
+    expect(params().getAll("urn")).toEqual([HOODIE, HAT]);
+    expect(onError).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(onError).toHaveBeenCalledWith("The preview did not load in time.");
+  });
+
+  test("an option an earlier update set and the next one leaves out is cleared, since Bevy keeps every update's", () => {
+    const { change } = mount({ urns: [HOODIE], bevy: true });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    const updates = () => posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update").map(([message]) => (message as { payload: { options: Record<string, unknown> } }).payload.options);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HOODIE], skin: "ff0000", bevy: true });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HOODIE], bevy: true });
+    // What Bevy runs on: the mount URL's options with every update laid over them in turn (preview.js state.overrides).
+    const merged = updates().reduce<Record<string, unknown>>((all, update) => ({ ...all, ...update }), Object.fromEntries(params()));
+    expect(updates()).toHaveLength(2);
+    expect(Object.keys(updates()[1]!)).toContain("skin");
+    expect(merged.skin).toBeUndefined();
+  });
+
+  test("turning Bevy off mounts wearable-preview", () => {
+    const { change } = mount({ urns: [HOODIE], bevy: true });
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HOODIE] });
+    expect(new URL(frame().src).origin).toBe(MAINNET);
+  });
+});

@@ -274,7 +274,8 @@ check. `test/client-login-storage.test.ts` checks the browser queue's transactio
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
-Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
+Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer,
+and that the chat's `Reactions` button plays a reaction (`/reaction_state`) and keeps its bar open.
 
 `specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
 and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
@@ -302,7 +303,7 @@ banned topic sender increments both `bannedSenderDrops` and `receiveDropped`.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
+test is in the spec file's header. Port 49, Partial 34, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -320,7 +321,7 @@ test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |
-| BackpackOutfits (4) | `backpack-outfits` | 2 | 2 | | | No delete confirmation; two closes to commit a look |
+| BackpackOutfits (4) | `backpack-outfits` | 3 | 1 | | | Two closes to commit a look |
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
 | Passport (5) | `passport` | 1 | 4 | | | Opens from the Profile row of the rail's Me panel; header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |

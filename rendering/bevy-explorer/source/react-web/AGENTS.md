@@ -4,7 +4,7 @@ This app is the React DOM port of the Decentraland in-world HUD. UI here is buil
 the design system: tokens plus the design primitives.
 
 The HUD shared with the Sites `/play` host lives in two layers. The UI is
-`library/ui/apps/hud` (`@hud/*`): the primitives (`@hud/design`), the tokens
+`library/ui/apps/hud` (`@hud/*`): the HUD's adapters of the shared components and its own primitives (`@hud/design`), the tokens
 (`@hud/styles/tokens.css`), the assets, the features and the session. The Explorer page's core is
 `library/explorer-core` (`@explorer-core/*`), with no React: the wire protocol and bindings
 (`@explorer-core/engine/*`), the drivers' contract, sign-in, shell messaging, analytics and server
@@ -31,11 +31,19 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   component. The only raw values allowed are layout primitives with no token
   (e.g. a one-off `gap: 4px`) — and even those should prefer a token when one fits.
 
-- **Primitives.** Reusable interactive elements and surfaces use the
-  components in `@hud/design` — `Button`, `IconButton`, `ControlButton`, `Panel`,
-  `Icon`, not a bespoke `<button>` + CSS for something a primitive already
-  covers (close/back/menu/toggle buttons, nav controls, cards, popovers).
+- **Primitives.** Reusable interactive elements and surfaces use the shared
+  components from `@dcl/one-ui` (`Button`, `Tooltip`, `Switch`, `Checkbox`,
+  `TabsBar`, `Spinner` and `Skeleton` with `appearance="hud"` or their HUD
+  variants; `Panel`, `MenuPanel`, `MaskIcon`, `Slider` and `EmptyState` as they
+  are) and the components still in `@hud/design` — `IconButton`,
+  `ControlButton`, `Icon`, and the adapters that pass the HUD's icons and the
+  engine's cancel layers to a shared component (`Chip`, `Pager`, `Dropdown`,
+  `ContextMenu`, `OptionMenu`), not a bespoke `<button>` + CSS for something
+  a primitive already covers (close/back/menu/toggle buttons, nav controls,
+  cards, popovers).
 
+- **Pull the shared UI's Git LFS assets once per clone**: `git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"`. The HUD's input graph lists them, and `pnpm dev`, the tests and the native build refuse a pointer.
+- **Use the shared component when one exists.** Import it from `@dcl/one-ui` (`library/ui/components`); do not add a HUD copy of a component the library already has. A look the HUD needs is a variant on the shared component (`docs/ui-standards.md`).
 - **If a primitive doesn't exist, CREATE it** in `library/ui/apps/hud/design/` — don't inline custom CSS
   for a pattern that will recur. A new primitive must:
   1. Live in `library/ui/apps/hud/design/<Name>.tsx` (+ `.module.css`), token-driven only.

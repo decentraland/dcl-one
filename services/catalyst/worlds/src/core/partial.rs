@@ -20,8 +20,6 @@
 //! pending upload names, and [`delete_expired_uploads`] (the leased
 //! `worlds-partial-upload-cleanup` job and `/gc`) reclaims expired ones.
 
-// A refused batch is the answer itself, built where the refusal is decided.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
