@@ -240,7 +240,10 @@ impl CurrentAssignments {
                         && !view.records[&wallet].legacy_invalidated))
             {
                 if assignment.is_some() {
-                    view.records.get_mut(&wallet).unwrap().last_pass = pass;
+                    view.records
+                        .get_mut(&wallet)
+                        .expect("record inserted above")
+                        .last_pass = pass;
                 }
                 continue;
             }
@@ -254,7 +257,10 @@ impl CurrentAssignments {
             {
                 view.next_version = version;
             }
-            let record = view.records.get_mut(&wallet).unwrap();
+            let record = view
+                .records
+                .get_mut(&wallet)
+                .expect("record inserted above");
             if let Some(previous) = record.current.take() {
                 record.retained = Some(previous);
             }
@@ -456,16 +462,15 @@ impl CurrentAssignments {
             if record.current.is_some() || record.blocked || !record.pending.is_empty() {
                 return None;
             }
-            if let Some((retained, version)) = &record.retained {
-                if *version != lookup.assignment_version
+            if let Some((retained, version)) = &record.retained
+                && (*version != lookup.assignment_version
                     || retained.session != lookup.session
                     || lookup.selected.as_ref().is_some_and(|selected| {
                         selected.origin != retained.selected_origin
                             || selected.identity != retained.owner_epoch
-                    })
-                {
-                    return None;
-                }
+                    }))
+            {
+                return None;
             }
         }
         // Record reclamation retains every current, blocked and pending record.
@@ -606,7 +611,11 @@ mod current_tests {
         let wallet = "0x1111111111111111111111111111111111111111";
         let session = "0x2222222222222222222222222222222222222222";
         let controls = Mutex::new(ControlPositions::new(2, Duration::ZERO, Duration::ZERO));
-        controls.lock().unwrap().enable("retirement").unwrap();
+        controls
+            .lock()
+            .expect("controls lock poisoned")
+            .enable("retirement")
+            .unwrap();
         // No control source is bound for this synthetic selected legacy pass.
         let mut a = assignment(session, 9);
         a.wallet = wallet.into();
@@ -630,7 +639,7 @@ mod current_tests {
         current
             .view
             .lock()
-            .unwrap()
+            .expect("view lock poisoned")
             .records
             .get_mut(wallet)
             .unwrap()
@@ -657,25 +666,47 @@ mod current_tests {
             realm: "r".into(),
             position: Some([1.0, 0.0, 1.0]),
         };
-        assert!(controls.lock().unwrap().ingest(update.clone()));
+        assert!(
+            controls
+                .lock()
+                .expect("controls lock poisoned")
+                .ingest(update.clone())
+        );
         assert!(
             current
                 .lookup_retirement_checked(&request, Some(&controls))
                 .is_none(),
             "new candidate blocks retirement before its next pass"
         );
-        assert!(controls.lock().unwrap().ingest(ControlPosition {
-            sequence: 2,
-            position: None,
-            ..update
-        }));
-        controls.lock().unwrap().snapshot();
         assert!(
-            controls.lock().unwrap().snapshot().owners.is_empty(),
+            controls
+                .lock()
+                .expect("controls lock poisoned")
+                .ingest(ControlPosition {
+                    sequence: 2,
+                    position: None,
+                    ..update
+                })
+        );
+        controls.lock().expect("controls lock poisoned").snapshot();
+        assert!(
+            controls
+                .lock()
+                .expect("controls lock poisoned")
+                .snapshot()
+                .owners
+                .is_empty(),
             "fixture GC actually removed the terminal head"
         );
         current.replace(1000, Duration::from_secs(2), vec![]);
-        assert!(current.view.lock().unwrap().records.is_empty());
+        assert!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .is_empty()
+        );
         assert!(
             current
                 .lookup_retirement_checked(&request, Some(&controls))
@@ -723,7 +754,7 @@ mod current_tests {
         assert!(current.lookup_retirement(&request).is_none());
         current.replace(3, Duration::from_secs(2), vec![]);
         assert!(
-            !current.view.lock().unwrap().records[wallet]
+            !current.view.lock().expect("view lock poisoned").records[wallet]
                 .pending
                 .is_empty()
         );
@@ -732,7 +763,7 @@ mod current_tests {
             "retained cleanup cannot disappear from a negative reply"
         );
         {
-            let mut view = current.view.lock().unwrap();
+            let mut view = current.view.lock().expect("view lock poisoned");
             let record = view.records.get_mut(wallet).unwrap();
             record.pending.clear();
             record.blocked = true;
@@ -756,9 +787,10 @@ mod current_tests {
                     current.replace(2, Duration::from_secs(2), vec![legacy.clone()]);
                     let before = current.lookup("wallet", "legacy").unwrap();
                     assert_eq!(before.pending_takeovers.len(), 1);
-                    let potential = current.view.lock().unwrap().records["wallet"]
-                        .potential
-                        .clone();
+                    let potential =
+                        current.view.lock().expect("view lock poisoned").records["wallet"]
+                            .potential
+                            .clone();
                     // `usable` deliberately changes only board/grid availability: registration
                     // must invalidate before either collection or a lookup can observe it.
                     let mut board = crate::pulse::snapshot::SnapshotBoard::new(2, 2);
@@ -776,7 +808,8 @@ mod current_tests {
                     assert_eq!(retained.pending_takeovers, before.pending_takeovers);
                     assert_eq!(retained.token_not_before, before.token_not_before);
                     assert_eq!(
-                        current.view.lock().unwrap().records["wallet"].potential,
+                        current.view.lock().expect("view lock poisoned").records["wallet"]
+                            .potential,
                         potential
                     );
                     let op = retained.pending_takeovers[0].takeover_id.clone();
@@ -829,10 +862,21 @@ mod current_tests {
         identity.remove(0);
         assert_eq!(identity.peer_by_wallet("wallet"), Some(1));
         identity.remove(1);
-        current.view.lock().unwrap().next_version = u64::MAX;
+        current
+            .view
+            .lock()
+            .expect("view lock poisoned")
+            .next_version = u64::MAX;
         current.replace(3, Duration::from_secs(2), vec![legacy]);
         assert!(current.lookup("wallet", "legacy").is_none());
-        assert_eq!(current.view.lock().unwrap().next_version, u64::MAX);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .next_version,
+            u64::MAX
+        );
     }
     use crate::protocol::pulse::decentraland::pulse::TakeoverCompleted;
 
@@ -882,16 +926,32 @@ mod current_tests {
             + crate::pulse::cluster::control::DEFAULT_CONTROL_POSITION_CAPACITY;
         assert_eq!(simultaneous, 4095 + 4096 + 16382);
         current.replace(1, Duration::from_secs(2), cohort(0, simultaneous, "a"));
-        assert_eq!(current.view.lock().unwrap().records.len(), simultaneous);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .len(),
+            simultaneous
+        );
         current.replace(
             2,
             Duration::from_secs(2),
             cohort(simultaneous, simultaneous, "b"),
         );
-        assert_eq!(current.view.lock().unwrap().records.len(), simultaneous * 2);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .len(),
+            simultaneous * 2
+        );
         for n in [0, simultaneous - 1] {
             let wallet = format!("w{n:06}");
-            let record = &current.view.lock().unwrap().records[&wallet];
+            let record = &current.view.lock().expect("view lock poisoned").records[&wallet];
             assert!(
                 record.potential.is_some(),
                 "churn cannot forget potentially admitted predecessors"
@@ -914,7 +974,15 @@ mod current_tests {
         early.wallet = "a-before-old-wallets".into();
         current.replace(RETENTION_PASSES + 2, Duration::from_secs(2), vec![early]);
         assert!(current.lookup("a-before-old-wallets", "new").is_some());
-        assert_eq!(current.view.lock().unwrap().records.len(), 1);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -923,7 +991,7 @@ mod current_tests {
         current.replace(1, Duration::from_secs(2), cohort(0, 4, "a"));
         let floor = unix_seconds() + FLOOR_GRACE_SECONDS;
         {
-            let mut view = current.view.lock().unwrap();
+            let mut view = current.view.lock().expect("view lock poisoned");
             view.records.get_mut("w000000").unwrap().blocked = true;
             let pending = view.records.get_mut("w000001").unwrap();
             pending.pending.push((
@@ -938,7 +1006,7 @@ mod current_tests {
             view.records.get_mut("w000002").unwrap().floor = floor;
         }
         current.replace(RETENTION_PASSES + 2, Duration::from_secs(2), vec![]);
-        let view = current.view.lock().unwrap();
+        let view = current.view.lock().expect("view lock poisoned");
         assert_eq!(view.records.len(), 3);
         assert!(view.records["w000000"].blocked);
         assert_eq!(view.records["w000001"].pending.len(), 1);
@@ -969,7 +1037,7 @@ mod current_tests {
         let current = CurrentAssignments::default();
         pass(&current, 1, "a");
         {
-            let mut view = current.view.lock().unwrap();
+            let mut view = current.view.lock().expect("view lock poisoned");
             let record = view.records.get_mut("wallet").unwrap();
             for n in 0..RECOVERY_ROOMS {
                 record.pending.push((
@@ -1031,7 +1099,12 @@ mod current_tests {
         current.replace(3, Duration::from_secs(2), vec![]);
         current.replace(1000, Duration::from_secs(2), vec![]);
         assert_eq!(
-            current.view.lock().unwrap().records.len(),
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .len(),
             1,
             "confirmed floor clock grace also governs retirement"
         );
@@ -1098,7 +1171,14 @@ mod current_tests {
         assert!(current.lookup("wallet", "b").is_none());
         assert!(current.retained_hints(1).is_empty());
         current.replace(3000, Duration::from_secs(2), vec![]);
-        assert!(current.view.lock().unwrap().records.is_empty());
+        assert!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .is_empty()
+        );
     }
 
     fn pass(current: &CurrentAssignments, n: u64, session: &str) -> PeerClusterSnapshot {
@@ -1199,10 +1279,21 @@ mod current_tests {
         current.replace(1000, Duration::from_secs(2), vec![]);
         let next = pass(&current, 1001, "a");
         assert!(next.assignment_version > first.assignment_version);
-        current.view.lock().unwrap().next_version = u64::MAX;
+        current
+            .view
+            .lock()
+            .expect("view lock poisoned")
+            .next_version = u64::MAX;
         current.replace(1002, Duration::from_secs(2), vec![assignment("b", 3)]);
         assert!(current.lookup("wallet", "b").is_none());
-        assert_eq!(current.view.lock().unwrap().next_version, u64::MAX);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .next_version,
+            u64::MAX
+        );
     }
 
     #[tokio::test]
@@ -1226,7 +1317,7 @@ mod current_tests {
         }
         // Inject a second independent retained operation to check out-of-order aggregate handling.
         {
-            let mut view = current.view.lock().unwrap();
+            let mut view = current.view.lock().expect("view lock poisoned");
             let record = view.records.get_mut("wallet").unwrap();
             let mut other = record.pending[0].0.clone();
             other.takeover_id = "independent".into();
@@ -1302,12 +1393,20 @@ mod current_tests {
         refused.wallet = "excess".into();
         current.replace(1000, Duration::from_secs(2), vec![refused]);
         assert!(current.lookup("excess", "new").is_none());
-        assert_eq!(current.view.lock().unwrap().records.len(), RECOVERY_WALLETS);
+        assert_eq!(
+            current
+                .view
+                .lock()
+                .expect("view lock poisoned")
+                .records
+                .len(),
+            RECOVERY_WALLETS
+        );
         assert!(
             current
                 .view
                 .lock()
-                .unwrap()
+                .expect("view lock poisoned")
                 .records
                 .values()
                 .all(|r| r.pending.len() == 1)
@@ -1318,7 +1417,7 @@ mod current_tests {
         oversized.replace(1, Duration::from_secs(2), vec![a]);
         assert!(oversized.lookup("wallet", "a").is_none());
         assert!(
-            oversized.view.lock().unwrap().records["wallet"]
+            oversized.view.lock().expect("view lock poisoned").records["wallet"]
                 .potential
                 .is_none()
         );

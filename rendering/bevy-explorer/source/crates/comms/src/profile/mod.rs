@@ -32,7 +32,7 @@ use common::{
     },
     rpc::{RpcCallEvent, RpcEventSender, RpcResultSender, RpcStreamSender},
     sets::SceneSets,
-    structs::{AppConfig, PrimaryUser},
+    structs::{AppConfig, PlayerAddress, PrimaryUser},
     util::{TaskCompat, TaskExt},
 };
 use common::{rpc::RpcCall, util::AsH160};
@@ -641,7 +641,9 @@ fn setup_primary_profile(
             let Some(profile) = current_profile.profile.as_ref() else {
                 *announced = None;
                 if maybe_profile.is_some() {
-                    commands.entity(player).remove::<UserProfile>();
+                    commands
+                        .entity(player)
+                        .remove::<(UserProfile, PlayerAddress)>();
                     // logged out: scenes must stop seeing the previous account as `PLAYER`
                     for mut global_crdt in contexts.iter_mut() {
                         for component_id in [
@@ -656,8 +658,13 @@ fn setup_primary_profile(
                 return;
             };
 
-            // update component
-            commands.entity(player).try_insert(profile.clone());
+            // update components
+            let mut entity = commands.entity(player);
+            entity.try_insert(profile.clone());
+            match profile.content.eth_address.as_h160() {
+                Some(address) => entity.try_insert(PlayerAddress(address)),
+                None => entity.try_remove::<PlayerAddress>(),
+            };
 
             // send to scenes (every context: the local player is `PLAYER` in all of them)
             for mut global_crdt in contexts.iter_mut() {

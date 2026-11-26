@@ -229,6 +229,127 @@ class FinancialMigrationCases:
         self.credits_load(db, 'purchase', [row.replace("'2026-01-02'", "'2026-03-01'")])
         self.assertEqual(self.sql(db, 'SELECT status, refunded_cents FROM credits.purchases;\n').strip(), 'paid\t0')
 
+    # ── credits-server: studios, operators and budgets ──
+
+    STUDIO_A = '11111111-1111-1111-1111-1111111111a1'
+    STUDIO_B = '11111111-1111-1111-1111-1111111111b2'
+
+    @staticmethod
+    def sql_text(value):
+        return 'NULL' if value is None else "'" + str(value).replace("'", "''") + "'"
+
+    def studio_row(self, studio_id, name, status='active', updated='2026-01-02'):
+        return f"'{studio_id}', {self.sql_text(name)}, '{status}', 'console', '2026-01-01', '{updated}'"
+
+    def entry_row(self, entry_id, studio_id, cents, kind, credit=None, note=None, key=None):
+        q = self.sql_text
+        return (f"'{entry_id}', '{studio_id}', {cents}, '{kind}', {q(credit)}, {q(note)}, {q(key)}, "
+                f"{q(key and 'hash-' + key)}, 'console', '2026-01-03'")
+
+    def studio_balances(self, db):
+        return self.sql(db, 'SELECT studio_id, sum(usd_cents) FROM credits.studio_budget_entries '
+                            'GROUP BY studio_id ORDER BY studio_id;\n').strip().splitlines()
+
+    def test_when_studio_budgets_load_each_balance_should_equal_the_sum_of_its_upstream_entries(self):
+        db = self.catalyst_db('credits_studio_budget')
+        player = '0x' + 'f' * 40
+        # The ledger step imported the credit of the first grant (50 cents = 5 Credits), not yet the second.
+        self.credits_load(db, 'ledger', [f"'{player}', 0, 'credits-server:credit:c-1', 'grant', 5, '2026-01-03'"])
+        self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'Alpha'), self.studio_row(self.STUDIO_B, 'Beta')])
+        e = [f'22222222-2222-2222-2222-22222222222{i}' for i in range(5)]
+        entries = [
+            self.entry_row(e[0], self.STUDIO_A, 1000, 'deposit', key='k-0'),
+            self.entry_row(e[1], self.STUDIO_A, -50, 'grant', credit='c-1', note='gift', key='k-1'),
+            self.entry_row(e[2], self.STUDIO_A, -30, 'grant', credit='c-2', key='k-2'),
+            self.entry_row(e[3], self.STUDIO_A, -20, 'adjustment', note='fix'),
+            self.entry_row(e[4], self.STUDIO_B, 300, 'deposit'),
+        ]
+        upstream = [f'{self.STUDIO_A}\t900', f'{self.STUDIO_B}\t300']
+        self.credits_load(db, 'studio_budget_entry', entries)
+        self.assertEqual(self.studio_balances(db), upstream)
+        entry = "SELECT kind, coalesce(ledger_id::text, '-'), coalesce(note, '-') FROM credits.studio_budget_entries WHERE id = '{}';\n"
+        credit_id = "SELECT id FROM credits.ledger WHERE tx_ref = 'credits-server:credit:{}';\n"
+        self.assertEqual(self.sql(db, entry.format(e[1])).strip().split('\t'),
+                         ['grant', self.sql(db, credit_id.format('c-1')).strip(), 'gift'])
+        self.assertEqual(self.sql(db, entry.format(e[2])).strip().split('\t'),
+                         ['adjustment', '-', '(credits-server grant of credit c-2, not imported yet)'])
+        # A replay writes nothing.
+        self.credits_load(db, 'studio_budget_entry', entries)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM credits.studio_budget_entries;\n').strip(), '5')
+        self.assertEqual(self.studio_balances(db), upstream)
+        # Once the ledger imports the second credit, the carried grant links to it, balance unchanged.
+        self.credits_load(db, 'ledger', [f"'{player}', 0, 'credits-server:credit:c-2', 'grant', 3, '2026-01-04'"])
+        self.credits_load(db, 'studio_budget_entry', entries)
+        self.assertEqual(self.sql(db, entry.format(e[2])).strip().split('\t'),
+                         ['grant', self.sql(db, credit_id.format('c-2')).strip(), '-'])
+        self.assertEqual(self.studio_balances(db), upstream)
+
+    def test_when_the_node_changed_a_studio_later_it_should_keep_the_node_values(self):
+        db = self.catalyst_db('credits_studio_newer')
+        self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'Alpha')])
+        self.sql(db, f"UPDATE credits.studios SET name = 'Alpha Node', status = 'paused', updated_at = '2026-02-01' "
+                     f"WHERE id = '{self.STUDIO_A}';\n")
+        self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'Alpha')])
+        names = 'SELECT name, status FROM credits.studios;\n'
+        self.assertEqual(self.sql(db, names).strip(), 'Alpha Node\tpaused')
+        self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'Alpha 2', updated='2026-03-01')])
+        self.assertEqual(self.sql(db, names).strip(), 'Alpha 2\tactive')
+
+    def test_when_the_node_already_names_another_studio_the_same_it_should_stop(self):
+        db = self.catalyst_db('credits_studio_name')
+        self.sql(db, f"INSERT INTO credits.studios (id, name, created_by) VALUES ('{self.STUDIO_B}', 'Beta', 'node');\n")
+        with self.assertRaisesRegex(migrate.MigrationError, 'already has another studio named'):
+            self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'BETA')])
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM credits.studios;\n').strip(), '1')
+
+    def test_studio_operators_follow_upstream_and_leave_the_node_ones_alone(self):
+        db = self.catalyst_db('credits_studio_operators')
+        self.credits_load(db, 'studio', [self.studio_row(self.STUDIO_A, 'Alpha')])
+        op1, op2, node_op = '0x' + '1' * 40, '0x' + '2' * 40, '0x' + '3' * 40
+        row = lambda a: f"'{self.STUDIO_A}', '{a}', 'console', '2026-01-02'"
+        operators = 'SELECT address FROM credits.studio_operators ORDER BY address;\n'
+        self.credits_load(db, 'studio_operator', [row(op1), row(op2)])
+        self.sql(db, f"INSERT INTO credits.studio_operators (studio_id, address, added_by) "
+                     f"VALUES ('{self.STUDIO_A}', '{node_op}', 'node');\n")
+        # Upstream removed op2: it stops acting for the studio; the node's own operator stays.
+        self.credits_load(db, 'studio_operator', [row(op1)])
+        self.assertEqual(self.sql(db, operators).split(), [op1, node_op])
+        # The node removed op1: a later run does not add it back.
+        self.sql(db, f"DELETE FROM credits.studio_operators WHERE address = '{op1}';\n")
+        self.credits_load(db, 'studio_operator', [row(op1)])
+        self.assertEqual(self.sql(db, operators).split(), [node_op])
+        # An empty upstream set while imported operators are recorded is refused, unless allowed.
+        with self.assertRaisesRegex(migrate.MigrationError, 'refusing to remove'):
+            self.credits_load(db, 'studio_operator', [])
+        self.credits_load(db, 'studio_operator', [], allow_empty=True)
+        self.assertEqual(self.sql(db, operators).split(), [node_op])
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM dcl_migration.credit_studio_operator_loaded;\n').strip(), '0')
+
+    def test_studio_extracts_read_upstream_milliseconds_and_lower_case_operators(self):
+        db = self.fresh_db('credits_studio_extract')
+        self.sql(db, f'''
+            CREATE TABLE studios (id uuid, name text, status text, created_by varchar(42), created_at bigint,
+                updated_at bigint);
+            CREATE TABLE studio_operators (studio_id uuid, address varchar(42), added_by varchar(42), created_at bigint);
+            CREATE TABLE studio_budget_entries (id uuid, studio_id uuid, usd_cents bigint, kind text,
+                credit_id varchar(66), note text, idempotency_key text, request_hash text, created_by varchar(42),
+                created_at bigint);
+            INSERT INTO studios VALUES ('{self.STUDIO_A}', 'Alpha', 'active', 'console', 1767225600000, 1767312000000);
+            INSERT INTO studio_operators VALUES ('{self.STUDIO_A}', '0xAB{'c' * 38}', 'console', 1767225600000);
+            INSERT INTO studio_budget_entries VALUES ('{'3' * 8}-3333-3333-3333-{'3' * 12}', '{self.STUDIO_A}', -50,
+                'grant', 'c-1', NULL, 'k', 'h', 'console', 1767225600000);
+        ''')
+        folder = migrate.SOURCES / 'credits-server'
+
+        def run(name, columns):
+            extract = (folder / f'{name}.extract.sql').read_text()
+            return self.sql(db, f'SELECT {columns} FROM ({extract}) x;\n').strip().split('\t')
+        self.assertEqual(run('studio', "id, name, status, created_by, created_at AT TIME ZONE 'UTC', "
+                                       "updated_at AT TIME ZONE 'UTC'"),
+                         [self.STUDIO_A, 'Alpha', 'active', 'console', '2026-01-01 00:00:00', '2026-01-02 00:00:00'])
+        self.assertEqual(run('studio_operator', 'address'), ['0xab' + 'c' * 38])
+        self.assertEqual(run('studio_budget_entry', 'usd_cents, kind, credit_id'), ['-50', 'grant', 'c-1'])
+
     # ── signatures-server: one open listing per asset ──
 
     def test_when_a_batch_cancels_a_listing_and_carries_its_open_replacement_it_should_land_both(self):

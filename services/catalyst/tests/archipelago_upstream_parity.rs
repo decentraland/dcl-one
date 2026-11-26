@@ -1,6 +1,5 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/upstream_parity.rs
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 use reqwest::Method;
 use reqwest::header::ORIGIN;
 
