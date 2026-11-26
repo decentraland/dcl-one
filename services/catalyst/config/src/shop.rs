@@ -132,6 +132,12 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
     pub wert_api_key: Option<String>,
 
+    /// Extra Wert contract tuples as comma-separated `network:address:target`
+    /// entries. Networks are ethereum, polygon, amoy and sepolia. Targets
+    /// are default and publicationFees.
+    #[arg(long, env = "WERT_EXTRA_CONTRACTS")]
+    pub wert_extra_contracts: Option<String>,
+
     // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
     // then answer 503 naming them).
     /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
@@ -222,13 +228,15 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_third_party_registry_index_enabled: bool,
 
-    /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
+    /// Walk the Polygon collection factories and their collections' events, and on Ethereum
+    /// mainnet the collections-v1 contracts', into `shop.collection_event`, over each network's
+    /// `TRADE_RPC_URLS` entry (Ethereum's falls back to `ETH_RPC_URL`).
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
     /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
-    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    /// takes from the collections mirror and writes (`matic`, `ethereum`); empty, it keeps its log
+    /// alone.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
     pub marketplace_collections_index_owns: String,
 

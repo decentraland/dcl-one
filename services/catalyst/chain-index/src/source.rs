@@ -32,7 +32,8 @@ pub enum Source {
     CollectionsIndex,
     /// Historical Polygon curation committee membership.
     CommitteeIndex,
-    /// The common marketplace accounting publication.
+    /// The sales walks' publications: the common marketplace accounting and
+    /// the bid book (`shop.sale_event` and `shop.nft_bid`, `sales_index`).
     SalesIndex,
     /// `shop.trade_event` after a published fold (`trade_events`).
     TradeEventsIndex,

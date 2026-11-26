@@ -89,8 +89,9 @@ reopen or close an order before its fold is published, nor can a write at
 the published height. The cost is a window on each pass, from the fold's
 commit until the walk, having read the head, publishes it: order reads in it
 answer the `nft-index` envelope rather than an unpublished fold, and
-`catalyst_shop_order_book_unpublished_fold_reads_total` counts them. A
-database that
+`catalyst_shop_order_book_unpublished_fold_reads_total` counts them by network
+and route. The corresponding attempted checks use
+`catalyst_shop_order_book_fold_read_checks_total`. A database that
 predates the table fills it in the schema run that creates it: the fold's
 rules over every token, bounded by what the nft fold had folded
 (`fold_through`), which becomes the book's marker with its recovery point's

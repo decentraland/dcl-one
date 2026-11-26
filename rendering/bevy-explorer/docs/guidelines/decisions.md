@@ -450,7 +450,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   play 0.2 s apart whichever messages they came in; unity-explorer starts the gap afresh for a
   message that finds none of theirs waiting, which lets a sender of one-reaction messages play
   twenty a second. In the HUD, Cancel closes the bar, the full picker takes the bar's place
-  while it is open, and a pick with no index still becomes a recent emoji.
+  while it is open, and a pick with no index still becomes a recent emoji. The
+  reactions on screen scale with the HUD, are solved to where each ends and animated to there,
+  fade in place under reduced motion and are drawn in the system's emoji.
+  `reaction_visualization` is sent for a change of the setting only, never for the value a
+  session starts with. unity-explorer also sends it when its settings controller first applies
+  the saved value and that differs from its settings asset's (`chatReactionsEnabled`, true), so
+  it can send one `state: false` in a session where the player changed nothing: the two clients'
+  counts of the event are not alike.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the

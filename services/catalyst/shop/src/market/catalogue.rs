@@ -48,6 +48,19 @@ pub use crate::chain_index::catalogue::{
     Waited, index_verdict, read_snapshot,
 };
 
+/// Whether collection row `c` belongs to the served network and chain.
+pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    let proof = if chain == net.chain_id() {
+        ""
+    } else {
+        " AND c.testnet_verified"
+    };
+    format!(
+        "(c.network = '{}' AND c.chain_id = {chain}{proof})",
+        net.db_name()
+    )
+}
+
 /// Whether the read's transaction may write (a campaign whose approval
 /// check and tag write share one snapshot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +213,7 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+            .map_err(super::trades::CheckError::refusal)
     }
 }
 
@@ -444,6 +458,54 @@ async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx:
     .fetch_all(conn)
     .await?;
     rows.iter().map(NetworkState::from_row).collect()
+}
+
+/// Require the collection membership of one network in the route's existing
+/// snapshot. The native catalogue must hold its published fold. The mirror
+/// must have published a complete pass even when its current copy is empty.
+pub(super) async fn require_collections_on(
+    tx: &mut Transaction<'static, Postgres>,
+    state: &MarketplaceState,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Result<(), super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
+    let catalogue = states
+        .iter()
+        .find(|s| s.network == net.db_name())
+        .expect("every catalogue network has a state");
+    if catalogue.owned {
+        return index_verdict(
+            catalogue,
+            state.settings.catalogue_chain(net),
+            Purpose::Describe,
+            now,
+        )
+        .map(|_| ())
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let network = match net {
+        ChainNet::Ethereum => Network::Ethereum,
+        ChainNet::Matic => Network::Matic,
+    };
+    let configured = state.settings.collection_networks().contains(&network);
+    let served = if configured { &[network][..] } else { &[] };
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[catalogue],
+            returnable: &[network],
+            served,
+            configured,
+            owned: &[],
+            asked: Some(network),
+        },
+        &[Mirror::Collections],
+        Purpose::Describe,
+        now,
+    )
+    .map(|_| ())
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 
 /// [`begin_checked`], answering a refusal with its envelope.

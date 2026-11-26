@@ -165,6 +165,9 @@
   /* ---- typography (Inter scale) ---- */
   --font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', monospace;
+  /* The colour emoji face by name: through the text stack, Chromium and WebKit on Linux take a
+     monochrome glyph from the system's sans (DejaVu has the smileys) before they reach it. */
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   --fs-2xs: 0.6rem; /* micro labels — rarity tags and the like */
   --fs-xs: 0.72rem;
   --fs-sm: 0.82rem;
