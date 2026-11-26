@@ -186,9 +186,8 @@ impl<'a> Rpc<'a> {
         let number = block["number"]
             .as_str()
             .and_then(hex_to_i64)
-            .filter(|n| *n >= 0)
-            .ok_or_else(|| RpcError::Rpc("invalid finalized number".into()))?
-            as u64;
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| RpcError::Rpc("invalid finalized number".into()))?;
         let hash = block["hash"]
             .as_str()
             .filter(|h| {
@@ -294,7 +293,8 @@ impl<'a> Rpc<'a> {
                     let number = block
                         .get("number")
                         .and_then(Value::as_str)
-                        .and_then(hex_to_i64);
+                        .and_then(hex_to_i64)
+                        .and_then(|n| u64::try_from(n).ok());
                     let hash = block
                         .get("hash")
                         .and_then(Value::as_str)
@@ -305,9 +305,9 @@ impl<'a> Rpc<'a> {
                         .and_then(hex_to_i64);
                     if let (Some(number), Some(hash), Some(timestamp)) = (number, hash, timestamp) {
                         out.insert(
-                            number as u64,
+                            number,
                             BlockHeader {
-                                number: number as u64,
+                                number,
                                 hash,
                                 timestamp,
                             },

@@ -529,7 +529,9 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
             }
         };
     for log in &read.logs {
-        let block = log_position(log).0 as u64;
+        let Ok(block) = u64::try_from(log_position(log).0) else {
+            continue;
+        };
         if let Some(h) = log.block_hash.as_deref() {
             note(block, lower(h), &mut rpc_hashes);
         }
@@ -569,7 +571,8 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
         .iter()
         .filter_map(|l| {
             let (b, i) = log_position(l);
-            (b >= read.from as i64 && b <= anchor as i64).then_some(((b as u64, i as u32), l))
+            let (b, i) = (u64::try_from(b).ok()?, u32::try_from(i).ok()?);
+            (b >= read.from && b <= anchor).then_some(((b, i), l))
         })
         .collect();
     let mut portal: BTreeMap<(u64, u32), &PortalLog> = BTreeMap::new();
@@ -623,8 +626,8 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
         let Some((hash, time)) = fetched.headers.get(&block) else {
             continue;
         };
-        match read.times.get(&(block as i64)) {
-            Some(t) if *t as u64 == *time => {}
+        match i64::try_from(block).ok().and_then(|b| read.times.get(&b)) {
+            Some(t) if u64::try_from(*t).ok() == Some(*time) => {}
             Some(_) => out.timestamp += 1,
             None => unavailable("timestamp", &mut out),
         }
