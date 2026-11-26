@@ -758,19 +758,17 @@ async fn slack_retry_after_is_capped_at_thirty_minutes() {
     };
     let credits = Credits::new(db.pool.clone());
     let (url, hook) = webhook(StatusCode::TOO_MANY_REQUESTS).await;
-    hook.headers
-        .lock()
-        .unwrap()
-        .push(("retry-after", "86400".into()));
     let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
 
-    let t0 = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
-    delivery.run_pass(&credits, t0).await.unwrap();
-    assert_eq!(
-        alert_row(&db.pool).await.3,
-        t0 + chrono::Duration::minutes(30)
-    );
+    let mut due = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
+    for retry_after in [86_400, i64::MAX] {
+        *hook.headers.lock().unwrap() = vec![("retry-after", retry_after.to_string())];
+        let out = delivery.run_pass(&credits, due).await.unwrap();
+        assert_eq!(out.retried, 1);
+        due += chrono::Duration::minutes(30);
+        assert_eq!(alert_row(&db.pool).await.3, due);
+    }
     db.drop().await;
 }
 
