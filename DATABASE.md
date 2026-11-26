@@ -3045,6 +3045,8 @@ the table (`catalyst schema migrate`), and no step is needed.
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
+Publication also clears acknowledged projection writes. See
+[Fold-written projections and their publication](#fold-written-projections-and-their-publication).
 
 A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
@@ -5531,15 +5533,20 @@ listing keeps its network in scope through an ownership rewind, and an
 unknown address keeps both networks in scope. LAND and estate ownership checks use
 the same snapshot. Open v3 listings check the trades mirror and the verdicts
 of the networks read. Legacy-only status and buyer filters skip those
-checks. Each statement uses the `/v1/nfts` statement timeout.
+checks. Each statement uses the `/v1/nfts` statement timeout. Cancellation of
+a trades mirror or trade-events marker read returns the standard statement
+timeout response for orders and bids.
 
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
   of the same snapshot;
 - the total: each network's count capped at 5,000, or at the deep window
   for a deeper page, summed, as the subgraph reader counted;
-- open-by-items: per contract, its open orders cheapest first
-  (`legacy_order_open_idx`), up to `perContract`.
+- open-by-items queries the requested contracts together on that snapshot.
+  It takes each contract's cheapest legacy window and newest 1,000 backed
+  v3 listings, merges them by their full integer price, and applies the
+  item filter after the `perContract` cut. Graph-backed legacy orders keep their page limit
+  and use one batched query for the local v3 leg.
 
 Writers that predate the book's marker (an earlier binary's nft fold during
 a rollout) write `shop.nft` all the same. So readiness also reads
@@ -5547,8 +5554,12 @@ a rollout) write `shop.nft` all the same. So readiness also reads
 publication"): a write to `shop.nft` or `shop.legacy_order` that no
 publication has acknowledged refuses the read, whichever binary wrote it and
 at whatever height. Reads refused that way are counted by
-`catalyst_shop_order_book_unpublished_fold_reads_total` (serve); they fall in
-each pass's window between the fold's commit and its publication.
+`catalyst_shop_order_book_unpublished_fold_reads_total` during the window
+between a fold's commit and its publication. The denominator is
+`catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
+attempted network's publication check. Both counters use `network` and
+`route` labels. The route is `orders`, `open_by_items` or `activity`.
+Each activity page takes its own book snapshot and counts its checks.
 
 ### Fold-written projections and their publication
 
@@ -5583,7 +5594,11 @@ no network), `legacy_order_seller_idx` (an owner's orders newest first),
 `legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
 and recently-updated windows with no filter), `legacy_order_open_idx` (a
 contract's open orders by price) and `legacy_order_open_price_idx` (every
-open order by price).
+open order by price). `legacy_order_issued_idx` supports unscoped token
+ID sorts in either direction, with an incremental sort for order ID ties.
+`legacy_order_price_idx` sorts unscoped orders by price and order ID
+when the caller asks for every status. See the
+[order-book read measurements](METRICS.md#marketplace-order-book-reads).
 
 The fold finds the event that ends each order with one backward probe of
 `nft_event_token_idx` per order (`LATERAL ... LIMIT 1`). As a join of the
@@ -5604,9 +5619,11 @@ quarter sold and 30% cancelled by id, 130,050 left open:
 | a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |
 | a catch-up pass (the last 200,000 Polygon blocks) | 0.87 s |
 
-The table holds 719 MB at that bound (346 MB heap, the primary key 145 MB,
-`legacy_order_token_idx` 98 MB, `legacy_order_seller_idx` 74 MB, the rest
-under 25 MB each).
+The heap and indexes in that fold benchmark totalled 719 MB (346 MB heap,
+the primary key 145 MB, `legacy_order_token_idx` 98 MB,
+`legacy_order_seller_idx` 74 MB, the rest under 25 MB each). The unscoped
+sort indexes add 130 MiB in the
+[order-book read fixture](METRICS.md#marketplace-order-book-reads).
 
 | Read (first = 100 unless noted) | Page | Capped total |
 |---|---|---|
