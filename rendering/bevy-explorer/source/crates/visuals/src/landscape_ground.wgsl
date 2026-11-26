@@ -47,4 +47,16 @@ fn ground_albedo_normal(world_xz: vec2<f32>) -> GroundSample {
     return GroundSample(ground * splat.r + sand * splat.g, vec3(0.0, 0.0, 1.0));
 }
 
+// The colour unity-explorer's scatter gives the grass, flower or reed rooted at `world_xz`: the
+// ground and sand colours under the splat's weights, with all three textures laid at the splat's
+// tiling and read at their full level. Stretched that far the colours change over metres, so the
+// instances of a patch share its colour. Takes no derivatives.
+fn scatter_colour(world_xz: vec2<f32>) -> vec3<f32> {
+    let uv = world_xz / f32(#{GROUND_SPLAT_METRES});
+    let splat = textureSampleLevel(ground_splat, ground_splat_sampler, uv, 0.0).rg;
+    let ground = textureSampleLevel(ground_colour, ground_colour_sampler, uv, 0.0).rgb;
+    let sand = textureSampleLevel(sand_colour, sand_colour_sampler, uv, 0.0).rgb;
+    return ground * splat.r + sand * splat.g;
+}
+
 #endif

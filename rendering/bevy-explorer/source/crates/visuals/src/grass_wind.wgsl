@@ -1,8 +1,8 @@
 // Grass tufts, flowers and reeds. Each vertex stands on the terrain under its instance's root,
 // leans with the wind by its height above the root, and shrinks toward the root with distance
 // from the camera, so far instances need no blending. A tuft is two crossed cards, cut out by
-// the blade mask and coloured as the ground under them; flowers and reeds are solid and keep
-// their own colours, blended toward the ground at the root.
+// the blade mask and coloured as its patch of ground (landscape_ground.wgsl's `scatter_colour`);
+// flowers and reeds are solid and keep their own colours, blended toward that colour at the root.
 //
 // Mesh: uv is the instance's root (x/z from the parcel's centre), uv_b its height share (0 at the
 // root, 1 at the top) and its part (grass/geometry.rs PART_*), colour (x, y) where it reads the
@@ -33,7 +33,7 @@
     #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
     #import bevy_pbr::pbr_fragment::pbr_input_from_standard_material
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing}
-    #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo_normal
+    #import "embedded://visuals/landscape_ground.wgsl"::scatter_colour
 #ifdef ENVIRONMENT_MAP
     #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
     #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
@@ -256,9 +256,9 @@ fn part_colour(part: u32) -> vec3<f32> {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    // sampled first, in uniform control flow. The root is the same over an instance, so this
-    // reads the textures' finest level: one colour per instance, from the ground under it.
-    let ground = ground_albedo_normal(in.uv).albedo;
+    // the root is the same over an instance: one colour per instance, its patch of ground's
+    let ground = scatter_colour(in.uv);
+    // samples, so before any branch
     cut_out(in.uv_b.y, in.color.xy);
 
     let height = in.uv_b.x;

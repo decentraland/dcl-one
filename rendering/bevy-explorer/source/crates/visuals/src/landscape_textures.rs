@@ -18,7 +18,7 @@ use bevy::{
 /// The splat covers this many metres of ground and repeats beyond them.
 pub(crate) const GROUND_SPLAT_METRES: u32 = 1024;
 
-/// The splat size, for the pipeline of every shader that imports `ground_albedo_normal`.
+/// The splat size, for the pipeline of every shader that imports `landscape_ground.wgsl`.
 pub(crate) fn ground_shader_defs() -> [ShaderDefVal; 1] {
     [ShaderDefVal::UInt(
         "GROUND_SPLAT_METRES".to_owned(),

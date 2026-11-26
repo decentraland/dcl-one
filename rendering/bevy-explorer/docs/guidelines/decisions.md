@@ -1007,18 +1007,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Instances stand upright, where Unity tilts each to the terrain's normal: the normal would
     cost the vertex shader four more height samples per vertex. They are lit with an upward
     normal, as the ground under them.
-  - A blade takes the ground's drawn colour under its root (the ground and sand textures at the
-    ground's tiling), darkened toward its root by the material's 0.487, where Unity's scatter
-    reads those textures at the splat's 1024 m tiling. The material's vertex darkening and
-    colour-map height are not carried: they act on vertex data and textures of the packages'
-    meshes. Flowers and reeds blend toward the ground by 0.241 over their lowest 0.178.
+  - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
+    under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
+    the colour changes over metres and the tufts of a patch share it. It is darkened toward the
+    root by the material's 0.487. The material's vertex darkening and colour-map height are not
+    carried: they act on vertex data and textures of the packages' meshes. Flowers and reeds
+    blend toward that colour by 0.241 over their lowest 0.178.
   - Flowers and reeds use the grass material's wind; the flower material's own wind values act
     through the package's shader, whose meaning is not known here.
   - Until the splat and both ground textures have loaded, and for good if one fails, no flowers
     or reeds grow: their one-texel stand-ins would read as sand everywhere and grow reeds on
     every parcel. Unity's textures ship in the build.
-  - Instances fade out between 50 and 100 m by shrinking toward their roots, so no blending or
-    discard is needed, and a parcel more than 100 m plus half its diagonal from the camera is not
+  - Instances fade out between 50 and 100 m by shrinking toward their roots, so the fade needs
+    no blending, and a parcel more than 100 m plus half its diagonal from the camera is not
     drawn. Nothing casts shadows, as in Unity; the grass, like the ground, receives the softened
     sun shadows of the scene materials.
 - **Bevy's procedural cliffs stay and take Unity's cliff rock texture.** Unity places cliff
