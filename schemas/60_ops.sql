@@ -526,7 +526,9 @@ CREATE TABLE credits.alerts (
     finished_at timestamp without time zone,
     CONSTRAINT alerts_pkey PRIMARY KEY (id),
     CONSTRAINT alerts_kind_dedupe_key UNIQUE (kind, dedupe_key),
-    CONSTRAINT alerts_kind_check CHECK (kind IN ('recovered_consumption', 'unpaid_consumption', 'cap_near_limit', 'submitted_unconsumed', 'repeated_expiry')),
+    -- One of the kinds `alerts.rs` names; a shape rather than a list, so a new
+    -- kind needs no step on an existing table.
+    CONSTRAINT alerts_kind_check CHECK (kind ~ '^[a-z][a-z_]{0,62}$'),
     CONSTRAINT alerts_status_check CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
     CONSTRAINT alerts_attempts_check CHECK (attempts >= 0)
 );
