@@ -72,11 +72,8 @@ macro_rules! sync_lease_holder {
         concat!(
             "SELECT l.pid, timezone('UTC', a.backend_start) AS backend_start
                FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-              WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 2
-                AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
-                AND l.classid = hashtext(",
-            $namespace,
-            ")::oid AND l.objid = hashtext('sync')::oid"
+              WHERE ",
+            catalyst_jobs::lease_lock_held!($namespace, "'sync'")
         )
     };
 }
