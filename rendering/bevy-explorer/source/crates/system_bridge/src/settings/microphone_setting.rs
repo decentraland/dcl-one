@@ -241,4 +241,24 @@ mod tests {
         assert_eq!(shown_now.value, 2.0);
         assert_eq!(shown_now.named_variants[2].name, "headset label");
     }
+
+    #[test]
+    fn an_open_settings_stream_gets_the_list_again_when_a_microphone_is_plugged_in() {
+        let mut app = app();
+        app.add_event::<crate::SystemApi>();
+        super::super::add_settings_streams(&mut app);
+        let (sender, mut stream) = common::rpc::RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(crate::SystemApi::GetSettingsStream(sender));
+        app.update();
+        let choices = |list: Vec<SettingInfo>| list[0].named_variants.len();
+        assert_eq!(stream.try_recv().map(choices), Ok(1));
+        app.update();
+        assert!(stream.try_recv().is_err());
+
+        report(&mut app, &["a"]);
+        app.update();
+        assert_eq!(stream.try_recv().map(choices), Ok(2));
+        assert!(stream.try_recv().is_err());
+    }
 }

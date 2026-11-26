@@ -36,6 +36,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_logout(),
             op_settings(),
             op_set_setting(),
+            op_get_settings_stream(),
+            op_read_settings_stream(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
             op_deploy_outfits(),
@@ -235,6 +237,20 @@ async fn op_set_setting(
     val: f32,
 ) -> Result<(), AnyError> {
     dcl_js::system_api::op_set_setting(state, name, val).await
+}
+
+#[op2(async)]
+async fn op_get_settings_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_settings_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+async fn op_read_settings_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<Vec<SettingInfo>>, AnyError> {
+    dcl_js::system_api::op_read_settings_stream(state, rid).await
 }
 
 #[op2(async)]

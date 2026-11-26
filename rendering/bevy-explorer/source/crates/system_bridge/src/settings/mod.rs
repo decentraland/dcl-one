@@ -29,6 +29,7 @@ use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
 use common::{
+    rpc::RpcStreamSender,
     sets::SceneSets,
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, ChatBubbleVisibility, DofSetting,
@@ -177,7 +178,7 @@ impl Plugin for SettingBridgePlugin {
             settings: Vec::default(),
         };
         app.add_event::<NewCameraEvent>();
-        app.add_systems(Update, handle_settings);
+        add_settings_streams(app);
 
         let mut schedule = Schedule::new(ApplyAppSettingsLabel);
         let config = app.world().resource::<AppConfig>().clone();
@@ -507,6 +508,42 @@ impl Settings {
     }
 }
 
+fn add_settings_streams(app: &mut App) {
+    app.init_resource::<SettingsStreams>().add_systems(
+        Update,
+        (
+            handle_settings,
+            publish_settings.run_if(resource_changed::<Settings>),
+        )
+            .chain(),
+    );
+}
+
+/// The open settings streams and the list they last got.
+#[derive(Resource, Default)]
+struct SettingsStreams {
+    open: Vec<RpcStreamSender<Vec<SettingInfo>>>,
+    sent: Option<Vec<SettingInfo>>,
+}
+
+impl SettingsStreams {
+    /// Sends `list` to the open streams unless it is the list they last got.
+    fn publish(&mut self, list: Vec<SettingInfo>) {
+        self.open.retain(|stream| !stream.is_closed());
+        if self.sent.as_ref() == Some(&list) {
+            return;
+        }
+        for stream in &self.open {
+            let _ = stream.send(list.clone());
+        }
+        self.sent = Some(list);
+    }
+}
+
+fn publish_settings(settings: Res<Settings>, mut streams: ResMut<SettingsStreams>) {
+    streams.publish(settings.get());
+}
+
 // Gets and sets must be handled in arrival order: the scene->engine channel is FIFO, so a
 // GetSettings queued after SetSettings is only guaranteed to reflect them if a single system
 // processes both event kinds in sequence.
@@ -514,11 +551,18 @@ fn handle_settings(
     mut ev: EventReader<SystemApi>,
     mut config: ResMut<AppConfig>,
     mut settings: ResMut<Settings>,
+    mut streams: ResMut<SettingsStreams>,
 ) {
     for ev in ev.read() {
         match ev {
             SystemApi::GetSettings(sender) => {
                 sender.send(settings.settings.iter().map(|s| s.info.clone()).collect());
+            }
+            SystemApi::GetSettingsStream(sender) => {
+                // the open streams take a pending change first, so the new one starts level
+                streams.publish(settings.get());
+                let _ = sender.send(settings.get());
+                streams.open.push(sender.clone());
             }
             SystemApi::SetSetting(name, val) => {
                 if let Err(e) = settings.set_value(&mut config, name, *val) {
