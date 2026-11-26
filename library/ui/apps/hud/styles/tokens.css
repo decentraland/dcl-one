@@ -273,9 +273,7 @@
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
-  --switch-off-menu: #454545; /* a switch in a menu sheet, off */
   --switch-off-rail: #423f49; /* a switch in a rail popover, off */
-  --menu-sheet: #1e1e1e; /* a flat menu sheet over the chat */
   --voice-divider: rgba(255, 255, 255, 0.14);
   --voice-fill: rgba(255, 255, 255, 0.19);
   --voice-fill-hover: #696473;
@@ -511,7 +509,6 @@
   --color-bg: var(--panel);
   --font-title-xl: var(--fs-display);
   --font-title-l: var(--fs-title);
-  --font-body: var(--fs-md);
   --font-button: var(--fs-md);
 
   /* ---- events ---- the Events page: its calendar, cards and detail.

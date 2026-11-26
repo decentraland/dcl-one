@@ -113,6 +113,17 @@ export { Chip } from './components/Chip/Chip'
 export type { ChipProps } from './components/Chip/Chip'
 export { CodeInput } from './components/CodeInput/CodeInput'
 export type { CodeInputProps } from './components/CodeInput/CodeInput'
+export { AnchoredMenu, anchoredMenuPosition } from './components/ContextMenu/AnchoredMenu'
+export type { AnchoredMenuProps } from './components/ContextMenu/AnchoredMenu'
+export { ContextMenu, Submenu } from './components/ContextMenu/ContextMenu'
+export type {
+  ContextMenuItem,
+  ContextMenuProps,
+  MenuWhileOpen,
+  SubmenuProps
+} from './components/ContextMenu/ContextMenu'
+export { KebabMenu } from './components/ContextMenu/KebabMenu'
+export type { KebabMenuProps } from './components/ContextMenu/KebabMenu'
 export { CountBadge } from './components/CountBadge/CountBadge'
 export type { CountBadgeProps } from './components/CountBadge/CountBadge'
 export { DclLogo } from './components/DclLogo/DclLogo'

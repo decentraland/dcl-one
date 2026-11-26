@@ -27,11 +27,41 @@ import {
   MenuDivider,
   MenuList,
   MenuPanel,
-  MenuRow
+  MenuRow,
+  AnchoredMenu,
+  ContextMenu,
+  KebabMenu,
+  Submenu
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people, placeholderFace } from './data'
 import layout from './layout.module.css'
+
+function AnchoredMenuExample() {
+  const [opener, setOpener] = useState<HTMLSpanElement | null>(null)
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
+  return (
+    <div style={{ minHeight: 160 }}>
+      <span ref={setOpener} style={{ display: 'inline-block' }}>
+        <Button
+          onClick={(event: MouseEvent<HTMLElement>) =>
+            setAnchor({ x: event.clientX, y: event.clientY })
+          }
+        >
+          Photo options
+        </Button>
+      </span>
+      <AnchoredMenu
+        open={anchor != null}
+        anchor={anchor ?? { x: 0, y: 0 }}
+        aria-label="Photo options"
+        ignore={opener}
+        onClose={() => setAnchor(null)}
+        items={[{ label: 'Share' }, { label: 'Download' }, { label: 'Delete', danger: true }]}
+      />
+    </div>
+  )
+}
 
 const publicSections = decentralandPublicNavSections('explore', '/explore', {
   marketplaceEligible: true
@@ -502,6 +532,83 @@ export const navigationEntries: GalleryEntry[] = [
             </div>
           </div>
         )
+      }
+    ]
+  },
+  {
+    name: 'ContextMenu',
+    group: 'Navigation',
+    summary: 'A stacked menu of rows, with the forms that open it from a kebab button or a point.',
+    components: ['ContextMenu', 'Submenu', 'KebabMenu', 'AnchoredMenu'],
+    examples: [
+      {
+        id: 'menu',
+        title: 'A header, items, a switch, exclusive options and a danger row',
+        render: () => (
+          <ContextMenu
+            aria-label="Player options"
+            items={[
+              { kind: 'header', name: 'Aria', tag: '#a3f1', address: '0x1234567890abcdef1234' },
+              { kind: 'separator' },
+              { label: 'View profile' },
+              { kind: 'toggle', label: 'Mute', checked: true },
+              { kind: 'title', label: 'Sort by' },
+              { kind: 'option', label: 'Newest', checked: true },
+              { kind: 'option', label: 'Oldest', checked: false },
+              { kind: 'separator' },
+              { label: 'Block', danger: true }
+            ]}
+          />
+        )
+      },
+      {
+        id: 'sheet',
+        title: 'The flat sheet, with taller rows',
+        render: () => (
+          <ContextMenu
+            variant="sheet"
+            aria-label="Conversation options"
+            items={[
+              { label: 'View profile' },
+              { kind: 'toggle', label: 'Notifications', checked: false },
+              { kind: 'separator' },
+              { label: 'Delete chat history', danger: true }
+            ]}
+          />
+        )
+      },
+      {
+        id: 'submenu',
+        title: 'A row that opens a list beside it, on hover or press',
+        render: () => (
+          <div style={{ width: 240, minHeight: 150 }}>
+            <Submenu label="Invite to Community">
+              <ContextMenu items={[{ label: 'Pixel Builders' }, { label: 'Neon Club' }]} scroll />
+            </Submenu>
+          </div>
+        )
+      },
+      {
+        id: 'kebab',
+        title: 'Opened from a kebab button, in both sizes',
+        render: () => (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, minHeight: 120 }}>
+            <KebabMenu
+              label="Conversation options"
+              items={(close) => [{ label: 'View Community', onClick: close }]}
+            />
+            <KebabMenu
+              size="sm"
+              label="Participant options"
+              items={(close) => [{ label: 'View profile', onClick: close }]}
+            />
+          </div>
+        )
+      },
+      {
+        id: 'anchored',
+        title: 'Opened from the point of a press: press the button',
+        render: () => <AnchoredMenuExample />
       }
     ]
   },

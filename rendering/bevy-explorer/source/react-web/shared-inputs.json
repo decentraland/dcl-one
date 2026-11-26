@@ -3176,10 +3176,6 @@
       "path": "library/ui/apps/hud/design",
       "entries": [
         {
-          "name": "AnchoredMenu.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "AnchoredMenu.tsx",
           "kind": "regular"
         },
@@ -3201,10 +3197,6 @@
         },
         {
           "name": "ColorPicker.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "ContextMenu.module.css",
           "kind": "regular"
         },
         {
@@ -3264,10 +3256,6 @@
           "kind": "regular"
         },
         {
-          "name": "KebabMenu.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "KebabMenu.tsx",
           "kind": "regular"
         },
@@ -3317,10 +3305,6 @@
         },
         {
           "name": "ShowcaseIndex.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Submenu.module.css",
           "kind": "regular"
         },
         {
@@ -7818,6 +7802,10 @@
           "kind": "directory"
         },
         {
+          "name": "ContextMenu",
+          "kind": "directory"
+        },
+        {
           "name": "CopyFeedback",
           "kind": "directory"
         },
@@ -8375,6 +8363,39 @@
         },
         {
           "name": "CommunityCard.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/ContextMenu",
+      "entries": [
+        {
+          "name": "AnchoredMenu.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "AnchoredMenu.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ContextMenu.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ContextMenu.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ContextMenu.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "KebabMenu.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "KebabMenu.tsx",
           "kind": "regular"
         }
       ]
@@ -12655,12 +12676,8 @@
       "sha256": "3ca6133265b6c75afbf14881ddeedff2ba6e044fbd13645e79f95f86483e9188"
     },
     {
-      "path": "library/ui/apps/hud/design/AnchoredMenu.module.css",
-      "sha256": "1cb3ebf7ca377957db1748053850428c941f05bdb114c8251d380e5b583854fd"
-    },
-    {
       "path": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "sha256": "6ea8d33c83ca400656dbefe8ec38d24d446307fca3233a3b4f824943952ee1df"
+      "sha256": "122896435dfd6896015e5e4efe5795145c0e3a82ce9c6a1a2d499996529af72c"
     },
     {
       "path": "library/ui/apps/hud/design/ArmedButton.tsx",
@@ -12683,12 +12700,8 @@
       "sha256": "0fa508cfb404d26cfbe15ef8b93e1210ef3b3f00f98f0d2c23b78661f825602c"
     },
     {
-      "path": "library/ui/apps/hud/design/ContextMenu.module.css",
-      "sha256": "5e19e4b35fc1f46258c01838546f66fe3ecb1e5d54aa0400312bf0c4272a756c"
-    },
-    {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "sha256": "ee48ec7544bd7edf4e1ec5b51ccc121ad2df67c0bea998c2ca8b27fb0366ade4"
+      "sha256": "a20fc3b38811b6648b67d207655e0a22238d8bfa2472fec07af8a106c5504ae0"
     },
     {
       "path": "library/ui/apps/hud/design/ControlButton.tsx",
@@ -12743,12 +12756,8 @@
       "sha256": "b2132503059f044d134ba07e81e30dba77a3f53accc212787f2f323be83717f1"
     },
     {
-      "path": "library/ui/apps/hud/design/KebabMenu.module.css",
-      "sha256": "14b2fc4765524f28fac9e32ed78697b99341265e7faa745af704b375d7407313"
-    },
-    {
       "path": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "sha256": "f1b2712b9942d1fecf45de47a6973a7e453818a5e251c1563dfffc33ec2105ef"
+      "sha256": "254b4103373a17fb0bd14b94ae190575c9ad9d561aaadab5593cce98863ae4ea"
     },
     {
       "path": "library/ui/apps/hud/design/LogoPattern.module.css",
@@ -12799,12 +12808,8 @@
       "sha256": "90289eb64131ef17a629589ab14d99fc87c17abf0e92320052f8d75eb4101f62"
     },
     {
-      "path": "library/ui/apps/hud/design/Submenu.module.css",
-      "sha256": "b7449284b330bae8ec87ba8ae2a1e724c5ed42e4696220fd836f8fc7288897d5"
-    },
-    {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
-      "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
+      "sha256": "40f1560e0e74e09bf1b223b642979524ca8149dd8a44e2eccb78f2ba0326909b"
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
@@ -14136,7 +14141,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "7a1a0bcb314b98b095758b5a227f2e2cedb733b86b6abedfb0ec02c8589d77b6"
+      "sha256": "62729bf7b2bb55f45796b7e5d91477d3af90808b198d9c2d6dc6b5e3c94e33f5"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -16655,6 +16660,22 @@
       "sha256": "b58523579d32eba7daed767855110bccd36586a3f117f8b7f8492b188f9ed716"
     },
     {
+      "path": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "sha256": "db46b0de0941051c7f446f3dcffa0a3046cacc148056823d4e55db9ae34c6df0"
+    },
+    {
+      "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "sha256": "ed2265932b624c97a40f9eca3cf6e6a349e1154d4508906f0ea9e207f951a862"
+    },
+    {
+      "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "sha256": "0a343fff27d062cb2c52e6ce8fabc8ea4d29c13c6a5aed7db7e2030881c1b7c8"
+    },
+    {
+      "path": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "sha256": "f6485abaf770a98e760f6dadd74401ea10afa9be2af5cc974ab976900a908d4e"
+    },
+    {
       "path": "library/ui/components/CopyFeedback/CopyFeedback.module.css",
       "sha256": "f12717232cd95d9cc5a10f0b29ad5cdc3487f69f8a55c1a33a8b18a574d1a3d6"
     },
@@ -17164,7 +17185,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "5d3649f71b0abb72a2d419013a05f7d20e41f603d4ee4d687c37d06e0437216f"
+      "sha256": "11c00dce83ed3c0a2c51dcd45b0ffd47646862d97346a92ec95206c30374300d"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21132,32 +21153,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/AnchoredMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21267,47 +21273,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.module.css",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.module.css",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -21597,62 +21573,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -22107,17 +22038,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/Submenu.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -62108,6 +62039,111 @@
     {
       "from": "library/ui/components/CommunityCard/CommunityCard.tsx",
       "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/Switch/Switch.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/Switch/Switch.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/components/Switch/Switch.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -64233,6 +64269,51 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/KebabMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ContextMenu/KebabMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -69533,6 +69614,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ContextMenu/AnchoredMenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ContextMenu/KebabMenu.tsx",
       "kind": "type"
     },
     {
