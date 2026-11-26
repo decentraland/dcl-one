@@ -1,5 +1,5 @@
 import { createRef, type RefObject } from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -137,6 +137,78 @@ describe('Switch', () => {
       const data = new FormData(screen.getByRole('form'))
       expect(data.get('events')).toBe('on')
       expect(data.has('tips')).toBe(false)
+    })
+  })
+  describe('when it takes the hud appearance', () => {
+    it('should keep the named native switch and add the appearance, size and surface classes', () => {
+      render(<Switch appearance="hud" size="sm" surface="light" label="Hear others" labelHidden className="row" />)
+      const control = screen.getByRole('switch', { name: 'Hear others' })
+      const root = control.closest('label') as HTMLElement
+      expect(root.className).toMatch(/hud/)
+      expect(root.className).toMatch(/sm/)
+      expect(root.className).toMatch(/onLight/)
+      expect(root.className).toMatch(/row/)
+    })
+
+    it('should report the next state to the caller', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch appearance="hud" label="Set as Home" checked={false} onCheckedChange={onCheckedChange} />)
+      await userEvent.click(screen.getByRole('switch', { name: 'Set as Home' }))
+      expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('should toggle on Enter as well as Space', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch appearance="hud" label="Auto" checked={false} onCheckedChange={onCheckedChange} />)
+      screen.getByRole('switch', { name: 'Auto' }).focus()
+      await userEvent.keyboard('{Enter}')
+      expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('should keep Enter from also submitting a form it sits in, and toggle once', () => {
+      const onCheckedChange = vi.fn()
+      render(
+        <form>
+          <Switch appearance="hud" label="Auto" checked={false} onCheckedChange={onCheckedChange} />
+        </form>
+      )
+      const handled = fireEvent.keyDown(screen.getByRole('switch', { name: 'Auto' }), { key: 'Enter' })
+      expect(handled).toBe(false)
+      expect(onCheckedChange).toHaveBeenCalledTimes(1)
+    })
+
+    it('should do nothing on an Enter a caller already handled', () => {
+      const onCheckedChange = vi.fn()
+      render(
+        <Switch
+          appearance="hud"
+          label="Auto"
+          checked={false}
+          onCheckedChange={onCheckedChange}
+          onKeyDown={(event) => event.preventDefault()}
+        />
+      )
+      fireEvent.keyDown(screen.getByRole('switch', { name: 'Auto' }), { key: 'Enter' })
+      expect(onCheckedChange).not.toHaveBeenCalled()
+    })
+
+    it('should leave Enter to the browser in the default appearance', () => {
+      render(<Switch label="Notifications" checked={false} />)
+      expect(fireEvent.keyDown(screen.getByRole('switch', { name: 'Notifications' }), { key: 'Enter' })).toBe(true)
+    })
+
+    it('should leave Enter alone in the default appearance', async () => {
+      const onCheckedChange = vi.fn()
+      render(<Switch label="Notifications" checked={false} onCheckedChange={onCheckedChange} />)
+      screen.getByRole('switch', { name: 'Notifications' }).focus()
+      await userEvent.keyboard('{Enter}')
+      expect(onCheckedChange).not.toHaveBeenCalled()
+    })
+
+    it('should not add the size or surface classes to the default appearance', () => {
+      render(<Switch size="sm" surface="light" label="Notifications" />)
+      const root = screen.getByRole('switch', { name: 'Notifications' }).closest('label') as HTMLElement
+      expect(root.className).not.toMatch(/hud|sm|onLight/)
     })
   })
 })

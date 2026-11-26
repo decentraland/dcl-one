@@ -33,7 +33,13 @@ const CONTROL_PATHS = [
 ]
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPOSITORY = path.resolve(HERE, '../../../../..')
-const SHARED = ['library/ui/', 'library/shop/', 'library/catalyst-api/', 'library/explorer-core/']
+const SHARED = [
+  'library/ui/',
+  'library/shop/',
+  'library/catalyst-api/',
+  'library/explorer-core/',
+  'library/web-core/'
+]
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const relative = (root, file) => path.relative(root, file).split(path.sep).join('/')
 const portable = (value) =>
@@ -53,6 +59,28 @@ const git = (root, ...args) =>
     maxBuffer: 1 << 28
   })
 const hasGit = (root) => existsSync(path.join(root, '.git'))
+const COMPOSITION = /(?:^|[;{\s])compose(?:s|-with)\s*:([^;}]*)/gi
+const COMPOSED_FILE = /\sfrom\s+(['"])(.+?)\1\s*$/
+/** The files a stylesheet composes classes from (`composes: name from './file.css'`), comments aside. */
+export function composedSpecifiers(css) {
+  const found = new Set()
+  for (const [, value] of css.replace(/\/\*[\s\S]*?\*\//g, ' ').matchAll(COMPOSITION)) {
+    const file = COMPOSED_FILE.exec(value)
+    if (file) found.add(file[2])
+  }
+  return [...found]
+}
+/** A composed file's path: relative to its importer, or through one of the build's aliases. */
+function composedTarget(specifier, importer, config) {
+  if (specifier.startsWith('.')) return path.resolve(path.dirname(importer), specifier)
+  for (const { find, replacement } of config.resolve.alias) {
+    if (typeof find === 'string') {
+      if (specifier === find) return replacement
+      if (specifier.startsWith(find + '/')) return replacement + specifier.slice(find.length)
+    } else if (find.test(specifier)) return specifier.replace(find, replacement)
+  }
+  return undefined
+}
 function rejectAutomaticPostcss(root) {
   const names = new Set([
     '.postcssrc',
@@ -598,27 +626,6 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                 throw Error(
                   'External PostCSS configuration is unsupported by the checked HUD contract'
                 )
-              return {
-                css: {
-                  postcss: {
-                    plugins: [
-                      {
-                        postcssPlugin: 'checked-hud-css-composition',
-                        Once(css) {
-                          css.walkDecls((declaration) => {
-                            if (
-                              ['composes', 'compose-with'].includes(declaration.prop.toLowerCase())
-                            )
-                              throw declaration.error(
-                                'Unsupported HUD CSS Modules composition: Vite/postcss-modules does not report these dependency reads. Upstream dependency reporting is required before enabling composition in this contract.'
-                              )
-                          })
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
             },
             configResolved(config) {
               resolvedConfig = config
@@ -710,6 +717,20 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                   if (!include(to)) continue
                   if (!shared(from)) controls.add(from)
                   edge(from, to, mode + ':css')
+                }
+                // Vite's CSS Modules pipeline reads a composed file without reporting it, so the contract
+                // resolves each `composes ... from` target itself and walks the target as a module too.
+                for (const specifier of composedSpecifiers(regular(root, from).toString())) {
+                  const target = composedTarget(specifier, path.join(root, from), resolvedConfig)
+                  if (!target || !existsSync(target))
+                    throw Error(
+                      'Unresolved HUD CSS Modules composition: ' + specifier + ' in ' + from
+                    )
+                  const to = relative(root, realpathSync(target))
+                  if (!include(to)) continue
+                  if (!shared(from)) controls.add(from)
+                  edge(from, to, mode + ':composes')
+                  cssModules.add(to)
                 }
               }
             }

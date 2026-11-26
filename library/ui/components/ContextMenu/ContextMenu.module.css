@@ -1,0 +1,240 @@
+/* Not from Figma's menu-item and menu-header (Menus): the Explorer HUD's context menu, with the row that opens a
+   list beside it, the menu a kebab button opens and the one opened from a point. These rules sit outside the
+   cascade layer: its rows are native buttons, which a host's own reset would otherwise restyle. The 14px corners,
+   the shadow, the 4 %, 8 %, 45 % and 70 % whites, the danger reds and the sheet's greys have no token. */
+.ctx {
+  min-width: 220px;
+  max-width: 280px;
+  padding: 6px;
+  background: var(--dcl-neutrals-shadow);
+  border: 1px solid var(--dcl-transparencies-white-10);
+  border-radius: 14px; /* = HUD --r-card */
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5); /* = HUD --shadow-modal */
+  color: var(--dcl-neutrals-snow);
+}
+
+/* A long list scrolls past this height. */
+.scroll {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 10px 12px;
+}
+.hinfo {
+  min-width: 0;
+}
+.hname {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--dcl-neutrals-snow);
+}
+.htag {
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-weight: 600;
+}
+.wallet {
+  margin-top: 3px;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dcl-transparencies-white-60);
+  font-size: 12px;
+}
+
+.title {
+  padding: 9px 10px 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--dcl-neutrals-snow);
+}
+
+.caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 8px;
+}
+.captionLabel {
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.7); /* = HUD --ink-7 */
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.04); /* = HUD --fill-1 */
+}
+
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--dcl-neutrals-snow);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 10px;
+  border-radius: 9px;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+.item:hover {
+  background: rgba(255, 255, 255, 0.08); /* = HUD --fill-3 */
+}
+.itemDanger {
+  color: #ff5470;
+}
+.itemDanger:hover {
+  background: rgba(255, 36, 36, 0.14);
+  color: #ff6b84;
+}
+.icon {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  opacity: 0.85;
+}
+.label {
+  flex: 1;
+  min-width: 0;
+}
+.chev {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-size: 16px;
+}
+.check {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: right;
+  color: var(--dcl-brand-ruby);
+  font-size: 12px;
+}
+.check svg {
+  flex: none;
+  vertical-align: -0.125em;
+}
+
+/* sheet: a flat menu over the chat. 41px rows, 20px icons, a rule from edge to edge of the rows,
+   and a 40x24 switch that is grey while off. */
+.sheet {
+  width: 258px;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 6px 9px 7px;
+  border: none;
+  background: #1e1e1e; /* = HUD --menu-sheet */
+  box-shadow: none;
+  --toggle-w: 40px;
+  --toggle-h: 24px;
+  --toggle-pad: 2px;
+  --toggle-off: #454545; /* = HUD --switch-off-menu */
+}
+.sheet .item {
+  gap: 10px;
+  height: 41px;
+  padding: 0 12px 0 10px;
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
+  font-size: 14px;
+  font-weight: 700;
+}
+.sheet .icon {
+  display: flex;
+  justify-content: center;
+  width: 20px;
+  opacity: 1;
+}
+.sheet .sep {
+  margin: 6px 0;
+  background: var(--dcl-transparencies-white-20);
+}
+/* the switch ends 12px from the sheet's edge */
+.sheet .itemToggle {
+  padding-right: 3px;
+}
+.sheet .chev {
+  font-weight: 400;
+}
+.sheet .itemDanger {
+  color: var(--dcl-brand-ruby);
+}
+
+/* A row that opens a list beside it. The row takes the host menu's row class too. */
+.subWrap {
+  position: relative;
+}
+.subRow {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.subIcon {
+  display: inline-flex;
+  flex: none;
+}
+.subLabel {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.subChev {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-size: 1.05rem; /* = HUD --fs-lg */
+}
+/* Beside the row, its top level with the row's. */
+.flyout {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  padding-left: 4px;
+  z-index: 10000; /* = HUD --z-popup */
+}
+/* No room on the right: the list opens on the row's left. */
+.flyoutLeft {
+  left: auto;
+  right: 100%;
+  padding-left: 0;
+  padding-right: 4px;
+}
+/* No room below: the list's bottom lines up with the row's. */
+.flyoutUp {
+  top: auto;
+  bottom: 0;
+}
+
+/* The menu a kebab button opens: below it, right-aligned. */
+.kebabWrap {
+  position: relative;
+}
+.kebabMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 1;
+}
+
+/* Opened from a point and portaled to the body, so it re-applies the scale its opener is drawn at. */
+.anchored {
+  position: fixed;
+  z-index: 10001; /* = HUD --z-popup + 1 */
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+}

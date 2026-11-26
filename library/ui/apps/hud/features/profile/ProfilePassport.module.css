@@ -224,6 +224,8 @@
   letter-spacing: 0;
   color: rgba(255, 255, 255, 0.62);
 }
+/* The shared strip's rules sit in a cascade layer, so the dimmed colour above would hold on hover. */
+.tabs.tabs [role='tab']:hover:not(:disabled),
 .tabs.tabs [role='tab'][aria-selected='true'] {
   color: #fff;
 }

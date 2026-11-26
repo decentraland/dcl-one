@@ -8,8 +8,10 @@ pub const ITEM_SHIFT: &str = "10531229166855718669791802768367043231889509540054
 /// of 1,000 items every 300 s by default).
 pub const ITEM_WAIT_SECS: i64 = 3_600;
 
-/// How old a sale may grow while it waits for its item: past it the sale is
-/// passed even when the mirror is off or stalled, so a cursor never freezes.
+/// How old a sale may grow while it waits for its item under the mirrors:
+/// past it the sale is passed even when the mirror is off or stalled, so a
+/// cursor never freezes on a stalled mirror. On a network the collections
+/// index owns there is no such bound (`ItemWait::decide`).
 pub const ITEM_HOLD_MAX_SECS: i64 = 86_400;
 
 /// Whether the items mirror's last complete pass (`items_pass`, unix

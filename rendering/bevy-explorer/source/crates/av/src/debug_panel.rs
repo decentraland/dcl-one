@@ -148,7 +148,7 @@ fn media_state(
 // identifies the source without exposing playback credentials in the panel or console logs.
 fn source_label(source: &str) -> String {
     let source = source.trim();
-    if source.starts_with("livekit-video://") {
+    if livestream_manager::is_livekit_video(source) {
         return String::from("livekit-video stream");
     }
     if source.starts_with("//") {

@@ -149,6 +149,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // A world's /about names its room sign-in at this origin's root, which the gateway's `location /` sends to the node.
+    "^/worlds/[^/]+/(?:scenes/[^/]+/)?comms(?:[/?]|$)": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
     // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes

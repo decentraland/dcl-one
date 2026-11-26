@@ -23,6 +23,7 @@ pub mod sky_preset;
 pub mod structs;
 pub mod sync;
 pub mod terrain;
+pub mod token_bucket;
 pub mod util;
 
 /// Panics on debug builds but only logs an error on release builds

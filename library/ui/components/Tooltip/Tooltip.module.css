@@ -125,6 +125,106 @@
   right: -4px;
 }
 
+/* Not in Figma: the Explorer HUD's tip (`appearance="hud"`). The pointer alone opens it. Each rule has the
+ * specificity of the HUD rule it replaced, so a HUD stylesheet keeps the precedence it had. It takes its surface
+ * from `.tip`. Its 140ms, its easing curve and the rail's 9.6px corners are the HUD's --dur-fast, --ease-out and
+ * --r-button, written as values: the shared library has no token for them and does not read the host's. */
+.hudRoot {
+  position: relative;
+  display: inline-flex;
+}
+
+.hud {
+  padding: var(--tooltip-pad, 8px 12px);
+  border-radius: var(--tooltip-radius, 12px);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 17px;
+  transition:
+    opacity 140ms ease,
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:where(.hud).right {
+  transform: translate(10px, -50%) scale(0.96);
+}
+:where(.hud).left {
+  transform: translate(-10px, -50%) scale(0.96);
+}
+:where(.hud).top {
+  transform: translate(-50%, -10px) scale(0.96);
+}
+:where(.hud).bottom {
+  transform: translate(-50%, 10px) scale(0.96);
+}
+
+.hudRoot:hover .hud {
+  opacity: 1;
+}
+.hudRoot:hover :where(.hud).right {
+  transform: translate(14px, -50%) scale(1);
+}
+.hudRoot:hover :where(.hud).left {
+  transform: translate(-14px, -50%) scale(1);
+}
+.hudRoot:hover :where(.hud).top {
+  transform: translate(-50%, -14px) scale(1);
+}
+.hudRoot:hover :where(.hud).bottom {
+  transform: translate(-50%, 14px) scale(1);
+}
+
+.hudEnd.top,
+.hudEnd.bottom {
+  left: auto;
+  right: 0;
+}
+.hudEnd.top {
+  transform: translate(0, -10px) scale(0.96);
+  transform-origin: right bottom;
+}
+.hudEnd.bottom {
+  transform: translate(0, 10px) scale(0.96);
+  transform-origin: right top;
+}
+.hudRoot:hover .hudEnd.top {
+  transform: translate(0, -14px) scale(1);
+}
+.hudRoot:hover .hudEnd.bottom {
+  transform: translate(0, 14px) scale(1);
+}
+
+.hudMultiline {
+  display: block;
+  width: max-content;
+  max-width: 360px;
+  white-space: pre-line;
+  font-weight: 500;
+  text-align: left;
+}
+.hudMultiline.bottom {
+  left: 0;
+  transform: translate(0, 10px) scale(0.96);
+  transform-origin: left top;
+}
+.hudRoot:hover .hudMultiline.bottom {
+  transform: translate(0, 14px) scale(1);
+}
+
+.hudRail {
+  border-radius: var(--tooltip-radius, 9.6px);
+  box-shadow: none;
+  transition: none;
+}
+.hudRail.right,
+.hudRoot:hover .hudRail.right {
+  transform: translate(10px, -50%);
+}
+.hudRail.top,
+.hudRoot:hover .hudRail.top {
+  transform: translate(-50%, -4px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tip {
     transition: none;
