@@ -1,7 +1,8 @@
 # credits-server -> credits
 
 `run all` excludes this source. Run `run credits-server` explicitly at
-cutover; selecting individual steps also runs `cutover_guard` first.
+cutover. Selecting the `wallet`, `wallet_flag`, `purchase` or `ledger`
+step also runs `cutover_guard` first.
 
 Pinned at `6b7407ef227af07885fe863123c6dbfb9056d1f7` (migrations through
 `1787000000000_usd-purchase-alerts`). Run at cutover with upstream writes
@@ -17,6 +18,7 @@ stopped.
 | `studio` | `studios` | `credits.studios` |
 | `studio_operator` | `studio_operators` | `credits.studio_operators` |
 | `studio_budget_entry` | `studio_budget_entries` | `credits.studio_budget_entries` (each studio's balance) |
+| `grant_audit` | `on_demand_credits` for imported USD grants | `ops.admin_audit` and `credits.ledger.admin_audit_id` |
 
 ## Known limitations
 
