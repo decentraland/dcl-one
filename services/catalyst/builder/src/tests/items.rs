@@ -1071,3 +1071,75 @@ async fn an_on_chain_manager_reads_an_unminted_item_of_a_published_collection_in
         "{body}"
     );
 }
+
+/// Any signer reads by id exactly the items a published third-party
+/// collection's listing shows it: the curated ones, not a draft beside them.
+#[tokio::test]
+async fn a_stranger_reads_a_published_third_party_collections_curated_items_only() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let owner = address(OWNER_KEY);
+    let collection = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) \
+         VALUES ($1, 'Linked', $2, $3, $3 || ':linked')",
+    )
+    .bind(collection)
+    .bind(&owner)
+    .bind(PROVIDER)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (curated, draft) = (Uuid::new_v4(), Uuid::new_v4());
+    for (item, name) in [(curated, "curated"), (draft, "draft")] {
+        sqlx::query(
+            "INSERT INTO builder.items (id, collection_id, eth_address, name, type, urn_suffix, local_content_hash) \
+             VALUES ($1, $2, $3, $4, 'wearable', $5 || ':linked:' || $4, repeat('ab', 32))",
+        )
+        .bind(item)
+        .bind(collection)
+        .bind(&owner)
+        .bind(name)
+        .bind(PROVIDER)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO builder.item_curations (id, item_id, status, content_hash) VALUES ($1, $2, 'pending', repeat('ab', 32))",
+    )
+    .bind(Uuid::new_v4())
+    .bind(curated)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (listed, body) = send(
+        &app,
+        STRANGER_KEY,
+        "GET",
+        &format!("/v1/collections/{collection}/items"),
+        Body::empty(),
+        "application/json",
+    )
+    .await;
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{body}"))
+        .iter()
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert_eq!((listed, ids), (200, vec![curated.to_string().as_str()]));
+    for (item, expected) in [(curated, 200), (draft, 401)] {
+        let (status, body) = send(
+            &app,
+            STRANGER_KEY,
+            "GET",
+            &format!("/v1/items/{item}"),
+            Body::empty(),
+            "application/json",
+        )
+        .await;
+        assert_eq!(status, expected, "{body}");
+    }
+}
