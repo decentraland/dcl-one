@@ -10,6 +10,9 @@
 //! rows and asks [`NetworkState::owned_verdict`]: `None` on a network the
 //! mirrors serve (the reader keeps its own mirror check), else the index's
 //! verdict for its [`Purpose`] ([`index_verdict`]).
+//!
+//! It also holds the publish marker ([`published_sql_on`]) that the
+//! fail-closed readers of a chain walk bound their reads by.
 
 use std::sync::LazyLock;
 
@@ -17,7 +20,7 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, PgPool, Postgres, Row, Transaction};
 
-use crate::shared::collections::{ITEM_HOLD_MAX_SECS, item_awaited};
+use crate::shared::collections::item_awaited;
 
 /// The collections index's cursor (`shop.chain_cursor.indexer`).
 pub const INDEXER_COLLECTIONS: &str = "collections";
@@ -28,6 +31,30 @@ pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 /// How far ahead of the caller's clock the database's `updated_at` may be and
 /// still count as advanced.
 pub const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+
+/// The publish marker alone as SQL, for the fail-closed readers of an index
+/// whose every pass advances `last_block` before it folds and publishes (the
+/// shop's `trade_events` and the `nft` readers' `owned_items::Rule::Fresh`,
+/// Social's badge sales): the whole history walked, a fold published
+/// (`folded_block`, cleared by every rewind, divergence, unpublish,
+/// quarantine and rebuild) within [`READY_WINDOW`] of the caller's clock,
+/// bound to the expected chain and out of quarantine, without
+/// `folded_block = last_block`, which a pass breaks for as long as it walks
+/// and folds. `folded_at` is the walker's clock: one up to
+/// [`MAX_CLOCK_SKEW`] ahead of the caller's still counts. A reader bounds
+/// every row it reads by that `folded_block`, in the snapshot it read it in:
+/// a walk may already have committed the next window.
+pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: i64) -> String {
+    format!(
+        "({alias}.full_history AND {alias}.folded_block IS NOT NULL \
+          AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
+          AND {alias}.quarantined_at IS NULL \
+          AND {alias}.folded_at <= {now_p} + interval '{skew} seconds' \
+          AND {alias}.folded_at >= {now_p} - interval '{window} seconds')",
+        skew = MAX_CLOCK_SKEW.num_seconds(),
+        window = READY_WINDOW.num_seconds(),
+    )
+}
 
 /// What a read of the catalogue is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,18 +298,20 @@ impl ItemWait {
     /// `mirror_waits`: under the mirrors, the producer waits for this sale's
     /// item (the items mirror runs, and the sale is of a kind it waits for).
     /// - The mirrors: a sale whose item has no row waits until a complete
-    ///   items pass ran an hour after it ([`item_awaited`]); otherwise it is
-    ///   described from whatever row there is.
+    ///   items pass ran an hour after it ([`item_awaited`]), and never past
+    ///   [`ITEM_HOLD_MAX_SECS`](crate::shared::collections::ITEM_HOLD_MAX_SECS),
+    ///   so a stalled mirror never freezes a cursor; then it is described
+    ///   from whatever row there is.
     /// - The index: a sale its publication covers is described; every item
     ///   added by then is in the catalogue, so a missing one never comes.
-    ///   Until then every sale waits, row or not: a row read while the index
-    ///   refuses (a rewind leaves the rows in place) may be a discarded
-    ///   branch's.
-    ///
-    /// Nothing waits past [`ITEM_HOLD_MAX_SECS`], so a stalled source never
-    /// freezes a cursor. Past it, an index that still does not cover the
-    /// sale passes it without a notice ([`Waited::Skip`]), so an unverified
-    /// row never picks a recipient.
+    ///   Until then every sale waits, row or not, however long: a row read
+    ///   while the index refuses (a rewind leaves the rows in place) may be
+    ///   a discarded branch's, so it never picks a recipient, and a sale is
+    ///   never given up because its producer fell behind. An index that
+    ///   refuses for good holds the producers until it is fixed or the
+    ///   network is handed back to the mirrors
+    ///   (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`); they then drain under that
+    ///   network's rule.
     pub fn decide(
         self,
         mirror_waits: bool,
@@ -300,10 +329,7 @@ impl ItemWait {
                 }
             }
             ItemWait::Index(Some(covered)) if covered >= block_number => Waited::Describe,
-            ItemWait::Index(_) if now.saturating_sub(block_time) < ITEM_HOLD_MAX_SECS => {
-                Waited::Hold
-            }
-            ItemWait::Index(_) => Waited::Skip,
+            ItemWait::Index(_) => Waited::Hold,
         }
     }
 }
@@ -316,8 +342,6 @@ pub enum Waited {
     /// It describes the sale from the catalogue's rows (a missing row gives
     /// no notice).
     Describe,
-    /// It passes the sale without a notice.
-    Skip,
 }
 
 /// A `REPEATABLE READ, READ ONLY` transaction: the snapshot a job reads a
@@ -411,5 +435,56 @@ pub mod owning {
         .execute(pool)
         .await
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::collections::{ITEM_HOLD_MAX_SECS, ITEM_WAIT_SECS};
+
+    /// Under the mirrors nothing waits past [`ITEM_HOLD_MAX_SECS`]; on an
+    /// owned network a sale waits for the publication over its block
+    /// however long the index refuses, and is described once it is covered.
+    #[test]
+    fn only_the_mirrors_bound_the_wait() {
+        let (block, t) = (100, 1_700_000_000);
+        let past = t + 3 * ITEM_HOLD_MAX_SECS;
+        let mirror = ItemWait::Mirror(None);
+        assert_eq!(mirror.decide(true, false, block, t, t + 60), Waited::Hold);
+        assert_eq!(
+            mirror.decide(true, false, block, t, past),
+            Waited::Describe,
+            "a stalled mirror"
+        );
+        assert_eq!(
+            ItemWait::Mirror(Some(t + ITEM_WAIT_SECS)).decide(
+                true,
+                false,
+                block,
+                t,
+                t + ITEM_WAIT_SECS
+            ),
+            Waited::Describe,
+            "a complete pass an hour after the sale"
+        );
+        for wait in [ItemWait::Index(None), ItemWait::Index(Some(block - 1))] {
+            for described in [false, true] {
+                assert_eq!(
+                    wait.decide(false, described, block, t, t + 60),
+                    Waited::Hold
+                );
+                assert_eq!(
+                    wait.decide(true, described, block, t, past),
+                    Waited::Hold,
+                    "however long the index refuses"
+                );
+            }
+        }
+        assert_eq!(
+            ItemWait::Index(Some(block)).decide(false, false, block, t, past),
+            Waited::Describe,
+            "covered, however late"
+        );
     }
 }
