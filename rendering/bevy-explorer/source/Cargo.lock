@@ -1418,6 +1418,7 @@ dependencies = [
  "alloy-core",
  "anyhow",
  "assets",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -1446,6 +1447,7 @@ dependencies = [
  "texture_camera",
  "tokio",
  "ui_core",
+ "wallet",
 ]
 
 [[package]]

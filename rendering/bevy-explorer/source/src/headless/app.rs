@@ -215,6 +215,7 @@ pub fn assemble(
         .insert_resource(wallet)
         .insert_resource(TimeOfDay {
             time: 10.0 * 3600.0,
+            ..Default::default()
         })
         .insert_resource(SceneLoadDistance {
             load: 100.0,

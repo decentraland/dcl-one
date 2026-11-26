@@ -40,8 +40,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
-  clock hands control back to the scene. No HUD lock while a scene controls the sky.
+- **Day and night (#1467).** The time of the scene the player stands in holds the sky: over
+  the running clock, over a time set from the HUD and over `/time`, which still move the clock
+  and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and says
+  why. The "Allow overriding scene controls" setting (off by default) unlocks it: the scene's
+  time still takes the sky when it arrives, a time the player stops the clock at after that
+  wins, and the scene's time is back when it arrives again (on return, in another scene, or
+  when the scene changes it) or when the clock runs again, the menu's Auto included. No
+  override is kept for a scene. `~system/Runtime.getWorldTime` tells every scene, next to the
+  time, whether a scene holds it, the clock's speed and whether the clock sets the sky, so
+  that the menu and a scene that shows the time of day read one source. Two exceptions.
+  `/time --force` beats a
+  scene's time whatever the setting, until the next `/time` that sets a time or a speed: the
+  scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
+  only over a running clock and never locks the menu: a portable follows the player
+  everywhere, so the player's own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for
@@ -412,6 +425,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
+  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
+  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
+  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
+  by the other room is told by its stamp and its index together, and the stamps sent only move
+  on: the sender's uptime as a float stops telling two messages of one send apart after a few
+  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
+  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
+  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
+  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
+  messages play twenty a second.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the

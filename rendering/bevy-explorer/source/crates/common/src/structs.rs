@@ -305,6 +305,13 @@ pub struct PlayerEmoteTriggered {
     pub source: &'static str,
 }
 
+/// The local player reacted with an emoji over their avatar: `emoji_index` is the emoji's index
+/// on the wire, the `react_situation` reaction id.
+#[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerReacted {
+    pub emoji_index: i32,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from
@@ -702,6 +709,9 @@ pub struct AppConfig {
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
     pub constrain_scene_ui: bool,
+    /// "Allow overriding scene controls": the player may change what the scene they stand in
+    /// controls, today the time of day.
+    pub allow_scene_control_override: bool,
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
@@ -778,6 +788,7 @@ impl Default for AppConfig {
             scene_log_to_console: false,
             max_avatars: 20,
             constrain_scene_ui: false,
+            allow_scene_control_override: false,
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,
@@ -2165,10 +2176,18 @@ pub struct SceneGlobalLight {
     pub layers: RenderLayers,
 }
 
-#[derive(Resource)]
+/// The time the sky shows and who sets it. Sent whole to every scene, which reads it with
+/// `~system/Runtime.getWorldTime`.
+#[derive(Resource, Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct TimeOfDay {
     /// secs since midnight
     pub time: f32,
+    /// The scene the player stands in holds the time of day and the player may not change it.
+    pub locked: bool,
+    /// The speed of the player's clock; 0 when it is stopped.
+    pub speed: f32,
+    /// The player's clock sets the sky: no scene's time does.
+    pub follows_clock: bool,
 }
 
 impl TimeOfDay {
@@ -2415,7 +2434,7 @@ pub struct DebugInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GlobalCrdtStateUpdate {
     Crdt(Vec<u8>, dcl_component::Localizer),
-    Time(f32),
+    Time(TimeOfDay),
     /// Vertical FOV of the active camera, in radians. Pushed when the value
     /// changes (camera zoom etc.).
     CameraFov(f32),

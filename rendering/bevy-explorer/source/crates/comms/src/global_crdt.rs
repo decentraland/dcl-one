@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -148,6 +148,7 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+        app.add_event::<ReactionEvent>();
     }
 }
 
@@ -512,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
@@ -719,6 +720,14 @@ pub struct ChatEvent {
     pub message: String,
 }
 
+/// An rfc4 `Reaction` as a peer sent it: an emoji to show over their avatar, `count` times.
+/// Nothing in it is checked yet.
+#[derive(Event, Debug, Clone)]
+pub struct ReactionEvent {
+    pub sender: Entity,
+    pub reaction: rfc4::Reaction,
+}
+
 /// The rfc4 chat wire timestamp for now. unity-explorer decodes it with DateTime.FromOADate: days
 /// since 1899-12-30 UTC (25569 = the OADate of the unix epoch). Receivers only need it monotonic
 /// per sender.
@@ -872,9 +881,10 @@ pub fn process_transport_updates(
     mut position_events: EventWriter<PlayerPositionEvent>,
     mut anim_events: EventWriter<PlayerSceneAnimEvent>,
     mut emote_events: EventWriter<EmoteLifecycleEvent>,
-    (mut chat_events, mut reaction_events): (
+    (mut chat_events, mut reaction_events, mut situational_events): (
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
+        EventWriter<ReactionEvent>,
     ),
     mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
@@ -1196,7 +1206,11 @@ pub fn process_transport_updates(
                             debug!("look at position: {look_at_position:?}");
                         }
                         PlayerMessage::PlayerData(Message::Reaction(reaction)) => {
-                            debug!("reaction: {reaction:?}");
+                            debug!("reaction from {:#x}: {reaction:?}", update.address);
+                            situational_events.write(ReactionEvent {
+                                sender: entity,
+                                reaction,
+                            });
                         }
                         PlayerMessage::PlayerData(Message::ChatReaction(chat_reaction)) => {
                             debug!(
@@ -1896,6 +1910,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        app.add_event::<ReactionEvent>();
         crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
@@ -2543,6 +2558,45 @@ mod tests {
         app.world_mut().despawn(gone);
         app.update();
         assert!(foreign_players(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_peers_reaction_is_raised_for_its_player_as_sent() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let transport = spawn_transport(&mut app, context);
+        let reaction = rfc4::Reaction {
+            emoji_index: -7,
+            timestamp: 12.5,
+            count: 900,
+        };
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Reaction(reaction.clone())),
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.update();
+
+        let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
+        let raised = app
+            .world()
+            .resource::<Events<ReactionEvent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].sender, player);
+        // its bounds are the reader's to enforce: the event carries what the peer sent
+        assert_eq!(raised[0].reaction, reaction);
     }
 
     #[test]
