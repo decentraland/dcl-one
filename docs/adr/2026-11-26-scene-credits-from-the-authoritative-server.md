@@ -22,7 +22,7 @@ A scene's code is public and runs on every client. Nothing in it, or in its Scen
 - **A separate key.** Credits gets its own ephemeral key, never World storage's. A signed-fetch signature does not cover the host, so with a shared key a request captured at one service could be replayed at the other wherever the paths overlap. The envelope decoding, the delegated signer and the renewal system are shared.
 - **Presence.** The engine reports it and credits-server decides. The body carries `recipientConnected`, which is true only when the player is in this scene's crdt context, on this scene's room transport, and that room is connected. A new payment needs it; a retry of an outcome already paid returns its receipt without it.
 - **What the scene names.** Only the program, the recipient and its own outcome id. Amounts, budgets, eligibility and limits belong to the program in credits-server.
-- **Confirming a payment.** An answer counts as paid only with its whole receipt. Anything ambiguous is `GCE_UNAVAILABLE`: a lost connection, a gateway page, a partial body or a request dropped with its scene. The scene then retries the same outcome, and credits-server answers with the original receipt.
+- **Confirming a payment.** An answer counts as paid only with its whole receipt. Anything ambiguous is `GCE_UNAVAILABLE`: a lost connection, a gateway page, a partial body or a request dropped with its scene. The scene then retries with the same program, recipient and outcome id. If the first call committed, credits-server returns its receipt to the location it was paid in; otherwise the retry is judged as a new payment.
 - **Pending requests.** They are entities despawned with their scene (`DespawnWith`), at most 4 per scene. More are refused with `GCE_RATE_LIMITED`, not queued.
 
 ## Alternatives rejected
@@ -35,7 +35,7 @@ A scene's code is public and runs on every client. Nothing in it, or in its Scen
 
 ## Consequences
 
-- **Turning payments off** needs no engine release: the orchestrator stops minting claims (`CREDITS_DELEGATIONS_ENABLED`), or credits-server stops accepting them.
+- **Turning payments off** needs no engine release. To stop new payments at once, credits-server switches issuance off: it refuses every new payment and still answers receipts already paid. Turning off minting (`CREDITS_DELEGATIONS_ENABLED`, read when the orchestrator starts) stops new claims, but each claim already issued stays usable until it expires.
 - **Rotating the root key.** A claim signed by a root that credits-server no longer trusts is refused until the orchestrator mints a new one.
 - **Redeploys.** A redeploy changes the scene entity id, so a program pinned to the old deployment stops paying until it is pinned again.
 - **Explorer clients** (this engine's desktop and web builds, the Unity explorer and the mobile explorer) ship a module that always answers `GCE_NOT_AVAILABLE`, so a scene that imports `~system/SceneCredits` still loads.
