@@ -330,9 +330,11 @@ mod tests {
         ] {
             assert_eq!(json_bytes(&value), expected, "{value}");
         }
-        // Parses only when serde_json's arbitrary_precision is unified in; then as_f64 is None.
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>("1e400") {
-            assert_eq!(json_bytes(&value), 5);
+        match serde_json::from_str::<serde_json::Value>("1e400") {
+            // Only with serde_json's arbitrary_precision: as_f64 is None, so the raw text is used.
+            Ok(value) => assert_eq!(json_bytes(&value), 5),
+            // Default build: out of range, and the fallback is unreachable.
+            Err(error) => assert!(error.to_string().contains("out of range"), "{error}"),
         }
     }
 
