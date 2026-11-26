@@ -303,7 +303,6 @@ pub(super) fn rerank_for_diversity(
 /// for the address it proves (and only when `address` is absent or that
 /// same one; a signed caller naming nobody means themselves). The old rail's
 /// content neighbours and taste blend are not carried.
-
 pub(super) async fn personal_rows(
     state: &MarketplaceState,
     read: &mut super::super::catalogue::CatalogueRead,

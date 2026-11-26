@@ -12,10 +12,8 @@ use sqlx::PgPool;
 use catalyst::content::sync::{DeploymentContext, LiveDeploymentRepository, SyncStatus};
 use catalyst::content::sync_deployer::{DEFAULT_FLUSH_CONCURRENCY, LiveSyncDeployer};
 
-#[path = "support/auth.rs"]
-mod auth;
-#[path = "support/db.rs"]
-mod db;
+use crate::auth;
+use crate::db;
 
 fn entity_json(
     entity_type: &str,
