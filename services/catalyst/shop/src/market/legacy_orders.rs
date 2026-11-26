@@ -170,15 +170,13 @@ pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<b
     let Some(through) = stands else {
         return Ok(false);
     };
-    let published: Option<i64> = sqlx::query_scalar(
-        "SELECT folded_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1",
+    super::chain_walk::holds_published_fold_on(
+        conn,
+        super::chain_walk::INDEXER_NFT,
+        net,
+        Some(through),
     )
-    .bind(net.db_name())
-    .bind(super::chain_walk::INDEXER_NFT)
-    .fetch_optional(&mut *conn)
-    .await?
-    .flatten();
-    Ok(published == Some(through))
+    .await
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
