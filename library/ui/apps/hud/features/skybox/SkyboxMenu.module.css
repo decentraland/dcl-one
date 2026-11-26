@@ -91,3 +91,12 @@
 .custom > div:last-child {
   gap: 4px;
 }
+/* Why the controls are off where the scene holds the time of day. */
+.locked {
+  margin: 0;
+  padding: 0 16px 16px;
+  color: var(--ink-muted);
+  font-size: var(--type-12);
+  font-weight: 400;
+  line-height: 15px;
+}
