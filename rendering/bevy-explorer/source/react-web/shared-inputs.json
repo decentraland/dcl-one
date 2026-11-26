@@ -3348,10 +3348,6 @@
           "kind": "regular"
         },
         {
-          "name": "popups.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "popups.tsx",
           "kind": "regular"
         },
@@ -5166,6 +5162,10 @@
           "kind": "regular"
         },
         {
+          "name": "popupLayers.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "popups.test.tsx",
           "kind": "regular"
         },
@@ -5251,6 +5251,10 @@
         },
         {
           "name": "textureOptimization.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "toastHost.test.tsx",
           "kind": "regular"
         }
       ]
@@ -12816,7 +12820,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Modal.tsx",
-      "sha256": "da49b763ba49acfc8d0ea1207308a623d9f0189ab66ebc3402a2bad5651310cf"
+      "sha256": "d90d94d479f6624a31399a8b0e620b8a82eaeb55b65cb6de965c33b226b89446"
     },
     {
       "path": "library/ui/apps/hud/design/OptionMenu.tsx",
@@ -12895,12 +12899,8 @@
       "sha256": "b252235909076545707e1133786effd771fd367325d19fb9de8704248a944abe"
     },
     {
-      "path": "library/ui/apps/hud/design/popups.module.css",
-      "sha256": "9c6733f0c550db0e27896609f81a0b78faf684d5249f5da883f98e52c55dcef6"
-    },
-    {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "30a6320cfcef660711fb43dda43dc2b1004e023adc56e507d785d2b20fec67ae"
+      "sha256": "fa13439be7066534b69fecbc8fe379ebcf9b7e8ea951be785385d8461ca81027"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
@@ -13196,11 +13196,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.module.css",
-      "sha256": "4a8690c2e42af3dc708cb04d8b38d5b227021cdc75938a198393fb9bf578b970"
+      "sha256": "ef48fc06a48c6976aea27a5aa490b5febb1c744e44aae1ba3a0d1bd301e4f321"
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.tsx",
-      "sha256": "d3d3a0ce4cb76920351cf4afafb661c6569d5bcbe3ecbf59c322c0fc01ba2f79"
+      "sha256": "f9ccb7f5c907bc1b569a12ee6cec86160074a125bc9daa1c417d2b86709b20e4"
     },
     {
       "path": "library/ui/apps/hud/features/error/ErrorBoundary.tsx",
@@ -14184,7 +14184,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "64775a6ee7450b7bbf0c79192da0d570591a6c832530efce3b021bd96e5b5a62"
+      "sha256": "63f1dbfe61ee02791e378672ac8f76b26b62e6a0b068e4c11cb751c0c9dcabba"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14775,6 +14775,10 @@
       "sha256": "02b3fe51643472ea054ff62d9e5d84f78612b63d62b0d352733834ccd9706732"
     },
     {
+      "path": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "sha256": "9bfbffdb8dc924453b1531028efa97ef149e7084bc5972eb22b4f4ab1c87393a"
+    },
+    {
       "path": "library/ui/apps/hud/test/popups.test.tsx",
       "sha256": "44008aa82288968d5f84c7d11f1c30ce38ce865383cdb3f9b8da72fafbd5ee04"
     },
@@ -14861,6 +14865,10 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
+    },
+    {
+      "path": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "sha256": "b5d4a928a43dd9b7f7223ccce000314fb68faca3dbc1cc1745edab253ff42963"
     },
     {
       "path": "library/ui/apps/shop/ShopCartDrawer.module.css",
@@ -16868,11 +16876,11 @@
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.module.css",
-      "sha256": "a50100596f6b21933e0a4072025445cf6608acae2aaebcbd308a21d331dae6a9"
+      "sha256": "f483eae401d0034aa434e38f28028bebcc4b873bc1886c8ed36c8ee8f34a25c8"
     },
     {
       "path": "library/ui/components/ModalCard/ModalCard.tsx",
-      "sha256": "ccdfd4075b5091b94799a5723620f0d865ac69be58e4487ee0a0f35bc54d7a55"
+      "sha256": "d7a2a4f7307d689f8243af440db563c65676998db5c89923248f1b21f76e0280"
     },
     {
       "path": "library/ui/components/NavBar/NavBar.module.css",
@@ -23091,21 +23099,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
-      "to": "library/ui/apps/hud/design/popups.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/popups.tsx",
       "to": "library/ui/apps/hud/lib/useFocusTrap.ts",
       "kind": "native:runtime"
     },
@@ -51290,6 +51283,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/popups.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -51917,6 +51925,21 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/toastHost.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -68951,6 +68974,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/popupLayers.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/popups.test.tsx",
       "kind": "type"
     },
@@ -69057,6 +69085,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/toastHost.test.tsx",
       "kind": "type"
     },
     {
