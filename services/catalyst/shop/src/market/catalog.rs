@@ -1767,7 +1767,7 @@ mod tests {
             (LAND_SEPOLIA.land_registry, true),
             (LAND_MAINNET.land_registry, false),
         ] {
-            let held: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(&query))
+            let held: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
                 .bind(now)
                 .bind(signer)
                 .bind(registry)
