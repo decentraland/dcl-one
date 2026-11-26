@@ -6099,22 +6099,29 @@ Workload and invariants:
   every record that doesn't parse, and every implausible timestamp as debt.
   A recorded failure in `content.failed_deployments` is debt, not
   acceptance. A page that doesn't advance the keyset also adds debt and ends
-  that peer's walk.
+  that peer's walk. So does a page that still fails once its retry wait
+  (5 seconds, doubling) passes 5 minutes, after about 5 minutes of retries:
+  the pass completes with debt, and a later pass reads that peer again.
 - The replay never reads or writes `content.server_sync_cursors`,
   `content.processed_snapshots` or the sync properties in
   `content.system_properties`. Existing deployment rows are never rewritten.
-- A completed pass starts reading the next one `SYNC_ITEM_REPLAY_INTERVAL_SECS`
-  later (default 1200, 20 minutes). The setting takes 0, which turns the
-  replay off and leaves item coverage unknown, or 600 to 1440; the node
-  refuses to start with any other value. A pass never starts while another
-  runs: the job runs one pass at a time and waits the interval after it ends.
+- A pass starts `SYNC_ITEM_REPLAY_INTERVAL_SECS` after the previous one
+  started, or as soon as it ends when it took longer (default 1200, 20
+  minutes). The setting takes 0, which turns the replay off and leaves item
+  coverage unknown, or 600 to 1440; the node refuses to start with any other
+  value. A pass never starts while another runs.
 - Every pass starts from the floor again, so a deployment a peer commits
   after a pass read past it is recovered by the next pass. Coverage stays
-  continuous while a pass plus the interval fits in the 30-minute staleness
-  window. At the default pause a pass takes about 2 minutes, so the default
-  interval leaves about 8 minutes for a slow pass. At the largest interval and
-  page pause a pass takes about 4.5 minutes and the two leave about 1.5
-  minutes.
+  continuous while the next pass completes within 30 minutes of the previous
+  start: the larger of the interval and a pass, plus a pass, must fit in the
+  30-minute staleness window. A pass reads its sources one after another,
+  about 2 minutes each at the default pause and 4.5 minutes at the largest.
+  One source at the default interval leaves about 8 minutes for a slow pass,
+  and at the largest interval and pause about 1.5 minutes. At the default
+  pause, coverage stays continuous for up to five sources at the default
+  interval and up to seven at the smallest. When a completed pass is longer
+  than that allows, the replay logs a warning with its length and the
+  number of sources, and readers get `Stale` for part of every cycle.
 - Passes stay full. A pass that read only past the previous pass's newest
   `localTimestamp` would be cheaper, but it would date its proof from a start
   it didn't reread: a deployment a peer commits late, with a timestamp below
@@ -6195,9 +6202,9 @@ daily `/pointer-changes` traffic pulled from each source catalyst is:
 
 | `SYNC_ITEM_REPLAY_INTERVAL_SECS` | Passes a day | Traffic a day | Requests a day |
 | --- | --- | --- | --- |
-| 600 (smallest) | about 118 | about 9.5 GB | about 18,900 |
-| 1200 (default) | about 65 | about 5.3 GB | about 10,400 |
-| 1440 (largest) | about 55 | about 4.4 GB | about 8,800 |
+| 600 (smallest) | 144 | about 11.6 GB | about 23,000 |
+| 1200 (default) | 72 | about 5.8 GB | about 11,500 |
+| 1440 (largest) | 60 | about 4.9 GB | about 9,600 |
 | 0 (off) | 0 | 0 | 0 |
 
 A node that syncs from several catalysts reads each of them in every pass, so
