@@ -1,11 +1,13 @@
-// Grass blades, flowers and reeds. Each vertex stands on the terrain under its instance's root,
+// Grass tufts, flowers and reeds. Each vertex stands on the terrain under its instance's root,
 // leans with the wind by its height above the root, and shrinks toward the root with distance
-// from the camera, so far instances need no blending or discard. The blades take the ground's
-// colour under them; flowers and reeds keep their own, blended toward the ground at the root.
+// from the camera, so far instances need no blending. A tuft is two crossed cards, cut out by
+// the blade mask and coloured as the ground under them; flowers and reeds are solid and keep
+// their own colours, blended toward the ground at the root.
 //
 // Mesh: uv is the instance's root (x/z from the parcel's centre), uv_b its height share (0 at the
-// root, 1 at the top) and its part (grass/geometry.rs PART_*). To the fragment, uv carries the
-// root's world x/z and uv_b the height share and the part plus a per-instance random.
+// root, 1 at the top) and its part (grass/geometry.rs PART_*), colour (x, y) where it reads the
+// blade mask. To the fragment, uv carries the root's world x/z, uv_b the height share and the
+// part plus a per-instance random, and colour the mask position.
 
 #import bevy_pbr::{
     mesh_functions,
@@ -16,6 +18,12 @@
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{Vertex, VertexOutput}
+#ifdef PREPASS_FRAGMENT
+    #import bevy_pbr::prepass_io::FragmentOutput
+#ifdef MOTION_VECTOR_PREPASS
+    #import bevy_pbr::pbr_prepass_functions::calculate_motion_vector
+#endif
+#endif
     #import bevy_render::globals::Globals
     // the prepass view layout has the globals at binding 1, not the forward layout's 11
     @group(0) @binding(1) var<uniform> globals: Globals;
@@ -34,6 +42,9 @@
 
 // x: 1 while the landscape sways, 0 while it is held still
 @group(2) @binding(108) var<uniform> wind_scale: vec4<f32>;
+// the blade clumps a grass card shows (grass/mask.rs)
+@group(2) @binding(109) var blade_mask: texture_2d<f32>;
+@group(2) @binding(110) var blade_mask_sampler: sampler;
 
 // The wind, as unity-explorer's grass material sets it.
 // (1, 0, 1) in unity x/z, normalised, with unity's z negated
@@ -57,6 +68,8 @@ const SWAY_WAVENUMBER: f32 = 0.35;
 const FLUTTER_RATE: f32 = 4.0;
 const FLUTTER_SHARE: f32 = 0.25;
 const TAU: f32 = 6.2831855;
+// a grass card shows where the mask reaches this, as unity-explorer's grass material cuts
+const MASK_CUTOFF: f32 = 0.5;
 
 fn hash_u32(value: u32) -> u32 {
     var x = value;
@@ -125,6 +138,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     // the part is whole, the random below it a quarter clear of each whole number, so
     // interpolation never moves the part
     out.uv_b = vec2(vertex.uv_b.x, vertex.uv_b.y + 0.25 + 0.5 * random);
+    out.color = vertex.color;
 
 #ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
@@ -151,7 +165,43 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     return out;
 }
 
-#ifndef PREPASS_PIPELINE
+// Drops the fragment of a grass card where the mask shows no blade; flowers and reeds are solid.
+// `part` is the fragment's uv_b.y. It samples, so call it in uniform control flow.
+fn cut_out(part: f32, mask_uv: vec2<f32>) {
+    let mask = textureSample(blade_mask, blade_mask_sampler, mask_uv).r;
+    if u32(part) == 0u && mask < MASK_CUTOFF {
+        discard;
+    }
+}
+
+#ifdef PREPASS_PIPELINE
+
+// The prepasses cut the cards out as the main pass does.
+#ifdef PREPASS_FRAGMENT
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
+    cut_out(in.uv_b.y, in.color.xy);
+
+    var out: FragmentOutput;
+#ifdef NORMAL_PREPASS
+    out.normal = vec4(in.world_normal * 0.5 + vec3(0.5), 1.0);
+#endif
+#ifdef MOTION_VECTOR_PREPASS
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+#endif
+#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    out.frag_depth = in.unclipped_depth;
+#endif
+    return out;
+}
+#else
+@fragment
+fn fragment(in: VertexOutput) {
+    cut_out(in.uv_b.y, in.color.xy);
+}
+#endif
+
+#else
 
 // the softened sun shadows of the scene materials, trees and ground (see shadow_softening.wgsl)
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
@@ -209,6 +259,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // sampled first, in uniform control flow. The root is the same over an instance, so this
     // reads the textures' finest level: one colour per instance, from the ground under it.
     let ground = ground_albedo_normal(in.uv).albedo;
+    cut_out(in.uv_b.y, in.color.xy);
 
     let height = in.uv_b.x;
     let part = u32(in.uv_b.y);

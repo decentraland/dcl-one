@@ -987,12 +987,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   16 jittered grid of 256 grass instances a parcel, 16 flowers of each of two kinds where the
   ground is not sandy, 16 reeds shared out over the sandy 4 m cells), its 180 m and 256-parcel
   limits and its wind and fade values, and differ in these ways.
-  - The meshes are lookalikes built in code, and the wind and colour shader is written from the
-    meaning of the material's values: Unity's grass and flower meshes, textures and shader come
-    from commercial packages that cannot be redistributed. A grass instance is a tuft of
-    fourteen single-triangle blades in two crossed rows, the size of Unity's grass card (0.64 m
-    wide, 0.27 m tall at scale 1), a flower a stem under a five-petal daisy or a four-petal bell, a reed
-    a stem, a leaf and a seed head.
+  - The meshes and the grass mask are built in code, and the wind and colour shader is written
+    from the meaning of the material's values: Unity's grass and flower meshes, textures and
+    shader come from commercial packages that cannot be redistributed. A grass instance is built
+    as Unity's grass card, two crossed quads (0.64 m wide, 0.27 m tall at scale 1) cut out at 0.5
+    by a mask of blade clumps, with a mask drawn in code where Unity has a texture. A flower is a
+    stem under a five-petal daisy or a four-petal bell, a reed a stem, a leaf and a seed head.
   - The scatter runs on the CPU once per parcel, and each parcel draws one mesh of its blades and
     one of its flowers and reeds, where Unity scatters every frame on the GPU and draws
     instanced. The vertex shader stands each instance on the terrain, so a change of

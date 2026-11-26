@@ -1,13 +1,16 @@
-//! The grass, flower and reed meshes: own low-poly lookalikes, built in code. Each is drawn many
-//! thousand times, so each is a handful of double-sided triangles; the shader colours them by part
+//! The grass, flower and reed meshes, built in code. Each is drawn many thousand times, so each is
+//! a handful of double-sided triangles: a grass tuft is two crossed cards cut out by the blade
+//! mask (`mask.rs`), a flower or a reed an own low-poly lookalike. The shader colours them by part
 //! and bends them by height.
 
 use std::f32::consts::TAU;
 
 use bevy::math::{Vec2, Vec3};
 
+use super::mask;
+
 /// Parts, which the shader colours (`grass_wind.wgsl`'s `part_colour`).
-/// A grass blade, coloured from the ground under it.
+/// A grass card, cut out by the blade mask and coloured from the ground under it.
 pub(crate) const PART_BLADE: f32 = 0.0;
 /// A green stem or leaf.
 pub(crate) const PART_STEM: f32 = 1.0;
@@ -24,12 +27,19 @@ pub(crate) struct Shape {
     /// Per vertex: its height as a share of the instance's (0 at the root, 1 at the top), and
     /// its part.
     pub(crate) parts: Vec<[f32; 2]>,
+    /// Per vertex: where it reads the blade mask. Only a grass card reads it.
+    pub(crate) mask_uvs: Vec<[f32; 2]>,
     pub(crate) indices: Vec<u16>,
 }
 
 impl Shape {
     fn vertex(&mut self, position: Vec3, height: f32, part: f32) -> u16 {
+        self.masked_vertex(position, height, part, [0.0; 2])
+    }
+
+    fn masked_vertex(&mut self, position: Vec3, height: f32, part: f32, mask_uv: [f32; 2]) -> u16 {
         self.positions.push(position);
+        self.mask_uvs.push(mask_uv);
         self.parts
             .push([(position.y / height).clamp(0.0, 1.0), part]);
         (self.positions.len() - 1) as u16
@@ -46,40 +56,27 @@ fn around(turns: f32) -> Vec3 {
     Vec3::new(cos, 0.0, sin)
 }
 
-/// A tuft the size of unity-explorer's grass card (two crossed quads 0.64 m wide and 0.27 m
-/// tall, each showing a strip of blades): two crossed rows of seven single-triangle blades, 5 cm
-/// wide at the root, fanning out along their row. 42 vertices and 14 triangles.
+/// A tuft built as unity-explorer's grass card: two crossed quads 0.64 m wide and 0.27 m tall,
+/// each showing one strip of the blade mask. 8 vertices and 4 triangles.
 pub(crate) fn blade_mesh() -> Shape {
     const HEIGHT: f32 = 0.27;
-    // from the centre to the outermost roots along a row
-    const ROW_REACH: f32 = 0.29;
-    const HALF_WIDTH: f32 = 0.025;
-    // the second row's turn from the first, as the card's second quad (55.5 degrees)
-    const ROW_TURN: f32 = 0.154;
-    // per blade along a row: its height as a share of the tuft's, and its tip's lean along the
-    // row in metres
-    const BLADES: [(f32, f32); 7] = [
-        (0.6, -0.08),
-        (0.85, -0.03),
-        (0.7, 0.04),
-        (1.0, -0.02),
-        (0.75, 0.05),
-        (0.9, 0.02),
-        (0.55, 0.08),
-    ];
+    const HALF_WIDTH: f32 = 0.32;
+    // the second quad's turn from the first (55.5 degrees)
+    const QUAD_TURN: f32 = 0.154;
     let mut shape = Shape::default();
-    for (row, turns) in [0.0, ROW_TURN].into_iter().enumerate() {
-        let along = around(turns);
-        for i in 0..BLADES.len() {
-            // the second row takes the blades in reverse, so the rows differ
-            let (share, lean) = BLADES[if row == 0 { i } else { BLADES.len() - 1 - i }];
-            let root = along * ROW_REACH * (2.0 * i as f32 / (BLADES.len() - 1) as f32 - 1.0);
-            let left = shape.vertex(root - along * HALF_WIDTH, HEIGHT, PART_BLADE);
-            let right = shape.vertex(root + along * HALF_WIDTH, HEIGHT, PART_BLADE);
-            let tip = root + along * lean + Vec3::Y * HEIGHT * share;
-            let tip = shape.vertex(tip, HEIGHT, PART_BLADE);
-            shape.triangle(left, right, tip);
-        }
+    for (strip, turns) in [0.0, QUAD_TURN].into_iter().enumerate() {
+        let along = around(turns) * HALF_WIDTH;
+        // bottom left, bottom right, top left, top right
+        let corners = [(-1.0, 0.0), (1.0, 0.0), (-1.0, 1.0), (1.0, 1.0)].map(|(side, up)| {
+            shape.masked_vertex(
+                along * side + Vec3::Y * HEIGHT * up,
+                HEIGHT,
+                PART_BLADE,
+                mask::uv(strip, side * 0.5 + 0.5, up),
+            )
+        });
+        shape.triangle(corners[0], corners[1], corners[2]);
+        shape.triangle(corners[2], corners[1], corners[3]);
     }
     shape
 }

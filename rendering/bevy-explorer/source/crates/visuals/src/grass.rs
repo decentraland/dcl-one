@@ -1,6 +1,6 @@
 //! Grass blades, flowers and reeds on the empty parcels around the player, scattered as
 //! unity-explorer's GPU scatter places them and bent by the wind. Each parcel merges its instances
-//! into one mesh for the blades and one for the flowers and reeds, built once when the parcel
+//! into one mesh for the grass tufts and one for the flowers and reeds, built once when the parcel
 //! appears and again only when the density or the ground they read changes. The vertex shader
 //! stands each instance on the terrain, so heights never rebuild a mesh.
 
@@ -41,9 +41,11 @@ use crate::{
     trees::TreeWind,
 };
 use geometry::{blade_mesh, cattail_mesh, flower_mesh, Shape};
+use mask::BLADE_MASK;
 use scatter::{scatter, Placement};
 
 pub(crate) mod geometry;
+pub(crate) mod mask;
 pub(crate) mod scatter;
 #[cfg(test)]
 mod tests;
@@ -103,8 +105,8 @@ pub(crate) fn add_parcel_systems(app: &mut App) {
 
 pub(crate) type GrassMaterial = ExtendedMaterial<GrassExtension>;
 
-/// The terrain the instances stand on, the ground the blades take their colour from, and the
-/// wind.
+/// The terrain the instances stand on, the ground the grass takes its colour from, the wind,
+/// and the mask the grass cards are cut out by.
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 pub(crate) struct GrassExtension {
     #[texture(100, sample_type = "float", filterable = false, visibility(vertex))]
@@ -123,6 +125,9 @@ pub(crate) struct GrassExtension {
     /// x: 1 while the landscape sways, 0 while it is held still.
     #[uniform(108)]
     wind: Vec4,
+    #[texture(109)]
+    #[sampler(110)]
+    blade_mask: Handle<Image>,
 }
 
 impl GrassExtension {
@@ -134,6 +139,7 @@ impl GrassExtension {
             ground_colour: textures.ground.clone(),
             sand_colour: textures.sand.clone(),
             wind: wind_settings(wind),
+            blade_mask: BLADE_MASK,
         }
     }
 }
@@ -162,6 +168,11 @@ impl MaterialExtension for GrassExtension {
     }
 
     fn fragment_shader() -> ShaderRef {
+        grass_shader()
+    }
+
+    // the prepasses cut the cards out too
+    fn prepass_fragment_shader() -> ShaderRef {
         grass_shader()
     }
 
@@ -200,9 +211,11 @@ impl GrassAssets {
     }
 }
 
-/// The base of the grass material: matte, both faces drawn, unfogged like the ground.
+/// The base of the grass material: matte, both faces drawn, unfogged like the ground, and cut
+/// out (the shader discards by the blade mask; the mode has the prepasses run it).
 pub(crate) fn grass_base() -> StandardMaterial {
     StandardMaterial {
+        alpha_mode: AlphaMode::Mask(0.5),
         // 1 - unity-explorer's grass smoothness
         perceptual_roughness: 0.979,
         metallic: 0.0,
@@ -215,10 +228,12 @@ pub(crate) fn grass_base() -> StandardMaterial {
 fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<GrassMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     textures: Res<LandscapeTextures>,
     surface: Res<TerrainSurface>,
     wind: Res<TreeWind>,
 ) {
+    images.insert(BLADE_MASK.id(), mask::image());
     let material = materials.add(GrassMaterial {
         base: grass_base(),
         extension: GrassExtension::new(&textures, surface.params(), wind.0),
@@ -495,8 +510,9 @@ fn build_parcels(
 }
 
 /// One mesh of every placed shape, relative to the parcel's centre, and its bounds; none if
-/// nothing is placed. Each vertex carries its instance's root (uv 0), and its height share and
-/// part (uv 1), which the shader stands, bends and colours it by.
+/// nothing is placed. Each vertex carries its instance's root (uv 0), its height share and part
+/// (uv 1), which the shader stands, bends and colours it by, and where it reads the blade mask
+/// (colour, x and y).
 fn merged_mesh(parts: &[(&Shape, &Vec<Placement>)]) -> Option<(Mesh, Aabb)> {
     let vertices: usize = parts
         .iter()
@@ -508,6 +524,7 @@ fn merged_mesh(parts: &[(&Shape, &Vec<Placement>)]) -> Option<(Mesh, Aabb)> {
     let mut positions = Vec::with_capacity(vertices);
     let mut roots = Vec::with_capacity(vertices);
     let mut shares = Vec::with_capacity(vertices);
+    let mut mask_uvs = Vec::with_capacity(vertices);
     let mut indices = Vec::new();
     let mut top: f32 = 0.0;
     for (shape, placements) in parts {
@@ -524,6 +541,7 @@ fn merged_mesh(parts: &[(&Shape, &Vec<Placement>)]) -> Option<(Mesh, Aabb)> {
                 roots.push(root.to_array());
                 shares.push(*share);
             }
+            mask_uvs.extend(shape.mask_uvs.iter().map(|[u, v]| [*u, *v, 0.0, 1.0]));
             indices.extend(shape.indices.iter().map(|index| base + index));
         }
     }
@@ -534,6 +552,7 @@ fn merged_mesh(parts: &[(&Shape, &Vec<Placement>)]) -> Option<(Mesh, Aabb)> {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, roots)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, shares)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, mask_uvs)
     .with_inserted_indices(Indices::U16(indices));
     // the shader raises every vertex onto the terrain, which lies within the ground's bounds
     let side = 8.0 + SWAY_PADDING;

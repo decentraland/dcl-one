@@ -350,17 +350,60 @@ fn a_density_change_rebuilds_meshes_in_place() {
     pointers(&mut app).insert(IVec2::X, PointerResult::Nothing);
     app.update();
     let parcels = grass_parcels_of(&mut app);
-    assert_eq!(meshes_of(&mut app, IVec2::X), [(GrassMesh::Blades, 64 * 6)]);
+    let tuft_vertices = blade_mesh().positions.len();
+    assert_eq!(
+        meshes_of(&mut app, IVec2::X),
+        [(GrassMesh::Blades, 64 * tuft_vertices)]
+    );
     app.insert_resource(*ParcelGrassSetting::High);
     app.update();
     assert_eq!(grass_parcels_of(&mut app), parcels);
     assert_eq!(
         meshes_of(&mut app, IVec2::X),
-        [(GrassMesh::Blades, 256 * 6)]
+        [(GrassMesh::Blades, 256 * tuft_vertices)]
     );
     app.insert_resource(*ParcelGrassSetting::Off);
     app.update();
     assert!(grass_parcels_of(&mut app).is_empty());
+}
+
+/// A tuft is two crossed cards the size of unity-explorer's grass card, each reading its own
+/// strip of the blade mask from root to tip, and every vertex of a parcel's mesh carries where
+/// it reads the mask.
+#[test]
+fn a_tuft_is_two_crossed_cards() {
+    let tuft = blade_mesh();
+    assert_eq!((tuft.positions.len(), tuft.indices.len()), (8, 12));
+    for (strip, (card, uvs)) in tuft
+        .positions
+        .chunks(4)
+        .zip(tuft.mask_uvs.chunks(4))
+        .enumerate()
+    {
+        assert!((card[0].distance(card[1]) - 0.64).abs() < 1e-6);
+        assert_eq!([card[0].y, card[1].y], [0.0; 2]);
+        assert_eq!([card[2].y, card[3].y], [0.27; 2]);
+        let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
+        assert_eq!(
+            uvs,
+            corners.map(|(along, height)| mask::uv(strip, along, height))
+        );
+    }
+    let across =
+        |card: usize| (tuft.positions[card * 4 + 1] - tuft.positions[card * 4]).normalize();
+    let turn = across(0).dot(across(1)).acos().to_degrees();
+    assert!((turn - 55.5).abs() < 0.1, "{turn}");
+
+    let set = scatter(IVec2::ZERO, FULL_DENSITY, None);
+    let (mesh, _) = merged_mesh(&[(&tuft, &set.blades)]).unwrap();
+    let Some(VertexAttributeValues::Float32x4(mask_uvs)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+    else {
+        panic!("no mask positions")
+    };
+    assert_eq!(mask_uvs.len(), 256 * 8);
+    for (carried, [u, v]) in mask_uvs.iter().zip(tuft.mask_uvs.iter().cycle()) {
+        assert_eq!(carried[..2], [*u, *v]);
+    }
 }
 
 /// The grass material compiles in every pipeline it is drawn with: the main pass and the
@@ -384,9 +427,9 @@ fn grass_wind_compiles() {
     let world = app.world_mut();
     let textures = world.resource::<LandscapeTextures>().clone();
     let steps = TerrainSurface::default().image();
-    world
-        .resource_mut::<Assets<Image>>()
-        .insert(TERRAIN_TEXTURE.id(), steps);
+    let mut images = world.resource_mut::<Assets<Image>>();
+    images.insert(TERRAIN_TEXTURE.id(), steps);
+    images.insert(BLADE_MASK.id(), mask::image());
     let material = world
         .resource_mut::<Assets<GrassMaterial>>()
         .add(GrassMaterial {
