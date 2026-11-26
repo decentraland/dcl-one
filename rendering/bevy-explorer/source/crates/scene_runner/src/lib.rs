@@ -921,6 +921,16 @@ impl ContainingScene<'_, '_> {
             return self.get_portables(false);
         };
 
+        self.get_area_xz(focus, radius)
+    }
+
+    /// The scenes within `radius` of `position` on the ground plane, plus any global scenes.
+    pub fn get_area_at(&self, position: Vec3, radius: f32) -> HashSet<Entity> {
+        self.get_area_xz(position.xz() * Vec2::new(1.0, -1.0), radius)
+    }
+
+    // `focus` is in parcel orientation: world x, world -z
+    fn get_area_xz(&self, focus: Vec2, radius: f32) -> HashSet<Entity> {
         let min_point = focus - Vec2::splat(radius);
         let max_point = focus + Vec2::splat(radius);
 
@@ -2172,7 +2182,7 @@ fn set_ui_constraints(
 
 fn push_time_to_crdt(time_of_day: Res<TimeOfDay>, mut contexts: Query<&mut GlobalCrdtState>) {
     for mut global_crdt_state in contexts.iter_mut() {
-        global_crdt_state.update_time(time_of_day.time);
+        global_crdt_state.update_time(*time_of_day);
     }
 }
 

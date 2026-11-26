@@ -685,7 +685,7 @@ pub fn encode_dictionary_batches_with(
         let mask = masks
             .iter()
             .position(|mask| *mask == subject.presence_mask())
-            .unwrap() as u32;
+            .expect("masks hold every subject's presence mask") as u32;
         subject.encode_with_mask(
             &mut writer,
             SeqEncoding::AbsoluteBaseline,

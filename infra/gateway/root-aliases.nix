@@ -273,6 +273,15 @@
     ];
   }
   {
+    key = "^~ /v1/historical/";
+    to = "/marketplace-api$uri";
+    probe = [
+      "POST"
+      "/v1/historical/head"
+      "/marketplace-api/v1/historical/head"
+    ];
+  }
+  {
     key = "^~ /v1/nfts";
     to = "/marketplace-api$uri";
     probe = [
@@ -333,6 +342,15 @@
       "GET"
       "/v1/owners"
       "/marketplace-api/v1/owners"
+    ];
+  }
+  {
+    key = "= /v1/rates/mana-usd";
+    to = "/marketplace-api$uri";
+    probe = [
+      "GET"
+      "/v1/rates/mana-usd"
+      "/marketplace-api/v1/rates/mana-usd"
     ];
   }
   {
