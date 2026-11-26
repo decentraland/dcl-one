@@ -1,5 +1,7 @@
-import { CrdtMessageType, Entity } from '../../packages/@dcl/ecs/src'
-import { ByteBuffer, ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
+import type { Entity } from '../../packages/@dcl/ecs/src'
+import { CrdtMessageType } from '../../packages/@dcl/ecs/src'
+import type { ByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
+import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { dataCompare } from '../../packages/@dcl/ecs/src/systems/crdt/utils'
 import {
   createUpdateLwwFromCrdt,

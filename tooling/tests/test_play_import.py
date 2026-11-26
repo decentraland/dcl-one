@@ -464,7 +464,7 @@ class PlayImportTests(unittest.TestCase):
         crate = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
         self.write(crate, 'pub fn layout() {}\n')
         def git(*args):
-            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
                                             *args], cwd=self.root, text=True).strip()
         git('init', '-q')
         git('config', 'maintenance.auto', 'false')
@@ -517,7 +517,7 @@ class PlayImportTests(unittest.TestCase):
 
     def test_root_ui_exports_and_components_are_not_hud_inputs(self):
         def git(*args):
-            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
                                             *args], cwd=self.root, text=True).strip()
         self.write('library/ui/index.ts', "export * from './foundations'\n")
         git('init', '-q')
@@ -552,7 +552,7 @@ class PlayImportTests(unittest.TestCase):
         for name in names:
             self.write(name, 'export const zero = 0n;\n')
         def git(*args):
-            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
                                             *args], cwd=self.root, text=True).strip()
         git('init', '-q')
         git('config', 'maintenance.auto', 'false')
@@ -698,7 +698,7 @@ class PlayImportTests(unittest.TestCase):
         self.write(contract.SOURCE + 'deploy/headless/launcher/package.json', 'native package')
         self.write(contract.SOURCE + 'deploy/web/package.json', 'web package')
         def git(*args):
-            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
                                             *args], cwd=self.root, text=True).strip()
         git('init', '-q')
         # Fixture cleanup must not race detached maintenance after a commit.

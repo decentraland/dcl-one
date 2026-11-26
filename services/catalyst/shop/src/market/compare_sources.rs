@@ -247,7 +247,7 @@ pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIn
         (chain_walk::INDEXER_SALES, ChainNet::Ethereum) => {
             Box::new(super::ethereum_sales::EthereumSalesIndex)
         }
-        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::SalesIndex),
+        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::POLYGON),
         (chain_walk::INDEXER_TRADE_EVENTS, _) => Box::new(super::trade_events::TradeEventsIndex {
             net,
             chain_id: net.chain_id(),

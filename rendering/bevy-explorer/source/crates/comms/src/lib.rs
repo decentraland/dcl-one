@@ -470,23 +470,30 @@ pub struct Transport {
 
 /// Encode `message` once and queue it onto every transport matching `target`. The single point that
 /// turns a [`BroadcastTarget`] into per-transport sends; full channels are dropped (best-effort).
+/// Returns how many transports took the message.
 pub fn broadcast_to<'a, D: ToDclWriter>(
     transports: impl Iterator<Item = &'a Transport>,
     target: BroadcastTarget,
     unreliable: bool,
     message: &D,
-) {
+) -> usize {
     let mut data = Vec::new();
     let mut writer = DclWriter::new(&mut data);
     message.to_writer(&mut writer);
-    for transport in transports.filter(|t| target.includes(&t.transport_type)) {
-        let _ = transport.sender.try_send(NetworkMessage {
-            message: Box::new(data.clone()),
-            unreliable,
-            recipient: NetworkMessageRecipient::All,
-            topic: None,
-        });
-    }
+    transports
+        .filter(|t| target.includes(&t.transport_type))
+        .filter(|transport| {
+            transport
+                .sender
+                .try_send(NetworkMessage {
+                    message: Box::new(data.clone()),
+                    unreliable,
+                    recipient: NetworkMessageRecipient::All,
+                    topic: None,
+                })
+                .is_ok()
+        })
+        .count()
 }
 
 /// Queue a [`Broadcast`] message onto every transport matching `target`, boxed fresh per transport so

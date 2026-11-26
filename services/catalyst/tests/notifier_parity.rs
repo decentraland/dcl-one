@@ -27,8 +27,7 @@ use catalyst::shared::segment_signature;
 use catalyst::social::segment_webhooks::{self, Settings, State};
 use catalyst::social::writes;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const SIGNING_KEY: &[u8] = b"fixture-signing-key";
 const PREFIX: &str = "/events-notifier";

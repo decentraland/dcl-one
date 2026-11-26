@@ -1,8 +1,8 @@
 -- Every read is bounded by the executions inserted for this pass. Separate
 -- the parties to the NFT transfer from the parties to the consideration.
-WITH execution AS MATERIALIZED (
-    SELECT *, row_number() OVER (PARTITION BY tx_hash ORDER BY log_index)-1 AS fill
-    FROM shop.sale_execution WHERE network = $1 AND block_number > $2 AND block_number <= $3
+, execution AS MATERIALIZED (
+    SELECT e.*,v.fill FROM shop.sale_execution e JOIN positions v USING(block_number,tx_hash,log_index)
+    WHERE e.network = $1 AND e.block_number > $2 AND e.block_number <= $3
 ), fixed_price AS MATERIALIZED (
     SELECT e.network, e.block_number, e.log_index, 0 AS ordinal, e.kind, n.contract_address,
            n.token_id, NULL::numeric AS item_id, n.from_address AS seller, n.to_address AS buyer,
@@ -38,7 +38,7 @@ WITH execution AS MATERIALIZED (
            -- Polygon and Ethereum mutate the asset in memory before emitting Traded:
            -- the converted leg carries the MANA contract. An unconverted leg
            -- remains denominated in USD and cannot enter MANA totals.
-           CASE WHEN typ='2' AND contract<>$4 THEN 'usd' ELSE contract END AS currency
+           CASE WHEN typ='2' AND contract<>$8 THEN 'usd' ELSE contract END AS currency
     FROM trade_leg WHERE typ IN ('1','2')
 ), trade_asset AS (
     SELECT *, (row_number() OVER w-1)::int AS ordinal, count(*) OVER (PARTITION BY network,block_number,log_index) AS n
@@ -46,17 +46,17 @@ WITH execution AS MATERIALIZED (
     WINDOW w AS (PARTITION BY network,block_number,log_index ORDER BY sent DESC,ordinality)
 ), payments AS (
     INSERT INTO shop.sale_payment (network,block_number,log_index,ordinal,currency,gross,payer,beneficiary,bid_fee,consideration)
-    SELECT network,block_number,log_index,ordinal,$4,price,payer,payee,bid_fee,true FROM fixed_price
+    SELECT network,block_number,log_index,ordinal,$8,price,payer,payee,bid_fee,true FROM fixed_price
     UNION ALL
     SELECT network,block_number,log_index,ordinal,currency,amount,sender,recipient,NULL,
         NOT EXISTS (SELECT FROM trade_asset a WHERE (a.network,a.block_number,a.log_index,a.sent)=
                           (p.network,p.block_number,p.log_index,p.sent))
     FROM trade_payment p
     UNION ALL
-    SELECT e.network,e.block_number,e.log_index,0,$4,n.price,n.caller,NULL,NULL,true
+    SELECT e.network,e.block_number,e.log_index,0,$8,n.price,n.caller,NULL,NULL,true
     FROM execution e JOIN shop.name_purchase n USING (block_number,log_index) WHERE e.kind = 'name_fee'
 ), assets (network,block_number,log_index,ordinal,kind,contract_address,token_id,item_id,seller,buyer,price,currency) AS (
-SELECT network,block_number,log_index,ordinal,kind,contract_address,token_id,item_id,seller,buyer,price,$4 FROM fixed_price WHERE kind<>'mint' OR token_id IS NOT NULL
+SELECT network,block_number,log_index,ordinal,kind,contract_address,token_id,item_id,seller,buyer,price,$8 FROM fixed_price WHERE kind<>'mint' OR token_id IS NOT NULL
 UNION ALL
 SELECT a.network,a.block_number,a.log_index,a.ordinal,
        CASE WHEN a.typ='4' THEN 'mint' WHEN a.sent THEN 'order' ELSE 'bid' END,
@@ -66,7 +66,9 @@ FROM trade_asset a
 LEFT JOIN LATERAL (
     SELECT sum(amount) AS price, min(currency) AS currency
     FROM trade_payment t WHERE (t.network,t.block_number,t.log_index) = (a.network,a.block_number,a.log_index)
-    HAVING count(DISTINCT currency)=1 AND bool_and(t.sent <> a.sent)
+    -- Classify every leg before checking eligibility. A converted USD leg
+    -- can acquire a price only when the receipt proves the execution's split.
+    HAVING bool_and(t.typ='1' AND t.currency=$8 AND t.sent<>a.sent) AND sum(t.amount)>0
 ) p ON a.n = 1
 )
 INSERT INTO shop.sale_asset (public_id,beneficiary,network,block_number,log_index,ordinal,kind,contract_address,token_id,item_id,seller,buyer,price,currency)

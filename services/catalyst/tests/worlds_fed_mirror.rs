@@ -38,8 +38,7 @@ use catalyst::worlds::fed::poll::{
 use catalyst::worlds::fed::store::{RemoteWorld, RemoteWorldsComponent, Revocation, SweptBecause};
 use catalyst::worlds::fed::{FedState, handlers, router};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const ADMIN_TOKEN: &str = "fed-routes-admin";
 const PEER: &str = "worlds.peer-operator.org";

@@ -17,5 +17,7 @@ export const MOCK_SWITCHES = [
   'mockcall',
   'mockstream',
   'mockportables',
+  // a scene holding the time of day: the Skybox menu locked
+  'mocksky',
   'mockEvents'
 ] as const

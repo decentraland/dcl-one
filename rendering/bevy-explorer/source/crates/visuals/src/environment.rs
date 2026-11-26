@@ -74,8 +74,8 @@ impl Plugin for SceneEnvironmentPlugin {
                 ("Star brightness", "starsBrightness"),
             ],
             actions: &[
-                ("Midnight", "/time 0 0"),
-                ("Noon", "/time 12 0"),
+                ("Midnight", "/time 0 0 --force"),
+                ("Noon", "/time 12 0 --force"),
                 ("Resume scene time", "/time --resume"),
             ],
             inputs: &[],
@@ -473,7 +473,10 @@ mod tests {
         config.graphics.fog = FogSetting::On;
         app.insert_resource(time)
             .insert_resource(config)
-            .insert_resource(TimeOfDay { time: 43200.0 })
+            .insert_resource(TimeOfDay {
+                time: 43200.0,
+                ..Default::default()
+            })
             .init_resource::<FogDensity>()
             .init_resource::<CloudCover>()
             .init_resource::<SkyAmbient>()

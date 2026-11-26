@@ -424,6 +424,31 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
+// get situational reactions as they play (the local user's included) as a stream
+// type Reaction = {
+//   from: string,
+//   emoji: string,
+// }
+module.exports.getReactionStream = async function() {
+  const rid = await Deno.core.ops.op_get_reaction_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_reaction_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the local user reacts with an emoji, shown over their avatar; an emoji the wire has no
+// index for does nothing
+module.exports.sendReaction = function(emoji) {
+  Deno.core.ops.op_send_reaction(emoji)
+}
+
 module.exports.quit = function() {
     Deno.core.ops.op_quit();
 }

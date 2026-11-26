@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -148,6 +148,7 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+        app.add_event::<ReactionEvent>();
     }
 }
 
@@ -512,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
@@ -719,6 +720,14 @@ pub struct ChatEvent {
     pub message: String,
 }
 
+/// An rfc4 `Reaction` as a peer sent it: an emoji to show over their avatar, `count` times.
+/// Nothing in it is checked yet.
+#[derive(Event, Debug, Clone)]
+pub struct ReactionEvent {
+    pub sender: Entity,
+    pub reaction: rfc4::Reaction,
+}
+
 /// The rfc4 chat wire timestamp for now. unity-explorer decodes it with DateTime.FromOADate: days
 /// since 1899-12-30 UTC (25569 = the OADate of the unix epoch). Receivers only need it monotonic
 /// per sender.
@@ -870,9 +879,10 @@ pub fn process_transport_updates(
     mut position_events: EventWriter<PlayerPositionEvent>,
     mut anim_events: EventWriter<PlayerSceneAnimEvent>,
     mut emote_events: EventWriter<EmoteLifecycleEvent>,
-    (mut chat_events, mut reaction_events): (
+    (mut chat_events, mut reaction_events, mut situational_events): (
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
+        EventWriter<ReactionEvent>,
     ),
     mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
@@ -880,7 +890,10 @@ pub fn process_transport_updates(
     mut remote_anim: Local<RemoteAnimState>,
     (discard_player_updates, transports): (
         Res<DiscardPlayerUpdates>,
-        Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
+        Query<(
+            &Transport,
+            Option<&crate::room_connection::ConnectionHealth>,
+        )>,
     ),
 ) {
     // gather any event receivers
@@ -927,7 +940,7 @@ pub fn process_transport_updates(
                     // would hold the player forever, as nothing can remove it again
                     if !transports
                         .get(update.transport_id)
-                        .is_ok_and(|health| health.is_none_or(|health| health.is_connected()))
+                        .is_ok_and(|(_, health)| health.is_none_or(|health| health.is_connected()))
                     {
                         debug!(
                             "dropping update from {} on despawned transport {}",
@@ -1191,7 +1204,11 @@ pub fn process_transport_updates(
                             debug!("look at position: {look_at_position:?}");
                         }
                         PlayerMessage::PlayerData(Message::Reaction(reaction)) => {
-                            debug!("reaction: {reaction:?}");
+                            debug!("reaction from {:#x}: {reaction:?}", update.address);
+                            situational_events.write(ReactionEvent {
+                                sender: entity,
+                                reaction,
+                            });
                         }
                         PlayerMessage::PlayerData(Message::ChatReaction(chat_reaction)) => {
                             debug!(
@@ -1218,7 +1235,20 @@ pub fn process_transport_updates(
                     }
                 }
                 NetworkUpdate::NonPlayer(update) => {
-                    if update.address != "authoritative-server" {
+                    let is_presenter_state = update
+                        .address
+                        .strip_prefix("presentation-bot:")
+                        .is_some_and(|id| !id.is_empty())
+                        && transports
+                            .get(update.transport_id)
+                            .is_ok_and(|(transport, health)| {
+                                transport.transport_type == TransportType::Livekit
+                                    && transport.context == context_entity
+                                    && health.is_none_or(|health| health.is_connected())
+                            })
+                        && matches!(&update.message, Message::Scene(scene)
+                            if scene.data.starts_with(b"\x03\x0c\x00presentation"));
+                    if update.address != "authoritative-server" && !is_presenter_state {
                         warn!(
                             "skipping unexpected update from {}: {:?}",
                             update.address, update.message
@@ -1240,7 +1270,13 @@ pub fn process_transport_updates(
                                 }
                             }
 
-                            messagebus.process(scene, update.address, update.transport_id, true);
+                            let authoritative = update.address == "authoritative-server";
+                            messagebus.process(
+                                scene,
+                                update.address,
+                                update.transport_id,
+                                authoritative,
+                            );
                         }
                         // a server resolving a guest profile asks the guest directly — the
                         // only source there is. The request handler reads the requested
@@ -1872,6 +1908,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        app.add_event::<ReactionEvent>();
         crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
@@ -1966,6 +2003,215 @@ mod tests {
         });
         app.update();
         (bus_rx, topics_rx)
+    }
+
+    fn queue_presenter_message(
+        app: &App,
+        context: Entity,
+        transport: Entity,
+        identity: &str,
+        scene: &str,
+        data: Vec<u8>,
+    ) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                NonPlayerUpdate {
+                    transport_id: transport,
+                    address: identity.to_owned(),
+                    message: Message::Scene(rfc4::Scene {
+                        scene_id: scene.to_owned(),
+                        data,
+                    }),
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    fn presentation_state_frame() -> Vec<u8> {
+        let mut frame = vec![3, 12, 0];
+        frame.extend_from_slice(b"presentation");
+        frame.extend_from_slice(
+            br#"{"type":"presentation:state","id":"slides","currentSlide":0,"slideCount":2}"#,
+        );
+        frame
+    }
+
+    #[test]
+    fn presentation_bot_state_reaches_the_scene_topic_inbox() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        let frame = presentation_state_frame();
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().expect("presentation state delivered"),
+            ("presentation-bot:session".to_owned(), frame[1..].to_vec())
+        );
+        assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn authoritative_server_retains_video_crdt_authority() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (binary, mut binary_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender: binary },
+        });
+        app.update();
+        // Binary scene frame, CRDT batch, then a VideoPlayer put with an empty value.
+        let mut frame = vec![2, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::VIDEO_PLAYER.0,
+            1,
+            0,
+        ] {
+            frame.extend(word.to_le_bytes());
+        }
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "authoritative-server",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            binary_rx.try_recv().unwrap(),
+            ("authoritative-server".into(), frame[1..].to_vec())
+        );
+    }
+
+    #[test]
+    fn presentation_bot_cannot_deliver_other_topics_or_use_another_transport() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let socket = spawn_transport(&mut app, context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        for (transport, identity, scene, frame) in [
+            (
+                room,
+                "stream:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "another-scene",
+                presentation_state_frame(),
+            ),
+            (
+                socket,
+                "presentation-bot:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 1, 0, b't', b'x'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![1, b'h', b'i'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 12, 0, b'p'],
+            ),
+        ] {
+            queue_presenter_message(&app, context, transport, identity, scene, frame);
+        }
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+        app.world_mut()
+            .entity_mut(room)
+            .insert(crate::room_connection::ConnectionHealth::default());
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a disconnected presenter cannot deliver queued state"
+        );
+        app.world_mut()
+            .entity_mut(room)
+            .remove::<crate::room_connection::ConnectionHealth>();
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = Entity::PLACEHOLDER;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a presenter cannot enter another context"
+        );
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = context;
+        app.world_mut()
+            .get_mut::<Transport>(room)
+            .unwrap()
+            .transport_type = TransportType::WebsocketRoom;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a websocket cannot impersonate a LiveKit presenter"
+        );
     }
 
     const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
@@ -2310,6 +2556,45 @@ mod tests {
         app.world_mut().despawn(gone);
         app.update();
         assert!(foreign_players(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_peers_reaction_is_raised_for_its_player_as_sent() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let transport = spawn_transport(&mut app, context);
+        let reaction = rfc4::Reaction {
+            emoji_index: -7,
+            timestamp: 12.5,
+            count: 900,
+        };
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Reaction(reaction.clone())),
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.update();
+
+        let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
+        let raised = app
+            .world()
+            .resource::<Events<ReactionEvent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].sender, player);
+        // its bounds are the reader's to enforce: the event carries what the peer sent
+        assert_eq!(raised[0].reaction, reaction);
     }
 
     #[test]

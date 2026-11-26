@@ -1,20 +1,25 @@
-import { ISchema } from '../schemas'
-import { ByteBuffer, ReadWriteByteBuffer } from '../serialization/ByteBuffer'
-import {
+import type { ISchema } from '../schemas'
+import type { ByteBuffer } from '../serialization/ByteBuffer'
+import { ReadWriteByteBuffer } from '../serialization/ByteBuffer'
+import type {
   PutComponentMessageBody,
   DeleteComponentMessageBody,
-  ProcessMessageResultType,
-  CrdtMessageType,
   CrdtMessageBody,
-  PutComponentOperation,
-  DeleteComponent,
   PutNetworkComponentMessageBody,
   DeleteComponentNetworkMessageBody
 } from '../serialization/crdt'
+import {
+  ProcessMessageResultType,
+  CrdtMessageType,
+  PutComponentOperation,
+  DeleteComponent
+} from '../serialization/crdt'
 import { dataCompare } from '../systems/crdt/utils'
-import { LastWriteWinElementSetComponentDefinition, ComponentType } from './component'
-import { Entity } from './entity'
-import { DeepReadonly, deepReadonly } from './readonly'
+import type { LastWriteWinElementSetComponentDefinition } from './component'
+import { ComponentType } from './component'
+import type { Entity } from './entity'
+import type { DeepReadonly } from './readonly'
+import { deepReadonly } from './readonly'
 
 export function incrementTimestamp(entity: Entity, timestamps: Map<Entity, number>): number {
   const newTimestamp = (timestamps.get(entity) || 0) + 1
