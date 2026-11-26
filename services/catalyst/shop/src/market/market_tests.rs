@@ -8599,6 +8599,15 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
             "{token}: {body}"
         );
     }
+    for (seller, total) in [(CREATOR, 1), (WALLET_A, 0)] {
+        let (status, body) = get(
+            app(),
+            &format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId=8&seller={seller}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], total, "{body}");
+    }
     sqlx::query("DELETE FROM shop.nft_bid WHERE network = 'matic' AND token_id IN (8, 9)")
         .execute(&pool)
         .await
@@ -8764,13 +8773,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     let legacy_owner =
         super::chain_walk::test_owner(&pool, &ix, &state.settings.market.indexes).await;
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query(super::sales_index::FOLD_BIDS_SQL)
-        .bind("matic")
-        .bind(210i64)
-        .bind(137i64)
-        .bind(super::chain_walk::INDEXER_NFT)
-        .bind(None::<i64>)
-        .execute(&mut *tx)
+    super::sales_index::fold_in(&mut tx, Some(210), &legacy_owner)
         .await
         .unwrap();
     legacy_owner.check(&mut tx).await.unwrap();
@@ -8796,6 +8799,11 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         vec![("6".into(), "cancelled".into(), CREATOR.into())]
     );
     assert_eq!(body["data"]["total"], 1, "{body}");
+
+    let (status, body) = get(app(), &format!("{sold}&sortBy=recently_updated&limit=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["results"][0]["tokenId"], "1", "{body}");
+    assert_eq!(body["data"]["total"], 2, "{body}");
 
     // ERC721BidV2 price and expiry are full-width on chain. The SQL window
     // and final merge must rank the same bid first for every requested limit.
@@ -8831,6 +8839,35 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         assert_eq!(results[0]["price"], WIDE_PRICE, "{body}");
         assert_eq!(results[0]["expiresAt"], i64::MAX, "{body}");
     }
+    sqlx::raw_sql(
+        "ALTER TABLE shop.bid_seller_recheck RENAME TO saved_bid_seller_recheck;
+         CREATE FUNCTION shop.bid_snapshot_error() RETURNS bigint LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
+         $$;
+         CREATE VIEW shop.bid_seller_recheck AS
+           SELECT 'matic'::text AS network, shop.bid_snapshot_error() AS from_block;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(message.contains("statement bound"), "{body}");
+    assert!(!message.contains("private fixture detail"), "{body}");
+
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION shop.bid_snapshot_error() RETURNS bigint LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail'; END;
+         $$;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["message"], "database error", "{body}");
+
     own.drop().await;
 }
 

@@ -454,10 +454,8 @@ pub(super) async fn require_collections_on(
     state: &MarketplaceState,
     net: ChainNet,
     now: DateTime<Utc>,
-) -> Result<(), Response> {
-    let states = read_states(tx)
-        .await
-        .map_err(super::nft_reads::read_error)?;
+) -> Result<(), super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
     let catalogue = states
         .iter()
         .find(|s| s.network == net.db_name())
@@ -470,7 +468,7 @@ pub(super) async fn require_collections_on(
             now,
         )
         .map(|_| ())
-        .map_err(|why| unavailable(Source::CollectionsIndex, &why));
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
     }
     let network = match net {
         ChainNet::Ethereum => Network::Ethereum,
@@ -493,7 +491,7 @@ pub(super) async fn require_collections_on(
         now,
     )
     .map(|_| ())
-    .map_err(|(source, why)| unavailable(source, &why))
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
 }
 
 /// [`begin_checked`], answering a refusal with its envelope.
