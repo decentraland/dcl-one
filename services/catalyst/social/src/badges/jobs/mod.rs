@@ -117,6 +117,10 @@ impl Pass {
     }
 }
 
+/// The chain the badge processor reads Polygon on: its indexes and the
+/// catalogue's verdict are bound to it.
+const POLYGON_CHAIN: i64 = 137;
+
 /// Batches one tick drains at most per source before yielding.
 const MAX_BATCHES_PER_TICK: usize = 50;
 

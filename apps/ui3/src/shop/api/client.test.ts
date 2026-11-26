@@ -66,6 +66,7 @@ const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["GET /shop-api/v1/rentals-listings", ["GET /signatures-api/v1/rentals-listings", "GET /v1/rentals-listings"]],
   ["GET /shop-api/v1/sales", ["GET /marketplace-api/v1/sales"]],
   ["GET /shop-api/v1/sales/summary", ["GET /marketplace-api/v1/sales/summary"]],
+  ["GET /shop-api/v1/rates/mana-usd", ["GET /marketplace-api/v1/rates/mana-usd"]],
   ["GET /shop-api/v1/stats/{}/{}", ["GET /marketplace-api/v1/stats/{}/{}"]],
   ["GET /shop-api/v1/trades", ["GET /marketplace-api/v1/trades", "GET /v1/trades"]],
   ["GET /shop-api/v1/trades-mirror", ["GET /marketplace-api/v1/trades-mirror", "GET /v1/trades-mirror"]],

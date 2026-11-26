@@ -118,9 +118,10 @@ pub enum EndpointRefusal {
 
 /// The chain each endpoint was seen to serve. Only a match is remembered, so
 /// a refused or unreachable endpoint is asked again on the next use.
-fn verified_endpoints() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
-    static VERIFIED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-        std::sync::OnceLock::new();
+fn verified_endpoints() -> &'static parking_lot::Mutex<std::collections::HashMap<String, u64>> {
+    static VERIFIED: std::sync::OnceLock<
+        parking_lot::Mutex<std::collections::HashMap<String, u64>>,
+    > = std::sync::OnceLock::new();
     VERIFIED.get_or_init(Default::default)
 }
 
@@ -133,10 +134,7 @@ pub async fn verified_reader(
     expected: u64,
 ) -> Result<Reader, EndpointRefusal> {
     let reader = Reader::new(http, url);
-    let known = verified_endpoints()
-        .lock()
-        .ok()
-        .and_then(|m| m.get(url).copied());
+    let known = verified_endpoints().lock().get(url).copied();
     if known == Some(expected) {
         return Ok(reader);
     }
@@ -150,9 +148,7 @@ pub async fn verified_reader(
     if served != expected {
         return Err(EndpointRefusal::WrongChain { expected, served });
     }
-    if let Ok(mut m) = verified_endpoints().lock() {
-        m.insert(url.to_string(), served);
-    }
+    verified_endpoints().lock().insert(url.to_string(), served);
     Ok(reader)
 }
 

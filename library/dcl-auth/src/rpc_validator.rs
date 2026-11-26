@@ -1033,10 +1033,10 @@ mod tests {
                 };
                 // ABI layout asserted independently of encode_is_valid_signature.
                 let data = format!(
-                    "0x1626ba7e{}{}{}1234{}",
+                    "0x1626ba7e{}{:064x}{:064x}1234{}",
                     hex::encode(hash),
-                    format!("{:064x}", 64),
-                    format!("{:064x}", 2),
+                    64,
+                    2,
                     "0".repeat(60)
                 );
                 let block = if index < latest_count {
@@ -1136,7 +1136,7 @@ mod tests {
             let elapsed = started.elapsed();
             let calls = calls.lock().unwrap();
             assert_eq!(calls.len(), 11 * links);
-            for (index, link_calls) in calls.chunks_exact(11).enumerate() {
+            for (index, link_calls) in calls.as_chunks::<11>().0.iter().enumerate() {
                 assert_eq!(link_calls[0]["params"][1], "latest");
                 assert_eq!(
                     link_calls[0]["params"][0]["to"],

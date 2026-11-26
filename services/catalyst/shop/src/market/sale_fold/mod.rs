@@ -1,7 +1,9 @@
 //! The common sales prefix. Check each walk's history identity before
 //! publishing. A normal advance preserves its identity and covered prefix.
 mod creators;
+mod last_sale;
 mod settlements;
+mod trade_prices;
 
 use std::collections::BTreeSet;
 
@@ -14,8 +16,8 @@ use super::chain_walk::{self, ChainNet};
 use super::{ethereum_sales, listings, nft_index, sale_history, sales_index, trade_events};
 use crate::chain_index::rpc::Rpc;
 
-// The input decoder version is independent of how the published ID is formed.
-pub(super) const PUBLICATION_VERSION: i32 = 3;
+// The input decoder version is independent of how public sales are derived.
+pub(super) const PUBLICATION_VERSION: i32 = 4;
 
 fn venue_query(
     net: ChainNet,
@@ -74,13 +76,11 @@ struct Inputs {
     late_collections: i64,
     first_backfill: Option<i64>,
     collection_changes: Vec<String>,
+    /// The lowest folded block of `rows`.
+    common: i64,
 }
 
 impl Inputs {
-    fn common(&self) -> i64 {
-        self.rows.iter().map(|r| r.folded_block).min().unwrap()
-    }
-
     fn epochs(&self) -> Vec<Uuid> {
         self.rows.iter().map(|r| r.epoch).collect()
     }
@@ -90,13 +90,13 @@ impl Inputs {
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
-        if !matches!(marker.input_version, 1 | 2 | PUBLICATION_VERSION)
+        if !matches!(marker.input_version, 1 | 2 | 3 | PUBLICATION_VERSION)
             || marker.input_epochs.get(..self.rows.len()) != self.epochs().get(..self.rows.len())
             || marker.input_revisions.len() < self.rows.len()
         {
             return None;
         }
-        let mut prefix = marker.block_number.min(self.common());
+        let mut prefix = marker.block_number.min(self.common);
         if let Some(from) = self.first_backfill {
             prefix = prefix.min(from.checked_sub(1)?);
         }
@@ -109,12 +109,12 @@ impl Inputs {
     }
 
     fn covers(&self, marker: &Marker) -> bool {
-        matches!(marker.input_version, 1 | 2 | PUBLICATION_VERSION)
+        matches!(marker.input_version, 1 | 2 | 3 | PUBLICATION_VERSION)
             && marker.input_epochs.starts_with(&self.epochs())
             && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
             && self.collection_changes.is_empty()
-            && marker.block_number <= self.common()
+            && marker.block_number <= self.common
     }
 }
 
@@ -128,6 +128,18 @@ struct Marker {
     input_revisions: Vec<i64>,
     late_collections: i64,
     published_at: Option<NaiveDateTime>,
+    last_sale_through: Option<i64>,
+    last_sale_generation: Option<Uuid>,
+}
+
+impl Marker {
+    /// Whether `shop.nft_last_sale` was kept for this publication's
+    /// generation. Every writer rotates the generation when it replaces
+    /// history or corrects a published sale; a writer from before step 0078
+    /// does so without touching the table, which then no longer matches.
+    fn last_sale_matches(&self) -> bool {
+        self.last_sale_through.is_some() && self.last_sale_generation == Some(self.generation)
+    }
 }
 
 async fn marker(c: &mut PgConnection, net: ChainNet) -> Result<Option<Marker>, sqlx::Error> {
@@ -165,7 +177,9 @@ async fn inputs(
     {
         return Ok(None);
     }
-    let common = rows.iter().map(|r| r.folded_block).min().unwrap();
+    let Some(common) = rows.iter().map(|r| r.folded_block).min() else {
+        return Ok(None);
+    };
     let (late_collections, first_backfill, collection_changes, owed): (i64, Option<i64>, Vec<String>, bool) = sqlx::query_as(
         "WITH current AS (SELECT contract_address,backfill_from_block,refold_owed OR
                    coalesce(backfilled_to_block,backfill_from_block-1)<walked_from_block-1 AS owed
@@ -230,6 +244,7 @@ async fn inputs(
         late_collections,
         first_backfill,
         collection_changes,
+        common,
     }))
 }
 
@@ -264,30 +279,12 @@ pub async fn snapshot(
     let mut generations = Vec::with_capacity(nets.len());
     let mut published_through = Vec::with_capacity(nets.len());
     for &net in nets {
-        let Some(marker) = marker(&mut tx, net).await? else {
+        let Some((marker, fresh_until)) = valid(&mut tx, net, now).await? else {
             return Ok(None);
         };
-        let Some(inputs) = inputs(&mut tx, net, now, Some(marker.block_number)).await? else {
-            return Ok(None);
-        };
-        let Some(at) = marker.published_at else {
-            return Ok(None);
-        };
-        if marker.input_version != PUBLICATION_VERSION
-            || inputs.factory.is_some()
-            || !inputs.covers(&marker)
-            || at > now.naive_utc()
-        {
-            return Ok(None);
-        }
         generations.push((net, marker.generation));
         published_through.push(marker.block_number);
-        let earliest = inputs
-            .rows
-            .iter()
-            .map(|r| r.folded_at)
-            .fold(at, std::cmp::min);
-        deadline = deadline.min(earliest.and_utc() + chain_walk::READY_WINDOW);
+        deadline = deadline.min(fresh_until);
     }
     Ok((now <= deadline).then_some(SalesSnapshot {
         transaction: tx,
@@ -295,6 +292,61 @@ pub async fn snapshot(
         generations,
         published_through,
     }))
+}
+
+/// `net`'s publication on `c` when it is valid at `now`, with the instant
+/// its inputs keep it fresh until.
+async fn valid(
+    c: &mut PgConnection,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> anyhow::Result<Option<(Marker, DateTime<Utc>)>> {
+    let Some(marker) = marker(c, net).await? else {
+        return Ok(None);
+    };
+    let Some(inputs) = inputs(c, net, now, Some(marker.block_number)).await? else {
+        return Ok(None);
+    };
+    let Some(at) = marker.published_at else {
+        return Ok(None);
+    };
+    if marker.input_version != PUBLICATION_VERSION
+        || inputs.factory.is_some()
+        || !inputs.covers(&marker)
+        || at > now.naive_utc()
+    {
+        return Ok(None);
+    }
+    let earliest = inputs
+        .rows
+        .iter()
+        .map(|r| r.folded_at)
+        .fold(at, std::cmp::min);
+    Ok(Some((
+        marker,
+        earliest.and_utc() + chain_walk::READY_WINDOW,
+    )))
+}
+
+/// Of `nets`, those whose `shop.nft_last_sale` a read on `c` may take at
+/// `now`: a valid, fresh publication whose table was built from its input
+/// history and reaches its block.
+pub async fn last_sale_networks(
+    c: &mut PgConnection,
+    nets: &[ChainNet],
+    now: DateTime<Utc>,
+) -> anyhow::Result<Vec<ChainNet>> {
+    let mut admitted = Vec::new();
+    for &net in nets {
+        if let Some((marker, fresh_until)) = valid(c, net, now).await?
+            && now <= fresh_until
+            && marker.last_sale_matches()
+            && marker.last_sale_through >= Some(marker.block_number)
+        {
+            admitted.push(net);
+        }
+    }
+    Ok(admitted)
 }
 
 pub(super) async fn write_rows(
@@ -447,7 +499,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .unwrap_or(initial)
         .max(initial);
     let preserved_marker = previous.as_ref().filter(|m| m.block_number == from);
-    let limit = start.common().min(from + 250_000);
+    let limit = start.common.min(from + 250_000);
     // Limit RPC receipt work even in a dense block range. Never split a block.
     let to: i64 = sqlx::query_scalar(include_str!("window.sql"))
         .bind(net.db_name())
@@ -491,8 +543,23 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         );
     }
     let hash = &blocks[&(to as u64)].hash;
+    let mana = listings::mana_token(net.chain_id()).context("missing MANA deployment")?;
     let mut tx = pool.begin().await?;
     let mut days: Vec<i64> = Vec::new();
+    // The block through which `shop.nft_last_sale` holds the ledger. A table
+    // without a publication kept for its generation (none yet, its coverage
+    // cleared, or a writer from before step 0078 replaced or corrected the
+    // published history) is rebuilt from the start.
+    let mut last_sale_through = match previous.as_ref().filter(|m| m.last_sale_matches()) {
+        Some(m) => m.last_sale_through.unwrap_or(initial).max(initial),
+        None => {
+            sqlx::query("DELETE FROM shop.nft_last_sale WHERE network=$1")
+                .bind(net.db_name())
+                .execute(&mut *tx)
+                .await?;
+            initial
+        }
+    };
     if !same_history {
         // Capture the old UTC days before the cascading delete. A replacement
         // can move the only purchase to another day, seller or item.
@@ -500,6 +567,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             DELETE FROM shop.sale_execution WHERE network=$1 AND block_number>$2 RETURNING block_time)
             SELECT DISTINCT block_time/86400*86400 FROM removed")
             .bind(net.db_name()).bind(from).fetch_all(&mut *tx).await?;
+        last_sale::rewind(&mut tx, net, from, mana).await?;
+        last_sale_through = last_sale_through.min(from);
     }
     let upgrading_ids = previous.as_ref().is_some_and(|m| m.input_version == 1);
     if upgrading_ids {
@@ -507,8 +576,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     }
     write_rows(&mut tx, net, from, to).await?;
     let (creator_days, corrected_creators) = creators::write(&mut tx, rpc, net, from, to).await?;
-    let (payment_days, corrected_payments) =
-        settlements::write(&mut tx, rpc, net, from, to).await?;
+    let (payment_days, corrected_payments, mut receipt_asset_changes) =
+        settlements::write(&mut tx, rpc, net, from, to, mana).await?;
     days.extend(creator_days);
     days.extend(payment_days);
     let upgrading_rollups = previous
@@ -528,6 +597,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
                 (p.network,p.block_number,p.log_index,p.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal))"
         )).bind(net.db_name()).fetch_all(&mut *tx).await?;
         days.extend(repair_days);
+    }
+    let upgrading_prices = previous
+        .as_ref()
+        .is_some_and(|marker| matches!(marker.input_version, 1..=3));
+    if upgrading_prices {
+        let cleared = trade_prices::clear_unproved(&mut tx, net, from, mana).await?;
+        let mut removed_mana = Vec::new();
+        for (day, block, log, was_mana) in cleared {
+            days.push(day);
+            if was_mana {
+                removed_mana.push((block, log));
+            }
+        }
+        last_sale::remove_changed(&mut tx, net, &removed_mana).await?;
+        receipt_asset_changes.extend(removed_mana);
     }
     days.sort_unstable();
     days.dedup();
@@ -568,6 +652,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             .bind(net.db_name()).bind(&days).execute(&mut *tx).await?;
     }
     rollups(&mut tx, net, &days).await?;
+    // After every write of the window, the token repairs included. A table
+    // behind the ledger (an upgrade, a rebuild) catches up a window a pass.
+    let last_sale_to = to.min(last_sale_through.saturating_add(last_sale::WINDOW_BLOCKS));
+    last_sale::advance(&mut tx, net, last_sale_through, last_sale_to, mana).await?;
+    last_sale_through = last_sale_through.max(last_sale_to);
+    // A receipt can price or identify a token below the latest-sale table's
+    // block. Recompute the tokens touched by either a receipt or the upgrade.
+    last_sale::refresh(
+        &mut tx,
+        net,
+        &receipt_asset_changes,
+        last_sale_through,
+        mana,
+    )
+    .await?;
     let point = rpc.block_header(to as u64).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
     let head = rpc.head_block().await?;
@@ -575,12 +674,12 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .as_ref()
         .filter(|_| same_history)
         .and_then(|m| m.published_at);
-    let published_at = if (to == start.common() || previously_published.is_some())
+    let published_at = if (to == start.common || previously_published.is_some())
         && head >= to as u64
         && chain_walk::within_publish_lag(net, head, to as u64)
     {
         Some(Utc::now().naive_utc())
-    } else if to < start.common() && head >= to as u64 {
+    } else if to < start.common && head >= to as u64 {
         // This prefix extends the same verified history. Retain its original
         // freshness deadline until a near-head measurement earns a new one.
         previously_published
@@ -591,7 +690,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     // A rewind or a repair committed during the fold changes this comparison.
     sqlx::query("SELECT indexer FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events','collections') ORDER BY indexer FOR UPDATE")
         .bind(net.db_name()).fetch_all(&mut *tx).await?;
-    let end = inputs(&mut tx, net, Utc::now(), Some(start.common()))
+    let end = inputs(&mut tx, net, Utc::now(), Some(start.common))
         .await?
         .context("sales inputs withdrawn during fold")?;
     ensure!(
@@ -599,7 +698,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             && start.revisions() == end.revisions()
             && start.late_collections == end.late_collections
             && start.collection_changes == end.collection_changes
-            && to <= end.common(),
+            && to <= end.common,
         "sales history changed during fold"
     );
     ensure!(
@@ -649,18 +748,25 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     // Cached reads may lag an append by their TTL. Changes within that
     // prefix and a newly restored publication invalidate those results.
     let replace_generation = !same_history
-        || upgrading_rollups
+        || upgrading_prices
         || corrected_creators
         || corrected_payments
         || corrected_buyers
         || (previously_published.is_none() && published_at.is_some());
-    sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
+    // The table is kept for the generation this upsert leaves: a new one
+    // when the history is replaced or corrected, else the one it keeps.
+    sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at,
+            last_sale_through,generation,last_sale_generation)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10,$11,$11) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
-        input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
+        input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at,
+        last_sale_through=EXCLUDED.last_sale_through,
+        last_sale_generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END")
         .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
-        .bind(start.late_collections).bind(published_at).bind(replace_generation).execute(&mut *tx).await?;
+        .bind(start.late_collections).bind(published_at).bind(replace_generation).bind(last_sale_through)
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx).await?;
     if !days.is_empty() {
         let unknown: i64 = sqlx::query_scalar(concat!(
             include_str!("../sale_reads/seller_evidence.sql"),
