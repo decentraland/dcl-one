@@ -8354,7 +8354,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &ix, &a, before.0, chrono::Utc::now())
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)
@@ -9074,6 +9074,9 @@ mod supervisor {
                 gate.acquire().await.unwrap().forget();
             }
             self.inner().fold(pool, since, upto, owner).await
+        }
+        async fn publish(&self, conn: &mut sqlx::PgConnection, upto: i64) -> anyhow::Result<()> {
+            self.inner().publish(conn, upto).await
         }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
