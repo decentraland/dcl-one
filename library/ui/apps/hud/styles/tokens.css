@@ -10,7 +10,7 @@
   --brand-hover: #ff4d70;
   --brand-active: rgba(229, 39, 75, 0.5);
   --panel: var(--dcl-neutrals-shadow); /* dark panel surface */
-  --accent: #ff743a; /* category / selected orange */
+  --accent: var(--dcl-primary-alt-primary-alt); /* category / selected orange */
   --accent-hover: #ff8a5a;
   --accent-ink: #1a1206; /* dark text/icon on an --accent (orange) fill */
   --text: var(--dcl-neutrals-snow);
@@ -84,7 +84,7 @@
 
   /* status */
   --online: #57df41;
-  --away: #ffa25a; /* a presence status; the value of --dcl-brand-melon, a brand colour */
+  --away: var(--dcl-brand-melon); /* a presence status */
   --offline: var(--dcl-neutrals-silver);
   --error: #ff2424;
   --error-text: #ffd0d8; /* soft error text on dark (readable, vs the solid --error) */
@@ -274,11 +274,11 @@
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
-  --switch-off-rail: #423f49; /* a switch in a rail popover, off */
+  --switch-off-rail: var(--dcl-neutrals-pale-black); /* a switch in a rail popover, off */
   --voice-divider: rgba(255, 255, 255, 0.14);
   --voice-fill: rgba(255, 255, 255, 0.19);
   --voice-fill-hover: #696473;
-  --voice-green: #34ce76;
+  --voice-green: var(--dcl-system-green);
   --voice-live: #30cd00;
   --voice-stream: #36d41d; /* the chat's "Live Voice Stream" banner */
   --voice-speaking-fill: rgba(26, 198, 45, 0.2);
@@ -344,7 +344,7 @@
   --lobby-cell: 114px;
   --lobby-gutter: 2px;
   --lobby-card-fill: rgba(20, 20, 26, 0.9);
-  --lobby-card-bone: rgb(20, 20, 26);
+  --lobby-card-bone: var(--dcl-neutrals-shadow);
   --lobby-landing-static: rgba(16, 16, 20, 0.45);
   --lobby-white-1: rgba(255, 255, 255, 0.01);
   --lobby-white-2: rgba(255, 255, 255, 0.02);
@@ -367,7 +367,7 @@
   --lobby-subtitle: var(--dcl-neutrals-gray);
   --lobby-grip: var(--dcl-neutrals-cloudy-sky);
   --lobby-accent: var(--dcl-primary-primary);
-  --lobby-accent-hover: rgb(255, 77, 111);
+  --lobby-accent-hover: var(--dcl-primary-primary-light-1);
   --lobby-accent-pressed: rgb(200, 35, 67);
   --lobby-accent-tint: rgb(255, 230, 235);
   --lobby-view-all-arrow: var(--dcl-system-red-dark-2);
@@ -375,7 +375,7 @@
   --lobby-live-red: rgb(255, 0, 0);
   --lobby-online-green: rgb(48, 205, 0);
   --lobby-status-online: var(--dcl-system-green);
-  --lobby-status-away: rgb(255, 162, 90);
+  --lobby-status-away: var(--dcl-brand-melon);
   --lobby-friend-hover: var(--dcl-neutrals-charcoal);
   --lobby-menu-border: rgb(34, 33, 36);
   --lobby-menu-separator: rgb(42, 41, 44);
@@ -444,7 +444,7 @@
   --chat-pressed: rgba(255, 255, 255, 0.18);
   --chat-divider: var(--dcl-transparencies-white-20);
   --chat-avatar-ring: rgba(255, 255, 255, 0.48);
-  --counter-half: #ffbc5b;
+  --counter-half: var(--dcl-system-orange-light-1);
   --emoji-tab: var(--dcl-neutrals-silver);
   --emoji-hover: var(--dcl-neutrals-pale-black);
   --emoji-search: #d6d6d6;
@@ -526,7 +526,7 @@
   --tint-glass: rgba(255, 255, 255, 0.095); /* the header's Today */
   --tint-faint: rgba(255, 255, 255, 0.128); /* a card's round-cornered icon buttons, the time pill */
   --tint-faint-hover: rgba(255, 255, 255, 0.176);
-  --events-day-bar-top: #ffa15a; /* the day bar, top to bottom */
+  --events-day-bar-top: var(--dcl-brand-melon); /* the day bar, top to bottom */
   --events-day-bar-bottom: #ff6257;
   --events-day-today-top: rgba(255, 234, 128, 0.99); /* the "Today" pill, top to bottom */
   --events-day-today-bottom: rgba(255, 228, 128, 0.7);
