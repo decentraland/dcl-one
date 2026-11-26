@@ -209,12 +209,21 @@ impl Registry {
         Ok(builder)
     }
 
-    /// For binaries that mount metrics alongside their own health routes.
-    pub fn install(&self, builder: PrometheusBuilder) -> anyhow::Result<PrometheusHandle> {
+    /// Builds a recorder with the process's descriptors and histogram buckets.
+    pub fn build_recorder(
+        &self,
+        builder: PrometheusBuilder,
+    ) -> anyhow::Result<metrics_exporter_prometheus::PrometheusRecorder> {
         let recorder = self.builder(builder)?.build_recorder();
         for family in self.families.values() {
             family.describe(&recorder);
         }
+        Ok(recorder)
+    }
+
+    /// For binaries that mount metrics alongside their own health routes.
+    pub fn install(&self, builder: PrometheusBuilder) -> anyhow::Result<PrometheusHandle> {
+        let recorder = self.build_recorder(builder)?;
         let handle = recorder.handle();
         set_global_recorder(recorder)
             .map_err(|error| anyhow::anyhow!("installing prometheus recorder: {error}"))?;

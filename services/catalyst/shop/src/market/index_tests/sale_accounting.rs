@@ -14,7 +14,17 @@ async fn sales_replay_backfills_only_the_transaction_hash_on_a_transfer() {
         .unwrap();
     row.tx_hash = Some(format!("0x{:064x}", 2));
     row.block_time = 200;
-    row.to_address = Some(DAVE.into());
+    // Another receiver is another log: it never supplies the hash.
+    let other = nft_index::NftEvent {
+        to_address: Some(DAVE.into()),
+        ..row.clone()
+    };
+    assert_eq!(
+        nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&other))
+            .await
+            .unwrap(),
+        0
+    );
     for count in [1, 0] {
         assert_eq!(
             nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&row))
@@ -1317,7 +1327,33 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
     );
     sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=timezone('UTC',now())-interval '6 minutes' WHERE block_number=$1")
         .bind(b as i64).execute(&db.pool).await.unwrap();
+    let last_sales = || {
+        sqlx::query_as::<_, (String, i64, i64)>(
+            "SELECT token_id::text,sold_at,block_number FROM shop.nft_last_sale
+             WHERE network='matic' AND contract_address=$1 ORDER BY token_id",
+        )
+        .bind(DAVE)
+        .fetch_all(&db.pool)
+    };
+    let covered: Option<i64> = sqlx::query_scalar(
+        "SELECT last_sale_through FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(covered >= Some(b as i64), "the latest sales cover block b");
+    assert_eq!(
+        last_sales().await.unwrap(),
+        [],
+        "the mint's token is unknown"
+    );
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    // The retried receipt set the mint's token below the covered block: the
+    // same pass took its sale into the latest sales.
+    assert_eq!(
+        last_sales().await.unwrap(),
+        [("123".into(), 86400, b as i64)]
+    );
     assert_eq!(
         firsts().await.unwrap(),
         [(CARL.into(), 86400), (CHECKOUT.into(), 172800)]

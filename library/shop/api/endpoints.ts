@@ -52,6 +52,7 @@ export const ENDPOINTS = {
   owners: mk("GET", "/v1/owners"),
   sales: mk("GET", "/v1/sales"),
   salesSummary: mk("GET", "/v1/sales/summary"),
+  manaUsdRates: mk("GET", "/v1/rates/mana-usd"),
   activity: mk("GET", "/v1/activity", "signed"),
   prices: mk("GET", "/v1/prices"),
   trendings: mk("GET", "/v1/trendings"),
@@ -115,6 +116,7 @@ export const ENDPOINTS = {
   authorizeCreditBatch: e("POST", "/v1/credit-authorizations/batch", "/credits/credits/authorize/batch", "signed"),
   cancelCreditAuthorizations: e("POST", "/v1/credit-authorizations/cancel", "/credits/credits/authorize/cancel", "signed"),
   reportCreditSubmission: e("POST", "/v1/credit-authorizations/submitted", "/credits/credits/authorize/submitted", "signed"),
+  creditAuthorizationCharge: e("GET", "/v1/credit-authorizations/{salt}", "/credits/credits/authorize/{salt}", "signed"),
   authorizePublication: e("POST", "/v1/credit-authorizations/publication", "/credits/credits/authorize-publication", "signed"),
 
   manaTopup: e("POST", "/v1/credit-topups/mana", "/credits/topup/mana", "signed"),

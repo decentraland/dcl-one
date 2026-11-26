@@ -48,7 +48,8 @@
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
-//! `/v1/activity` over the readers and the local trades (`activity.rs`),
+//! `/v1/activity` over the readers, the local trades and the nft index's
+//! transfers (`activity.rs`, `activity_transfers.rs`),
 //! the `/v1/nfts` rental legs over the local rentals listings (`rentals.rs`),
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
@@ -58,11 +59,14 @@ pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
+pub mod activity_transfers;
 pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
+mod cancelled_trades;
 pub mod catalog;
+pub mod catalogue;
 pub mod chain_group;
 pub mod chain_jobs;
 pub mod chain_walk;
@@ -101,6 +105,7 @@ pub mod owners;
 pub mod prices;
 pub mod profiles;
 pub mod rankings;
+mod rates;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
@@ -512,7 +517,7 @@ impl Settings {
         if self.writes_catalogue() {
             self.market
                 .indexes
-                .check_chains()
+                .check_catalogue_pair()
                 .map_err(anyhow::Error::msg)?;
             for net in chain_walk::ChainNet::ALL {
                 let expected = self
@@ -606,7 +611,8 @@ pub fn select_name_authority(
     pool: &PgPool,
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
-    let mainnet = settings.eth_network.trim() == "mainnet";
+    let mainnet = crate::shared::network::ChainPair::from_eth_network(&settings.eth_network)
+        == Some(crate::shared::network::ChainPair::Mainnet);
     if settings.walks_catalogue() {
         return Some(Arc::new(names::IndexNames::for_catalogue(
             pool.clone(),
@@ -650,11 +656,13 @@ pub struct MarketplaceState {
     pub readers: readers::Caches,
     /// Bounds concurrent expensive sales analytics independently of other Shop reads.
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    /// Concurrent uncached creator owner rankings.
+    pub(crate) top_owners_slots: tokio::sync::Semaphore,
+    /// Concurrent creator royalty scans.
+    pub(crate) royalty_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
-    /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
-    pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
     /// (`trades::require_ready`).
     pub(crate) trades_ready: TtlMap<(), Option<chrono::NaiveDateTime>>,
@@ -748,10 +756,11 @@ impl MarketplaceState {
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            top_owners_slots: tokio::sync::Semaphore::new(1),
+            royalty_analytics_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
-            mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
             trades_list: std::sync::Mutex::new(None),
             catalog_cache: catalog::Cache::new(settings.market.catalog_cache_ttl),
@@ -857,6 +866,7 @@ impl MarketplaceState {
         }
         mirrors::spawn_jobs(self, jobs);
         chain_jobs::spawn_jobs(self, jobs, rentals);
+        crate::mana::history::spawn(self, jobs);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -915,7 +925,9 @@ impl MarketplaceState {
             }
             _ => return None,
         };
-        if self.settings.eth_network.trim() != "mainnet" {
+        if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
+            != Some(crate::shared::network::ChainPair::Mainnet)
+        {
             return self
                 .settings
                 .market
@@ -929,7 +941,7 @@ impl MarketplaceState {
     /// Sepolia rentals use an explicit chain endpoint, or the node's Ethereum
     /// RPC only when it is configured for Sepolia.
     pub(crate) fn sepolia_rentals_rpc_url(&self) -> Option<String> {
-        if self.settings.eth_network.eq_ignore_ascii_case("sepolia") {
+        if self.land_network() == Some(crate::land_authz::LAND_SEPOLIA) {
             return self.rpc_url_for(chain_walk::ChainNet::Ethereum, 11_155_111);
         }
         self.settings
@@ -946,7 +958,7 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
-        if id == net.chain_id() {
+        if self.settings.market.indexes.serves_mainnet(net) {
             return self.chain_rpc_url(net);
         }
         if self.settings.catalogue_chain(net)? != id {
@@ -969,7 +981,7 @@ impl MarketplaceState {
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
-            (self.settings.eth_network.trim() == "mainnet")
+            (self.land_network() == Some(crate::land_authz::LAND_MAINNET))
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
         })
@@ -1249,6 +1261,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/collections", get(collections::get_collections))
         .route("/v1/accounts", get(accounts::get_accounts))
         .route("/v1/owners", get(owners::get_owners))
+        .route("/v1/owners/top", get(owners::get_top_owners))
         .route("/v1/catalog", get(catalog::get_catalog_v1))
         .route("/v2/catalog", get(catalog::get_catalog_v2))
         .route("/v3/catalog/shop", get(shop::get_shop_catalog))
@@ -1300,8 +1313,11 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/bids", get(bids::get_bids))
         .route("/v1/sales/summary", get(sales::get_sales_summary))
+        .route("/v1/sales/royalties", get(sale_reads::get_royalties))
         .route("/v1/sales", get(sales::get_sales))
+        .route("/v1/cancelled-trades", get(cancelled_trades::get))
         .route("/v1/prices", get(prices::get_prices))
+        .route("/v1/rates/mana-usd", get(rates::get_mana_usd_rates))
         .route("/v1/trendings", get(items::get_trendings))
         .route(
             "/v1/rankings/{entity}/{timeframe}",

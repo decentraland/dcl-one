@@ -132,6 +132,11 @@ in-app purchases cannot be clawed back by a later Apple refund
   denylist reload, then up to 5 seconds while cached `/pointer-changes` and
   `/deployments` answers expire), a starting one at boot. The remote lists
   (`DENYLIST_URLS`) are not imported: the node fetches them itself.
+- **Events moderators.** The events import brings no admins: the old
+  service read them from its `ADMIN_ADDRESSES` setting. Seed
+  `explore.moderators` from that value with `catalyst explore moderators-add`
+  (`services/catalyst/docs/events.md`, "Events moderators"); the node's own
+  `ADMIN_ADDRESSES` is the console's list, not this one.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 

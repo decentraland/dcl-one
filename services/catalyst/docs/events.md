@@ -40,7 +40,7 @@ These routes answer the old events service (`decentraland/events@b60d5bbd`) for 
 - The admin bearer (`EVENTS_ADMIN_AUTH_TOKEN`; a signed chain wins over it, a non-`Bearer` header is anonymous, a `Bearer` while the token is unset is 503, a wrong one 401) lists pending and rejected rows by default, honours `approved`, `rejected` and `deleted` (`?deleted=true` lists the soft-deleted rows), and its reads by id and its PATCH/DELETE answers carry `contact` and `details` (`adminServiceProfile`, `admin.ts:37-42`) with `attending: false`; its lists carry neither. It is not honoured on `POST /api/events`, `GET /api/events/attending` or the attendee routes (401).
 - `GET /api/events/attending` answers every event that has not finished, is not rejected and not deleted, pending events of other creators included, each with the signer's `attending` flag (`Event/model.ts:461-480`).
 - Records carry the old service's keys: `contact`/`details` only in the owner's and the bearer's views, `connected_addresses` on every item when `with_connected_users` is set (an empty array when the room is unknown), no `previous_place_id` on `/api/*` (the `/v1/*` routes keep it). `recurrent_dates` lists the next occurrences that have not ended, at most ten (`MAX_EVENT_RECURRENT`); `/v1/events?with_recurrent_dates=true` answers the stored window. `recurrent_interval` defaults to 1.
-- `user_name` answers `Decentraland Foundation` for the wallets the feature flag `events-decentraland-foundation-addresses` lists in its variant payload (`modules/decentralandFoundationAddresses.ts`). The list is read every five minutes from the `events` feature-flags document in `explore_api.feature_flags`, which the explorer API's feature-flags mirror fetches beside the explorer document (`events.json` next to the configured `EXPLORER_FEATURE_FLAGS_SOURCE_URL`), and kept when the row is absent.
+- `user_name` answers `Decentraland Foundation` for the wallets the feature flag `events-decentraland-foundation-addresses` lists in its variant payload (`modules/decentralandFoundationAddresses.ts`). The list is read every five minutes from the `events` feature-flags document in `explore_api.feature_flags`, which the leased `events-foundation-flags` job fetches every five minutes from `<EVENTS_FEATURE_FLAGS_URL>/events.json` whatever `EXPLORER_MIRRORS_ENABLED` says. It sends `Referer: https://decentraland.org`, the only Referer the service answers the Foundation variant to, and adds `X-Address-Hash` from the optional `EVENTS_FEATURE_FLAGS_USER_ID` (the old `FEATURE_FLAGS_USER_ID`; also `EVENTS_FEATURE_FLAGS_USER_ID_FILE`); labelling works without it. The mirror posture sets the URL. A node with the explorer flags mirror on and no `EVENTS_FEATURE_FLAGS_URL` warns at startup that the list is not refreshed. A failed fetch keeps the stored document; an empty URL fetches nothing and labels no creator.
 - Text search weighs name `A`, creator name `B`, estate name `B`, description `C` (`Event/model.ts:35-48`).
 
 ### Create (`POST /api/events`, `createEvent.ts`)
@@ -87,7 +87,7 @@ The window:
 3. Catch up: `run events --since last`. `attendance_reconcile` runs after `attendance` and refuses an empty upstream set while imported attendance exists; pass `--allow-empty events/attendance_reconcile` only after confirming the legacy database holds no RSVPs.
 4. Copy the posters added since the last copy: `blobs events --to "$STORAGE_ROOT_FOLDER"`. A poster the bucket does not hold fails the run, since a wrong `--from-url` looks the same; review the listed ones, then re-run with `--allow-missing`. `blobs events --verify` then lists as not indexed only those reviewed posters.
 5. Check keys against legacy (below).
-6. Follow [Activation with imported event history](#activation-with-imported-event-history), then enable event writes and jobs and switch the events API traffic to the node.
+6. Follow [Activation with imported event history](#activation-with-imported-event-history) and seed the [events moderators](#events-moderators), then enable event writes and jobs and switch the events API traffic to the node.
 
 Until traffic switches, unfreezing the legacy service aborts the cutover; the imported rows stay local and the next catch-up refreshes them.
 
@@ -121,6 +121,19 @@ psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
 ```
 
 Every `_missing` count must be 0. An `_extra` row exists on the target but not in the frozen legacy database: either it was created on this node, or legacy deleted it after an earlier import, which the import does not propagate (only `attendance_reconcile` removes RSVPs, so `rsvps_extra` is 0 after it unless the node changed them since). Review each extra row before switching. `events_mirrored` counts mirror-written events the import did not take over, all of which legacy no longer holds; delete them, or adopt them as local with `EVENTS_MIRROR_ADOPT=true` (above; adoption runs as the `events-mirror` job, so once jobs are enabled).
+
+### Events moderators
+
+The old service's admins were its `ADMIN_ADDRESSES` setting, not a table, so neither the mirror nor the import (`tooling/migration`) brings them. Until `explore.moderators` holds them, they answer 403 on schedules and other profiles' settings and see no pending events. Seed it at the cut-over, before the node takes the events traffic, with the old service's value as it was:
+
+```sh
+catalyst explore moderators-add --addresses "<old ADMIN_ADDRESSES value>" --added-by 0x<operator wallet>
+catalyst explore moderators-list
+```
+
+Take the value from the old events service's configuration, not from the node's environment: the node's own `ADMIN_ADDRESSES` lists the operator console's wallets, which is a different list. The command needs `DATABASE_URL` and works while `serve` is stopped. `--addresses` is comma-separated, as upstream read it: empty entries are skipped, and an entry that is not exactly a wallet address (`0x` and 40 hex digits, no surrounding spaces) refuses the whole list and writes nothing, naming the entries, where upstream ignored them. Addresses are stored lowercase. A wallet already listed keeps its row, so a re-run adds nothing. It prints `requested`, `changed` (the wallets added) and `unchanged`, and each added wallet gets an `explore`/`events.moderator.add` audit row by `cli:<operator wallet>`. `catalyst explore moderators-remove --addresses ... --actor 0x<operator wallet>` removes moderators the same way. Removing a moderator does not revoke the `permissions` the wallet holds or granted while it was one: a full revocation also clears its own (`PATCH /api/profiles/{id}/settings` with `{"permissions":[]}`) and checks the profiles it granted to.
+
+Later changes go through the operator console ("Explorer overlays" card, "Events moderator" form): `/admin/api/events/moderator-add` and `/admin/api/events/moderator-remove` take `{address}` and need `OPS_WRITES_ENABLED`; `/admin/api/events/moderators-list` is open with writes off. Each call is audited as the signed-in wallet, which is also the row's `added_by`. The gate reads the table on every request, so a change applies on the next request.
 
 ## Background jobs and notifications
 

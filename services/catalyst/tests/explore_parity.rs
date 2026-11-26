@@ -689,7 +689,7 @@ const RESET_TABLES: &[&str] = &[
 /// A profile deployment this node holds for `address`, as the content
 /// deployers store it: a `profile` entity whose pointer is the lowercase
 /// address, read back by `/lambdas/profiles` and gatsby's `withAuthProfile()`
-/// port (`explore/src/events/profiles.rs::local_profile`). The seed deletes
+/// port (`explore/src/events/profiles.rs::profile`). The seed deletes
 /// every profile deployment first, so the entity id may be random.
 async fn deploy_profile(pool: &PgPool, address: &str) {
     let address = address.to_ascii_lowercase();

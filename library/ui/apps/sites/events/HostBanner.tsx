@@ -2,7 +2,7 @@ import { useId } from 'react'
 import { GeneralAdd, GeneralCheck } from '../../../foundations/icons'
 import hostAvatar from '../assets/events/host_avatar.webp'
 import hostScene from '../assets/events/host_scene.webp'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { useEventsCopy } from './locale'
 import styles from './HostBanner.module.css'
 
@@ -35,11 +35,14 @@ function HostBanner({ createHref, learnMoreHref }: { createHref: string; learnMo
           ))}
         </ul>
         <div className={styles.buttons}>
-          <Button href={createHref} size="sm">
-            <GeneralAdd size={16} aria-hidden="true" />
+          <Button
+            href={createHref}
+            size="md"
+            leadingIcon={<GeneralAdd size={16} aria-hidden="true" />}
+          >
             {text('Create an Event')}
           </Button>
-          <Button href={learnMoreHref} target="_blank" variant="secondary" size="sm">
+          <Button href={learnMoreHref} target="_blank" variant="secondary" size="md">
             {text('Learn More')}
           </Button>
         </div>
