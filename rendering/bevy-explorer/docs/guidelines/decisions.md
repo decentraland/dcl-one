@@ -1012,8 +1012,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     the colour changes over metres and the tufts of a patch share it. A tuft is that colour from
     root to tip, as Unity draws it: the material's darkening, vertex darkening and colour-map
     height are not carried (they act through the package's shader, on its meshes' vertex data),
-    and its hue variation is switched off. Flowers and reeds blend toward that colour by 0.241
-    over their lowest 0.178.
+    and its hue variation is switched off. The grass takes the sun, the ambient light and
+    shadows, and no highlight or sky reflection: Unity's grass material has specular highlights
+    and environment reflections switched off. Flowers and reeds are drawn with the grass
+    material, so they take none either, where Unity's flower material keeps its highlights.
+    They blend toward that colour by 0.241 over their lowest 0.178.
   - Flowers and reeds use the grass material's wind; the flower material's own wind values act
     through the package's shader, whose meaning is not known here.
   - Until the splat and both ground textures have loaded, and for good if one fails, no flowers

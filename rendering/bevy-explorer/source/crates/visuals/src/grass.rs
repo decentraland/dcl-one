@@ -216,6 +216,9 @@ impl GrassAssets {
 pub(crate) fn grass_base() -> StandardMaterial {
     StandardMaterial {
         alpha_mode: AlphaMode::Mask(0.5),
+        // no highlight and no sky reflection: unity-explorer's grass material has its specular
+        // highlights and environment reflections switched off
+        reflectance: 0.0,
         // 1 - unity-explorer's grass smoothness
         perceptual_roughness: 0.979,
         metallic: 0.0,
