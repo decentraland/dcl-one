@@ -6399,10 +6399,24 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     db.drop().await;
 }
 
+async fn publish_bid_collections(pool: &PgPool, chain: i64) {
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id) \
+         VALUES ('collections', 'matic', 'test', timezone('UTC', now()), $1) \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
+             chain_id = EXCLUDED.chain_id",
+    )
+    .bind(chain)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// A walking node with the sales index on, over its own database: Polygon's
 /// legacy bids come from `shop.nft_bid`.
 async fn state_with_the_bid_book(url: &str) -> Option<(SharedState, super::tests::support::OwnDb)> {
     let own = super::tests::support::OwnDb::create("bid_book").await?;
+    publish_bid_collections(&own.pool, 137).await;
     let eth_url = serve_empty_graph().await;
     let settings = super::owned_items::test_support::walking(market_settings(url, &eth_url, true));
     let market = MarketSettings {
@@ -6672,6 +6686,36 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         "the stray acceptance is neither listed nor counted: {body}"
     );
     assert_eq!(body["data"]["total"], 1, "{body}");
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through) \
+         VALUES ('matic', timezone('UTC', now()), 200)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_cursor("collections", 200).await;
+    let sold = "/v1/bids?network=MATIC&status=sold";
+    let (status, before_hand_back) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{before_hand_back}");
+    assert_eq!(before_hand_back["data"]["total"], 1, "{before_hand_back}");
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror", "{body}");
+    // Repopulating the catalogue is insufficient before the mirror publishes.
+    catalogue(c.clone()).await;
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror", "{body}");
+    publish_bid_collections(&pool, 137).await;
+    let (status, after_hand_back) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{after_hand_back}");
+    assert_eq!(after_hand_back, before_hand_back);
+
     // An nft rewind the sales fold has not rechecked yet: the stored seller
     // of an open bid created past it is set aside and read again from the
     // rewound log, as the next fold will; an acceptance's seller stands.
@@ -6725,7 +6769,6 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     // advanced without folding leaves it at the published 200, still read; a
     // fold committed through 210 whose publication stalls (the walk reads
     // the head first) is not read until it is published.
-    let sold = "/v1/bids?network=MATIC&status=sold";
     sqlx::query("UPDATE shop.chain_cursor SET last_block = 210 WHERE indexer = 'sales' AND network = 'matic'")
         .execute(&pool)
         .await
@@ -6920,6 +6963,32 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         vec![("6".into(), "cancelled".into(), CREATOR.into())]
     );
     assert_eq!(body["data"]["total"], 1, "{body}");
+
+    // ERC721BidV2 price and expiry are full-width on chain. The SQL window
+    // and final merge must rank the same bid first for every requested limit.
+    const WIDE_PRICE: &str = "340282366920938463463374607431768211456";
+    sqlx::query(
+        "UPDATE shop.nft_bid SET price = $2::numeric, expires_at = $3 \
+         WHERE network = 'matic' AND contract_address = $1 AND token_id = 1",
+    )
+    .bind(&c)
+    .bind(WIDE_PRICE)
+    .bind(i64::MAX)
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_cursor("sales", 220).await;
+    for limit in [1, 2] {
+        let url = format!("/v1/bids?network=MATIC&status=sold&sortBy=most_expensive&limit={limit}");
+        let (status, body) = get(app(), &url).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], 2, "{body}");
+        let results = body["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), limit);
+        assert_eq!(results[0]["tokenId"], "1", "{body}");
+        assert_eq!(results[0]["price"], WIDE_PRICE, "{body}");
+        assert_eq!(results[0]["expiresAt"], i64::MAX, "{body}");
+    }
     own.drop().await;
 }
 
@@ -6936,6 +7005,7 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
     let Some(own) = super::tests::support::OwnDb::create("amoy_bids").await else {
         return;
     };
+    publish_bid_collections(&own.pool, 80_002).await;
     let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
     settings.eth_network = "sepolia".into();
     settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
@@ -7057,6 +7127,46 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         ],
         "{body}"
     );
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn item_only_bids_on_a_walker_do_not_require_an_ethereum_graph() {
+    let Some(own) = super::tests::support::OwnDb::create("item_only_bids").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
+    settings.eth_collections_subgraph_url = None;
+    settings.market.indexes.sales_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(super::bids::polygon_book_here(&state));
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    let (trade, _) = insert_trade(
+        &own.pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: contract_of(&tag(), 2),
+            value: "3".into(),
+        },
+    )
+    .await;
+    let (status, body) = get(market_router(state), "/v1/bids?itemId=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
     own.drop().await;
 }
 

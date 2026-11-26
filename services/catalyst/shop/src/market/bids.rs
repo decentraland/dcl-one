@@ -422,6 +422,12 @@ async fn legacy_leg(
     graph_leg(state, f, window, networks, now_ms, false).await
 }
 
+/// Native legacy bids refer to NFTs, and the unsupported networks have
+/// no bid rows on either legacy source.
+fn legacy_bids_possible(f: &BidFilters) -> bool {
+    f.item_id.is_none() && !f.network_db_filter.as_ref().is_some_and(|n| n.is_empty())
+}
+
 /// The subgraph reader's legacy bids of `networks` unexpired at `now_ms`
 /// over the merged window and their capped total. `served` labels each row
 /// with the chain the node serves on its network (a walking node's
@@ -434,7 +440,7 @@ async fn graph_leg(
     now_ms: i64,
     served: bool,
 ) -> Result<(Vec<Bid>, i64), Response> {
-    if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
+    if !legacy_bids_possible(f) {
         return Ok((Vec::new(), 0));
     }
     let where_ = legacy_where(f, now_ms);
@@ -583,6 +589,7 @@ pub(super) async fn bids_snapshot(
     )
     .await
     .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    super::catalogue::require_collections_on(&mut tx, state, ChainNet::Matic, now).await?;
     let nft = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
         .await
         .map_err(db)?
@@ -644,13 +651,13 @@ fn catalogued(chain: i64, probe: bool) -> String {
 }
 
 /// The filters of `f` but its seller over `shop.nft_bid b` at `now_ms`, from
-/// `$4` (`$1` is `now_ms`, `$2` and `$3` the [`SellerBounds`]); `None` when
+/// `$4` (`$1` is the cutoff in seconds, `$2` and `$3` the [`SellerBounds`]); `None` when
 /// no bid can match (a token id that is not a decimal). Each read adds the
 /// catalogue ([`catalogued`]).
 fn polygon_scope(f: &BidFilters, now_ms: i64, binds: &mut Vec<String>) -> Option<String> {
     binds.clear();
-    binds.push(now_ms.to_string());
-    let mut sql = String::from("b.network = 'matic' AND b.expires_at * 1000 > $1::bigint");
+    binds.push(now_ms.div_euclid(1000).to_string());
+    let mut sql = String::from("b.network = 'matic' AND b.expires_at > $1::bigint");
     let next = |binds: &mut Vec<String>, v: String| {
         binds.push(v);
         format!("${}", binds.len() + 2)
@@ -856,12 +863,12 @@ pub fn sort_bids(rows: &mut [Bid], sort_by: Option<BidSortBy>) {
         let id = a.id.cmp(&b.id);
         match sort_by {
             Some(BidSortBy::RecentlyUpdated) => b.updated_at.cmp(&a.updated_at).then(id),
-            Some(BidSortBy::MostExpensive) => b
-                .price
-                .parse::<u128>()
-                .unwrap_or(0)
-                .cmp(&a.price.parse::<u128>().unwrap_or(0))
-                .then(id),
+            Some(BidSortBy::MostExpensive) => {
+                let price = |bid: &Bid| {
+                    alloy_primitives::U256::from_str_radix(&bid.price, 10).unwrap_or_default()
+                };
+                price(b).cmp(&price(a)).then(id)
+            }
             _ => b.created_at.cmp(&a.created_at).then(id),
         }
     });
@@ -884,14 +891,12 @@ pub async fn list_bids(
     readers::check_window(limit, f.offset)?;
     let window = f.offset + limit;
     let (mut merged, legacy_total, trades) = if polygon_book_here(state) {
-        let ethereum = f.network != Some(Network::Matic);
+        let legacy = legacy_bids_possible(f);
+        let ethereum = legacy && f.network != Some(Network::Matic);
         if ethereum {
             readers::require_networks(state, Some(graph::Network::Ethereum))?;
         }
-        // The book holds no item bids; an empty network list names none.
-        let polygon = f.network != Some(Network::Ethereum)
-            && f.item_id.is_none()
-            && !f.network_db_filter.as_ref().is_some_and(|n| n.is_empty());
+        let polygon = legacy && f.network != Some(Network::Ethereum);
         let (mut tx, bounds, now) = bids_snapshot(state, polygon).await?;
         let now_ms = now.timestamp_millis();
         let read = async {

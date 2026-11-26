@@ -38,6 +38,9 @@ and the subgraph's Ethereum bids are filtered at. It checks:
   its rows. An older writer leaves the changed network's book unavailable
   until a current writer folds and publishes again;
 - the nft index is fresh on Polygon, on that same chain;
+- the catalogue supplying Polygon membership has published. The reader
+  uses the native collections fold while it owns Polygon and waits for a
+  complete collections mirror pass after hand-back;
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 
