@@ -1215,6 +1215,9 @@ async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines(
 /// token's latest sale falls back to its earlier sale and drops a token
 /// sold only there, never keeping the reverted one. A publication from
 /// before the table (no `last_sale_through`) is refilled by the next pass.
+/// A writer from before the table that replaces or corrects the published
+/// history rotates the generation and withdraws the table until a current
+/// writer rebuilds it.
 #[tokio::test]
 async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
     let Some(db) = ScratchDb::create().await else {
@@ -1406,6 +1409,49 @@ async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
     .unwrap();
     sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
     assert_eq!(rows().await, vec![]);
+    assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
+
+    // A writer from before step 0078 corrects a published sale in the
+    // covered prefix (a retried receipt names parcel 7's sale at `b - 5`) and
+    // rotates the generation, at the same height and history. The table is
+    // not read until this writer's next pass takes the sale.
+    sqlx::query(
+        "INSERT INTO shop.sale_execution (network, block_number, log_index, tx_hash, venue, kind, block_time)
+         VALUES ('ethereum', $1, 3, $2, $3, 'order', 1700000200)",
+    )
+    .bind(b - 5)
+    .bind(format!("0x{:064x}", 85))
+    .bind(market)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_asset (network, block_number, log_index, ordinal, public_id, beneficiary, kind,
+             contract_address, token_id, seller, buyer, price, currency)
+         VALUES ('ethereum', $1, 3, 0, 'repaired-7', $2, 'order', $3, 7, $4, $2, 1000, $5)",
+    )
+    .bind(b - 5)
+    .bind(BOB)
+    .bind(LAND_REGISTRY_MAINNET)
+    .bind(ALICE)
+    .bind(crate::market::listings::mana_token(1))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_publication SET generation = gen_random_uuid(), published_at = timezone('UTC', now())
+         WHERE network = 'ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        admitted().await,
+        Vec::<ChainNet>::new(),
+        "a correction without the table withdraws it"
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(rows().await, vec![("7".into(), 1_700_000_200, b - 5)]);
     assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
     db.drop().await;
 }

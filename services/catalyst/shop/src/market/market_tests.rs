@@ -5178,10 +5178,11 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     db.drop().await;
 }
 
-/// A shallow NAME page sorted by recently sold reads the index on a walker
-/// whose Ethereum latest sales are admitted: the graph ranks the two names
-/// one way by its own `soldAt`, the ledger the other. Without admitted
-/// latest sales the page reads the graph as before.
+/// A shallow NAME page reads the index on a walker whose Ethereum latest
+/// sales are admitted, whatever its sort: the graph ranks the two names one
+/// way by its own `soldAt`, the ledger the other, and each token shows one
+/// soldAt across sorts. A failed admission check is the page's error with
+/// no graph request; confirmed not admitted, the page reads the graph.
 #[tokio::test]
 async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     let graph = FakeGraph::new();
@@ -5222,11 +5223,10 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     .unwrap();
     sqlx::query(
         "INSERT INTO shop.sale_publication(network,block_number,block_hash,input_version,input_epochs,
-            input_revisions,late_collections,published_at,last_sale_through,last_sale_epochs,last_sale_revisions,
-            last_sale_late_collections)
+            input_revisions,late_collections,published_at,last_sale_through,generation,last_sale_generation)
          SELECT network,$1,$2,$3,array_agg(sale_input_epoch ORDER BY indexer),
                 array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now()),$1,
-                array_agg(sale_input_epoch ORDER BY indexer),array_agg(sale_history_revision ORDER BY indexer),0
+                '00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001'
          FROM shop.chain_cursor WHERE indexer IN ('nft','sales','trade_events') GROUP BY network",
     )
     .bind(height)
@@ -5254,33 +5254,60 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     .await
     .unwrap();
     let app = market_router(state.clone());
-    let path = "/v1/nfts?category=ens&sortBy=recently_sold&first=1";
-    let first = |body: &Value| {
-        (
-            body["data"][0]["nft"]["tokenId"]
-                .as_str()
-                .map(str::to_string),
-            body["data"][0]["nft"]["soldAt"].as_i64(),
-        )
+    let sold_at = |body: &Value, token: &str| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["nft"]["tokenId"] == token)
+            .and_then(|r| r["nft"]["soldAt"].as_i64())
     };
-    let (status, body) = get(app.clone(), path).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        first(&body),
-        (Some("1002".into()), Some(3_000_000)),
-        "{body}"
-    );
+    let graph_reads = || {
+        graph
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| *e == "nfts")
+            .count()
+    };
+    let by_sale = "/v1/nfts?category=ens&sortBy=recently_sold&first=2";
+    let browse = "/v1/nfts?category=ens&first=2";
+    // Admitted: every shallow NAME page reads the index, so a token shows
+    // the same soldAt whatever the sort.
+    let (status, sorted) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::OK, "{sorted}");
+    assert_eq!(sorted["data"][0]["nft"]["tokenId"], "1002", "{sorted}");
+    let (status, browsed) = get(app.clone(), browse).await;
+    assert_eq!(status, StatusCode::OK, "{browsed}");
+    for token in ["1001", "1002"] {
+        assert_eq!(sold_at(&sorted, token), sold_at(&browsed, token), "{token}");
+    }
+    assert_eq!(sold_at(&browsed, "1002"), Some(3_000_000));
+    assert_eq!(graph_reads(), 0);
 
+    // An admission check that cannot run is the page's error, never the graph.
+    sqlx::query("ALTER TABLE shop.sale_publication RENAME TO sale_publication_hidden")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(graph_reads(), 0, "no graph request on a failed check");
+    sqlx::query("ALTER TABLE shop.sale_publication_hidden RENAME TO sale_publication")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Confirmed not admitted: the graph, as before.
     sqlx::query("UPDATE shop.sale_publication SET last_sale_through = NULL")
         .execute(pool)
         .await
         .unwrap();
-    let (status, body) = get(app, path).await;
+    let (status, body) = get(app, by_sale).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        first(&body),
-        (Some("1001".into()), Some(2_000_000)),
-        "{body}"
-    );
+    assert_eq!(body["data"][0]["nft"]["tokenId"], "1001", "{body}");
+    assert_eq!(sold_at(&body, "1001"), Some(2_000_000));
+    assert!(graph_reads() > 0);
     own.drop().await;
 }

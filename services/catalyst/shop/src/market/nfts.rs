@@ -949,17 +949,15 @@ async fn list_page(
         let (first, skip) = index_page(f);
         return super::nft_reads::list_nfts(state, f, first, skip).await;
     }
-    // A NAME page sorted by its latest sale reads the index where the
-    // node's latest sales are admitted, as its deep pages do: the graph's
-    // `soldAt` counts other sales.
-    if super::owned_items::walks_here(state)
-        && f.sort_by == Some(NftSortBy::RecentlySold)
-        && names_only(state, f)
-        && super::nft_reads::admits_last_sales(&state.pool, super::chain_walk::ChainNet::Ethereum)
-            .await
-    {
+    // A NAME page reads the index where the node's latest sales are admitted,
+    // whatever its sort, as its deep pages do: the graph's `soldAt` counts
+    // other sales. The admission is checked on the snapshot that supplies
+    // the rows; a check that cannot run is the page's error.
+    if super::owned_items::walks_here(state) && names_only(state, f) {
         let (first, skip) = index_page(f);
-        return super::nft_reads::list_nfts(state, f, first, skip).await;
+        if let Some(page) = super::nft_reads::names_page_if_admitted(state, f, first, skip).await? {
+            return Ok(page);
+        }
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {

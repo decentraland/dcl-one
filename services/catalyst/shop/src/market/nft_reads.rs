@@ -150,22 +150,42 @@ fn page_networks(f: &NftFilters, sources: Sources) -> Vec<ChainNet> {
     nets
 }
 
-/// Whether a read now may take `net`'s latest sales
-/// ([`super::sale_fold::last_sale_networks`] on a snapshot of its own). A
-/// database error reads as not admitted.
-pub async fn admits_last_sales(pool: &PgPool, net: ChainNet) -> bool {
-    let admitted = async {
-        let mut tx = pool.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *tx)
-            .await?;
-        let nets = super::sale_fold::last_sale_networks(&mut tx, &[net], Utc::now()).await?;
-        anyhow::Ok(nets.contains(&net))
+/// A page that reads only names, on a walker: the index's page when the
+/// Ethereum latest sales are admitted on the snapshot that supplies its rows
+/// (`Some`), `None` when the names index or those latest sales are confirmed
+/// not ready there (the caller keeps the graph), and the read's error when
+/// a check cannot run. The snapshot carries the reads' statement timeout.
+pub async fn names_page_if_admitted(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    first: i64,
+    skip: i64,
+) -> Result<Option<(Vec<NftResult>, i64)>, Response> {
+    let sources = Sources {
+        names: true,
+        ..Default::default()
     };
-    admitted.await.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
-        false
-    })
+    let mut conn = match open_read_conn(&state.pool, state.land_network(), f, sources).await {
+        Ok(conn) => conn,
+        Err(ReadConnError::NftUnavailable(..) | ReadConnError::LandUnavailable) => return Ok(None),
+        Err(ReadConnError::Pool(e)) => return Err(read_error(e)),
+    };
+    let admitted = super::sale_fold::last_sale_networks(
+        &mut conn,
+        &[ChainNet::Ethereum],
+        Utc::now(),
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "cannot read the sales publication for the names' latest sales");
+        ApiError::internal("cannot read the sales publication").into_response()
+    })?;
+    if !admitted.contains(&ChainNet::Ethereum) {
+        return Ok(None);
+    }
+    list_page_on(state, f, first, skip, sources, &mut conn)
+        .await
+        .map(Some)
 }
 
 /// The networks the collection source reads for `f`.

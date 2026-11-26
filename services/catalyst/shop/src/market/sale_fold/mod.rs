@@ -130,20 +130,16 @@ struct Marker {
     late_collections: i64,
     published_at: Option<NaiveDateTime>,
     last_sale_through: Option<i64>,
-    last_sale_epochs: Option<Vec<Uuid>>,
-    last_sale_revisions: Option<Vec<i64>>,
-    last_sale_late_collections: Option<i64>,
+    last_sale_generation: Option<Uuid>,
 }
 
 impl Marker {
-    /// Whether `shop.nft_last_sale` was built from this publication's input
-    /// history. A writer from before step 0078 republishes without touching
-    /// the table, and a history it replaces no longer matches.
+    /// Whether `shop.nft_last_sale` was kept for this publication's
+    /// generation. Every writer rotates the generation when it replaces
+    /// history or corrects a published sale; a writer from before step 0078
+    /// does so without touching the table, which then no longer matches.
     fn last_sale_matches(&self) -> bool {
-        self.last_sale_through.is_some()
-            && self.last_sale_epochs.as_ref() == Some(&self.input_epochs)
-            && self.last_sale_revisions.as_ref() == Some(&self.input_revisions)
-            && self.last_sale_late_collections == Some(self.late_collections)
+        self.last_sale_through.is_some() && self.last_sale_generation == Some(self.generation)
     }
 }
 
@@ -549,9 +545,9 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let mut tx = pool.begin().await?;
     let mut days: Vec<i64> = Vec::new();
     // The block through which `shop.nft_last_sale` holds the ledger. A table
-    // without a publication built from its history (none yet, its coverage
-    // cleared, or a writer from before step 0078 republished another history)
-    // is rebuilt from the start.
+    // without a publication kept for its generation (none yet, its coverage
+    // cleared, or a writer from before step 0078 replaced or corrected the
+    // published history) is rebuilt from the start.
     let mut last_sale_through = match previous.as_ref().filter(|m| m.last_sale_matches()) {
         Some(m) => m.last_sale_through.unwrap_or(initial).max(initial),
         None => {
@@ -732,16 +728,19 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         || corrected_payments
         || corrected_buyers
         || (previously_published.is_none() && published_at.is_some());
+    // The table is kept for the generation this upsert leaves: a new one
+    // when the history is replaced or corrected, else the one it keeps.
     sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at,
-            last_sale_through,last_sale_epochs,last_sale_revisions,last_sale_late_collections)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10,$5,$6,$7) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
+            last_sale_through,generation,last_sale_generation)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10,$11,$11) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at,
-        last_sale_through=EXCLUDED.last_sale_through,last_sale_epochs=EXCLUDED.last_sale_epochs,
-        last_sale_revisions=EXCLUDED.last_sale_revisions,last_sale_late_collections=EXCLUDED.last_sale_late_collections")
+        last_sale_through=EXCLUDED.last_sale_through,
+        last_sale_generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END")
         .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
         .bind(start.late_collections).bind(published_at).bind(replace_generation).bind(last_sale_through)
+        .bind(Uuid::new_v4())
         .execute(&mut *tx).await?;
     if !days.is_empty() {
         let unknown: i64 = sqlx::query_scalar(concat!(
