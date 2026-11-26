@@ -67,11 +67,12 @@ clipboard, anything that touches the host OS or a page) must be excluded from th
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
 
-**On native, V8 callbacks run no scene code and never panic.** Scene code reaches the isolate's
-stack-trace and WebAssembly-result callbacks without any op, and a panic there aborts the
-sidecar. `crates/dcl_deno/src/js/isolate_hooks.rs` replaces deno_core's: stack text is built
-from data properties with bounded strings, so a scene's own `Error.prepareStackTrace` is not
-called.
+**On native, V8 callbacks never panic, and the stack-trace callback runs no scene code.** Scene
+code reaches the isolate's stack-trace and WebAssembly-result callbacks without any op, and a
+panic there aborts the sidecar. `crates/dcl_deno/src/js/isolate_hooks.rs` replaces deno_core's:
+stack text is built from data properties with bounded strings, so a scene's own
+`Error.prepareStackTrace` is not called, and a compile result is settled without assuming the
+promise is still usable while the scene is terminated.
 
 **On the scene server every hosted scene is a portable.** `reconcile_scene_rooms` (in
 `src/bin/headless.rs`) re-inserts any wanted scene missing from `PortableScenes`, so a

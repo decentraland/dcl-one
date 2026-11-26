@@ -1,7 +1,9 @@
-//! Isolate-wide V8 callbacks. Scene code reaches these without any op, so like ops they never
-//! panic and run no scene code: a panic inside a V8 callback aborts the sidecar. deno_core's
-//! stack-trace callback reads getters and calls `Error.prepareStackTrace`, and its WebAssembly
-//! callback unwraps a settle that fails while the isolate terminates.
+//! Isolate-wide V8 callbacks. Scene code reaches these without any op, and a panic inside a V8
+//! callback aborts the sidecar. The stack-trace callback runs no scene code; both tolerate
+//! termination and never panic. deno_core's stack-trace callback reads getters and calls
+//! `Error.prepareStackTrace`, and its WebAssembly callback unwraps a settle that fails while the
+//! isolate terminates. Settling a compile result still reads `then` on it, as any promise
+//! resolution does.
 
 use std::fmt::Write as _;
 
@@ -92,14 +94,20 @@ fn header<'s>(scope: &v8::PinScope<'s, '_>, error: v8::Local<'s, v8::Value>) -> 
     let Ok(object) = v8::Local::<v8::Object>::try_from(error) else {
         return String::new();
     };
-    let message = data_property(scope, object, "message")
-        .filter(|m| !m.is_undefined())
-        .and_then(|m| bounded_string(scope, m, MAX_HEADER_UNITS))
-        .unwrap_or_default();
-    let name = data_property(scope, object, "name")
-        .filter(|n| !n.is_undefined())
-        .and_then(|n| bounded_string(scope, n, MAX_HEADER_UNITS))
-        .unwrap_or_else(|| "Error".to_owned());
+    let field = |name: &str| {
+        data_property(scope, object, name)
+            .or_else(|| own_symbol_field(scope, object, name))
+            .filter(|v| !v.is_undefined())
+            .and_then(|v| {
+                if v.is_null() {
+                    Some("null".to_owned())
+                } else {
+                    bounded_string(scope, v, MAX_HEADER_UNITS)
+                }
+            })
+    };
+    let message = field("message").unwrap_or_default();
+    let name = field("name").unwrap_or_else(|| "Error".to_owned());
     match (message.is_empty(), name.is_empty()) {
         (false, false) => format!("{name}: {message}"),
         (false, true) => message,
@@ -110,6 +118,48 @@ fn header<'s>(scope: &v8::PinScope<'s, '_>, error: v8::Local<'s, v8::Value>) -> 
 
 /// A primitive as a string of at most `max_units` UTF-16 units. `None` for null, undefined,
 /// symbols and objects, whose conversion could run scene code.
+/// The value of an own data property keyed by a symbol described as `description`. deno_web's
+/// `DOMException` keeps its name and message under such symbols and exposes them only through
+/// prototype getters, which this file does not call.
+fn own_symbol_field<'s>(
+    scope: &v8::PinScope<'s, '_>,
+    object: v8::Local<'s, v8::Object>,
+    description: &str,
+) -> Option<v8::Local<'s, v8::Value>> {
+    if object.is_proxy() {
+        return None;
+    }
+    let keys = object.get_own_property_names(
+        scope,
+        v8::GetPropertyNamesArgs {
+            mode: v8::KeyCollectionMode::OwnOnly,
+            property_filter: v8::PropertyFilter::SKIP_STRINGS,
+            index_filter: v8::IndexFilter::SkipIndices,
+            key_conversion: v8::KeyConversionMode::KeepNumbers,
+        },
+    )?;
+    let value = v8::String::new(scope, "value")?;
+    for index in 0..keys.length().min(64) {
+        let Some(symbol) = keys
+            .get_index(scope, index)
+            .and_then(|k| v8::Local::<v8::Symbol>::try_from(k).ok())
+        else {
+            continue;
+        };
+        let named = symbol.description(scope);
+        if !named.is_string() || named.to_rust_string_lossy(scope) != description {
+            continue;
+        }
+        let descriptor = object.get_own_property_descriptor(scope, symbol.into())?;
+        let descriptor = v8::Local::<v8::Object>::try_from(descriptor).ok()?;
+        if !descriptor.has_own_property(scope, value.into())? {
+            return None;
+        }
+        return descriptor.get(scope, value.into());
+    }
+    None
+}
+
 fn bounded_string(
     scope: &v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
@@ -262,7 +312,20 @@ impl Frame {
                 out.push_str("<anonymous>");
             }
         }
-        if let Some(line) = self.line {
+        let is_wasm = self
+            .file_name
+            .as_deref()
+            .is_some_and(|f| f.starts_with("wasm://"));
+        if is_wasm {
+            // V8 reports a wasm frame's function index (1-based) as its line and its byte offset
+            // (1-based) as its column; deno_core prints them as the WebAssembly Web API does
+            if let Some(line) = self.line {
+                let _ = write!(out, ":wasm-function[{}]", line.saturating_sub(1));
+            }
+            if let Some(column) = self.column {
+                let _ = write!(out, ":0x{:x}", column.saturating_sub(1));
+            }
+        } else if let Some(line) = self.line {
             let _ = write!(out, ":{line}");
             if let Some(column) = self.column {
                 let _ = write!(out, ":{column}");

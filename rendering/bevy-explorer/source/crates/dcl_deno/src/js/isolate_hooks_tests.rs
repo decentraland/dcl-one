@@ -146,6 +146,10 @@ fn formatting_a_stack_runs_no_scene_code() {
         format!("Error.prepareStackTrace = () => {forever};"),
         format!("Object.defineProperty(TypeError.prototype, 'name', {{ get() {forever} }});"),
         format!("Object.defineProperty(globalThis, 'made', {{ value: new TypeError('x') }}); Object.defineProperty(made, 'message', {{ get() {forever} }});"),
+        // a proxy in the prototype chain, under the `name` the header looks for
+        format!("Object.defineProperty(globalThis, 'made', {{ value: new TypeError('x') }}); Object.setPrototypeOf(made, new Proxy({{}}, {{ getOwnPropertyDescriptor() {forever}, get() {forever}, getPrototypeOf() {forever}, ownKeys() {forever} }}));"),
+        // an object message whose conversion to a string would run scene code
+        format!("Object.defineProperty(globalThis, 'made', {{ value: new TypeError('x') }}); Object.defineProperty(made, 'message', {{ value: {{ toString() {forever}, valueOf() {forever}, [Symbol.toPrimitive]() {forever} }} }});"),
     ] {
         let (mut runtime, _) = scene();
         let outcome = eval(
@@ -210,4 +214,40 @@ fn failed_dynamic_import() {
     .unwrap();
     assert!(drive(&mut runtime, |runtime| eval(runtime, "out").unwrap() != "pending"));
     assert_eq!(eval(&mut runtime, "out").unwrap(), "rejected");
+}
+
+/// deno_web's `DOMException` exposes its name and message only through prototype getters.
+#[test]
+fn a_dom_exception_stack_keeps_its_name_and_message() {
+    let (mut runtime, _) = scene();
+    let header = eval(
+        &mut runtime,
+        r#"String(new DOMException("m", "AbortError").stack).split("\n")[0]"#,
+    )
+    .unwrap();
+    assert_eq!(header, "AbortError: m");
+}
+
+/// A wasm frame is printed as deno_core prints it: function index and byte offset.
+#[test]
+fn a_wasm_frame_names_its_function_and_offset() {
+    let (mut runtime, _) = scene();
+    // (module (func (export "f") unreachable))
+    let stack = eval(
+        &mut runtime,
+        r#"
+        const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0,
+            7, 5, 1, 1, 102, 0, 0, 10, 5, 1, 3, 0, 0, 11]);
+        const { f } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+        let stack = "did not trap";
+        try { f(); } catch (e) { stack = String(e.stack); }
+        stack
+        "#,
+    )
+    .unwrap();
+    let frame = stack.lines().nth(1).unwrap_or_default();
+    assert!(
+        frame.contains("wasm://") && frame.contains(":wasm-function[0]:0x"),
+        "{stack}"
+    );
 }
