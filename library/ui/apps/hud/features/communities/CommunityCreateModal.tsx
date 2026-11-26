@@ -312,7 +312,7 @@ export function CommunityCreateModal({
   }
 
   const title = isEdit ? 'Edit Community' : 'Create a Community'
-  // Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates
+  // Just the card — the popup layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it and animates
   // it in. stopPropagation keeps a click on the card from reaching the scrim.
   return (
     <div className={styles.modal} role="dialog" aria-modal="true" aria-label={title} aria-busy={saving} onClick={(e) => e.stopPropagation()}>
