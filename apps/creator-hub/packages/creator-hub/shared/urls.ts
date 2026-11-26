@@ -18,3 +18,17 @@ export function buildMetricsUrl(baseUrl: string, path: string): URL {
   }
   return new URL(path.replace(/^\//, ''), `${baseUrl.replace(/\/$/, '')}/`);
 }
+
+/** The public dcl.dev mount publishes scenes locally but manages shared Worlds on .org. */
+export function worldsManagementUrl(configured: string): string {
+  if (!URL.canParse(configured)) return configured;
+  const url = new URL(configured);
+  return url.origin === 'https://dcl.dev' &&
+    url.pathname.replace(/\/+$/, '') === '/worlds-content-server' &&
+    !url.search &&
+    !url.hash &&
+    !url.username &&
+    !url.password
+    ? 'https://worlds-content-server.decentraland.org'
+    : configured;
+}

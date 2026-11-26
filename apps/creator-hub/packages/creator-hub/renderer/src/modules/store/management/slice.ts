@@ -1,3 +1,4 @@
+import { captureException } from '@sentry/electron/renderer';
 import { createSlice, createSelector, isPending, type PayloadAction } from '@reduxjs/toolkit';
 import { createLimit } from '/shared/limit';
 import type { Async } from '/shared/types/async';
@@ -14,6 +15,7 @@ import type {
   WorldsWalletStats,
   WorldPermissionsResponse,
   WorldPermissions,
+  WorldsPurpose,
 } from '/@/lib/worlds';
 import { WorldRoleType, Worlds } from '/@/lib/worlds';
 import { createAsyncThunk } from '/@/modules/store/thunk';
@@ -163,7 +165,9 @@ export const fetchManagedProjectsFiltered = createAsyncThunk(
     }
     if (page === 0) {
       const address = connectedAccount;
-      const contributable = await dispatch(fetchContributableNames({ address })).unwrap();
+      const contributable = await dispatch(
+        fetchContributableNames({ address, purpose: 'management' }),
+      ).unwrap();
       if (publishFilter !== FilterBy.PUBLISHED) {
         await dispatch(fetchEmptyWorlds({ address, contributable })).unwrap();
       }
@@ -218,14 +222,19 @@ export const fetchEmptyWorlds = createAsyncThunk(
       let scenesCount = worldProject?.deployment ? worldProject.deployment.scenesCount : null;
 
       if (scenesCount === null) {
-        try {
-          const worldScenes = await worldsAPI.fetchWorldScenes(ens.subdomain, { limit: 1 });
-          if (!worldScenes && worldsAPI.usesCanonicalManagement) return null;
-          scenesCount = worldScenes ? worldScenes.total : 0;
-        } catch {
-          if (worldsAPI.usesCanonicalManagement) return null;
-          scenesCount = 0;
+        const worldScenes = await worldsAPI
+          .fetchWorldScenes(ens.subdomain, { limit: 1 })
+          .catch(() => null);
+        if (!worldScenes && worldsAPI.usesCanonicalManagement) {
+          captureException(
+            new Error('Could not classify a World without its canonical scene list'),
+            {
+              tags: { source: 'worlds', event: 'fetch-empty-worlds' },
+            },
+          );
+          return null;
         }
+        scenesCount = worldScenes?.total ?? 0;
       }
 
       if (scenesCount > 0) return null;
@@ -263,6 +272,7 @@ export const fetchStorageStats = createAsyncThunk(
   'management/fetchStorageStats',
   async ({ address }: { address: string }) => {
     const WorldsAPI = new Worlds();
+    // Quota belongs to the configured publish target, which checks it before accepting uploads.
     const stats = await WorldsAPI.fetchWalletStats(address);
     return stats;
   },
@@ -468,8 +478,13 @@ export const removeAddressPermission = createAsyncThunk(
 
 export const fetchParcelsPermission = createAsyncThunk(
   'management/fetchParcelsPermission',
-  async ({ worldName, permissionName, walletAddress }: AddressPermissionPayload) => {
-    const WorldsAPI = new Worlds('management');
+  async ({
+    worldName,
+    permissionName,
+    walletAddress,
+    purpose = 'management',
+  }: AddressPermissionPayload & { purpose?: WorldsPurpose }) => {
+    const WorldsAPI = new Worlds(purpose);
     const LIMIT = 100;
 
     const firstPage = await WorldsAPI.fetchParcelsPermission(

@@ -200,7 +200,13 @@ export type ContributableNames = { names: ENS[]; streamOnly: string[] };
 
 export const fetchContributableNames = createAsyncThunk(
   'ens/fetchContributableNames',
-  async ({ address }: { address: string }): Promise<ContributableNames> => {
+  async ({
+    address,
+    purpose,
+  }: {
+    address: string;
+    purpose?: WorldsPurpose;
+  }): Promise<ContributableNames> => {
     const dclNamesApi = new DCLNames();
     const ensApi = new ENSApi();
     const bannedNames = await fetchBannedNames();
@@ -208,7 +214,7 @@ export const fetchContributableNames = createAsyncThunk(
 
     const isAllowed = (name: string) =>
       name.split('.').every(nameSegment => !bannedNamesSet.has(nameSegment));
-    const domains = await fetchContributableDomains(address, 'management');
+    const domains = await fetchContributableDomains(address, purpose);
     const names = domains.filter(isDeployable).filter(({ name }) => isAllowed(name));
     const streamOnly = getStreamOnlyWorldNames(domains).filter(isAllowed);
 

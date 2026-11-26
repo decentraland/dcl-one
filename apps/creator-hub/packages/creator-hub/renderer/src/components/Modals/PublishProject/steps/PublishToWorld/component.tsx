@@ -147,6 +147,7 @@ export function PublishToWorld(props: Props) {
           worldName,
           permissionName: WorldPermissionName.Deployment,
           walletAddress: wallet || '',
+          purpose: 'content',
         }),
       );
     },

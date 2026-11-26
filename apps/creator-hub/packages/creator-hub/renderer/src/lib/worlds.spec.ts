@@ -542,18 +542,21 @@ describe('Worlds management routing', () => {
     configGet.mockReturnValue(WORLDS_SERVER);
   });
 
-  it('reads settings and their thumbnails from the canonical server for the public dcl.dev realm', async () => {
-    configGet.mockReturnValue(dclDev);
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ thumbnail_hash: 'canonical-thumb' }),
-    });
+  it.each([dclDev, dclDev + '/', 'https://DCL.DEV/worlds-content-server'])(
+    'reads settings and thumbnails from the canonical server for %s',
+    async url => {
+      configGet.mockReturnValue(url);
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ thumbnail_hash: 'canonical-thumb' }),
+      });
 
-    expect(await new Worlds('management').fetchWorldSettings(world)).toMatchObject({
-      thumbnail: canonical + '/contents/canonical-thumb',
-    });
-    expect(fetchMock.mock.calls[0][0]).toBe(canonical + '/world/' + world + '/settings');
-  });
+      expect(await new Worlds('management').fetchWorldSettings(world)).toMatchObject({
+        thumbnail: canonical + '/contents/canonical-thumb',
+      });
+      expect(fetchMock.mock.calls[0][0]).toBe(canonical + '/world/' + world + '/settings');
+    },
+  );
 
   it('sends the signed settings, permissions, and removal requests directly to the canonical server', async () => {
     configGet.mockReturnValue(dclDev);
@@ -586,16 +589,18 @@ describe('Worlds management routing', () => {
     ]);
   });
 
-  it.each([canonical, WORLDS_SERVER, 'https://worlds-content-server.decentraland.zone'])(
-    'keeps the configured server in management mode for %s',
-    async server => {
-      configGet.mockReturnValue(server);
-      fetchMock.mockResolvedValueOnce({ status: 200 });
+  it.each([
+    canonical,
+    WORLDS_SERVER,
+    'https://worlds-content-server.decentraland.zone',
+    'https://dcl.dev/standalone-worlds',
+  ])('keeps the configured server in management mode for %s', async server => {
+    configGet.mockReturnValue(server);
+    fetchMock.mockResolvedValueOnce({ status: 200 });
 
-      expect(await new Worlds('management').unpublishEntireWorld(wallet, world)).toBe(true);
-      expect(fetchMock.mock.calls[0][0]).toBe(server + '/entities/' + world);
-    },
-  );
+    expect(await new Worlds('management').unpublishEntireWorld(wallet, world)).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe(server + '/entities/' + world);
+  });
 
   it('does not submit a dcl.dev-only setting to the canonical server', async () => {
     configGet.mockReturnValue(dclDev);

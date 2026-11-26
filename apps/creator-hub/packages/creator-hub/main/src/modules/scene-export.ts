@@ -14,6 +14,7 @@ import TSCONFIG_JSON from './scene-export-template/template.tsconfig.json?raw';
 import { createLimit } from '/shared/limit';
 import type { SceneExportProgress, SceneExportResult } from '/shared/types/scene-export';
 
+import { worldsManagementUrl } from '/shared/urls';
 import { getPeerUrl, getWorldsContentUrl } from './catalyst';
 import { showSaveDialog } from './electron';
 
@@ -391,7 +392,7 @@ export async function exportScene(
 
 /**
  * Asks the user where to save the export of `entityId`, suggesting a file named after `title`,
- * then exports it from the app environment's catalyst (`land`) or Worlds content server
+ * then exports it from the app environment's catalyst (`land`) or Worlds management server
  * (`world`). Resolves null when the dialog is cancelled.
  */
 export async function saveScene(
@@ -407,7 +408,9 @@ export async function saveScene(
   });
   if (!outputPath) return null;
   const server =
-    source === 'world' ? { contentUrl: getWorldsContentUrl() } : { peerUrl: getPeerUrl() };
+    source === 'world'
+      ? { contentUrl: worldsManagementUrl(getWorldsContentUrl()) }
+      : { peerUrl: getPeerUrl() };
   return exportScene({ entityId, outputPath, ...server }, onProgress);
 }
 

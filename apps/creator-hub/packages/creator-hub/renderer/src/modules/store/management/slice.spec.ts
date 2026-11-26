@@ -1524,6 +1524,18 @@ describe('management slice', () => {
       expect(result.find((w: ManagedProject) => w.id === 'another-empty.dcl.eth')).toBeDefined();
     });
 
+    it('does not classify an unreadable canonical world as unpublished', async () => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      mockWorldsAPI.fetchWorldScenes
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue({ scenes: [], total: 0 });
+
+      const result = await store.dispatch(fetchEmptyWorlds({ address: TEST_ADDRESS })).unwrap();
+
+      expect(result.map(world => world.id)).not.toContain('empty-world.dcl.eth');
+      expect(result).toHaveLength(2);
+    });
+
     it('should set owner role for ENS owned by the address', async () => {
       mockWorldsAPI.fetchWorldScenes.mockResolvedValue({ scenes: [], total: 0 });
 

@@ -2,6 +2,7 @@ import { captureException } from '@sentry/electron/renderer';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
 import type { Entity, IPFSv2 } from '@dcl/schemas';
 
+import { worldsManagementUrl } from '/shared/urls';
 import { config } from '/@/config';
 import type { ContributableDomain } from '/@/modules/store/ens/types';
 import { formatQueryParams, fromCamelToSnake, fromSnakeToCamel } from '../modules/api';
@@ -164,6 +165,9 @@ export type WorldSettings = {
   skyboxTime?: number | null;
   singlePlayer?: boolean;
   showInPlaces?: boolean;
+  /** Local Worlds extensions. The canonical public management server does not accept them. */
+  realmNameOverride?: string | null;
+  previewWearableUrns?: string[] | null;
 };
 
 export enum SceneAgeRating {
@@ -280,9 +284,6 @@ export type WorldParcelsResponse = {
   total: number;
 };
 
-const DCL_DEV_WORLDS_URL = 'https://dcl.dev/worlds-content-server';
-const CANONICAL_WORLDS_URL = 'https://worlds-content-server.decentraland.org';
-
 export type WorldsPurpose = 'content' | 'management';
 
 export const WORLD_LIMITS_TIMEOUT_MS = 5000;
@@ -317,9 +318,8 @@ export class Worlds {
 
   constructor(purpose: WorldsPurpose = 'content') {
     const configured = config.get('WORLDS_CONTENT_SERVER_URL');
-    this.usesCanonicalManagement =
-      purpose === 'management' && configured.replace(/\/+$/, '') === DCL_DEV_WORLDS_URL;
-    this.url = this.usesCanonicalManagement ? CANONICAL_WORLDS_URL : configured;
+    this.url = purpose === 'management' ? worldsManagementUrl(configured) : configured;
+    this.usesCanonicalManagement = this.url !== configured;
   }
 
   private withIdentity(address: string): AuthIdentity {
