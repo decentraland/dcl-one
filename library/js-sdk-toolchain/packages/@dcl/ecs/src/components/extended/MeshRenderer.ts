@@ -1,5 +1,6 @@
-import { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
-import { MeshRenderer, PBMeshRenderer } from '../generated/index.gen'
+import type { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
+import type { PBMeshRenderer } from '../generated/index.gen'
+import { MeshRenderer } from '../generated/index.gen'
 
 /**
  * @public

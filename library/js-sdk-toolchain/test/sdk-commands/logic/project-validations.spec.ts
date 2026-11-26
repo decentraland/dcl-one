@@ -1,5 +1,7 @@
+import { mkdtempSync, mkdirSync, promises, readFileSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import path from 'path'
-import { isEditorScene } from '../../../packages/@dcl/sdk-commands/src/logic/project-validations'
+import { isEditorScene, startValidations } from '../../../packages/@dcl/sdk-commands/src/logic/project-validations'
 
 const WORKING_DIR = '/test/project'
 const COMPOSITE_PATH = path.resolve(WORKING_DIR, 'assets', 'scene', 'main.composite')
@@ -105,5 +107,45 @@ describe('isEditorScene', () => {
     })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(true)
+  })
+})
+
+describe('startValidations', () => {
+  let scene: string
+
+  beforeEach(() => {
+    scene = mkdtempSync(path.join(tmpdir(), 'scene-'))
+    mkdirSync(path.join(scene, 'node_modules/@dcl/sdk'), { recursive: true })
+    writeFileSync(
+      path.join(scene, 'node_modules/@dcl/sdk/package.json'),
+      JSON.stringify({ name: '@other-scope/sdk', version: '7.1.0-1.commit-abc' })
+    )
+  })
+
+  afterEach(() => rmSync(scene, { recursive: true, force: true }))
+
+  async function jsRuntimeWrittenFor(sdkSpec: string) {
+    writeFileSync(path.join(scene, 'package.json'), JSON.stringify({ dependencies: { '@dcl/sdk': sdkSpec } }))
+    const fs = {
+      fileExists: (file: string) =>
+        promises.access(file).then(
+          () => true,
+          () => false
+        ),
+      readFile: promises.readFile,
+      writeFile: promises.writeFile
+    }
+    await startValidations({ fs, logger: { error: jest.fn() } } as any, scene)
+    return JSON.parse(readFileSync(path.join(scene, 'package.json'), 'utf8')).dependencies['@dcl/js-runtime']
+  }
+
+  it('pins js-runtime to the installed sdk version', async () => {
+    expect(await jsRuntimeWrittenFor('^7.1.0')).toBe('7.1.0-1.commit-abc')
+  })
+
+  it('keeps the scope of an aliased sdk', async () => {
+    expect(await jsRuntimeWrittenFor('npm:@other-scope/sdk@7.1.0-1.commit-abc')).toBe(
+      'npm:@other-scope/js-runtime@7.1.0-1.commit-abc'
+    )
   })
 })

@@ -1,5 +1,6 @@
 import { components, cyclicParentingChecker } from '../../packages/@dcl/ecs/src'
-import { Engine, Entity, IEngine } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity, IEngine } from '../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../packages/@dcl/ecs/src/engine'
 
 const errorFor = (entity: Entity) => `There is a cyclic parent with entity ${entity}`
 

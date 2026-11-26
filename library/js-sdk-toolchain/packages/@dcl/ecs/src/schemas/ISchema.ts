@@ -1,5 +1,5 @@
-import { DeepReadonly } from '../engine/readonly'
-import { ByteBuffer } from '../serialization/ByteBuffer'
+import type { DeepReadonly } from '../engine/readonly'
+import type { ByteBuffer } from '../serialization/ByteBuffer'
 
 /**
  * @public

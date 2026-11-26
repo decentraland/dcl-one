@@ -37,6 +37,7 @@ pub mod errors;
 pub mod formatters;
 pub mod metrics;
 pub mod queries;
+pub mod series;
 pub mod sync_types;
 pub mod validation;
 pub mod validator;
@@ -475,6 +476,7 @@ impl SyncStatus {
     }
 
     pub fn set_state(&self, state: SyncState) {
+        sync::metrics::sync_state(&state);
         *self.state.write() = state;
     }
 
@@ -485,6 +487,11 @@ impl SyncStatus {
             SyncState::PartiallySynced { .. } | SyncState::Syncing => "Syncing",
             SyncState::Failed => "Failed",
         }
+    }
+
+    /// Whether the sync state can serve content according to the realm's /about.
+    pub fn is_ready(&self) -> bool {
+        about::content_is_healthy(self.state_name())
     }
 
     /// Set when the process serves unsynced while `SYNC_SOURCE` names a peer
@@ -664,11 +671,13 @@ impl ContentState {
     ) -> Self {
         let denylist = storage.denylist().clone();
         let upload_budget = upload_admission::UploadBudget::new(
+            "memory",
             settings
                 .max_in_memory_deployment_bytes
                 .max(create_entity::max_heap_share(&settings)),
         );
         let spool_budget = upload_admission::UploadBudget::new(
+            "disk",
             settings
                 .max_in_flight_upload_bytes
                 .max(create_entity::max_spool_footprint(&settings)),
@@ -689,6 +698,12 @@ impl ContentState {
         );
         let content_get_limit =
             content_get_limit::ContentGetLimit::new(&settings.content_get_limit);
+        series::build_info(
+            &settings.version,
+            settings.commit_hash.as_deref(),
+            &settings.eth_network,
+        );
+        series::partial_capacity(settings.partial_uploads.global_bytes);
         Self {
             pool,
             settings,

@@ -1,6 +1,7 @@
 # The bare-metal benchmark of a pull request's web app: on each laptop of the fleet, Chrome runs
-# the PR's web build and main's, interleaved (bevy-explorer-benchmark-leg.yml), and the report goes
-# into the performance section of the PR's CI status comment (.github/actions/bevy-explorer-ci-status).
+# the PR's web build, main's and the latest release's, interleaved (bevy-explorer-benchmark-leg.yml),
+# and the report goes into the performance section of the PR's CI status comment
+# (.github/actions/bevy-explorer-ci-status).
 # It runs for every PR of this repository whose Bevy Explorer / CI run passes with a web app built,
 # which a PR that changes the explorer's web inputs gets, or by hand for any PR of this repository.
 # Each night, and by hand without a PR, it measures main's newest web build against the latest
@@ -12,7 +13,7 @@
 #
 # Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
 # empty means all; `none` means none, and PR engine builds then skip wasm-opt), BENCHMARK_RUNS
-# (measured runs per build, 3 by default) and BENCHMARK_QUEUE_TIMEOUT_MINUTES (60 by default).
+# (measured runs per build, 3 by default) and BENCHMARK_QUEUE_TIMEOUT_MINUTES (150 by default).
 name: Bevy Explorer / Benchmark
 'on':
   workflow_run:
@@ -75,17 +76,20 @@ jobs:
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
-    timeout-minutes: 10
+    # Up to three web app zips (change, base, release) at 5 minutes each.
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
-      pull-requests: read
       deployments: read
+      pull-requests: read
     outputs:
       run: ${{ steps.inputs.outputs.run }}
       pr: ${{ steps.inputs.outputs.pr }}
       change_sha: ${{ steps.inputs.outputs.change_sha }}
       base_sha: ${{ steps.inputs.outputs.base_sha }}
+      release_sha: ${{ steps.inputs.outputs.release_sha }}
+      release_version: ${{ steps.inputs.outputs.release_version }}
       runs: ${{ steps.inputs.outputs.runs }}
       legs: ${{ steps.inputs.outputs.legs }}
       expected_labels: ${{ steps.inputs.outputs.expected_labels }}
@@ -171,15 +175,18 @@ jobs:
           PR_NUMBER: ${{ needs.setup.outputs.pr }}
           CHANGE_SHA: ${{ needs.setup.outputs.change_sha }}
           BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          RELEASE_VERSION: ${{ needs.setup.outputs.release_version }}
           EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
           RUNS: ${{ needs.setup.outputs.runs }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           labels=$(sed 's/,/`, `/g' <<< "$EXPECTED_LABELS")
+          release=''
+          if [ -n "$RELEASE_VERSION" ]; then release=" and the latest release \`$RELEASE_VERSION\`"; fi
           {
             printf '[![Performance](https://img.shields.io/badge/Performance-Running!-yellow?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$RUN_URL"
-            printf 'Benchmarking #%s at `%s` against main at `%s` on `%s`, %s runs per build ([run](%s)). The report lands here.\n' \
-              "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$labels" "$RUNS" "$RUN_URL"
+            printf 'Benchmarking #%s at `%s` against main at `%s`%s on `%s`, %s runs per build ([run](%s)). The report lands here.\n' \
+              "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$release" "$labels" "$RUNS" "$RUN_URL"
           } > section.md
       - name: Set the performance section to running
         uses: ./.github/actions/bevy-explorer-ci-status
@@ -206,7 +213,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ needs.setup.outputs.pr }}
       EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
-      QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 60 }}
+      # A leg queued behind another run's leg on the same laptop waits up to that leg's 135-minute job.
+      QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 150 }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -282,6 +290,8 @@ jobs:
       change_run_id: ${{ matrix.leg.change_run_id }}
       base_artifact: ${{ matrix.leg.base_artifact }}
       base_run_id: ${{ matrix.leg.base_run_id }}
+      release_artifact: ${{ matrix.leg.release_artifact }}
+      release_run_id: ${{ matrix.leg.release_run_id }}
       runs: ${{ needs.setup.outputs.runs }}
       retention_days: ${{ needs.setup.outputs.retention_days }}
   # The report runner may be the PR's own build, so this job has no write permission; the post
@@ -319,6 +329,9 @@ jobs:
           PR_NUMBER: ${{ needs.setup.outputs.pr }}
           CHANGE_DESCRIPTION: ${{ needs.setup.outputs.change_description }}
           BASE_DESCRIPTION: ${{ needs.setup.outputs.base_description }}
+          RELEASE_DESCRIPTION: >-
+            ${{ needs.setup.outputs.release_version &&
+                format('{0} at {1}', needs.setup.outputs.release_version, needs.setup.outputs.release_sha) || '' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXPECTED_RUNS: ${{ needs.setup.outputs.runs }}
           EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}

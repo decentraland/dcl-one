@@ -190,10 +190,21 @@ pub async fn fetch_document(
     referer: &str,
     timeout: std::time::Duration,
 ) -> anyhow::Result<Value> {
-    let response = http
-        .get(target)
-        .header("referer", referer)
-        .timeout(timeout)
+    fetch_document_with(http, target, &[("referer", referer)], timeout).await
+}
+
+/// [`fetch_document`] sending exactly `headers`.
+pub async fn fetch_document_with(
+    http: &crate::http::Outbound,
+    target: reqwest::Url,
+    headers: &[(&str, &str)],
+    timeout: std::time::Duration,
+) -> anyhow::Result<Value> {
+    let mut request = http.get(target).timeout(timeout);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = request
         .send()
         .await
         .context("fetching application feature flags")?;

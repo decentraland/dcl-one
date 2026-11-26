@@ -6,7 +6,7 @@ import {
   GeneralRightArrow,
   GeneralSearch
 } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { ADMIN_PERMISSIONS, adminCopy } from './admin-copy'
 import styles from './UsersTable.module.css'
 
@@ -62,7 +62,9 @@ export function UsersTable({ rows, onAdd, onEdit }: UsersTableProps) {
             setPage(0)
           }}
         />
-        <Button onClick={onAdd}>{adminCopy.users.addUser}</Button>
+        <Button size="lg" onClick={onAdd}>
+          {adminCopy.users.addUser}
+        </Button>
       </div>
       <div className={styles.frame}>
         <div className={styles.scroller}>
