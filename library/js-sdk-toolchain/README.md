@@ -93,14 +93,19 @@ npm install \
 Install the exact version; the tag moves to the last PR published. Those packages are previews
 only: any branch of this repository can publish to them. Fork pull requests publish nothing.
 
-**`next` and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*` names. Its
-publish job uses the `npm-release` environment, which only `main` may deploy to, and the `@dcl`
-trusted publishers require that environment, so a branch or a pull request cannot publish them
-whatever its workflow says.
+**`next`, `auth-server` and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*`
+names. Its publish job uses the `npm-release` environment, which only `main` and `auth-server` may
+deploy to, and the `@dcl` trusted publishers require that environment, so another branch or a pull
+request cannot publish them whatever its workflow says.
 
 A push to `main` that changes `library/js-sdk-toolchain` or `library/protocol` publishes under
 `next` as `<latest patch+1>-<run>.commit-<sha>`. The SDK is generated from the protocol at build
 time, so a protocol change ships in the SDK without a protocol release.
+
+The `auth-server` branch carries the authoritative-server SDK on top of `main`. A push to it that
+changes the same paths publishes under the `auth-server` dist-tag, with the same version scheme;
+install it with `npm install @dcl/sdk@auth-server`. The branch takes changes by pull request only
+and is kept current by merging `main` into it, never by a squash.
 
 A versioned release is a manual run from `main`:
 
