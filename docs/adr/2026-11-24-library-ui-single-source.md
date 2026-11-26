@@ -28,7 +28,7 @@ A migration covers one component and its consumers in one surface, records its a
 
 ## Consequences
 
-- The Explorer HUD's foundations-only entry, its own design primitives and tokens, and the exemption of `library/ui/apps/hud` from the library's lint, formatting and import checks are the current state, not the target. They end when the Explorer build resolves the `@dcl/one-ui` entry, which requires its input graph to record composed stylesheets, accept the library folders the entry reaches, and settle how Git LFS assets are provided. Until then the HUD keeps its entry.
+- The Explorer HUD's foundations-only entry, its own design primitives and tokens, and the exemption of `library/ui/apps/hud` from the library's lint, formatting and import checks are the current state, not the target. The Explorer build resolves the `@dcl/one-ui` entry ([ADR](2026-11-24-explorer-hud-shared-entry.md)), so each of them ends as the HUD adopts the shared components and tokens, one bounded component at a time.
 - A change to a component the HUD imports from the entry changes the HUD's build fingerprint and selects the Explorer's CI jobs.
 - Shared components that position against the viewport (`Modal`, `Toast`, `Dropdown`) account for the HUD's runtime scale before the HUD adopts them.
 - Creator Hub and the inspector adopt the shared components after they run a React version the package supports.

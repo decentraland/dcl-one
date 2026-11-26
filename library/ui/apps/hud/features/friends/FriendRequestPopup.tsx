@@ -1,8 +1,9 @@
 // Friend request popup: send one (with an intro message), or look at one received / sent. The
 // result screens ("Friend Request Sent To", "You And X Are Now Friends!") show only once the
 // friends service accepted the action, then close by themselves.
+import { Button, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '../../design'
+import { Avatar, ModalShell, TextArea, openPopup } from '../../design'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'
@@ -122,7 +123,7 @@ function FriendRequestPopup({ mode, user, onClose }: { mode: RequestMode; user: 
     return (
       <ModalShell onClose={onClose} title="Accepting Friend Request" centeredTitle>
         <div className={styles.pair}>
-          <Spinner />
+          <Spinner variant="thin" />
         </div>
       </ModalShell>
     )
@@ -137,10 +138,10 @@ function FriendRequestPopup({ mode, user, onClose }: { mode: RequestMode; user: 
         actionsEqual
         actions={
           <>
-            <Button variant="secondary" onClick={onClose}>
+            <Button appearance="hud" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button disabled={busy} onClick={() => friends.act('request', user.address, message.trim() || undefined)}>
+            <Button appearance="hud" disabled={busy} onClick={() => friends.act('request', user.address, message.trim() || undefined)}>
               Send
             </Button>
           </>
@@ -163,19 +164,19 @@ function FriendRequestPopup({ mode, user, onClose }: { mode: RequestMode; user: 
       actions={
         received ? (
           <>
-            <Button variant="secondary" disabled={busy} onClick={() => friends.act('reject', user.address)}>
+            <Button appearance="hud" variant="secondary" disabled={busy} onClick={() => friends.act('reject', user.address)}>
               Reject
             </Button>
-            <Button disabled={busy} onClick={() => friends.act('accept', user.address)}>
+            <Button appearance="hud" disabled={busy} onClick={() => friends.act('accept', user.address)}>
               Accept
             </Button>
           </>
         ) : cancelArmed ? (
-          <Button disabled={busy} onClick={() => friends.act('cancel', user.address)}>
+          <Button appearance="hud" disabled={busy} onClick={() => friends.act('cancel', user.address)}>
             Cancel Request
           </Button>
         ) : (
-          <Button variant="secondary" onClick={() => setCancelArmed(true)}>
+          <Button appearance="hud" variant="secondary" onClick={() => setCancelArmed(true)}>
             Cancel Request
           </Button>
         )

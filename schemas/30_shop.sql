@@ -719,9 +719,10 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 
 -- How far each network's legacy order book (`shop.legacy_order`) is folded,
 -- and from which branch: the nft walk's last block and its hash when the
--- order fold last ran, in the nft fold's transaction, or the nft fold's
--- `fold_through` and that block's recovery point when the schema run seeded
--- the book. The book stands only while the nft walk's recovery point at that
+-- order fold last ran, in the nft fold's transaction. No row (a database
+-- that predates the book) means the book does not stand: readers refuse it,
+-- and the next nft fold folds it whole. The book stands only while the nft
+-- walk's recovery point at that
 -- block (`shop.chain_checkpoint`) still has that hash: a rewind (by any
 -- binary) drops the points past its target, so a branch republished at the
 -- same height brings another hash, and a book left behind past the kept
@@ -776,16 +777,6 @@ AFTER INSERT OR UPDATE ON shop.nft_event
 FOR EACH ROW WHEN (NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
 EXECUTE FUNCTION shop.queue_legacy_order_refold();
 
--- A database that predates the order book records the block its seed below
--- covers (what the nft fold has folded, never a walked block past it) and
--- that block's recovery point; without one the book never stands and the
--- first fold refolds it whole.
-INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash)
-SELECT c.network, c.fold_through, k.block_hash
-FROM shop.chain_cursor c
-LEFT JOIN shop.chain_checkpoint k ON k.indexer = c.indexer AND k.network = c.network AND k.block_number = c.fold_through
-WHERE c.indexer = 'nft' AND c.fold_through IS NOT NULL;
-
 -- Every legacy Marketplace order ever created, one row per order (the order
 -- book of /v1/orders, /v1/orders/open-by-items and the activity orders
 -- leg), folded from `shop.nft_event` in the nft fold's transaction
@@ -826,43 +817,11 @@ CREATE TABLE shop.legacy_order (
     CONSTRAINT legacy_order_price_nonneg CHECK (price >= 0)
 );
 
--- A database that predates the table fills it from the log in the run that
--- creates it: the fold's rules (legacy_orders::FOLD_SQL) over every token of
--- each network, bounded by the block `shop.legacy_order_cursor` records for
--- it, so the book holds no creation, supersession or end the nft fold has not
--- folded yet; the next fold folds the rest.
-INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
-    created_block, created_log, created_at, updated_block, updated_log, updated_at)
-WITH created AS (
-    SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
-    FROM (
-        SELECT e.network, e.contract_address, e.token_id, e.block_number, e.log_index, e.block_time, e.emitter, e.detail,
-               e.from_address, e.amount, e.expires_at, k.folded_through,
-               lead(e.block_number) OVER w AS next_block, lead(e.log_index) OVER w AS next_log, lead(e.block_time) OVER w AS next_time
-        FROM shop.nft_event e JOIN shop.legacy_order_cursor k ON k.network = e.network
-        WHERE e.kind = 'order_created' AND e.detail IS NOT NULL AND e.block_number <= k.folded_through
-        WINDOW w AS (PARTITION BY e.network, e.contract_address, e.token_id ORDER BY e.block_number, e.log_index)
-    ) c
-    ORDER BY c.network, c.emitter, c.detail, c.block_number DESC, c.log_index DESC
-)
-SELECT c.network, c.emitter, c.detail, c.contract_address, c.token_id,
-       COALESCE(c.from_address, '0x0000000000000000000000000000000000000000'),
-       CASE WHEN t.kind = 'order_successful' THEN t.to_address END,
-       CASE WHEN t.kind = 'order_successful' THEN COALESCE(t.amount, c.amount, 0) ELSE COALESCE(c.amount, 0) END,
-       COALESCE(c.expires_at, 0),
-       CASE WHEN t.kind = 'order_successful' THEN 'sold' WHEN t.kind = 'order_cancelled' OR c.next_block IS NOT NULL THEN 'cancelled' ELSE 'open' END,
-       c.block_number, c.log_index, c.block_time,
-       COALESCE(t.block_number, c.next_block, c.block_number), COALESCE(t.log_index, c.next_log, c.log_index), COALESCE(t.block_time, c.next_time, c.block_time)
-FROM created c
-LEFT JOIN LATERAL (
-    SELECT t.kind, t.to_address, t.amount, t.block_number, t.log_index, t.block_time
-    FROM shop.nft_event t
-    WHERE t.network = c.network AND t.contract_address = c.contract_address AND t.token_id = c.token_id
-      AND t.kind IN ('order_successful', 'order_cancelled') AND t.emitter = c.emitter AND t.detail = c.detail
-      AND (t.block_number, t.log_index) > (c.block_number, c.log_index) AND t.block_number <= c.folded_through
-    ORDER BY t.block_number DESC, t.log_index DESC
-    LIMIT 1
-) t ON true;
+-- A database that predates the table gets it empty and with no marker, so
+-- the book does not stand: the first nft fold after the upgrade refolds it
+-- whole, in the fold's own transaction, and readers refuse it until that fold
+-- is published. The schema run never reads `shop.nft_event`: a whole book is
+-- a large statement, and the run is not where a statement may take minutes.
 
 -- A token's orders: the fold's and the rewind's per-token rewrite, and
 -- /v1/orders?contractAddress=&tokenId= (which names no network).
