@@ -1,11 +1,7 @@
 use crate::{
-    badges::report_badge_events,
-    crash::refresh_crash_snapshot,
-    frame::FrameMetricPlugin,
-    in_world::report_in_world,
-    loading::report_loading_screen,
-    primary_player_parcel_position::report_parcel_changes,
-    reactions::{report_reaction_visualization, report_reactions},
+    badges::report_badge_events, crash::refresh_crash_snapshot, frame::FrameMetricPlugin,
+    in_world::report_in_world, loading::report_loading_screen,
+    primary_player_parcel_position::report_parcel_changes, reactions::ReactionReportsPlugin,
     segment_system::SegmentMetricPlugin,
 };
 use bevy::prelude::*;
@@ -32,12 +28,10 @@ impl Plugin for MetricsPlugin {
                 report_loading_screen,
                 refresh_crash_snapshot,
                 report_badge_events,
-                report_reactions,
-                report_reaction_visualization
-                    .run_if(resource_exists_and_changed::<common::structs::AppConfig>),
             ),
         );
         app.add_plugins((
+            ReactionReportsPlugin,
             crate::page_events::PageEventsPlugin,
             crate::feature_flags::FeatureFlagsReportPlugin,
         ));

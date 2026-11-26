@@ -1,8 +1,11 @@
 // The on-screen lane of situational reactions: each one the engine plays, the local player's or a
 // player's nearby, rises from beside the reactions button and is gone. The engine passes them only
-// while the "Chat Reactions" setting is on, so everything that arrives is shown.
+// while the "Chat Reactions" setting is on, so the lane has no switch of its own. It is part of the
+// chat: when the chat gives way to a panel or the HUD is hidden it goes too, with what is in flight,
+// so a screen with no HUD has no emoji over it. Reactions played meanwhile are not shown later.
 
 import { memo, useEffect, useRef, useState } from 'react'
+import { getHudScale } from '@explorer-core/lib/hudScale'
 import type { ChatState } from '../session/useEngineSession'
 import { MAX_FLYING, SWAY, SWAY_PERIOD, reactionFlight, type ReactionFlight } from './reactionMotion'
 import styles from './ReactionLane.module.css'
@@ -21,7 +24,8 @@ export const ReactionLane = memo(function ReactionLane({
   anchor
 }: {
   subscribe: ChatState['onReaction']
-  /** What the reactions rise from beside: the reactions button's place. */
+  /** What the reactions rise from beside: the reactions button's place, which keeps its box while
+   *  the button is not drawn (the chat collapsed, the nearby list open). */
   anchor: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const [flying, setFlying] = useState<Flying[]>([])
@@ -38,7 +42,7 @@ export const ReactionLane = memo(function ReactionLane({
         if (from == null || count.current >= MAX_FLYING || document.hidden) return
         const box = from.getBoundingClientRect()
         // the lane is scaled as the HUD is: client px back into its own
-        const scale = from.offsetWidth > 0 ? box.width / from.offsetWidth : 1
+        const scale = getHudScale() || 1
         const flight = reactionFlight(Math.random)
         const id = nextId.current++
         count.current++

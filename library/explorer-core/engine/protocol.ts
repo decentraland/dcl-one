@@ -18,6 +18,7 @@ import type {
   OutfitsData,
   PlatformBanNotice,
   PortableInfo,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   TextureOptimizationStatus,
@@ -388,11 +389,9 @@ export interface ChatReactionMessage {
   reaction: ChatReaction
 }
 
-/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. */
-export interface SituationalReaction {
-  from: string
-  emoji: string
-}
+/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. The
+ *  engine's own type, so a field it gains is here too. */
+export type SituationalReaction = ReactionData
 
 /** Streamed situational reactions (scene → page): one for each that plays, the local user's
  *  included, and none while the "Chat Reactions" setting is off. */

@@ -13,8 +13,23 @@ use crate::{
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
 
+pub(crate) struct ReactionReportsPlugin;
+
+impl Plugin for ReactionReportsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                report_reactions,
+                // only on a frame some setting was written
+                report_reaction_visualization.run_if(resource_exists_and_changed::<AppConfig>),
+            ),
+        );
+    }
+}
+
 /// Nothing is reported in an app with no analytics session.
-pub(crate) fn report_reactions(
+fn report_reactions(
     mut reactions: EventReader<PlayerReacted>,
     config: Option<Res<SegmentConfig>>,
     metrics: Option<ResMut<SegmentMetricsEvents>>,
@@ -34,7 +49,7 @@ pub(crate) fn report_reactions(
 }
 
 /// Each change of the setting, whoever made it. The value a session starts with is no change.
-pub(crate) fn report_reaction_visualization(
+fn report_reaction_visualization(
     app_config: Res<AppConfig>,
     mut last: Local<Option<bool>>,
     config: Option<Res<SegmentConfig>>,
@@ -64,13 +79,7 @@ mod tests {
         let mut app = App::new();
         app.add_event::<PlayerReacted>()
             .init_resource::<AppConfig>()
-            .add_systems(
-                Update,
-                (
-                    report_reactions,
-                    report_reaction_visualization.run_if(resource_exists_and_changed::<AppConfig>),
-                ),
-            );
+            .add_plugins(ReactionReportsPlugin);
         app
     }
 

@@ -379,13 +379,22 @@ HUD offers the pick and shows each reaction the engine plays on screen
   setting.
 - **On screen**: while the setting is on the engine passes each reaction it plays (`reaction`),
   the player's own included, and each rises from beside the button for about two seconds
-  (`features/chat/ReactionLane.tsx`, its numbers in `reactionMotion.ts`). At most 30 fly at once;
-  more are not shown. An emoji the wire has no index for (a flag) plays nowhere, so the HUD shows
-  none of its own accord. With reduced motion a reaction fades in place.
+  (`features/chat/ReactionLane.tsx`, its numbers in `reactionMotion.ts`). It starts at the same
+  place while the chat is collapsed and the button is not drawn, at every HUD scale. At most 30
+  fly at once; more are not shown. The lane is part of the chat: while the chat gives way to a
+  panel (Friends) or the HUD is hidden (a full-screen page, the camera, the scene editor, Hide
+  UI) none is shown, the ones in flight go with it and none is shown later. An emoji the wire
+  has no index for (a flag) plays nowhere, so the HUD shows none of its own accord. With reduced
+  motion a reaction fades in place.
 - Mock: `?mock=1&mockreactions=1` (the setting on and the nearby players reacting). Tests:
   `library/ui/apps/hud/test/hosted/chatReactions.test.tsx`, `chatReactions.clicks.test.tsx` and
   `chatReactionLane.test.tsx`, `library/ui/apps/hud/features/chat/reactionMotion.test.ts`,
   `src/test/bridgeReactions.test.ts`.
+- No visual baseline yet: the bar (its row of emoji and the `Chat Reactions` row under it) needs
+  a capture of the open chat with the bar up. The lane has none to take: it is motion only, the
+  harness stops animations at capture, and a flight that is over draws nothing. Where a reaction
+  starts and its scale are tier-1 (`chatReactionLane.test.tsx`); its look is checked by eye in
+  the mock above.
 
 ## Analytics
 

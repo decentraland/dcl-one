@@ -31,9 +31,16 @@ describe('the on-screen flight of a reaction', () => {
     expect(Math.abs(end.drift + end.sway - reference.x)).toBeLessThan(1.5)
   })
 
+  // Each draw at its least, its middle and its most, in every mix: the shortest life with the
+  // slowest start, the hardest kick with the longest life, and the rest.
   it('stays within its ranges whatever the dice say', () => {
-    for (const roll of [0, 0.25, 0.5, 0.75, 0.999999]) {
-      const flight = reactionFlight(() => roll)
+    const rolls = [0, 0.5, 0.999999]
+    // a flight draws seven numbers
+    const draws = 7
+    for (let mix = 0; mix < rolls.length ** draws; mix++) {
+      let drawn = 0
+      const flight = reactionFlight(() => rolls[Math.floor(mix / rolls.length ** (drawn++ % draws)) % rolls.length])
+      expect(drawn).toBe(draws)
       expect(flight.life).toBeGreaterThanOrEqual(2.04)
       expect(flight.life).toBeLessThanOrEqual(2.54)
       expect(flight.size).toBeGreaterThanOrEqual(30)

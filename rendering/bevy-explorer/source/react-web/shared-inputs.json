@@ -6746,7 +6746,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "613bbbae3d5a754f3f078805c6ac021093d8eef1891a7e9eefc5877a78c8d8e6"
+      "sha256": "cae6a8c8dbe714a33001f9610c4197dfbdbba2d777e2fe1e9df97b09b12f93b1"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6786,7 +6786,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "e956bb618f9e22ecc348ec03c95583fbff505989768ba5312fd6404451e30733"
+      "sha256": "382ca77336fd1eaef2250f0a7d537afc274610e8bb8b9df777f749f7c304306c"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -9410,7 +9410,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "3e31e736171f8144e635b6a40e9d6e62d0fa4b288449877958d73223e9d35022"
+      "sha256": "e32a23566112c3d30eaf49a3a32a8a8518c0a3f24b9992c31b0bdcbc0babade3"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
@@ -9474,7 +9474,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
-      "sha256": "4ec47bb7ac9764b8176bf1524c92392471b4d251f95f95f659cdd33b7149eaf9"
+      "sha256": "7af88306341bb18ac37aea7f9022ca64654f0484edacf495f881d11b07fdad67"
     },
     {
       "path": "library/ui/apps/hud/features/chat/buttonSounds.test.ts",
@@ -9522,7 +9522,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/reactionMotion.test.ts",
-      "sha256": "ac6f99b2d111f145fd37a9552a074b11ca8517d8a37d4f6834e6c31fa76e0f88"
+      "sha256": "c325330c30eae53393ba348c2f7bb79f5eba9c8d7ceeb22bded26c93d7a4da96"
     },
     {
       "path": "library/ui/apps/hud/features/chat/reactionMotion.ts",
@@ -10850,7 +10850,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactionLane.test.tsx",
-      "sha256": "6444573dc1ca77e7212f6b4538e866ff13acaf9957f0d79987dbe60c14d2e401"
+      "sha256": "6aefb7e650f47ec79028a82ff9d7013dc0eb214800f6e005e008a26babc16639"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
@@ -20782,6 +20782,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ReactionLane.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "test:runtime"
     },
     {

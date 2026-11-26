@@ -761,6 +761,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   let pendingAuth: { id: string; timer: ReturnType<typeof setTimeout> } | null = null
   // Drives the mock pose stream (see spawnPlayer) so the minimap is developable without an engine.
   let poseTimer: ReturnType<typeof setInterval> | null = null
+  // The nearby players' reactions under ?mockreactions=1 (see spawnPlayer).
+  let reactionTimer: ReturnType<typeof setInterval> | null = null
 
   // No engine in mock mode, so stand in for the engine's input stream: relay DOM key edges as
   // the systemAction messages the real bridge sends from getSystemActionStream, looked up from
@@ -1064,7 +1066,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (setting != null) setting.value = 1
       const emoji = ['\u{2665}\u{fe0f}', '\u{1f44f}', '\u{1f525}', '\u{1f923}']
       let played = 0
-      if (!alone) setInterval(() => {
+      // one stream however many times the player has logged in
+      if (reactionTimer != null) clearInterval(reactionTimer)
+      reactionTimer = alone ? null : setInterval(() => {
         if (!reactionsShown()) return
         reply({ kind: 'reaction', reaction: { from: samples[played % samples.length][0], emoji: emoji[played % emoji.length] } })
         played++
@@ -2096,6 +2100,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     window.removeEventListener('keyup', onKeyUp)
     window.removeEventListener('pointerdown', onPointerDown, true)
     if (poseTimer != null) clearInterval(poseTimer)
+    if (reactionTimer != null) clearInterval(reactionTimer)
     ch.close()
   }
   return running
