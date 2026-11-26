@@ -9428,7 +9428,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "abd95025c6d206fa52e4eb9ec0f6a3400b75d77fd215a57e7061fa17fa8a9093"
+      "sha256": "944e6d14246c393d294258c506152115879abc987b3e25c278dba97434dae270"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -10852,7 +10852,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
-      "sha256": "0dba68a193fda9551c643b338d1af93802418bd85a09d429f271f92d4d37a374"
+      "sha256": "853e546189e112159b21fae12a3a406da34b7591c31e527df605192a798aa0e3"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.test.tsx",

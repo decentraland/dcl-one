@@ -28,7 +28,7 @@ import { useTranslationPrefs, useTranslations } from './useTranslation'
 import { type ChatUser } from './ProfileCardPresentation'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { peekProfile, useProfile } from '../session/profileStore'
-import { isCancelKey, isEditableTarget } from '../../lib/bindingLabels'
+import { isCancelKey } from '../../lib/bindingLabels'
 import { hudInsetRef } from '../../lib/hudInset'
 import { displayName, mentionName } from '@explorer-core/engine/mention'
 import playersIcon from '../../assets/chat/players.png'
@@ -52,6 +52,9 @@ function lineKey(line: ChatLine): string {
 
 /** The newest lines of a conversation translated when it auto-translates (older ones by hand). */
 const AUTO_TRANSLATE_RECENT = 20
+// How long after the reactions picker closes on its own cancel key a Cancel from the engine is
+// taken to be that same press.
+const PICKER_CANCEL_PRESS_MS = 300
 
 /** The icon by a message's time saying where its translation stands; its tooltip says what a click does. */
 function TranslationMark({ line, translation, onTranslate, onShowOriginal, onHover }: {
@@ -680,6 +683,10 @@ export function Chat({
   // button's, and whether the full picker is choosing the reaction instead.
   const [reacting, setReacting] = useState<{ kind: 'line'; line: ChatLine; top: number } | { kind: 'situational' } | null>(null)
   const [reactPicker, setReactPicker] = useState(false)
+  const reactPickerRef = useRef(reactPicker)
+  reactPickerRef.current = reactPicker
+  // When the reactions button's picker last closed itself on its own cancel key.
+  const pickerCancelledAt = useRef(-Infinity)
   const reactRef = useRef<HTMLDivElement>(null)
   const heartRef = useRef<HTMLSpanElement>(null)
   // The hovered reaction pill's tooltip (where its pill's top and centre are, in the panel's px).
@@ -1018,16 +1025,18 @@ export function Chat({
   }, [reacting])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => closeReactions(), [chat.channel, open, hidden, showMembers])
-  // Cancel closes the reactions button's picker, then its bar. With the picker's search field
-  // focused the key is the field's and the picker closes itself (below).
+  // Cancel closes the reactions button's picker, then its bar. The layer is registered once for
+  // the bar, so it keeps its place among the layers and popups opened after it. With the focus
+  // inside the picker the key is the picker's, which closes itself (below); an engine that saw
+  // that press too sends its Cancel here, and it must not take the bar as well.
   useEffect(() => {
     if (!situational) return
     return registerCancelLayer(() => {
-      if (reactPicker) setReactPicker(false)
-      else closeReactions()
+      if (reactPickerRef.current) setReactPicker(false)
+      else if (performance.now() - pickerCancelledAt.current > PICKER_CANCEL_PRESS_MS) closeReactions()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [situational, reactPicker])
+  }, [situational])
   // "Mention" from the viewer drops @name into the draft, ready to send.
   const insertMention = (name: string): void => {
     setDraft((d) => `${d.replace(/\s*$/, '')} @${name} `.trimStart())
@@ -1273,7 +1282,8 @@ export function Chat({
             onClose={
               situational
                 ? () => {
-                    if (isEditableTarget(document.activeElement)) setReactPicker(false)
+                    pickerCancelledAt.current = performance.now()
+                    setReactPicker(false)
                   }
                 : closeReactions
             }

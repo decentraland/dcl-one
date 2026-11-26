@@ -312,9 +312,10 @@ State, in every build:
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
 - `/reaction_state`: the situational reactions, as JSON: `world` (the Chat bubbles and
-  reactions setting lets them show over avatars), `outbox` (the local user's picks not yet
-  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send:
-  none with no room to carry it),
+  reactions setting lets them show over avatars), `picked` (the local user's picks that played,
+  which no peer's reaction moves), `outbox` (the local user's picks not yet sent),
+  `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none with
+  no room to carry it),
   `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
   waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
   frame, and waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas
