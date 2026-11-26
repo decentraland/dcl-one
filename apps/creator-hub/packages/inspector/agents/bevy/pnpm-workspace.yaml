@@ -9,6 +9,12 @@ overrides:
   '@dcl/sdk-commands>typescript': 7.0.2
   # @dcl/sdk-commands takes only `fetch` from undici; its later releases ask for undici 7.
   '@dcl/sdk-commands>undici': 7.30.2
+  # @dcl/sdk-commands starts i18next with its file backend and calls only t().
+  '@dcl/sdk-commands>i18next': ^26.3.4
+  # @dcl/sdk-commands calls only v4 and validate, which uuid 11 keeps for require().
+  '@dcl/sdk-commands>uuid': ^11.1.1
+  # dcl-catalyst-client lists cookie and loads it from no file.
+  'dcl-catalyst-client>cookie': '-'
   # One protobufjs for every package that asks for one.
   protobufjs: 7.6.6
   # extract-zip 2 has no fixed release. packages/zip-extract has the same call and makes no link.

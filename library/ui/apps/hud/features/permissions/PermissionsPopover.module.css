@@ -58,9 +58,21 @@
 .row:hover {
   background: var(--row-hover);
 }
+/* an "In force now" row before the scene's rules have loaded */
+.row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.row:disabled:hover {
+  background: none;
+}
 /* a row the scene ran into this visit: the answer or rule that decided it */
 .row[data-hit] {
   background: var(--fill-2);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+/* what the scene is doing to the player now */
+.row[data-in-force] {
   box-shadow: inset 3px 0 0 var(--brand);
 }
 .empty,

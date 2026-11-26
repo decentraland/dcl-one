@@ -137,7 +137,8 @@ fn chain_refusal(headers: &HeaderMap, e: ChainShapeError) -> SignedFetchRefusal 
 }
 
 /// `verifySign`'s refusals: `Invalid signature: <reason>` for a personal-sign
-/// chain, the bare `Invalid signature` and the catalyst 503 for EIP-1654.
+/// chain, the bare `Invalid signature` and the catalyst 503 for EIP-1654, and
+/// the 429 of a client source that spent its contract-wallet checks.
 fn signature_refusal(e: AuthError) -> SignedFetchRefusal {
     let message = match &e {
         AuthError::Eip1654Rejected { .. } | AuthError::Eip1654NotImplemented => {
@@ -146,6 +147,8 @@ fn signature_refusal(e: AuthError) -> SignedFetchRefusal {
         AuthError::Eip1654ValidationFailed(detail) => {
             format!("Error connecting to catalyst: {detail}")
         }
+        // The client source spent its contract-wallet checks: the 429, before any RPC call.
+        AuthError::Eip1654RateLimited => e.to_string(),
         other => format!("Invalid signature: {other}"),
     };
     SignedFetchRefusal::new(map_auth_error(e), message)

@@ -26,8 +26,8 @@ either kind, which is the floor of an unlisted one.
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
 fails, because shared UI comes only from the `@dcl/one-ui` entry
 (docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
-paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
-not exported yet: they resolve their host's aliases, which the entry cannot.
+paths. In-world Shop and HUD modules that require host aliases can use their
+app subpaths. Web Shop views use the public entry.
 A script under apps/ that imports a library/ui module by a relative path
 (`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
 way; stylesheets and the Node-only Figma review tooling listed in

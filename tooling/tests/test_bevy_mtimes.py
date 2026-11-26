@@ -38,7 +38,7 @@ class BevyMtimesTest(unittest.TestCase):
             (profile / '.fingerprint').mkdir(parents=True)
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', *args],
+        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false', *args],
                                        cwd=self.root, text=True).strip()
 
     def write(self, name, value):
@@ -270,7 +270,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.assertEqual(self.mtime(folder), after)
 
     def test_the_manifest_survives_the_native_cache_pruning(self):
-        # tooling/bevy-target-cache.py keeps every .fingerprint directory of a profile.
+        # tooling/bevy-target-cache.py removes only units' hashed entries from a profile's .fingerprint directory.
         spec = importlib.util.spec_from_file_location('bevy_target_cache', Path(__file__).parents[1] / 'bevy-target-cache.py')
         cache = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cache)
@@ -280,6 +280,7 @@ class BevyMtimesTest(unittest.TestCase):
         (self.target / 'release/deps').mkdir(parents=True, exist_ok=True)
         (self.target / 'release/decentra-bevy').write_text('binary')
         cache.prune_target(self.target, [])
+        cache.prune_generations(self.target, set(), [])
         self.assertTrue(manifest.is_file())
         self.assertFalse((self.target / 'release/decentra-bevy').exists())
 
