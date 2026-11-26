@@ -977,6 +977,13 @@ mod unit_tests {
     }
 
     #[test]
+    fn a_log_index_past_i32_is_refused() {
+        let mut log: RpcLog = serde_json::from_str(CAPTURED_LOG).unwrap();
+        log.log_index = "0x80000000".into();
+        assert!(decode_log(&log).unwrap_err().contains("bad logIndex"));
+    }
+
+    #[test]
     fn a_foreign_or_short_log_is_refused() {
         let mut log: RpcLog = serde_json::from_str(CAPTURED_LOG).unwrap();
         log.data.truncate(130);

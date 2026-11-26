@@ -58,6 +58,11 @@ pub fn backoff(attempts: i32) -> Duration {
     Duration::from_secs((5u64 << attempts.clamp(0, 4).unsigned_abs()).min(60))
 }
 
+/// A receipt's block as the `bigint` column.
+fn receipt_block(n: u64) -> anyhow::Result<i64> {
+    i64::try_from(n).map_err(|_| anyhow::anyhow!("receipt block {n} is past i64"))
+}
+
 /// The address an indexed `address` topic carries (its low 20 bytes).
 fn topic_address(topic: &B256) -> Address {
     Address::from_slice(&topic[12..])
@@ -641,8 +646,7 @@ pub async fn step(
         .await?;
         return Ok(status);
     };
-    let block = i64::try_from(receipt.block_number)
-        .map_err(|_| anyhow::anyhow!("receipt block {} is past i64", receipt.block_number))?;
+    let block = receipt_block(receipt.block_number)?;
     if receipt.status == Some(false) {
         advance(
             &state.pool,
@@ -897,6 +901,13 @@ pub type Shared = SharedState;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_receipt_block_past_i64_is_refused() {
+        assert_eq!(receipt_block(7).unwrap(), 7);
+        let err = receipt_block(1 << 63).unwrap_err();
+        assert!(err.to_string().contains("past i64"), "{err}");
+    }
 
     #[test]
     fn only_the_sender_or_its_meta_transaction_signer_reported_the_hash() {

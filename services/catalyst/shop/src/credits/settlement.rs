@@ -1089,6 +1089,21 @@ pub(super) async fn settlement_pass(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_revoker_refuses_a_negative_chain_id() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap();
+        let chain = Arc::new(ChainComponent::new(
+            crate::http::Outbound::for_tests(),
+            "http://127.0.0.1:1",
+            Duration::from_secs(1),
+        ));
+        let key = format!("0x{}", "11".repeat(32));
+        let err = Revoker::new(Credits::new(pool), chain, &key, -1).err();
+        assert_eq!(err.as_deref(), Some("invalid chain id -1"));
+    }
+
     #[test]
     fn the_role_and_calldata_match_the_contract() {
         assert_eq!(credits_signer_role(), keccak256(b"CREDITS_SIGNER_ROLE"));

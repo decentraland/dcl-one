@@ -758,6 +758,15 @@ mod creator_tests {
     const CREATOR: &str = "0x00000000000000000000000000000000000c4ea7";
     const OTHER: &str = "0x00000000000000000000000000000000000000e5";
 
+    #[test]
+    fn coupon_uses_past_their_column_are_refused() {
+        assert_eq!(uses_column(3).unwrap(), 3);
+        assert!(matches!(
+            uses_column(i64::from(i32::MAX) + 1),
+            Err(CouponError::Internal(_))
+        ));
+    }
+
     /// The creator check reads no chain.
     struct NoChain;
 

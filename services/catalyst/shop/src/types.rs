@@ -1038,6 +1038,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_chain_id_past_its_column_is_refused() {
+        assert_eq!(chain_id_column::<i32>(137), Ok(137));
+        assert_eq!(
+            chain_id_column::<i32>(1 << 31),
+            Err(ChainIdOverflow(1 << 31))
+        );
+        assert_eq!(
+            chain_id_column::<i64>(u64::MAX),
+            Err(ChainIdOverflow(u64::MAX))
+        );
+    }
+
+    #[test]
     fn the_asset_type_codes_are_the_ones_from_code_reads() {
         for (code, kind) in [
             (ASSET_TYPE_ERC20, TradeAssetType::Erc20),
