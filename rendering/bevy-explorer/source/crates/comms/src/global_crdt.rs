@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -513,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
