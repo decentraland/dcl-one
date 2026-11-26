@@ -43,11 +43,16 @@ squid. In the node they come from the `trade_events` index (`shop.trade_event`)
 and its fold into `shop.trade_chain_state`. That fold compares
 `checks.contractSignatureIndex`/`signerSignatureIndex` with the indexed bumps.
 It picks up every imported trade that has no folded row, so an invalidated
-trade folds to `cancelled`. Until the index is published for a network, the
-routes ignore chain verdicts there, which is the node's normal pre-ready
-behaviour. `trade_digest` is not copied because the fold recomputes the V3
-digest from the row. Nothing is written to `shop.trade_cancellations`, which
-holds only cancellations signed into the node.
+trade folds to `cancelled`. Until the index is current for every network, the
+routes over `shop.trades` answer the unavailable envelope naming it, which
+is the node's normal pre-ready behaviour. `trade_digest`, the V3
+cancellation key upstream stored at creation, is copied when it is a 32-byte
+hex value (lowercase), and replaces a mirrored copy's only when upstream has
+one. The fold keys a V3 cancellation on it once the signature recovers the
+signer over it, else on the digest it rebuilds from the row; a V3 trade with
+neither is left out of the open listings. Nothing is written to
+`shop.trade_cancellations`, which holds only cancellations signed into the
+node.
 
 ## Not migrated
 

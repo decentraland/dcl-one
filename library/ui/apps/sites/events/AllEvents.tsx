@@ -2,7 +2,7 @@ import { useId, type CSSProperties, type MouseEvent } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Tabs } from '../../../components/Tabs/Tabs'
 import { TabsBar } from '../../../components/TabsBar/TabsBar'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { Busy } from './Busy'
 import { DayCard, UpcomingCard } from './cards'
 import { MyEvents, type MyEventsProps } from './MyEvents'
@@ -179,7 +179,7 @@ function AllEvents({
               <Notice tone="error">
                 {text('Events are temporarily unavailable.')}{' '}
                 {onRetry ? (
-                  <Button variant="tertiary" size="sm" onClick={onRetry}>
+                  <Button variant="tertiary" size="md" onClick={onRetry}>
                     {text('Retry')}
                   </Button>
                 ) : null}

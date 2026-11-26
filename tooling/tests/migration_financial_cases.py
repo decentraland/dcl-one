@@ -49,6 +49,22 @@ class FinancialMigrationCases:
             INSERT INTO stripe_payment_refunds VALUES ('refunded',10,10);''')
         self.sql(db, 'CREATE TEMP TABLE stage AS ' + extract + ';' + load)
 
+    def test_rental_asset_import_resets_source_blocks_only_when_upstream_wins(self):
+        db = self.fresh_db('rental_asset_membership')
+        self.sql(db, (ROOT / 'schemas/32_signatures.sql').read_text())
+        step = self.financial_step('signatures-server', 'rental_assets')
+        stage = self.financial_stage(step)
+        row = """INSERT INTO stage VALUES ('asset',1,'estate-1','ethereum',1,'estate','name',
+                 2,true,3,'2026-01-01','2026-01-01','2026-01-02');"""
+        blocks = 'SELECT membership_block, metadata_block FROM signatures.rental_assets'
+        self.sql(db, stage + row + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
+        self.sql(db, "UPDATE signatures.rental_assets SET membership_block=120, metadata_block=115, fetched_at='2026-01-03'")
+        self.sql(db, stage + row + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['120', '115'])
+        self.sql(db, stage + row.replace('2026-01-02', '2026-01-04') + step.load.read_text())
+        self.assertEqual(self.sql(db, blocks).split(), ['0', '0'])
+
     def test_when_rental_parent_is_newer_it_should_preserve_listing_and_periods(self):
         db = self.fresh_db('financial_fix_rentals')
         folder = migrate.SOURCES / 'signatures-server'
@@ -354,7 +370,7 @@ class FinancialMigrationCases:
         CREATE SCHEMA marketplace;
         CREATE TABLE marketplace.trades (id uuid, network text, chain_id int, signature text, hashed_signature text,
             checks jsonb, signer text, type text, expires_at timestamp, effective_since timestamp, contract text,
-            created_at timestamp);
+            created_at timestamp, trade_digest text);
         CREATE TABLE marketplace.trade_assets (id uuid, trade_id uuid, direction text, asset_type smallint,
             contract_address text, beneficiary text, extra text, created_at timestamp);
         CREATE TABLE marketplace.trade_assets_erc20 (asset_id uuid, amount numeric);
@@ -373,13 +389,19 @@ class FinancialMigrationCases:
         self.sql(src, self.MARKETPLACE_SCHEMA)
         trade, coupon = '11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'
         sent, received = '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'
+        other, other_sent = '55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'
         signer, contract = '0x' + 'a' * 40, '0x' + 'b' * 40
         self.sql(src, f"""
             INSERT INTO marketplace.trades VALUES ('{trade}', 'polygon', 137, '0xABC', '0xDEF', '{{}}',
-              '{signer.upper().replace('0X', '0x')}', 'public_item_order', '2027-01-01', '2026-01-01', 'c', '2026-01-02');
+              '{signer.upper().replace('0X', '0x')}', 'public_item_order', '2027-01-01', '2026-01-01', 'c', '2026-01-02',
+              '0x{'C' * 64}');
+            INSERT INTO marketplace.trades VALUES ('{other}', 'polygon', 137, '0x123', '0x456', '{{}}',
+              '{signer}', 'bid', '2027-01-01', '2026-01-01', 'c', '2026-01-02', '0xnot-a-digest');
             INSERT INTO marketplace.trade_assets VALUES
               ('{sent}', '{trade}', 'sent', 1, '{contract}', NULL, '0x', '2026-01-02'),
               ('{received}', '{trade}', 'received', 4, '{contract}', '{signer}', '', '2026-01-02');
+            INSERT INTO marketplace.trade_assets VALUES
+              ('{other_sent}', '{other}', 'sent', 1, '{contract}', NULL, '', '2026-01-02');
             INSERT INTO marketplace.trade_assets_erc20 VALUES ('{sent}', 1000000000000000000);
             INSERT INTO marketplace.trade_assets_item VALUES ('{received}', '7');
             INSERT INTO marketplace.coupons VALUES ('{coupon}', 'polygon', 137, '{signer}', '0x01', '0x02', '0x03',
@@ -403,11 +425,14 @@ class FinancialMigrationCases:
             self.sql(tgt, f"INSERT INTO shop.coupon_state VALUES ('{coupon}', 5, false, false, '2026-02-01');")
             code, out = self.migrate('run', 'marketplace-server', '--step', 'coupon_state', sources_dir=migrate.SOURCES)
             self.assertEqual(code, 0, out)
-        self.assertEqual(self.sql(tgt, 'SELECT signature, signer, mirrored_from IS NULL FROM shop.trades;').strip(),
-                         f'0xabc\t{signer}\tt')
+        # The promoted copy takes upstream's V3 digest lowercase; a malformed one is not copied.
+        self.assertEqual(self.sql(tgt, "SELECT signature, signer, mirrored_from IS NULL, COALESCE(trade_digest, 'none') "
+                                       'FROM shop.trades ORDER BY id;').strip().splitlines(),
+                         [f'0xabc\t{signer}\tt\t0x{"c" * 64}', f'0x123\t{signer}\tt\tnone'])
         self.assertEqual(self.sql(tgt, 'SELECT a.id, a.extra, e.amount, i.item_id FROM shop.trade_assets a '
                                        'LEFT JOIN shop.trade_assets_erc20 e ON e.asset_id = a.id '
-                                       'LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id ORDER BY a.id;')
+                                       'LEFT JOIN shop.trade_assets_item i ON i.asset_id = a.id '
+                                       f"WHERE a.trade_id = '{trade}' ORDER BY a.id;")
                          .strip().splitlines(),
                          [f'{sent}\t\t1000000000000000000\t', f'{received}\t\t\t7'])
         self.assertEqual(self.sql(tgt, 'SELECT uses FROM shop.coupon_state;').strip(), '5')
