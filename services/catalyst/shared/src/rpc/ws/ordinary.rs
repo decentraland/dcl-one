@@ -1,6 +1,7 @@
 //! Opt-in ordinary-message queue for the existing RPC writer.
+use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc::UnboundedSender, oneshot};
 use tokio::time::Instant;
@@ -185,9 +186,11 @@ impl Queue {
             return;
         }
         self.retry = None;
-        while !self.pending.is_empty() {
+        loop {
             let queued = self.pending.len();
-            let item = self.pending.front_mut().unwrap();
+            let Some(item) = self.pending.front_mut() else {
+                break;
+            };
             if item.attempts as f64 >= self.config.max_retry_attempts {
                 self.counter("ws_backpressure_events", Some("max_retries"));
                 self.fail("Message not deliverable after max retries");
@@ -219,13 +222,19 @@ impl Queue {
             }
             let attempts = match outcome {
                 SendOutcome::Code(1) => {
-                    let item = self.pending.pop_front().unwrap();
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
                     let _ = item.completion.send(Ok(()));
                     self.counter("ws_messages_sent", None);
                     continue;
                 }
                 SendOutcome::Code(0) => {
-                    let item = self.pending.pop_front().unwrap();
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
                     let _ = item.completion.send(Ok(()));
                     self.counter("ws_messages_sent", None);
                     self.counter("ws_backpressure_events", Some("backpressure"));
@@ -245,7 +254,10 @@ impl Queue {
                 SendOutcome::Contended => unreachable!("returned above"),
                 SendOutcome::Failure(error) => {
                     let message = format!("Failed to send message: {error}");
-                    let item = self.pending.pop_front().unwrap();
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
                     let _ = item.completion.send(Err(message.clone()));
                     self.fail(&message);
                     return;
@@ -341,14 +353,14 @@ impl OrdinaryLane {
         }
     }
     pub(super) fn send(&self, bytes: Vec<u8>) -> oneshot::Receiver<Result<(), String>> {
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.queue.lock();
         let receiver = queue.enqueue(bytes, !self.close.is_ended());
         self.process(&mut queue);
         self.changed.notify_one();
         receiver
     }
     pub(super) fn close(&self) {
-        self.queue.lock().unwrap().close();
+        self.queue.lock().close();
         self.changed.notify_one();
     }
     async fn run(
@@ -367,7 +379,7 @@ impl OrdinaryLane {
                 return;
             };
             let deadline = {
-                let mut queue = lane.queue.lock().unwrap();
+                let mut queue = lane.queue.lock();
                 lane.process(&mut queue);
                 if !queue.active {
                     return;
@@ -381,7 +393,7 @@ impl OrdinaryLane {
                 _ = &mut drained => {
                     // Physical writer-budget release wakes retries. It is not a
                     // native uWS drain callback and must not count as one.
-                    if let Some(lane) = weak.upgrade() { lane.queue.lock().unwrap().retry = None; }
+                    if let Some(lane) = weak.upgrade() { lane.queue.lock().retry = None; }
                 },
                 _ = async { if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; } else { std::future::pending::<()>().await; } } => {},
             }
@@ -390,7 +402,7 @@ impl OrdinaryLane {
 }
 impl Drop for OrdinaryLane {
     fn drop(&mut self) {
-        self.queue.get_mut().unwrap().close();
+        self.queue.get_mut().close();
         self.changed.notify_one();
     }
 }

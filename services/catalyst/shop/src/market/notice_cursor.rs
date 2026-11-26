@@ -10,6 +10,7 @@
 //! logs of the token precede it. The same log mined again in another block
 //! keeps its id; a different log at the same (block, log_index) gets another.
 
+use dcl_metrics::{Descriptor, GaugeFamily};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
@@ -43,6 +44,28 @@ pub const PRODUCERS: &[&str] = &[
     ROYALTIES_BID_ACCEPTED_MATIC,
     BID_RECEIVED,
 ];
+
+/// Blocks between a producer's cursor and the published block it reads up
+/// to, by `producer`, set each time a pass locks the cursor. The producers
+/// that wait for the catalogue (sales, bids, royalties) report it: a cursor
+/// held behind a sale shows as a lag that keeps growing.
+const CURSOR_LAG: GaugeFamily<1> = GaugeFamily::new(
+    "shop_notification_cursor_lag",
+    "Blocks between a chain notification producer's cursor and the published block it reads up to.",
+    None,
+    &["producer"],
+);
+
+/// The producers' families, declared for serve's registry.
+pub const FAMILIES: &[Descriptor] = &[CURSOR_LAG.descriptor];
+
+/// Records `producer`'s [`CURSOR_LAG`]: its cursor at `cursor_block`, its
+/// reads bounded by `published`.
+pub(super) fn report_lag(producer: &'static str, published: i64, cursor_block: i64) {
+    CURSOR_LAG
+        .handle([producer])
+        .set(published.saturating_sub(cursor_block).max(0) as f64);
+}
 
 /// How far below an index's head a replay moves the cursors back: deeper
 /// rows are not announced again, and a backfill entirely below it replays nothing.

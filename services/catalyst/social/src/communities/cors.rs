@@ -28,14 +28,12 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
     // Request, before CORS runs. Node's parser rejects TRACK even earlier.
     if matches!(req.method().as_str(), "TRACE" | "TRACK") {
         let trace = req.method().as_str() == "TRACE";
-        let mut response = Response::builder()
-            .status(if req.method().as_str() == "TRACK" {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            })
-            .body(Body::empty())
-            .unwrap();
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = if req.method().as_str() == "TRACK" {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
         if trace {
             response
                 .headers_mut()
