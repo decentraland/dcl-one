@@ -279,12 +279,12 @@ async fn lock_counts(tx: &mut PgConnection, entity_id: &str) -> Result<i32, sqlx
         .bind(now())
         .execute(&mut *tx)
         .await?;
-    Ok(sqlx::query_scalar(
+    sqlx::query_scalar(
         "SELECT imported FROM explore.place_interaction_counts WHERE entity_id = $1 FOR UPDATE",
     )
     .bind(entity_id)
     .fetch_one(&mut *tx)
-    .await?)
+    .await
 }
 
 /// Recounts the entity's counter row from the facts (upstream
