@@ -89,6 +89,20 @@ struct Shared {
     statistics_pending: Notify,
 }
 
+impl Shared {
+    // Poison is permanent: revoke the generation so the process exits and is restarted.
+    fn control_poisoned(&self) {
+        let Some(authority) = &self.generation else {
+            tracing::error!("control positions lock poisoned");
+            return;
+        };
+        if !authority.lost().is_cancelled() {
+            tracing::error!("control positions lock poisoned; revoking the Pulse generation");
+            authority.lost().cancel();
+        }
+    }
+}
+
 /// Holds the outbox and the handle to the task draining it. Dropping it aborts that task, so the
 /// feed lives exactly as long as the server that owns it.
 pub struct NatsClusterFeed {
@@ -182,6 +196,7 @@ impl ClusterFeedPublisher for NatsClusterFeed {
     fn control_snapshot(&self) -> ControlSnapshot {
         // Poisoned: no control member joins the pass.
         let Ok(mut control) = self.shared.control.lock() else {
+            self.shared.control_poisoned();
             return ControlSnapshot::default();
         };
         control.snapshot()
@@ -534,7 +549,7 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         match enabled_now {
             Some(true) => break,
             Some(false) => {}
-            None => return control_poisoned().await,
+            None => return control_poisoned(shared).await,
         }
         enabled.await;
     }
@@ -551,35 +566,37 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         return;
     };
     let mut updates = futures::stream::select(updates, intents);
-    while let Some(message) = updates.next().await {
+    let mut poisoned = false;
+    while !poisoned && let Some(message) = updates.next().await {
         use crate::protocol::bus::control_position::{ControlPosition, LegacyRoomIntent};
         match message.subject.as_str() {
             crate::protocol::bus::control_position::SUBJECT => {
-                if let Some(update) = ControlPosition::decode(&message.payload)
-                    && shared.control.lock().map(|mut c| c.ingest(update)).is_err()
-                {
-                    return control_poisoned().await;
+                if let Some(update) = ControlPosition::decode(&message.payload) {
+                    poisoned = shared.control.lock().map(|mut c| c.ingest(update)).is_err();
                 }
             }
             LegacyRoomIntent::SUBJECT => {
-                if let Some(update) = LegacyRoomIntent::decode(&message.payload)
-                    && shared
+                if let Some(update) = LegacyRoomIntent::decode(&message.payload) {
+                    poisoned = shared
                         .control
                         .lock()
                         .map(|mut c| c.ingest_intent(update))
-                        .is_err()
-                {
-                    return control_poisoned().await;
+                        .is_err();
                 }
             }
             _ => {}
         }
     }
+    if poisoned {
+        // Unpolled subscriptions would fill and turn into slow-consumer drops.
+        drop(updates);
+        control_poisoned(shared).await;
+    }
 }
 
-// Park instead of returning so the other feed tasks keep the link up.
-async fn control_poisoned() {
-    tracing::error!("control positions lock poisoned; ingest stopped");
+// Parks rather than returning, which would rebuild the link against the same poisoned lock.
+async fn control_poisoned(shared: &Shared) {
+    shared.control_poisoned();
     std::future::pending().await
 }
 
@@ -1034,6 +1051,85 @@ mod tests {
             statistics_sequence: AtomicU64::new(0),
             statistics_pending: Notify::new(),
         })
+    }
+
+    struct Generation {
+        binding: crate::interfaces::PulseGenerationBinding,
+        lost: tokio_util::sync::CancellationToken,
+    }
+
+    impl crate::interfaces::PulseGeneration for Generation {
+        fn binding(&self) -> &crate::interfaces::PulseGenerationBinding {
+            &self.binding
+        }
+        fn lost(&self) -> &tokio_util::sync::CancellationToken {
+            &self.lost
+        }
+    }
+
+    fn poison_control(shared: &Shared) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = shared.control.lock();
+            panic!("poison the control lock");
+        }));
+        assert!(shared.control.is_poisoned());
+    }
+
+    #[test]
+    fn a_poisoned_control_lock_fails_closed() {
+        let shared = feed_shared(8);
+        poison_control(&shared);
+        let feed = NatsClusterFeed {
+            shared: shared.clone(),
+            drain: Mutex::new(None),
+        };
+
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(feed.enable_control_positions("audience").is_err());
+        let selected = CurrentAssignment {
+            wallet: "wallet".into(),
+            session: "session".into(),
+            realm: "realm".into(),
+            cluster_id: "room".into(),
+            owner_epoch: 1,
+            selected_origin: 2,
+            owner_peer: 0,
+            registration: None,
+        };
+        assert!(
+            shared
+                .current
+                .replace_checked(
+                    1,
+                    Duration::from_secs(2),
+                    vec![selected],
+                    Some(&shared.control)
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_poisoned_control_lock_revokes_the_generation() {
+        let lost = tokio_util::sync::CancellationToken::new();
+        let mut shared = Arc::into_inner(feed_shared(8)).expect("fresh shared state");
+        shared.generation = Some(Arc::new(Generation {
+            binding: crate::interfaces::PulseGenerationBinding {
+                audience: "audience".into(),
+                epoch: 1,
+                source_incarnation: uuid::Uuid::new_v4().to_string(),
+            },
+            lost: lost.clone(),
+        }));
+        let shared = Arc::new(shared);
+        poison_control(&shared);
+        let feed = NatsClusterFeed {
+            shared,
+            drain: Mutex::new(None),
+        };
+
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(lost.is_cancelled(), "the pass fences and ends this process");
     }
 
     // On a paused clock the 50 ms window only closes once the drain loop is idle, after it
