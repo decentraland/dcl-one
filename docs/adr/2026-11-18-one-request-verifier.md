@@ -107,10 +107,21 @@ available.
   `Date.parse` first, then the shapes it read before, so each accepts the
   forms `Date.parse` reads that it used to refuse: local content and worlds
   deployments, worlds mirroring, signed-fetch routes not yet on the verifier
-  (comms, worlds storage, shop lambdas), the archipelago and Pulse logins,
+  (comms, worlds storage, shop lambdas, the builder routes), the archipelago
+  and Pulse logins,
   explore's auth API, the social webhooks and the scene CLI. Content entities
   synced from a peer read only the earlier shapes and take any other
   expiration on the peer's word, as before.
+- The builder routes stay on `shared::signed_fetch` with
+  `VerificationProfile::builder`. They answer builder-server's refusals: a
+  401 whose message names the check that failed (auth chain, timestamp,
+  expiry or signature). `RequestAuthError` carries only a status and a
+  free-text message, so the verifier can't give those answers without
+  matching its message text. The profile takes the 6.x payload alone, 60 s
+  either side, and refuses the scene signer, metadata that isn't an object,
+  a repeated timestamp or metadata header, and scoped logins. The builder
+  routes move onto the verifier once `RequestAuthError` names the failed
+  stage.
 - `fixtures/request-vectors.json` holds requests signed by the reference
   clients with the reference's answers; regenerating it with
   `fixtures/gen-request-vectors.js` re-checks parity against a new release.
