@@ -1,5 +1,6 @@
 # Same as the workspace clippy.toml; clippy reads only the nearest file.
 large-error-threshold = 256
+allow-unwrap-in-tests = true
 
 # Production routes go through `catalyst_shared::routing` so axum proves one handler stack per state.
 disallowed-methods = [

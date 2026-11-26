@@ -196,6 +196,40 @@ describe('when looking at the summaries', () => {
     expect(await screen.findByText(/A lamp that glows at night · Partly achieved/)).toBeTruthy();
     expect(screen.getByText('Problems: wrong SDK knowledge')).toBeTruthy();
   });
+
+  it('should leave the goal out of a summary whose notes were dropped', async () => {
+    vi.mocked(api.listDigests).mockResolvedValue(
+      ok({
+        digests: [
+          {
+            conversationId: 's3',
+            goal: null,
+            outcome: 'partial',
+            frictions: [{ kind: 'tool_failed' }],
+            createdAt: '2026-11-12T09:00:00.000Z',
+          },
+        ],
+        next: null,
+      }),
+    );
+    mount({ consent: granted });
+
+    fireEvent.click(screen.getByRole('button', { name: copy.digests_show }));
+
+    const line = await screen.findByText(/Partly achieved/);
+    expect(line.textContent).not.toMatch(/·\s*·/);
+  });
+
+  it('should drop them when hidden, so a later delete does not load them again', async () => {
+    vi.mocked(api.listDigests).mockResolvedValue(ok({ digests: [], next: null }));
+    const { store } = mount({ consent: granted });
+    fireEvent.click(screen.getByRole('button', { name: copy.digests_show }));
+    await waitFor(() => expect(store.getState().aiSharing.digests.status).toBe('loaded'));
+
+    fireEvent.click(screen.getByRole('button', { name: copy.digests_hide }));
+
+    expect(store.getState().aiSharing.digests.status).toBe('idle');
+  });
 });
 
 describe('when deleting everything', () => {
@@ -221,6 +255,18 @@ describe('when deleting everything', () => {
 
     expect(await screen.findByText('Deleted 12 shared turns.')).toBeTruthy();
     expect(sharingSwitch().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('should say one turn, not one turns', async () => {
+    vi.mocked(api.eraseAll).mockResolvedValue(ok({ deleted: 1 }));
+    mount({ consent: granted });
+
+    fireEvent.click(screen.getByRole('button', { name: copy.delete }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy.delete_confirm_yes }));
+    });
+
+    expect(await screen.findByText('Deleted 1 shared turn.')).toBeTruthy();
   });
 
   it('should say when the delete failed', async () => {

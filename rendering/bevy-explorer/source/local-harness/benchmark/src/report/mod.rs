@@ -14,6 +14,7 @@
 
 mod exceptions;
 mod fleet;
+mod load_times;
 mod perf_summary;
 mod render;
 mod stats;
@@ -29,6 +30,10 @@ use crate::out;
 
 use exceptions::ExceptionKindCounts;
 pub use exceptions::{EXCEPTION_MARKER, EXIT_MARKER};
+use load_times::RunLoadTimes;
+pub use load_times::{
+    ARRIVED_IN_WORLD_PREFIX, AUTOPILOT_CATEGORY, FIRST_RING_READY_PREFIX, SCENE_TIMING_CATEGORY,
+};
 use perf_summary::ExplorerPerfSummary;
 use stats::{
     FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
@@ -75,6 +80,8 @@ struct BuildBenchmarkRun {
     exception_kinds: ExceptionKindCounts,
     /// The explorer's `perf_summary` lines, when the run wrote them.
     perf_summary: Option<ExplorerPerfSummary>,
+    /// The load times its log holds.
+    load_time_ms: RunLoadTimes,
 }
 
 /// A build's runs in a section, outliers excluded.
@@ -86,19 +93,32 @@ struct BuildBenchmarkRunsStatistics {
     /// Per run, not in total: after a crash or an exclusion the builds have different run counts.
     exceptions_per_run: f64,
     exception_kinds: ExceptionKindCounts,
-    /// The runs whose summary measured the hiccup count, which its row comes from.
-    cpu_hiccup_count_run_count: usize,
-    /// Frames over the hiccup threshold per run, across those runs.
-    cpu_hiccups_per_run: MedianAndRange,
+    /// Frames over the hiccup threshold per run, across the runs whose summary measured it.
+    cpu_hiccups_per_run: MeasuredRuns,
     /// The threshold in effect, the median across those runs.
     cpu_hiccup_threshold_ms: Option<f32>,
-    /// The runs whose summary measured the peak memory, which its row comes from.
-    peak_memory_run_count: usize,
-    /// Peak engine memory per run, MiB, across those runs.
-    peak_memory_mib: MedianAndRange,
+    /// Peak engine memory per run, MiB, across the runs whose summary measured it.
+    peak_memory_mib: MeasuredRuns,
     /// Self time per run, ms, of the scopes the summaries name, over every run with a summary
     /// (0 in a run whose top rows leave the scope out), highest first.
     scope_self_ms_per_run: Vec<(String, f32)>,
+    /// Per metric of [`stats::LOAD_TIME_METRICS`], across the runs whose log holds it.
+    load_time_ms: [MeasuredRuns; 2],
+}
+
+/// A value across the runs that measured it.
+struct MeasuredRuns {
+    run_count: usize,
+    value: MedianAndRange,
+}
+
+impl MeasuredRuns {
+    fn of(values: Vec<f32>) -> Self {
+        Self {
+            run_count: values.len(),
+            value: stats::median_and_range(values),
+        }
+    }
 }
 
 struct BaselineComparison {
@@ -107,6 +127,7 @@ struct BaselineComparison {
     exceptions_per_run_verdict: IncidentsPerRunVerdict,
     cpu_hiccups_per_run_verdict: IncidentsPerRunVerdict,
     peak_memory_verdict: PeakMemoryVerdict,
+    load_time_verdicts: [FrameTimeVerdict; 2],
 }
 
 /// The change against the latest release: frame times only.
@@ -169,11 +190,15 @@ impl RunnerSection {
         }
     }
 
-    /// The 🟢 and 🔴 frame-time verdicts.
-    fn frame_time_changes(&self, verdicts: &[FrameTimeVerdict; 6]) -> Vec<SignificantMetricChange> {
+    /// The 🟢 and 🔴 timing verdicts, each named by the metric at its index.
+    fn timing_changes(
+        &self,
+        verdicts: &[FrameTimeVerdict],
+        metrics: &[&'static str],
+    ) -> Vec<SignificantMetricChange> {
         verdicts
             .iter()
-            .zip(stats::FRAME_TIME_METRICS)
+            .zip(metrics.iter().copied())
             .filter_map(|(verdict, metric)| match *verdict {
                 FrameTimeVerdict::Faster(by) => Some(self.found(metric, true, by)),
                 FrameTimeVerdict::Slower(by) => Some(self.found(metric, false, by)),
@@ -186,7 +211,9 @@ impl RunnerSection {
     fn release_metric_changes(&self) -> Vec<SignificantMetricChange> {
         self.release_comparison
             .as_ref()
-            .map(|comparison| self.frame_time_changes(&comparison.frame_time_verdicts))
+            .map(|comparison| {
+                self.timing_changes(&comparison.frame_time_verdicts, &stats::FRAME_TIME_METRICS)
+            })
             .unwrap_or_default()
     }
 
@@ -195,7 +222,10 @@ impl RunnerSection {
         let Some(comparison) = &self.baseline_comparison else {
             return Vec::new();
         };
-        let mut findings = self.frame_time_changes(&comparison.frame_time_verdicts);
+        let mut findings =
+            self.timing_changes(&comparison.frame_time_verdicts, &stats::FRAME_TIME_METRICS);
+        findings
+            .extend(self.timing_changes(&comparison.load_time_verdicts, &stats::LOAD_TIME_METRICS));
         match comparison.exceptions_per_run_verdict {
             IncidentsPerRunVerdict::More => {
                 findings.push(self.found(stats::EXCEPTIONS_METRIC, false, 0.0))
@@ -414,18 +444,22 @@ fn read_runs(folder: &Path, build: &str) -> Result<Vec<BuildBenchmarkRun>, Strin
             let perf_summary = perf_summary::read_last_perf_summary(&log).map_err(|error| {
                 format!("{}: {}", file_name(&log), out::safe(&error.to_string()))
             })?;
+            let load_time_ms = load_times::read_load_times(&log).map_err(|error| {
+                format!("{}: {}", file_name(&log), out::safe(&error.to_string()))
+            })?;
             Ok(BuildBenchmarkRun {
                 sample_count,
                 frame_time_ms,
                 exception_count,
                 exception_kinds,
                 perf_summary,
+                load_time_ms,
             })
         })
         .collect()
 }
 
-/// Runs whose summary measured the value a build needs for its hiccup or memory verdict.
+/// Runs that measured the value a build needs for its hiccup, memory or load-time verdict.
 const MIN_MEASURED_RUNS: usize = 2;
 const TOO_FEW_MEASURED_RUNS: &str = "fewer than 2 runs measured it";
 
@@ -516,12 +550,12 @@ fn compare_builds(
             change_runs >= MIN_MEASURED_RUNS && base_runs >= MIN_MEASURED_RUNS
         };
         let cpu_hiccups_per_run_verdict = if measured_by_both(
-            change.cpu_hiccup_count_run_count,
-            base.cpu_hiccup_count_run_count,
+            change.cpu_hiccups_per_run.run_count,
+            base.cpu_hiccups_per_run.run_count,
         ) {
             stats::hiccups_per_run_verdict(
-                &change.cpu_hiccups_per_run,
-                &base.cpu_hiccups_per_run,
+                &change.cpu_hiccups_per_run.value,
+                &base.cpu_hiccups_per_run.value,
                 change.cpu_hiccup_threshold_ms,
                 base.cpu_hiccup_threshold_ms,
                 incomparable,
@@ -529,22 +563,33 @@ fn compare_builds(
         } else {
             IncidentsPerRunVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
         };
-        let peak_memory_verdict =
-            if measured_by_both(change.peak_memory_run_count, base.peak_memory_run_count) {
-                stats::peak_memory_verdict(
-                    &change.peak_memory_mib,
-                    &base.peak_memory_mib,
-                    incomparable,
-                )
+        let peak_memory_verdict = if measured_by_both(
+            change.peak_memory_mib.run_count,
+            base.peak_memory_mib.run_count,
+        ) {
+            stats::peak_memory_verdict(
+                &change.peak_memory_mib.value,
+                &base.peak_memory_mib.value,
+                incomparable,
+            )
+        } else {
+            PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
+        };
+        let load_time_verdicts = std::array::from_fn(|m| {
+            let (change, base) = (&change.load_time_ms[m], &base.load_time_ms[m]);
+            if measured_by_both(change.run_count, base.run_count) {
+                stats::load_time_verdict(&change.value, &base.value, incomparable)
             } else {
-                PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
-            };
+                FrameTimeVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
+            }
+        });
         BaselineComparison {
             base,
             frame_time_verdicts,
             exceptions_per_run_verdict,
             cpu_hiccups_per_run_verdict,
             peak_memory_verdict,
+            load_time_verdicts,
         }
     });
 
@@ -669,8 +714,7 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
             exceptions as f64 / runs.len() as f64
         },
         exception_kinds: ExceptionKindCounts::combine(runs.iter().map(|run| &run.exception_kinds)),
-        cpu_hiccup_count_run_count: cpu_hiccup_counts.len(),
-        cpu_hiccups_per_run: stats::median_and_range(cpu_hiccup_counts),
+        cpu_hiccups_per_run: MeasuredRuns::of(cpu_hiccup_counts),
         cpu_hiccup_threshold_ms: {
             let thresholds: Vec<f32> = summaries
                 .iter()
@@ -678,9 +722,11 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
                 .collect();
             (!thresholds.is_empty()).then(|| stats::median_and_range(thresholds).median)
         },
-        peak_memory_run_count: peak_memories_mib.len(),
-        peak_memory_mib: stats::median_and_range(peak_memories_mib),
+        peak_memory_mib: MeasuredRuns::of(peak_memories_mib),
         scope_self_ms_per_run,
+        load_time_ms: std::array::from_fn(|m| {
+            MeasuredRuns::of(runs.iter().filter_map(|run| run.load_time_ms[m]).collect())
+        }),
     }
 }
 
@@ -762,6 +808,7 @@ mod tests {
             exception_count: 0,
             exception_kinds: ExceptionKindCounts::default(),
             perf_summary: None,
+            load_time_ms: [None; 2],
         };
         let section = compare_builds(
             "apple-m1".to_owned(),
@@ -829,6 +876,7 @@ mod tests {
             exception_count: 0,
             exception_kinds: ExceptionKindCounts::default(),
             perf_summary: summary,
+            load_time_ms: [None, None],
         };
         let summary = |hiccups: Option<u64>, mib: Option<u64>| {
             Some(ExplorerPerfSummary {
@@ -916,6 +964,7 @@ mod tests {
         let run = |cpu: f32, gpu: f32| BuildBenchmarkRun {
             sample_count: 1000,
             frame_time_ms: [cpu, cpu, cpu, gpu, gpu, gpu],
+            load_time_ms: [None, None],
             exception_count: 0,
             exception_kinds: ExceptionKindCounts::default(),
             perf_summary: None,

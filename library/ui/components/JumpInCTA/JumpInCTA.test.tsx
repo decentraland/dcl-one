@@ -56,4 +56,36 @@ describe('JumpInCTA', () => {
       expect(screen.getByRole('button')).toBeDisabled()
     })
   })
+
+  describe('when it takes the hud appearance', () => {
+    it('adds the hud class beside its size and keeps the consumer class', () => {
+      render(<JumpInCTA appearance="hud" size="md" className="placed" />)
+      const button = screen.getByRole('button', { name: 'Jump in' })
+      expect(button.className).toMatch(/hud/)
+      expect(button.className).toMatch(/md/)
+      expect(button.className).toMatch(/placed/)
+    })
+
+    it('does not add the hud class by default', () => {
+      render(<JumpInCTA />)
+      expect(screen.getByRole('button').className).not.toMatch(/hud/)
+    })
+  })
+
+  describe('when given an icon', () => {
+    it('draws it in place of the default icon, under the caller\'s accessible name', () => {
+      const { container } = render(
+        <JumpInCTA aria-label="Jump in to Genesis Plaza" label="JUMP IN" icon={<span data-testid="own" aria-hidden="true" />} />
+      )
+      expect(screen.getByRole('button', { name: 'Jump in to Genesis Plaza' })).toHaveTextContent('JUMP IN')
+      expect(screen.getByTestId('own')).toBeInTheDocument()
+      expect(container.querySelector('svg')).toBeNull()
+    })
+
+    it('still shows the spinner while loading', () => {
+      const { container } = render(<JumpInCTA loading icon={<span data-testid="own" />} />)
+      expect(screen.queryByTestId('own')).toBeNull()
+      expect(container.querySelector('[aria-hidden="true"]')).not.toBeNull()
+    })
+  })
 })

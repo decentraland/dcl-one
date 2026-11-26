@@ -155,6 +155,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::excessive_precision, reason = "exact inputs")]
     fn number_to_string_matches_ecmascript() {
         for (n, s) in [
             (1_700_000_000_000.0, "1700000000000"),

@@ -20,7 +20,7 @@ import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '@shop/detail/lib/body
 import { hostOr } from '@shop-host'
 import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names/name'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
+import { Chip, ChevronDown, ChevronLeft, OptionMenu, Pager, SearchField, showConfirm, showToast, Tabs, type TabItem } from '@hud/design'
 import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
 import type { EngineViewportRegion, PreviewFocus, PreviewStageFraming, Wearable } from '@explorer-core/engine/protocol'
@@ -46,7 +46,7 @@ import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, w
 import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
 import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
-import { ShopCardSkeleton } from '@dcl/one-ui'
+import { Button, EmptyState, MaskIcon, ScrollThumb, ShopCardSkeleton, Spinner } from '@dcl/one-ui'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
 import { inShell } from '@explorer-core/lib/shell'
@@ -554,7 +554,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           <div className={styles.tools}>
             <>
                 <div className={styles.menuWrap}>
-                  <Button variant="light" className={styles.toolBtn} aria-expanded={menu === 'filters'} onClick={() => setMenu((m) => (m === 'filters' ? null : 'filters'))}>
+                  <Button appearance="hud" variant="light" className={styles.toolBtn} aria-expanded={menu === 'filters'} onClick={() => setMenu((m) => (m === 'filters' ? null : 'filters'))}>
                     <MaskIcon src={filterIcon} size={24} />
                     Filters
                     <ChevronDown size={18} />
@@ -564,7 +564,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                   )}
                 </div>
                 <div className={styles.menuWrap}>
-                  <Button variant="light" className={`${styles.toolBtn} ${styles.sortBtn}`} aria-label={`Sort by: ${sortLabel}`} aria-expanded={menu === 'sort'} onClick={() => setMenu((m) => (m === 'sort' ? null : 'sort'))}>
+                  <Button appearance="hud" variant="light" className={`${styles.toolBtn} ${styles.sortBtn}`} aria-label={`Sort by: ${sortLabel}`} aria-expanded={menu === 'sort'} onClick={() => setMenu((m) => (m === 'sort' ? null : 'sort'))}>
                     Sort by
                     <ChevronDown size={18} />
                   </Button>
@@ -669,7 +669,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           )}
           {grid.isPending && isCatalogue(section) && (
             <div className={styles.avatarLoading} role="status" aria-label="Loading the avatar">
-              <Spinner variant="shop" size={64} />
+              <Spinner variant="thick" size={64} />
             </div>
           )}
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>

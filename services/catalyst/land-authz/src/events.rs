@@ -224,7 +224,9 @@ pub static ESTATE_TOPICS: LazyLock<(String, String)> = LazyLock::new(|| {
 /// estate); `account` is the owner for `approval`/`update_manager`/
 /// `approved_for_all`, `to` for `transfer`, the destinatary for
 /// `remove_land`; `operator` the grantee; `approved` the flag of the two
-/// account-wide legs.
+/// account-wide legs. A `transfer` also keeps its sender (`from_address`,
+/// the zero address for a mint) and its transaction (`tx_hash`), which the
+/// activity's transfer leg names; every other kind leaves both `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthzEvent {
     pub block_number: i64,
@@ -237,6 +239,8 @@ pub struct AuthzEvent {
     pub account: Option<String>,
     pub operator: Option<String>,
     pub approved: Option<bool>,
+    pub from_address: Option<String>,
+    pub tx_hash: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -282,7 +286,7 @@ fn u256_topic_to_decimal(topic: &str) -> Option<String> {
             carry /= 10;
         }
     }
-    while digits.len() > 1 && *digits.last().unwrap() == 0 {
+    while digits.len() > 1 && digits.last() == Some(&0) {
         digits.pop();
     }
     Some(digits.iter().rev().map(|d| (b'0' + d) as char).collect())
@@ -327,6 +331,8 @@ pub fn decode_log(
         account: None,
         operator: None,
         approved: None,
+        from_address: None,
+        tx_hash: None,
     };
     let uint = |i: usize, field: &'static str| {
         u256_topic_to_decimal(&topics[i]).ok_or(DecodeError::Field { field })
@@ -358,6 +364,7 @@ pub fn decode_log(
             Ok(AuthzEvent {
                 token_id: Some(uint(3, "assetId")?),
                 account: addr_from_topic(&topics[2]),
+                from_address: addr_from_topic(&topics[1]),
                 ..base(KIND_TRANSFER)
             })
         }
@@ -691,6 +698,77 @@ mod tests {
             (ev.kind, ev.token_id.as_deref(), ev.account.as_deref()),
             (KIND_TRANSFER, Some("1"), Some(to))
         );
+    }
+
+    /// Each of the three `Transfer` shapes keeps its sender (topic 1); no
+    /// other kind carries one, and the decoder leaves the transaction to the
+    /// log reader.
+    #[test]
+    fn every_transfer_shape_keeps_its_sender() {
+        let from = "0xaaaa000000000000000000000000000000000001";
+        let to = "0x4959f54f7b30224047ac3cae6bf147bbaee8b61c";
+        for (registry, topic0) in [
+            (LAND_REGISTRY_MAINNET, TOPIC_TRANSFER_5),
+            (LAND_REGISTRY_MAINNET, TOPIC_TRANSFER_6),
+            (ESTATE_REGISTRY_MAINNET, TOPIC_TRANSFER_3),
+        ] {
+            let ev = decode_log(
+                registry,
+                &[
+                    topic0.to_string(),
+                    topic_addr(from),
+                    topic_addr(to),
+                    ONE.to_string(),
+                ],
+                "0x",
+                7,
+                1,
+                0,
+            )
+            .unwrap();
+            assert_eq!(
+                (
+                    ev.from_address.as_deref(),
+                    ev.account.as_deref(),
+                    ev.tx_hash
+                ),
+                (Some(from), Some(to), None),
+                "{topic0}"
+            );
+        }
+        let mint = decode_log(
+            LAND_REGISTRY_MAINNET,
+            &[
+                TOPIC_TRANSFER_5.to_string(),
+                ZERO.to_string(),
+                topic_addr(to),
+                ONE.to_string(),
+            ],
+            "0x",
+            7,
+            2,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            mint.from_address.as_deref(),
+            Some("0x0000000000000000000000000000000000000000")
+        );
+        let approval = decode_log(
+            LAND_REGISTRY_MAINNET,
+            &[
+                TOPIC_APPROVAL.to_string(),
+                topic_addr(from),
+                topic_addr(to),
+                ONE.to_string(),
+            ],
+            "0x",
+            7,
+            3,
+            0,
+        )
+        .unwrap();
+        assert_eq!(approval.from_address, None);
     }
 
     #[test]

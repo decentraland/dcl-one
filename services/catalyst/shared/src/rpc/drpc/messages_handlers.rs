@@ -557,7 +557,7 @@ fn ack_key(port: u32, message: u32, sequence: u32) -> AckKey {
 /// Holds the per-message acknowledge listeners that pace stream sending.
 #[derive(Default)]
 pub struct StreamsHandler {
-    ack_listeners: std::sync::Mutex<HashMap<AckKey, OneShotSender<Vec<u8>>>>,
+    ack_listeners: parking_lot::Mutex<HashMap<AckKey, OneShotSender<Vec<u8>>>>,
 }
 
 // Synchronous short map lock makes cleanup cancellation-safe on every exit branch.
@@ -567,7 +567,7 @@ struct AckReservation<'a> {
 }
 impl Drop for AckReservation<'_> {
     fn drop(&mut self) {
-        self.handler.ack_listeners.lock().unwrap().remove(&self.key);
+        self.handler.ack_listeners.lock().remove(&self.key);
     }
 }
 
@@ -597,14 +597,13 @@ impl<T: Transport + ?Sized + 'static> Drop for BoundedStreamLifetime<T> {
 impl StreamsHandler {
     #[cfg(test)]
     pub(crate) fn pending_ack_count(&self) -> usize {
-        self.ack_listeners.lock().unwrap().len()
+        self.ack_listeners.lock().len()
     }
     #[cfg(test)]
     pub(crate) fn complete_test_ack(&self, port: u32, message: u32, sequence: u32, bytes: Vec<u8>) {
         if let Some(sender) = self
             .ack_listeners
             .lock()
-            .unwrap()
             .remove(&ack_key(port, message, sequence))
         {
             let _ = sender.send(bytes);
@@ -612,7 +611,7 @@ impl StreamsHandler {
     }
     pub fn new() -> Self {
         Self {
-            ack_listeners: std::sync::Mutex::new(HashMap::new()),
+            ack_listeners: parking_lot::Mutex::new(HashMap::new()),
         }
     }
 
@@ -769,7 +768,7 @@ impl StreamsHandler {
             };
             let key = ack_key(port_id, message_number, candidate);
             let (tx, rx) = oneshot_channel();
-            self.ack_listeners.lock().unwrap().insert(key, tx);
+            self.ack_listeners.lock().insert(key, tx);
             let _reservation = AckReservation { handler: self, key };
             let handed_off = std::sync::atomic::AtomicBool::new(false);
             let exchange = async {
@@ -886,7 +885,7 @@ impl StreamsHandler {
         let (_, message_number) = parse_message_identifier(message.message_identifier);
         let (tx, rx) = oneshot_channel();
         {
-            let mut lock = self.ack_listeners.lock().unwrap();
+            let mut lock = self.ack_listeners.lock();
             if lock
                 .insert(
                     ack_key(message.port_id, message_number, message.sequence_id),
@@ -906,7 +905,7 @@ impl StreamsHandler {
                 "> StreamsHandler > send_stream > Error while sending through transport - message: {message:?} - Error: {error:?}"
             );
             {
-                let mut lock = self.ack_listeners.lock().unwrap();
+                let mut lock = self.ack_listeners.lock();
                 lock.remove(&ack_key(
                     message.port_id,
                     message_number,
@@ -929,7 +928,7 @@ impl StreamsHandler {
             match parse_protocol_message::<StreamMessage>(&payload) {
                 Ok((_, _, stream_message)) => {
                     let listener = {
-                        let mut lock = self.ack_listeners.lock().unwrap();
+                        let mut lock = self.ack_listeners.lock();
                         lock.remove(&ack_key(
                             stream_message.port_id,
                             message_number,
@@ -989,7 +988,7 @@ mod tests {
         let (first, mut first_rx) = oneshot_channel();
         let (second, mut second_rx) = oneshot_channel();
         {
-            let mut listeners = handler.ack_listeners.lock().unwrap();
+            let mut listeners = handler.ack_listeners.lock();
             listeners.insert(ack_key(1, 7, 1), first);
             listeners.insert(ack_key(2, 7, 1), second);
         }

@@ -1,0 +1,19 @@
+{
+  "name": "movement-scene",
+  "description": "Portable scene that computes the Explorer player's movement",
+  "version": "1.0.0",
+  "dependencies": {
+    "@dcl/sdk": "7.27.1-33247605236.commit-732120a",
+    "@dcl/js-runtime": "7.27.1-33247605236.commit-732120a"
+  },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=11.27"
+  },
+  "scripts": {
+    "build": "sdk-commands build --skip-install",
+    "deploy": "sdk-commands deploy",
+    "start": "sdk-commands start"
+  },
+  "packageManager": "pnpm@12.21.0"
+}

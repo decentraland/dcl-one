@@ -19,6 +19,7 @@ chrono.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
+parking_lot.workspace = true
 tower = { version = "0.5", features = ["util"], optional = true }
 
 [features]
@@ -30,3 +31,6 @@ catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["scratch"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+
+[lints.clippy]
+unwrap_used = "deny"

@@ -11,8 +11,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const EVENT_ID: &str = "9a1e0000-0000-4000-8000-000000000001";
 const LOCAL_EVENT_ID: &str = "9a1e0000-0000-4000-8000-000000000003";

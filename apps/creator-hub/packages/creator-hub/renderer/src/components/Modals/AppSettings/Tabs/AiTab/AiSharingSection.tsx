@@ -77,9 +77,12 @@ export function AiSharingSection() {
   }, [showShared, address, dispatch]);
 
   useEffect(() => {
-    if (showDigests && address !== null) {
-      void dispatch(aiSharingActions.loadDigests({ reset: true }));
-    }
+    if (!showDigests || address === null) return;
+    void dispatch(aiSharingActions.loadDigests({ reset: true }));
+    // Hidden summaries are dropped, so an erasure doesn't load them again.
+    return () => {
+      dispatch(aiSharingActions.clearDigests());
+    };
   }, [showDigests, address, dispatch]);
 
   if (!visible) return null;
@@ -291,7 +294,7 @@ export function AiSharingSection() {
                   return (
                     <div key={digest.conversationId}>
                       <p className={`${styles.line} ${styles.gray}`}>
-                        {day(digest.createdAt)} · {digest.goal} ·{' '}
+                        {day(digest.createdAt)} · {digest.goal ? `${digest.goal} · ` : ''}
                         {translated(
                           `modal.app_settings.fields.ai_sharing.digest_outcome.${digest.outcome}`,
                           digest.outcome,

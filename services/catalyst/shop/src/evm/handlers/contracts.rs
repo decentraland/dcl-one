@@ -1,7 +1,8 @@
 //! `GET /v1/contracts/{address}`: whitelisted or a mirrored collection
 //! answers `{ok: true}`, a known non-member 404; while the collections
-//! mirror has no complete pass on the relay's network the answer is the
-//! unavailable envelope, never a 404 out of an empty table.
+//! mirror has no complete pass on the relay's network, or the collections
+//! index owns it and cannot authorize a read, the answer is the unavailable
+//! envelope, never a 404 out of an empty table.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -24,6 +25,10 @@ pub async fn contracts_address(
         Membership::MirrorUnavailable => unavailable(
             Source::CollectionsMirror,
             "the collections mirror has no complete pass yet, so contract membership cannot be decided",
+        ),
+        Membership::IndexUnavailable(why) => unavailable(
+            Source::CollectionsIndex,
+            &format!("{why}, so contract membership cannot be decided"),
         ),
     })
 }

@@ -1,14 +1,12 @@
 import * as components from '../../packages/@dcl/ecs/src/components'
 import { TRANSFORM_LENGTH } from '../../packages/@dcl/ecs/src/components/manual/Transform'
-import { Engine, Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../packages/@dcl/ecs/src/engine'
 import { Quaternion, Vector3 } from '../../packages/@dcl/sdk/src/math'
 
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
-import {
-  CrdtMessageType,
-  CRDT_MESSAGE_HEADER_LENGTH,
-  PutComponentMessageBody
-} from '../../packages/@dcl/ecs/src/serialization/crdt/types'
+import type { PutComponentMessageBody } from '../../packages/@dcl/ecs/src/serialization/crdt/types'
+import { CrdtMessageType, CRDT_MESSAGE_HEADER_LENGTH } from '../../packages/@dcl/ecs/src/serialization/crdt/types'
 
 import {
   CrdtMessageProtocol,

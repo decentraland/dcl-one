@@ -4,9 +4,10 @@
 // violet card as the scene permission prompt.
 
 import { useState } from 'react'
-import { Button, TextInput, openPopup } from '../../design'
+import { TextInput, openPopup } from '../../design'
 import type { WorldPasswordRequestMessage } from '@explorer-core/engine/protocol'
 import styles from './WorldPasswordDialog.module.css'
+import { Button } from '@dcl/one-ui'
 
 function LockIcon(): React.JSX.Element {
   return (
@@ -67,10 +68,10 @@ export function WorldPasswordDialog({
         </div>
       ) : null}
       <div className={styles.actions}>
-        <Button variant="ghost" type="button" className={styles.cancel} onClick={() => onResolve(null)}>
+        <Button appearance="hud" variant="ghost" type="button" className={styles.cancel} onClick={() => onResolve(null)}>
           Cancel
         </Button>
-        <Button variant="primary" type="submit" disabled={password.length === 0}>
+        <Button appearance="hud" variant="primary" type="submit" disabled={password.length === 0}>
           Enter
         </Button>
       </div>

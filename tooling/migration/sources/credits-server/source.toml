@@ -29,16 +29,25 @@ Not migrated, by reason:
   refund ledger rows.
 - iap_credits, iap_account_tokens (App Store state; the node has no IAP),
   seasons, goals, season_goals, user_progress (the seasons domain is gone),
-  sale_proceeds, proceeds_cursor, proceeds_abandoned_fills, studios,
-  studio_operators, studio_budget_entries, shop_daily_summaries,
-  usd_purchase_alerts (no target; their money effects are user_credits rows).
+  sale_proceeds, proceeds_cursor, proceeds_abandoned_fills,
+  shop_daily_summaries, usd_purchase_alerts (no target; their money effects
+  are user_credits rows).
+
+Studios, their operators and their budget entries are imported after the
+ledger, so each budget grant links to the credit it gave. The grant audit
+step then links the granter, reason and annotation of imported USD grants
+and studio grants. Each batch reports how many grants were linked, already
+linked, or missing a matching ledger row. Each unmatched available grant
+raises a warning with its upstream credit ID (see MAPPING.md).
 - Node-only state left to the node: packs (upstream packs are code), idempotency,
   captcha_challenges, carts, cart_items, checkouts, fulfillment_outbox,
   authorizations, authorization_lines, usage_settlements, revocations, usages,
   usage_index_cursor.
 
 No step has a watermark; every run re-scans and the loads are idempotent
-(ledger rows by tx_ref, purchases by order_id, wallets and flags by address).
+(ledger rows by tx_ref, purchases by order_id, wallets and flags by address,
+studios and budget entries by upstream id, operators by studio and address,
+grant audits by their existing ledger link).
 A row the node changed later (a purchase with a newer updated_at, a flag
 lifted by an operator) is kept.
 """
@@ -119,4 +128,68 @@ columns = [
   { name = "kind", type = "text" },
   { name = "amount", type = "numeric" },
   { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "studio"
+targets = ["credits.studios"]
+extract = "studio.extract.sql"
+load = "studio.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "name", type = "text" },
+  { name = "status", type = "text" },
+  { name = "created_by", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "studio_operator"
+targets = ["credits.studio_operators"]
+extract = "studio_operator.extract.sql"
+load = "studio_operator.load.sql"
+key = ["studio_id", "address"]
+whole = true
+columns = [
+  { name = "studio_id", type = "uuid" },
+  { name = "address", type = "text" },
+  { name = "added_by", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "studio_budget_entry"
+targets = ["credits.studio_budget_entries"]
+extract = "studio_budget_entry.extract.sql"
+load = "studio_budget_entry.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "studio_id", type = "uuid" },
+  { name = "usd_cents", type = "bigint" },
+  { name = "kind", type = "text" },
+  { name = "credit_id", type = "text" },
+  { name = "note", type = "text" },
+  { name = "idempotency_key", type = "text" },
+  { name = "request_hash", type = "text" },
+  { name = "created_by", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "grant_audit"
+targets = ["ops.admin_audit", "credits.ledger"]
+extract = "grant_audit.extract.sql"
+load = "grant_audit.load.sql"
+key = ["credit_id"]
+columns = [
+  { name = "credit_id", type = "text" },
+  { name = "address", type = "text" },
+  { name = "credit_source", type = "text" },
+  { name = "actor", type = "text" },
+  { name = "reason", type = "text" },
+  { name = "annotation", type = "text" },
+  { name = "granted_at", type = "timestamptz" },
 ]

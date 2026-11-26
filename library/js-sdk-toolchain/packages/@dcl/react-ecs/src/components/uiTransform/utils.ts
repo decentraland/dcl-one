@@ -9,7 +9,7 @@ import {
   YGWrap,
   PointerFilterMode
 } from '@dcl/ecs'
-import {
+import type {
   AlignType,
   FlexDirectionType,
   DisplayType,
@@ -25,8 +25,8 @@ import {
   UiTransformProps
 } from './types'
 import { calcOnViewport, getUiScaleFactor } from '../utils'
-import { ScaleUnit } from '../types'
-import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
+import type { ScaleUnit } from '../types'
+import type { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
 
 function capitalize<T extends string>(value: T): Capitalize<T> {
   return `${value[0].toUpperCase()}${value.slice(1, value.length)}` as Capitalize<T>
