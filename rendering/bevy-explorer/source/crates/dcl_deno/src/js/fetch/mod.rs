@@ -26,7 +26,7 @@ use request_budget::SceneRequestBudget;
 use dcl_types::{interface::crdt_context::CrdtContext, RpcCalls, SceneResourceCounters};
 
 /// The cancel handle `op_fetch` returns alongside the request.
-pub struct FetchCancelHandle(pub Rc<CancelHandle>);
+struct FetchCancelHandle(Rc<CancelHandle>);
 
 impl Resource for FetchCancelHandle {
     fn name(&self) -> std::borrow::Cow<'_, str> {

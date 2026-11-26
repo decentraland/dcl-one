@@ -77,7 +77,7 @@ const CLOSE_NO_STATUS: u16 = 1005;
 const CLOSE_ABNORMAL: u16 = 1006;
 const CLOSE_PROTOCOL_ERROR: u16 = 1002;
 
-pub fn ops() -> Vec<OpDecl> {
+pub(crate) fn ops() -> Vec<OpDecl> {
     vec![
         op_ws_create(),
         op_ws_connect(),
@@ -392,7 +392,7 @@ impl Drop for WsResource {
 /// itself is made by [`op_ws_connect`]; closing the returned resource cancels it.
 #[op2(fast)]
 #[smi]
-pub fn op_ws_create(
+fn op_ws_create(
     state: &mut OpState,
     #[string] url: String,
     #[string] protocols: String,
@@ -626,7 +626,7 @@ fn get_resource(state: &OpState, rid: ResourceId) -> Result<Rc<WsResource>, AnyE
 /// Completes the connection [`op_ws_create`] started and returns the agreed protocol.
 #[op2]
 #[string]
-pub async fn op_ws_connect(
+async fn op_ws_connect(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
 ) -> Result<String, OpError> {
@@ -826,7 +826,7 @@ fn send(
 }
 
 #[op2(fast)]
-pub fn op_ws_send_text(
+fn op_ws_send_text(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[string] data: String,
@@ -835,7 +835,7 @@ pub fn op_ws_send_text(
 }
 
 #[op2]
-pub fn op_ws_send_binary(
+fn op_ws_send_binary(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[anybuffer] data: &[u8],
@@ -846,7 +846,7 @@ pub fn op_ws_send_binary(
 }
 
 #[op2(fast)]
-pub fn op_ws_send_binary_ab(
+fn op_ws_send_binary_ab(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     #[arraybuffer] data: &[u8],
@@ -860,7 +860,7 @@ pub fn op_ws_send_binary_ab(
 /// not yet seen that result; before then it cancels the connection. The socket is dropped
 /// when the peer answers or after the close timeout.
 #[op2]
-pub fn op_ws_close(
+fn op_ws_close(
     state: &mut OpState,
     #[smi] rid: ResourceId,
     code: Option<f64>,
@@ -906,7 +906,7 @@ pub fn op_ws_close(
 /// Waits for the next event and returns its kind: 0 text, 1 binary, 2 close, 3 error. The
 /// payload, close code and reason or error are read with the getters below.
 #[op2]
-pub async fn op_ws_next_event(
+async fn op_ws_next_event(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
 ) -> Result<u16, OpError> {
@@ -959,7 +959,7 @@ pub async fn op_ws_next_event(
 
 #[op2]
 #[serde]
-pub fn op_ws_get_buffer(
+fn op_ws_get_buffer(
     state: &mut OpState,
     #[smi] rid: ResourceId,
 ) -> Result<Option<ToJsBuffer>, OpError> {
@@ -970,7 +970,7 @@ pub fn op_ws_get_buffer(
 
 #[op2]
 #[string]
-pub fn op_ws_get_buffer_as_string(
+fn op_ws_get_buffer_as_string(
     state: &mut OpState,
     #[smi] rid: ResourceId,
 ) -> Result<Option<String>, OpError> {
@@ -981,14 +981,14 @@ pub fn op_ws_get_buffer_as_string(
 
 #[op2(fast)]
 #[smi]
-pub fn op_ws_get_close_code(state: &mut OpState, #[smi] rid: ResourceId) -> Result<u32, OpError> {
+fn op_ws_get_close_code(state: &mut OpState, #[smi] rid: ResourceId) -> Result<u32, OpError> {
     Ok(get_resource(state, rid)?.close_code.get().into())
 }
 
 /// The close reason after a close event, or the error message after an error event.
 #[op2]
 #[string]
-pub fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<String, OpError> {
+fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<String, OpError> {
     let resource = get_resource(state, rid)?;
     let message = std::mem::take(&mut *resource.message.borrow_mut());
     Ok(message)
@@ -996,10 +996,7 @@ pub fn op_ws_get_error(state: &mut OpState, #[smi] rid: ResourceId) -> Result<St
 
 #[op2(fast)]
 #[smi]
-pub fn op_ws_get_buffered_amount(
-    state: &mut OpState,
-    #[smi] rid: ResourceId,
-) -> Result<u32, OpError> {
+fn op_ws_get_buffered_amount(state: &mut OpState, #[smi] rid: ResourceId) -> Result<u32, OpError> {
     let buffered = get_resource(state, rid)?
         .backlog
         .bytes

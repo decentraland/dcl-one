@@ -12,7 +12,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::errors::OpError;
 
 /// The folder that holds a scene's `local_storage` database.
-pub struct LocalStorageDir(pub PathBuf);
+pub(crate) struct LocalStorageDir(pub(crate) PathBuf);
 
 const MAX_STORAGE_BYTES: usize = 10 * 1024 * 1024;
 
@@ -149,13 +149,13 @@ fn remove(state: &mut OpState, key: &str, persistent: bool) -> Result<(), OpErro
 }
 
 #[op2(fast)]
-pub fn op_webstorage_length(state: &mut OpState, persistent: bool) -> Result<u32, OpError> {
+fn op_webstorage_length(state: &mut OpState, persistent: bool) -> Result<u32, OpError> {
     Ok(iterate_keys(state, persistent)?.count() as u32)
 }
 
 #[op2]
 #[string]
-pub fn op_webstorage_key(
+fn op_webstorage_key(
     state: &mut OpState,
     #[smi] index: u32,
     persistent: bool,
@@ -166,7 +166,7 @@ pub fn op_webstorage_key(
 }
 
 #[op2(fast)]
-pub fn op_webstorage_set(
+fn op_webstorage_set(
     state: &mut OpState,
     #[string] key: &str,
     #[string] value: &str,
@@ -178,7 +178,7 @@ pub fn op_webstorage_set(
 
 #[op2]
 #[string]
-pub fn op_webstorage_get(
+fn op_webstorage_get(
     state: &mut OpState,
     #[string] key_name: String,
     persistent: bool,
@@ -188,7 +188,7 @@ pub fn op_webstorage_get(
 }
 
 #[op2(fast)]
-pub fn op_webstorage_remove(
+fn op_webstorage_remove(
     state: &mut OpState,
     #[string] key_name: &str,
     persistent: bool,
@@ -198,7 +198,7 @@ pub fn op_webstorage_remove(
 }
 
 #[op2(fast)]
-pub fn op_webstorage_clear(state: &mut OpState, persistent: bool) -> Result<(), OpError> {
+fn op_webstorage_clear(state: &mut OpState, persistent: bool) -> Result<(), OpError> {
     for key in iterate_keys(state, persistent)?.collect::<Vec<_>>() {
         remove(state, &key, persistent)?;
     }
@@ -207,7 +207,7 @@ pub fn op_webstorage_clear(state: &mut OpState, persistent: bool) -> Result<(), 
 
 #[op2]
 #[serde]
-pub fn op_webstorage_iterate_keys(
+fn op_webstorage_iterate_keys(
     state: &mut OpState,
     persistent: bool,
 ) -> Result<Vec<String>, OpError> {
