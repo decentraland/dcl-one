@@ -200,6 +200,14 @@ impl Credits {
     /// The credits held by the wallet's live pledges, for the balance's
     /// `usd.held` block: `None` when nothing is held.
     pub async fn held(&self, address: &str) -> Result<Option<HeldOut>, ApiError> {
+        Self::held_on(&self.pool, address).await
+    }
+
+    /// [`Self::held`] on `executor`, for a read within one snapshot.
+    pub(crate) async fn held_on<'e, E: sqlx::PgExecutor<'e>>(
+        executor: E,
+        address: &str,
+    ) -> Result<Option<HeldOut>, ApiError> {
         let rows = sqlx::query(
             "SELECT a.id, a.usd_cents, a.expires_at, a.status, \
                     (SELECT contract_address FROM credits.authorization_lines l WHERE l.authorization_id = a.id ORDER BY position LIMIT 1) AS contract_address, \
@@ -208,7 +216,7 @@ impl Credits {
              FROM credits.authorizations a WHERE a.address = $1 AND a.status IN ('authorized', 'retired') ORDER BY a.created_at DESC",
         )
         .bind(address)
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
         if rows.is_empty() {
             return Ok(None);

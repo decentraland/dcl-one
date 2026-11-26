@@ -84,6 +84,8 @@ pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
 mod processing_timing;
+#[cfg(feature = "explorer")]
+mod reaction;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -232,6 +234,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(AvatarTexturePlugin);
         app.add_plugins(DynamicNametagPlugin);
         app.add_plugins(NametagPlugin);
+        app.add_plugins(reaction::ReactionPlugin);
         app.add_plugins(JumpMarkerPlugin);
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);

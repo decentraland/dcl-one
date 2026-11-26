@@ -1,6 +1,7 @@
 import { readFile } from 'fs/promises'
 import { fileURLToPath } from 'url'
-import { BasicSourceMapConsumer, SourceMapConsumer, SourceNode } from 'source-map'
+import type { BasicSourceMapConsumer } from 'source-map'
+import { SourceMapConsumer, SourceNode } from 'source-map'
 import { existsSync } from 'fs'
 
 /**

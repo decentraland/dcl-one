@@ -59,6 +59,21 @@ struct OzTransactionData {
     status_reason: Option<String>,
 }
 
+impl OzTransactionData {
+    fn broadcast_failure(&self) -> Option<ApiError> {
+        let tx_hash = crate::types::normalize_tx_hash(self.hash.as_ref()?.as_deref()?)?;
+        let reason = self
+            .status_reason
+            .as_deref()
+            .filter(|reason| !reason.is_empty())
+            .unwrap_or(&self.status);
+        Some(ApiError::BroadcastFailed {
+            message: format!("Transaction {}: {reason}", self.status),
+            tx_hash,
+        })
+    }
+}
+
 /// A 408 or a 499 can come from a proxy in front of the relayer, which gives one when it timed out
 /// or the caller went away, possibly after it forwarded the submission. The status does not say
 /// who answered, so, unlike the relayer's other 4xx, neither is taken as proof that no transaction
@@ -345,7 +360,7 @@ impl Relayer {
     }
 
     /// Submits the call and waits for its hash. Only an answer that proves the relayer created no
-    /// transaction is a refusal: a 400 or 422 to the submission (`RelayReverted`), another 4xx
+    /// transaction is a refusal: a 400 or 422 to the submission (`RelayerRefused`), another 4xx
     /// (`RelayerFailed`), or a connection that never opened (`RelayerUnavailable`). Once the
     /// relayer may hold the transaction (a submission cut after it was sent, a 5xx, a hop's 408 or
     /// 499, a 2xx that cannot be read), the outcome is unknown: `RelayerTimeout`. Each of those
@@ -378,7 +393,7 @@ impl Relayer {
         if !status.is_success() {
             let text = String::from_utf8_lossy(&body).into_owned();
             if status.as_u16() == 422 || status.as_u16() == 400 {
-                return Err(ApiError::RelayReverted(text));
+                return Err(ApiError::RelayerRefused(text));
             }
             let message = format!(
                 "The relayer responded with a {} status code: {text}",
@@ -404,21 +419,25 @@ impl Relayer {
                 )));
             }
         };
-        let signed = tx_data.hash.clone().flatten();
-        if let Some(hash) = &signed
-            && BROADCAST_STATUSES.contains(&tx_data.status.as_str())
+        if FAILED_STATUSES.contains(&tx_data.status.as_str())
+            && let Some(err) = tx_data.broadcast_failure()
         {
-            return Ok(hash.clone());
+            return Err(err);
+        }
+        let signed = tx_data.hash.flatten();
+        if BROADCAST_STATUSES.contains(&tx_data.status.as_str())
+            && let Some(hash) = signed
+        {
+            return Ok(hash);
         }
         self.wait_for_broadcast(&tx_data.id, signed).await
     }
 
     /// Polls `tx_id` until it has a hash in a broadcast status, a terminal status, or the budget
     /// runs out. A status answer is evidence only when it is a success about this transaction;
-    /// any other answer is read as no answer. A terminal status is a refusal (`RelayReverted`,
-    /// nothing went out) only with an explicit `"hash": null` and no hash seen before, in the
-    /// submission or an earlier status. Otherwise the relayer may have signed and sent it, and the
-    /// outcome is unknown: `RelayerTimeout`.
+    /// any other answer is read as no answer. A terminal status carrying a valid hash reports
+    /// `BroadcastFailed` so the relay can record the hash. An explicit `"hash": null` with no hash
+    /// seen before is a refusal (`RelayerRefused`). The remaining terminal cases are indeterminate.
     async fn wait_for_broadcast(
         &self,
         tx_id: &str,
@@ -471,6 +490,9 @@ impl Relayer {
                 continue;
             };
             if FAILED_STATUSES.contains(&data.status.as_str()) {
+                if let Some(err) = data.broadcast_failure() {
+                    return Err(err);
+                }
                 let reason = data
                     .status_reason
                     .clone()
@@ -480,7 +502,7 @@ impl Relayer {
                 // never signed one.
                 return Err(match (&data.hash, &signed) {
                     (Some(None), None) => {
-                        ApiError::RelayReverted(format!("Transaction {}: {}", data.status, reason))
+                        ApiError::RelayerRefused(format!("Transaction {}: {}", data.status, reason))
                     }
                     _ => ApiError::RelayerTimeout(format!(
                         "Transaction {} after the relayer may have signed it ({}): {reason}",
@@ -1071,19 +1093,40 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(result, Err(ApiError::RelayReverted(_))),
+                matches!(result, Err(ApiError::RelayerRefused(_))),
                 "{terminal}: {result:?}"
             );
         }
     }
 
-    /// A terminal status with a hash, or with no `hash` field at all, is no proof that nothing
-    /// was signed: the outcome is unknown.
     #[tokio::test]
-    async fn a_terminal_status_with_a_hash_or_without_the_field_is_in_flight() {
+    async fn terminal_status_with_a_valid_hash_reports_the_broadcast_failure() {
+        for terminal in ["failed", "canceled", "expired"] {
+            let mut answer = status(terminal, Some(Some(HASH)));
+            answer["data"]
+                .as_object_mut()
+                .unwrap()
+                .remove("status_reason");
+            let result = relay(status("pending", Some(None)), vec![answer.clone()]).await;
+            let immediate = relay(answer, vec![status("failed", Some(None))]).await;
+            for result in [result, immediate] {
+                assert!(
+                    matches!(
+                        result,
+                        Err(ApiError::BroadcastFailed { ref message, ref tx_hash })
+                            if tx_hash == HASH && message == &format!("Transaction {terminal}: {terminal}")
+                    ),
+                    "{result:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_terminal_status_with_a_missing_or_invalid_hash_is_in_flight() {
         for terminal in [
-            status("failed", Some(Some(HASH))),
-            status("expired", Some(Some(HASH))),
+            status("failed", Some(Some(""))),
+            status("expired", Some(Some("0xfeed"))),
             status("failed", None),
         ] {
             let result = relay(status("pending", Some(None)), vec![terminal.clone()]).await;
@@ -1100,7 +1143,7 @@ mod tests {
     async fn a_status_answer_about_something_else_is_no_evidence() {
         let mut refused = status("failed", Some(None));
         refused["success"] = serde_json::json!(false);
-        let mut other = status("failed", Some(None));
+        let mut other = status("failed", Some(Some(HASH)));
         other["data"]["id"] = serde_json::json!("another");
         for answer in [refused, other] {
             let result = relay(status("pending", Some(None)), vec![answer.clone()]).await;
@@ -1149,7 +1192,7 @@ mod tests {
                 "0x12".into(),
             ],
         };
-        // 'r' RelayReverted, 'f' RelayerFailed: no transaction created. 't' RelayerTimeout.
+        // 'r' RelayerRefused, 'f' RelayerFailed: no transaction created. 't' RelayerTimeout.
         for (code, body, expected) in [
             (422u16, "simulation reverted", 'r'),
             (400, "bad request", 'r'),
@@ -1170,7 +1213,7 @@ mod tests {
             let (url, server) = serve(app).await;
             let result = relayer(&url).send_meta_transaction(&tx).await;
             let matched = match expected {
-                'r' => matches!(result, Err(ApiError::RelayReverted(_))),
+                'r' => matches!(result, Err(ApiError::RelayerRefused(_))),
                 'f' => matches!(result, Err(ApiError::RelayerFailed(_))),
                 _ => matches!(result, Err(ApiError::RelayerTimeout(_))),
             };

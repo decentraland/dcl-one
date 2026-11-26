@@ -30,8 +30,7 @@ use catalyst::storage::Storage;
 use serde_json::json;
 use tokio::sync::{RwLock, watch};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const POLL_MS: u64 = 100;
 

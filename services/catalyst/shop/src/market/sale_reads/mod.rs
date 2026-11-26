@@ -14,7 +14,15 @@ use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 macro_rules! sales_query {
     ($nets:expr, wallet $param:literal; $($path:literal),+) => {
         sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT ", $param, "::text AS address)",
-            include_str!("wallet_assets.sql")); $($path),+)
+            include_str!("wallet_assets.sql"),
+            ", scoped_assets AS NOT MATERIALIZED (SELECT a.* FROM wallet_keys k JOIN shop.sale_asset a USING(network,block_number,log_index,ordinal))"); $($path),+)
+    };
+    ($nets:expr, summary; $($path:literal),+) => {
+        sales_query!(@query $nets, concat!(", requested_wallet AS (SELECT $7::text AS address)",
+            include_str!("wallet_assets.sql"),include_str!("summary_assets.sql")); $($path),+)
+    };
+    ($nets:expr, scope $file:literal; $($path:literal),+) => {
+        sales_query!(@query $nets, include_str!($file); $($path),+)
     };
     ($nets:expr, $($path:literal),+) => {
         sales_query!(@query $nets, ", scoped_assets AS NOT MATERIALIZED (SELECT * FROM shop.sale_asset)"; $($path),+)
@@ -28,7 +36,9 @@ macro_rules! sales_query {
 }
 
 mod proceeds;
+mod royalties;
 pub(crate) use proceeds::{proceeds_page, proceeds_summary};
+pub(super) use royalties::get as get_royalties;
 
 fn db_error(error: impl Into<anyhow::Error>) -> Response {
     let error = error.into();
@@ -96,6 +106,75 @@ pub(crate) fn ensure_fresh(expires_at: DateTime<Utc>) -> Result<(), Response> {
     Ok(())
 }
 
+pub(super) async fn top_owners(
+    state: &MarketplaceState,
+    creator: &str,
+    sort: &str,
+    ascending: bool,
+    first: i64,
+    skip: i64,
+) -> Result<super::wire::DataTotal<super::owners::TopOwner>, Response> {
+    if !super::owned_items::walks_here(state) {
+        return Err(super::owned_items::not_ready(
+            "this node does not walk the nft index",
+        ));
+    }
+    // The sales snapshot requires a fresh, full NFT publication on both
+    // chains. The owner and spend reads share the same snapshot.
+    let (mut snap, nets) = snapshot(state, None).await?;
+    let nft =
+        super::owned_items::Publications::read(&mut snap.transaction, state.settings.catalogue())
+            .await
+            .map_err(db_error)?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
+    let collections = require_metadata(
+        &mut snap,
+        &[ChainNet::Ethereum],
+        "collections",
+        Source::CollectionsMirror,
+    )
+    .await?;
+    // Native catalogue rows can advance while their history revision and
+    // the sales publication stay the same.
+    let projections: Vec<(String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT network, generation, projected_through FROM shop.collection_projection
+         WHERE owned_at IS NOT NULL ORDER BY network",
+    )
+    .fetch_all(&mut *snap.transaction)
+    .await
+    .map_err(db_error)?;
+    let key = format!(
+        "published-top-owners/{creator}/{sort}/{ascending}/{first}/{skip}/{nft:?}/{items:?}/{collections:?}/{projections:?}/{:?}/{:?}",
+        snap.generations, snap.published_through,
+    );
+    let (data, total) = cached_analytics(
+        state,
+        &state.top_owners_slots,
+        key,
+        snap.expires_at,
+        async {
+            sqlx::query("SET LOCAL statement_timeout = '5s'")
+                .execute(&mut *snap.transaction)
+                .await
+                .map_err(db_error)?;
+            let (Json(data), total) =
+                sales_query!(nets, scope "creator_sales_scope.sql"; "top_owners.sql")
+                    .bind(creator)
+                    .bind(sort)
+                    .bind(ascending)
+                    .bind(first)
+                    .bind(skip)
+                    .bind(nft_index::ZERO_ADDRESS)
+                    .fetch_one(&mut *snap.transaction)
+                    .await
+                    .map_err(db_error)?;
+            Ok((data, total))
+        },
+    )
+    .await?;
+    Ok(super::wire::DataTotal { data, total })
+}
+
 pub(crate) async fn seller_slot(
     state: &MarketplaceState,
 ) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
@@ -115,8 +194,10 @@ pub(crate) async fn seller_slot(
     }
 }
 
-fn enabled(state: &MarketplaceState) -> bool {
-    state.settings.market.indexes.sales_enabled && state.settings.eth_network.trim() == "mainnet"
+pub(crate) fn enabled(state: &MarketplaceState) -> bool {
+    state.settings.market.indexes.sales_enabled
+        && crate::shared::network::ChainPair::from_eth_network(&state.settings.eth_network)
+            == Some(crate::shared::network::ChainPair::Mainnet)
 }
 
 pub(crate) async fn snapshot(
@@ -171,6 +252,8 @@ pub(crate) async fn require_metadata(
          LEFT JOIN shop.collection_walk collection USING(network)
          LEFT JOIN shop.chain_cursor walk ON walk.network=sales.network AND walk.indexer='collections'
          LEFT JOIN shop.mirror_state copy ON copy.network=sales.network AND copy.mirror=$1
+           AND (copy.chain_id=CASE sales.network WHEN 'ethereum' THEN 1 ELSE 137 END
+                OR (copy.chain_id IS NULL AND copy.pass_block_hash IS NULL))
          WHERE sales.network=ANY($2)
          ORDER BY sales.network",
     )
@@ -272,8 +355,11 @@ struct SellerTotals {
     mints: i64,
     resales: i64,
     earned: String,
+    earned_usd: String,
+    unpriced_sales: i64,
     royalty_resales: i64,
     volume: String,
+    royalty_paid: Option<String>,
     by_collection: Json<Vec<super::sales::SalesSummaryCollection>>,
     items: Json<Vec<MintTotals>>,
     incomplete: bool,
@@ -286,8 +372,9 @@ pub(crate) async fn seller_stats(
 ) -> Result<SellerStats, Response> {
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
     require_metadata(snap, nets, "items", Source::ItemsMirror).await?;
-    let row: SellerTotals = sales_query!(nets, wallet "$7"; "summary.sql")
-        .bind(f.seller.to_lowercase())
+    let seller = f.seller.to_lowercase();
+    let row: SellerTotals = sales_query!(nets, summary; "settled_sales.sql", "summary.sql")
+        .bind(seller)
         .bind(f.from)
         .bind(f.to)
         .fetch_one(&mut *snap.transaction)
@@ -319,11 +406,14 @@ pub(crate) async fn seller_stats(
             mints: row.mints,
             resales: row.resales,
             earned_wei: row.earned,
+            earned_usd: row.earned_usd,
+            unpriced_sales: row.unpriced_sales,
             by_collection: row.by_collection.0,
             by_item,
             royalties: SalesSummaryRoyalties {
                 resales: row.royalty_resales,
                 volume_wei: row.volume,
+                royalties_wei: row.royalty_paid,
             },
         },
         window,

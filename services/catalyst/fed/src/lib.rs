@@ -222,6 +222,7 @@ pub fn next_cursor(prev: Cursor, applied: &[Change]) -> Cursor {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use alloy::signers::SignerSync;

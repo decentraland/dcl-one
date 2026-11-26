@@ -1,6 +1,6 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
   Animator,
-  Entity,
   GltfContainer,
   Material,
   MeshRenderer,

@@ -96,7 +96,15 @@ upstream host names served under another prefix: `abcdn` and `abgen-cdn` →
 `rpc-social-service-ea` → `/social-rpc`, `market` → `/shop`, `storage` →
 `/world-storage`, `comms-gatekeeper-local` → `/comms-gatekeeper`; `peer` and
 `worlds` are the root. `gateway.<domain>/<sub>/...` uses the same table, and a
-path already under the target prefix is not prefixed twice. A scene builds a service
+path already under the target prefix is not prefixed twice. On `credits`, the
+paths credits-server itself serves under `/credits` (the bare `/credits`,
+`/credits/packs`, `/credits/checkout`, `/credits/orders/...` and
+`/credits/authorize...`) are prefixed too, since the node serves them under its
+`/credits` mount. `/credits/authorize-publication` and `/credits/iap/...` are
+prefixed the same way for parity, though the node does not serve them yet.
+Any other `/credits/...` path is taken as already prefixed: Stripe's
+`/credits/webhook`, and the node's own `/credits/packs/{sku}/...` and
+`/credits/checkout/{id}`. A scene builds a service
 URL from its realm base URL, so the realm hosts `worlds-content-server`,
 `realm-provider` and `realm-provider-ea` leave a path under `/comms-gatekeeper/`
 or `/cast-presenter-service/` unprefixed; no service of these hosts has such a path.
