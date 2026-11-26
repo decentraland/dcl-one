@@ -66,6 +66,10 @@ pub(crate) fn urldecode(s: &str) -> String {
             let hi = (bytes[i + 1] as char).to_digit(16);
             let lo = (bytes[i + 2] as char).to_digit(16);
             if let (Some(hi), Some(lo)) = (hi, lo) {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "two hex digits make a byte"
+                )]
                 out.push(((hi << 4) | lo) as u8);
                 i += 3;
                 continue;
@@ -272,7 +276,7 @@ pub async fn create_rentals_listing(
         ));
     }
     // The stored address drives the status sync, so it is the served contract's, never the caller's.
-    let Some(rentals) = rentals_contract(served_chain as u64) else {
+    let Some(rentals) = u64::try_from(served_chain).ok().and_then(rentals_contract) else {
         return Err(ApiError::bad_request(format!(
             "There is no rentals contract for chain id {served_chain}"
         )));
@@ -287,7 +291,8 @@ pub async fn create_rentals_listing(
     body.rental_contract_address = rentals.to_string();
 
     let contract = ContractRentalListing::from_creation(&signer, &body);
-    let chain_id = body.chain_id as u64;
+    let chain_id = u64::try_from(body.chain_id)
+        .map_err(|_| ApiError::bad_request("Unsupported Rentals chain"))?;
     match verify_rentals_listing_signature(&contract, chain_id) {
         Ok(true) => {}
         Ok(false) => {

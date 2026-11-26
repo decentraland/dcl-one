@@ -68,6 +68,14 @@
 //! proxy; the create checks the signature over the request's own path first
 //! and the route-local one second.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 mod active;
 pub mod calls;
 pub mod db;
