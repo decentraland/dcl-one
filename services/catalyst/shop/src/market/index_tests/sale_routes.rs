@@ -1987,3 +1987,614 @@ async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
     assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
     db.drop().await;
 }
+
+#[tokio::test]
+async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() {
+    use crate::market::collections_index::{CollectionsIndex, Seed, reads_token, write_seeds};
+
+    const FIRST_COLLECTION: &str = "0x1010101010101010101010101010101010101010";
+    const OTHER_COLLECTION: &str = "0x2020202020202020202020202020202020202020";
+    const STORE_COLLECTION: &str = "0x3030303030303030303030303030303030303030";
+    const OLD_COLLECTOR: &str = "0x4040404040404040404040404040404040404040";
+    const WALK_AHEAD_COLLECTION: &str = "0x5050505050505050505050505050505050505050";
+    const CORRECTED_CREATOR: &str = "0xfffffffffffffffffffffffffffffffffffffffe";
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mut settings = index_settings(100, 20);
+    settings.sales_enabled = true;
+    settings.collections_enabled = true;
+    let state = state_over(db.pool.clone(), "http://127.0.0.1", settings, false);
+    let app = market_router(state);
+    let eth = nft_index::deployments::Deployments::mainnet(ChainNet::Ethereum).start as i64 + 100;
+    let polygon = nft_index::deployments::Deployments::mainnet(ChainNet::Matic).start as i64 + 100;
+    for (net, height) in [(ChainNet::Ethereum, eth), (ChainNet::Matic, polygon)] {
+        let hash = format!("0x{height:064x}");
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+                full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+             SELECT ix,$1,$2,1,$3,$4,true,$3,timezone('UTC',now()),$5,$3,0
+             FROM unnest(ARRAY['nft','sales','trade_events','collections']) ix",
+        )
+        .bind(net.db_name())
+        .bind(net.chain_id())
+        .bind(height)
+        .bind(&hash)
+        .bind(sale_history::VERSION)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.sale_publication(network,block_number,block_hash,input_version,input_epochs,
+                input_revisions,late_collections,published_at)
+             SELECT $1,$2,$3,$4,array_agg(sale_input_epoch ORDER BY indexer),
+                    array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now())
+             FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events')",
+        )
+        .bind(net.db_name())
+        .bind(height)
+        .bind(&hash)
+        .bind(sale_fold::PUBLICATION_VERSION)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,chain_id,pass_block_hash,marks_item_rows)
+         SELECT m,n,'test',timezone('UTC',now()),CASE WHEN n='ethereum' THEN 1 ELSE 137 END,
+                '0x'||repeat('a',64),m='items' FROM unnest(ARRAY['items','collections']) m
+         CROSS JOIN unnest(ARRAY['ethereum','matic']) n",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let day = chrono::Utc::now().timestamp() / 86400 * 86400;
+    let older = day - 10 * 86400;
+    let recent = day - 3600;
+    sqlx::query(
+        "INSERT INTO shop.collection_event(network,block_number,log_index,block_time,kind,
+            contract_address,account,previous_account)
+         VALUES('matic',$1-2,1,$2,'proxy_created',$3,$3,NULL),
+               ('matic',$1-2,20,$2,'creatorship_transferred',$3,$4,$5),
+               ('matic',$1-18,1,$6-1,'proxy_created',$7,$7,NULL),
+               ('matic',$1-17,1,$6,'proxy_created',$8,$8,NULL),
+               ('matic',$1-2,40,$2,'creatorship_transferred',$8,$9,$4)",
+    )
+    .bind(polygon)
+    .bind(recent)
+    .bind(FIRST_COLLECTION)
+    .bind(BOB)
+    .bind(ALICE)
+    .bind(older)
+    .bind(OTHER_COLLECTION)
+    .bind(STORE_COLLECTION)
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_seed(network,contract_address,name,symbol,creator,is_approved,
+            is_editable,read_block,read_hash,verified)
+         VALUES('matic',$1,'Existing','E',$2,true,false,$3,$4,true)",
+    )
+    .bind(OTHER_COLLECTION)
+    .bind(ALICE)
+    .bind(polygon - 1)
+    .bind(format!("0x{:064x}", polygon - 1))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    seed_item(
+        &db.pool,
+        "ethereum",
+        FIRST_COLLECTION,
+        1,
+        "ethereum-delegated-item",
+        "Ethereum item",
+        "wearable_v1",
+        "hat",
+    )
+    .await;
+    sqlx::query(
+        "UPDATE shop.items SET creator=$1 WHERE network='ethereum' AND contract_address=$2",
+    )
+    .bind(ALICE)
+    .bind(FIRST_COLLECTION)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    // CARL signed the mints for others. Store seller is proved at Issue,
+    // earlier than the BOB-to-CARL transfer at log 40 and the Bought at 45.
+    for (net, block, log, at, venue, kind, contract, seller, buyer, amount, settled) in [
+        (
+            ChainNet::Matic,
+            polygon - 15,
+            7,
+            older,
+            "trade",
+            "mint",
+            OTHER_COLLECTION,
+            CARL,
+            OLD_COLLECTOR,
+            15,
+            false,
+        ),
+        (
+            ChainNet::Matic,
+            polygon - 2,
+            10,
+            recent,
+            "trade",
+            "mint",
+            FIRST_COLLECTION,
+            CARL,
+            DAVE,
+            30,
+            true,
+        ),
+        (
+            ChainNet::Matic,
+            polygon - 2,
+            11,
+            recent,
+            "trade",
+            "mint",
+            FIRST_COLLECTION,
+            CARL,
+            DAVE,
+            40,
+            true,
+        ),
+        (
+            ChainNet::Matic,
+            polygon - 2,
+            30,
+            recent,
+            "trade",
+            "mint",
+            FIRST_COLLECTION,
+            CARL,
+            DAVE,
+            200,
+            true,
+        ),
+        (
+            ChainNet::Matic,
+            polygon - 2,
+            45,
+            recent,
+            "store",
+            "mint",
+            STORE_COLLECTION,
+            BOB,
+            DAVE,
+            50,
+            true,
+        ),
+        (
+            ChainNet::Matic,
+            polygon - 1,
+            1,
+            recent + 1,
+            "trade",
+            "mint",
+            OTHER_COLLECTION,
+            CARL,
+            DAVE,
+            50,
+            true,
+        ),
+        (
+            ChainNet::Ethereum,
+            eth - 1,
+            1,
+            recent,
+            "order",
+            "order",
+            LAND_REGISTRY_MAINNET,
+            BOB,
+            DAVE,
+            100,
+            true,
+        ),
+        (
+            ChainNet::Ethereum,
+            eth - 1,
+            2,
+            recent,
+            "trade",
+            "mint",
+            FIRST_COLLECTION,
+            CARL,
+            DAVE,
+            10,
+            true,
+        ),
+    ] {
+        sqlx::query(
+            "WITH e AS (
+                INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+                VALUES($1,$2,$3,$10,$4,$5,$6,true) RETURNING network,block_number,log_index
+             ), asset AS (
+                INSERT INTO shop.sale_asset(network,block_number,log_index,ordinal,public_id,beneficiary,kind,
+                    contract_address,token_id,item_id,seller,buyer,price,currency)
+                SELECT e.*,0,$1||'-'||$10,$8,$11,$7,$3,CASE WHEN $11='mint' THEN 1 END,$9,$8,$12,$13 FROM e
+             ), payment AS (
+                INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,settled)
+                SELECT e.*,0,$13,$12,$14 FROM e RETURNING network,block_number,log_index,ordinal,gross,settled
+             )
+             INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+             SELECT network,block_number,log_index,ordinal,0,'seller',$9,gross FROM payment WHERE settled",
+        )
+        .bind(net.db_name())
+        .bind(block)
+        .bind(log)
+        .bind(contract)
+        .bind(venue)
+        .bind(at)
+        .bind(contract)
+        .bind(buyer)
+        .bind(seller)
+        .bind(format!("0x{:064x}", block * 100 + i64::from(log)))
+        .bind(kind)
+        .bind(amount as i64)
+        .bind(crate::market::listings::mana_token(net.chain_id()))
+        .bind(settled)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+
+    let week = "/v1/rankings/creators/week";
+    let count_path = format!("{week}?sortBy=most_sales");
+    let alice = json!({"id":ALICE,"sales":4,"earned":"130","uniqueCollectors":2,"collections":3});
+    let bob = json!({"id":BOB,"sales":2,"earned":"250","uniqueCollectors":1,"collections":2});
+    let (code, counts) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::OK, "{counts}");
+    assert_eq!(counts["data"], json!([alice, bob]));
+    for path in [week.to_owned(), format!("{week}?sortBy=most_volume")] {
+        let (code, volume) = get_json(&app, &path).await;
+        assert_eq!(code, StatusCode::OK, "{volume}");
+        assert_eq!(volume["data"], json!([bob, alice]));
+    }
+
+    // Replace the proof without changing the completion time. An Ethereum
+    // mint still requires its item on the served chain.
+    for (chain_id, proof, expected) in [(11155111, 'b', false), (1, 'c', true)] {
+        sqlx::query("UPDATE shop.items SET chain_id=$1 WHERE network='ethereum'")
+            .bind(chain_id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.mirror_state SET pass_block_hash=$1 WHERE network='ethereum' AND mirror='items'",
+        )
+        .bind(format!("0x{}", proof.to_string().repeat(64)))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let (code, result) = get_json(&app, &count_path).await;
+        if expected {
+            assert_eq!((code, result), (StatusCode::OK, counts.clone()));
+        } else {
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+            assert_eq!(result["source"], "collections-index");
+        }
+    }
+
+    let (code, month) = get_json(&app, "/v1/rankings/creators/month").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{month}");
+    assert_eq!(month["source"], "sales-index");
+
+    // The incomplete payment is outside the week, but its creator is
+    // required for the cumulative relationships.
+    sqlx::query(
+        "UPDATE shop.sale_asset SET contract_address=$1 WHERE network='matic' AND block_number=$2",
+    )
+    .bind(CORRECTED_CREATOR)
+    .bind(polygon - 15)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_publication SET generation=gen_random_uuid() WHERE network='matic'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, missing) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{missing}");
+    assert_eq!(missing["source"], "collections-index");
+    sqlx::query(
+        "UPDATE shop.sale_asset SET contract_address=$1 WHERE network='matic' AND block_number=$2",
+    )
+    .bind(OTHER_COLLECTION)
+    .bind(polygon - 15)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "WITH p AS (UPDATE shop.sale_payment SET settled=true WHERE network='matic' AND block_number=$1
+                    RETURNING network,block_number,log_index,ordinal,gross)
+         INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+         SELECT network,block_number,log_index,ordinal,0,'seller',$2,gross FROM p",
+    )
+    .bind(polygon-15)
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    {
+        let mut conn = db.pool.acquire().await.unwrap();
+        sale_fold::rollups(&mut conn, ChainNet::Matic, &[older, day - 86400])
+            .await
+            .unwrap();
+        sale_fold::rollups(&mut conn, ChainNet::Ethereum, &[day - 86400])
+            .await
+            .unwrap();
+    }
+
+    let all = "/v1/rankings/creators/all";
+    let alice_lifetime =
+        json!({"id":ALICE,"sales":0,"earned":"0","uniqueCollectors":0,"collections":1});
+    let bob_lifetime =
+        json!({"id":BOB,"sales":1,"earned":"50","uniqueCollectors":1,"collections":2});
+    for (path, expected) in [
+        (all.to_owned(), json!([bob_lifetime])),
+        (
+            format!("{all}?sortBy=most_sales"),
+            json!([alice_lifetime, bob_lifetime]),
+        ),
+        (
+            format!("{all}?sortBy=most_volume"),
+            json!([bob_lifetime, alice_lifetime]),
+        ),
+    ] {
+        let (code, page) = get_json(&app, &path).await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["data"], expected, "{path}");
+    }
+
+    let (code, warm) = get_json(&app, &count_path).await;
+    assert_eq!((code, warm), (StatusCode::OK, counts.clone()));
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())+interval '1 day'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, future) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{future}");
+    assert_eq!(future["source"], "items-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '1 day'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, stale) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{stale}");
+    assert_eq!(stale["source"], "items-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())+interval '30 seconds'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, counts.clone())
+    );
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, withdrawn) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{withdrawn}");
+    assert_eq!(withdrawn["source"], "collections-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '1 day'
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, stale) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{stale}");
+    assert_eq!(stale["source"], "collections-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(get_json(&app, &count_path).await, (StatusCode::OK, counts));
+    sqlx::query(
+        "UPDATE shop.collection_event SET previous_account=$1 WHERE network='matic' AND block_number=$2 AND log_index=20",
+    )
+    .bind(CORRECTED_CREATOR)
+    .bind(polygon-2)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_history_revision=sale_history_revision+1 WHERE network='matic' AND indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, corrected) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::OK, "{corrected}");
+    let corrected_creator = json!({"id":CORRECTED_CREATOR,"sales":2,"earned":"70","uniqueCollectors":1,"collections":1});
+    let remaining_alice =
+        json!({"id":ALICE,"sales":2,"earned":"60","uniqueCollectors":2,"collections":2});
+    assert_eq!(
+        corrected["data"],
+        json!([remaining_alice, bob, corrected_creator])
+    );
+
+    let index = CollectionsIndex::new();
+    let lifetime = format!("{all}?sortBy=most_sales");
+    let lifetime_page = get_json(&app, &lifetime).await;
+    assert_eq!(lifetime_page.0, StatusCode::OK);
+    for (retained_through, retains_seed) in [(polygon, true), (polygon - 2, false)] {
+        let mut tx = db.pool.begin().await.unwrap();
+        index.rewind(&mut tx, retained_through).await.unwrap();
+        // The collections log through the sales prefix has been republished
+        // after the rewind. A seed above the retained block still needs a read.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET reorg_rewinds=reorg_rewinds+1,
+                sale_history_revision=sale_history_revision+1, folded_at=timezone('UTC',now())
+             WHERE network='matic' AND indexer='collections'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let (code, page) = get_json(&app, &count_path).await;
+        if retains_seed {
+            assert_eq!((code, page), (StatusCode::OK, corrected.clone()));
+            assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+        } else {
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+            assert_eq!(page["source"], "collections-index");
+        }
+    }
+    // A metadata update after both mints remains within the published
+    // prefix. With no creatorship transfers, it can prove both positions.
+    sqlx::query(
+        "INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+         VALUES('matic',$1,1,$2,'order','order',$3,true)",
+    )
+    .bind(polygon)
+    .bind(format!("0x{:064x}", polygon * 100 + 1))
+    .bind(recent + 3)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collections(network,contract_address,chain_id,name,creator,owner,urn,
+            is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at)
+         VALUES('matic',$1,137,'Existing',$2,$2,'urn:decentraland:matic:collections-v2:creator-rank',
+            true,true,false,$3,$4,$3,timezone('UTC',now()))",
+    )
+    .bind(OTHER_COLLECTION)
+    .bind(ALICE)
+    .bind(older - 1)
+    .bind(recent + 2)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, corrected.clone())
+    );
+    sqlx::query("DELETE FROM shop.collections WHERE network='matic' AND contract_address=$1")
+        .bind(OTHER_COLLECTION)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let token = reads_token(&db.pool, ChainNet::Matic).await.unwrap();
+    assert_eq!(
+        write_seeds(
+            &db.pool,
+            ChainNet::Matic,
+            &[Seed {
+                contract_address: OTHER_COLLECTION.into(),
+                name: "Existing".into(),
+                symbol: "E".into(),
+                creator: ALICE.into(),
+                is_approved: true,
+                is_editable: false,
+                read_block: polygon,
+            }],
+            &format!("0x{polygon:064x}"),
+            token,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, corrected)
+    );
+    assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,last_block_time=$3,
+                sale_history_revision=sale_history_revision+1
+         WHERE network='matic' AND indexer='collections'",
+    )
+    .bind(polygon + 20)
+    .bind(format!("0x{:064x}", polygon + 20))
+    .bind(recent + 30)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+    sqlx::query(
+        "WITH events AS (
+            INSERT INTO shop.collection_event(network,block_number,log_index,block_time,
+                kind,contract_address,account,previous_account)
+            VALUES('matic',$1-10,1,$2,'proxy_created',$3,$3,NULL),
+                  ('matic',$1+1,1,$4,'creatorship_transferred',$3,$5,$6)
+         )
+         INSERT INTO shop.collections(network,contract_address,chain_id,name,creator,owner,urn,
+            is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at)
+         VALUES('matic',$3,137,'Walk ahead',$5,$5,'urn:decentraland:matic:collections-v2:walk-ahead',
+            true,true,false,$2,$4,$2,timezone('UTC',now()))",
+    )
+    .bind(polygon)
+    .bind(recent - 10)
+    .bind(WALK_AHEAD_COLLECTION)
+    .bind(recent + 4)
+    .bind(BOB)
+    .bind(ALICE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, ahead) = get_json(&app, &lifetime).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{ahead}");
+    assert_eq!(ahead["source"], "collections-index");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block=last_block,folded_at=timezone('UTC',now())
+         WHERE network='matic' AND indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, recovered) = get_json(&app, &lifetime).await;
+    assert_eq!(code, StatusCode::OK, "{recovered}");
+    let founder = recovered["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == ALICE)
+        .unwrap();
+    assert_eq!(founder["collections"], 2);
+    db.drop().await;
+}
