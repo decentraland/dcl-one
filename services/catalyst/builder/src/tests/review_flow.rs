@@ -1477,7 +1477,8 @@ async fn concurrent_appeals_open_one_review_and_concurrent_comments_keep_the_bou
             "a comment was written while another of the wallet's texts was being counted"
         );
         waited = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory')",
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() \
+             AND wait_event_type = 'Lock' AND wait_event = 'advisory')",
         )
         .fetch_one(&node.pool)
         .await

@@ -22,7 +22,6 @@ const STRANGER_KEY: &str = "0x22222222222222222222222222222222222222222222222222
 const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 const MANAGER_KEY: &str = "0x4444444444444444444444444444444444444444444444444444444444444444";
 const CREATOR_KEY: &str = "0x5555555555555555555555555555555555555555555555555555555555555555";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:lifecycle";
 
 /// A collection name unique to `id`.
 fn short(label: &str, id: Uuid) -> String {
@@ -51,6 +50,9 @@ struct Node {
     pool: PgPool,
     app: Router,
     state: crate::SharedState,
+    /// The third-party provider of this node's own, whose virtual third
+    /// party the owner manages.
+    provider: String,
 }
 
 struct Options {
@@ -78,11 +80,15 @@ impl Default for Options {
 }
 
 async fn node_over(pool: PgPool, options: Options) -> Node {
+    let provider = format!(
+        "urn:decentraland:matic:collections-thirdparty:lifecycle-{}",
+        Uuid::new_v4().simple()
+    );
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Lifecycle:') \
          ON CONFLICT (id) DO NOTHING",
     )
-    .bind(PROVIDER)
+    .bind(&provider)
     .bind(vec![address(OWNER_KEY)])
     .execute(&pool)
     .await
@@ -91,8 +97,9 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
         Some(committee) => Some(committee_index(committee).await),
         None => Some(super::support::registry_only_index().await),
     };
-    let mut state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         market,
         crate::Settings {
             network: options.network,
@@ -105,13 +112,18 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             }),
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = options.now;
+            (options.tune)(state);
+        },
     )
     .await;
-    state.items.clock.now = options.now;
-    (options.tune)(&mut state);
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
-    Node { pool, app, state }
+    Node {
+        pool,
+        app,
+        state,
+        provider,
+    }
 }
 
 async fn node(options: Options) -> Option<Node> {
@@ -324,8 +336,8 @@ async fn only_the_owner_of_a_standard_collection_sets_its_lock() {
     )
     .bind(third_party)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", third_party.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, third_party.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -696,8 +708,8 @@ async fn a_submitted_third_party_collection_is_never_deleted() {
     )
     .bind(id)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", id.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, id.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -734,6 +746,17 @@ async fn a_submitted_third_party_collection_is_never_deleted() {
             json!({ "ok": false, "data": { "id": id }, "error": "The third party collection already has published items. It can't be deleted." })
         )
     );
+    let kept: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM builder.collections WHERE id = $1), \
+                (SELECT count(*) FROM builder.items WHERE id = $2), \
+                (SELECT count(*) FROM builder.item_curations WHERE item_id = $2)",
+    )
+    .bind(id)
+    .bind(item)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, (1, 1, 1), "the refused delete removed nothing");
 }
 
 /// A third-party collection that holds a slot cheque but no submitted item
@@ -750,8 +773,8 @@ async fn a_third_party_collection_with_a_cheque_but_no_submission_is_deleted_and
     )
     .bind(id)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", id.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, id.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -763,7 +786,7 @@ async fn a_third_party_collection_with_a_cheque_but_no_submission_is_deleted_and
     )
     .bind(cheque)
     .bind(id)
-    .bind(PROVIDER)
+    .bind(&node.provider)
     .bind(format!("0x{}1b", "cd".repeat(64)))
     .bind(&salt)
     .execute(&node.pool)
@@ -830,8 +853,8 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
     )
     .bind(third_party)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", third_party.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, third_party.simple()))
     .execute(&node.pool)
     .await
     .unwrap();

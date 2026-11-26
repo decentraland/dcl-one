@@ -18,7 +18,6 @@ const OWNER_KEY: &str = super::support::OWNER_KEY;
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 const NAMED_KEY: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:forum";
 
 struct Env {
     pool: PgPool,
@@ -26,14 +25,17 @@ struct Env {
     state: crate::SharedState,
     forum: FakeForum,
     origin: String,
+    /// The third-party provider of this environment's own.
+    provider: String,
 }
 
 async fn env_with(pool: PgPool, forum_on: bool) -> Env {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let forum = FakeForum::default();
     let origin = forum.start().await;
-    let state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         Some(committee_index(&committee).await),
         crate::Settings {
             writes_enabled: true,
@@ -45,16 +47,19 @@ async fn env_with(pool: PgPool, forum_on: bool) -> Env {
             builder_server_url: "https://builder-api.example.org".into(),
             ..crate::Settings::default()
         },
+        |_| {},
     )
     .await;
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
     Env {
         pool,
         app,
         state,
         forum,
         origin,
+        provider: format!(
+            "urn:decentraland:matic:collections-thirdparty:forum-{}",
+            Uuid::new_v4().simple()
+        ),
     }
 }
 
@@ -119,24 +124,25 @@ async fn standard_of(
     (id, contract)
 }
 
-async fn third_party(pool: &PgPool, published: bool) -> Uuid {
+async fn third_party(e: &Env, published: bool) -> Uuid {
+    let pool = &e.pool;
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Forum:') \
          ON CONFLICT (id) DO NOTHING",
     )
-    .bind(PROVIDER)
+    .bind(&e.provider)
     .bind(vec![address(OWNER_KEY)])
     .execute(pool)
     .await
     .unwrap();
     let id = Uuid::new_v4();
-    let urn = format!("{PROVIDER}:forum-{}", id.simple());
+    let urn = format!("{}:forum-{}", e.provider, id.simple());
     sqlx::query(
         "INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) VALUES ($1, 'Linked hats', $2, $3, $4)",
     )
     .bind(id)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
+    .bind(&e.provider)
     .bind(&urn)
     .execute(pool)
     .await
@@ -372,7 +378,7 @@ async fn a_third_party_collection_is_posted_under_its_provider_before_any_item_i
         return;
     };
     for submitted in [false, true] {
-        let id = third_party(&e.pool, submitted).await;
+        let id = third_party(&e, submitted).await;
         sqlx::query("UPDATE builder.collections SET name = $2 WHERE id = $1")
             .bind(id)
             .bind(format!("Linked hats {submitted}"))
@@ -391,13 +397,16 @@ async fn a_third_party_collection_is_posted_under_its_provider_before_any_item_i
         assert_eq!(calls.len(), 1, "{calls:#?}");
         assert_eq!(
             calls[0]["body"]["title"],
-            format!("Third Party collection Linked hats {submitted} with URN: {PROVIDER}")
+            format!(
+                "Third Party collection Linked hats {submitted} with URN: {}",
+                e.provider
+            )
         );
         let (link, post, claimed) = stored(&e.pool, id).await;
         assert_eq!(link.as_deref(), body["data"].as_str());
         assert!(post.is_some() && !claimed);
     }
-    let draft = third_party(&e.pool, false).await;
+    let draft = third_party(&e, false).await;
     let (status, body) = send(
         &e.app,
         Some(STRANGER_KEY),
@@ -579,7 +588,7 @@ async fn a_third_party_post_the_node_never_stored_is_refused_again_by_its_taken_
     let Some(e) = env().await else {
         return;
     };
-    let id = third_party(&e.pool, false).await;
+    let id = third_party(&e, false).await;
     let path = format!("/v1/collections/{id}/post");
     e.forum.lose(1);
     let (status, _) = send(&e.app, Some(OWNER_KEY), &path, json!({})).await;

@@ -26,7 +26,6 @@ const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333
 const FORMER_KEY: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 const ADMIN_KEY: &str = "0x8888888888888888888888888888888888888888888888888888888888888888";
 const NEW_CREATOR_KEY: &str = "0x9999999999999999999999999999999999999999999999999999999999999999";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:curation";
 const TOKEN: &str = "xoxb-example123";
 
 fn hash(n: u8) -> String {
@@ -103,6 +102,9 @@ struct Node {
     pool: PgPool,
     app: Router,
     state: crate::SharedState,
+    /// The third-party provider of this node's own, whose virtual third
+    /// party the owner manages.
+    provider: String,
 }
 
 struct Options {
@@ -122,17 +124,22 @@ impl Default for Options {
 }
 
 async fn node_over(pool: PgPool, options: Options) -> Node {
+    let provider = format!(
+        "urn:decentraland:matic:collections-thirdparty:curation-{}",
+        Uuid::new_v4().simple()
+    );
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Curation:') \
          ON CONFLICT (id) DO NOTHING",
     )
-    .bind(PROVIDER)
+    .bind(&provider)
     .bind(vec![address(OWNER_KEY)])
     .execute(&pool)
     .await
     .unwrap();
-    let state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         Some(registry_index(&options.committee, &options.registry).await),
         crate::Settings {
             writes_enabled: true,
@@ -148,13 +155,16 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             },
             ..crate::Settings::default()
         },
+        |_| {},
     )
     .await;
-    let state = Arc::new(state);
-    let app = options
-        .registry
-        .published(&pool, super::support::mounted(&state));
-    Node { pool, app, state }
+    let app = options.registry.published(&pool, app);
+    Node {
+        pool,
+        app,
+        state,
+        provider,
+    }
 }
 
 async fn node(options: Options) -> Option<Node> {
@@ -179,9 +189,10 @@ async fn standard(pool: &PgPool, name: &str) -> Uuid {
 /// of the owner's whose content hash is `hash(1)`; `anchored` adds a second
 /// item with an approved curation, so the collection is published whatever
 /// the first one's curations.
-async fn third_party(pool: &PgPool, anchored: bool) -> (Uuid, Uuid) {
+async fn third_party(n: &Node, anchored: bool) -> (Uuid, Uuid) {
+    let pool = &n.pool;
     let id = Uuid::new_v4();
-    let urn = format!("{PROVIDER}:{}", id.simple());
+    let urn = format!("{}:{}", n.provider, id.simple());
     sqlx::query(
         "INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) \
          VALUES ($1, $2, $3, $4, $5)",
@@ -189,7 +200,7 @@ async fn third_party(pool: &PgPool, anchored: bool) -> (Uuid, Uuid) {
     .bind(id)
     .bind(format!("Curated {}", &id.simple().to_string()[..8]))
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
+    .bind(&n.provider)
     .bind(&urn)
     .execute(pool)
     .await
@@ -341,7 +352,7 @@ async fn every_cell_of_the_transition_table_answers_and_writes_as_the_table_says
                             (id, format!("/v1/collections/{id}/curation"))
                         }
                         Curation::Item => {
-                            let (_, item) = third_party(&n.pool, true).await;
+                            let (_, item) = third_party(&n, true).await;
                             if let Some(from) = from {
                                 item_curation(&n.pool, item, from.as_str()).await;
                             }
@@ -453,7 +464,7 @@ async fn the_operator_sets_an_item_status_only_as_the_table_gives_it_and_every_w
         Some(Status::Rejected),
     ] {
         for to in Status::ALL {
-            let (collection, item) = third_party(&n.pool, true).await;
+            let (collection, item) = third_party(&n, true).await;
             if let Some(from) = from {
                 item_curation(&n.pool, item, from.as_str()).await;
             }
@@ -521,9 +532,10 @@ async fn an_operator_write_waits_for_the_collection_lock_and_decides_the_newest_
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, true).await;
+    let (collection, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "rejected").await;
     let mut holder = n.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(collection)
         .execute(&mut *holder)
@@ -541,8 +553,10 @@ async fn an_operator_write_waits_for_the_collection_lock_and_decides_the_newest_
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(!operator.is_finished(), "the operator waits for the lock");
+    assert!(
+        super::support::blocked_by(&n.pool, holding, 1).await && !operator.is_finished(),
+        "the operator waits for the lock"
+    );
     crate::curation::record_item_curation(&mut holder, item, "pending", &hash(1), false)
         .await
         .unwrap();
@@ -562,9 +576,10 @@ async fn an_operator_bulk_write_on_a_collection_deleted_meanwhile_answers_not_fo
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, true).await;
+    let (collection, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "pending").await;
     let mut holder = n.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(collection)
         .execute(&mut *holder)
@@ -582,7 +597,10 @@ async fn an_operator_bulk_write_on_a_collection_deleted_meanwhile_answers_not_fo
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&n.pool, holding, 1).await,
+        "the operator waits for the lock"
+    );
     sqlx::query("DELETE FROM builder.collections WHERE id = $1")
         .bind(collection)
         .execute(&mut *holder)
@@ -599,7 +617,7 @@ async fn the_operator_cannot_set_the_status_of_an_item_of_an_unpublished_collect
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, false).await;
+    let (collection, item) = third_party(&n, false).await;
     for (path, body) in [
         (
             format!("/v1/collections/{collection}/items/{item}/status"),
@@ -739,7 +757,7 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
         .execute(&n.pool)
         .await
         .unwrap();
-    let (_, item) = third_party(&n.pool, true).await;
+    let (_, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "pending").await;
     let path = format!("/v1/collections/{id}/curation");
     for key in [FORMER_KEY, ADMIN_KEY, STRANGER_KEY] {
@@ -794,7 +812,7 @@ async fn a_registry_that_cant_be_read_answers_503_to_third_party_curations() {
         },
     )
     .await;
-    let (collection, item) = third_party(&n.pool, false).await;
+    let (collection, item) = third_party(&n, false).await;
     item_curation(&n.pool, item, "approved").await;
     registry.fail(true);
     for (method, path) in [
@@ -1168,7 +1186,7 @@ async fn the_item_list_filters_by_each_items_newest_curation() {
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, synced) = third_party(&n.pool, false).await;
+    let (collection, synced) = third_party(&n, false).await;
     let mut ids = vec![synced];
     for (label, hash_of_item) in [("changed", 2), ("pending", 3), ("mapped", 4), ("never", 5)] {
         let item = Uuid::new_v4();

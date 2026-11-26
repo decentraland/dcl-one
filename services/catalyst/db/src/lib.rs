@@ -829,9 +829,10 @@ pub mod scratch {
         Ok(())
     }
 
-    /// `/proc` is absent on macOS. Signal zero probes existence without sending
-    /// a signal; permission denied also proves that a process still exists.
-    pub(super) fn process_alive(pid: u32) -> bool {
+    /// Whether process `pid` still runs. `/proc` is absent on macOS. Signal
+    /// zero probes existence without sending a signal; permission denied also
+    /// proves that a process still exists.
+    pub fn process_alive(pid: u32) -> bool {
         if pid == std::process::id() {
             return true;
         }

@@ -3,8 +3,6 @@
 //! send for its own draft is priced from the rarities, and every other call
 //! is refused.
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use serde_json::json;
@@ -38,17 +36,17 @@ async fn node() -> Option<Node> {
         ("rare", HALF_CENT_OVER_TWO_USD, "10"),
     ]));
     let oracle = FakeOracle::with(&[("common", "4000000000000000000"), ("rare", "5")]);
-    let state = Arc::new(
-        super::support::state(
-            pool.clone(),
-            Some(committee_index(&subgraph).await),
-            crate::Settings {
-                polygon_rpc_url: Some(oracle.url().await),
-                ..crate::Settings::default()
-            },
-        )
-        .await,
-    );
+    let super::support::Node { pool, state, .. } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
+        Some(committee_index(&subgraph).await),
+        crate::Settings {
+            polygon_rpc_url: Some(oracle.url().await),
+            ..crate::Settings::default()
+        },
+        |_| {},
+    )
+    .await;
     Some(Node {
         pool,
         state,
