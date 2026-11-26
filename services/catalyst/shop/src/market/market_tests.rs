@@ -9423,19 +9423,66 @@ async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publica
         }
     }
 
+    let land = LAND_MAINNET.land_registry;
+    let url =
+        format!("/v1/bids?network=ETHEREUM&contractAddress={land}&itemId=0&seller={WALLET_A}");
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE shop.projection_write IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (status, body) = get(apps[0].clone(), &url).await;
+    lock.rollback().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_A, "{body}");
+
     let mut lock = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE land_authz.index_cursor IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *lock)
         .await
         .unwrap();
-    let url = format!(
-        "/v1/bids?network=ETHEREUM&contractAddress={}",
-        LAND_MAINNET.land_registry
-    );
     let (status, body) = get(apps[1].clone(), &url).await;
     lock.rollback().await.unwrap();
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["source"], "land-authz-index", "{body}");
+
+    // A graph-backed reader can be configured for a different LAND chain
+    // from the chain its local trade mirror serves.
+    let sepolia = crate::land_authz::LAND_SEPOLIA;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET network = $1, land_registry = $2, estate_registry = $3, \
+             folded_at = timezone('UTC', now())",
+    )
+    .bind(sepolia.network)
+    .bind(sepolia.land_registry)
+    .bind(sepolia.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+    let wrong_land_settings = Settings {
+        eth_network: "sepolia".into(),
+        eth_collections_subgraph_url: Some(graph),
+        data_writes_enabled: true,
+        ..Settings::for_tests()
+    };
+    wrong_land_settings.check_writer_pair().unwrap();
+    let wrong_land = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        wrong_land_settings,
+    ));
+    wrong_land
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&wrong_land));
+    let app = market_router(wrong_land);
+    let (status, body) = get(app.clone(), &url).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    let (status, body) = get(app, &format!("{url}&tokenId=78")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
     own.drop().await;
 }
 

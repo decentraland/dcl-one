@@ -341,27 +341,29 @@ pub(super) async fn trades_rows(
             if f.network.is_some_and(|asked| asked != network) {
                 continue;
             }
+            let checked = polygon.filter(|_| net == ChainNet::Matic);
+            if checked.is_some_and(|bounds| bounds.nft_rows_published) {
+                continue;
+            }
+            if !affected(&format!(
+                "lower(b.network) = '{}' AND b.uses_nft_owner",
+                net.db_name()
+            ))
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(read_error)?
+            .get::<bool, _>("affected")
+            {
+                continue;
+            }
             let chain = state.settings.catalogue().chain_id(net);
-            let ready = match (net, polygon) {
-                (ChainNet::Matic, Some(bounds)) => bounds.nft_rows_published,
-                _ => {
-                    chain_walk::cursor_with_rows_publication(&mut *conn, INDEXER_NFT, net, &["nft"])
-                        .await
-                        .map_err(read_error)?
-                        .is_some_and(|(cursor, published)| {
-                            published && chain_walk::fresh_fold_on(&cursor, chain, now).is_some()
-                        })
-                }
-            };
-            if !ready
-                && affected(&format!(
-                    "lower(b.network) = '{}' AND b.uses_nft_owner",
-                    net.db_name()
-                ))
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(read_error)?
-                .get::<bool, _>("affected")
+            if checked.is_some()
+                || !chain_walk::cursor_with_rows_publication(&mut *conn, INDEXER_NFT, net, &["nft"])
+                    .await
+                    .map_err(read_error)?
+                    .is_some_and(|(cursor, published)| {
+                        published && chain_walk::fresh_fold_on(&cursor, chain, now).is_some()
+                    })
             {
                 return Err(nft_unavailable(
                     net,
@@ -381,7 +383,8 @@ pub(super) async fn trades_rows(
             .map_err(read_error)?
             .get::<bool, _>("affected")
     {
-        readers::require_land_on(&mut *conn, state).await?;
+        let (chain, _) = super::catalog::served_chains();
+        readers::require_land_on(&mut *conn, state, chain).await?;
     }
     if let Some(v) = &f.seller {
         let p = next(&mut binds, v.to_lowercase());

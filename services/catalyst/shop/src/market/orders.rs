@@ -518,7 +518,8 @@ pub(super) async fn book_snapshot(
     .map_err(read_error)?;
     let land = land_possible && nets.contains(&ChainNet::Ethereum);
     if land {
-        readers::require_land_on(&mut tx, state).await?;
+        let chain = state.settings.catalogue().chain_id(ChainNet::Ethereum);
+        readers::require_land_on(&mut tx, state, chain).await?;
     }
     owned_items::check(
         &mut tx,
