@@ -241,6 +241,31 @@ needs four settings:
 Without them, the route answers 503 naming them. A partial set fails startup. The
 route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
 
+The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
+`PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
+six settings:
+- `TRANSAK_API_URL` and `TRANSAK_API_GATEWAY_URL`, over https;
+- `TRANSAK_API_KEY` and `TRANSAK_API_SECRET`, plain or as `_FILE`;
+- `TRANSAK_REFRESH_ACCESS_TOKEN_AUTH`: the bearer of the forced refresh, at least
+  32 bytes;
+- `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
+
+Without them, the routes answer 503 naming them. A partial set fails startup.
+Run `catalyst schema migrate` before deploying: it creates
+`shop.transak_access_token`, the one access token the replicas share.
+
+**Never configure a node with the Transak partner key marketplace-server is
+serving with.** Transak invalidates the previous token on each refresh, and
+marketplace-server never refreshes on a 401. The node's first refresh would
+leave marketplace-server's Redis token dead, and production Transak with it,
+until that token expires (up to 7 days) or someone calls marketplace-server's
+`PUT /v1/transak/access-token`. Use separate partner credentials, or set the
+six `TRANSAK_*` only at the cutover, once marketplace-server has stopped
+serving Transak. No posture or default config sets them, so a node keeps the
+unavailable envelope until an operator does. When marketplace-server
+refreshes, the node itself recovers: its next 401 refreshes once, at most
+once per 30 s.
+
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)

@@ -2960,6 +2960,34 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Transak access token
+
+`shop.transak_access_token` (`schemas/30_shop.sql`) holds the one Transak
+partner access token every replica uses (`shop/src/market/transak.rs`). Transak
+invalidates its previous token whenever it issues a new one, so the token is
+shared rather than kept per process.
+- **Read:** each Transak call reads the row by its primary key while
+  `expires_at` is more than 60 s away.
+- **Claim:** otherwise one task per replica, behind a process mutex, claims the
+  refresh. The claim is one autocommit `INSERT … ON CONFLICT DO UPDATE` that
+  sets `refreshing_until` (15 s). It succeeds only while no claim is live and
+  the row still needs a new token: none, about to expire, or still the token
+  Transak refused with 401.
+- **Refresh:** the claimant calls Transak holding no transaction or
+  connection, then stores the token with an `UPDATE` that clears the claim.
+- **Others wait without a connection.** Waiting tasks of the replica wait on
+  the mutex. Other replicas reread the row every 250 ms while a claim is live.
+- **Failure:** a failed refresh keeps the claim for 10 s, and the replica fails
+  its callers at once for as long, so nobody calls Transak again in the
+  meantime.
+- **401s:** a refresh driven by a 401 runs at most once per 30 s
+  (`refreshed_at`).
+- **Volume:** one row, a few hundred bytes. Refreshes happen about once every
+  7 days (Transak's token life), plus one per `PUT /v1/transak/access-token`.
+
+The token is a bearer, so it is never logged. The schema object pass creates
+the table (`catalyst schema migrate`), and no step is needed.
+
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
