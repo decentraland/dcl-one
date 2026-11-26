@@ -421,10 +421,12 @@ async fn a_lock_refuses_saves_creations_and_deletes_for_a_day_and_never_uploads(
     )
     .await;
     assert_eq!(status, 200);
+    let oracle = FakeOracle::default();
     let within = node_over(
         pool.clone(),
         Options {
             now: a_day_less_a_millisecond_later,
+            rpc: Some(oracle.url().await),
             ..Options::default()
         },
     )
@@ -541,6 +543,7 @@ async fn a_lock_refuses_saves_creations_and_deletes_for_a_day_and_never_uploads(
         pool.clone(),
         Options {
             now: a_day_later,
+            rpc: Some(oracle.url().await),
             ..Options::default()
         },
     )
@@ -567,7 +570,13 @@ async fn a_lock_refuses_saves_creations_and_deletes_for_a_day_and_never_uploads(
 
 #[tokio::test]
 async fn the_owner_deletes_a_draft_with_its_items_and_the_upload_records_no_other_item_names() {
-    let Some(node) = node(Options::default()).await else {
+    let oracle = FakeOracle::default();
+    let Some(node) = node(Options {
+        rpc: Some(oracle.url().await),
+        ..Options::default()
+    })
+    .await
+    else {
         return;
     };
     let (id, items, hashes) = draft(&node, 2).await;
