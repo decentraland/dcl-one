@@ -36,7 +36,9 @@ Not migrated, by reason:
 Studios, their operators and their budget entries are imported after the
 ledger, so each budget grant links to the credit it gave. The grant audit
 step then links the granter, reason and annotation of imported USD grants
-and studio grants (see MAPPING.md).
+and studio grants. Each batch reports how many grants were linked, already
+linked, or missing a matching ledger row. Each unmatched available grant
+raises a warning with its upstream credit ID (see MAPPING.md).
 - Node-only state left to the node: packs (upstream packs are code), idempotency,
   captcha_challenges, carts, cart_items, checkouts, fulfillment_outbox,
   authorizations, authorization_lines, usage_settlements, revocations, usages,
