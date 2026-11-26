@@ -249,7 +249,10 @@ impl Settings {
         }
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
         let admin_token = non_empty(&raw.admin_token);
-        if admin_token.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+        if admin_token
+            .as_ref()
+            .is_some_and(|s| s.len() < MIN_SECRET_BYTES)
+        {
             bail!("CATALYRST_BUILDER_ADMIN_TOKEN must be at least {MIN_SECRET_BYTES} bytes");
         }
         let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
@@ -314,8 +317,8 @@ pub fn guarded_client() -> Outbound {
 }
 
 impl State {
-    /// `blobs` is the node's blob store; the builder keeps its item files in
-    /// its [`Storage::item_files`] tree, which the content routes never read.
+    /// `blobs` is the node's blob store, which must hold the builder's
+    /// [`Storage::item_files`] tree, the one the content routes never read.
     pub fn new(
         pool: PgPool,
         blobs: Arc<Storage>,
@@ -325,15 +328,14 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
-        let blobs = blobs
+        blobs
             .item_files()
-            .cloned()
             .context("the builder keeps its files in the blob store's item-files tree")?;
         let mut limits = limits::Limits::default();
         limits.node_bytes = settings.unpublished_max_bytes.unwrap_or(limits.node_bytes);
         limits.node_files = settings.unpublished_max_files.unwrap_or(limits.node_files);
         Ok(Self {
-            items: ItemsComponent::new(pool.clone(), blobs)
+            items: ItemsComponent::new(pool.clone())
                 .with_denylist(denylist.clone())
                 .with_network(settings.network),
             market,

@@ -143,24 +143,6 @@ impl FromRequestParts<SharedState> for Signed {
     }
 }
 
-/// The verified signer of a route that also answers unsigned requests: a
-/// request with no auth chain is anonymous, and one whose chain does not
-/// verify is [`unauthenticated`], never read as anonymous.
-pub struct MaybeSigned(pub Option<Signer>);
-
-impl FromRequestParts<SharedState> for MaybeSigned {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, ApiError> {
-        let chain = format!("{}0", signed_fetch::AUTH_CHAIN_HEADER_PREFIX);
-        if !parts.headers.contains_key(chain.as_str()) {
-            return Ok(MaybeSigned(None));
-        }
-        let Signed(signer) = Signed::from_request_parts(parts, state).await?;
-        Ok(MaybeSigned(Some(signer)))
-    }
-}
-
 /// Proof that [`authorize_admin`] admitted the request over the node's admin
 /// settings; extracted before the route's path parameters and body.
 pub struct Admin(String);
