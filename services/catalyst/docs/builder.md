@@ -98,7 +98,7 @@ the curation committee from the Polygon collections subgraph.
 - `MARKETPLACE_MIRRORS_ENABLED` with `MATIC_COLLECTIONS_SUBGRAPH_URL`: the
   collections mirror. Until its first complete pass, listings and bodies
   answer 503; once a pass is more than 30 minutes old, saves and deletes
-  answer 503 and a publish 401.
+  answer 503 and a publish 409.
 - The collections subgraph (see "Network"), read for the committee: the
   accounts it marks `isCommitteeMember`, in pages of 1,000. A write's decision takes a
   read that started after the decision began; a read-only decision also

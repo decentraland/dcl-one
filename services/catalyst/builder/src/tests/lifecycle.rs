@@ -347,7 +347,7 @@ async fn only_the_owner_of_a_standard_collection_sets_its_lock() {
         assert_eq!(
             answer(refused),
             (
-                401,
+                403,
                 format!("Unauthorized user {} for collections {id}", address(key))
             ),
             "{key} on {id}"
@@ -589,7 +589,7 @@ async fn the_owner_deletes_a_draft_with_its_items_and_the_upload_records_no_othe
     assert_eq!(
         (status, body["error"].clone()),
         (
-            401,
+            403,
             json!(format!(
                 "Unauthorized user {} for collections {id}",
                 address(STRANGER_KEY)
@@ -819,7 +819,7 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
         assert_eq!(body["data"]["id"], json!(id));
     }
     let (status, _) = call(&node.app, Some(STRANGER_KEY), "POST", &path, None).await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
     let stored: (String, String) = sqlx::query_as(
         "SELECT c.eth_address, i.eth_address FROM builder.collections c JOIN builder.items i ON i.collection_id = c.id \
          WHERE c.id = $1 AND i.id = $2",
@@ -1135,7 +1135,7 @@ async fn the_terms_route_takes_upstreams_schema_after_the_role_check() {
         Some(json!({})),
     )
     .await;
-    assert_eq!(status, 401, "the role is checked before the body");
+    assert_eq!(status, 403, "the role is checked before the body");
     for refused in [
         json!({}),
         json!({ "email": "not an email" }),
@@ -1195,7 +1195,7 @@ async fn publish_answers_not_published_until_the_chain_holds_the_collection() {
     for node in [&with_rpc, &without_rpc] {
         assert_eq!(
             call(&node.app, Some(OWNER_KEY), "POST", &path, None).await,
-            (401, not_published.clone())
+            (409, not_published.clone())
         );
     }
     let (unknown, _, _) = draft(&with_rpc, 1).await;
@@ -1211,15 +1211,15 @@ async fn publish_answers_not_published_until_the_chain_holds_the_collection() {
         )
         .await,
         (
-            401,
-            json!({ "ok": false, "data": { "id": unknown }, "error": "The collection is not published." })
+            503,
+            json!({ "ok": false, "data": {}, "error": "The collection's chain state is not available. Try again later." })
         ),
         "an RPC that can't tell keeps the client retrying"
     );
     assert_eq!(chain_ids(&pool, unknown).await, vec![None]);
     assert_eq!(chain_ids(&pool, id).await, vec![None, None]);
     let (status, _) = call(&with_rpc.app, Some(STRANGER_KEY), "POST", &path, None).await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
 }
 
 #[tokio::test]
@@ -1285,7 +1285,7 @@ async fn publish_waits_for_the_items_copy_to_catch_up_with_the_collections_copy(
         )
         .await,
         (
-            401,
+            409,
             json!({ "ok": false, "data": { "id": waiting }, "error": "The collection is not published." })
         ),
         "neither the copy nor a chain read can tell yet"
@@ -1513,7 +1513,7 @@ async fn concurrent_publish_calls_ask_the_rpc_once() {
         })
         .collect();
     for answered in calls {
-        assert_eq!(answered.await.unwrap().0, 401);
+        assert_eq!(answered.await.unwrap().0, 409);
     }
     assert_eq!(oracle.code_reads(), 1);
 }
@@ -1610,7 +1610,7 @@ async fn an_rpc_of_another_network_shows_no_deployment() {
         None,
     )
     .await;
-    assert_eq!(status, 401, "only Polygon's facts publish a collection");
+    assert_eq!(status, 503, "only Polygon's facts publish a collection");
     let (status, _) = call(
         &node.app,
         Some(OWNER_KEY),
@@ -1832,7 +1832,7 @@ async fn publish_waits_while_the_node_publishes_the_collection_itself() {
     .await;
     assert_eq!(
         (status, body["error"].clone()),
-        (401, json!("The collection is not published."))
+        (409, json!("The collection is not published."))
     );
     assert_eq!(
         chain_ids(&node.pool, id).await,
@@ -1863,7 +1863,7 @@ async fn a_terms_acceptance_rechecks_the_signers_role_when_it_writes() {
     let error = crate::terms::accept(&node.state, &grant, acceptance)
         .await
         .unwrap_err();
-    assert_eq!(error.status(), 401);
+    assert_eq!(error.status(), 403);
     assert_eq!(pending_terms(&node.pool, id).await, Vec::new());
 }
 
@@ -2067,6 +2067,6 @@ async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
     }
     assert_eq!(
         outcomes,
-        [(None, vec![Some("0".to_string())]), (Some(401), vec![None])]
+        [(None, vec![Some("0".to_string())]), (Some(403), vec![None])]
     );
 }

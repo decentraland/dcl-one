@@ -5,15 +5,15 @@
 //!
 //! | Curation | From | Request | Committee | Creator |
 //! | --- | --- | --- | --- | --- |
-//! | collection | any | `PATCH` assignee | the newest row, reassigned (404 without one) | 401 |
-//! | collection | any | `PATCH` status | the newest row, to that status (404 without one) | 401 |
-//! | collection | none, approved, rejected | `POST` | a new pending row, assigned when asked | a new pending row (401 with an assignee) |
+//! | collection | any | `PATCH` assignee | the newest row, reassigned (404 without one) | 403 |
+//! | collection | any | `PATCH` status | the newest row, to that status (404 without one) | 403 |
+//! | collection | none, approved, rejected | `POST` | a new pending row, assigned when asked | a new pending row (403 with an assignee) |
 //! | collection | pending | `POST` | 400 | 400 |
-//! | item | any | `PATCH` assignee | 400 | 401 |
-//! | item | any | `PATCH` approved or rejected | the newest row, to that status (404 without one) | 401 |
+//! | item | any | `PATCH` assignee | 400 | 403 |
+//! | item | any | `PATCH` approved or rejected | the newest row, to that status (404 without one) | 403 |
 //! | item | pending | `PATCH` pending | the newest row, its content hash taken again | the same |
-//! | item | approved, rejected | `PATCH` pending | the newest row, back to pending | 401 |
-//! | item | none | `PATCH` | 404 | 404 (401 for approved or rejected) |
+//! | item | approved, rejected | `PATCH` pending | the newest row, back to pending | 403 |
+//! | item | none | `PATCH` | 404 | 404 (403 for approved or rejected) |
 //! | item | approved, rejected | `POST` | a new pending row | the same |
 //! | item | pending | `POST` | 400 | 400 |
 //! | item | none | `POST` | 400 | 400 |
@@ -123,9 +123,9 @@ pub enum Change {
 /// Why a request is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// 401: only the committee changes a status.
+    /// 403: only the committee changes a status.
     StatusIsCommittees,
-    /// 401: only the committee assigns.
+    /// 403: only the committee assigns.
     AssigneeIsCommittees,
     /// 404: there is no curation to update.
     NoCuration,

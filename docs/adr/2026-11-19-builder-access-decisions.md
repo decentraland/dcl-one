@@ -40,6 +40,10 @@ source is down.
   is consulted only when the answer depends on it. For published content
   the committee only widens a caller's view: while the committee can't tell,
   a committee member reads published content as any signer does.
+- **401 for an unknown caller, 403 for a refused one.** A request whose
+  signature is missing, malformed or doesn't verify answers 401. A signer
+  whose signature verifies but who holds no role the request needs answers
+  403, with the refusal's text and `data` as upstream words them.
 - **No connection across another read.** A decision reads the builder's
   rows and the chain copy, returns its database connection, and only then
   reads the committee. It reads the registry before it takes a connection,
@@ -143,14 +147,14 @@ source is down.
   written by a wallet with a role on the collection or by a current
   committee member. The collection must exist (404) and be published: a
   standard one on chain, a third-party one with an item curation (409);
-  only then are the roles asked, so a stranger gets 401. The committee is
+  only then are the roles asked, so a stranger gets 403. The committee is
   asked only when no role answers: while the committee can't tell, the
   committee's curation listing and every decision only the committee
   can make answer 503, never a narrower view. Which status change each caller may make is
   one table (`builder/src/curation/transitions.rs`); a write asks it again
   inside its transaction, with the collection row locked. There it also
   reads the committee again: a curator the committee admitted, and the
-  assignee a write names, must still be members (401 otherwise). A review comment, appeal or retry asks the committee
+  assignee a write names, must still be members (403 otherwise). A review comment, appeal or retry asks the committee
   again only when no role on the collection still admits its signer.
 - **Admins.** The operator's routes, the item status routes and the
   console's under-review listing (`GET /v1/collections/curation`), admit
@@ -183,7 +187,7 @@ source is down.
   reads at most 5 seconds later. A committee decision waits for a subgraph
   read that starts after it arrives, or, for a read, up to 5 seconds before.
 - While the committee can't tell, a request that only the committee could
-  grant answers 503 rather than 401, and `GET /v1/committee` answers 503
+  grant answers 503 rather than 403, and `GET /v1/committee` answers 503
   rather than an empty list. Published content stays readable as any
   signer reads it, a committee member included.
 - Every by-id read is a decision, so it answers 503 when the chain copy is
@@ -217,7 +221,7 @@ source is down.
   before it could answer any committee decision; the subgraph answers in
   one request.
 - **A committee that can't be read admitting only the configured admin
-  addresses.** It would refuse every member with a 401 as if nobody were on
+  addresses.** It would refuse every member with a 403 as if nobody were on
   the committee while the source is down, and give the admin addresses a
   role on the upstream routes, which they don't have.
 - **The committee as every wallet that ever curated.** Past curators would

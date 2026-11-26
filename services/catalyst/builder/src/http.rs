@@ -28,20 +28,25 @@ pub enum Subject {
     Item,
 }
 
+/// A builder route's failure, answered in upstream's envelope.
 #[derive(Debug)]
 pub enum ApiError {
+    /// A refusal with its status, error text and `data`.
     Http {
         status: u16,
         error: String,
         data: Value,
     },
+    /// A database failure: logged, answered as a bare 500.
     Database(sqlx::Error),
+    /// Any other failure: logged, answered as a bare 500.
     Internal(String),
     /// 429 with a `Retry-After` of the wait, in whole seconds.
     Limited(std::time::Duration),
 }
 
 impl ApiError {
+    /// A refusal with `status`, `error` and empty `data`.
     pub fn http(status: u16, error: impl Into<String>) -> Self {
         Self::Http {
             status,
@@ -49,24 +54,32 @@ impl ApiError {
             data: json!({}),
         }
     }
+    /// 400.
     pub fn bad_request(error: impl Into<String>) -> Self {
         Self::http(400, error)
     }
+    /// 401: the caller's identity is unknown (no, a malformed or an
+    /// unverifiable signature).
     pub fn unauthorized(error: impl Into<String>) -> Self {
         Self::http(401, error)
     }
+    /// 403: the signer is known and holds no role the request needs.
     pub fn forbidden(error: impl Into<String>) -> Self {
         Self::http(403, error)
     }
+    /// 404.
     pub fn not_found(error: impl Into<String>) -> Self {
         Self::http(404, error)
     }
+    /// 409: the request conflicts with the current state.
     pub fn conflict(error: impl Into<String>) -> Self {
         Self::http(409, error)
     }
+    /// 503: the node can't tell yet; the client retries.
     pub fn service_unavailable(error: impl Into<String>) -> Self {
         Self::http(503, error)
     }
+    /// 500, with `detail` logged and never answered.
     pub fn internal(detail: impl Into<String>) -> Self {
         Self::Internal(detail.into())
     }
@@ -121,6 +134,7 @@ impl ApiError {
         Self::http(200, "The item doesn't exist.")
     }
 
+    /// The status the failure answers with.
     pub fn status(&self) -> u16 {
         match self {
             Self::Http { status, .. } => *status,
