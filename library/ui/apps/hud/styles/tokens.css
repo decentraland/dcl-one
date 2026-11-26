@@ -1,5 +1,6 @@
-/* Design tokens of the React HUD. A token whose value a foundation token has takes it from there
-   (`var(--dcl-…)`), so every document that loads this file loads the foundations' colours and spacing too:
+/* Design tokens of the React HUD. A token whose value and role a foundation token has takes it from there
+   (`var(--dcl-…)`); one that only shares a value with a foundation token of another role or opacity keeps a
+   literal, and says so. So every document that loads this file loads the foundations' colours and spacing too:
    react-web's entry, the Sites root (the `/play` shell and its app document) and the UI gallery's HUD canvas.
    New components use the canonical tokens below; the legacy --color-* aliases keep login, chat and loading
    components working. */
@@ -83,7 +84,7 @@
 
   /* status */
   --online: #57df41;
-  --away: #ffa25a;
+  --away: #ffa25a; /* a presence status; the value of --dcl-brand-melon, a brand colour */
   --offline: var(--dcl-neutrals-silver);
   --error: #ff2424;
   --error-text: #ffd0d8; /* soft error text on dark (readable, vs the solid --error) */
@@ -223,7 +224,7 @@
   --scrim-40: rgba(0, 0, 0, 0.22);
   --scrim-photo: rgba(0, 0, 0, 0.58); /* photo mode: 85% black outside the photo frame */
   --splash: var(--dcl-neutrals-white); /* photo mode: the shutter flash */
-  --scrim-20: rgba(0, 0, 0, 0.1);
+  --scrim-20: rgba(0, 0, 0, 0.1); /* 10 % black under this name; not an alias of the foundation's black-10 */
   --divider-pink: rgba(247, 85, 255, 0.25);
   --tab-hover: rgba(255, 255, 255, 0.26);
   --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
@@ -245,7 +246,7 @@
   --shown: #36d41d; /* a hidden item shown anyway */
   --smart-badge: linear-gradient(90deg, #e82af7 0%, #b229df 100%);
   --cta-flare: linear-gradient(90deg, #ff3156 0%, #ff5757 50%, #ff7d58 100%);
-  --scrim-60: rgba(0, 0, 0, 0.4);
+  --scrim-60: rgba(0, 0, 0, 0.4); /* 40 % black under this name; not an alias of the foundation's black-40 */
   --scrim-card: var(--dcl-transparencies-black-60); /* the lobby dimmed around a card it presents */
   --scrim-control: rgba(0, 0, 0, 0.35); /* a control's plate over a page's header band */
   --scrim-close: rgba(0, 0, 0, 0.82); /* a modal's close plate on its header band */
@@ -478,9 +479,9 @@
   --map-nav-hover: #ffd7d7;
   --map-nav-press: #fab6b6;
   --map-jump-press: #dd2749;
-  --map-field-btn: rgba(0, 0, 0, 0.1);
-  --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 30% */
-  --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 40% */
+  --map-field-btn: rgba(0, 0, 0, 0.1); /* black 10% */
+  --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 15% */
+  --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 21% */
   --map-sort-idle: rgba(0, 0, 0, 0.05); /* black 10% */
   --map-card: rgba(255, 255, 255, 0.5);
   --map-action: rgba(255, 255, 255, 0.7);

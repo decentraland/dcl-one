@@ -2,10 +2,6 @@ import type { ReactNode } from 'react'
 import { Spinner } from '../Spinner/Spinner'
 import styles from './BrowsePage.module.css'
 
-function classes(...names: (string | undefined)[]): string {
-  return names.filter(Boolean).join(' ')
-}
-
 export type BrowseToolbarProps = {
   /** The page's section tabs, at the toolbar's left. */
   tabs: ReactNode
@@ -17,7 +13,7 @@ export type BrowseToolbarProps = {
 /** The toolbar of a browse page: section tabs on the left, search and sort controls on the right. */
 export function BrowseToolbar({ tabs, children, className }: BrowseToolbarProps) {
   return (
-    <div className={classes(styles.toolbar, className)}>
+    <div className={[styles.toolbar, className].filter(Boolean).join(' ')}>
       {tabs}
       {children != null && <div className={styles.controls}>{children}</div>}
     </div>
@@ -34,7 +30,7 @@ export type BrowseControlProps = {
 /** A fixed-width slot in the toolbar's controls, so the row does not reflow as values change. */
 export function BrowseControl({ size, children, className }: BrowseControlProps) {
   return (
-    <div className={classes(styles[size], className)} data-size={size}>
+    <div className={[styles[size], className].filter(Boolean).join(' ')} data-size={size}>
       {children}
     </div>
   )
@@ -53,7 +49,7 @@ export type BrowsePanelProps = {
 export function BrowsePanel({ children, label, busy, className }: BrowsePanelProps) {
   return (
     <div
-      className={classes(styles.panel, className)}
+      className={[styles.panel, className].filter(Boolean).join(' ')}
       role={label != null ? 'region' : undefined}
       aria-label={label}
       aria-busy={busy}

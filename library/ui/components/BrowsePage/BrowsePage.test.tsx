@@ -49,7 +49,7 @@ describe('BrowseLoading', () => {
   })
 })
 
-describe("when a caller passes its own class", () => {
+describe('when a caller passes its own class', () => {
   it('keeps it beside the own class of the toolbar, a control and the panel', () => {
     render(
       <>
