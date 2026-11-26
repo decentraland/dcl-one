@@ -5521,7 +5521,8 @@ Invariants:
   rebuild) is emptied in the nft fold's transaction and a rebuild opened in
   `shop.legacy_order_rebuild` at the nft walk's last block; the nft fold
   publishes as usual and only the book's readers answer the `nft-index`
-  envelope. Each nft walk pass then spends up to 10 s on it: a batch of 100
+  envelope. Each nft walk pass then spends up to 2 minutes on it, so it runs
+  nearly back to back while the pass still publishes the nft index: a batch of 100
   contracts with an order event (a loose scan of `nft_event_token_idx`)
   refolded whole per transaction, the last contract done recorded, so a
   restart resumes there. The last step refolds every token with an order

@@ -437,8 +437,11 @@ use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 /// The keys a fold past `$2` touches, counted before the fold decides its
 /// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
 /// How long one pass of the nft walk spends on the legacy order book's
-/// open rebuild (`legacy_orders::run_rebuild`) before it walks.
-const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(10);
+/// open rebuild (`legacy_orders::run_rebuild`) before it walks: long enough
+/// that a rebuild runs nearly back to back (the book is refused meanwhile),
+/// short enough that the pass still folds and publishes the nft index well
+/// inside its 30-minute freshness window.
+const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// fold's `touched`.
 const COUNT_TOUCHED_SQL: &str = "
