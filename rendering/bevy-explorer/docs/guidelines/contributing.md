@@ -187,13 +187,22 @@ Bump the three together, in one PR.
    re-apply the listed changes.
 4. **Build and fix.** `cargo check -p dcl_deno --tests --features inspect` and
    `cargo check -p dcl_deno_ipc` first: `inspect` is a default feature.
-5. **The tests that catch an upgrade:**
+5. **Upstream ops.** `UPSTREAM_OPS` in `crates/dcl_deno/src/js/mod.rs` lists the upstream ops
+   scenes get; every other upstream op is disabled. List the ops the loaded scripts name, from
+   the new deno_core's own scripts (`*.js` at the crate root) and ours:
+   `rg -o -h '\bop_\w+' <deno_core>/*.js crates/dcl_deno/src/js/vendor crates/dcl_deno/src/js/modules crates/dcl_js/src/modules | sort -u`.
+   Add a new upstream op only if a script calls it on a path scenes reach, after reading what
+   it does with its arguments: an op that indexes, unwraps or borrows across scene input stays
+   off the list or gets an override. Remove names that no longer exist.
+6. **The tests that catch an upgrade:**
+   - `upstream_ops_outside_the_list_are_disabled` and `every_op_a_loaded_script_names_is_enabled`:
+     a listed op is gone, or a script needs one that is not listed.
    - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`:
      a vendored script is stale or missing.
    - `runtime_surface_tests.rs`: Intl, console, op results, `performance.now()`, per-scene
      BroadcastChannel, the fetch contract, `localStorage`.
    - `websocket_tests.rs`: the scene WebSocket.
-6. **Measure.** Compare scene frame time against main with the [benchmark](benchmark.md) before
+7. **Measure.** Compare scene frame time against main with the [benchmark](benchmark.md) before
    merging.
 
 ## Review
