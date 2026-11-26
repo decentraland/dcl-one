@@ -50,7 +50,7 @@ describe('request', () => {
   })
 })
 
-describe('boundRefusal', () => {
+describe('when the node refuses a request at one of its bounds', () => {
   async function refused(
     status: number,
     body: unknown,
@@ -124,8 +124,8 @@ describe('isRefusedRequest', () => {
   })
 })
 
-describe('baseUrl', () => {
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+describe('when choosing the builder API', () => {
+  describe('and the page is served by this deployment, as on localhost or its own domain', () => {
     afterEach(() => {
       delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
     })
@@ -135,13 +135,13 @@ describe('baseUrl', () => {
       expect(baseUrl('dcl.example')).toBe(`${window.location.origin}/builder-api/v1`)
     })
 
-    it('should be the builder-api of the public node base when the page names one', () => {
+    it('should be the builder-api of the public node base the page names', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(baseUrl()).toBe('https://node.example/builder-api/v1')
     })
   })
 
-  describe('when the page is on a Decentraland host', () => {
+  describe('and the page is on a Decentraland host', () => {
     it("should be that environment's builder-api", () => {
       expect(baseUrl('decentraland.zone')).toBe('https://builder-api.decentraland.zone/v1')
     })

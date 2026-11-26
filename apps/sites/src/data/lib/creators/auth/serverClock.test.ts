@@ -127,18 +127,18 @@ describe('serverClock', () => {
   })
 })
 
-describe('clockUrl', () => {
+describe('when choosing the clock to measure against', () => {
   afterEach(() => {
     delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
   })
 
-  describe('when the page names no node', () => {
+  describe('and the page names no node', () => {
     it("should be the lambdas status of the node behind the page's origin, whose clock checks the signatures", () => {
       expect(clockUrl()).toBe(`${window.location.origin}/lambdas/status`)
     })
   })
 
-  describe('when the page names a node', () => {
+  describe('and the page names a node', () => {
     it("should be that node's lambdas status", () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://decentraland.zone'
       expect(clockUrl()).toBe('https://decentraland.zone/lambdas/status')

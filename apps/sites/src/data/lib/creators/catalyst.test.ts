@@ -95,8 +95,8 @@ describe('fetchBaseWearables', () => {
   })
 })
 
-describe('peerUrl', () => {
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+describe('when choosing the catalyst peer', () => {
+  describe('and the page is served by this deployment, as on localhost or its own domain', () => {
     afterEach(() => {
       delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
     })
@@ -106,7 +106,7 @@ describe('peerUrl', () => {
       expect(peerUrl('dcl.example')).toBe(window.location.origin)
     })
 
-    it('should be the public node base when the page names one', () => {
+    it('should be the public node base the page names', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(peerUrl()).toBe('https://node.example')
     })
@@ -117,17 +117,17 @@ describe('peerUrl', () => {
     })
   })
 
-  describe('when the page is on a Decentraland host', () => {
+  describe('and the page is on a Decentraland host', () => {
     it("should be that environment's peer", () => {
       expect(peerUrl('decentraland.zone')).toBe('https://peer.decentraland.zone')
     })
   })
 })
 
-describe('erc721BaseUri', () => {
+describe('when choosing the base URI of minted items', () => {
   const ERC721_PATH = '/lambdas/collections/standard/erc721/'
 
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+  describe('and the page is served by this deployment, as on localhost or its own domain', () => {
     afterEach(() => {
       delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
     })
@@ -137,7 +137,7 @@ describe('erc721BaseUri', () => {
       expect(erc721BaseUri('dcl.example')).toBe(`${window.location.origin}${ERC721_PATH}`)
     })
 
-    it('should be the token metadata route of the public node base when the page names one', () => {
+    it('should be the token metadata route of the public node base the page names', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(erc721BaseUri()).toBe(`https://node.example${ERC721_PATH}`)
     })
@@ -148,7 +148,7 @@ describe('erc721BaseUri', () => {
     })
   })
 
-  describe('when the page is on a Decentraland host', () => {
+  describe('and the page is on a Decentraland host', () => {
     it("should be that environment's base URI", () => {
       expect(erc721BaseUri('decentraland.zone')).toBe(`https://peer.decentraland.zone${ERC721_PATH}`)
     })

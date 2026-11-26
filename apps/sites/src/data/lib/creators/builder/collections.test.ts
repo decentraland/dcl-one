@@ -35,7 +35,7 @@ describe('fetchCollections', () => {
 })
 
 describe('fetchCollectionItemPreviews', () => {
-  it('fetches the first items with their thumbnail hash and whether each is published', async () => {
+  it('should fetch the first items with their thumbnail hash and whether each is published', async () => {
     signedFetchMock.mockResolvedValue(
       okResponse({
         results: [

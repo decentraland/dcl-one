@@ -316,7 +316,7 @@ describe('when a call is sent through the relayer', () => {
       expect(sent()).toHaveLength(1)
     })
 
-    it('should pass on what the relayer refused it for when the creator refuses the switch', async () => {
+    it('should pass on what the relayer refused it for if the creator refuses the switch', async () => {
       nodeAndRelayer(REFUSAL)
       const { session, sent } = walletOn(1, 'refuses')
       await expect(sendContractTransaction(session, transfer)).rejects.toMatchObject({
@@ -326,7 +326,7 @@ describe('when a call is sent through the relayer', () => {
       expect(sent()).toHaveLength(0)
     })
 
-    it('should fail with what stopped the wallet when it stays on another chain', async () => {
+    it('should fail with what stopped the wallet if it stays on another chain', async () => {
       nodeAndRelayer(REFUSAL)
       const { session, sent } = walletOn(1, 'ignores')
       await expect(sendContractTransaction(session, transfer)).rejects.toBeInstanceOf(WrongChainError)
@@ -620,15 +620,15 @@ describe('when watching a transaction until it settles', () => {
   })
 })
 
-describe('relayUrl', () => {
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+describe('when choosing the transactions relay', () => {
+  describe('and the page is served by this deployment, as on localhost or its own domain', () => {
     it("should be the transactions relay of the node behind the page's origin", () => {
       expect(relayUrl()).toBe(`${window.location.origin}/transactions-api/v1`)
       expect(relayUrl('dcl.example')).toBe(`${window.location.origin}/transactions-api/v1`)
     })
   })
 
-  describe('when the page is on a Decentraland host', () => {
+  describe('and the page is on a Decentraland host', () => {
     it("should be that environment's transactions relay", () => {
       expect(relayUrl('decentraland.zone')).toBe('https://transactions-api.decentraland.zone/v1')
     })
