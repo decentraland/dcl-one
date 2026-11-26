@@ -464,6 +464,16 @@ Movement:
   `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
   and its height over it (the debug panel's Locomotion section).
 
+Scene animations:
+
+- `/scene_animations` (JSON: the `models` that animate and how many are `withAnimator`; the
+  clips `playing`, `stopped` by their scene and `finished`; `finishReports`, the ended clips
+  reported to their scenes; and up to 32 `clips`, each with its `scene`, `entity`, `clip`,
+  `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`). The debug panel's
+  Scene animations section shows the counts. A clip that ended reads `finished` until its
+  scene writes the Animator again: `stopped` after a write that keeps its state stopped, and
+  `playing` after one that plays it again.
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role
