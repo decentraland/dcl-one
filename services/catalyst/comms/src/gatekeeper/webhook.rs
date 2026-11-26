@@ -387,7 +387,7 @@ pub async fn livekit_webhook(
         .or(event.ingress_id.as_deref())
         .unwrap_or_default();
     let id = &event.id;
-    let (a, b) = (stripe(id), stripe(&resource));
+    let (a, b) = (stripe(id), stripe(resource));
     let _first = state.webhooks.locks[a.min(b)].lock().await;
     let _second = if a != b {
         Some(state.webhooks.locks[a.max(b)].lock().await)
@@ -443,12 +443,12 @@ pub async fn livekit_webhook(
         && let Some(room) = &event.room
     {
         let sid = event.room_sid.as_deref().filter(|sid| sid.len() <= 128);
-        let due = state.webhooks.state.lock().metadata_due(&room, sid);
+        let due = state.webhooks.state.lock().metadata_due(room, sid);
         if due {
             // Already serialized by this room's webhook stripe. Record only a
             // confirmed same-incarnation write; failures remain retryable.
             let updated =
-                super::moderation::maintenance::initialize_room(state.as_ref(), &room, sid).await?;
+                super::moderation::maintenance::initialize_room(state.as_ref(), room, sid).await?;
             if let Some(updated) = updated.filter(|updated| sid == Some(updated.as_str())) {
                 state
                     .webhooks
@@ -497,7 +497,7 @@ async fn room_event(
         return Ok(None);
     };
     let room = &participant.room;
-    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
+    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), room)
         .await
         .map_err(|error| {
             tracing::warn!(%error, room, "canonical room identity unavailable");

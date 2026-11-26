@@ -147,7 +147,7 @@ impl ApiError {
 
     /// The published message: the variant's text, except for the two
     /// internal arms whose detail (a DSN, a peer address) never leaves the log.
-    fn public_message(&self) -> String {
+    pub(crate) fn public_message(&self) -> String {
         match self {
             Self::Database(e) => {
                 tracing::error!(error = %e, "credits database error");
