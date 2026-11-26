@@ -328,6 +328,17 @@ test('the offline guard reads a string first argument as a port wherever Node do
   assert.deepEqual(JSON.parse(result.stdout), ['192.0.2.10: 443', '192.0.2.10:0x50', '192.0.2.10:8e1'])
 })
 
+test('the offline guard refuses an http request to an address outside loopback', () => {
+  const program = `
+    const http = require('node:http')
+    const { refused } = require(${JSON.stringify(guard)})
+    http.get('http://192.0.2.10:8080/x', { signal: AbortSignal.timeout(2000) })
+      .on('error', error => console.log(JSON.stringify({ error: error.message, refused })))
+  `
+  const result = spawnSync(process.execPath, ['-e', program], { encoding: 'utf8' })
+  assert.deepEqual(JSON.parse(result.stdout), { error: 'capture is offline: 192.0.2.10:8080', refused: ['192.0.2.10:8080'] })
+})
+
 test('the offline guard refuses to start under a proxy, in any spelling', () => {
   for (const [name, value] of [['HTTPS_PROXY', 'http://127.0.0.1:9'], ['http_proxy', 'http://127.0.0.1:9'], ['NODE_USE_ENV_PROXY', '1']]) {
     const env = { ...process.env, [name]: value, NODE_OPTIONS: `--require=${guard}` }
