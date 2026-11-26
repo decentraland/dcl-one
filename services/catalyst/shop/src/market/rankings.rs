@@ -5,7 +5,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveTime, Utc};
 use serde::Serialize;
 
 use super::wire::{ApiError, InvalidParameterError, Params};
@@ -75,8 +75,7 @@ pub fn get_timestamp_from_timeframe(tf: AnalyticsTimeframe) -> i64 {
     };
     (Utc::now() - Duration::days(days))
         .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
+        .and_time(NaiveTime::MIN)
         .and_utc()
         .timestamp_millis()
 }

@@ -176,8 +176,8 @@ pub fn transform_parent(component_id: u32, data: &[u8]) -> Option<u32> {
     if component_id != TRANSFORM_COMPONENT_ID || data.len() < TRANSFORM_PAYLOAD_LEN {
         return None;
     }
-    let bytes = &data[TRANSFORM_PARENT_OFFSET..TRANSFORM_PARENT_OFFSET + 4];
-    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    let bytes = data.get(TRANSFORM_PARENT_OFFSET..)?.first_chunk::<4>()?;
+    Some(u32::from_le_bytes(*bytes))
 }
 
 /// The single place a CRDT batch is checked against the authority of whoever

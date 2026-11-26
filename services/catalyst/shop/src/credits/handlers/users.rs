@@ -12,6 +12,7 @@ use crate::credits::dto::{
 };
 use crate::credits::errors::ApiError;
 use crate::credits::history::HeldOut;
+use crate::credits::store::Credits;
 use crate::types::UsdCents;
 
 pub async fn enroll(
@@ -62,17 +63,35 @@ pub async fn user_credits(
     if signer.as_str() != wallet {
         return Err(ApiError::forbidden("walletId does not match signer"));
     }
+    Ok(Json(
+        user_credits_body(&state, &wallet, query.status.as_deref()).await?,
+    ))
+}
 
-    let spendable = state.credits.spendable(&wallet).await?;
-    let held = state.credits.held(&wallet).await?;
+/// What `GET /users/{address}/credits` answers for `wallet` (lowercase), the
+/// body the balance stream sends too (`stream.rs`). Read from one REPEATABLE
+/// READ, READ ONLY snapshot, so a pledge committed during the read shows in
+/// the spendable balance and the hold together, or in neither.
+pub(crate) async fn user_credits_body(
+    state: &SharedState,
+    wallet: &str,
+    status: Option<&str>,
+) -> Result<UserCreditsResponse, ApiError> {
+    let mut tx = state.credits.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let spendable = Credits::spendable_on(&mut *tx, wallet).await?;
+    let held = Credits::held_on(&mut *tx, wallet).await?;
     let mut response = user_credits_response(spendable.spendable_cents(), held);
     let (credits, total, _) =
-        crate::credits::goals::user_credits(&state, &wallet, query.status.as_deref()).await?;
+        crate::credits::goals::user_credits_on(&mut tx, wallet, status).await?;
     response.credits = credits;
     response.total_credits = total;
     response.totals.expiring = total;
-    let mut conn = state.credits.pool.acquire().await?;
-    if let Some((at, reason)) = crate::credits::goals::flag_reason(&mut conn, &wallet).await? {
+    let flag = crate::credits::goals::flag_reason(&mut tx, wallet).await?;
+    tx.commit().await?;
+    if let Some((at, reason)) = flag {
         response.credits.clear();
         response.total_credits = 0.0;
         response.totals.expiring = 0.0;
@@ -82,7 +101,7 @@ pub async fn user_credits(
         response.reason = Some(reason);
         response.is_blocked_for_claiming = Some(true);
     }
-    Ok(Json(response))
+    Ok(response)
 }
 
 fn user_credits_response(spendable_cents: i64, held: Option<HeldOut>) -> UserCreditsResponse {

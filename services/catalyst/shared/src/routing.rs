@@ -15,6 +15,7 @@ use axum::response::Response;
 use axum::routing::MethodRouter;
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod guard;
 
 type BoxedResponse = Pin<Box<dyn Future<Output = Response> + Send>>;

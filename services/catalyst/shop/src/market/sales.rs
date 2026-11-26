@@ -170,6 +170,9 @@ pub struct SalesSummaryCollection {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub sold: i64,
     pub earned_wei: String,
+    pub earned_usd: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub unpriced_sales: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -197,6 +200,7 @@ pub struct SalesSummaryRoyalties {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub resales: i64,
     pub volume_wei: String,
+    pub royalties_wei: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -214,6 +218,9 @@ pub struct SalesSummary {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub resales: i64,
     pub earned_wei: String,
+    pub earned_usd: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub unpriced_sales: i64,
     pub by_collection: Vec<SalesSummaryCollection>,
     pub by_item: Vec<SalesSummaryItem>,
     pub royalties: SalesSummaryRoyalties,
