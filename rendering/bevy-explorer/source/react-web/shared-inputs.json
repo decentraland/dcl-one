@@ -16590,11 +16590,11 @@
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.module.css",
-      "sha256": "d1c0c75d1ec1bd73c6cf6b43198a92f241517b000ba6876acdcf6d7f5bc47418"
+      "sha256": "73984b00d968403223a07fc3ac8aed303d0a291c7aa6934e285bceed1246aa8b"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityCreate.tsx",
-      "sha256": "9f81ab210c30da8074af1b2c2701b6ddd9e04109c99e239f77d0179fdd30a854"
+      "sha256": "be2afc26772ed837aa75f5832e7043a68807f6f191a3e7214f80831d69ccda86"
     },
     {
       "path": "library/ui/apps/sites/social/CommunityDetail.module.css",
@@ -61642,6 +61642,21 @@
     {
       "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
       "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/social/CommunityCreate.tsx",
+      "to": "library/ui/components/InputWebCreatorTools/InputWebCreatorTools.tsx",
       "kind": "test:runtime"
     },
     {

@@ -585,7 +585,7 @@
   },
   "library/ui/apps/sites/social/CommunityCreate.module.css": {
     "primitives": 0,
-    "tokens": 32
+    "tokens": 24
   },
   "library/ui/apps/sites/social/CommunityDetail.module.css": {
     "primitives": 0,
