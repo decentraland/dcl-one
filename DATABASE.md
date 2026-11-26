@@ -3391,8 +3391,10 @@ seller a sale event names stays), then deletes the rows it read; a row
 recorded meanwhile waits for the next fold. The table holds one row per nft
 rewind until a sales fold runs. After a rebuild the point is the start, so
 every seller inferred from a transfer is unset and comes back as the nft
-walk passes its bid again; nothing outside the bids fold reads
-`nft_bid.seller`.
+walk passes its bid again. The bid book of `/v1/bids` (see "Polygon legacy
+bids") reads a pending row too: it sets aside the stored seller of a bid
+the next fold will infer again and reads it from the rewound log, as that
+fold will.
 
 A database that gains the table starts with no recovery points. A search
 reads only the points below the cursor, and the first advance's point is
@@ -5308,6 +5310,93 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 ```
 
 Its size and the lookup time on production data are unmeasured.
+
+## Polygon legacy bids
+
+On a node that walks the nft and sales indexes, `/v1/bids` and the activity
+feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
+`shop.nft_bid`, the sales fold's table, in
+`services/catalyst/shop/src/market/bids.rs`. Ethereum's legacy bids still
+come from the collections subgraph reader.
+
+Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
+taken once the snapshot is established: the trades mirror's bids are read on
+it too, and the subgraph's Ethereum bids are filtered at that instant. Each
+statement is bounded by the `/v1/nfts` statement timeout. The snapshot
+checks:
+
+- the trades mirror and its trade-events verdicts are ready (otherwise their
+  envelopes);
+
+- the Polygon `sales` cursor is published: its whole history, a fold
+  within 30 minutes, bound to the chain the node serves on Polygon
+  (`IndexSettings::chain_id`), out of quarantine. Otherwise the read answers
+  the `sales-index` envelope. `folded_block` is not compared with
+  `last_block`, as for the nft index's readers: a pass advances the latter
+  before it folds;
+- the bid book holds that published fold. The shared `shop.projection_write`
+  triggers mark changed bid rows pending in the writer's transaction and
+  acknowledge them when the sales cursor publishes. This includes legacy
+  writers and writes at an unchanged height. A walk advance without book
+  writes keeps serving. A pending write returns `sales-index` 503 until
+  publication and increments `catalyst_shop_bid_book_unpublished_fold_reads_total`;
+- the nft index is fresh on Polygon, on that same chain (otherwise the
+  `nft-index` envelope);
+- the catalogue supplying Polygon membership has published. The reader
+  uses the native collections fold while it owns Polygon and waits for a
+  complete collections mirror pass after hand-back;
+- every bid in the request's scope (its filters but the seller's) has a
+  seller.
+
+The scope, the page and the total hold only bids on the catalogue the nft
+index walks on the served chain: a `shop.collections` row of that
+`chain_id`, `testnet_verified` on a testnet. The bid contract takes any
+ERC721, and the collections subgraph kept no bid on an asset it had not
+catalogued; the nft walk never reads such a token's transfers.
+
+A bid's seller is the one the fold stored, unless an nft rewind the fold
+has not rechecked yet (`shop.bid_seller_recheck`) lies before the bid and
+no acceptance named it. Otherwise it is the token's latest transfer before
+the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block
+and no backfill of the contract below its walk is owed
+(`shop.nft_contract`, the fold's own rule): a transfer the backfill has yet
+to add may be the latest.
+A bid with neither fails the read closed with the `nft-index` envelope,
+rather than being served without its seller or left out of a `seller`
+filter. That happens while the sales walk is ahead of the nft walk.
+
+Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
+contract dropped when another bid on its token was accepted reads
+`cancelled`.
+
+A mirror (v3) bid on an item names the item's creator as its seller only
+from an item row of the trade's chain, verified there on a testnet. On a
+node that does not walk the indexes, the trades readiness and the mirror's
+bids are one short read-only snapshot, released before the subgraph is
+awaited, whose instant the subgraph's filter takes. On an NFT walker, a
+mirrored ERC721 bid in the request's scope requires a fresh NFT ownership
+publication for the served chain. The check runs before any seller filter or pagination, so
+a pending owner change cannot move bids between seller pages or totals.
+
+Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
+3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
+6,000 bids without a stored seller (PostgreSQL 17, warm cache), no index
+added. The catalogue check is a join in a page and a total, and one primary
+key probe per bid in the unresolved-seller check, where a join misjudged the
+few bids it reads and compared each with the whole catalogue (180 ms):
+
+| Read (first = 100) | Time |
+|---|---|
+| the unresolved-seller check (`nft_bid_seller_unknown_idx`) | 22 to 27 ms |
+| no filter, newest first / its capped total | 20 ms / 2 ms |
+| one bidder (the activity leg) | 5.6 ms |
+| one seller (the activity leg), page and total | 48 ms and 46 ms |
+| one token | 0.5 ms |
+| open, most expensive | 17 ms |
+
+These timings cover a book with no pending seller recheck. A pending recheck
+also inspects bids created past its start, whose stored sellers may have
+changed. That case can scan a larger part of the book and is unmeasured.
 
 ## Legacy Marketplace orders
 

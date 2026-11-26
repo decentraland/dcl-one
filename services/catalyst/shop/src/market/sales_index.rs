@@ -101,6 +101,12 @@ pub const SEPOLIA: SalesIndex = SalesIndex {
 };
 
 impl SalesIndex {
+    /// The ERC721BidV2 contract this deployment walks: a legacy bid's
+    /// `bidAddress`.
+    pub fn bid_contract(self) -> &'static str {
+        self.bid
+    }
+
     pub fn for_chain(chain: i64) -> Option<Self> {
         match chain {
             137 => Some(POLYGON),
