@@ -1,5 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { worldsManagementUrl } from '/shared/urls';
+import { config } from '/@/config';
 import { cx } from '/@/lib/cx';
 import Checkbox from '@ui/atoms/Checkbox';
 import Text from '@ui/atoms/Text';
@@ -97,8 +99,13 @@ export function Deploy(props: Props) {
     );
   }, [isWorld, deploymentMetadata?.isMultiScene, worldScenes, project.scene.parcels]);
 
+  const worldsUrl = config.get('WORLDS_CONTENT_SERVER_URL');
+  const managesCanonicalWorlds = worldsManagementUrl(worldsUrl) !== worldsUrl;
+  // An independent .dev upload cannot replace an entire .org World atomically.
+  // Require an explicit removal through Manage for layouts that need a whole-World delete.
+  const requiresManualRemoval = needsUndeploy && managesCanonicalWorlds;
   /** Publishing empties the world first: the same condition `handlePublish` undeploys on. */
-  const willEmptyWorld = needsUndeploy && !!wallet && !!worldName;
+  const willEmptyWorld = needsUndeploy && !managesCanonicalWorlds && !!wallet && !!worldName;
 
   // Only the idle view shows the limit. A deployment whose publish server never answered
   // (initializeDeployment rejected, e.g. offline) is failed and carries no parcels.
@@ -123,6 +130,7 @@ export function Deploy(props: Props) {
   }, [isWorld, worldScenes, project.scene.parcels]);
 
   const handlePublish = useCallback(async () => {
+    if (requiresManualRemoval) return;
     setShowWarning(false);
     updateProjectInfo(project.path, { skipPublishWarning: skipWarning }); // write skip warning flag
 
@@ -146,6 +154,7 @@ export function Deploy(props: Props) {
   }, [
     skipWarning,
     project,
+    requiresManualRemoval,
     willEmptyWorld,
     worldName,
     wallet,
@@ -267,7 +276,7 @@ export function Deploy(props: Props) {
     const stepsList: Step[] = [];
     let stepNumber = 1;
 
-    if (needsUndeploy || undeployStatus !== 'idle') {
+    if ((needsUndeploy && !managesCanonicalWorlds) || undeployStatus !== 'idle') {
       stepsList.push({
         bulletText: stepNumber++,
         name: t('modal.publish_project.deploy.deploying.step.unpublishing'),
@@ -296,7 +305,13 @@ export function Deploy(props: Props) {
     });
 
     return stepsList;
-  }, [deployment?.componentsStatus, getStepDescription, needsUndeploy, undeployStatus]);
+  }, [
+    deployment?.componentsStatus,
+    getStepDescription,
+    needsUndeploy,
+    managesCanonicalWorlds,
+    undeployStatus,
+  ]);
 
   const hasError =
     publishError || !deployment || deployment.status === 'failed' || undeployStatus === 'failed';
@@ -390,6 +405,13 @@ export function Deploy(props: Props) {
                   <Idle
                     files={deployment.files}
                     error={deployment.error}
+                    publishBlockedReason={
+                      requiresManualRemoval
+                        ? t(
+                            'modal.publish_project.deploy.deploying.errors.canonical_removal_required',
+                          )
+                        : undefined
+                    }
                     sceneSizeLimit={sceneSizeLimit}
                     isSceneSizeLimitLoading={isSceneSizeLimitLoading}
                     onClick={() =>
@@ -435,6 +457,7 @@ export function Deploy(props: Props) {
 type IdleProps = {
   files: File[];
   error?: Deployment['error'];
+  publishBlockedReason?: string;
   sceneSizeLimit: number | null;
   isSceneSizeLimitLoading?: boolean;
   onClick: () => void;
@@ -443,6 +466,7 @@ type IdleProps = {
 export function Idle({
   files,
   error,
+  publishBlockedReason,
   sceneSizeLimit,
   isSceneSizeLimitLoading = false,
   onClick,
@@ -451,13 +475,14 @@ export function Idle({
   const totalSize = getTotalSize(files);
   const exceedsSceneSize = sceneSizeLimit !== null && totalSize > sceneSizeLimit;
   const errorMessage =
-    invalidFiles.length > 0
+    publishBlockedReason ??
+    (invalidFiles.length > 0
       ? t('modal.publish_project.deploy.deploying.errors.max_file_size_exceeded', {
           maxFileSizeInMb: MAX_FILE_SIZE_BYTES / 1e6,
         })
       : exceedsSceneSize
         ? t('modal.publish_project.deploy.deploying.errors.max_scene_size_exceeded')
-        : error?.message;
+        : error?.message);
 
   return (
     <div
@@ -512,7 +537,9 @@ export function Idle({
           size="lg"
           className="hub-button hub-button--primary"
           onClick={onClick}
-          disabled={!!error || exceedsSceneSize || isSceneSizeLimitLoading}
+          disabled={
+            !!publishBlockedReason || !!error || exceedsSceneSize || isSceneSizeLimitLoading
+          }
         >
           {t('modal.publish_project.deploy.files.publish')}
           <i className="deploy-icon" />
