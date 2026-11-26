@@ -1,7 +1,7 @@
 -- Only Polygon factory creations increment the account's collection counter.
 -- The factory handler reads creator() at the end of the creation block.
 , founders AS (
-    SELECT e.network,e.contract_address,
+    SELECT e.network,e.contract_address,e.block_number AS created_block,e.log_index AS created_log,e.block_time AS created_at,
            coalesce(initial.account,later.previous_account,seed.creator,c.creator) AS creator
     FROM shop.collection_event e JOIN shop.sale_publication p USING(network)
     JOIN shop.chain_cursor ix ON ix.network=e.network AND ix.indexer='collections'

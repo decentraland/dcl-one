@@ -228,12 +228,43 @@ pub(crate) async fn snapshot(
     Ok((snap, nets))
 }
 
+#[derive(Debug)]
+pub(crate) struct MetadataProofs {
+    identities: Vec<String>,
+    oldest_mirror_at: Option<NaiveDateTime>,
+}
+
+impl MetadataProofs {
+    fn require_fresh(
+        self,
+        state: &MarketplaceState,
+        snap: &mut sale_fold::SalesSnapshot,
+        mirror: super::mirrors::Mirror,
+    ) -> Result<Vec<String>, Response> {
+        if let Some(at) = self.oldest_mirror_at {
+            let now = Utc::now().naive_utc();
+            let budget =
+                chrono::Duration::from_std(super::mirrors::stale_after(&state.settings, mirror))
+                    .unwrap_or(chrono::Duration::MAX);
+            let expires = at.checked_add_signed(budget).unwrap_or(NaiveDateTime::MAX);
+            if now < at || now > expires {
+                return Err(unavailable(
+                    mirror.source(),
+                    "the marketplace metadata copy is stale",
+                ));
+            }
+            snap.expires_at = snap.expires_at.min(expires.and_utc());
+        }
+        Ok(self.identities)
+    }
+}
+
 pub(crate) async fn require_metadata(
     snap: &mut sale_fold::SalesSnapshot,
     nets: &[ChainNet],
     mirror: &'static str,
     source: Source,
-) -> Result<Vec<String>, Response> {
+) -> Result<MetadataProofs, Response> {
     let now = Utc::now();
     let proofs: Vec<(bool, Option<String>, Option<NaiveDateTime>)> = sqlx::query_as(
         "SELECT projection.owned_at IS NOT NULL,
@@ -245,8 +276,8 @@ pub(crate) async fn require_metadata(
                         AND walk.diverged_at IS NULL AND walk.quarantined_at IS NULL
                         AND walk.rebuild_requested_at IS NULL THEN concat('index:', projection.owned_at,
                             '/',walk.sale_input_epoch,'/',walk.sale_history_revision,'/',coalesce(collection.epoch,0)) END
-           ELSE 'mirror:'||copy.last_complete_pass_at END AS proof,
-           CASE WHEN projection.owned_at IS NOT NULL THEN walk.folded_at END
+           ELSE 'mirror:'||copy.last_complete_pass_at||'/'||coalesce(copy.pass_block_hash,'') END AS proof,
+           CASE WHEN projection.owned_at IS NOT NULL THEN walk.folded_at ELSE copy.last_complete_pass_at END
          FROM shop.sale_publication sales
          LEFT JOIN shop.collection_projection projection USING(network)
          LEFT JOIN shop.collection_walk collection USING(network)
@@ -260,29 +291,37 @@ pub(crate) async fn require_metadata(
     .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
     .bind((now-super::chain_walk::READY_WINDOW).naive_utc()).bind(now.naive_utc())
     .fetch_all(&mut *snap.transaction).await.map_err(db_error)?;
-    proofs
-        .into_iter()
-        .map(|(native, proof, folded_at)| {
-            if let Some(folded_at) = folded_at {
+    let mut identities = Vec::with_capacity(proofs.len());
+    let mut oldest_mirror_at: Option<NaiveDateTime> = None;
+    for (native, proof, at) in proofs {
+        let identity = proof.ok_or_else(|| {
+            if native {
+                unavailable(
+                    Source::CollectionsIndex,
+                    "the native catalogue does not cover the published sales",
+                )
+            } else {
+                unavailable(
+                    source,
+                    "the requested marketplace metadata has no complete mirror pass",
+                )
+            }
+        })?;
+        if let Some(at) = at {
+            if native {
                 snap.expires_at = snap
                     .expires_at
-                    .min(folded_at.and_utc() + super::chain_walk::READY_WINDOW);
+                    .min(at.and_utc() + super::chain_walk::READY_WINDOW);
+            } else {
+                oldest_mirror_at = Some(oldest_mirror_at.map_or(at, |oldest| oldest.min(at)));
             }
-            proof.ok_or_else(|| {
-                if native {
-                    unavailable(
-                        Source::CollectionsIndex,
-                        "the native catalogue does not cover the published sales",
-                    )
-                } else {
-                    unavailable(
-                        source,
-                        "the requested marketplace metadata has no complete mirror pass",
-                    )
-                }
-            })
-        })
-        .collect()
+        }
+        identities.push(identity);
+    }
+    Ok(MetadataProofs {
+        identities,
+        oldest_mirror_at,
+    })
 }
 
 async fn require_collections(

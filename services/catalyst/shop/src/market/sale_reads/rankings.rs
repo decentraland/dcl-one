@@ -95,14 +95,25 @@ pub(in crate::market) async fn creator_rankings(
 ) -> Result<crate::market::rankings::RankingResponse, Response> {
     use crate::market::rankings::{CreatorRank, RankingResponse, RankingsSortBy};
     let (mut snap, nets) = snapshot(state, None).await?;
-    let dependencies = if filters.from == 0 {
-        let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
-        Some((items, require_collections(state, &mut snap).await?))
-    } else {
-        None
-    };
+    let history = require_collections(state, &mut snap).await?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror)
+        .await?
+        .require_fresh(state, &mut snap, crate::market::mirrors::Mirror::Items)?;
+    // Founder attribution can read the Polygon collections catalogue.
+    let collections = require_metadata(
+        &mut snap,
+        &[crate::market::chain_walk::ChainNet::Matic],
+        "collections",
+        Source::CollectionsMirror,
+    )
+    .await?
+    .require_fresh(
+        state,
+        &mut snap,
+        crate::market::mirrors::Mirror::Collections,
+    )?;
     let cache_key = format!(
-        "published-creator-rank/{filters:?}/{:?}/{dependencies:?}",
+        "published-creator-rank/{filters:?}/{:?}/{history}/{items:?}/{collections:?}",
         snap.generations
     );
     let rows = cached_analytics(
@@ -139,7 +150,7 @@ pub(in crate::market) async fn creator_rankings(
             if unknown_creator {
                 return Err(unavailable(
                     Source::CollectionsIndex,
-                    "the original collection creator is unavailable",
+                    "the collection creator at the required sale or creation is unavailable",
                 ));
             }
             Ok(rows)
