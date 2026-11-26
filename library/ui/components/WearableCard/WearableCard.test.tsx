@@ -130,6 +130,14 @@ describe('WearableCard', () => {
       expect(card('Hat').querySelector('img')).toBeNull()
       expect(card('Hat')).toHaveTextContent('EQUIP')
     })
+
+    it('should try a new thumbnail after one failed', () => {
+      const view = render(<WearableCard name="Hat" thumbnail="/gone.png" />)
+      fireEvent.error(card('Hat').querySelector('img')!)
+      expect(card('Hat').querySelector('img')).toBeNull()
+      view.rerender(<WearableCard name="Hat" thumbnail="/new.png" />)
+      expect(card('Hat').querySelector('img')).toHaveAttribute('src', '/new.png')
+    })
   })
 
   describe('when the name is long, or missing', () => {
@@ -276,6 +284,19 @@ describe('WearableCard', () => {
       expect(onClick).not.toHaveBeenCalled()
     })
 
+    it("should keep a double press on the action from the card's own handlers", async () => {
+      const onClick = vi.fn()
+      const onDoubleClick = vi.fn()
+      const onEquip = vi.fn()
+      render(
+        <WearableCard name="Hat" onClick={onClick} onDoubleClick={onDoubleClick} onEquip={onEquip} />
+      )
+      await userEvent.dblClick(screen.getByText('EQUIP'))
+      expect(onEquip).toHaveBeenCalledTimes(2)
+      expect(onClick).not.toHaveBeenCalled()
+      expect(onDoubleClick).not.toHaveBeenCalled()
+    })
+
     it('should call onDoubleClick for a double press', async () => {
       const onDoubleClick = vi.fn()
       render(<WearableCard name="Hat" onDoubleClick={onDoubleClick} />)
@@ -318,6 +339,18 @@ describe('WearableCard', () => {
       await userEvent.tab()
       await userEvent.keyboard('{Enter}')
       expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should offer no action and ignore a double press on a tile that is not to pick', async () => {
+      const onDoubleClick = vi.fn()
+      const onEquip = vi.fn()
+      render(
+        <WearableCard name="Hat" coverNote="Equipped" onDoubleClick={onDoubleClick} onEquip={onEquip} />
+      )
+      expect(screen.queryByText('EQUIP')).toBeNull()
+      await userEvent.dblClick(card('Hat'))
+      expect(onDoubleClick).not.toHaveBeenCalled()
+      expect(onEquip).not.toHaveBeenCalled()
     })
 
     it('should cover it with an empty note too', async () => {

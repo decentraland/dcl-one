@@ -68,7 +68,7 @@ export type WearableCardProps = {
   pick?: boolean
   /** How many copies there are, shown as "xN" above one. */
   count?: number
-  /** Covers the tile with this note, always shown, and the card cannot be pressed. */
+  /** Covers the tile with this note, always shown: the card cannot be pressed and offers no action. */
   coverNote?: string
   /** The card's texts. English by default. */
   labels?: Partial<WearableCardLabels>
@@ -114,9 +114,13 @@ export function WearableCard({
   coverNote,
   labels
 }: WearableCardProps) {
-  const [failed, setFailed] = useState(false)
+  // The picture that failed to load: a new one is tried again.
+  const [failedSrc, setFailedSrc] = useState<string>()
+  const failed = failedSrc != null && failedSrc === thumbnail
+  const covered = coverNote != null
   const text = { ...LABELS, ...labels }
-  const action = pick
+  const action =
+    pick || covered
     ? null
     : incompatible && !equipped
       ? null
@@ -126,7 +130,6 @@ export function WearableCard({
           : null
         : text.equip
   const ringed = pick ? selected : equipped
-  const covered = coverNote != null
   const hostArt = {
     '--wearable-card-flap': url(art?.flap),
     '--wearable-card-ring': url(art?.ring),
@@ -150,7 +153,7 @@ export function WearableCard({
       aria-pressed={selected}
       aria-disabled={covered ? true : undefined}
       onClick={covered ? undefined : onClick}
-      onDoubleClick={onDoubleClick}
+      onDoubleClick={covered ? undefined : onDoubleClick}
       onMouseEnter={onHoverChange && (() => onHoverChange(true))}
       onMouseLeave={onHoverChange && (() => onHoverChange(false))}
     >
@@ -167,7 +170,7 @@ export function WearableCard({
         style={art?.tile == null ? undefined : { backgroundImage: url(art.tile) }}
       >
         {thumbnail && !failed && (
-          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />
+          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
         )}
         {categoryIcon != null && (
           <span className={styles.flap}>
@@ -202,6 +205,8 @@ export function WearableCard({
             event.stopPropagation()
             onEquip?.()
           }}
+          // The card's own double press is not this action's.
+          onDoubleClick={(event) => event.stopPropagation()}
         >
           {action}
         </span>

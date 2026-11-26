@@ -71,6 +71,14 @@ describe('EquippedItemCard', () => {
       expect(screen.getByText('Hat')).toBeInTheDocument()
       expect(screen.getByText('epic')).toBeInTheDocument()
     })
+
+    it('should try a new thumbnail after one failed', () => {
+      const { container, rerender } = render(<EquippedItemCard name="Hat" thumbnail="/gone.png" />)
+      fireEvent.error(container.querySelector('img')!)
+      expect(container.querySelector('img')).toBeNull()
+      rerender(<EquippedItemCard name="Hat" thumbnail="/new.png" />)
+      expect(container.querySelector('img')).toHaveAttribute('src', '/new.png')
+    })
   })
 
   describe('when the name is long, or missing', () => {

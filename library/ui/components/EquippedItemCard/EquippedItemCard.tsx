@@ -41,7 +41,9 @@ export function EquippedItemCard({
   categoryIcon,
   pinShop = false
 }: EquippedItemCardProps) {
-  const [failed, setFailed] = useState(false)
+  // The picture that failed to load: a new one is tried again.
+  const [failedSrc, setFailedSrc] = useState<string>()
+  const failed = failedSrc != null && failedSrc === thumbnail
   const shop = shopUrl == null ? undefined : pinShop ? styles.pinnedShop : styles.hasShop
   return (
     <div
@@ -50,7 +52,7 @@ export function EquippedItemCard({
     >
       <div className={styles.thumbWrap}>
         {thumbnail && !failed ? (
-          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />
+          <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
         ) : (
           <span className={styles.placeholder} />
         )}

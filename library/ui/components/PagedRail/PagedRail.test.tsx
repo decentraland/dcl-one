@@ -279,6 +279,28 @@ describe('PagedRail', () => {
       expect(current()).toEqual(['Page 5'])
     })
 
+    it('should move the keyboard focus to the other arrow when the focused one hides at an end, and only then', async () => {
+      scrolling(3432)
+      await renderSettled(twenty())
+      button('Page 7')!.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(button('Page 7')).toHaveFocus()
+      button('Page 6')!.focus()
+      await userEvent.keyboard('{Enter}')
+      button('Next')!.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(current()).toEqual(['Page 7'])
+      expect(button('Next')).toBeNull()
+      expect(button('Previous')).toHaveFocus()
+      button('Page 2')!.focus()
+      await userEvent.keyboard('{Enter}')
+      button('Previous')!.focus()
+      await userEvent.keyboard('{Enter}')
+      expect(current()).toEqual(['Page 1'])
+      expect(button('Previous')).toBeNull()
+      expect(button('Next')).toHaveFocus()
+    })
+
     it('should scroll smoothly, and at once for a visitor who asks for less motion', async () => {
       const calls = scrolling(3432)
       await renderSettled(twenty())

@@ -37,7 +37,10 @@ export type PagedRailProps = {
   nextLabel?: string
   /** A dot's accessible name, from its page counted from one. "Page N" by default. */
   pageLabel?: (page: number) => string
-  /** The cards, one element each. */
+  /**
+   * The cards, one element each. The rail goes back to its first page when their number changes; a host that
+   * swaps in other cards of the same number gives the rail a new `key`.
+   */
   children: ReactNode
   className?: string
 }
@@ -96,6 +99,8 @@ export function PagedRail({
   // Zero cards a page would make the pages endless: a page holds one card at least.
   const cardsPerPage = perPage >= 1 ? perPage : 1
   const viewport = useRef<HTMLDivElement>(null)
+  const previousArrow = useRef<HTMLButtonElement>(null)
+  const nextArrow = useRef<HTMLButtonElement>(null)
   const count = Children.count(children)
   const countPages = Math.max(1, Math.ceil(count / cardsPerPage))
   const [pages, setPages] = useState(countPages)
@@ -157,6 +162,14 @@ export function PagedRail({
     setPage(0)
   }, [count])
 
+  // An arrow hides at its end of the rail. If it held the focus, the focus moves to the other arrow, so a keyboard
+  // user stays in the rail.
+  useLayoutEffect(() => {
+    const focused = document.activeElement
+    if (page === 0 && focused === previousArrow.current) nextArrow.current?.focus()
+    else if (page === pages - 1 && focused === nextArrow.current) previousArrow.current?.focus()
+  }, [page, pages])
+
   return (
     <div
       className={[
@@ -188,6 +201,7 @@ export function PagedRail({
         <>
           <div className={styles.arrows}>
             <button
+              ref={previousArrow}
               type="button"
               className={styles.arrow}
               aria-label={previousLabel}
@@ -197,6 +211,7 @@ export function PagedRail({
               {previousIcon ?? <GeneralLeftArrow size={15} aria-hidden="true" />}
             </button>
             <button
+              ref={nextArrow}
               type="button"
               className={`${styles.arrow} ${styles.next}`}
               aria-label={nextLabel}
