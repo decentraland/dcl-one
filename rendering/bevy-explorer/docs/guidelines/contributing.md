@@ -196,7 +196,8 @@ Bump the three together, in one PR.
    off the list or gets an override. Remove names that no longer exist.
 6. **The tests that catch an upgrade:**
    - `upstream_ops_outside_the_list_are_disabled` and `every_op_a_loaded_script_names_is_enabled`:
-     a listed op is gone, or a script needs one that is not listed.
+     a listed op is gone, or a vendored or own script needs one that is not listed. The second
+     test does not read deno_core's own scripts, so step 5's search is what catches those.
    - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`:
      a vendored script is stale or missing.
    - `runtime_surface_tests.rs`: Intl, console, op results, `performance.now()`, per-scene

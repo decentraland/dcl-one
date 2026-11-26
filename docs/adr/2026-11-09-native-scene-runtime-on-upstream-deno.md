@@ -46,7 +46,10 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   and `op_current_user_call_site` are off the allowlist (nothing the runtime loads calls them,
   with leak tracing off). `op_url_parse`, `op_url_parse_with_base` and `op_url_reparse` index
   a short buffer and `op_eval_context` unwraps its host-defined options; fetch and `require`
-  need them, so they stay until they are replaced. `op_structured_clone`
+  need them, so they stay until they are replaced. So do the
+  `op_readable_stream_resource_*` ops that take the sink pointer (`write_buf`, `write_sync`,
+  `write_error`, `close`) trust whatever pointer the script passes back, and the streams script
+  needs them. `op_structured_clone`
   (`performance.mark` and `measure` reach it) is replaced by a serializer with no host-object path
   (`structured_clone.rs`). `op_drain_pending_rejections` returns nothing (`rejections.rs`):
   upstream holds the rejection queue's borrow while a scene's `Array.prototype` setter can run,
