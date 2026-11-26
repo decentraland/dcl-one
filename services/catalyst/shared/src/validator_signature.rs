@@ -13,8 +13,10 @@
 //! validator calls several routes. This module keeps no record of what it
 //! verified: a signature is valid for its whole window, so the caller
 //! refuses a MAC it has seen within the window, in storage every replica
-//! shares. [`crate::signed_request`]'s nonce cache lives in one process, so
-//! it can't refuse a replay sent to another replica.
+//! shares: the builder's validator routes keep
+//! `builder.validator_seen_signatures`. [`crate::signed_request`]'s nonce
+//! cache lives in one process, so it can't refuse a replay sent to another
+//! replica.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
