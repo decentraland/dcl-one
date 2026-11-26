@@ -52,11 +52,22 @@ use crate::sky_preset::{
 
 const SHADER_PATH: &str = "embedded://shaders/stylized_sky.wgsl";
 const HORIZON_NOISE_PATH: &str = "embedded://sky/horizon_noise.png";
-/// One strip a cloud layer, in the order of `CLOUD_LAYERS`.
-const CLOUD_STRIP_PATHS: [&str; 3] = [
-    "embedded://sky/clouds_overhead.png",
-    "embedded://sky/clouds_low.png",
-    "embedded://sky/clouds_cumulus.png",
+/// One strip a cloud layer, in the order of `CLOUD_LAYERS`, each in a left and a right half:
+/// the web build shrinks any image over 1024 wide at load (`reduce_image_sizes`), and a strip is
+/// 2048.
+const CLOUD_STRIP_PATHS: [[&str; 2]; 3] = [
+    [
+        "embedded://sky/clouds_overhead_left.png",
+        "embedded://sky/clouds_overhead_right.png",
+    ],
+    [
+        "embedded://sky/clouds_low_left.png",
+        "embedded://sky/clouds_low_right.png",
+    ],
+    [
+        "embedded://sky/clouds_cumulus_left.png",
+        "embedded://sky/clouds_cumulus_right.png",
+    ],
 ];
 /// Turns a second a strip of speed 1 scrolls.
 const CLOUD_SCROLL_TURNS: f32 = 0.0004;
@@ -658,21 +669,24 @@ pub fn load_horizon_noise(asset_server: &AssetServer) -> Handle<Image> {
 
 /// The cloud strips while they load, in the order of `CLOUD_LAYERS`.
 #[derive(Resource)]
-pub struct CloudStrips([Handle<Image>; 3]);
+pub struct CloudStrips([[Handle<Image>; 2]; 3]);
 
-/// The strips as authored: data, not colour, each wide image one turn of the sky. They
+/// The strips as authored: data, not colour, each pair of halves one turn of the sky. They
 /// stay off the GPU; `stack_cloud_strips` makes the texture the shader reads.
 pub fn load_cloud_strips(asset_server: &AssetServer) -> CloudStrips {
-    CloudStrips(CLOUD_STRIP_PATHS.map(|path| {
-        asset_server.load_with_settings(path, |settings: &mut ImageLoaderSettings| {
-            settings.is_srgb = false;
-            settings.asset_usage = RenderAssetUsages::MAIN_WORLD;
+    CloudStrips(CLOUD_STRIP_PATHS.map(|halves| {
+        halves.map(|path| {
+            asset_server.load_with_settings(path, |settings: &mut ImageLoaderSettings| {
+                settings.is_srgb = false;
+                settings.asset_usage = RenderAssetUsages::MAIN_WORLD;
+            })
         })
     }))
 }
 
-/// Once the three strips have loaded, gives the sky one texture with a layer for each:
-/// repeating around the sky, held at the top and bottom rows, which are clear.
+/// Once the three strips have loaded, gives the sky one texture with a layer for each, its two
+/// halves side by side: repeating around the sky, held at the top and bottom rows, which are
+/// clear.
 pub fn stack_cloud_strips(
     mut commands: Commands,
     strips: Res<CloudStrips>,
@@ -682,23 +696,32 @@ pub fn stack_cloud_strips(
     let Some(layers) = strips
         .0
         .iter()
-        .map(|strip| images.get(strip))
+        .map(|[left, right]| Some([images.get(left)?, images.get(right)?]))
         .collect::<Option<Vec<_>>>()
     else {
         return;
     };
+    let height = layers[0][0].height() as usize;
+    // row `y` of a half
+    let row = |half: &Image, y: usize| {
+        let data = half.data.as_deref().unwrap_or_default();
+        let stride = data.len() / height;
+        &data[y * stride..(y + 1) * stride]
+    };
     let mut stacked = Image::new(
         Extent3d {
-            width: layers[0].width(),
-            height: layers[0].height(),
+            width: layers[0][0].width() * 2,
+            height: height as u32,
             depth_or_array_layers: layers.len() as u32,
         },
         TextureDimension::D2,
         layers
             .iter()
-            .flat_map(|layer| layer.data.iter().flatten().copied())
+            .flat_map(|[left, right]| (0..height).flat_map(move |y| [row(left, y), row(right, y)]))
+            .flatten()
+            .copied()
             .collect(),
-        layers[0].texture_descriptor.format,
+        layers[0][0].texture_descriptor.format,
         RenderAssetUsages::RENDER_WORLD,
     );
     stacked.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
