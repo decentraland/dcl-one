@@ -10,17 +10,23 @@
 //!   [`CAP_NEAR_LIMIT_BPS`] of its signed MANA cap.
 //! - **The expiry sweep** ([`expiry_ctes`], run by the fulfilment tick): a
 //!   credit the Shop reported submitting a transaction for that expired with
-//!   no use indexed (the sweep only runs once the index is past its expiry),
-//!   unless another credit of the same wallet went through in that
-//!   transaction; a wallet with [`REPEATED_EXPIRY_ATTEMPTS`] expired
-//!   purchases of one item within [`REPEATED_EXPIRY_WINDOW_SECS`].
+//!   no use indexed, unless another credit of the same wallet went through in
+//!   that transaction. Only where the CreditUsed index bounds the sweep (it
+//!   expires a pledge once the index read past it): without one the sweep runs
+//!   on the clock alone and no use is ruled out, so none is queued. And a
+//!   wallet with [`REPEATED_EXPIRY_ATTEMPTS`] expired purchases of one item
+//!   created within [`REPEATED_EXPIRY_WINDOW_SECS`] of the newest one this
+//!   sweep expired.
 //!
 //! A row is unique per (kind, key), so detecting the same case again adds
-//! nothing. The job claims due rows for a lease, posts each, and ends it
-//! `sent` once Slack accepted it; a refused or failed post is retried with
-//! backoff, and a row still undelivered after [`MAX_AGE`] ends `failed`.
-//! With no webhook each row is logged at error and ends `skipped`: an alert
-//! is never dropped silently.
+//! nothing. The job claims due rows for a lease, posts each (no redirect
+//! followed), and ends it `sent` once Slack accepted it; a refused or failed
+//! post is retried with backoff, Slack's `Retry-After` on a 429 holding the
+//! rest of the pass too, and a row still undelivered after [`MAX_AGE`] and
+//! one attempted post ends `failed`. With no webhook each row is logged at
+//! error and ends `skipped`: an alert is never dropped silently. Delivery is
+//! at least once: a post Slack accepted whose row was not ended (a crash, a
+//! timeout after acceptance) is posted again after the lease.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -122,18 +128,23 @@ pub(crate) async fn record_cap_near_limit(
 
 /// The expiry sweep and the alerts it detects, as the CTEs of one
 /// statement: `expired` flips the past-expiry pledges (`authorized` to
-/// `expired`, `retired` to `released`) whose expiry is at or before `bound`
-/// and returns them; `submitted_unconsumed` and `repeated_expiry` queue their
-/// alerts from those rows. `now` is the clock's bind. Both the fulfilment
-/// tick and [`Credits::expire_stale_authorizations`] run it, so a sweep
-/// never expires a pledge without its alerts.
+/// `expired`, `retired` to `released`) whose expiry the CreditUsed index of
+/// chain `chain` read past (`usage::expiry_bound_sql`) and returns them;
+/// `submitted_unconsumed` and `repeated_expiry` queue their alerts from those
+/// rows. `now` is the clock's bind. Both the fulfilment tick and
+/// [`Credits::expire_stale_authorizations`] run it, so a sweep never expires a
+/// pledge without its alerts.
 ///
 /// The other CTEs read the table as it was before the flip, so the rows this
 /// sweep expires come from `expired` (`fresh`), the earlier ones from the
-/// table. A repeated expiry is keyed by its newest fresh attempt: each sweep
-/// that adds one past the threshold alerts once.
-pub(crate) fn expiry_ctes(now: &str, bound: &str) -> String {
-    let window = format!("{now} - interval '{REPEATED_EXPIRY_WINDOW_SECS} seconds'");
+/// table. A repeated expiry counts a wallet's attempts at one item created
+/// within the window before the newest fresh one (a pledge reaches the sweep
+/// only after its TTL and the index's lag, so the window is anchored on the
+/// attempts, not on the sweep), and is keyed by that newest attempt: each
+/// sweep that adds one past the threshold alerts once.
+pub(crate) fn expiry_ctes(now: &str, chain: &str) -> String {
+    let bound = super::usage::expiry_bound_sql(now, chain);
+    let window = format!("interval '{REPEATED_EXPIRY_WINDOW_SECS} seconds'");
     format!(
         "expired AS ( \
              UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
@@ -145,31 +156,37 @@ pub(crate) fn expiry_ctes(now: &str, bound: &str) -> String {
                     jsonb_build_object('salt', e.id, 'address', e.address, 'usdCents', e.usd_cents, \
                                        'capWei', e.amount_wei::text, 'txHash', e.submitted_tx_hash), {now}, {now} \
              FROM expired e \
-             WHERE e.submitted_tx_hash IS NOT NULL \
+             WHERE {chain}::bigint IS NOT NULL AND e.submitted_tx_hash IS NOT NULL \
                AND NOT EXISTS (SELECT 1 FROM credits.usages u WHERE u.salt = e.id) \
                AND NOT EXISTS (SELECT 1 FROM credits.authorizations s \
                                WHERE s.submitted_tx_hash = e.submitted_tx_hash AND s.address = e.address AND s.id <> e.id \
                                  AND (s.status = 'consumed' OR EXISTS (SELECT 1 FROM credits.usages su WHERE su.salt = s.id))) \
              ON CONFLICT (kind, dedupe_key) DO NOTHING RETURNING 1 \
          ), expired_attempts AS ( \
-             SELECT a.id, a.address, a.contract_address, a.item_id, false AS fresh FROM credits.authorizations a \
-             WHERE a.status IN ('expired', 'released') AND a.created_at > {window} \
-               AND a.address IN (SELECT address FROM expired) \
+             SELECT a.id, a.address, a.contract_address, a.item_id, a.created_at, false AS fresh \
+             FROM credits.authorizations a \
+             WHERE a.status IN ('expired', 'released') AND a.address IN (SELECT address FROM expired) \
+               AND a.created_at > (SELECT min(e.created_at) FROM expired e WHERE e.address = a.address) - {window} \
              UNION ALL \
-             SELECT e.id, e.address, e.contract_address, e.item_id, true FROM expired e WHERE e.created_at > {window} \
+             SELECT e.id, e.address, e.contract_address, e.item_id, e.created_at, true FROM expired e \
          ), expired_items AS ( \
-             SELECT DISTINCT t.id, t.address, t.fresh, \
+             SELECT DISTINCT t.id, t.address, t.created_at, t.fresh, \
                     COALESCE(l.asset_contract || ':' || COALESCE(l.asset_item_id::text, l.asset_token_id::text, lower(l.registered_name)), \
                              t.contract_address || ':' || t.item_id) AS item \
              FROM expired_attempts t LEFT JOIN credits.authorization_lines l ON l.authorization_id = t.id \
+         ), anchored AS ( \
+             SELECT i.*, max(i.created_at) FILTER (WHERE i.fresh) OVER (PARTITION BY i.address, i.item) AS anchor \
+             FROM expired_items i WHERE i.item IS NOT NULL \
          ), repeated_expiry AS ( \
              INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
-             SELECT '{REPEATED_EXPIRY}', i.address || ':' || i.item || ':' || max(i.id) FILTER (WHERE i.fresh), \
-                    jsonb_build_object('address', i.address, 'item', i.item, 'attempts', count(DISTINCT i.id), \
+             SELECT '{REPEATED_EXPIRY}', g.address || ':' || g.item || ':' || g.newest, \
+                    jsonb_build_object('address', g.address, 'item', g.item, 'attempts', g.attempts, \
                                        'windowSecs', {REPEATED_EXPIRY_WINDOW_SECS}), {now}, {now} \
-             FROM expired_items i WHERE i.item IS NOT NULL \
-             GROUP BY i.address, i.item \
-             HAVING count(DISTINCT i.id) >= {REPEATED_EXPIRY_ATTEMPTS} AND bool_or(i.fresh) \
+             FROM (SELECT address, item, count(DISTINCT id) AS attempts, \
+                          (array_agg(id ORDER BY created_at DESC, id DESC) FILTER (WHERE fresh))[1] AS newest \
+                   FROM anchored WHERE anchor IS NOT NULL AND created_at > anchor - {window} \
+                   GROUP BY address, item) g \
+             WHERE g.attempts >= {REPEATED_EXPIRY_ATTEMPTS} \
              ON CONFLICT (kind, dedupe_key) DO NOTHING RETURNING 1 \
          )"
     )
@@ -181,6 +198,14 @@ pub(crate) fn expiry_ctes(now: &str, bound: &str) -> String {
 pub struct Delivery {
     webhook: Option<Arc<str>>,
     http: Outbound,
+}
+
+/// Why a post was not accepted.
+enum Refusal {
+    /// Retried with backoff; the reason never names the webhook.
+    Failed(String),
+    /// Slack's 429, with its `Retry-After` when it sent one.
+    RateLimited(Option<chrono::Duration>),
 }
 
 /// What one pass did with the alerts it claimed.
@@ -220,6 +245,8 @@ impl Delivery {
         .await?;
         claimed.sort_by_key(|row| row.get::<i64, _>("id"));
         let mut outcome = PassOutcome::default();
+        // Once Slack rate limits, the rest of the pass waits as it asked.
+        let mut held_until: Option<chrono::NaiveDateTime> = None;
         for row in claimed {
             let id: i64 = row.get("id");
             let kind: String = row.get("kind");
@@ -233,10 +260,17 @@ impl Delivery {
                 outcome.skipped += 1;
                 continue;
             };
-            if created_at <= now - MAX_AGE {
+            // Given up only after one attempted post: an alert queued while no
+            // writer delivered is posted late rather than never.
+            if attempts > 1 && created_at <= now - MAX_AGE {
                 tracing::error!(alert = %text, kind, attempts, "a credits alert went undelivered for a day and is given up");
                 finish(credits, id, "failed", now).await?;
                 outcome.failed += 1;
+                continue;
+            }
+            if let Some(until) = held_until {
+                retry(credits, id, until, "held while Slack rate limits").await?;
+                outcome.retried += 1;
                 continue;
             }
             match self.post(webhook, &text).await {
@@ -244,17 +278,16 @@ impl Delivery {
                     finish(credits, id, "sent", now).await?;
                     outcome.sent += 1;
                 }
-                Err(error) => {
+                Err(Refusal::RateLimited(wait)) => {
+                    let until = clock(now) + wait.unwrap_or_else(|| backoff(attempts));
+                    tracing::warn!(kind, attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
+                    retry(credits, id, until, "Slack answered 429 Too Many Requests").await?;
+                    held_until = Some(until);
+                    outcome.retried += 1;
+                }
+                Err(Refusal::Failed(error)) => {
                     tracing::warn!(kind, attempts, %error, "a credits alert was not delivered; retried with backoff");
-                    sqlx::query(
-                        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3 \
-                         WHERE id = $1 AND status = 'pending'",
-                    )
-                    .bind(id)
-                    .bind(now + backoff(attempts))
-                    .bind(&error)
-                    .execute(&credits.pool)
-                    .await?;
+                    retry(credits, id, clock(now) + backoff(attempts), &error).await?;
                     outcome.retried += 1;
                 }
             }
@@ -262,30 +295,40 @@ impl Delivery {
         Ok(outcome)
     }
 
-    /// Posts `text`; `Err` with a reason that never names the webhook (its
-    /// path is the credential).
-    async fn post(&self, webhook: &str, text: &str) -> Result<(), String> {
+    /// Posts `text`, following no redirect: a 3xx would log the webhook (its
+    /// path is the credential) and turn the post into a body-less GET. The
+    /// refusal's reason never names the webhook.
+    async fn post(&self, webhook: &str, text: &str) -> Result<(), Refusal> {
         let response = self
             .http
             .post(webhook)
+            .max_redirects(0)
             .json(&json!({ "text": text }))
             .timeout(POST_TIMEOUT)
             .send()
             .await
             .map_err(|error| {
-                if error.is_timeout() {
+                Refusal::Failed(if error.is_timeout() {
                     "the post timed out".to_string()
                 } else if error.is_connect() {
                     "the webhook did not accept a connection".to_string()
                 } else {
                     "the post failed".to_string()
-                }
+                })
             })?;
         let status = response.status();
         if status.is_success() {
             Ok(())
+        } else if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let wait = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .map(|seconds| chrono::Duration::seconds(seconds.max(1)).min(MAX_BACKOFF));
+            Err(Refusal::RateLimited(wait))
         } else {
-            Err(format!("Slack answered {status}"))
+            Err(Refusal::Failed(format!("Slack answered {status}")))
         }
     }
 }
@@ -296,6 +339,30 @@ fn backoff(attempts: i32) -> chrono::Duration {
     BACKOFF
         .checked_mul(1 << doublings)
         .map_or(MAX_BACKOFF, |wait| wait.min(MAX_BACKOFF))
+}
+
+/// The time a retry is scheduled from: the pass's clock, or later once its
+/// slow posts took time.
+fn clock(now: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
+    now.max(super::store::now())
+}
+
+/// Schedules `id`'s next attempt at `at`, keeping why this one failed.
+async fn retry(
+    credits: &Credits,
+    id: i64,
+    at: chrono::NaiveDateTime,
+    error: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3 WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .bind(at)
+    .bind(error)
+    .execute(&credits.pool)
+    .await?;
+    Ok(())
 }
 
 async fn finish(
@@ -329,7 +396,7 @@ pub(crate) fn message(kind: &str, payload: &Value) -> String {
         payload[key]
             .as_str()
             .and_then(|wei| U256::from_str(wei).ok())
-            .map_or("an unknown amount of".into(), |wei| {
+            .map_or("an unknown amount".into(), |wei| {
                 crate::types::decimal_text(wei, 18)
             })
     };

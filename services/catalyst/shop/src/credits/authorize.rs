@@ -454,7 +454,7 @@ impl Credits {
     pub async fn expire_stale_authorizations(&self) -> Result<u64, ApiError> {
         let sql = format!(
             "WITH {} SELECT count(*) FROM expired",
-            super::alerts::expiry_ctes("$1", &super::usage::expiry_bound_sql("$1", "$2"))
+            super::alerts::expiry_ctes("$1", "$2")
         );
         let expired: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(now())

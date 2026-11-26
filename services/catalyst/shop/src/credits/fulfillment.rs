@@ -86,7 +86,7 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 pub(crate) static OUTBOX_TICK_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
         "WITH {}, {OUTBOX_TICK_REST}",
-        super::alerts::expiry_ctes("$2", &super::usage::expiry_bound_sql("$2", "$5"))
+        super::alerts::expiry_ctes("$2", "$5")
     )
 });
 

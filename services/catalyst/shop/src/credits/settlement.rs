@@ -585,17 +585,25 @@ impl Credits {
             Err(e) => {
                 tx.rollback().await?;
                 tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
-                // Once per log, however often the fold retries it.
-                alerts::record(
-                    &mut *self.pool.acquire().await?,
-                    alerts::UNPAID_CONSUMPTION,
-                    &format!("{chain_id}:{}:{}", c.block_number, c.log_index),
-                    serde_json::json!({
-                        "salt": c.salt, "address": address, "status": status, "kind": kind,
-                        "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
-                    }),
-                )
-                .await?;
+                // Once per log, however often the fold retries it. A failed
+                // insert is logged and the pass goes on: the next fold retries
+                // the debit and queues the alert then.
+                let queued = async {
+                    alerts::record(
+                        &mut *self.pool.acquire().await?,
+                        alerts::UNPAID_CONSUMPTION,
+                        &format!("{chain_id}:{}:{}", c.block_number, c.log_index),
+                        serde_json::json!({
+                            "salt": c.salt, "address": address, "status": status, "kind": kind,
+                            "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                        }),
+                    )
+                    .await
+                }
+                .await;
+                if let Err(error) = queued {
+                    tracing::error!(credit = %c.salt, %error, "queueing the unpaid-consumption alert failed; the next fold retries it");
+                }
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,

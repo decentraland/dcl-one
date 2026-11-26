@@ -152,7 +152,7 @@ pub const DEFAULT_TOPUP_MIN_CONFIRMATIONS: u64 = 64;
 const CHAIN_SEPOLIA: i64 = 11_155_111;
 
 /// The raw values `main.rs` reads from `Config` (the old env names; the
-/// secrets through `<NAME>_FILE`). No `Debug`: five fields are credentials.
+/// secrets through `<NAME>_FILE`). No `Debug`: several fields are credentials.
 #[derive(Clone)]
 pub struct RawSettings {
     pub goal_flags_source: goals::flags::Source,

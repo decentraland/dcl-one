@@ -1780,24 +1780,34 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
   tick and `expire_stale_authorizations` run):
   - `submitted_unconsumed`, keyed by salt: a pledge it expires that has a
     `submitted_tx_hash` and no `credits.usages` row (`usages_salt_idx`), unless
-    another pledge of the same wallet with that hash was consumed;
+    another pledge of the same wallet with that hash was consumed. Only with
+    the CreditUsed index configured: without it the sweep expires on the
+    clock, and an unindexed use cannot be ruled out;
   - `repeated_expiry`, keyed by wallet, item and the newest attempt this sweep
     expired: three or more expired or released pledges of the wallet for one
-    line item created within 30 minutes. The read is bounded to the wallets
-    the sweep expired, through `authorizations_address_status_expiry_idx`.
+    line item created within 30 minutes of that newest attempt (anchored on
+    the attempts, since a pledge reaches the sweep only after its TTL and the
+    index's lag). The read is bounded to the wallets the sweep expired and to
+    pledges created 30 minutes before their earliest swept one, through
+    `authorizations_address_status_expiry_idx`.
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
 (`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
 `next_attempt_at` out by a five-minute lease, then posts each to
 `CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction:
-- a 2xx ends the row `sent`;
+- a 2xx ends the row `sent`; no redirect is followed;
 - any other answer, or no answer within 10 seconds, schedules a retry after
-  30 seconds, doubling up to 30 minutes, and keeps the reason in `last_error`
-  (never the webhook, whose path is the credential);
-- a row still undelivered a day after it was written ends `failed`, and with
-  no webhook a row ends `skipped`. Both log the alert at error, so none is
-  dropped silently.
+  30 seconds, doubling up to 30 minutes, from the time it failed, and keeps
+  the reason in `last_error` (never the webhook, whose path is the
+  credential); a 429 waits Slack's `Retry-After` when given, and the rest of
+  the pass waits with it;
+- a row still undelivered a day after it was written, with one post already
+  attempted, ends `failed`, and with no webhook a row ends `skipped`. Both
+  log the alert at error, so none is dropped silently.
+
+Delivery is at least once: a post Slack accepted whose row was not ended (a
+crash, or a timeout after Slack took it) is posted again once its lease ends.
 
 Rows are few: at most one per credit or log for the settlement kinds, one per
 expired submitted credit, and one per failing attempt past the threshold.

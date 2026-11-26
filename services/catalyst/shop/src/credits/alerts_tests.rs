@@ -174,20 +174,42 @@ async fn submit(pool: &PgPool, id: &str, tx_hash: &str) {
         .unwrap();
 }
 
-/// The sweep alerts a submitted credit that expired with no use indexed:
-/// not one never submitted, not one with a use indexed, not one whose
-/// transaction went through by another credit of the same wallet (another
-/// wallet's credit in it does not count), and once.
+/// The sweep alerts a submitted credit that expired with no use indexed,
+/// only where the CreditUsed index bounds it: not one never submitted, not
+/// one with a use indexed, not one whose transaction went through by another
+/// credit of the same wallet (another wallet's credit in it does not count),
+/// and once.
 #[tokio::test]
 async fn an_expired_credit_the_shop_submitted_is_alerted() {
     let Some(db) = OwnDatabase::create("alerts_submitted").await else {
         return;
     };
     let pool = db.pool.clone();
-    let credits = Credits::new(pool.clone());
     let (wallet, other) = (scratch_wallet().address, scratch_wallet().address);
     let earlier = now() - chrono::Duration::minutes(10);
     let later = now() + chrono::Duration::minutes(10);
+    // Without the index the sweep runs on the clock: nothing is alerted.
+    let unindexed = salt();
+    authorization(&pool, &unindexed, &wallet, 500, "authorized", earlier).await;
+    submit(&pool, &unindexed, &salt()).await;
+    let clock_only = Credits::new(pool.clone());
+    assert_eq!(clock_only.expire_stale_authorizations().await.unwrap(), 1);
+    assert!(
+        alerts_of(&pool, alerts::SUBMITTED_UNCONSUMED)
+            .await
+            .is_empty()
+    );
+    // With it, the sweep expires what the index read past.
+    sqlx::query(
+        "INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_block_time) \
+         VALUES (137, $1, 100, 100, $2)",
+    )
+    .bind(format!("0x{}", "c".repeat(40)))
+    .bind(now() + chrono::Duration::hours(1))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let credits = Credits::new(pool.clone()).with_usage_index(137);
     let [alone, unsent, sibling_used, sibling, other_wallets, indexed] =
         std::array::from_fn::<_, 6, _>(|_| salt());
     let [tx_alone, tx_shared, tx_indexed] = std::array::from_fn::<_, 3, _>(|_| salt());
@@ -268,8 +290,9 @@ async fn attempt(
 }
 
 /// The tick alerts a wallet whose purchases of one item expired three times
-/// within half an hour: an older attempt, another item and another wallet do
-/// not count; a later expired attempt alerts again, a tick with none does not.
+/// within half an hour of the newest: an older attempt, another item and
+/// another wallet do not count, and attempts swept long after they were made
+/// still do; a later expired attempt alerts again, a tick with none does not.
 #[tokio::test]
 async fn a_wallet_whose_purchases_of_one_item_keep_expiring_is_alerted() {
     let Some(db) = OwnDatabase::create("alerts_repeated").await else {
@@ -295,35 +318,65 @@ async fn a_wallet_whose_purchases_of_one_item_keep_expiring_is_alerted() {
     attempt(&pool, &wallet, &contract, 8, "authorized", minutes(5)).await;
     attempt(&pool, &other, &contract, 7, "expired", minutes(10)).await;
     attempt(&pool, &other, &contract, 7, "authorized", minutes(5)).await;
+    // A long TTL and a late sweep: all three attempts are older than half an
+    // hour when swept, yet created within 25 minutes of one another.
+    let slow = scratch_wallet().address;
+    attempt(&pool, &slow, &contract, 9, "expired", minutes(60)).await;
+    attempt(&pool, &slow, &contract, 9, "released", minutes(45)).await;
+    let slow_newest = attempt(&pool, &slow, &contract, 9, "authorized", minutes(35)).await;
 
     worker.run_once().await.unwrap();
-    let repeated = alerts_of(&pool, alerts::REPEATED_EXPIRY).await;
+    let of = async |address: &str| -> Vec<(String, Value, String)> {
+        alerts_of(&pool, alerts::REPEATED_EXPIRY)
+            .await
+            .into_iter()
+            .filter(|(_, payload, _)| payload["address"] == address)
+            .collect()
+    };
+    let repeated = of(&wallet).await;
     assert_eq!(repeated.len(), 1, "{repeated:?}");
     let (_, payload, _) = &repeated[0];
-    assert_eq!(payload["address"], wallet.as_str());
     assert_eq!(payload["item"], format!("{contract}:7"));
     assert_eq!(payload["attempts"], 3);
+    let slowly = of(&slow).await;
+    assert_eq!(
+        slowly.len(),
+        1,
+        "anchored on the attempts, not the sweep: {slowly:?}"
+    );
+    assert_eq!(slowly[0].1["attempts"], 3);
+    assert_eq!(
+        slowly[0].0,
+        format!("{slow}:{contract}:9:{slow_newest}"),
+        "keyed by the newest attempt"
+    );
+    assert!(of(&other).await.is_empty());
 
     worker.run_once().await.unwrap();
-    assert_eq!(alerts_of(&pool, alerts::REPEATED_EXPIRY).await.len(), 1);
+    assert_eq!(of(&wallet).await.len(), 1);
     attempt(&pool, &wallet, &contract, 7, "authorized", minutes(1)).await;
     worker.run_once().await.unwrap();
-    let repeated = alerts_of(&pool, alerts::REPEATED_EXPIRY).await;
+    let repeated = of(&wallet).await;
     assert_eq!(repeated.len(), 2, "{repeated:?}");
     assert_eq!(repeated[1].1["attempts"], 4);
     db.drop().await;
 }
 
-/// A webhook stub answering `status` and keeping each body it got.
+/// A webhook stub answering `status` with `headers`, keeping each body it
+/// got, and counting the requests a redirect to `/elsewhere` would bring.
 struct Hook {
     status: Mutex<StatusCode>,
+    headers: Mutex<Vec<(&'static str, String)>>,
     bodies: Mutex<Vec<Value>>,
+    elsewhere: std::sync::atomic::AtomicUsize,
 }
 
 async fn webhook(status: StatusCode) -> (String, Arc<Hook>) {
     let hook = Arc::new(Hook {
         status: Mutex::new(status),
+        headers: Mutex::default(),
         bodies: Mutex::default(),
+        elsewhere: std::sync::atomic::AtomicUsize::new(0),
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/hook", listener.local_addr().unwrap());
@@ -334,7 +387,21 @@ async fn webhook(status: StatusCode) -> (String, Arc<Hook>) {
                 |axum::extract::State(hook): axum::extract::State<Arc<Hook>>,
                  axum::Json(body): axum::Json<Value>| async move {
                     hook.bodies.lock().unwrap().push(body);
-                    *hook.status.lock().unwrap()
+                    let mut headers = axum::http::HeaderMap::new();
+                    for (name, value) in hook.headers.lock().unwrap().iter() {
+                        headers.insert(*name, value.parse().unwrap());
+                    }
+                    (*hook.status.lock().unwrap(), headers)
+                },
+            ),
+        )
+        .route(
+            "/elsewhere",
+            axum::routing::any(
+                |axum::extract::State(hook): axum::extract::State<Arc<Hook>>| async move {
+                    hook.elsewhere
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    StatusCode::OK
                 },
             ),
         )
@@ -457,19 +524,31 @@ async fn with_no_webhook_an_alert_ends_skipped() {
     db.drop().await;
 }
 
-/// An alert still pending a day after it was queued ends `failed` and is not
-/// posted.
+/// An alert still pending a day after it was queued is posted once all the
+/// same (no writer may have delivered meanwhile), and given up only once that
+/// post failed too.
 #[tokio::test]
-async fn an_alert_undelivered_for_a_day_is_given_up() {
+async fn an_alert_undelivered_for_a_day_is_given_up_after_one_post() {
     let Some(db) = OwnDatabase::create("alerts_stale").await else {
         return;
     };
     let credits = Credits::new(db.pool.clone());
-    let (url, hook) = webhook(StatusCode::OK).await;
+    let (url, hook) = webhook(StatusCode::BAD_GATEWAY).await;
     let delivery = Delivery::new(Some(url), Outbound::for_tests());
     queue_one(&db.pool).await;
     let late = now() + alerts::MAX_AGE + chrono::Duration::seconds(1);
     let out = delivery.run_pass(&credits, late).await.unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 1,
+            ..PassOutcome::default()
+        }
+    );
+    let out = delivery
+        .run_pass(&credits, late + chrono::Duration::seconds(31))
+        .await
+        .unwrap();
     assert_eq!(
         out,
         PassOutcome {
@@ -478,7 +557,134 @@ async fn an_alert_undelivered_for_a_day_is_given_up() {
         }
     );
     assert_eq!(alert_row(&db.pool).await.0, "failed");
-    assert!(hook.bodies.lock().unwrap().is_empty());
+    assert_eq!(hook.bodies.lock().unwrap().len(), 1, "posted once");
+    db.drop().await;
+}
+
+/// A redirect is not followed: it is a refusal to retry, and its target
+/// hears nothing.
+#[tokio::test]
+async fn a_redirect_is_not_followed() {
+    let Some(db) = OwnDatabase::create("alerts_redirect").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::FOUND).await;
+    hook.headers
+        .lock()
+        .unwrap()
+        .push(("location", url.replace("/hook", "/elsewhere")));
+    // Serve's client follows two redirects; the post must not.
+    let follows = Outbound::new(crate::http::HttpClientCfg::serve(4))
+        .unwrap()
+        .allowing_private_hosts();
+    let delivery = Delivery::new(Some(url), follows);
+    queue_one(&db.pool).await;
+    let out = delivery
+        .run_pass(&credits, now() + chrono::Duration::seconds(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 1,
+            ..PassOutcome::default()
+        }
+    );
+    assert_eq!(
+        alert_row(&db.pool).await.2.as_deref(),
+        Some("Slack answered 302 Found")
+    );
+    assert_eq!(hook.elsewhere.load(std::sync::atomic::Ordering::SeqCst), 0);
+    db.drop().await;
+}
+
+/// A webhook that refuses the connection is retried, and the reason kept
+/// never names it (its path is the credential).
+#[tokio::test]
+async fn a_refused_connection_is_retried_without_naming_the_webhook() {
+    let Some(db) = OwnDatabase::create("alerts_refused").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/services/secret-path",
+        closed.local_addr().unwrap()
+    );
+    drop(closed);
+    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    queue_one(&db.pool).await;
+    let out = delivery
+        .run_pass(&credits, now() + chrono::Duration::seconds(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 1,
+            ..PassOutcome::default()
+        }
+    );
+    let error = alert_row(&db.pool).await.2.unwrap();
+    assert_eq!(error, "the webhook did not accept a connection");
+    assert!(!error.contains("secret-path"));
+    db.drop().await;
+}
+
+/// Slack's 429 holds the alert for its `Retry-After`, and the rest of the
+/// pass with it, unposted.
+#[tokio::test]
+async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
+    let Some(db) = OwnDatabase::create("alerts_rate_limited").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::TOO_MANY_REQUESTS).await;
+    hook.headers
+        .lock()
+        .unwrap()
+        .push(("retry-after", "120".into()));
+    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    queue_one(&db.pool).await;
+    let mut conn = db.pool.acquire().await.unwrap();
+    alerts::record(
+        &mut conn,
+        alerts::SUBMITTED_UNCONSUMED,
+        "0xdef",
+        json!({ "salt": "0xdef", "address": "0xdef", "usdCents": 100, "txHash": "0x02" }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    let t0 = now() + chrono::Duration::seconds(1);
+    let out = delivery.run_pass(&credits, t0).await.unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 2,
+            ..PassOutcome::default()
+        }
+    );
+    assert_eq!(
+        hook.bodies.lock().unwrap().len(),
+        1,
+        "the second is held, not posted"
+    );
+    let rows: Vec<(String, chrono::NaiveDateTime)> =
+        sqlx::query_as("SELECT last_error, next_attempt_at FROM credits.alerts ORDER BY id")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(rows[0].0, "Slack answered 429 Too Many Requests");
+    assert_eq!(rows[1].0, "held while Slack rate limits");
+    for (_, next) in &rows {
+        let wait = *next - t0;
+        assert!(
+            wait > chrono::Duration::seconds(118) && wait <= chrono::Duration::seconds(121),
+            "{wait}"
+        );
+    }
     db.drop().await;
 }
 
