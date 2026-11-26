@@ -741,6 +741,64 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
     }
 }
 
+/// A container in `root` whose node `primitive` draws a new triangle, ready to be processed.
+fn spawn_triangle(app: &mut App, root: Entity, primitive: &str) -> Handle<Mesh> {
+    spawn_container(app, root, &[&format!("top_{primitive}"), primitive]);
+    app.update();
+    // tracked by the asset server, as a loaded glTF's meshes are
+    let mesh = app.world().resource::<AssetServer>().add(triangle());
+    let node = node(app, primitive);
+    app.world_mut()
+        .entity_mut(node)
+        .insert(Mesh3d(mesh.clone()));
+    mesh
+}
+
+#[test]
+fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
+    let mut app = app();
+    app.world_mut().resource_mut::<SharedMeshes>().hash_salt = None;
+    let root = scene_root(&mut app);
+    let first = spawn_triangle(&mut app, root, "primitive_a");
+    give_context(&mut app, root);
+    app.update();
+    let lookup = app.world().get::<SceneResourceLookup>(root).unwrap();
+    let (&hash, &own_id) = lookup
+        .mesh_ids_by_hash
+        .iter()
+        .next()
+        .expect("a hashed mesh");
+    assert_eq!(own_id, first.id());
+
+    // another scene's mesh with the same hash replaces the cached one
+    let foreign = app.world().resource::<AssetServer>().add(triangle());
+    app.world_mut()
+        .resource_mut::<SharedMeshes>()
+        .by_hash
+        .get_mut(&(hash, true))
+        .expect("the cached mesh")
+        .mesh_id = foreign.id();
+
+    // a second container of the scene, which has a mesh with that hash
+    // without a context it waits until its mesh is in place
+    app.world_mut()
+        .entity_mut(root)
+        .remove::<RendererSceneContext>();
+    let second = spawn_triangle(&mut app, root, "primitive_b");
+    give_context(&mut app, root);
+    app.world_mut()
+        .get_mut::<SceneResourceLookup>(root)
+        .unwrap()
+        .mesh_ids_by_hash
+        .insert(hash, own_id);
+    app.update();
+
+    let node = node(&mut app, "primitive_b");
+    let drawn = app.world().get::<Mesh3d>(node).expect("a mesh").id();
+    assert_ne!(drawn, foreign.id());
+    assert_eq!(drawn, second.id());
+}
+
 const URL: &str = "https://content.example/contents/bafkreimodel";
 
 /// An app that keeps the shared caches as the explorer does.
