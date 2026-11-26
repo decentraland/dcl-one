@@ -575,6 +575,18 @@ impl UsageIndex {
         }
     }
 
+    /// `credits_usage_index_ready` and `credits_usage_index_lag_seconds`
+    /// as [`Self::ready_at`] reads the lane at `now`; the lag is from the
+    /// last folded block's time, set only while the lane is open.
+    pub async fn record_readiness(&self, now: DateTime<Utc>) {
+        let ready = self.ready_at(now).await;
+        let lag = ready
+            .as_ref()
+            .and_then(|c| c.folded_block_time)
+            .map(|t| (now.naive_utc() - t).num_milliseconds() as f64 / 1000.0);
+        super::metrics::usage_index(ready.is_some(), lag);
+    }
+
     /// The cursor row when the authorize lane may mint at `now`; a
     /// database error reads as not ready (fail closed).
     pub async fn ready_at(&self, now: DateTime<Utc>) -> Option<Cursor> {
@@ -698,7 +710,11 @@ impl UsageIndex {
         writes_enabled: bool,
     ) -> anyhow::Result<PassOutcome> {
         let allowed = gate.allows(writes_enabled);
-        let outcome = self.run_pass(ctx, allowed).await?;
+        let outcome = self.run_pass(ctx, allowed).await;
+        // After every pass, a failed one included: the lane's state is what
+        // the gauges report, not the pass's success.
+        self.record_readiness(Utc::now()).await;
+        let outcome = outcome?;
         if let (false, Some(ctx)) = (allowed, ctx) {
             ctx.progress(format!(
                 "indexed to {}; not folded, not published: {}",

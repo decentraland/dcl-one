@@ -39,6 +39,7 @@ use sqlx::Row;
 
 use super::errors::ApiError;
 use super::events;
+use super::metrics;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
@@ -469,6 +470,8 @@ impl Credits {
         let credit_hash: Option<String> = row.get("credit_hash");
         // Released or expired: its hold no longer counted against the balance.
         let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        // A later log of an already consumed credit (a remainder) moves no pledge.
+        let newly_consumed = row.get::<&str, _>("status") != "consumed";
         let trade_id: Option<String> = row.get("trade_id");
         // Another pass settled this log while this one waited for the lock.
         if let Some(recorded) = sqlx::query(
@@ -610,6 +613,12 @@ impl Credits {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
         tx.commit().await?;
+        // This pass inserted the log's settlement row (its key), so the log
+        // and the pledge's move are counted once, after the commit.
+        metrics::settlement(kind, recovered);
+        if newly_consumed {
+            metrics::pledges(metrics::Pledge::Consumed, 1);
+        }
         // The settlement row's key makes this the one pass that recorded the
         // purchase, so it is reported once, after the commit: one event per
         // line, as credits-server reported one per intent. A purchase debit
@@ -923,6 +932,8 @@ pub fn spawn_settlement_job(
     }
     let gate = Arc::new(PassGate::new(JOB_NAME));
     let report = Arc::new(StaleProcessingReport::default());
+    // The pass's gauges are cleared when the lease they were set under ends.
+    let gauges = Arc::new(metrics::LeaseGauges::settlement());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -933,6 +944,7 @@ pub fn spawn_settlement_job(
             let revoker = revoker.clone();
             let gate = gate.clone();
             let report = report.clone();
+            gauges.arm(&ctx.cancel);
             async move {
                 settlement_job_pass(
                     &credits,
@@ -993,11 +1005,24 @@ pub(super) async fn settlement_pass(
             "retired pack orders nobody paid within a session's lifetime"
         );
     }
-    if let Some(revoker) = revoker {
-        revoker
-            .run_pass(ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let revoked = match revoker {
+        Some(revoker) => Some(revoker.run_pass(ctx).await),
+        None => None,
+    };
+    if let Some(Ok(outcome)) = &revoked {
+        metrics::revocations(outcome.sent, outcome.confirmed, outcome.failed);
+    }
+    // The settlement gauges, from one read per pass, taken whatever the
+    // revoker did (an RPC outage is when pending revocations matter); a
+    // failed read leaves them as they were and never fails the pass.
+    match metrics::Snapshot::read(credits).await {
+        Ok(snapshot) => snapshot.record(),
+        Err(e) => {
+            tracing::warn!(error = %e, "credits metrics snapshot failed; gauges keep their last values")
+        }
+    }
+    if let Some(Err(e)) = revoked {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(true)
 }
