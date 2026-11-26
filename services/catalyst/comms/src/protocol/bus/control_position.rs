@@ -120,7 +120,7 @@ impl ControlPosition {
             let mut out = String::from("0x");
             for value in bytes {
                 use std::fmt::Write;
-                write!(out, "{value:02x}").unwrap();
+                write!(out, "{value:02x}").expect("writing to a String cannot fail");
             }
             out
         }

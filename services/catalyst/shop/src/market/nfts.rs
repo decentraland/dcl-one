@@ -357,6 +357,18 @@ fn is_land_routed(f: &NftFilters) -> bool {
         || only_land_registries(&f.contract_addresses)
 }
 
+/// Whether `f` reads only the node's DCL names: the `ens` category, or a
+/// contract filter naming only the registrar.
+fn names_only(state: &MarketplaceState, f: &NftFilters) -> bool {
+    let registrar = state.settings.catalogue().registrar();
+    f.category == Some(NftCategory::Ens)
+        || (f.category.is_none()
+            && !f.contract_addresses.is_empty()
+            && f.contract_addresses
+                .iter()
+                .all(|a| a.eq_ignore_ascii_case(registrar)))
+}
+
 /// A contract filter naming only the LAND, estate and NAME registries reads the
 /// marketplace source, as upstream's `?contractAddress&tokenId` lookup does: the
 /// collections subgraphs never hold those tokens.
@@ -936,6 +948,19 @@ async fn list_page(
     {
         let (first, skip) = index_page(f);
         return super::nft_reads::list_nfts(state, f, first, skip).await;
+    }
+    // A NAME page reads the index where the node's latest sales are admitted,
+    // whatever its sort, as its deep pages do: the graph's `soldAt` counts
+    // other sales. The admission is checked on the snapshot that supplies
+    // the rows; a check that cannot run is the page's error.
+    if super::owned_items::walks_here(state) && names_only(state, f) {
+        let (first, skip) = index_page(f);
+        if let Some(page) =
+            super::nft_reads::names_page_if_admitted(state, f, first, skip, chrono::Utc::now())
+                .await?
+        {
+            return Ok(page);
+        }
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {

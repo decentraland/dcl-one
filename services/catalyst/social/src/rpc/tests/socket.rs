@@ -120,6 +120,75 @@ async fn a_field_outside_the_identity_headers_does_not_stop_the_handshake() {
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
 
+/// The handshake verifies after the upgrade, in the task the upgrade spawns:
+/// its contract-wallet check still runs under the upgrading request's client
+/// source (`eip1654_budget::on_upgrade`), here a trusted proxy's `X-Real-IP`, so
+/// the node's budget of contract-wallet checks counts it.
+#[tokio::test]
+async fn a_socket_handshake_checks_a_contract_wallet_under_its_client_source() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    struct Records(parking_lot::Mutex<Vec<Option<String>>>);
+    #[async_trait::async_trait]
+    impl crate::auth::eip1654::Eip1654Validator for Records {
+        async fn validate_signature(
+            &self,
+            _contract: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            self.0
+                .lock()
+                .push(crate::shared::eip1654_budget::current_source());
+            Ok(false)
+        }
+    }
+    let records = Arc::new(Records(Default::default()));
+    let settings = Settings {
+        auth_window_secs: 5,
+        ..Settings::default()
+    };
+    let pool = closed_pool();
+    let ctx = test_ctx(
+        Db::new(pool.clone()),
+        Arc::new(FakeVoiceRooms::new(pool.clone())),
+    );
+    let state = Arc::new(State::with_context(settings, ctx, Some(records.clone())));
+    let jobs = Jobs::new();
+    state.start_topology(&jobs, Arc::new(crate::comms::topology::Topology::default()));
+    state.spawn_jobs(&jobs);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = crate::shared::eip1654_budget::scope_client_source(
+        super::super::router(state.clone()),
+        vec!["127.0.0.1/32".parse().unwrap()],
+    );
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let mut request = format!("ws://{addr}/social-rpc")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("x-real-ip", "203.0.113.70".parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let frame = contract_wallet_frame(&PrivateKeySigner::random()).await;
+    socket.send(WsMessage::Text(frame.into())).await.unwrap();
+    assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
+    let seen = records.0.lock().clone();
+    assert!(!seen.is_empty(), "the contract was asked");
+    assert!(
+        seen.iter().all(|s| s.as_deref() == Some("203.0.113.70")),
+        "every check ran under the client's source: {seen:?}"
+    );
+    jobs.shutdown(Duration::from_secs(2)).await;
+}
+
 /// A contract wallet's chain whose validation cannot reach the chain (upstream:
 /// the catalyst's 503) closes 3003 like any other refusal.
 #[tokio::test]

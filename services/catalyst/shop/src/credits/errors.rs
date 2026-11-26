@@ -57,6 +57,9 @@ pub enum ApiError {
     NotImplemented(String),
     #[error("{0}")]
     ServiceUnavailable(String),
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    #[error("{0}")]
+    TooManyRequests(String),
     /// A source this route needs is not ready: the data-plane envelope
     /// (`source`, `configure`, `Retry-After`) inside the credits one.
     #[error("{message}")]
@@ -136,6 +139,7 @@ impl ApiError {
             Self::ServiceUnavailable(_) | Self::SourceUnavailable { .. } => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::PaymentRule(refused) => refused.status(),
             Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -143,7 +147,7 @@ impl ApiError {
 
     /// The published message: the variant's text, except for the two
     /// internal arms whose detail (a DSN, a peer address) never leaves the log.
-    fn public_message(&self) -> String {
+    pub(crate) fn public_message(&self) -> String {
         match self {
             Self::Database(e) => {
                 tracing::error!(error = %e, "credits database error");
@@ -160,7 +164,12 @@ impl ApiError {
 
 impl From<crate::shared::signed_fetch::SignedFetchError> for ApiError {
     fn from(e: crate::shared::signed_fetch::SignedFetchError) -> Self {
-        ApiError::InvalidAuthChain(e.to_string())
+        match e {
+            crate::shared::signed_fetch::SignedFetchError::RateLimited => {
+                ApiError::TooManyRequests(e.to_string())
+            }
+            e => ApiError::InvalidAuthChain(e.to_string()),
+        }
     }
 }
 
@@ -182,6 +191,14 @@ impl IntoResponse for ApiError {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"ok":false,"message":message,key:true})),
+            )
+                .into_response();
+        }
+        if let ApiError::TooManyRequests(message) = &self {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(json!({ "ok": false, "error": message, "message": message })),
             )
                 .into_response();
         }
@@ -244,6 +261,25 @@ mod tests {
             v,
             json!({ "ok": false, "error": "insufficient credits", "message": "insufficient credits" })
         );
+    }
+
+    /// A signed-fetch refusal is the ADR-44 400, except a contract-wallet
+    /// check the client source's budget refused: a 429 to retry later.
+    #[tokio::test]
+    async fn a_rate_limited_signature_check_is_a_429() {
+        use crate::shared::signed_fetch::SignedFetchError;
+        let resp = ApiError::from(SignedFetchError::RateLimited).into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers()[axum::http::header::RETRY_AFTER], "1");
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let message = "Too many contract-wallet signature checks; retry later";
+        assert_eq!(
+            v,
+            json!({ "ok": false, "error": message, "message": message })
+        );
+        let resp = ApiError::from(SignedFetchError::InvalidSignature("x".into())).into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

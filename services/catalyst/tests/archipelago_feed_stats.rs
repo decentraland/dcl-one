@@ -1,6 +1,5 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/feed_stats.rs
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 use catalyst::comms::archipelago::AppState;
 use catalyst::comms::archipelago::feed::{
     DISCOVERY_FRESHNESS_MS, Routed, dispatch as dispatch_feed, route_island,

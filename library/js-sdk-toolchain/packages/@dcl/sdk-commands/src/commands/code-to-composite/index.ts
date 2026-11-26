@@ -1,10 +1,10 @@
 import path from 'path'
 import prompts from '../../logic/prompts'
-import { Result } from 'arg'
-import { CliComponents } from '../../components'
+import type { Result } from 'arg'
+import type { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
 import { getValidWorkspace } from '../../logic/workspace-validations'
-import { SceneProject } from '../../logic/project-validations'
+import type { SceneProject } from '../../logic/project-validations'
 import {
   printCurrentProjectStarting,
   printProgressInfo,

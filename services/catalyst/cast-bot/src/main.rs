@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -159,7 +159,12 @@ fn now_us() -> i64 {
 }
 
 fn capture(video: &Video) {
-    if let Some(frame) = video.frame.lock().unwrap().as_mut() {
+    if let Some(frame) = video
+        .frame
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_mut()
+    {
         frame.timestamp_us = now_us();
         video.source.capture_frame(frame);
     }
@@ -412,12 +417,13 @@ async fn run(out: Out) -> anyhow::Result<()> {
                         command.width.unwrap_or(0),
                         command.height.unwrap_or(0),
                     )?;
-                    *video.frame.lock().unwrap() = Some(VideoFrame {
-                        rotation: VideoRotation::VideoRotation0,
-                        timestamp_us: now_us(),
-                        frame_metadata: None,
-                        buffer,
-                    });
+                    *video.frame.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(VideoFrame {
+                            rotation: VideoRotation::VideoRotation0,
+                            timestamp_us: now_us(),
+                            frame_metadata: None,
+                            buffer,
+                        });
                     capture(video);
                     Ok(())
                 }

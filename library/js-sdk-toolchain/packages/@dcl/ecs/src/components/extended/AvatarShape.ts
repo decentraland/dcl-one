@@ -1,8 +1,8 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { DeepReadonly } from '../../engine/readonly'
-import { ByteBuffer } from '../../serialization/ByteBuffer'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { DeepReadonly } from '../../engine/readonly'
+import type { ByteBuffer } from '../../serialization/ByteBuffer'
 import { AvatarShapeSchema } from '../generated/AvatarShape.gen'
-import { PBAvatarShape } from '../generated/pb/decentraland/sdk/components/avatar_shape.gen'
+import type { PBAvatarShape } from '../generated/pb/decentraland/sdk/components/avatar_shape.gen'
 
 /**
  * @public

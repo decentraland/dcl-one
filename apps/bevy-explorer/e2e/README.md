@@ -75,6 +75,7 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_PROFILE_DIR` | Absolute directory for a spawned native client's config, logs and content cache; use a directory in the test workspace | OS profile when unset |
 | `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
 
 A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
@@ -156,7 +157,7 @@ pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
-| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the Max Avatars and Unlimited Avatars settings and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
 | `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
@@ -501,6 +502,7 @@ change on the left updates what is on the right in the same change, then runs th
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
+| Selected Cast video frames and playback state in `/media_state` (`crates/av/src/debug_panel.rs`) | `MediaPlayerRow` in `driver/explorer.ts` and the media-state reply tests in `test/explorer.test.ts` | `pnpm run typecheck`; `pnpm test` |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
 | A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
