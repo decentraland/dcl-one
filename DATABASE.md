@@ -2418,11 +2418,17 @@ default, and social writes are), each a reader of tables other areas own, with o
   an item `shop.items` lacks holds its log's cursor until the item is
   mirrored or the items mirror completes a pass an hour after the sale (a
   pass walks every item, minutes at the defaults); then it is passed without
-  effect. Without
+  effect. Once the collections index owns Polygon, every sale with an item
+  waits instead until the index's publication covers its block, row or not,
+  and one it has not covered for a day passes without a badge (the notices'
+  rule, `ItemWait::decide` in `catalyst_chain_index::catalogue`). The page,
+  its goods' item types and the wait come from one snapshot. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
 - recounts of `shop.items` and `shop.collections` on Polygon (once
-  `shop.mirror_state` records a complete pass) and of accepted
+  `shop.mirror_state` records a complete pass, or, once the collections
+  index owns Polygon, while its descriptive verdict holds; the verdict, the
+  candidates and the creators' items come from one snapshot) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for
   business, referral), for the wallets whose stored steps are behind. A
   creator's steps are the size of their item set, never below the stored
@@ -3508,9 +3514,10 @@ that fails starts again on a new snapshot.
 
 These readers decide a permission, a price or a wait from the catalogue
 without the gate's transaction. On a network the index owns, each reads the
-index's verdict (the gate's state columns, `catalogue::STATE_COLUMNS`) in the
+index's verdict (the gate's state columns,
+`catalyst_chain_index::catalogue::STATE_COLUMNS`) in the
 statement or snapshot that reads its rows. On any other network each keeps
-its own mirror check:
+its current check (a mirror pass, or none):
 - authorizing: the credits guards' contract role and item record
   (`policy_entry::item_facts`), the relay contract allowlist and
   `/v1/contracts/{address}`, a public item order's creator
@@ -3527,16 +3534,24 @@ its own mirror check:
   (`catalogue::CatalogueCopies`: the index's projection generation, or the
   mirrors' passes) beside the nft index's publications, so a republication
   of the catalogue alone misses them;
-- the sale, bid and royalty notices' wait (`catalogue::ItemWait`).
-  - On an owned network, every sale waits until the index's publication
-    covers its block, and so does a bid on a contract the catalogue does not
-    list yet. Every collection and item added by then is in the catalogue,
-    so a missing one never comes; a row read before then may be a rewound
-    branch's, so it never picks a recipient.
+- Social's badge processor (see "Badge processor"): its recounts read the
+  descriptive verdict, and its sales job waits by the notices' rule;
+- the sale, bid and royalty notices' wait (`ItemWait::decide` in
+  `catalyst_chain_index::catalogue`), which Social's badge processor shares.
+  - On an owned network, every sale of a token the catalogue describes waits
+    until the index's publication covers its block, and so does a bid on a
+    contract the catalogue does not list yet. Every collection and item
+    added by then is in the catalogue, so a missing one never comes; a row
+    read before then may be a rewound branch's, so it never picks a
+    recipient. A LAND, estate or NAME token, which other sources describe,
+    never waits for it.
   - Under the mirrors, only a sale whose item has no row waits, until a
     complete items pass an hour after the sale; a bid on an unlisted
     contract never waits.
-  - Either way, nothing waits past a day.
+  - Nothing waits past a day. Under the mirrors the sale is then described
+    from whatever rows there are. On an owned network a sale the publication
+    still does not cover passes without a notice, so an unverified row never
+    picks a recipient.
   - A sale's description, its collection membership and its wait come from
     one snapshot (the royalty notices' from the statement that joins the
     items).
@@ -3565,9 +3580,8 @@ decide nothing from them:
 - the walks' address sets: the NFT walk's and the sales index walk's
   contract sets, and the sales index's coverage checks (`sale_fold`,
   `sale_history`), take the catalogue as it stands;
-- Social's badge jobs (deployments, recount and sales) read the items
-  mirror's pass marker (`shop.mirror_state`), which an owned network does not
-  advance.
+- Social's deployments job reads a wearable's rarity from `shop.items` when
+  its entity lacks one (an item's rarity never changes).
 
 The storage collector names `shop.items.image` among the columns that hold
 no blob reference, and reads no catalogue row.
