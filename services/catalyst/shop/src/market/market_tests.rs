@@ -1813,9 +1813,10 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // fast a cold read is.
     {
         // Dropped at once: an open snapshot would hold its connection to the end.
-        let mut read = super::catalogue::begin_unchecked(&state).await;
+        let mut read = Some(super::catalogue::begin_unchecked(&state).await);
         super::search::creator_directory(&state, &mut read)
             .await
+            .unwrap()
             .unwrap();
     }
     let feeds = [
@@ -2800,8 +2801,8 @@ async fn the_pages_of_one_read_decide_expiries_at_its_instant() {
         .await
         .unwrap();
     // c1's listing (first page, the newer) and c2's coupon (second page;
-    // half off: a sale the card shows) end 1.5 s from now.
-    sqlx::query("UPDATE shop.trades SET expires_at = timezone('UTC', now()) + interval '1.5 seconds' WHERE id = $1::uuid")
+    // half off: a sale the card shows) end 3 s from now.
+    sqlx::query("UPDATE shop.trades SET expires_at = timezone('UTC', now()) + interval '3 seconds' WHERE id = $1::uuid")
         .bind(&trades[0])
         .execute(&pool)
         .await
@@ -2816,7 +2817,7 @@ async fn the_pages_of_one_read_decide_expiries_at_its_instant() {
     sqlx::query("INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
             discount_type, discount_ppm, root, collections, effective_since, expires_at) \
             VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
-                '{\"uses\": 10}', 1, 500000, '0x00', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '1.5 seconds')")
+                '{\"uses\": 10}', 1, 500000, '0x00', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '3 seconds')")
         .bind(CREATOR)
         .bind(format!("0x{}", tag()))
         .bind(&c2)
@@ -2833,7 +2834,7 @@ async fn the_pages_of_one_read_decide_expiries_at_its_instant() {
     let instant = read.now;
     let (first, total) = shop_listings(&state, &mut read, &page("0")).await.unwrap();
     assert_eq!((first.len(), total), (1, 2));
-    tokio::time::sleep(Duration::from_millis(1800)).await;
+    tokio::time::sleep(Duration::from_millis(3500)).await;
     let (second, total) = shop_listings(&state, &mut read, &page("1")).await.unwrap();
     assert_eq!((second.len(), total), (1, 2), "the second page of the read");
     assert_eq!(
@@ -5304,6 +5305,92 @@ async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
     pool.close().await;
 }
 
+/// Requests that wait on another's memo fetch hold no connection. A lock on
+/// a table only the fetch reads (the creator directory's deployments, read by
+/// the creator search and the search suggest; the v2 page's trades) holds the
+/// leader; four identical cold requests wait on it, and another catalogue
+/// route still gets a connection on a pool of two. Once the lock goes, every
+/// waiter answers. A burst of eight identical cold `/v1/catalog` pages (whose
+/// query reads only tables the gate reads too, so no lock can hold it alone)
+/// all answer on the same pool.
+#[tokio::test]
+async fn memo_waiters_hold_no_connection() {
+    let up = FakeGraph::new();
+    let Some((pool, wide, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let mut settings = wide.settings.clone();
+    settings.market.catalog_cache_ttl = Duration::from_secs(60);
+    let narrow = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(2))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        narrow.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    for (table, uri) in [
+        (
+            "content.deployments",
+            "/v3/catalog/creators/search?search=cc",
+        ),
+        ("content.deployments", "/v3/catalog/suggest?search=item"),
+        ("shop.trades", "/v2/catalog?first=2"),
+    ] {
+        state.readers.clear();
+        state.catalog_cache.invalidate();
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+        )))
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let waiting: Vec<_> = (0..4)
+            .map(|_| {
+                let state = state.clone();
+                tokio::spawn(async move { get(market_router(state), uri).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            waiting.iter().all(|t| !t.is_finished()),
+            "{uri}: the fetch waits on the lock"
+        );
+        let (status, body) = tokio::time::timeout(
+            Duration::from_secs(10),
+            get(market_router(state.clone()), "/v1/collections?first=1"),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("/v1/collections waited behind {uri}'s memo"));
+        assert_eq!(status, StatusCode::OK, "beside {uri}: {body}");
+        lock.rollback().await.unwrap();
+        let mut bodies = Vec::new();
+        for task in waiting {
+            let (status, body) = task.await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            bodies.push(body);
+        }
+        assert!(bodies.windows(2).all(|w| w[0] == w[1]), "{uri}: one page");
+    }
+    state.catalog_cache.invalidate();
+    let burst = futures::future::join_all(
+        (0..8).map(|_| get(market_router(state.clone()), "/v1/catalog?first=2")),
+    )
+    .await;
+    for (status, body) in &burst {
+        assert_eq!(*status, StatusCode::OK, "{body}");
+        assert_eq!(body, &burst[0].1, "one page for the burst");
+    }
+    drop((state, wide));
+    narrow.close().await;
+    pool.close().await;
+}
+
 /// A suggested page is read on one snapshot. A full personal page answers
 /// from its first read without the sales reader; one that falls back to the
 /// trending rail rebuilds its personal rows on the read it opens after the
@@ -5464,10 +5551,13 @@ async fn a_page_is_stamped_with_the_copy_it_was_read_from() {
     pool.close().await;
 }
 
-/// Every gated route follows an owned network's publication: all answer a
-/// fresh one; a publication older than the money window refuses the priced
-/// and authorizing routes (503 `collections-index`) while the descriptive
-/// ones answer; a rewind refuses them all. The creator directory is filed
+/// The shop's priced and descriptive routes and the import check follow an
+/// owned network's publication: all answer a fresh one; a publication older
+/// than the money window refuses the priced and authorizing routes (503
+/// `collections-index`) while the descriptive ones answer; a rewind refuses
+/// them all. (The lambdas catalogue's owned-network case is
+/// `lambdas_never_read_a_subgraph_for_a_network_the_index_owns`; credits,
+/// campaign tags and the favourites job go through the same gate.) The creator directory is filed
 /// under the sources that serve each network, so a hand-back files it anew.
 #[tokio::test]
 async fn every_gated_route_follows_an_owned_networks_publication() {

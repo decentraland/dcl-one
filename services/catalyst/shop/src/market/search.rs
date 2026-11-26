@@ -36,7 +36,7 @@ use super::catalog::escape_like;
 use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::items::{self, CreditCatalogItem};
 use super::mirrors::Mirror;
-use super::readers::{RefreshClaim, Ttl, cached};
+use super::readers::{RefreshClaim, Ttl, memoized_holding};
 use super::wire::{ApiError, Params};
 use super::{MarketplaceState, SharedState};
 
@@ -220,7 +220,7 @@ pub async fn directory_snapshot(state: &SharedState, sources: &str) -> Option<Ar
                 // A read that hangs (a stuck connection, a lock) ends as failed at the limit, so
                 // the claim falls to the backoff instead of being held until a restart.
                 let read = tokio::time::timeout(DIRECTORY_READ_LIMIT, async {
-                    let mut read = catalogue::begin(
+                    let read = catalogue::begin(
                         &state,
                         Purpose::Describe,
                         &[Mirror::Items],
@@ -229,10 +229,13 @@ pub async fn directory_snapshot(state: &SharedState, sources: &str) -> Option<Ar
                     )
                     .await
                     .map_err(|_| ApiError::Internal("the catalogue cannot be read".into()))?;
-                    let directory = directory_value(&state, &mut read).await?;
+                    let read_sources = read.sources();
+                    let directory = directory_value(&state, &mut Some(read))
+                        .await?
+                        .ok_or_else(|| ApiError::Internal("the directory read failed".into()))?;
                     // Read after an ownership change: filed under its own sources, and not
                     // this claim's.
-                    if read.sources() != sources {
+                    if read_sources != sources {
                         return Err(ApiError::Internal(
                             "the catalogue's sources changed during the directory read".into(),
                         ));
@@ -348,15 +351,19 @@ fn face_url(state: &MarketplaceState, entity_id: &str, face: Option<&str>) -> Op
 /// The cached directory, read in `read`'s snapshot, after the content denylist.
 pub async fn creator_directory(
     state: &MarketplaceState,
-    read: &mut CatalogueRead,
-) -> Result<Vec<CreatorEntry>, ApiError> {
-    let value = directory_value(state, read).await?;
+    held: &mut Option<CatalogueRead>,
+) -> Result<Option<Vec<CreatorEntry>>, ApiError> {
+    let Some(value) = directory_value(state, held).await? else {
+        return Ok(None);
+    };
     let entries: Vec<CreatorEntry> = serde_json::from_value(Arc::unwrap_or_clone(value))
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    Ok(entries
-        .into_iter()
-        .map(|c| c.without_denylisted_profile(&state.denylist))
-        .collect())
+    Ok(Some(
+        entries
+            .into_iter()
+            .map(|c| c.without_denylisted_profile(&state.denylist))
+            .collect(),
+    ))
 }
 
 /// The creator directory's memo key prefix, under [`Ttl::M15`].
@@ -371,47 +378,60 @@ pub(crate) fn directory_key(sources: &str) -> String {
     format!("{CREATOR_DIRECTORY_KEY}:{sources}")
 }
 
+/// The directory memo holds the read only in the request that computes it:
+/// one that waits on another's computation drops it first (`held` becomes
+/// `None`). `Ok(None)`: that computation failed, and the caller opens a new
+/// read and asks again.
 async fn directory_value(
     state: &MarketplaceState,
-    read: &mut CatalogueRead,
-) -> Result<Arc<Value>, ApiError> {
-    let key = directory_key(&read.sources());
-    let conn = &mut *read.tx;
-    cached(state, Ttl::M15, key.clone(), || async move {
-        let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
-            .fetch_all(conn)
-            .await
-            .map_err(|e| e.to_string())?;
-        let entries: Vec<CreatorEntry> = rows
-            .iter()
-            .map(|r| {
-                let entity_id: Option<String> = r.get("entity_id");
-                let face: Option<String> = r.get("face");
-                let mut names: Vec<String> = r.get("names");
-                names.truncate(CREATOR_MAX_NAMES);
-                CreatorEntry {
-                    address: r.get("address"),
-                    name: r.get("name"),
-                    face: entity_id
-                        .as_deref()
-                        .and_then(|id| face_url(state, id, face.as_deref())),
-                    entity_id,
-                    claimed: r.get("claimed"),
-                    names,
-                    items: r.get("items"),
-                    collections: r.get("collections"),
-                }
-            })
-            .collect();
-        state.warm_faces(
-            rows.iter()
-                .filter_map(|r| r.get::<Option<String>, _>("entity_id")),
-        );
-        serde_json::to_value(entries).map_err(|e| e.to_string())
-    })
+    held: &mut Option<CatalogueRead>,
+) -> Result<Option<Arc<Value>>, ApiError> {
+    let key = directory_key(&held.as_ref().expect("a request holds its read").sources());
+    memoized_holding(
+        state,
+        Ttl::M15,
+        key.clone(),
+        held,
+        async |read: &mut CatalogueRead| {
+            let rows = sqlx::query(CREATOR_DIRECTORY_SQL)
+                .fetch_all(&mut *read.tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            let entries: Vec<CreatorEntry> = rows
+                .iter()
+                .map(|r| {
+                    let entity_id: Option<String> = r.get("entity_id");
+                    let face: Option<String> = r.get("face");
+                    let mut names: Vec<String> = r.get("names");
+                    names.truncate(CREATOR_MAX_NAMES);
+                    CreatorEntry {
+                        address: r.get("address"),
+                        name: r.get("name"),
+                        face: entity_id
+                            .as_deref()
+                            .and_then(|id| face_url(state, id, face.as_deref())),
+                        entity_id,
+                        claimed: r.get("claimed"),
+                        names,
+                        items: r.get("items"),
+                        collections: r.get("collections"),
+                    }
+                })
+                .collect();
+            state.warm_faces(
+                rows.iter()
+                    .filter_map(|r| r.get::<Option<String>, _>("entity_id")),
+            );
+            serde_json::to_value(entries).map_err(|e| e.to_string())
+        },
+    )
     .await
     .map_err(ApiError::Internal)
-    .inspect(|directory| state.readers.keep(&key, Arc::clone(directory)))
+    .inspect(|directory| {
+        if let Some(directory) = directory {
+            state.readers.keep(&key, Arc::clone(directory));
+        }
+    })
 }
 
 /// Creators whose profile name or a NAME matches every term, best first:
@@ -469,18 +489,6 @@ pub async fn get_creator_search(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    let mut read = match catalogue::begin(
-        &state,
-        Purpose::Describe,
-        &[Mirror::Items],
-        None,
-        Access::ReadOnly,
-    )
-    .await
-    {
-        Ok(read) => read,
-        Err(envelope) => return envelope,
-    };
     let p = Params::new(&pairs);
     let search = p.get_string("search", None).unwrap_or_default();
     let first = clamp(
@@ -488,21 +496,37 @@ pub async fn get_creator_search(
         CREATOR_SEARCH_DEFAULT_LIMIT,
         CREATOR_SEARCH_MAX_LIMIT,
     );
-    if query_terms(&search).is_empty() {
-        return (
-            [(CACHE_CONTROL, SUGGEST_CACHE)],
-            Json(json!({ "data": [] })),
-        )
-            .into_response();
-    }
-    match creator_directory(&state, &mut read).await {
-        Ok(directory) => (
-            [(CACHE_CONTROL, SUGGEST_CACHE)],
-            Json(json!({ "data": rank_creators(&directory, &search, first) })),
-        )
-            .into_response(),
-        Err(e) => e.into_response(),
-    }
+    // The directory memo holds the read only in the request that computes
+    // it; one that waits drops it first, and starts again if that failed.
+    let directory = loop {
+        let read =
+            match catalogue::preflight(&state, Purpose::Describe, &[Mirror::Items], None).await {
+                Ok(read) => read,
+                Err(envelope) => return envelope,
+            };
+        let stamp = read.stamp();
+        if query_terms(&search).is_empty() {
+            stamp.note(&state);
+            return (
+                [(CACHE_CONTROL, SUGGEST_CACHE)],
+                Json(json!({ "data": [] })),
+            )
+                .into_response();
+        }
+        match creator_directory(&state, &mut Some(read)).await {
+            Ok(Some(directory)) => {
+                stamp.note(&state);
+                break directory;
+            }
+            Ok(None) => continue,
+            Err(e) => return e.into_response(),
+        }
+    };
+    (
+        [(CACHE_CONTROL, SUGGEST_CACHE)],
+        Json(json!({ "data": rank_creators(&directory, &search, first) })),
+    )
+        .into_response()
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -644,20 +668,39 @@ pub async fn get_search_suggest(
     };
     // The gate first, on a short read: a refusal answers without waiting on
     // the sales reader's subgraph call, which runs with no connection held.
-    if let Err(envelope) = items::priced_preflight(&state).await {
+    if let Err(envelope) = items::priced_preflight(&state, None).await {
         return envelope;
     }
     let sales = collection_sales(&state).await;
-    // One snapshot answers the three sections: the items carry prices. It is
-    // opened again, so its readiness is checked again.
-    let mut read = match items::priced_read(&state, None).await {
-        Ok(read) => read,
-        Err(envelope) => return envelope,
+    // One snapshot answers the items and the collections (the items carry
+    // prices); it is opened again, so its readiness is checked again. The
+    // creator directory (a display aggregate of stated staleness, filed under
+    // the sources that serve each network) holds the read only in the
+    // request that computes it: a request that waited on another's opens a
+    // new read from the same sources.
+    let (directory, mut read) = loop {
+        let read = match items::priced_preflight(&state, None).await {
+            Ok(read) => read,
+            Err(envelope) => return envelope,
+        };
+        let sources = read.sources();
+        let mut held = Some(read);
+        let directory = match creator_directory(&state, &mut held).await {
+            Ok(Some(directory)) => directory,
+            Ok(None) => continue,
+            Err(e) => return e.into_response(),
+        };
+        let read = match held {
+            Some(read) => read,
+            None => match items::priced_preflight(&state, None).await {
+                Ok(read) if read.sources() == sources => read,
+                Ok(_) => continue,
+                Err(envelope) => return envelope,
+            },
+        };
+        break (directory, read);
     };
-    let directory = match creator_directory(&state, &mut read).await {
-        Ok(d) => d,
-        Err(e) => return e.into_response(),
-    };
+    read.note(&state);
     let item_pairs = vec![
         ("search".to_string(), search.clone()),
         ("first".to_string(), items_first.to_string()),
@@ -1052,10 +1095,11 @@ mod tests {
         .unwrap();
         let directory = creator_directory(
             &state,
-            &mut crate::market::catalogue::begin_unchecked(&state).await,
+            &mut Some(crate::market::catalogue::begin_unchecked(&state).await),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .expect("this request computed the directory");
         let entry = directory
             .iter()
             .find(|c| c.address == creator)
@@ -1092,10 +1136,11 @@ mod tests {
         state.denylist.set_remote(listed, [entity.clone()]);
         let directory = creator_directory(
             &state,
-            &mut crate::market::catalogue::begin_unchecked(&state).await,
+            &mut Some(crate::market::catalogue::begin_unchecked(&state).await),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .expect("this request computed the directory");
         let entry = directory.iter().find(|c| c.address == creator).unwrap();
         assert_eq!(
             (entry.name.as_deref(), entry.face.as_deref(), entry.claimed),

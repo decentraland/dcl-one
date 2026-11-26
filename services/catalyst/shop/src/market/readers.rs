@@ -290,6 +290,30 @@ where
         .await
 }
 
+/// [`memoized`] for a fetch that reads through what the caller holds (its
+/// catalogue read), which only the fetching request keeps
+/// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]): a request that
+/// waits on another's fetch drops it first. `Ok(None)`: that fetch failed
+/// and the caller, its read gone, opens a new one and asks again.
+pub async fn memoized_holding<G, F, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    held: &mut Option<G>,
+    fetch: F,
+) -> Result<Option<Arc<Value>>, E>
+where
+    F: AsyncFnOnce(&mut G) -> Result<Value, E>,
+{
+    state
+        .readers
+        .map(ttl)
+        .get_or_fetch_holding(key, held, async move |g: &mut G| {
+            fetch(g).await.map(Arc::new)
+        })
+        .await
+}
+
 /// The collections subgraph of `network`, or the envelope naming its variable.
 pub fn require_collections(state: &MarketplaceState, network: Network) -> Result<&str, Response> {
     network.url(&state.index).ok_or_else(|| {

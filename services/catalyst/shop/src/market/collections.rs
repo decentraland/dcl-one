@@ -13,7 +13,7 @@ use sqlx::Row;
 
 use super::catalogue::{self, Access, CatalogueRead, Purpose};
 use super::mirrors::Mirror;
-use super::readers::{Ttl, cached};
+use super::readers::{Ttl, memoized_holding};
 use super::wire::{
     ApiError, ChainId, Contract, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network,
     NftCategory, Params, clamp_first, clamp_skip, ethereum_chain_id, network_and_chain,
@@ -279,39 +279,51 @@ pub fn marketplace_contracts(chain_id: ChainId) -> Vec<Contract> {
 /// Every approved collection as a `Contract` (category wearable), name order
 /// (`COLLATE "C"`, the old sort), read in `read`'s snapshot and memoized
 /// 15 min under what it read: the old route cached the whole list for an
-/// hour and the mirror moves every 15 min anyway.
+/// hour and the mirror moves every 15 min anyway. The memo holds the read
+/// only in the request that computes it; `Ok(None)`: the computation this
+/// request waited on failed, and it opens a new read and asks again.
 pub async fn all_collection_contracts(
     state: &MarketplaceState,
-    read: &mut CatalogueRead,
-) -> Result<Vec<Contract>, ApiError> {
-    let key = format!("collections:contracts:{}", read.key());
-    let conn = &mut *read.tx;
-    let value = cached(state, Ttl::M15, key, || async move {
-        let rows = sqlx::query(
-            "SELECT contract_address, name, chain_id, network FROM shop.collections \
+    held: &mut Option<CatalogueRead>,
+) -> Result<Option<Vec<Contract>>, ApiError> {
+    let copy = held.as_ref().expect("a request holds its read").key();
+    let key = format!("collections:contracts:{copy}");
+    let value = memoized_holding(
+        state,
+        Ttl::M15,
+        key,
+        held,
+        async |read: &mut CatalogueRead| {
+            let rows = sqlx::query(
+                "SELECT contract_address, name, chain_id, network FROM shop.collections \
              WHERE is_approved ORDER BY name COLLATE \"C\" ASC, contract_address ASC",
-        )
-        .fetch_all(conn)
-        .await
-        .map_err(|e| e.to_string())?;
-        let out: Vec<Contract> = rows
-            .iter()
-            .map(|r| {
-                let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
-                Contract {
-                    name: r.get("name"),
-                    address: r.get("contract_address"),
-                    category: NftCategory::Wearable,
-                    network,
-                    chain_id,
-                }
-            })
-            .collect();
-        serde_json::to_value(out).map_err(|e| e.to_string())
-    })
+            )
+            .fetch_all(&mut *read.tx)
+            .await
+            .map_err(|e| e.to_string())?;
+            let out: Vec<Contract> = rows
+                .iter()
+                .map(|r| {
+                    let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
+                    Contract {
+                        name: r.get("name"),
+                        address: r.get("contract_address"),
+                        category: NftCategory::Wearable,
+                        network,
+                        chain_id,
+                    }
+                })
+                .collect();
+            serde_json::to_value(out).map_err(|e| e.to_string())
+        },
+    )
     .await
     .map_err(ApiError::internal)?;
-    serde_json::from_value((*value).clone()).map_err(|e| ApiError::internal(e.to_string()))
+    value
+        .map(|value| {
+            serde_json::from_value((*value).clone()).map_err(|e| ApiError::internal(e.to_string()))
+        })
+        .transpose()
 }
 
 pub async fn get_contracts(
@@ -329,22 +341,25 @@ pub async fn get_contracts(
     let should_fetch_all = filters.category.is_none_or(|c| c == NftCategory::Wearable)
         && filters.network.is_none_or(|n| n == Network::Matic);
     if should_fetch_all {
-        let mut read = match catalogue::begin(
-            &state,
-            Purpose::Describe,
-            &[Mirror::Collections],
-            None,
-            Access::ReadOnly,
-        )
-        .await
-        {
-            Ok(read) => read,
-            Err(envelope) => return envelope,
+        let collections = loop {
+            let read =
+                match catalogue::preflight(&state, Purpose::Describe, &[Mirror::Collections], None)
+                    .await
+                {
+                    Ok(read) => read,
+                    Err(envelope) => return envelope,
+                };
+            let stamp = read.stamp();
+            match all_collection_contracts(&state, &mut Some(read)).await {
+                Ok(Some(collections)) => {
+                    stamp.note(&state);
+                    break collections;
+                }
+                Ok(None) => continue,
+                Err(e) => return e.into_response(),
+            }
         };
-        match all_collection_contracts(&state, &mut read).await {
-            Ok(collections) => all.extend(collections),
-            Err(e) => return e.into_response(),
-        }
+        all.extend(collections);
     }
     let total = all.len() as i64;
     let first = filters.first.unwrap_or(0);

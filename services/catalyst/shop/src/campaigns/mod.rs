@@ -675,7 +675,8 @@ mod tests {
     }
 
     /// A tag write that conflicts with another committed meanwhile (40001
-    /// under `REPEATABLE READ`) starts again on a new snapshot and lands.
+    /// under `SERIALIZABLE`) starts again on a new snapshot and lands; with a
+    /// single attempt the second write fails, so landing needs the retry.
     #[tokio::test]
     async fn a_conflicting_tag_write_retries_on_a_new_snapshot() {
         let Some(pool) = crate::db::scratch::isolated_pool(4).await else {

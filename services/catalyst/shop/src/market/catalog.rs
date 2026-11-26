@@ -39,7 +39,7 @@ use sqlx::postgres::PgArguments;
 
 use crate::shared::cache::TtlMap;
 
-use super::catalogue::{self, Access, CatalogueRead, Purpose};
+use super::catalogue::{self, CatalogueRead, Purpose};
 use super::lists::{PickStats, picks_stats};
 use super::mirrors::Mirror;
 use super::signed::optional_signer;
@@ -419,19 +419,23 @@ impl Cache {
         self.picks.clear();
     }
 
-    async fn page_or_fetch<F, Fut>(
+    /// A page read through the caller's catalogue read, which only the
+    /// fetching request keeps
+    /// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]).
+    async fn page_or_fetch_holding<F>(
         &self,
         key: (bool, CatalogFilters, String),
+        held: &mut Option<CatalogueRead>,
         fetch: F,
-    ) -> Result<Page, ApiError>
+    ) -> Result<Option<Page>, ApiError>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<Page, ApiError>>,
+        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, ApiError>,
     {
         if !self.enabled {
-            return fetch().await;
+            let read = held.as_mut().expect("a request holds its read");
+            return fetch(read).await.map(Some);
         }
-        self.pages.get_or_fetch(key, fetch).await
+        self.pages.get_or_fetch_holding(key, held, fetch).await
     }
 
     async fn picks_or_fetch<F, Fut>(
@@ -1203,41 +1207,49 @@ async fn catalog_inner(
         Ok(filters) => filters,
         Err(e) => return e.into_response(),
     };
-    // Every row carries the item's minter price: the money rule.
-    let mut read = match catalogue::begin(
-        &state,
-        Purpose::Priced,
-        &[Mirror::Items],
-        filters.network.map(Network::graph),
-        Access::ReadOnly,
-    )
-    .await
-    {
-        Ok(read) => read,
-        Err(envelope) => return envelope,
-    };
-    // The v2 legs (price, isOnSale, tradeId, the listing counts) are computed
-    // from shop.trades: a partial mirror is not the order book.
-    if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
-        return envelope;
-    }
-    let key = (is_v2, filters.clone(), read.key());
-    let page = match state
-        .catalog_cache
-        .page_or_fetch(key, || async {
-            fetch_page(&state, &mut read, &filters, is_v2)
-                .await
-                .map(Arc::new)
-        })
+    // The page memo holds the read only in the request that fetches it: one
+    // that waits on another's fetch drops it first, and starts again if that
+    // fetch failed. The stamp is the copy the page was read from.
+    let page = loop {
+        // Every row carries the item's minter price: the money rule.
+        let mut read = match catalogue::preflight(
+            &state,
+            Purpose::Priced,
+            &[Mirror::Items],
+            filters.network.map(Network::graph),
+        )
         .await
-    {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
+        {
+            Ok(read) => read,
+            Err(envelope) => return envelope,
+        };
+        // The v2 legs (price, isOnSale, tradeId, the listing counts) are
+        // computed from shop.trades: a partial mirror is not the order book.
+        if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
+            return envelope;
+        }
+        let (key, stamp) = ((is_v2, filters.clone(), read.key()), read.stamp());
+        let mut held = Some(read);
+        match state
+            .catalog_cache
+            .page_or_fetch_holding(key, &mut held, async |read: &mut CatalogueRead| {
+                fetch_page(&state, read, &filters, is_v2)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+        {
+            Ok(Some(page)) => {
+                stamp.note(&state);
+                break page;
+            }
+            Ok(None) => continue,
+            Err(e) => return e.into_response(),
+        }
     };
     // The picks are no catalogue rows, and the signer check may call the
-    // chain (EIP-1654): the read's connection goes back first, so neither
-    // waits while this request holds one.
-    drop(read);
+    // chain (EIP-1654): the read went back with the loop's scope, so neither
+    // waits while this request holds a connection.
     let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
     let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
         Ok(s) => s,

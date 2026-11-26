@@ -184,15 +184,25 @@ impl CatalogueRead {
     /// network's publication. [`begin`] records them; a [`preflight`] read
     /// records them only when the route answers from it.
     pub fn note(&self, state: &MarketplaceState) {
-        if let Some(mirror) = &self.mirror {
+        self.stamp().note(state);
+    }
+
+    /// The copies this read would record ([`Self::note`]), kept apart from
+    /// it: a route that hands its read to a memo
+    /// ([`super::readers::memoized_holding`]) may lose it there, and records
+    /// the stamp once the page it answers with is known to be this copy's.
+    pub fn stamp(&self) -> Stamp {
+        let mut mirror = Vec::new();
+        if let Some(copy) = &self.mirror {
             for m in [Mirror::Collections, Mirror::Items] {
-                if let Some(at) = mirror.oldest(Some(m)) {
-                    mirrors::note_copy_at(state, m, at);
+                if let Some(at) = copy.oldest(Some(m)) {
+                    mirror.push((m, at));
                 }
             }
         }
-        for (_, p) in &self.owned {
-            mirrors::note_index_copy(p.folded_at);
+        Stamp {
+            mirror,
+            index: self.owned.iter().map(|(_, p)| p.folded_at).collect(),
         }
     }
 
@@ -205,6 +215,25 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+    }
+}
+
+/// The copies a read answers from ([`CatalogueRead::stamp`]).
+#[derive(Clone, Debug, Default)]
+pub struct Stamp {
+    mirror: Vec<(Mirror, NaiveDateTime)>,
+    index: Vec<NaiveDateTime>,
+}
+
+impl Stamp {
+    /// Records the copies for the answer's `as_of` and staleness.
+    pub fn note(&self, state: &MarketplaceState) {
+        for (m, at) in &self.mirror {
+            mirrors::note_copy_at(state, *m, *at);
+        }
+        for folded_at in &self.index {
+            mirrors::note_index_copy(*folded_at);
+        }
     }
 }
 
@@ -358,6 +387,8 @@ struct MirrorScope<'a> {
     configured: bool,
     /// The networks the index owns.
     owned: &'a [Network],
+    /// The network the read asks for, if one.
+    asked: Option<Network>,
 }
 
 /// The mirrors' verdict for a read that may return rows of the networks the
@@ -373,8 +404,8 @@ struct MirrorScope<'a> {
 ///   read (its key). A returnable network without a pass and without a
 ///   subgraph names its subgraph: no pass can come;
 /// - with no subgraph configured, a priced read names the subgraph of the
-///   first network no index owns, and so does any other read when no network
-///   is owned and no pass is recorded.
+///   network it asks for, else of the first network no index owns, and so
+///   does any other read when no network is owned and no pass is recorded.
 fn mirror_verdict(
     state: &MarketplaceState,
     scope: &MirrorScope<'_>,
@@ -388,10 +419,13 @@ fn mirror_verdict(
         served,
         configured,
         owned: owned_networks,
+        asked,
     } = *scope;
+    // The network asked for, else the first no index owns.
     let missing_subgraph = |mirror: Mirror| {
-        let missing = [Network::Matic, Network::Ethereum]
+        let missing = asked
             .into_iter()
+            .chain([Network::Matic, Network::Ethereum])
             .find(|n| !owned_networks.contains(n))
             .unwrap_or(Network::Matic);
         (
@@ -651,6 +685,7 @@ async fn open(
                     served: &served,
                     configured: !configured.is_empty(),
                     owned: &owned_networks,
+                    asked: scope,
                 },
                 needs,
                 purpose,
