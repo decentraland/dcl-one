@@ -109,11 +109,12 @@ it is read beside does not hold yet, and the next fold takes the rest.
   `/v1/orders` and `/v1/orders/open-by-items` answer 503. So does credits
   pricing, which reads the latter.
 - `/v1/activity` returns a partial 200 when a source fails and keeps
-  pages already read. Its `x-activity-unavailable-sources` header lists
-  sources named by failed reads, such as `nft-index`, `land-authz-index`
-  or a reader's subgraph. A bid or order page that fails without a source
-  contributes `bids` or `orders` respectively. A failed direct trade read
-  contributes `trades`.
+  pages already read. The `x-activity-unavailable-sources` header covers
+  bid, order, trade and transfer reads. It can name a source such as
+  `nft-index`, `land-authz-index` or a reader's subgraph. A bid or order
+  page that fails without a source contributes `bids` or `orders`
+  respectively. A failed direct trade read contributes `trades`. Sales
+  read failures are logged separately and the affected sales are omitted.
 - A token sent away and back, away for good, relisted, sold or cancelled
   leaves the statuses the subgraph left (a test replays those traces
   against a model of its handlers). One trace differs: when an order is
