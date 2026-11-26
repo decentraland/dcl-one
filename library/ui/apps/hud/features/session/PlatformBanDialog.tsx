@@ -5,8 +5,9 @@
 import { useEffect, useState } from 'react'
 import { isNativeHud, siteUrl } from '@hud-host'
 import type { PlatformBanNotice } from '@explorer-core/engine/generated'
-import { Button, ModalShell, openPopup } from '../../design'
+import { ModalShell, openPopup } from '../../design'
 import type { SessionPhase } from './useEngineSession'
+import { Button } from '@dcl/one-ui'
 
 export const PLATFORM_BAN_TITLE = "You're banned from Decentraland"
 
@@ -74,11 +75,11 @@ export function openPlatformBanDialog(
         actionsAlign="center"
         actions={
           <>
-            <Button variant="secondary" onClick={openSupport}>
+            <Button appearance="hud" variant="secondary" onClick={openSupport}>
               Contact Support
             </Button>
             {signOut != null ? (
-              <Button
+              <Button appearance="hud"
                 onClick={() => {
                   close()
                   signOut()
@@ -87,7 +88,7 @@ export function openPlatformBanDialog(
                 Sign Out
               </Button>
             ) : (
-              <Button onClick={dismiss}>OK</Button>
+              <Button appearance="hud" onClick={dismiss}>OK</Button>
             )}
           </>
         }

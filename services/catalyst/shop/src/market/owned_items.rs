@@ -806,7 +806,8 @@ pub(crate) mod test_support {
     }
 
     /// Publishes the nft index of `nets` `age` ago (a complete walk at
-    /// block 100) and, with `items`, records the items mirror's pass.
+    /// block 100, its legacy order book folded through it) and, with
+    /// `items`, records the items mirror's pass.
     pub async fn publish(pool: &PgPool, nets: &[ChainNet], items: bool, age: std::time::Duration) {
         for net in nets {
             sqlx::query(
@@ -818,6 +819,24 @@ pub(crate) mod test_support {
             .bind(net.db_name())
             .bind(age.as_secs_f64())
             .bind(net.chain_id())
+            .execute(pool)
+            .await
+            .unwrap();
+            // The fold that published it folded the legacy order book too,
+            // on the branch of the walk's recovery point at block 100.
+            sqlx::query(
+                "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+                 VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+            )
+            .bind(net.db_name())
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64)) \
+                 ON CONFLICT (network) DO UPDATE SET folded_through = 100, through_hash = EXCLUDED.through_hash",
+            )
+            .bind(net.db_name())
             .execute(pool)
             .await
             .unwrap();
@@ -1042,15 +1061,13 @@ mod tests {
             other => panic!("another chain: {other:?}"),
         }
 
-        // Handed back with the mirror's pass cleared: the mirror's rule again.
-        sqlx::query("UPDATE shop.collection_projection SET owned_at = NULL")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM shop.mirror_state WHERE mirror = 'items'")
-            .execute(&pool)
-            .await
-            .unwrap();
+        // Handed back (the hand-back clears the network's rows and the
+        // mirrors' passes with the ownership): the mirror's rule again.
+        assert!(
+            super::super::collections_projection::hand_back(&pool, ChainNet::Matic)
+                .await
+                .unwrap()
+        );
         match checked(pool.clone()).await {
             Err(ReadError::NotReady(Source::ItemsMirror, _)) => {}
             other => panic!("handed back: {other:?}"),

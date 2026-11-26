@@ -3,7 +3,7 @@ use std::{f32::consts::TAU, sync::Arc};
 use alloy_core::primitives::Address;
 use bevy::{
     app::Propagate,
-    ecs::system::SystemParam,
+    ecs::{component::HookContext, system::SystemParam, world::DeferredWorld},
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::view::RenderLayers,
@@ -13,8 +13,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest, TimeOfDay, SCENE_GLOBAL_UPDATE_CAPACITY,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerAddress, PlayerLanguage,
+        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay, SCENE_GLOBAL_UPDATE_CAPACITY,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -553,10 +553,12 @@ impl GlobalCrdtState {
 }
 
 /// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
-/// does not depend on comms.
+/// does not depend on comms. Inserting it also inserts the entity's `PlayerAddress`.
 #[derive(Component, Debug)]
 #[require(common::structs::ForeignAvatar)]
+#[component(on_insert = Self::on_insert)]
 pub struct ForeignPlayer {
+    /// The same as the entity's `PlayerAddress`; use that for local or foreign players.
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
     /// wallet connected to several rooms is a separate entity in each room's context
@@ -571,6 +573,19 @@ pub struct ForeignPlayer {
 }
 
 impl ForeignPlayer {
+    fn on_insert(mut world: DeferredWorld, context: HookContext) {
+        let Some(address) = world
+            .get::<Self>(context.entity)
+            .map(|player| player.address)
+        else {
+            return;
+        };
+        world
+            .commands()
+            .entity(context.entity)
+            .try_insert(PlayerAddress(address));
+    }
+
     /// Whether the player belongs to a Pulse transport that still exists.
     pub fn has_pulse_transport(&self, transports: &Query<&Transport>) -> bool {
         self.transports.iter().any(|&entity| {
@@ -2695,6 +2710,15 @@ mod tests {
                 ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
             })
             .collect()
+    }
+
+    #[test]
+    fn a_foreign_player_also_gets_its_player_address() {
+        let (app, player, ..) = voice_app();
+        assert_eq!(
+            app.world().get::<PlayerAddress>(player),
+            Some(&PlayerAddress(Address::repeat_byte(0xab)))
+        );
     }
 
     #[test]

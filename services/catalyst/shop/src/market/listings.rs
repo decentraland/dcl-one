@@ -1328,6 +1328,18 @@ pub(crate) async fn insert_trade<'e>(
     Ok(trade_id)
 }
 
+/// The 503 of a trade the catalogue cannot judge yet, with `Retry-After`: the
+/// mirror catches up within a pass, and the collections index publishes
+/// within one.
+fn retryable_creation_error(e: TradeCreationError) -> Response {
+    let mut response = creation_error_to_api(e).into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
+}
+
 fn creation_error_to_api(e: TradeCreationError) -> ApiError {
     let message = e.to_string();
     match e {
@@ -1405,15 +1417,10 @@ async fn post_trade_inner(
     .await
     {
         Ok(id) => id,
-        // The mirror catches up within a pass: tell the client when to retry.
-        Err(TradeCreationError::ItemUnknown) => {
-            let mut response =
-                creation_error_to_api(TradeCreationError::ItemUnknown).into_response();
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static("60"),
-            );
-            return Ok(response);
+        Err(
+            e @ (TradeCreationError::ItemUnknown | TradeCreationError::CatalogueUnavailable(_)),
+        ) => {
+            return Ok(retryable_creation_error(e));
         }
         Err(e) => return Err(creation_error_to_api(e)),
     };
@@ -1528,6 +1535,27 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
+
+    /// A trade the catalogue cannot judge yet answers 503 with `Retry-After`:
+    /// an item the mirror has not brought, or an owned network the
+    /// collections index refuses.
+    #[test]
+    fn a_trade_the_catalogue_cannot_judge_yet_says_when_to_retry() {
+        for e in [
+            TradeCreationError::ItemUnknown,
+            TradeCreationError::CatalogueUnavailable("the index is rewinding".into()),
+        ] {
+            let response = retryable_creation_error(e);
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "60"
+            );
+        }
+    }
 
     #[test]
     fn endpoints_parse_per_chain_and_owner_words_decode() {
