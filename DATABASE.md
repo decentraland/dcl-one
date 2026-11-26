@@ -1785,10 +1785,13 @@ an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 `studio.operator.remove`, `studio.budget`). A studio's own operators grant
 Credits to players out of its budget, signed fetch with no admin gate
 (`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
-at 60 per operator wallet a minute). Its signature counts over the mount's
-path or the credits host's own route, never a foreign prefix ending with it;
-a contract wallet's is checked with the uncached EIP-1654 validator; and a
-signed `bodySha256` must be the body's. A grant writes, in one transaction, the
+at 60 a minute per operator wallet and per process, counting only wallets
+that act for the studio). Its signature counts over the mount's path or the
+credits host's own route, never a foreign prefix ending with it; a contract
+wallet's is checked with the uncached EIP-1654 validator; a signed
+`bodySha256` must be the body's, and one that signs none is refused while
+`CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` is on, as an admin write is. A grant
+writes, in one transaction, the
 player's paid credit as an admin grant does (`credits.wallets`,
 `credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
 the "A gift from {studio}" notice) and the `grant` entry naming that ledger
@@ -1802,9 +1805,9 @@ studios (`GET /credits/operator/studios`, by `studio_operators_address_idx`)
 and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
 REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
 `GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
-with an admin `grant` audit row or named by a budget entry, by
-`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
-ONLY snapshot; a gift that is not a whole number of cents within
+with an admin `grant` audit row or named by a budget entry, the wallet's rows
+found by `ledger_address_id_idx` and sorted by time, newest first, the total
+and the page from one REPEATABLE READ, READ ONLY snapshot; a gift that is not a whole number of cents within
 `Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
 counted in a warning; a migrated Decentraland grant has neither link and is not
 listed until #2473). The credits report calls a grant `studio_grant` only on
@@ -1819,12 +1822,14 @@ Locks: a change that adds budget first takes the service-wide advisory lock
 `studio-budget-deposits`, credits-server's), then the studio's row
 (`FOR UPDATE`); any other budget change, and adding or removing an operator,
 takes the studio's row alone, and so does a grant, which then takes the
-player's wallet row (no path takes a wallet row before a studio row). Each
-transaction pins READ COMMITTED whatever the session default, so each statement
-after a lock reads a snapshot taken after it was granted, and a balance, the
-day's total, a grant's operators or its studio's status is never read from
-before the previous holder committed: of two grants racing for the last of a
-budget, the second waits for the row and sees the first's entry.
+player's wallet row (no path takes a wallet row before a studio row). A budget
+change and a grant, the writes that judge what they read under the lock, pin
+READ COMMITTED whatever the session default, so each statement after the lock
+reads a snapshot taken after it was granted, and a balance, the day's total, a
+grant's operators or its studio's status is never read from before the
+previous holder committed: of two grants racing for the last of a budget, the
+second waits for the row and sees the first's entry. Renaming, pausing and
+operator changes judge nothing they read and run at the session's level.
 
 Invariants: a studio's balance never goes below zero (checked under its row
 lock before the entry is written). The new budget written in one UTC day of

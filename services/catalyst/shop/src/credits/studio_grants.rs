@@ -15,16 +15,21 @@
 //! takes a wallet row before a studio row.
 //!
 //! A refusal writes nothing. The order of judgment is credits-server's:
-//! - the signer must act for the studio (else the studio is not found);
+//! - the signer must act for the studio (else the studio is not found),
+//!   checked by the route before anything else and again under the lock,
+//!   before the key is answered;
 //! - a repeat of the idempotency key with the same request answers what it
 //!   wrote, even once the studio is paused, the player flagged or the ceiling
-//!   lowered (read with the operator check, from one snapshot);
+//!   lowered;
 //! - the per-grant ceiling (`CREDITS_STUDIO_GRANT_MAX_CENTS`, fail-closed);
-//! - under the lock: the signer still acts for the studio, before its key is
-//!   answered; then the key; then the studio is active, the player is not one
-//!   of its operators, and its balance covers the grant;
+//! - the studio is active, the player is not one of its operators, and its
+//!   balance covers the grant;
 //! - last, the player's multi-accounting flag, so that a paused or empty
-//!   studio cannot use the refusal to learn which wallets carry one.
+//!   studio cannot use the refusal to learn which wallets carry one. A funded,
+//!   active studio can still learn it by granting a flagged wallet one Credit
+//!   and reading the refusal, as with credits-server; and an operator can give
+//!   the budget to a wallet it controls. The budget is only as safe as the
+//!   studio's operators.
 //!
 //! The node keeps Credits in USD only, so credits-server's check that USD
 //! credits are enabled has no counterpart.
@@ -40,6 +45,22 @@ use super::studios::{
     SUMMARY_SELECT, StudioError, StudioSummary, USD_CENTS_PER_CREDIT, balance_cents,
     is_one_printable_line, map_summary,
 };
+
+/// Whether `operator` acts for the studio, read without its lock: the route
+/// answers a wallet that does not before anything else.
+async fn acts_for<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    studio_id: &str,
+    operator: &str,
+) -> Result<bool, StudioError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM credits.studio_operators WHERE studio_id = $1::uuid AND address = $2)",
+    )
+    .bind(studio_id)
+    .bind(operator)
+    .fetch_one(executor)
+    .await?)
+}
 
 /// The longest grant reason, shown on one line in the studio's history.
 pub const MAX_REASON_CHARS: usize = 80;
@@ -107,19 +128,36 @@ pub struct StudioGrantRequest<'a> {
     pub reason: &'a str,
     pub annotation: Option<&'a str>,
     pub idempotency_key: &'a str,
+    /// The per-grant ceiling, in cents; `None` refuses every new grant. It is
+    /// judged under the lock after the key, so a repeat is answered first.
+    pub max_cents: Option<i64>,
 }
 
-/// A stable fingerprint of what a grant asked for, kept next to its key. A
-/// budget change hashes `["budget", ...]`, so a key is never answered for the
-/// other kind of request.
+/// A stable fingerprint of what a grant asked for, kept next to its key: who
+/// grants is part of it, so one operator is never answered with another's
+/// grant. A budget change hashes `["budget", ...]`, so a key is never answered
+/// for the other kind of request.
 pub fn grant_request_hash(
+    granter: &str,
     recipient: &str,
     usd_cents: i64,
     reason: &str,
     annotation: Option<&str>,
 ) -> String {
-    let request = json!(["grant", recipient, usd_cents, reason, annotation]);
+    let request = json!(["grant", granter, recipient, usd_cents, reason, annotation]);
     hex::encode(Sha256::digest(request.to_string().as_bytes()))
+}
+
+impl StudioGrantRequest<'_> {
+    fn hash(&self) -> String {
+        grant_request_hash(
+            self.granter,
+            self.recipient,
+            self.usd_cents,
+            self.reason,
+            self.annotation,
+        )
+    }
 }
 
 /// The largest integer a JSON number carries exactly (`Number.MAX_SAFE_INTEGER`).
@@ -225,14 +263,7 @@ impl Credits {
         offset: i64,
     ) -> Result<Option<(StudioSummary, Vec<StudioGrantRow>, i64)>, StudioError> {
         let mut tx = self.read_snapshot().await?;
-        let acts: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM credits.studio_operators WHERE studio_id = $1::uuid AND address = $2)",
-        )
-        .bind(studio_id)
-        .bind(operator)
-        .fetch_one(&mut *tx)
-        .await?;
-        let row = if acts {
+        let row = if acts_for(&mut *tx, studio_id, operator).await? {
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{SUMMARY_SELECT} WHERE s.id = $1::uuid"
             )))
@@ -281,58 +312,13 @@ impl Credits {
         Ok(Some((studio, grants, total)))
     }
 
-    /// Whether `req`'s granter acts for the studio and, if so, the grant its
-    /// key already made, read without the studio's lock so that a repeat is
-    /// answered before anything that only decides a new grant. The operator,
-    /// the entry and the balance are read from one snapshot, so nothing is
-    /// told from after the granter stopped acting for the studio. `NotFound`
-    /// when it does not act for it; `IdempotencyKeyReused` when the key was
-    /// used for another request (a budget change included). The write checks
-    /// both again under the lock: this read only ever answers early.
-    pub async fn studio_grant_replay(
+    /// Whether `operator` acts for the studio (the route's first check).
+    pub async fn is_studio_operator(
         &self,
-        req: StudioGrantRequest<'_>,
-    ) -> Result<Option<StudioGrant>, StudioError> {
-        let hash = grant_request_hash(req.recipient, req.usd_cents, req.reason, req.annotation);
-        let mut tx = self.read_snapshot().await?;
-        let acts: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM credits.studio_operators WHERE studio_id = $1::uuid AND address = $2)",
-        )
-        .bind(req.studio_id)
-        .bind(req.granter)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !acts {
-            return Err(StudioError::NotFound);
-        }
-        let Some(entry) = sqlx::query(
-            "SELECT e.request_hash, e.ledger_id::text AS credit_id, s.name \
-             FROM credits.studio_budget_entries e JOIN credits.studios s ON s.id = e.studio_id \
-             WHERE e.studio_id = $1::uuid AND e.idempotency_key = $2",
-        )
-        .bind(req.studio_id)
-        .bind(req.idempotency_key)
-        .fetch_optional(&mut *tx)
-        .await?
-        else {
-            tx.commit().await?;
-            return Ok(None);
-        };
-        let credit_id: Option<String> = entry.get("credit_id");
-        let (true, Some(credit_id)) = (entry.get::<String, _>("request_hash") == hash, credit_id)
-        else {
-            return Err(StudioError::IdempotencyKeyReused(
-                req.idempotency_key.into(),
-            ));
-        };
-        let balance_cents = balance_cents(&mut tx, req.studio_id).await?;
-        tx.commit().await?;
-        Ok(Some(StudioGrant {
-            credit_id,
-            studio_name: entry.get("name"),
-            balance_cents,
-            replayed: true,
-        }))
+        studio_id: &str,
+        operator: &str,
+    ) -> Result<bool, StudioError> {
+        acts_for(&self.pool, studio_id, operator).await
     }
 
     /// Writes a studio grant, or answers the one its key already wrote. See
@@ -342,7 +328,7 @@ impl Credits {
         &self,
         req: StudioGrantRequest<'_>,
     ) -> Result<StudioGrant, StudioError> {
-        let hash = grant_request_hash(req.recipient, req.usd_cents, req.reason, req.annotation);
+        let hash = req.hash();
         let mut tx = self.pool.begin().await?;
         // Each statement after the lock must see what the previous holder
         // committed: under REPEATABLE READ a waiter's snapshot could predate it
@@ -403,6 +389,13 @@ impl Credits {
             });
         }
 
+        let max_cents = req.max_cents.ok_or(StudioError::GrantsNotConfigured)?;
+        if req.usd_cents > max_cents {
+            return Err(StudioError::GrantLimitExceeded {
+                max_cents,
+                requested_cents: req.usd_cents,
+            });
+        }
         if status != "active" {
             return Err(StudioError::Paused(studio_name));
         }
@@ -457,10 +450,12 @@ impl Credits {
             .await?;
         let ledger_id = ledger_id
             .ok_or_else(|| StudioError::Internal("a new grant wrote no ledger row".into()))?;
+        // One time for the grant on every surface: the entry takes its ledger
+        // row's, which the player's gifts and the report read.
         sqlx::query(
             "INSERT INTO credits.studio_budget_entries \
                  (studio_id, usd_cents, kind, ledger_id, note, idempotency_key, request_hash, created_by, created_at) \
-             VALUES ($1::uuid, $2, 'grant', $3, $4, $5, $6, $7, timezone('UTC', clock_timestamp()))",
+             SELECT $1::uuid, $2, 'grant', $3, $4, $5, $6, $7, l.created_at FROM credits.ledger l WHERE l.id = $3",
         )
         .bind(req.studio_id)
         .bind(-req.usd_cents)
@@ -487,20 +482,18 @@ mod tests {
 
     #[test]
     fn a_grant_request_hash_names_every_field_and_differs_from_a_budget_change() {
+        let g = "0x00000000000000000000000000000000000000cc";
         let a = "0x00000000000000000000000000000000000000aa";
-        let hash = grant_request_hash(a, 100, "why", None);
-        assert_eq!(hash, grant_request_hash(a, 100, "why", None));
+        let b = "0x00000000000000000000000000000000000000bb";
+        let hash = grant_request_hash(g, a, 100, "why", None);
+        assert_eq!(hash, grant_request_hash(g, a, 100, "why", None));
         for other in [
-            grant_request_hash(
-                "0x00000000000000000000000000000000000000bb",
-                100,
-                "why",
-                None,
-            ),
-            grant_request_hash(a, 110, "why", None),
-            grant_request_hash(a, 100, "why not", None),
-            grant_request_hash(a, 100, "why", Some("")),
-            grant_request_hash(a, 100, "why", Some("note")),
+            grant_request_hash(b, a, 100, "why", None),
+            grant_request_hash(g, b, 100, "why", None),
+            grant_request_hash(g, a, 110, "why", None),
+            grant_request_hash(g, a, 100, "why not", None),
+            grant_request_hash(g, a, 100, "why", Some("")),
+            grant_request_hash(g, a, 100, "why", Some("note")),
         ] {
             assert_ne!(hash, other);
         }
