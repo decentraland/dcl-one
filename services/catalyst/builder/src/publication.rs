@@ -193,7 +193,8 @@ pub(super) fn prepare(
     Ok(PublicationPreparation {
         id: id.into(),
         revision: hash_bytes_v1(snapshot.to_string().as_bytes()),
-        chain_id: network.chain_id as u32,
+        chain_id: u32::try_from(network.chain_id)
+            .map_err(|_| ApiError::internal("the network's chain id is past u32"))?,
         manager: network.collection_manager.into(),
         factory: network.collection_factory.into(),
         forwarder: network.forwarder.into(),

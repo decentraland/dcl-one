@@ -829,7 +829,8 @@ impl ItemsComponent {
             .push("))")
             .push(order.as_str());
         let rows: Vec<ListedRow> = sql.build_query_as().fetch_all(&mut *tx).await?;
-        let mut total = rows.len() as i64;
+        let mut total = i64::try_from(rows.len())
+            .map_err(|_| ApiError::internal("a listing page past i64 rows"))?;
         let mut counts = None;
         if listing.page.page.is_some() {
             let mut count = QueryBuilder::new("SELECT count(*) FROM ");

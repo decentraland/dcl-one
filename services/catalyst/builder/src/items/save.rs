@@ -145,7 +145,11 @@ pub async fn prepare(
     };
     let tags = array_len(input.data.get("tags")).unwrap_or(0);
     if tags > MAX_TAGS {
-        let stored_tags = stored.as_ref().and_then(|(_, t)| *t).unwrap_or(0) as usize;
+        let stored_tags = stored
+            .as_ref()
+            .and_then(|(_, t)| *t)
+            .and_then(|t| usize::try_from(t).ok())
+            .unwrap_or(0);
         if stored.is_none() || (stored_tags > MAX_TAGS && tags > stored_tags) {
             return Err(ApiError::http(
                 200,
@@ -399,8 +403,9 @@ impl ItemsComponent {
         let data = crate::content::js_stringify(&input.data);
         let metrics = crate::content::js_stringify(&input.metrics);
         let incoming = data.len() + metrics.len() + mappings.as_ref().map_or(0, String::len);
-        self.within_documents(&mut tx, &owner, id, incoming as i64)
-            .await?;
+        let incoming = i64::try_from(incoming)
+            .map_err(|_| ApiError::internal("an item's documents past i64 bytes"))?;
+        self.within_documents(&mut tx, &owner, id, incoming).await?;
         let (video_before, video_after): (Option<String>, Option<String>) = sqlx::query_as(
             "WITH before AS (SELECT video FROM builder.items WHERE id = $1) \
              INSERT INTO builder.items AS i (id, collection_id, eth_address, name, description, thumbnail, video, type, \
