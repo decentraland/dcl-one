@@ -2,17 +2,13 @@
 //! The ops dashboard's cross-wallet credits list and its grant reasons, read
 //! from this node's tables in the old server's row shape:
 //!
-//! - an operator grant (`credits.ledger` kind `grant` with its
-//!   `ops.admin_audit` row): a USD row, source `grant` (`studio_grant` when
-//!   the audit names a studio), goal `on-demand-granted-credits`, its reason
-//!   and annotation from the audit detail, and the granter when the audit
-//!   actor is a wallet (a bearer grant records `token:<VARIABLE>`, so it has
-//!   no granter, and no grant path writes an annotation yet);
-//! - a grant migrated from the old server (kind `grant`, no audit row): a USD
-//!   row, source `migrated`, no goal, reason or granter. The migration folded
-//!   every positive non-purchase credit (grants, studio grants, IAP, sale
-//!   proceeds and royalties, won disputes) into `grant` without its source,
-//!   so these rows are not claimed as the operator's grants;
+//! - An audited USD grant, including imported grants with metadata, has the
+//!   source `grant` or `studio_grant` when the audit carries `studioName`,
+//!   and goal `on-demand-granted-credits`. Reason and annotation come from
+//!   the audit detail. A wallet actor appears as the granter.
+//! - An imported credit of kind `grant` without an audit row has source
+//!   `migrated` and no goal, reason or granter. This includes IAP, sale
+//!   proceeds and royalties, and won disputes.
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
 //! - a claimed goal credit (`credits.goal_grants` with `claimed_at`): a MANA row with its season,
