@@ -2,7 +2,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 use std::time::Duration;
 
@@ -45,7 +46,7 @@ where
     }
     number
         .as_f64()
-        .filter(|value| value.fract() == 0.0 && value.abs() <= i64::MAX as f64)
+        .filter(|value| value.fract() == 0.0 && value.abs() <= crate::types::TWO_POW_63)
         .map(|value| value as i64)
         .ok_or_else(|| serde::de::Error::custom(format!("invalid integer {number}")))
 }
