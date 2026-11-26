@@ -6,6 +6,10 @@ import {
   Busy,
   Notice,
   type NoticeTone,
+  InputWebCreatorTools,
+  Switch,
+  WebSelect,
+  WebTextarea,
 } from "@dcl/one-ui";
 import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
@@ -18,6 +22,7 @@ import { isStepValid, toEventSchedule, type EventScheduleSource, type HangoutDra
 import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { heroWhen, scheduleLine } from "../../components/event-schedule";
 import styles from "./SubmitHangout.module.css";
+import FormField from "./FormField";
 import HangoutAssociations from "./HangoutAssociations";
 import SubmitSuccess from "./SubmitSuccess";
 import {
@@ -511,44 +516,39 @@ function StepFields({
   if (step === "details") {
     return (
       <div className={`submit-hangout__fields ${styles.fields} ${styles.descriptionFields}`}>
-        <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-          <span>{text(inline ? "Event Name" : "Hangout Name")}</span>
-          <input
-            className={`submit-hangout__field ${styles.field}`}
-            type="text"
-            maxLength={150}
-            value={draft.name}
-            placeholder={text("Be as descriptive as you can")}
-            onChange={(e) => onEdit({ name: e.target.value })}
-          />
-        </label>
-        <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-          <span>{text(inline ? "Event Description" : "Description")}</span>
-          <textarea
-            className={`submit-hangout__field ${styles.field}`}
-            rows={inline ? 3 : 2}
-            placeholder={inline ? text("Be as descriptive as you can") : undefined}
-            maxLength={5000}
-            value={draft.description}
-            onChange={(e) => onEdit({ description: e.target.value })}
-          />
-        </label>
+        <InputWebCreatorTools
+          className={styles.field}
+          label={text(inline ? "Event Name" : "Hangout Name")}
+          maxLength={150}
+          value={draft.name}
+          placeholder={text("Be as descriptive as you can")}
+          onChange={(e) => onEdit({ name: e.target.value })}
+        />
+        <FormField className={styles.field} label={text(inline ? "Event Description" : "Description")}>
+          {(id) => (
+            <WebTextarea
+              id={id}
+              rows={inline ? 3 : 2}
+              placeholder={inline ? text("Be as descriptive as you can") : undefined}
+              maxLength={5000}
+              value={draft.description}
+              onChange={(e) => onEdit({ description: e.target.value })}
+            />
+          )}
+        </FormField>
         {categories.length > 0 ? (
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-            {text("Category")}
-            <select
-              className={`submit-hangout__field ${styles.field}`}
-              value={draft.category}
-              onChange={(e) => onEdit({ category: e.target.value })}
-            >
-              <option value="">{text("None")}</option>
-              {categories.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.i18n?.[locale] ?? c.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormField className={styles.field} label={text("Category")}>
+            {(id) => (
+              <WebSelect id={id} value={draft.category} onChange={(e) => onEdit({ category: e.target.value })}>
+                <option value="">{text("None")}</option>
+                {categories.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.i18n?.[locale] ?? c.label}
+                  </option>
+                ))}
+              </WebSelect>
+            )}
+          </FormField>
         ) : (
           <Notice tone={categoriesError ? "warning" : "info"}>
             {categoriesError
@@ -557,8 +557,10 @@ function StepFields({
           </Notice>
         )}
         {privateFieldsEditable && <>
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>{text("Contact email")}<input className={`submit-hangout__field ${styles.field}`} type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} /></label>
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>{text("Details for moderators")}<textarea aria-label={text("Details for moderators")} className={`submit-hangout__field ${styles.field}`} value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} /></label>
+          <InputWebCreatorTools className={styles.field} label={text("Contact email")} type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} />
+          <FormField className={styles.field} label={text("Details for moderators")}>
+            {(id) => <WebTextarea id={id} value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} />}
+          </FormField>
         </>}
       </div>
     );
@@ -568,53 +570,31 @@ function StepFields({
     const isWorld = draft.location === "world";
     return (
       <div className={`submit-hangout__fields ${styles.fields}`}>
-        <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-          {text("Location Type")}
-          <select
-            className={`submit-hangout__field ${styles.field}`}
-            value={draft.location}
-            onChange={(e) =>
-              onEdit({ location: e.target.value === "world" ? "world" : "land" })
-            }
-          >
-            <option value="land">{text("Land")}</option>
-            <option value="world">{text("World")}</option>
-          </select>
-        </label>
+        <FormField className={styles.field} label={text("Location Type")}>
+          {(id) => (
+            <WebSelect id={id} value={draft.location} onChange={(e) => onEdit({ location: e.target.value === "world" ? "world" : "land" })}>
+              <option value="land">{text("Land")}</option>
+              <option value="world">{text("World")}</option>
+            </WebSelect>
+          )}
+        </FormField>
         {isWorld ? (
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-            {text("World")}
-            <input
-              className={`submit-hangout__field ${styles.field}`}
-              type="text"
+          <>
+            <InputWebCreatorTools
+              className={styles.field}
+              label={text("World")}
               list="hangout-worlds"
               value={draft.worldName}
               placeholder="my-world.dcl.eth"
+              hint={options?.worldsError ? text("World suggestions could not load. You can enter the world name.") : undefined}
               onChange={(e) => onEdit({ worldName: e.target.value })}
             />
             <datalist id="hangout-worlds">{options?.worlds.map((world) => <option value={world} key={world} />)}</datalist>
-            {options?.worldsError && <span className="submit-hangout__hint">{text("World suggestions could not load. You can enter the world name.")}</span>}
-          </label>
+          </>
         ) : (
           <div className={`submit-hangout__coords ${styles.coords}`}>
-            <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-              X
-              <input
-                className={`submit-hangout__field ${styles.field}`}
-                type="number"
-                value={draft.coordX}
-                onChange={(e) => onEdit({ coordX: Number(e.target.value) })}
-              />
-            </label>
-            <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-              Y
-              <input
-                className={`submit-hangout__field ${styles.field}`}
-                type="number"
-                value={draft.coordY}
-                onChange={(e) => onEdit({ coordY: Number(e.target.value) })}
-              />
-            </label>
+            <InputWebCreatorTools className={styles.field} label="X" type="number" value={draft.coordX} onChange={(e) => onEdit({ coordX: Number(e.target.value) })} />
+            <InputWebCreatorTools className={styles.field} label="Y" type="number" value={draft.coordY} onChange={(e) => onEdit({ coordY: Number(e.target.value) })} />
           </div>
         )}
       </div>
@@ -624,54 +604,29 @@ function StepFields({
   if (step === "schedule") {
     return (
       <div className={`submit-hangout__fields ${styles.fields} ${styles.scheduleFields}`}>
-        <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-          {text("Date")}
-          <input
-            className={`submit-hangout__field ${styles.field}`}
-            type="date"
-            value={draft.startDate}
-            onChange={(e) => onEdit({ startDate: e.target.value })}
-          />
-        </label>
-        <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-          {text("Start (UTC)")}
-          <input
-            className={`submit-hangout__field ${styles.field}`}
-            type="time"
-            value={draft.startTime}
-            onChange={(e) => onEdit({ startTime: e.target.value })}
-          />
-        </label>
-        <label className={`submit-hangout__fieldcheck ${styles.durationField}`}>
-          {text("Duration (hours)")}
-          <input className={`submit-hangout__field ${styles.field}`} type="number" min="0.25" max="24" step="0.25" value={draft.durationHours} onChange={(event) => onEdit({ durationHours: Number(event.target.value) })} />
-        </label>
-        <label className={`submit-hangout__fieldcheck ${styles.repeatField}`}>
-          <input
-            type="checkbox"
-            checked={draft.recurrent}
-            onChange={(e) => onEdit({ recurrent: e.target.checked })}
-          />
-          {text("Repeat Hangout")}
-        </label>
+        <InputWebCreatorTools className={styles.field} label={text("Date")} type="date" value={draft.startDate} onChange={(e) => onEdit({ startDate: e.target.value })} />
+        <InputWebCreatorTools className={styles.field} label={text("Start (UTC)")} type="time" value={draft.startTime} onChange={(e) => onEdit({ startTime: e.target.value })} />
+        <InputWebCreatorTools className={styles.field} label={text("Duration (hours)")} type="number" min="0.25" max="24" step="0.25" value={draft.durationHours} onChange={(event) => onEdit({ durationHours: Number(event.target.value) })} />
+        <Switch className={styles.repeatField} label={text("Repeat Hangout")} checked={draft.recurrent} onCheckedChange={(recurrent) => onEdit({ recurrent })} />
         {draft.recurrent && (
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>{text("Repeat")}<select className={`submit-hangout__field ${styles.field}`} value={draft.recurrence} onChange={(event) => onEdit({ recurrence: event.target.value })}><option value="every_hour">{text("Every hour")}</option><option value="every_day">{text("Every day")}</option><option value="every_week">{text("Every week")}</option><option value="every_month">{text("Every month")}</option><option value="every_year">{text("Every year")}</option></select></label>
+          <FormField className={styles.field} label={text("Repeat")}>
+            {(id) => (
+              <WebSelect id={id} value={draft.recurrence} onChange={(event) => onEdit({ recurrence: event.target.value })}>
+                <option value="every_hour">{text("Every hour")}</option>
+                <option value="every_day">{text("Every day")}</option>
+                <option value="every_week">{text("Every week")}</option>
+                <option value="every_month">{text("Every month")}</option>
+                <option value="every_year">{text("Every year")}</option>
+              </WebSelect>
+            )}
+          </FormField>
         )}
         {draft.recurrent && (
-          <label className={`submit-hangout__fieldlabel ${styles.fieldLabel}`}>
-            {text("Ends")}
-            <input
-              className={`submit-hangout__field ${styles.field}`}
-              type="date"
-              value={draft.recurrentUntil}
-              onChange={(e) => onEdit({ recurrentUntil: e.target.value, recurrentCount: null })}
-            />
-          </label>
+          <InputWebCreatorTools className={styles.field} label={text("Ends")} type="date" value={draft.recurrentUntil} onChange={(e) => onEdit({ recurrentUntil: e.target.value, recurrentCount: null })} />
         )}
       </div>
     );
   }
-
   return (
     <div className="submit-hangout__review">
       <h3 className="submit-hangout__reviewtitle">{text("Review your hangout")}</h3>

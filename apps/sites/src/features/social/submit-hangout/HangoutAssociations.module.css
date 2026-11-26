@@ -1,3 +1,2 @@
 .root { display: flex; flex-direction: column; gap: 12px; }
-.communityLabel { flex: initial; }
 .root :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
