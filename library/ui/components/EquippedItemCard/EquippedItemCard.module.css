@@ -193,6 +193,8 @@
   visibility: hidden;
   transform: translateY(-4px);
   pointer-events: none;
+  /* With less motion asked for, it does not animate: this replaces the shared Button's own transition. */
+  transition: none;
 }
 .hasShop:hover .shopBtn {
   opacity: 1;

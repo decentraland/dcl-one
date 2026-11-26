@@ -139,7 +139,6 @@ export function WearableCard({
         styles.card,
         rarityStyles.tone,
         ringed && styles.equipped,
-        incompatible && styles.incompatible,
         pick && styles.pick
       ]
         .filter(Boolean)

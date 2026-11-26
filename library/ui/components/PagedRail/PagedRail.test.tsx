@@ -126,6 +126,38 @@ describe('PagedRail', () => {
     })
   })
 
+  describe('when a page is said to hold no card', () => {
+    it('should count one card a page before the row is laid out, and not fail', async () => {
+      layout(0, 0, 0)
+      await renderSettled(
+        <PagedRail perPage={0} gap={8}>
+          {cards(3)}
+        </PagedRail>
+      )
+      expect(button('Page 3')).not.toBeNull()
+      expect(button('Page 4')).toBeNull()
+    })
+
+    it('should step one card at a time once it is laid out, for less than one or not a number', async () => {
+      // Twenty 194px cards 8px apart over 600px: 3432px of travel, a 202px stride for one card.
+      for (const perPage of [-2, Number.NaN]) {
+        layout(194, 600, 4032)
+        const calls = scrolling(3432)
+        const view = await renderSettled(
+          <PagedRail perPage={perPage} gap={8}>
+            {cards(20)}
+          </PagedRail>
+        )
+        expect(button('Page 18')).not.toBeNull()
+        expect(button('Page 19')).toBeNull()
+        fireEvent.click(button('Next')!)
+        expect(calls.at(-1)?.left).toBe(202)
+        view.unmount()
+        vi.restoreAllMocks()
+      }
+    })
+  })
+
   describe('when the cards end exactly on a page', () => {
     it('should page six cards of three as two pages', async () => {
       // Six 194px cards 8px apart are 1204px; three and their gaps are 598px of a 598px viewport. The cards
@@ -276,8 +308,9 @@ describe('PagedRail', () => {
   })
 
   describe('when the viewport or its cards resize', () => {
-    it('should drop the pages a wider viewport no longer needs', async () => {
+    it('should drop the pages a wider viewport no longer needs, and stop observing on unmount', async () => {
       const resized: Array<() => void> = []
+      let disconnected = 0
       vi.stubGlobal(
         'ResizeObserver',
         class {
@@ -285,12 +318,14 @@ describe('PagedRail', () => {
             resized.push(callback)
           }
           observe(): void {}
-          disconnect(): void {}
+          disconnect(): void {
+            disconnected += 1
+          }
         }
       )
       let width = 1300
       layout(295, () => width, 12 + 1555 + 12)
-      await renderSettled(
+      const view = await renderSettled(
         <PagedRail perPage={4} gap={20} bleed={12}>
           {cards(5)}
         </PagedRail>
@@ -300,6 +335,9 @@ describe('PagedRail', () => {
       width = 1700
       act(() => resized.forEach((callback) => callback()))
       expect(paged()).toBe(false)
+      expect(disconnected).toBe(0)
+      view.unmount()
+      expect(disconnected).toBe(1)
     })
 
     it('should keep the current page inside the pages that are left', async () => {

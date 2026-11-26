@@ -12,7 +12,7 @@ import { GeneralLeftArrow, GeneralRightArrow } from '../../foundations/icons/gen
 import styles from './PagedRail.module.css'
 
 export type PagedRailProps = {
-  /** How many cards a page holds. */
+  /** How many cards a page holds. Less than one, or not a number, counts as one. */
   perPage: number
   /** The space between cards, in pixels. */
   gap: number
@@ -93,9 +93,11 @@ export function PagedRail({
   children,
   className
 }: PagedRailProps) {
+  // Zero cards a page would make the pages endless: a page holds one card at least.
+  const cardsPerPage = perPage >= 1 ? perPage : 1
   const viewport = useRef<HTMLDivElement>(null)
   const count = Children.count(children)
-  const countPages = Math.max(1, Math.ceil(count / perPage))
+  const countPages = Math.max(1, Math.ceil(count / cardsPerPage))
   const [pages, setPages] = useState(countPages)
   const [page, setPage] = useState(0)
 
@@ -103,7 +105,7 @@ export function PagedRail({
     const el = viewport.current
     if (el == null) return
     const measure = (): void => {
-      const next = measuredPages(el, perPage, gap, bleed, countPages)
+      const next = measuredPages(el, cardsPerPage, gap, bleed, countPages)
       setPages(next)
       setPage((current) => Math.min(current, next - 1))
     }
@@ -116,7 +118,7 @@ export function PagedRail({
     observer.observe(el)
     if (el.firstElementChild != null) observer.observe(el.firstElementChild)
     return () => observer.disconnect()
-  }, [bleed, count, countPages, gap, perPage])
+  }, [bleed, cardsPerPage, count, countPages, gap])
 
   const goTo = useCallback(
     (target: number) => {
@@ -128,11 +130,11 @@ export function PagedRail({
       const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       // The last page scrolls to the very end, so its last card keeps the end bleed's room on the right.
       el.scrollTo({
-        left: next === pages - 1 ? end : Math.min(next * pageStride(el, perPage, gap), end),
+        left: next === pages - 1 ? end : Math.min(next * pageStride(el, cardsPerPage, gap), end),
         behavior: reduce ? 'auto' : 'smooth'
       })
     },
-    [gap, pages, perPage]
+    [cardsPerPage, gap, pages]
   )
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export function PagedRail({
     if (el == null) return
     const onScroll = (): void => {
       const travel = cardsTravel(el, bleed)
-      const stride = pageStride(el, perPage, gap)
+      const stride = pageStride(el, cardsPerPage, gap)
       if (travel <= 0 || stride <= 0) setPage(0)
       // The end of the cards, or past it into the end bleed, is the last page.
       else if (el.scrollLeft >= travel - 1) setPage(pages - 1)
@@ -148,7 +150,7 @@ export function PagedRail({
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [bleed, gap, pages, perPage])
+  }, [bleed, cardsPerPage, gap, pages])
 
   useEffect(() => {
     viewport.current?.scrollTo({ left: 0 })

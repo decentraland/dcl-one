@@ -528,7 +528,7 @@ export function ProfilePassport({
           <div className={styles.main}>
         {/* --- header --- */}
         <header className={styles.head}>
-          <div className={styles.idblock}>
+          <div>
             <div className={styles.nameRow}>
               <span className={styles.name} style={{ '--name-color': nameColor } as React.CSSProperties}>{base}</span>
               {claimed && <Verified />}

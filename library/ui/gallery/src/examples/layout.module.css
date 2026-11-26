@@ -178,8 +178,8 @@
 .tiles {
   display: flex;
   flex-wrap: wrap;
-  gap: 64px var(--dcl-space-24);
-  padding: var(--dcl-space-12) var(--dcl-space-16) 64px;
+  gap: var(--dcl-space-64) var(--dcl-space-24);
+  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-64);
 }
 
 /* EquippedItemCard grid: 108px columns, with room under the last row for the link a hovered card shows. */
