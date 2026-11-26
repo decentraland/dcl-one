@@ -1,9 +1,7 @@
 //! Who is calling a builder route: builder-server's `withAuthentication`,
 //! reproduced as [`VerificationProfile::builder`] over the shared verifier
 //! (`shared::signed_fetch`; EIP-1654 links go through the configured RPC
-//! validator), and the admin gate of the curation routes (the operator
-//! bearer, compared in constant time and failing closed when unset, or a
-//! signed-fetch request from a `BUILDER_ADMIN_ADDRESSES` wallet).
+//! validator).
 //!
 //! It accepts only the timestamped payload
 //! (`method:path:timestamp:metadata`) with a timestamp at most 60 seconds
@@ -22,7 +20,6 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Uri};
 
 use crate::shared::signed_fetch::{self, SignedFetchError, Signer, VerificationProfile};
-use dcl_auth::admin_bearer::matches as admin_bearer_matches;
 use dcl_auth::eip1654::Eip1654Validator;
 
 use super::SharedState;
@@ -90,37 +87,6 @@ pub fn signed_path(original: &Uri, local: &Uri) -> SignedPath {
     SignedPath::from_uris(original, local)
 }
 
-/// The curation gate: the configured bearer (timing-safe, an unset or empty
-/// token matches nothing) or a signed-fetch request from an admin address.
-/// A request whose signature does not verify is [`unauthenticated`]; a
-/// verified signer that is not an admin is refused with 403. Answers who
-/// acts: the admin address, or for the bearer the console's operator wallet
-/// (`x-catalyrst-admin`, an address) or `admin-token`.
-pub async fn authorize_admin(
-    admin_token: Option<&str>,
-    admin_addresses: &[String],
-    validator: Option<&dyn Eip1654Validator>,
-    headers: &HeaderMap,
-    method: &str,
-    path: &SignedPath,
-) -> Result<String, ApiError> {
-    if admin_bearer_matches(admin_token, headers) {
-        return Ok(headers
-            .get("x-catalyrst-admin")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_ascii_lowercase)
-            .filter(|a| dcl_auth::is_eth_address(a))
-            .unwrap_or_else(|| "admin-token".to_string()));
-    }
-    let signer = require_signer(headers, method, path, validator).await?;
-    if admin_addresses.iter().any(|a| a == signer.as_str()) {
-        return Ok(signer.as_str().to_string());
-    }
-    Err(ApiError::forbidden(
-        "Not authorized: curation requires the admin token or a committee-address signed request",
-    ))
-}
-
 /// The verified signer of a route that requires one, extracted before the
 /// route's path parameters and body so an unauthenticated request learns
 /// nothing from their validation; any failure is [`unauthenticated`]. A
@@ -140,50 +106,6 @@ impl FromRequestParts<SharedState> for Signed {
         .await?;
         crate::limits::spend_wallet(state, signer.as_str(), &parts.method)?;
         Ok(Signed(signer))
-    }
-}
-
-/// Proof that [`authorize_admin`] admitted the request over the node's admin
-/// settings; extracted before the route's path parameters and body.
-pub struct Admin(String);
-
-impl Admin {
-    /// [`authorize_admin`] with `state`'s token, admin addresses and validator.
-    pub async fn check(
-        state: &SharedState,
-        headers: &HeaderMap,
-        method: &str,
-        path: &SignedPath,
-    ) -> Result<Self, ApiError> {
-        authorize_admin(
-            state.settings.admin_token.as_deref(),
-            &state.settings.admin_addresses,
-            state.eip1654.as_deref(),
-            headers,
-            method,
-            path,
-        )
-        .await
-        .map(Admin)
-    }
-
-    /// Who acts, for the audit row.
-    pub fn actor(&self) -> &str {
-        &self.0
-    }
-}
-
-impl FromRequestParts<SharedState> for Admin {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(parts: &mut Parts, state: &SharedState) -> Result<Self, ApiError> {
-        Admin::check(
-            state,
-            &parts.headers,
-            parts.method.as_str(),
-            &request_path(parts),
-        )
-        .await
     }
 }
 
@@ -371,101 +293,6 @@ mod tests {
             try_extract_signer(&HeaderMap::new(), "get", &path, None)
                 .await
                 .is_none()
-        );
-    }
-
-    fn headers_with(auth: Option<&str>) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        if let Some(a) = auth {
-            h.insert("authorization", a.parse().unwrap());
-        }
-        h
-    }
-
-    const NO_ADMINS: &[String] = &[];
-
-    fn local() -> SignedPath {
-        SignedPath::local("/x")
-    }
-
-    async fn admin(
-        token: Option<&str>,
-        admins: &[String],
-        h: &HeaderMap,
-        path: &SignedPath,
-    ) -> Result<String, ApiError> {
-        authorize_admin(token, admins, None, h, "get", path).await
-    }
-
-    #[tokio::test]
-    async fn authorize_admin_accepts_the_configured_bearer() {
-        let h = headers_with(Some("Bearer the-real-token"));
-        assert!(
-            admin(Some("the-real-token"), NO_ADMINS, &h, &local())
-                .await
-                .is_ok()
-        );
-    }
-
-    #[tokio::test]
-    async fn authorize_admin_refuses_a_wrong_bearer_or_no_credentials_as_unauthenticated() {
-        for h in [
-            headers_with(Some("Bearer wrong")),
-            headers_with(None),
-            headers_with(Some("Basic the-real-token")),
-        ] {
-            for token in [Some("the-real-token"), None] {
-                let err = admin(token, NO_ADMINS, &h, &local()).await.unwrap_err();
-                assert_eq!(wire(err).await, refusal("Invalid auth chain"));
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn authorize_admin_never_authorizes_on_an_empty_token() {
-        let empty_bearer = headers_with(Some("Bearer "));
-        for (token, h) in [
-            (Some(""), &empty_bearer),
-            (Some(""), &headers_with(None)),
-            (None, &headers_with(Some("Bearer anything"))),
-            (Some(""), &headers_with(Some("Bearer anything"))),
-            (Some("the-real-token"), &empty_bearer),
-        ] {
-            assert!(admin(token, NO_ADMINS, h, &local()).await.is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn authorize_admin_accepts_an_admin_address_signed_request_and_refuses_others() {
-        let path = SignedPath::local("/v1/collections/curation");
-        let headers = signed_headers("get", "/v1/collections/curation", "{}", true).await;
-        let admins = vec![address().to_lowercase()];
-        assert!(admin(None, &admins, &headers, &path).await.is_ok());
-        assert!(
-            admin(Some(""), &admins, &headers, &path).await.is_ok(),
-            "an empty token does not weaken the signed-fetch branch"
-        );
-        let others = vec!["0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string()];
-        assert_eq!(
-            admin(None, &others, &headers, &path)
-                .await
-                .unwrap_err()
-                .status(),
-            403,
-            "a verified signer outside the allowlist is not allowed"
-        );
-        assert_eq!(
-            admin(
-                None,
-                &admins,
-                &headers,
-                &SignedPath::local("/v1/collections/other")
-            )
-            .await
-            .unwrap_err()
-            .status(),
-            401,
-            "path-bound"
         );
     }
 }

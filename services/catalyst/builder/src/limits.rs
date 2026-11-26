@@ -60,19 +60,6 @@ pub const BYTES_PER_WRITE_TOKEN: usize = 16 * 1024;
 /// Bytes of item documents one listing answers: three times builder-server's
 /// largest collection (12,665 items, 19.8 MB).
 pub const LISTING_BYTES: i64 = 64 * 1024 * 1024;
-/// The bytes one wallet's uploads may hold in the store while no published
-/// item names them.
-pub const WALLET_BYTES: u64 = 5_000_000_000;
-/// Upload records one wallet's uploads may hold while no published item
-/// names them: three times builder-server's largest creator's files.
-pub const WALLET_FILES: u64 = 100_000;
-/// The bytes every wallet's uploads together may hold while no published
-/// item names them (`BUILDER_UNPUBLISHED_MAX_BYTES`).
-pub const NODE_BYTES: u64 = 1_000_000_000_000;
-/// The upload records every wallet's uploads together may hold while no
-/// published item names them (`BUILDER_UNPUBLISHED_MAX_FILES`): 35 times
-/// the files builder-server's items name.
-pub const NODE_FILES: u64 = 10_000_000;
 /// Items one wallet may own that no publication names: twice the most
 /// builder-server's busiest wallet ever saved (12,669).
 pub const WALLET_ITEMS: u64 = 25_000;
@@ -100,14 +87,6 @@ pub struct Limits {
     pub source_writes: RateLimiter,
     pub wallet_reads: RateLimiter,
     pub wallet_writes: RateLimiter,
-    /// [`WALLET_BYTES`], or a test's own.
-    pub wallet_bytes: u64,
-    /// [`WALLET_FILES`], or a test's own.
-    pub wallet_files: u64,
-    /// [`NODE_BYTES`], or `BUILDER_UNPUBLISHED_MAX_BYTES`.
-    pub node_bytes: u64,
-    /// [`NODE_FILES`], or `BUILDER_UNPUBLISHED_MAX_FILES`.
-    pub node_files: u64,
     /// [`SOURCE_DOCUMENT_KIB`] a day, or a test's own.
     pub source_document_kib: RateLimiter,
     /// [`WALLET_DOCUMENT_KIB`] a day, or a test's own.
@@ -148,10 +127,6 @@ impl Default for Limits {
             source_writes: budget(SOURCE_WRITES, MINUTE),
             wallet_reads: budget(WALLET_READS, MINUTE),
             wallet_writes: budget(WALLET_WRITES, MINUTE),
-            wallet_bytes: WALLET_BYTES,
-            wallet_files: WALLET_FILES,
-            node_bytes: NODE_BYTES,
-            node_files: NODE_FILES,
             source_document_kib: budget(SOURCE_DOCUMENT_KIB, DAY),
             wallet_document_kib: budget(WALLET_DOCUMENT_KIB, DAY),
             listing_bytes: LISTING_BYTES,
@@ -170,10 +145,6 @@ impl Limits {
             source_writes: all(),
             wallet_reads: all(),
             wallet_writes: all(),
-            wallet_bytes: u64::MAX,
-            wallet_files: u64::MAX,
-            node_bytes: u64::MAX,
-            node_files: u64::MAX,
             source_document_kib: all(),
             wallet_document_kib: all(),
             listing_bytes: LISTING_BYTES,

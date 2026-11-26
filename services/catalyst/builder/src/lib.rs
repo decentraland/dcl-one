@@ -84,11 +84,10 @@ use sqlx::PgPool;
 use crate::chain_index::ChainIndex;
 use crate::storage::Storage;
 use dcl_auth::eip1654::Eip1654Validator;
-use dcl_http::{HttpClientCfg, Outbound};
+use dcl_http::Outbound;
 
 use items::ItemsComponent;
 
-pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
 /// A request body on a route that takes none of the larger ones below.
 pub const BODY_LIMIT: usize = 64 * 1024;
 /// An item save: ten times the largest item document builder-server holds.
@@ -115,52 +114,10 @@ pub struct RawSettings {
     /// ([`rarities`]); unset refuses begin/claim/verify and the rarities
     /// routes with 503.
     pub polygon_rpc_url: Option<String>,
-    /// `BUILDER_ADMIN_ADDRESSES`: comma-separated admin wallets.
-    pub admin_addresses: String,
-    /// `CATALYRST_BUILDER_ADMIN_TOKEN`: bearer of the curation routes.
-    pub admin_token: Option<String>,
-    pub newsletter_service_url: Option<String>,
-    pub newsletter_publication_id: Option<String>,
-    pub newsletter_api_key: Option<String>,
-    pub warehouse_url: Option<String>,
-    pub warehouse_token: Option<String>,
-    pub warehouse_context_prefix: Option<String>,
-    /// `SLACK_BOT_TOKEN`: the bot the curation notices are posted as, the
-    /// one social's Slack notices use.
-    pub slack_bot_token: Option<String>,
-    /// `SLACK_CURATION_CHANNEL`: the curators' channel; notices are posted
-    /// only when it is set, and it needs `SLACK_BOT_TOKEN`.
-    pub slack_curation_channel: Option<String>,
-    /// `CREATORS_URL`: the creators site a notice links to.
-    pub creators_url: Option<String>,
-    /// `BUILDER_URL`: the legacy builder a notice links to without
-    /// `CREATORS_URL`.
-    pub builder_url: Option<String>,
-    /// `FORUM_URL`: the forum's origin a collection's topic is posted to.
-    pub forum_url: Option<String>,
-    /// `FORUM_API_KEY`: the forum API key; the forum needs all four.
-    pub forum_api_key: Option<String>,
-    /// `FORUM_API_USERNAME`: the forum account the node posts as.
-    pub forum_api_username: Option<String>,
-    /// `FORUM_CATEGORY`: the id of the category a topic is created in.
-    pub forum_category: Option<String>,
-    /// `BUILDER_SERVER_URL`: the public origin of these routes, which a
-    /// forum post's thumbnails link into.
-    pub builder_server_url: Option<String>,
-    /// `WEARABLE_VALIDATOR_CALLBACK_SECRET`: the secret the wearable
-    /// validator signs its calls with; unset, no validation is requested
-    /// and the validator routes refuse.
-    pub validator_secret: Option<String>,
     /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
     pub cors_origin: Option<String>,
     /// `CORS_METHOD`: the methods a preflight allows ([`cors`]).
     pub cors_method: Option<String>,
-    /// `BUILDER_UNPUBLISHED_MAX_BYTES` ([`limits::NODE_BYTES`] unset).
-    pub unpublished_max_bytes: Option<u64>,
-    /// `BUILDER_UNPUBLISHED_MAX_FILES` ([`limits::NODE_FILES`] unset).
-    pub unpublished_max_files: Option<u64>,
-    /// `BUILDER_VIDEO_UPLOADS_MAX` ([`items::video::MAX_UPLOADS`] unset).
-    pub video_uploads_max: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -175,14 +132,8 @@ pub struct Settings {
     pub default_registry_subgraph: Option<String>,
     pub writes_enabled: bool,
     pub polygon_rpc_url: Option<String>,
-    pub admin_addresses: Vec<String>,
-    pub admin_token: Option<String>,
     /// Who may read the answers from another origin.
     pub cors: cors::Cors,
-    /// The node's bound of unpublished upload bytes, if not the default.
-    pub unpublished_max_bytes: Option<u64>,
-    /// The node's bound of unpublished upload files, if not the default.
-    pub unpublished_max_files: Option<u64>,
 }
 
 impl std::fmt::Debug for Settings {
@@ -196,17 +147,10 @@ impl std::fmt::Debug for Settings {
             .field("default_registry_subgraph", &self.default_registry_subgraph)
             .field("writes_enabled", &self.writes_enabled)
             .field("polygon_rpc_url", &self.polygon_rpc_url.is_some())
-            .field("admin_addresses", &self.admin_addresses)
-            .field("admin_token", &self.admin_token.is_some())
             .field("cors", &self.cors)
-            .field("unpublished_max_bytes", &self.unpublished_max_bytes)
-            .field("unpublished_max_files", &self.unpublished_max_files)
             .finish()
     }
 }
-
-/// The shortest admin token or validator secret startup accepts.
-pub const MIN_SECRET_BYTES: usize = 32;
 
 fn non_empty(value: &Option<String>) -> Option<String> {
     value
@@ -217,14 +161,6 @@ fn non_empty(value: &Option<String>) -> Option<String> {
 }
 
 impl Settings {
-    /// Lowercased, trimmed, blanks dropped.
-    pub fn admin_addresses_from(raw: &str) -> Vec<String> {
-        raw.split(',')
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect()
-    }
-
     /// The settings from [`RawSettings`]; a configured value the builder
     /// can't use safely (an invalid or unsafe endpoint, a malformed id) is
     /// an error.
@@ -248,13 +184,6 @@ impl Settings {
             }
         }
         let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
-        let admin_token = non_empty(&raw.admin_token);
-        if admin_token
-            .as_ref()
-            .is_some_and(|s| s.len() < MIN_SECRET_BYTES)
-        {
-            bail!("CATALYRST_BUILDER_ADMIN_TOKEN must be at least {MIN_SECRET_BYTES} bytes");
-        }
         let default_of = |set: &Option<String>, url: &str| set.is_none().then(|| url.to_string());
         Ok(Self {
             network,
@@ -267,12 +196,8 @@ impl Settings {
                 network.registry_subgraph,
             ),
             cors,
-            unpublished_max_bytes: raw.unpublished_max_bytes,
-            unpublished_max_files: raw.unpublished_max_files,
             writes_enabled: raw.writes_enabled,
             polygon_rpc_url,
-            admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
-            admin_token,
         })
     }
 }
@@ -284,9 +209,6 @@ pub struct State {
     pub market: Option<Arc<ChainIndex>>,
     pub settings: Settings,
     pub http: Outbound,
-    /// [`guarded_client`]: the warehouse forward, the Slack notices and the
-    /// forum, whose requests carry a credential.
-    pub guarded: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The content state's denylist (the same `Arc`): a hash the camera reel
     /// withheld (rejected or deleted photo) is a 404 on the storage routes
@@ -309,13 +231,6 @@ pub struct State {
 
 pub type SharedState = Arc<State>;
 
-/// The guarded client that follows no redirect, 20 s a request, built once
-/// per process: the shared one follows redirects with the request's headers.
-pub fn guarded_client() -> Outbound {
-    Outbound::new(HttpClientCfg::default().with_total_timeout(std::time::Duration::from_secs(20)))
-        .expect("the guarded client builds")
-}
-
 impl State {
     /// `blobs` is the node's blob store, which must hold the builder's
     /// [`Storage::item_files`] tree, the one the content routes never read.
@@ -331,9 +246,6 @@ impl State {
         blobs
             .item_files()
             .context("the builder keeps its files in the blob store's item-files tree")?;
-        let mut limits = limits::Limits::default();
-        limits.node_bytes = settings.unpublished_max_bytes.unwrap_or(limits.node_bytes);
-        limits.node_files = settings.unpublished_max_files.unwrap_or(limits.node_files);
         Ok(Self {
             items: ItemsComponent::new(pool.clone())
                 .with_denylist(denylist.clone())
@@ -341,7 +253,6 @@ impl State {
             market,
             settings,
             http,
-            guarded: guarded_client(),
             eip1654,
             denylist,
             third_parties: third_parties::ThirdParties::default(),
@@ -349,7 +260,7 @@ impl State {
             now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
             content_sync: Arc::default(),
-            limits,
+            limits: limits::Limits::default(),
         })
     }
 
@@ -374,11 +285,10 @@ impl State {
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "polygon_chain={} polygon_rpc={} collections_reader={} admins={}",
+            "polygon_chain={} polygon_rpc={} collections_reader={}",
             self.settings.network.chain_id,
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
-            self.settings.admin_addresses.len(),
         )
     }
 }
@@ -456,14 +366,10 @@ mod router_tests {
     #[test]
     fn settings_parse_the_old_env_rules_and_refuse_unsafe_endpoints() {
         let s = Settings::parse(RawSettings {
-            admin_addresses: " 0xABC, ,0xdef ".into(),
-            admin_token: Some("  ".into()),
             polygon_rpc_url: Some("https://polygon-rpc.com".into()),
             ..RawSettings::default()
         })
         .unwrap();
-        assert_eq!(s.admin_addresses, vec!["0xabc", "0xdef"]);
-        assert_eq!(s.admin_token, None, "a blank token is unset");
         assert!(!s.writes_enabled);
         let err = Settings::parse(RawSettings {
             polygon_rpc_url: Some("http://rpc.example/v3/SECRET".into()),
@@ -488,13 +394,13 @@ mod router_tests {
     fn no_secret_reaches_the_settings_printout() {
         let settings = Settings::parse(RawSettings {
             polygon_rpc_url: Some("https://rpc.example/v3/sk-example-rpc".into()),
-            admin_token: Some("sk-example-admin-0123456789abcdef".into()),
             ..RawSettings::default()
         })
         .unwrap();
         let printed = format!("{settings:?}");
-        for secret in ["sk-example-rpc", "sk-example-admin"] {
-            assert!(!printed.contains(secret), "{secret} in {printed}");
-        }
+        assert!(
+            !printed.contains("sk-example-rpc"),
+            "the RPC key in {printed}"
+        );
     }
 }

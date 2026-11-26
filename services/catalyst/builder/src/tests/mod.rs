@@ -6,8 +6,6 @@ pub(crate) mod support;
 
 mod chain_state;
 mod cors;
-mod curation_auth;
-mod curation_auth_fuzz;
 mod curations;
 mod items;
 mod limits;
