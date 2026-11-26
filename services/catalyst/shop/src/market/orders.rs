@@ -34,10 +34,10 @@ use super::catalog::{ITEM_ID_SHIFT, unified_trades_cte, unified_trades_cte_of};
 use super::chain_walk::ChainNet;
 use super::graph;
 use super::owned_items::{self, Rule};
-use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
+use super::readers::{self, GraphPage, Ttl, index_read_error as read_error, seconds_to_ms};
 use super::wire::{
     ApiError, ChainId, DataTotalString, InvalidParameterError, Network, Params, clamp_first,
-    clamp_skip, network_and_chain,
+    clamp_skip, network_and_chain, wire_chain,
 };
 use super::{MarketplaceState, SharedState};
 
@@ -549,24 +549,8 @@ pub(super) async fn book_snapshot(
     .map_err(read_error)?;
     let land = land_possible && nets.contains(&ChainNet::Ethereum);
     if land {
-        let net = state
-            .land_network()
-            .ok_or_else(super::nft_reads::land_unavailable)?;
-        let cursor = crate::land_authz::indexer::cursor_observed(&mut *tx, net.network)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "cannot read the land-authz index for the order book");
-                super::nft_reads::land_unavailable()
-            })?;
-        if !cursor.as_ref().is_some_and(|cursor| {
-            crate::land_authz::indexer::observation_ready(
-                cursor,
-                net.land_registry,
-                net.estate_registry,
-            )
-        }) {
-            return Err(super::nft_reads::land_unavailable());
-        }
+        let chain = state.settings.catalogue().chain_id(ChainNet::Ethereum);
+        readers::require_land_on(&mut tx, state, chain).await?;
     }
     owned_items::check(
         &mut tx,
@@ -577,10 +561,7 @@ pub(super) async fn book_snapshot(
         now,
     )
     .await
-    .map_err(|e| match e {
-        owned_items::ReadError::Db(e) => read_error(e),
-        e => e.into_response(|m| ApiError::internal(m.to_string()).into_response()),
-    })?;
+    .map_err(readers::index_source_error)?;
     // The ownership the book and the v3 listings read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
@@ -626,19 +607,6 @@ pub(super) async fn book_snapshot(
         nets,
         land,
     })
-}
-
-/// A statement of an order-book read failed: one Postgres cancelled at the
-/// statement bound is the 503 of `nft_reads::timed_out`, anything else a 500.
-fn read_error(e: sqlx::Error) -> Response {
-    let cancelled = e
-        .as_database_error()
-        .is_some_and(|d| d.code().as_deref() == Some("57014"));
-    if cancelled {
-        super::nft_reads::timed_out()
-    } else {
-        ApiError::from(e).into_response()
-    }
 }
 
 fn reads_trades(f: &OrderFilters) -> bool {
@@ -738,21 +706,10 @@ impl Served {
     /// marketplace log also holds orders for assets outside it; those are
     /// not served.
     fn catalogue_sql(&self) -> String {
-        let on = |net: ChainNet, chain: i64| {
-            format!(
-                "(c.network = '{}' AND c.chain_id = {chain}{})",
-                net.db_name(),
-                if chain == net.chain_id() {
-                    ""
-                } else {
-                    " AND c.testnet_verified"
-                }
-            )
-        };
         format!(
             "({} OR {})",
-            on(ChainNet::Ethereum, self.ethereum),
-            on(ChainNet::Matic, self.matic)
+            super::catalogue::collection_membership_sql(ChainNet::Ethereum, self.ethereum),
+            super::catalogue::collection_membership_sql(ChainNet::Matic, self.matic),
         )
     }
 
@@ -781,15 +738,6 @@ impl Served {
             network,
         )
     }
-}
-
-/// `chain` as the wire's `ChainId`. The index settings admit only the
-/// supported chains, so the network's default never stands in for a served one.
-fn wire_chain(chain: i64, network: Network) -> ChainId {
-    u64::try_from(chain)
-        .ok()
-        .and_then(|c| ChainId::try_from(c).ok())
-        .unwrap_or_else(|| network.chain_id())
 }
 
 fn served(state: &MarketplaceState) -> Served {

@@ -48,6 +48,19 @@ pub use crate::chain_index::catalogue::{
     Waited, index_verdict, read_snapshot,
 };
 
+/// Whether collection row `c` belongs to the served network and chain.
+pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    let proof = if chain == net.chain_id() {
+        ""
+    } else {
+        " AND c.testnet_verified"
+    };
+    format!(
+        "(c.network = '{}' AND c.chain_id = {chain}{proof})",
+        net.db_name()
+    )
+}
+
 /// Whether the read's transaction may write (a campaign whose approval
 /// check and tag write share one snapshot).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

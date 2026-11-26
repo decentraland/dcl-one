@@ -1077,18 +1077,46 @@ pub async fn rows_published_on(
     net: ChainNet,
     projections: &[&str],
 ) -> Result<bool, sqlx::Error> {
-    let published: Option<bool> = sqlx::query_scalar(
-        "SELECT c.folded_block IS NOT NULL AND NOT EXISTS ( \
-             SELECT 1 FROM shop.projection_write w \
-             WHERE w.indexer = c.indexer AND w.network = c.network AND w.projection = ANY($3) AND w.pending) \
-         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2",
-    )
+    let published: Option<bool> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {ROWS_PUBLISHED} FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
+    )))
     .bind(indexer)
     .bind(net.db_name())
     .bind(projections)
     .fetch_optional(conn)
     .await?;
     Ok(published.unwrap_or(false))
+}
+
+const ROWS_PUBLISHED: &str = "c.folded_block IS NOT NULL AND NOT EXISTS ( \
+    SELECT 1 FROM shop.projection_write w \
+    WHERE w.indexer = c.indexer AND w.network = c.network AND w.projection = ANY($3) AND w.pending)";
+
+#[derive(sqlx::FromRow)]
+struct CursorPublication {
+    #[sqlx(flatten)]
+    cursor: Cursor,
+    rows_published: bool,
+}
+
+/// Read the cursor and the same row-publication proof as [`rows_published_on`]
+/// when both are required on the read snapshot.
+pub(super) async fn cursor_with_rows_publication(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+) -> Result<Option<(Cursor, bool)>, sqlx::Error> {
+    let publication = sqlx::query_as::<_, CursorPublication>(sqlx::AssertSqlSafe(format!(
+        "SELECT {CURSOR_COLUMNS}, {ROWS_PUBLISHED} AS rows_published \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2"
+    )))
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(projections)
+    .fetch_optional(conn)
+    .await?;
+    Ok(publication.map(|p| (p.cursor, p.rows_published)))
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
