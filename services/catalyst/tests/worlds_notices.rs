@@ -15,8 +15,7 @@ use chrono::{NaiveDateTime, TimeDelta};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const WALLET: &str = "0x1111111111111111111111111111111111111111";
 const OTHER_WALLET: &str = "0x2222222222222222222222222222222222222222";

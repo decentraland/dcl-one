@@ -401,7 +401,14 @@ async fn live_lease_can_outlive_jwt_but_expired_lease_and_rejoin_cannot() {
         execute(&authority, Operation::Renew(renewal(&first)), 104).await,
         DenialReason::Expired,
     );
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -463,7 +470,15 @@ async fn incarnation_instance_and_generation_bind_renewal_and_release() {
             execute(&authority, Operation::Release(release(&changed)), 100).await,
             Reply::Denied(_)
         ));
-        assert_eq!(authority.leases.lock().unwrap().entries.len(), 1);
+        assert_eq!(
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .len(),
+            1
+        );
     }
     assert!(matches!(
         execute(
@@ -474,7 +489,14 @@ async fn incarnation_instance_and_generation_bind_renewal_and_release() {
         .await,
         Reply::Released(_)
     ));
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -510,7 +532,14 @@ async fn delayed_renewal_cannot_revive_expiry_or_release() {
         }
         policy.release.notify_one();
         assert_denied(task.await.unwrap(), DenialReason::Expired);
-        assert!(authority.leases.lock().unwrap().entries.is_empty());
+        assert!(
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .is_empty()
+        );
     }
 }
 
@@ -562,7 +591,14 @@ async fn policy_timeout_and_check_pressure_deny_and_delete_renewal() {
         DenialReason::Unavailable,
     );
     assert_eq!(started.elapsed(), CHECK_TIMEOUT);
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
     policy.mode.store(0, Ordering::SeqCst);
     let first = lease(
         execute(
@@ -590,7 +626,14 @@ async fn policy_timeout_and_check_pressure_deny_and_delete_renewal() {
         .await,
         DenialReason::Capacity,
     );
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
     drop(permits);
 }
 
@@ -606,7 +649,7 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         .await,
     );
     {
-        let mut leases = authority.leases.lock().unwrap();
+        let mut leases = authority.leases.lock().expect("leases lock poisoned");
         let stored = leases
             .entries
             .get(&fixed::<16>(&first.lease_id).unwrap())
@@ -635,7 +678,15 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         .await,
         DenialReason::Capacity,
     );
-    assert_eq!(authority.leases.lock().unwrap().entries.len(), MAX_LEASES);
+    assert_eq!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .len(),
+        MAX_LEASES
+    );
     tokio::time::advance(LEASE_TTL).await;
     lease(
         execute(
@@ -645,7 +696,15 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         )
         .await,
     );
-    assert_eq!(authority.leases.lock().unwrap().entries.len(), 1);
+    assert_eq!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -704,12 +763,24 @@ async fn lease_ttl_is_anchored_before_policy_and_jwt_is_rechecked_after_policy()
         let result = task.await.unwrap();
         if expires_during_check {
             assert_denied(result, DenialReason::Expired);
-            assert!(authority.leases.lock().unwrap().entries.is_empty());
+            assert!(
+                authority
+                    .leases
+                    .lock()
+                    .expect("leases lock poisoned")
+                    .entries
+                    .is_empty()
+            );
         } else {
             let granted = lease(result);
             let id = fixed::<16>(&granted.lease_id).unwrap();
             assert_eq!(
-                authority.leases.lock().unwrap().entries[&id].expires,
+                authority
+                    .leases
+                    .lock()
+                    .expect("leases lock poisoned")
+                    .entries[&id]
+                    .expires,
                 started + LEASE_TTL
             );
             tokio::time::advance(Duration::from_millis(1800)).await;
@@ -892,7 +963,12 @@ async fn failed_generation_check_clears_only_the_matching_renewal_without_extend
     );
     let context = renewal(&original);
     let id = fixed::<16>(&original.lease_id).unwrap();
-    let expires = authority.leases.lock().unwrap().entries[&id].expires;
+    let expires = authority
+        .leases
+        .lock()
+        .expect("leases lock poisoned")
+        .entries[&id]
+        .expires;
     // A closed lazy pool deterministically faults the real generation-check branch without I/O.
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgresql://fixture:fixture@127.0.0.1/fixture")
@@ -913,7 +989,7 @@ async fn failed_generation_check_clears_only_the_matching_renewal_without_extend
         .unwrap();
     assert_denied(failed, DenialReason::Unavailable);
     {
-        let leases = authority.leases.lock().unwrap();
+        let leases = authority.leases.lock().expect("leases lock poisoned");
         let retained = &leases.entries[&id];
         assert_eq!(retained.expires, expires);
         assert!(!retained.checking);
@@ -950,7 +1026,12 @@ async fn failed_generation_check_clears_only_the_matching_renewal_without_extend
         policy.release.notify_one();
         assert_denied(pending.await.result.unwrap(), DenialReason::Expired);
         assert!(
-            authority.leases.lock().unwrap().entries.is_empty(),
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .is_empty(),
             "a released exact lease is never recreated by the generation-error cleanup"
         );
     }
@@ -979,7 +1060,12 @@ async fn failed_generation_check_clears_only_the_matching_renewal_without_extend
         .unwrap();
     assert_denied(denied, DenialReason::NotAuthorized);
     assert!(
-        authority.leases.lock().unwrap().entries.is_empty(),
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty(),
         "confirmed policy denial removes the lease even when the generation check also fails"
     );
 }

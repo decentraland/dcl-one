@@ -9,18 +9,10 @@ use futures::{SinkExt, StreamExt};
 use prost::Message as _;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
-#[path = "support/fence.rs"]
-mod fence;
-// `fence` loads `gate` for itself; this binary needs it at the top as well.
-#[allow(clippy::duplicate_mod)]
-#[path = "support/gate.rs"]
-mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::archipelago;
+use crate::fence;
+use crate::gate;
+use crate::nats_broker;
 use fence::Fixture;
 
 type Socket =
@@ -748,13 +740,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), other.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -802,13 +793,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), other.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -827,13 +817,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), socket.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -1692,7 +1681,7 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
                 catalyst::comms::protocol::bus::control_position::LegacyRoomIntent::decode(bytes)
             })
             .filter_map(|record| record.position)
-            .last()
+            .next_back()
     };
     let wallet = PrivateKeySigner::random();
     let legacy_wallet = PrivateKeySigner::random();
