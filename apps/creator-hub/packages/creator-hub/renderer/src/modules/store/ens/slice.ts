@@ -291,6 +291,8 @@ export type ENSState = {
   /** Canonical management names are separate from the configured publish server's picker. */
   managementData: Record<string, ENS>;
   managementRequestIds: string[];
+  managementContributors: Record<string, ENS>;
+  managementContributorsRequestId: string | null;
   /** NAME list requests still in flight for the current account, oldest first. */
   requestIds: string[];
 };
@@ -300,6 +302,8 @@ export const initialState: Async<ENSState> = {
   data: {},
   managementData: {},
   managementRequestIds: [],
+  managementContributors: {},
+  managementContributorsRequestId: null,
   status: 'idle',
   error: null,
   requestIds: [],
@@ -317,6 +321,23 @@ export const slice = createSlice({
   extraReducers: builder => {
     builder
       .addCase(accountChanged, state => ({ ...initialState, chainId: state.chainId }))
+      .addCase(fetchContributableNames.pending, (state, action) => {
+        if (action.meta.arg.purpose === 'management') {
+          state.managementContributorsRequestId = action.meta.requestId;
+        }
+      })
+      .addCase(fetchContributableNames.fulfilled, (state, action) => {
+        if (state.managementContributorsRequestId !== action.meta.requestId) return;
+        state.managementContributorsRequestId = null;
+        state.managementContributors = Object.fromEntries(
+          action.payload.names.map(ens => [ens.subdomain, ens]),
+        );
+      })
+      .addCase(fetchContributableNames.rejected, (state, action) => {
+        if (state.managementContributorsRequestId === action.meta.requestId) {
+          state.managementContributorsRequestId = null;
+        }
+      })
       .addCase(fetchENSList.pending, (state, action) => {
         if (action.meta.arg?.purpose === 'management') {
           state.managementRequestIds.push(action.meta.requestId);

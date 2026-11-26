@@ -12,6 +12,7 @@ import { Select, SelectOption } from '@ui/atoms/Select';
 import Text from '@ui/atoms/Text';
 import Toggle from '@ui/atoms/Toggle';
 
+import { worldsManagementUrl } from '/shared/urls';
 import type { Project } from '/shared/types/projects';
 import FallbackThumbnail from '/assets/images/scene-thumbnail-fallback.png';
 import { misc } from '#preload';
@@ -77,6 +78,19 @@ export function PublishToWorld(props: Props) {
   /** The owner's or a world-wide collaborator's own pick on the switch; null keeps the default. */
   const [multiSceneChoice, setMultiSceneChoice] = useState<boolean | null>(null);
   const worldSettings = useSelector(managementSelectors.getWorldSettings);
+  const publishSceneLayout = useSelector(state => state.management.publishSceneLayout);
+  const usesSeparatePublishTarget =
+    worldsManagementUrl(WORLDS_CONTENT_SERVER) !== WORLDS_CONTENT_SERVER;
+  const publishLayout = publishSceneLayout.worldName === name ? publishSceneLayout : undefined;
+  // Keep both footprints visible while a local upload is waiting to reach the canonical world.
+  const previewScenes = useMemo(() => {
+    if (!usesSeparatePublishTarget || !publishLayout) return worldSettings.scenes;
+    const canonicalIds = new Set(worldSettings.scenes.map(scene => scene.entityId));
+    return [
+      ...worldSettings.scenes,
+      ...publishLayout.scenes.filter(scene => !canonicalIds.has(scene.entityId)),
+    ];
+  }, [usesSeparatePublishTarget, publishLayout, worldSettings.scenes]);
   const worldPermissions = useSelector(state =>
     managementSelectors.getParcelsStateForAddress(state, wallet || '', 'content', name),
   );
@@ -121,7 +135,12 @@ export function PublishToWorld(props: Props) {
   // "lose its Places listing" warning instead of the parcel picker).
   // A restricted collaborator always has to choose a location.
   const isMultiSceneEnabled =
-    !hasWorldWidePermissions || (multiSceneChoice ?? worldSettings.scenes.length > 1);
+    !hasWorldWidePermissions ||
+    (multiSceneChoice ??
+      Math.max(
+        worldSettings.scenes.length,
+        usesSeparatePublishTarget ? (publishLayout?.scenes.length ?? 0) : 0,
+      ) > 1);
 
   const handleBack = useCallback(() => {
     if (step === Step.CONFIRM_OVERWRITE) {
@@ -137,6 +156,9 @@ export function PublishToWorld(props: Props) {
     (worldName: string) => {
       dispatch(managementActions.fetchWorldSettings({ worldName }));
       dispatch(managementActions.fetchWorldScenes({ worldName }));
+      if (usesSeparatePublishTarget) {
+        dispatch(managementActions.fetchWorldScenes({ worldName, purpose: 'content' }));
+      }
       // The owner can deploy anywhere in the world, and the server answers 404 for an owner who
       // is not also on the deploy allow-list, which read as a failed load.
       const ownsWorld =
@@ -151,7 +173,7 @@ export function PublishToWorld(props: Props) {
         }),
       );
     },
-    [names, wallet],
+    [names, wallet, usesSeparatePublishTarget],
   );
 
   const handleChangeName = useCallback(
@@ -169,6 +191,7 @@ export function PublishToWorld(props: Props) {
     !!name &&
     (worldSettings.status === 'failed' ||
       worldSettings.scenesStatus === 'failed' ||
+      (usesSeparatePublishTarget && publishLayout?.status === 'failed') ||
       (!isOwner && worldPermissions?.status === 'failed'));
 
   // Single vs multi scene is decided from the scenes and the permissions, so the next step
@@ -177,6 +200,7 @@ export function PublishToWorld(props: Props) {
     !!name &&
     (worldSettings.status === 'loading' ||
       worldSettings.scenesStatus === 'loading' ||
+      (usesSeparatePublishTarget && (!publishLayout || publishLayout.status === 'loading')) ||
       (!isOwner && worldPermissions?.status === 'loading'));
 
   // Every choice made across the steps (world name, then location), so the publish can
@@ -284,6 +308,8 @@ export function PublishToWorld(props: Props) {
               name={name}
               project={project}
               worldSettings={worldSettings}
+              previewScenes={previewScenes}
+              usesSeparatePublishTarget={usesSeparatePublishTarget}
               isMultiSceneEnabled={isMultiSceneEnabled}
               onChangeMultiScene={setMultiSceneChoice}
               hasWorldWidePermissions={hasWorldWidePermissions}
@@ -298,7 +324,7 @@ export function PublishToWorld(props: Props) {
           {step === Step.LOCATION && (
             <SelectLocation
               project={project}
-              worldScenes={worldSettings.scenes}
+              worldScenes={previewScenes}
               worldPermissions={worldPermissions}
               hasWorldWidePermissions={hasWorldWidePermissions}
               onShowConfirmation={handleShowConfirmation}
@@ -308,7 +334,8 @@ export function PublishToWorld(props: Props) {
           {step === Step.CONFIRM_OVERWRITE && (
             <ConfirmOverwrite
               parcels={pendingScene?.parcels ?? project.scene.parcels}
-              worldScenes={worldSettings.scenes}
+              worldScenes={previewScenes}
+              canonicalScenes={worldSettings.scenes}
               isMultiScene={isMultiSceneEnabled}
               onCancel={handleBack}
               onConfirm={() => handlePublish()}
@@ -324,6 +351,8 @@ function SelectWorld({
   name,
   project,
   worldSettings,
+  previewScenes,
+  usesSeparatePublishTarget,
   hasWorldWidePermissions,
   worldLoadFailed,
   worldLoading,
@@ -337,6 +366,8 @@ function SelectWorld({
   name: string;
   project: Project;
   worldSettings: WorldSettingsState;
+  previewScenes: WorldScene[];
+  usesSeparatePublishTarget: boolean;
   hasWorldWidePermissions: boolean;
   worldLoadFailed: boolean;
   worldLoading: boolean;
@@ -367,11 +398,11 @@ function SelectWorld({
   );
 
   const worldSize = useMemo(() => {
-    const { width, height } = getWorldDimensions(worldSettings.scenes || []);
+    const { width, height } = getWorldDimensions(previewScenes);
     return width !== 0 && height !== 0
       ? formatWorldSize({ width, height })
       : formatWorldSize({ width: project.layout.cols, height: project.layout.rows });
-  }, [worldSettings.scenes]);
+  }, [previewScenes]);
 
   const listNames = useMemo(() => {
     const _names = [];
@@ -411,7 +442,7 @@ function SelectWorld({
   const handleNext = useCallback(async () => {
     const worldConfiguration: WorldConfiguration = { ...project.worldConfiguration, name };
 
-    if (isMultiSceneEnabled && worldSettings.scenes.length > 0) {
+    if (isMultiSceneEnabled && previewScenes.length > 0) {
       onSelectLocation({ worldConfiguration });
     } else {
       // In single scene mode, ensure the project base parcel is 0,0.
@@ -421,7 +452,10 @@ function SelectWorld({
           coordsToId(parcel.x, parcel.y),
         ),
       };
-      if (getWorldPlaceContinuityBreak(worldSettings.scenes, scene.parcels, isMultiSceneEnabled)) {
+      if (
+        getWorldPlaceContinuityBreak(worldSettings.scenes, scene.parcels, isMultiSceneEnabled) ||
+        (usesSeparatePublishTarget && countOverlappedWorldScenes(previewScenes, scene.parcels) > 0)
+      ) {
         onShowConfirmation({ worldConfiguration, scene });
       } else {
         onPublish({ worldConfiguration, scene });
@@ -432,6 +466,8 @@ function SelectWorld({
     name,
     isMultiSceneEnabled,
     worldSettings.scenes,
+    previewScenes,
+    usesSeparatePublishTarget,
     onPublish,
     onSelectLocation,
     onShowConfirmation,
@@ -602,7 +638,7 @@ function SelectWorld({
                   <InfoItem
                     icon={<MultiSceneIcon />}
                     label={t('modal.publish_project.worlds.select_world.multi_scene.scenes_count', {
-                      count: worldSettings.scenes?.length || 1,
+                      count: previewScenes.length || 1,
                     })}
                   />
                   <InfoItem
@@ -625,7 +661,7 @@ function SelectWorld({
           disabled={!projectIsReady || !name || worldLoadFailed || worldLoading}
           endIcon={<ArrowForwardIcon />}
         >
-          {isMultiSceneEnabled && worldSettings.scenes.length > 0
+          {isMultiSceneEnabled && previewScenes.length > 0
             ? t('modal.publish_project.worlds.select_world.actions.select_location')
             : t('modal.publish_project.worlds.select_world.actions.review')}
         </Button>
@@ -924,12 +960,14 @@ function SelectLocation({
 function ConfirmOverwrite({
   parcels,
   worldScenes,
+  canonicalScenes,
   isMultiScene,
   onCancel,
   onConfirm,
 }: {
   parcels: string[];
   worldScenes: WorldScene[];
+  canonicalScenes: WorldScene[];
   isMultiScene: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -944,10 +982,10 @@ function ConfirmOverwrite({
   }, [worldScenes, parcels]);
 
   const overlap = useMemo(
-    () => countOverlappedWorldScenes(worldScenes, parcels),
-    [worldScenes, parcels],
+    () => countOverlappedWorldScenes(canonicalScenes, parcels),
+    [canonicalScenes, parcels],
   );
-  const continuityBreak = getWorldPlaceContinuityBreak(worldScenes, parcels, isMultiScene);
+  const continuityBreak = getWorldPlaceContinuityBreak(canonicalScenes, parcels, isMultiScene);
   const hasReplacedScenes = replacedScenes.length > 0;
 
   return (

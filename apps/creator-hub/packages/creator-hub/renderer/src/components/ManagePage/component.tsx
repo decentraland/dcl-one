@@ -30,7 +30,7 @@ const LANDS_MARKETPLACE_URL = 'https://decentraland.org/marketplace/lands';
 
 export function ManagePage() {
   const { isSignedIn, isSigningIn, signIn, wallet } = useAuth();
-  const { data: ens } = useSelector(state => state.ens);
+  const { data: ens, managementData, managementContributors } = useSelector(state => state.ens);
   const { tab, status, projects, total, page, sortBy, searchQuery, publishFilter, lands } =
     useSelector(state => state.management);
   const worldProjects = useSelector(managementSelectors.getWorldProjects);
@@ -130,7 +130,9 @@ export function ManagePage() {
   const emptyKind = getEmptyKind({
     failed: listStatus === 'failed',
     count: items.length,
-    hasAny: isWorlds ? Object.keys(ens).length > 0 : lands.projects.length > 0,
+    hasAny: isWorlds
+      ? [ens, managementData, managementContributors].some(names => Object.keys(names).length > 0)
+      : lands.projects.length > 0,
     searchQuery,
     view: publishFilter,
   });

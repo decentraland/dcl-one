@@ -5,6 +5,8 @@ import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
+import { worldsManagementUrl } from '/shared/urls';
+import type * as SharedUrls from '/shared/urls';
 import { misc } from '#preload';
 import { useAuth } from '/@/hooks/useAuth';
 import { useEditor } from '/@/hooks/useEditor';
@@ -20,9 +22,14 @@ const OWNER = '0x00000000000000000000000000000000000000a1';
 
 vi.mock('/@/hooks/useAuth', () => ({ useAuth: vi.fn() }));
 vi.mock('/@/hooks/useEditor', () => ({ useEditor: vi.fn() }));
+vi.mock('/shared/urls', async importOriginal => ({
+  ...(await importOriginal<typeof SharedUrls>()),
+  worldsManagementUrl: vi.fn((url: string) => url),
+}));
 const api = vi.hoisted(() => ({
   fetchWorldSettings: vi.fn(),
   fetchWorldScenes: vi.fn(),
+  fetchPublishScenes: vi.fn(),
   fetchParcelsPermission: vi.fn(),
   getContentSrcUrl: (hash: string) => hash,
 }));
@@ -32,8 +39,8 @@ vi.mock('/@/lib/worlds', async importOriginal => {
   return {
     ...original,
     Worlds: class {
-      constructor() {
-        return api;
+      constructor(purpose?: string) {
+        return purpose === 'content' ? { ...api, fetchWorldScenes: api.fetchPublishScenes } : api;
       }
     },
   };
@@ -54,6 +61,7 @@ const project = {
   title: 'Fixture Scene',
   thumbnail: '',
   layout: { rows: 1, cols: 1 },
+  scene: { base: '0,0', parcels: ['0,0'] },
   worldConfiguration: { name: 'plaza.dcl.eth' },
 } as unknown as Project;
 
@@ -65,6 +73,8 @@ const OFFLINE = () => Promise.reject(new TypeError('Failed to fetch'));
 function goOnline() {
   api.fetchWorldSettings.mockResolvedValue({ title: 'Plaza' });
   api.fetchWorldScenes.mockResolvedValue({ scenes: [], total: 0 });
+  api.fetchPublishScenes.mockResolvedValue({ scenes: [], total: 0 });
+  vi.mocked(worldsManagementUrl).mockImplementation(url => url);
   api.fetchParcelsPermission.mockResolvedValue({ parcels: [], total: 0 });
 }
 
@@ -127,6 +137,48 @@ describe('PublishToWorld', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  describe('when a local deployment has not reached the canonical world', () => {
+    beforeEach(() => {
+      vi.mocked(worldsManagementUrl).mockImplementation(url => `${url}/canonical`);
+    });
+
+    it('shows the unforwarded scene before replacing it at the upload target', async () => {
+      api.fetchPublishScenes.mockResolvedValue({
+        scenes: [
+          {
+            entityId: 'local-scene',
+            parcels: ['0,0'],
+            entity: {
+              content: [],
+              metadata: {
+                display: { title: 'Pending Local Scene' },
+                scene: { base: '0,0', parcels: ['0,0'] },
+              },
+            },
+          },
+        ],
+        total: 1,
+      });
+      const store = await renderStep();
+
+      fireEvent.click(screen.getByTestId('publish-modal-publish-to-world-select-world-action'));
+
+      expect(await screen.findByText('Pending Local Scene')).toBeTruthy();
+      expect(useEditor().publishScene).not.toHaveBeenCalled();
+      expect(store.getState().management.worldSettings.scenes).toEqual([]);
+    });
+
+    it('keeps publishing blocked when the upload target layout cannot be loaded', async () => {
+      api.fetchPublishScenes.mockResolvedValue(null);
+      await renderStep();
+
+      expect(await screen.findByText(LOAD_ERROR)).toBeTruthy();
+      expect(
+        screen.getByTestId('publish-modal-publish-to-world-select-world-action'),
+      ).toHaveProperty('disabled', true);
+    });
   });
 
   describe('when the owner turns on multi-scene for one of their Worlds', () => {

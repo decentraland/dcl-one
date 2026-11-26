@@ -93,6 +93,12 @@ export type ManagementState = {
   storageStats: WorldsWalletStats | null;
   accountHoldings: AccountHoldings | null;
   worldSettings: WorldSettingsState;
+  publishSceneLayout: {
+    worldName: string;
+    scenes: WorldScene[];
+    status: WorldSettingsState['scenesStatus'];
+    requestId: string | null;
+  };
   worldPermissions: WorldPermissionsState;
   publishParcels: Pick<WorldPermissionsState, 'worldName' | 'parcels'>;
   lands: LandProjectsState;
@@ -115,6 +121,7 @@ export const initialState: Async<ManagementState> = {
   status: 'idle',
   error: null,
   worldSettings: getWorldSettingsInitialState(),
+  publishSceneLayout: { worldName: '', scenes: [], status: 'idle', requestId: null },
   worldPermissions: getWorldPermissionsInitialState(),
   publishParcels: { worldName: '', parcels: {} },
   lands: {
@@ -333,8 +340,8 @@ export const updateWorldSettings = createAsyncThunk(
 
 export const fetchWorldScenes = createAsyncThunk(
   'management/fetchWorldScenes',
-  async ({ worldName }: { worldName: string }) => {
-    const WorldsAPI = new Worlds('management');
+  async ({ worldName, purpose = 'management' }: { worldName: string; purpose?: WorldsPurpose }) => {
+    const WorldsAPI = new Worlds(purpose);
     const scenes = await fetchWorldSceneList(WorldsAPI, worldName);
     // A world with nothing deployed still answers with an empty list, so null is a failed
     // request. Reading it as "no scenes" would offer a single-scene publish over existing ones.
@@ -732,15 +739,35 @@ const slice = createSlice({
         state.accountHoldings = action.payload;
       })
       .addCase(fetchWorldScenes.pending, (state, action) => {
+        if (action.meta.arg.purpose === 'content') {
+          state.publishSceneLayout = {
+            worldName: action.meta.arg.worldName,
+            scenes: [],
+            status: 'loading',
+            requestId: action.meta.requestId,
+          };
+          return;
+        }
         switchWorldSettings(state.worldSettings, action.meta.arg.worldName);
         state.worldSettings.scenesStatus = 'loading';
       })
       .addCase(fetchWorldScenes.fulfilled, (state, action) => {
+        if (action.meta.arg.purpose === 'content') {
+          if (state.publishSceneLayout.requestId !== action.meta.requestId) return;
+          state.publishSceneLayout.scenes = action.payload;
+          state.publishSceneLayout.status = 'succeeded';
+          return;
+        }
         if (action.meta.arg.worldName !== state.worldSettings.worldName) return;
         state.worldSettings.scenes = action.payload ?? [];
         state.worldSettings.scenesStatus = 'succeeded';
       })
       .addCase(fetchWorldScenes.rejected, (state, action) => {
+        if (action.meta.arg.purpose === 'content') {
+          if (state.publishSceneLayout.requestId !== action.meta.requestId) return;
+          state.publishSceneLayout.status = 'failed';
+          return;
+        }
         if (action.meta.arg.worldName !== state.worldSettings.worldName) return;
         state.worldSettings.scenesStatus = 'failed';
       })
