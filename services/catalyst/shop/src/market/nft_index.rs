@@ -434,16 +434,11 @@ pub async fn insert_events(
 
 use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 
-/// The keys a fold past `$2` touches, counted before the fold decides its
-/// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
-/// How long one pass of the nft walk spends on the legacy order book's
-/// open rebuild (`legacy_orders::run_rebuild`) before it walks: long enough
-/// that a rebuild runs nearly back to back (the book is refused meanwhile).
-/// A step is bounded (60 s statements, 10 s lock waits), so the pass folds
-/// and publishes the nft index at most about three minutes after the last,
-/// well inside its 30-minute freshness window.
+/// The time the legacy book lane may spend before the NFT walk.
 const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// The keys a fold past `$2` touches, counted before the fold decides its
+/// join strategy (`NESTED_LOOP_TOUCHED_MAX`). The same two arms as the
 /// fold's `touched`.
 const COUNT_TOUCHED_SQL: &str = "
 SELECT count(*) FROM (
@@ -1165,9 +1160,8 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
-        // The legacy order book's open rebuild, a batch of contracts a
-        // transaction, within this pass's share of time: it never holds back
-        // the nft fold, and a restart resumes at the last batch committed.
+        // The private legacy order build spends a bounded share of this
+        // pass. A restart resumes at the last committed step.
         let deadline = std::time::Instant::now() + LEGACY_BOOK_REBUILD_PER_PASS;
         if let Err(error) = super::legacy_orders::run_rebuild(pool, self.net, owner, deadline).await
         {

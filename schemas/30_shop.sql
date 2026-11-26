@@ -720,8 +720,8 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 -- How far each network's legacy order book (`shop.legacy_order`) is folded,
 -- and from which branch: the nft walk's last block and its hash when the
 -- order fold last ran, in the nft fold's transaction. No row (a database
--- that predates the book) means the book does not stand: readers refuse it,
--- and the next nft fold folds it whole. The book stands only while the nft
+-- that predates the book) means the book does not stand. The next NFT fold
+-- publishes a proven empty book or opens a private build. The book stands only while the NFT
 -- walk's recovery point at that
 -- block (`shop.chain_checkpoint`) still has that hash: a rewind (by any
 -- binary) drops the points past its target, so a branch republished at the
@@ -729,8 +729,8 @@ CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, ex
 -- points loses its point. The order fold refolds the orders touched past the
 -- lower of this block and the nft fold's own marker, so the book catches up
 -- with nft folds that ran without it (a replica on an earlier binary during a
--- rollout); a book that no longer stands, or a rebuild, is refolded whole
--- after its rows are deleted. A reader serves the book only while it stands
+-- rollout). A private rebuild replaces the visible rows atomically.
+-- A reader serves the book only while it stands
 -- and its block reaches the published nft fold (`folded_block`). This
 -- binary's rewind lowers the block to its target and clears the hash.
 CREATE TABLE shop.legacy_order_cursor (
@@ -756,37 +756,109 @@ CREATE TABLE shop.legacy_order_refold (
     CONSTRAINT legacy_order_refold_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
--- A whole refold of a network's legacy order book in progress
--- (services/catalyst/shop/src/market/legacy_orders.rs, `rebuild_batch`). The
--- nft fold never refolds the book itself: a book that does not stand (never
--- folded, rewound, on a lost branch, or the nft walk rebuilt) gets this row
--- and the nft walk's pass (walking alone while it exists) runs it in small
--- bounded transactions: first it deletes the network's old orders a slice at
--- a time (`cleared`), then it reads `shop.nft_event` in `nft_event_token_idx`
--- order a slice of rows at a time from the position after
--- (`next_contract`, `next_token`, `next_block`, `next_log`), refolding whole
--- every token with an order event in the slice. A restart resumes at the last
--- slice committed. `upto` is the nft walk's block when the rebuild opened
--- (lowered by a rewind): the last step refolds every token with an order
--- event past it and the queued refolds (a rewind queues the tokens it
--- reaches), writes the book's marker and deletes this row. While it exists
--- the book does not stand and is not read. Workload: one row per network at
--- most, for the length of a rebuild.
+-- Shadow rebuild progress. The opening point and moving checkpoint fence
+-- bind the build to a branch. The existing book is published independently.
 CREATE TABLE shop.legacy_order_rebuild (
     network text PRIMARY KEY,
+    phase text NOT NULL DEFAULT 'scan' CHECK (phase IN ('reset', 'scan', 'build', 'tail',
+        'repair_clear', 'repair_scan', 'repair_build', 'publish', 'cleanup')),
     upto bigint NOT NULL,
-    cleared boolean NOT NULL DEFAULT false,
-    next_contract varchar(42),
-    next_token numeric(78,0),
-    next_block bigint,
-    next_log integer,
-    started_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic')),
-    CONSTRAINT legacy_order_rebuild_position_whole CHECK (
-        (next_contract IS NULL) = (next_token IS NULL)
-        AND (next_contract IS NULL) = (next_block IS NULL)
-        AND (next_contract IS NULL) = (next_log IS NULL))
+    upto_hash text NOT NULL,
+    anchor_block bigint NOT NULL,
+    anchor_hash text NOT NULL,
+    reorg_rewinds integer NOT NULL,
+    rebuilds integer NOT NULL,
+    visible_through bigint,
+    visible_hash text,
+    target bigint NOT NULL,
+    scan_block bigint NOT NULL DEFAULT -1,
+    scan_log integer NOT NULL DEFAULT -1,
+    step_block bigint NOT NULL DEFAULT -1,
+    step_log integer NOT NULL DEFAULT -1,
+    repair_contract varchar(42),
+    repair_token numeric(78,0),
+    repair_revision bigint,
+    progressed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic'))
 );
+
+-- Only order events already passed by the shadow scan need replay. This
+-- queue is independent from the queue read by deployed book writers.
+CREATE TABLE shop.legacy_order_build_dirty (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    revision bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (network, contract_address, token_id)
+);
+
+CREATE FUNCTION shop.note_legacy_order_build_change(
+    net text, contract varchar, token numeric, block bigint, idx integer
+) RETURNS void LANGUAGE sql AS $$
+    INSERT INTO shop.legacy_order_build_dirty AS d (network, contract_address, token_id)
+    SELECT r.network, contract, token FROM shop.legacy_order_rebuild r
+    WHERE r.network = net AND r.phase NOT IN ('reset', 'cleanup')
+      AND (block, idx) <= (r.scan_block, r.scan_log)
+    ON CONFLICT (network, contract_address, token_id)
+    DO UPDATE SET revision = d.revision + 1;
+$$;
+
+CREATE FUNCTION shop.capture_legacy_order_build_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP <> 'INSERT' AND OLD.kind IN ('order_created', 'order_successful', 'order_cancelled') THEN
+        PERFORM shop.note_legacy_order_build_change(OLD.network, OLD.contract_address,
+            OLD.token_id, OLD.block_number, OLD.log_index);
+    END IF;
+    IF TG_OP <> 'DELETE' AND NEW.kind IN ('order_created', 'order_successful', 'order_cancelled') THEN
+        PERFORM shop.note_legacy_order_build_change(NEW.network, NEW.contract_address,
+            NEW.token_id, NEW.block_number, NEW.log_index);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_event_order_build_insert AFTER INSERT ON shop.nft_event
+FOR EACH ROW WHEN (NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+CREATE TRIGGER nft_event_order_build_update AFTER UPDATE ON shop.nft_event
+FOR EACH ROW WHEN (OLD.kind IN ('order_created', 'order_successful', 'order_cancelled')
+                   OR NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+CREATE TRIGGER nft_event_order_build_delete AFTER DELETE ON shop.nft_event
+FOR EACH ROW WHEN (OLD.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.capture_legacy_order_build_change();
+
+-- Private order input. These indexes bound each creation's next-creation
+-- and latest-terminal probes even where one token has a long history.
+CREATE TABLE shop.legacy_order_build_event (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    kind text NOT NULL,
+    emitter varchar(42) NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    from_address varchar(42),
+    to_address varchar(42),
+    amount numeric(78,0),
+    expires_at bigint,
+    detail text NOT NULL,
+    PRIMARY KEY (network, block_number, log_index)
+);
+
+CREATE INDEX legacy_order_build_event_token_idx
+    ON shop.legacy_order_build_event (network, contract_address, token_id, block_number, log_index);
+CREATE INDEX legacy_order_build_created_idx
+    ON shop.legacy_order_build_event (network, block_number, log_index) WHERE kind = 'order_created';
+CREATE INDEX legacy_order_build_token_created_idx
+    ON shop.legacy_order_build_event (network, contract_address, token_id, block_number, log_index)
+    WHERE kind = 'order_created';
+CREATE INDEX legacy_order_build_terminal_idx
+    ON shop.legacy_order_build_event
+        (network, contract_address, token_id, emitter, detail, block_number, log_index)
+    WHERE kind IN ('order_successful', 'order_cancelled');
 
 -- Queues the token of an order event written at or below its network's book
 -- marker. Only order events fire it; one past the marker is the fold's own.
@@ -849,12 +921,29 @@ CREATE TABLE shop.legacy_order (
     CONSTRAINT legacy_order_price_nonneg CHECK (price >= 0)
 );
 
--- A database that predates the table gets it empty and with no marker, so
--- the book does not stand: the first nft fold after the upgrade opens a
--- rebuild (`shop.legacy_order_rebuild`) that the nft walk refolds a batch of
--- contracts at a time, and readers refuse the book until it is done. The
--- schema run never reads `shop.nft_event`: a whole book is a large statement,
--- and the run is not where a statement may take minutes.
+-- The build has the live row shape and only the indexes the writer needs.
+-- It has no publication trigger and is never read by the routes.
+CREATE TABLE shop.legacy_order_build (
+    network text NOT NULL,
+    marketplace_address varchar(42) NOT NULL,
+    order_id text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    seller varchar(42) NOT NULL,
+    buyer varchar(42),
+    price numeric(78,0) NOT NULL,
+    expires_at bigint NOT NULL,
+    status text NOT NULL,
+    created_block bigint NOT NULL,
+    created_log integer NOT NULL,
+    created_at bigint NOT NULL,
+    updated_block bigint NOT NULL,
+    updated_log integer NOT NULL,
+    updated_at bigint NOT NULL,
+    PRIMARY KEY (network, marketplace_address, order_id)
+);
+CREATE INDEX legacy_order_build_token_idx
+    ON shop.legacy_order_build (network, contract_address, token_id, marketplace_address, order_id);
 
 -- A token's orders: the fold's and the rewind's per-token rewrite, and
 -- /v1/orders?contractAddress=&tokenId= (which names no network).

@@ -5937,16 +5937,41 @@ async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
         .await
         .unwrap();
     }
+    // The traces extend past the generic fixture's block 100. Certify that
+    // suffix before opening a build, as the NFT writer does.
     let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = $1, fold_through = $1,
+             folded_block = $1, last_block_hash = '0x' || repeat('1', 64)
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .bind(block)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time)
+         SELECT indexer, network, last_block, last_block_hash, last_block FROM shop.chain_cursor
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
     super::legacy_orders::fold(&mut tx, super::chain_walk::ChainNet::Matic, -1)
         .await
         .unwrap();
-    while super::legacy_orders::rebuild_batch(&mut tx, super::chain_walk::ChainNet::Matic, 100)
-        .await
-        .unwrap()
-        == super::legacy_orders::RebuildStep::Batched
-    {}
     tx.commit().await.unwrap();
+    loop {
+        let mut tx = pool.begin().await.unwrap();
+        let step =
+            super::legacy_orders::rebuild_batch(&mut tx, super::chain_walk::ChainNet::Matic, 100)
+                .await
+                .unwrap();
+        tx.commit().await.unwrap();
+        if step != super::legacy_orders::RebuildStep::Batched {
+            break;
+        }
+    }
     republish_nft(&pool).await;
     for (token, (label, events)) in traces.iter().enumerate() {
         let (status, body) = get(
