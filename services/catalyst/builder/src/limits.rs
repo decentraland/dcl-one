@@ -562,14 +562,15 @@ pub async fn within_storage(
             });
         if let Some(over) = past(held, incoming, wallet_bound) {
             return Err(
-                ApiError::http(413, "The wallet's unpublished files reached their limit")
+                ApiError::too_large("The wallet's unpublished files reached their limit")
                     .with_data(over),
             );
         }
     }
     if let Some(over) = past(node, incoming, node_bound) {
         return Err(
-            ApiError::http(507, "The node's unpublished files reached their limit").with_data(over),
+            ApiError::storage_full("The node's unpublished files reached their limit")
+                .with_data(over),
         );
     }
     Ok(Upload {
@@ -737,7 +738,7 @@ impl Listing<'_> {
         let limits = &self.state.limits;
         if bytes > limits.listing_bytes {
             return Err(
-                ApiError::http(413, "The listing is too large, ask for it in pages")
+                ApiError::too_large("The listing is too large, ask for it in pages")
                     .with_data(serde_json::json!({ "maxBytes": limits.listing_bytes })),
             );
         }

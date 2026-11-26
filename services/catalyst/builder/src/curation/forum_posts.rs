@@ -332,7 +332,7 @@ fn reply_text(raw: Option<&str>, id: Uuid) -> Result<String, ApiError> {
 }
 
 fn not_replied(id: Uuid) -> ApiError {
-    ApiError::http(200, "Error creating forum post").with_data(json!({ "id": id }))
+    ApiError::thrown_without_status("Error creating forum post").with_data(json!({ "id": id }))
 }
 
 /// `POST /v1/collections/:id/curation/post`: replies `raw` in the

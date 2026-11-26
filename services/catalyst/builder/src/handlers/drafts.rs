@@ -185,7 +185,7 @@ pub async fn post_item_files(
     };
     let files = tokio::time::timeout(state.file_deadline, upload::read(multipart))
         .await
-        .unwrap_or_else(|_| Err(ApiError::http(408, "The upload timed out")));
+        .unwrap_or_else(|_| Err(ApiError::timed_out("The upload timed out")));
     let count = files.as_ref().map_or(1, |files| files.len().max(1));
     upload.carried(u32::try_from(count).unwrap_or(u32::MAX));
     drop(upload);

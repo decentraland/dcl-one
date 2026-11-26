@@ -151,10 +151,9 @@ pub async fn prepare(
             .and_then(|t| usize::try_from(t).ok())
             .unwrap_or(0);
         if stored.is_none() || (stored_tags > MAX_TAGS && tags > stored_tags) {
-            return Err(ApiError::http(
-                200,
-                format!("You hace exceeded the maximun amount of tags allowed ({MAX_TAGS})."),
-            ));
+            return Err(ApiError::thrown_without_status(format!(
+                "You hace exceeded the maximun amount of tags allowed ({MAX_TAGS})."
+            )));
         }
     }
     let social = input.data.get("startAnimation").is_some() && input.data.get("outcomes").is_some();
@@ -162,10 +161,9 @@ pub async fn prepare(
         && social
         && array_len(input.data.get("outcomes")).unwrap_or(0) > MAX_OUTCOMES
     {
-        return Err(ApiError::http(
-            200,
-            format!("You have exceeded the maximum amount of outcomes allowed ({MAX_OUTCOMES})."),
-        ));
+        return Err(ApiError::thrown_without_status(format!(
+            "You have exceeded the maximum amount of outcomes allowed ({MAX_OUTCOMES})."
+        )));
     }
     let id = match (by_urn, stored_id, &input.id) {
         (Some(_), None, _) => {
@@ -244,8 +242,7 @@ pub(crate) async fn lock_item(
             .fetch_optional(&mut **tx)
             .await?;
     if current.is_some_and(|parent| parent != previous_collection) {
-        return Err(ApiError::http(
-            409,
+        return Err(ApiError::conflict(
             "Item moved to another collection. Reload it before saving.",
         ));
     }
@@ -488,7 +485,7 @@ const STORED_BYTES: &str = "COALESCE(sum(pg_column_size(i.data) + pg_column_size
 
 /// A refusal of a save that would pass a wallet's bound of drafts.
 pub(crate) fn drafts_full(over: serde_json::Value) -> ApiError {
-    ApiError::http(413, "The wallet's unpublished drafts reached their limit").with_data(over)
+    ApiError::too_large("The wallet's unpublished drafts reached their limit").with_data(over)
 }
 
 /// Queues the saves of `owner`'s drafts, so its bounds hold however many

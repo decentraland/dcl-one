@@ -86,8 +86,7 @@ impl ItemsComponent {
             let prior = decode(prior)?;
             if prior.status != "reverted" {
                 if prior.preparation.revision != revision {
-                    return Err(ApiError::http(
-                        409,
+                    return Err(ApiError::conflict(
                         "A different collection revision is already being published",
                     ));
                 }
@@ -107,8 +106,7 @@ impl ItemsComponent {
         mark_missing_bytes(&self.blobs, &mut snapshot).await?;
         let preparation = prepare(snapshot, signer, &self.network)?;
         if preparation.revision != revision {
-            return Err(ApiError::http(
-                409,
+            return Err(ApiError::conflict(
                 "Collection changed. Review its items and fee again before publishing.",
             ));
         }
@@ -154,8 +152,7 @@ impl ItemsComponent {
         .await?
         .rows_affected();
         if changed != 1 {
-            return Err(ApiError::http(
-                409,
+            return Err(ApiError::conflict(
                 "Another wallet request is already active. Recover its transaction before retrying.",
             ));
         }
@@ -185,8 +182,7 @@ impl ItemsComponent {
         };
         let state = decode(state)?;
         if state.tx_hash.is_some() && state.status != "reverted" {
-            return Err(ApiError::http(
-                409,
+            return Err(ApiError::conflict(
                 "A submitted publication cannot be canceled here. Wait for its receipt.",
             ));
         }
@@ -220,8 +216,7 @@ impl ItemsComponent {
             AND p.status IN ('prepared','signing','submitted') AND (p.tx_hash IS NULL OR p.tx_hash=$3) AND p.preparation->>'revision'=$4")
             .bind(id).bind(signer).bind(hash).bind(revision).execute(&mut *tx).await?.rows_affected();
         if changed != 1 {
-            return Err(ApiError::http(
-                409,
+            return Err(ApiError::conflict(
                 "Publication is no longer pending or has another transaction",
             ));
         }
@@ -254,7 +249,7 @@ impl ItemsComponent {
             .ok_or_else(|| ApiError::not_found("Publication not found"))?;
         let mut state = decode(state)?;
         if state.tx_hash.as_deref() != Some(hash) {
-            return Err(ApiError::http(409, "Publication transaction changed"));
+            return Err(ApiError::conflict("Publication transaction changed"));
         }
         if state.status == "published" || state.status == "reverted" {
             return Ok(state);

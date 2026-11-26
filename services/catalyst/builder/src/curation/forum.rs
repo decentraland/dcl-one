@@ -77,7 +77,7 @@ pub enum Failure {
 impl Failure {
     /// The refusal a request gets: the forum's own words never reach it.
     pub fn api_error(&self, id: impl std::fmt::Display) -> ApiError {
-        ApiError::http(500, "Error creating forum post").with_data(
+        ApiError::failed("Error creating forum post").with_data(
             json!({ "id": id.to_string(), "errors": "The forum did not accept the post" }),
         )
     }
