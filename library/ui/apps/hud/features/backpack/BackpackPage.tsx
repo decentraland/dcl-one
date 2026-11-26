@@ -4,9 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
-import { Button, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
+import { Button, KeyCap, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Chip, ColorPicker, HintsButton, KeyCap, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Chip, ColorPicker, HintsButton, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'

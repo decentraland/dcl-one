@@ -1,7 +1,8 @@
 // The notice the HideUi key (U) shows as it cycles the UI: what its next press does, with the key
 // drawn as a key cap.
 
-import { dismissToast, KeyCap, showToast } from '../../design'
+import { KeyCap } from '@dcl/one-ui'
+import { dismissToast, showToast } from '../../design'
 import styles from './hideUiToast.module.css'
 
 /** What the HideUi key has hidden: nothing, the Explorer HUD, or the HUD and the scene UI. */
