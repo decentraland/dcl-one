@@ -90,6 +90,7 @@ pub async fn get_curation_collections(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ItemStatusBody {
     pub status: String,
 }
@@ -119,6 +120,7 @@ pub async fn patch_item_status(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BulkItemStatusBody {
     pub status: String,
     #[serde(rename = "itemIds", alias = "item_ids")]
@@ -221,7 +223,7 @@ fn item_ids(query: Option<&str>) -> Result<Option<Vec<Uuid>>, ApiError> {
     if raw.is_empty() {
         return Ok(None);
     }
-    if raw.len() as i64 > rows::MAX_ROWS {
+    if !i64::try_from(raw.len()).is_ok_and(|len| len <= rows::MAX_ROWS) {
         return Err(ApiError::bad_request("Invalid itemIds parameter provided.")
             .with_data(json!({ "itemIds": raw.len() })));
     }

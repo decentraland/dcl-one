@@ -1428,6 +1428,10 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
             count(hc::MAX_BULK_ITEMS as u64),
         ),
         (
+            "handlers::publication::MAX_REVISION",
+            count(crate::handlers::publication::MAX_REVISION as u64),
+        ),
+        (
             "handlers::newsletter::MAX_BODY",
             binary(newsletter::MAX_BODY as u64),
         ),
