@@ -64,7 +64,7 @@
   height: 48px;
 }
 
-/* The MUI outlined large button of the reference: no @dcl/one-ui Button variant has its 1px border. */
+/* Places the shared outline Button (md) at the top right of the signed-out page. */
 .signIn {
   position: absolute;
   top: 72px;
