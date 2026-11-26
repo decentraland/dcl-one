@@ -77,6 +77,10 @@ pub struct BalanceChanges {
     reads: Arc<Semaphore>,
     listening: AtomicBool,
     shutdown: OnceLock<CancellationToken>,
+    /// How long the listener waits for a notification before it pings.
+    listener_idle: Duration,
+    /// Where the listener connects; `None` is the request pool's database.
+    listener_at: Option<sqlx::postgres::PgConnectOptions>,
 }
 
 /// The wallets with open streams.
@@ -118,7 +122,31 @@ impl BalanceChanges {
             reads: Arc::new(Semaphore::new(CONCURRENT_READS)),
             listening: AtomicBool::new(false),
             shutdown: OnceLock::new(),
+            listener_idle: LISTENER_IDLE,
+            listener_at: None,
         }
+    }
+
+    /// The listener connecting to `at` and pinging after `idle`, for a test
+    /// that stalls its connection.
+    #[cfg(test)]
+    pub(crate) fn listening_at(
+        mut self,
+        at: sqlx::postgres::PgConnectOptions,
+        idle: Duration,
+    ) -> Self {
+        self.listener_at = Some(at);
+        self.listener_idle = idle;
+        self
+    }
+
+    /// Takes every read permit, for a test that holds the streams' reads.
+    #[cfg(test)]
+    pub(crate) fn hold_reads(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.reads
+            .clone()
+            .try_acquire_many_owned(CONCURRENT_READS as u32)
+            .expect("no read in flight")
     }
 
     /// Streams that read their balance again about every `refresh`.
@@ -230,31 +258,41 @@ fn ensure_listening(state: &SharedState) {
 /// backoff; every (re)connect wakes every stream. The listener holds its
 /// connection for good, so it gets its own, outside the request pool: it
 /// never takes a slot a request needs. A connection idle for
-/// [`LISTENER_IDLE`] is pinged, so a half-open one is replaced.
+/// [`LISTENER_IDLE`] is pinged, so a half-open one is replaced; each attempt
+/// connects through a pool of its own, because a dropped listener returns its
+/// connection only after its cleanup (`UNLISTEN *`) answers, which a stalled
+/// socket never does.
 async fn listen(state: &SharedState) {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .min_connections(0)
-        .connect_lazy_with((*state.credits.pool.connect_options()).clone());
     let changes = &state.balance_changes;
+    let at = changes
+        .listener_at
+        .clone()
+        .unwrap_or_else(|| (*state.credits.pool.connect_options()).clone());
     let mut backoff = Duration::from_secs(1);
     loop {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .min_connections(0)
+            .connect_lazy_with(at.clone());
         let ended: sqlx::Result<()> = async {
             let mut listener = PgListener::connect_with(&pool).await?;
             listener.listen(CHANNEL).await?;
             backoff = Duration::from_secs(1);
             changes.announce_everyone();
             loop {
-                match tokio::time::timeout(LISTENER_IDLE, listener.try_recv()).await {
+                match tokio::time::timeout(changes.listener_idle, listener.try_recv()).await {
                     Ok(Ok(Some(notification))) => changes.announce(notification.payload()),
                     // Reconnected: what was announced meanwhile is lost.
                     Ok(Ok(None)) => changes.announce_everyone(),
                     Ok(Err(error)) => return Err(error),
                     Err(_) => {
                         let ping = sqlx::query("SELECT 1").execute(&mut listener);
-                        tokio::time::timeout(Duration::from_secs(10), ping)
-                            .await
-                            .map_err(|_| sqlx::Error::PoolTimedOut)??;
+                        tokio::time::timeout(
+                            changes.listener_idle.min(Duration::from_secs(10)),
+                            ping,
+                        )
+                        .await
+                        .map_err(|_| sqlx::Error::PoolTimedOut)??;
                     }
                 }
             }
@@ -336,12 +374,23 @@ pub async fn credits_stream(
         wallet: wallet.clone(),
     };
     ensure_listening(&state);
-    let first = user_credits_body(&state, &wallet, None).await?;
+    let changes = &state.balance_changes;
+    // The first read waits for a permit like every other, so a burst of
+    // (re)connections queues here, not in the request pool.
+    let shutdown = changes.shutdown();
+    let first = tokio::select! {
+        () = shutdown.cancelled() => {
+            return Ok(StatusCode::SERVICE_UNAVAILABLE.into_response());
+        }
+        first = async {
+            let _permit = changes.reads.acquire().await.map_err(|_| ApiError::Internal("the streams' reads are closed".into()))?;
+            user_credits_body(&state, &wallet, None).await
+        } => first?,
+    };
     if first.is_blocked_for_claiming == Some(true) {
         return Ok(flagged(&first));
     }
     let first = serde_json::to_string(&first).map_err(|e| ApiError::Internal(e.to_string()))?;
-    let changes = &state.balance_changes;
     let follow = Follow {
         reader: Arc::new(WalletBalance {
             state: state.clone(),
@@ -349,7 +398,7 @@ pub async fn credits_stream(
         }),
         woken,
         reads: changes.reads.clone(),
-        shutdown: changes.shutdown(),
+        shutdown,
         last: None,
         first: Some(first),
         refresh: changes.refresh,
@@ -439,11 +488,17 @@ impl Follow {
             // What this read covers: a change announced from now wakes it again.
             self.woken.changed.borrow_and_update();
             self.woken.everyone.borrow_and_update();
-            let read = {
-                let Ok(_permit) = self.reads.acquire().await else {
-                    return None;
-                };
-                self.reader.read().await
+            // The node's shutdown ends the stream while it waits for a permit
+            // or for the database too.
+            let read = tokio::select! {
+                () = self.shutdown.cancelled() => return None,
+                read = async {
+                    let _permit = self.reads.acquire().await.ok()?;
+                    Some(self.reader.read().await)
+                } => match read {
+                    Some(read) => read,
+                    None => return None,
+                },
             };
             match read {
                 Ok(body) => {
@@ -577,6 +632,57 @@ mod tests {
             theirs.reads.load(Ordering::SeqCst),
             1,
             "a missed change wakes every stream"
+        );
+    }
+
+    /// A reader that never answers.
+    struct Stuck;
+
+    impl ReadBalance for Stuck {
+        fn read(&self) -> futures::future::BoxFuture<'_, Result<String, ApiError>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    /// The node's shutdown ends a stream waiting for a read permit, and one
+    /// waiting on its read, which gives its permit back.
+    #[tokio::test(start_paused = true)]
+    async fn the_nodes_shutdown_ends_a_stream_waiting_to_read() {
+        let changes = BalanceChanges::with_refresh(Duration::from_secs(60));
+        let token = CancellationToken::new();
+        changes.end_on(token.clone());
+        // Three permits held elsewhere; a stuck read takes the fourth.
+        let others = changes
+            .reads
+            .clone()
+            .try_acquire_many_owned(CONCURRENT_READS as u32 - 1)
+            .unwrap();
+        let reading = tokio::spawn(follow(&changes, "0xcd", Arc::new(Stuck)).next());
+        changes.announce("0xcd");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(
+            changes.reads.available_permits(),
+            0,
+            "the stuck read holds the last permit"
+        );
+        // This stream now waits for a permit.
+        let waiting = tokio::spawn(follow(&changes, "0xab", Arc::new(Counting::default())).next());
+        changes.announce("0xab");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        token.cancel();
+        assert!(
+            waiting.await.unwrap().is_none(),
+            "the stream waiting for a permit ends"
+        );
+        assert!(
+            reading.await.unwrap().is_none(),
+            "the stream waiting on its read ends"
+        );
+        drop(others);
+        assert_eq!(
+            changes.reads.available_permits(),
+            CONCURRENT_READS,
+            "every permit is back"
         );
     }
 

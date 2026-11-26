@@ -11702,3 +11702,138 @@ async fn a_wallets_open_balance_streams_are_capped() {
     assert_eq!(status, StatusCode::OK, "the closed stream's slot is free");
     cleanup(&pool, &wallet.address).await;
 }
+
+/// A new stream's first balance read waits for a read permit like every
+/// other, so a burst of (re)connections queues there, not in the pool.
+#[tokio::test]
+async fn an_opening_balance_stream_waits_for_a_read_permit() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let address = wallet.address.clone();
+    let held = state.balance_changes.hold_reads();
+    let opening = tokio::spawn(async move { open_balance_stream(&app, &wallet).await.0 });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !opening.is_finished(),
+        "it waits for a permit before its first read"
+    );
+    drop(held);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(10), opening)
+        .await
+        .expect("it opens once a permit is free")
+        .unwrap();
+    assert_eq!(status, StatusCode::OK);
+    cleanup(&pool, &address).await;
+}
+
+/// A TCP proxy to `target` that can stall the connections it holds: their
+/// sockets stay open and nothing passes either way, while connections opened
+/// afterwards pass.
+struct StallProxy {
+    port: u16,
+    stall: Arc<tokio::sync::watch::Sender<u64>>,
+}
+
+impl StallProxy {
+    async fn start(target: String) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stall = Arc::new(tokio::sync::watch::channel(0_u64).0);
+        let stalls = stall.clone();
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                let mut stalled = stalls.subscribe();
+                let opened_at = *stalled.borrow_and_update();
+                let target = target.clone();
+                tokio::spawn(async move {
+                    let Ok(mut server) = tokio::net::TcpStream::connect(target).await else {
+                        return;
+                    };
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
+                        () = async {
+                            loop {
+                                let generation = *stalled.borrow_and_update();
+                                if generation > opened_at || stalled.changed().await.is_err() {
+                                    return;
+                                }
+                            }
+                        } => {
+                            // Open and silent for good: a half-open connection.
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                });
+            }
+        });
+        Self { port, stall }
+    }
+
+    /// Stalls every connection open now.
+    fn stall(&self) {
+        self.stall.send_modify(|generation| *generation += 1);
+    }
+}
+
+/// The listener's connection goes half-open (nothing answers, nothing
+/// closes): its ping times out and it listens again on a new connection,
+/// though the old one never returns, and a change reaches the open stream
+/// again (the refresh is an hour away, so only a notification delivers it).
+#[tokio::test]
+async fn the_balance_listener_recovers_from_a_stalled_connection() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    let mut state = test_state(pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_limits(std::time::Duration::from_secs(3600), 8, 100)
+            .listening_at(
+                options.clone().host("127.0.0.1").port(proxy.port),
+                std::time::Duration::from_millis(300),
+            );
+    let app = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    let add = async |credits: &str| {
+        sqlx::query(
+            "UPDATE credits.wallets SET available = available + $2::numeric WHERE address = $1",
+        )
+        .bind(&wallet.address)
+        .bind(credits)
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    // Once listening, a change arrives by notification.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add("1").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard while connected");
+    proxy.stall();
+    // The ping times out after the idle wait; the listener reconnects on a new
+    // connection (about a second of backoff).
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    add("2").await;
+    let again = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard again after the stalled connection");
+    assert_eq!(
+        again["usd"]["balanceCents"].as_i64().unwrap()
+            - heard["usd"]["balanceCents"].as_i64().unwrap(),
+        20
+    );
+    cleanup(&pool, &wallet.address).await;
+}
