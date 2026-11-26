@@ -124,6 +124,80 @@ mod tests {
         assert_eq!(compared, deno_web().len() + deno_webidl().len());
     }
 
+    /// Every vendored script is compiled in with the bytes `upstream.lock.json` records, and
+    /// the lock lists every file under `vendor/`. This checks the copies against the lock, not
+    /// the lock against crates.io: the deno_web and deno_webidl copies are compared with the
+    /// locked crates above, while the deno_fetch and deno_webstorage crates are not dependencies,
+    /// so their `upstream_sha256` is checked by hand when they are updated.
+    #[test]
+    fn vendored_copies_match_the_lock() {
+        use sha2::{Digest, Sha256};
+        use std::collections::BTreeSet;
+        let sha256 = |bytes: &[u8]| -> String {
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/js/vendor");
+        let lock: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(vendor.join("upstream.lock.json")).unwrap())
+                .unwrap();
+
+        let mut locked = BTreeSet::from(["LICENSE.md".to_owned(), "upstream.lock.json".to_owned()]);
+        assert_eq!(
+            lock["license"]["sha256"].as_str().unwrap(),
+            sha256(include_bytes!("vendor/LICENSE.md"))
+        );
+        let embedded: Vec<_> = [own(), deno_fetch(), deno_web(), deno_webidl()]
+            .into_iter()
+            .flatten()
+            .filter(|file| file.specifier.starts_with("ext:deno_"))
+            .collect();
+        for file in lock["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|package| package["files"].as_array().unwrap())
+        {
+            let path = file["path"].as_str().unwrap();
+            let specifier = format!("ext:{path}");
+            let copy = embedded
+                .iter()
+                .find(|copy| copy.specifier == specifier)
+                .unwrap_or_else(|| panic!("{path} is locked but not compiled in"));
+            assert_eq!(
+                sha256(copy.load().unwrap().as_str().as_bytes()),
+                file["sha256"].as_str().unwrap(),
+                "{path} differs from upstream.lock.json"
+            );
+            locked.insert(path.to_owned());
+        }
+        assert_eq!(
+            locked.len() - 2,
+            embedded.len(),
+            "a compiled-in copy is not locked"
+        );
+
+        let mut on_disk = BTreeSet::new();
+        let mut dirs = vec![vendor.clone()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else {
+                    let relative = path.strip_prefix(&vendor).unwrap();
+                    on_disk.insert(relative.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+        assert_eq!(
+            on_disk, locked,
+            "files under vendor/ and upstream.lock.json differ"
+        );
+    }
+
     #[test]
     fn every_runtime_script_is_compiled_in() {
         let extensions = super::super::web_extensions();
