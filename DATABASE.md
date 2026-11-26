@@ -3427,11 +3427,126 @@ and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
 helper does. `sold_at` is the newest primary sale only; secondary sales come
 with the sales index.
 
-The catalogue routes still decide readiness from the mirror's passes
-(`shop.mirror_state`), so no network is taken from the mirror while they do.
+**Reading the catalogue.** These readers of `shop.collections` and
+`shop.items` open one `REPEATABLE READ` transaction first
+(`market::catalogue::begin`):
+- descriptive: `/v1/collections`, the `/v1/contracts` collection list,
+  `/lambdas/collections`, the lambdas wearables and emotes catalogue, the
+  creator search, and the campaign collection tags;
+- priced: `/v1/catalog` (v1 and v2), `/v1/items`, `/v3/catalog/items`,
+  `/v1/trendings`, the item leg of `/v1/prices`, every `/v3/catalog` shop feed,
+  the search suggest, credits pricing, and the coupon favourites job;
+- authorizing: the import check.
 
-**Switching a network from the mirror.** Run this after the catalogue routes
-follow the index and the NFT and sales walks take their contracts from it.
+In that transaction the reader reads, in one statement per request, per
+network: the ownership marker, the `collections` cursor, the projection's
+row, the mirrors' passes, whether the catalogue holds rows of the network,
+and whether a collections event was walked past the publication. It decides
+readiness by the source that owns each network, then reads its rows in the
+same snapshot, so a rewind, a republication or a hand-back that commits
+meanwhile never splits an answer. A reader that joins the open trades
+(credits pricing included) reads their pass and verdicts in the same
+snapshot, at the read's instant. That instant also decides the rows' open
+trades, trade floor and coupon window, on every page of the read.
+
+The statement is uncached and probes primary keys only:
+`collection_projection (network)`, `chain_cursor (indexer, network)`,
+`mirror_state (mirror, network)`, the first row of `collections` and of
+`items` by their `(network, …)` keys, and the first `collection_event` past
+the publication by `(network, block_number, log_index)`.
+
+The transaction holds a pooled connection, so a reader never waits on
+anything else while it holds it:
+- pool work that reads no catalogue row runs before the transaction opens or
+  after it is released; what does read the catalogue reuses the transaction;
+- a route with an external call (the sales reader's subgraph query, the
+  EIP-1654 signer check) first opens a short read for the gate and its page
+  memo, so a refusal or a warm page answers at once. On a miss it releases
+  the read for the call, then opens it again, checking readiness again, and
+  reads the whole page on that read (the suggested feed rebuilds its personal
+  rows there too) and files it under the copy that read saw. The answer's
+  `as_of` comes only from the reads that supplied its rows: the short read on
+  a warm page, the final read on a miss;
+- a request never waits on another's memo fetch while it holds the
+  connection.
+
+A read that writes (the campaign tags) runs `SERIALIZABLE`: two replacements
+of one tag's set cannot both commit, even when the tag was empty, and the one
+that fails starts again on a new snapshot.
+
+These readers of the same tables are outside the gate, and read whichever
+source wrote the rows:
+- the relay contract allowlist and `/v1/contracts/{address}`;
+- the sale, bid and royalty notices;
+- the owned-items pass check;
+- the MANA facts and quote;
+- the policy entry's facts;
+- the NFT pages' catalogue joins, and the bids, lists, listings, users,
+  neighbours, stores, coupons and subscriptions reads;
+- the NFT walk's contract set;
+- the sales index: its walk's contract set, `sale_fold`, `sale_history` and
+  the reads that join the catalogue (public sales, item rankings, collection
+  counts, seller evidence, wallet assets and the creator sales scope);
+- the activity's NFT transfers and cancelled trades;
+- the trade-events walk's item metadata;
+- the explorer lambdas (`lambdas_explorer.rs`) and explore's OpenSea metadata
+  (`explore/src/opensea.rs`);
+- Social's badge jobs (deployments, recount and sales);
+- the storage collector's image references.
+
+A network the index owns follows the publish marker. A pass walks before it
+folds and publishes, so `folded_block = last_block` would refuse every read
+while one runs; the marker does not. Every purpose needs:
+- the cursor bound to the chain this node serves for that network (a
+  testnet node reads none from a mainnet walk), out of quarantine, not
+  diverged;
+- its whole history walked, and a fold published;
+- the projection standing at that fold (`projected_through = folded_block`);
+- no collection waiting for its creation read (`pending = 0`).
+
+On top of that:
+- a priced read (a minter price, `available`, a credit price) needs the
+  publication within 30 minutes;
+- an authorizing read (the import check) needs that too, and no collections
+  event walked past the publication;
+- a descriptive read serves the last publication however old.
+
+Between a fold and its publication (the pass reads the chain's heads in
+between), `projected_through` is ahead of `folded_block`, and the network
+refuses reads until the publication.
+
+The mirrors' rule covers every network the index does not own that a read
+may return rows of. Every stored pass there must be bound to the chain this
+node serves, a network with no subgraph configured included, since its rows
+are read too. Each network the read may return rows of (the catalogue holds
+rows of it), configured or not, needs a complete pass of each mirror the
+route reads; so does each configured network the index does not own. A
+priced read needs the items pass within its money budget. A descriptive or
+authorizing read (the import check) takes any complete pass. A network
+holding rows with no pass and no subgraph configured names its subgraph,
+since no pass can come.
+
+With no subgraph configured, a network an index owns answers. An unscoped
+priced read names the subgraph of the network without a source; a
+descriptive or authorizing read serves the passes the tables record. The
+lambdas catalogue falls back to asking the subgraphs only when the mirrors
+refused and the index owns no network; it never stands in for a network the
+index owns.
+
+A memo over catalogue rows is filed under what its read saw: each mirror's
+pass on each network it may take rows from, configured or not (the oldest
+alone would not move when a newer network's pass does), and each owned
+network's publication and projection generation. The creator directory is a
+display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
+under which source serves each network: an ownership change files it anew.
+
+**Switching a network from the mirror.** Run this only once three things
+hold:
+- every reader above follows the index, the other readers included;
+- the projection is published atomically with the fold, so the refusal
+  between a fold and its publication is gone;
+- the NFT and sales walks take their contracts from the index.
+
 Deploys are manual, one process at a time:
 
 1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
