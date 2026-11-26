@@ -282,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 84] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 87] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -442,6 +442,12 @@ impl Config {
                 "HISTORICAL_ADMIN_TOKEN",
                 &mut self.marketplace.historical_admin_token,
             ),
+            ("WERT_PRIVATE_KEY", &mut self.marketplace.wert_private_key),
+            (
+                "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+                &mut self.marketplace.wert_publication_fees_private_key,
+            ),
+            ("WERT_API_KEY", &mut self.marketplace.wert_api_key),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
             ("OZ_RELAYER_API_KEY", &mut self.economy.oz_relayer_api_key),
@@ -528,15 +534,17 @@ impl Config {
     }
 
     /// The signing keys: each signs value on this node's behalf (treasury
-    /// credit claims, relayed transactions), so each is
+    /// credit claims, relayed transactions, Wert card purchases), so each is
     /// read from `<NAME>_FILE` alone (a `LoadCredential` or agenix file). A
     /// plain environment variable would sit in `/proc/<pid>/environ`,
     /// `systemctl show` and, set through a unit's `environment`, the unit
     /// file in the world-readable nix store.
-    pub const FILE_ONLY_SECRETS: [&'static str; 3] = [
+    pub const FILE_ONLY_SECRETS: [&'static str; 5] = [
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
         "RELAYER_PRIVATE_KEY",
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
     ];
 
     /// Secrets that fall back to a network default when unset
@@ -847,6 +855,10 @@ mod tests {
         "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
         "CREDITS_ALERTS_SLACK_WEBHOOK",
+        // Wert's partner keys and API key: their shape is Wert's.
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        "WERT_API_KEY",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
@@ -1315,6 +1327,9 @@ mod tests {
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
             "HISTORICAL_ADMIN_TOKEN",
+            "WERT_PRIVATE_KEY",
+            "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+            "WERT_API_KEY",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
