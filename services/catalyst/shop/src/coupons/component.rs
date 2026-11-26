@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -376,7 +382,10 @@ impl CouponsComponent {
         if chain_state.cancelled {
             return Err(CouponError::AlreadyUnusable(ALREADY_CANCELLED.to_string()));
         }
-        if chain_state.uses >= coupon.checks.uses as i64 {
+        let signed_uses = i64::try_from(coupon.checks.uses).map_err(|_| {
+            CouponError::InvalidChecks(format!("uses {} is past i64", coupon.checks.uses))
+        })?;
+        if chain_state.uses >= signed_uses {
             return Err(CouponError::AlreadyUnusable(NO_USES_LEFT.to_string()));
         }
         // The indexes were just checked against the manager, so nothing is revoked yet.
@@ -394,9 +403,17 @@ impl CouponsComponent {
             CouponError::InvalidChecks(format!("unrepresentable time {}", coupon.checks.expiration))
         })?;
 
+        let chain_id = i32::try_from(coupon.chain_id)
+            .map_err(|_| CouponError::UnsupportedChain(coupon.chain_id))?;
+        let discount_type = i16::try_from(coupon.discount_type)
+            .map_err(|_| CouponError::InvalidDiscount(ONLY_PERCENTAGE_DISCOUNTS.to_string()))?;
+        let discount_ppm = i32::try_from(coupon.discount)
+            .map_err(|_| CouponError::InvalidDiscount(discount_out_of_bounds()))?;
+        let state_uses = uses_column(state.uses)?;
+
         let inserted: (String, NaiveDateTime) = sqlx::query_as(sql::INSERT_COUPON_WITH_STATE)
             .bind(&validated.network)
-            .bind(coupon.chain_id as i32)
+            .bind(chain_id)
             .bind(coupon.signer.to_lowercase())
             .bind(&validated.signature)
             .bind(to_hex32(validated.hashed_signature))
@@ -404,13 +421,13 @@ impl CouponsComponent {
             .bind(validated.contracts.coupon_manager.address.to_lowercase())
             .bind(coupon.coupon_address.to_lowercase())
             .bind(&checks)
-            .bind(coupon.discount_type as i16)
-            .bind(coupon.discount as i32)
+            .bind(discount_type)
+            .bind(discount_ppm)
             .bind(to_hex32(validated.root))
             .bind(&validated.collections)
             .bind(effective_since.naive_utc())
             .bind(expires_at.naive_utc())
-            .bind(state.uses as i32)
+            .bind(state_uses)
             .bind(state.cancelled)
             .bind(state.revoked)
             .fetch_one(&self.pool)
@@ -434,21 +451,21 @@ impl CouponsComponent {
         let row = DbCouponWithState {
             id,
             network: validated.network,
-            chain_id: coupon.chain_id as i32,
+            chain_id,
             signer: coupon.signer.to_lowercase(),
             signature: validated.signature,
             state_key,
             coupon_manager: validated.contracts.coupon_manager.address.to_lowercase(),
             coupon_address: coupon.coupon_address.to_lowercase(),
             checks,
-            discount_type: coupon.discount_type as i16,
-            discount_ppm: coupon.discount as i32,
+            discount_type,
+            discount_ppm,
             root: to_hex32(validated.root),
             collections: validated.collections,
             effective_since: effective_since.naive_utc(),
             expires_at: expires_at.naive_utc(),
             created_at,
-            state_uses: Some(state.uses as i32),
+            state_uses: Some(state_uses),
             state_cancelled: Some(state.cancelled),
             state_revoked: Some(state.revoked),
             state_checked_at: ms_to_utc(now_ms).map(|t| t.naive_utc()),
@@ -462,10 +479,15 @@ impl CouponsComponent {
         collections: &[String],
         chain_id: i64,
     ) -> Result<(), CouponError> {
-        let network = crate::evm::contracts_addrs::mirror_network(chain_id as u64).unwrap_or("");
+        let network = u64::try_from(chain_id)
+            .ok()
+            .and_then(crate::evm::contracts_addrs::mirror_network)
+            .unwrap_or("");
+        let chain_id_col =
+            i32::try_from(chain_id).map_err(|_| CouponError::UnsupportedChain(chain_id))?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql::COLLECTION_CREATORS.as_str()))
             .bind(collections)
-            .bind(chain_id as i32)
+            .bind(chain_id_col)
             .bind(network)
             .fetch_all(&self.pool)
             .await?;
@@ -636,15 +658,15 @@ impl CouponsComponent {
         Ok(refreshed)
     }
 
-    async fn upsert_state(&self, id: &str, state: CouponStoredState) -> Result<(), sqlx::Error> {
+    async fn upsert_state(&self, id: &str, state: CouponStoredState) -> Result<(), CouponError> {
         sqlx::query(sql::UPSERT_COUPON_STATE)
             .bind(id)
-            .bind(state.uses as i32)
+            .bind(uses_column(state.uses)?)
             .bind(state.cancelled)
             .bind(state.revoked)
             .execute(&self.pool)
-            .await
-            .map(|_| ())
+            .await?;
+        Ok(())
     }
 }
 
@@ -669,6 +691,12 @@ pub(super) fn state_keys_of(row: &DbCouponWithState) -> Option<Vec<String>> {
         to_hex32(digest_coupon_state_key(&row.signer, digest).ok()?),
         row.state_key.clone(),
     ])
+}
+
+/// Consumed uses as the `integer` column that stores them.
+fn uses_column(uses: i64) -> Result<i32, CouponError> {
+    i32::try_from(uses)
+        .map_err(|_| CouponError::Internal(format!("coupon uses {uses} do not fit their column")))
 }
 
 fn index_key(row: &DbCouponWithState) -> String {
