@@ -721,47 +721,43 @@ async fn reconcile(
 /// The credits a test receipt shows when the body names none.
 pub const TEST_RECEIPT_CREDITS: u64 = 500;
 
-#[derive(Debug, Deserialize)]
-pub struct TestPurchaseEmailBody {
-    address: String,
-    /// A positive integer; checked by hand so anything else is upstream's 400.
-    #[serde(default)]
-    credits: Option<JsonValue>,
-    /// The recipient; without it, the account's email.
-    #[serde(default)]
-    email: Option<String>,
-}
-
 /// `POST /admin/test-purchase-email`: renders and sends the purchase receipt
 /// on demand, so it can be checked on a deployed node without paying for a
 /// pack. It writes no purchase and no receipt row. The send is audited
 /// without its recipient, and answers what happened to it: `sent` with the
 /// provider's message id, `skipped` with the reason, or 502 when the
-/// provider refused it.
+/// provider refused it; no answer carries an email address. The body
+/// (`{ address, credits?, email? }`) is read by hand, so every malformed
+/// one is upstream's 400.
 async fn test_purchase_email(
     admin: RequireAdmin,
     State(state): State<SharedState>,
-    body: Option<Json<TestPurchaseEmailBody>>,
+    body: axum::body::Bytes,
 ) -> Result<Json<JsonValue>, ApiError> {
-    let Json(b) = body.ok_or_else(|| ApiError::bad_request("missing JSON body"))?;
-    let address = normalize_address(&b.address)?;
-    let credits = match &b.credits {
-        None => TEST_RECEIPT_CREDITS,
+    let body: JsonValue =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid JSON body"))?;
+    let address = body
+        .get("address")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| ApiError::bad_request("invalid wallet address"))
+        .and_then(normalize_address)?;
+    let credits = match body.get("credits") {
+        None | Some(JsonValue::Null) => TEST_RECEIPT_CREDITS,
         Some(value) => value
             .as_u64()
             .filter(|credits| *credits > 0)
             .ok_or_else(|| ApiError::bad_request("credits must be a positive integer"))?,
+    };
+    let given = match body.get("email") {
+        None | Some(JsonValue::Null) => None,
+        Some(JsonValue::String(email)) => Some(email.trim()).filter(|email| !email.is_empty()),
+        Some(_) => return Err(ApiError::bad_request("email must be a string")),
     };
     let Some(sender) = state.receipts.get() else {
         return Err(ApiError::service_unavailable(
             "purchase receipts are not set up on this node",
         ));
     };
-    let given = b
-        .email
-        .as_deref()
-        .map(str::trim)
-        .filter(|email| !email.is_empty());
     let detail = json!({ "credits": credits, "recipient": if given.is_some() { "given" } else { "account" } });
     Credits::audit(
         &state.credits.pool,
@@ -802,9 +798,12 @@ async fn test_purchase_email(
             out["reason"] = json!(reason);
             Ok(Json(out))
         }
-        Outcome::Failed(error) | Outcome::Retry { error, .. } => Err(ApiError::bad_gateway(
-            format!("the receipt was not sent: {error}"),
-        )),
+        Outcome::Failed(error) | Outcome::Retry { error, .. } => {
+            Err(ApiError::bad_gateway(format!(
+                "the receipt was not sent: {}",
+                receipts::redact_addresses(&error)
+            )))
+        }
     }
 }
 

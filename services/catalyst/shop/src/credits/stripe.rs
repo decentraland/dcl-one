@@ -100,7 +100,7 @@ impl StripeClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            tracing::error!(status, body = %truncate(&body, 500), "stripe {what} create failed");
+            tracing::error!(status, error = %stripe_error(&body), "stripe {what} create failed");
             return Err(fail(format!("stripe returned status {status}")));
         }
 
@@ -166,7 +166,7 @@ impl StripeClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            tracing::error!(status, body = %truncate(&body, 500), "stripe checkout session retrieve failed");
+            tracing::error!(status, error = %stripe_error(&body), "stripe checkout session retrieve failed");
             return Err(ApiError::bad_gateway(format!(
                 "stripe returned status {status}"
             )));
@@ -214,7 +214,7 @@ impl StripeClient {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            tracing::error!(status, body = %truncate(&body, 500), "stripe checkout session expire failed");
+            tracing::error!(status, error = %stripe_error(&body), "stripe checkout session expire failed");
             return Err(ApiError::bad_gateway(format!(
                 "stripe returned status {status}"
             )));
@@ -326,15 +326,29 @@ pub(crate) fn session_buyer_email(session: &serde_json::Value) -> Option<String>
         .map(str::to_string)
 }
 
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
+/// What a Stripe error body may say in a log: its `error.type`, `code` and
+/// `param` (the request field it blames), never its message or the raw body,
+/// which can carry a customer's details.
+pub(crate) fn stripe_error(body: &str) -> String {
+    let error = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").cloned());
+    let parts: Vec<String> = ["type", "code", "param"]
+        .iter()
+        .filter_map(|key| {
+            let value = error.as_ref()?.get(*key)?.as_str()?;
+            let safe = !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-[]".contains(&b));
+            safe.then(|| format!("{key}={value}"))
+        })
+        .collect();
+    if parts.is_empty() {
+        "unclassified".to_string()
     } else {
-        let mut end = max;
-        while !s.is_char_boundary(end) && end > 0 {
-            end -= 1;
-        }
-        &s[..end]
+        parts.join(" ")
     }
 }
 

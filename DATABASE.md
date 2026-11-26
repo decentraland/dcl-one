@@ -1776,8 +1776,10 @@ index on `(next_attempt_at, purchase_id) WHERE status = 'pending'`
 (`FOR UPDATE SKIP LOCKED`, counting the attempt and leasing the row for five
 minutes), joins each to its purchase by primary key, sends outside any
 transaction, and records the outcome guarded on `status = 'pending'` and the
-claimed attempt. Rows are one per paid pack and never deleted, except with
-their purchase.
+claimed attempt. Right before each send it reads the receipt and its purchase
+again by primary key: a purchase no longer `paid` ends the row `skipped`
+(the reversal cutoff), and a claim another worker took over sends nothing.
+Rows are one per paid pack and never deleted, except with their purchase.
 
 A receipt with no stored address and none on its Checkout Session at Stripe
 reads `social.subscriptions` (`address`, `email`) by primary key: a shared

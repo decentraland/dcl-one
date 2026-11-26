@@ -21,8 +21,20 @@
 //!   then `failed`); an unconfigured sender ends the row `skipped`, never a
 //!   silent success. A terminal row drops its address.
 //!
-//! A claim sends once. A crash between the provider's accept and the record
-//! sends it again once the lease ends, as the waitlist outbox does.
+//! The reversal cutoff is the dispatch check: after the recipient and name
+//! lookups, right before the provider call, the worker re-reads the
+//! purchase's status and that it still holds the claim. A reversal committed
+//! before that read sends nothing; one committed while the provider request
+//! is in flight does not stop it.
+//!
+//! The purchase key makes one outbox row, not one delivery: a crash after the
+//! provider accepts a message and before its record commits sends it again
+//! once the lease ends, as the waitlist outbox does.
+//!
+//! No address reaches a log, a stored error or a response: the provider's
+//! refusal names only the request fields it blames
+//! (`social::notifications::email::refusal_fields`), and every failure text
+//! passes [`redact_addresses`] on its way out of the mailer.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,6 +124,30 @@ impl Sender {
             .flatten()
     }
 
+    /// The receipt for `address`, greeting it by its claimed name.
+    pub async fn render(&self, address: &str, credits: &str) -> RenderedEmail {
+        let username = self.claimed_name(address).await;
+        render_purchase_receipt(username.as_deref(), credits, &self.links)
+    }
+
+    /// Sends a rendered receipt. A failure's text leaves without any address
+    /// ([`redact_addresses`]).
+    pub async fn deliver(
+        &self,
+        to: &str,
+        email: &RenderedEmail,
+        custom_args: &serde_json::Value,
+    ) -> Result<Option<String>, SendFailure> {
+        self.mailer
+            .send_html(to, &email.subject, &email.html, &email.text, custom_args)
+            .await
+            .map_err(|failure| match failure {
+                SendFailure::Transient(e) => SendFailure::Transient(redact_addresses(&e)),
+                SendFailure::Permanent(e) => SendFailure::Permanent(redact_addresses(&e)),
+                other => other,
+            })
+    }
+
     /// Renders and sends one receipt.
     pub async fn send(
         &self,
@@ -120,12 +156,35 @@ impl Sender {
         credits: &str,
         custom_args: &serde_json::Value,
     ) -> Result<Option<String>, SendFailure> {
-        let username = self.claimed_name(address).await;
-        let email = render_purchase_receipt(username.as_deref(), credits, &self.links);
-        self.mailer
-            .send_html(to, &email.subject, &email.html, &email.text, custom_args)
-            .await
+        let email = self.render(address, credits).await;
+        self.deliver(to, &email, custom_args).await
     }
+}
+
+/// `text` with every token that holds an `@` replaced by `<address>`: a
+/// provider that echoes the recipient never puts it in a log, a stored error
+/// or a response.
+pub fn redact_addresses(text: &str) -> String {
+    fn flush(token: &mut String, out: &mut String) {
+        if token.contains('@') {
+            out.push_str("<address>");
+        } else {
+            out.push_str(token);
+        }
+        token.clear();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut token = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() || "._%+-@'".contains(c) {
+            token.push(c);
+        } else {
+            flush(&mut token, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut token, &mut out);
+    out
 }
 
 /// Writes the purchase's receipt row in the grant's transaction; a second
@@ -289,7 +348,7 @@ pub async fn recipient(
             }
             Ok(None) => {}
             Err(e) => {
-                tracing::warn!(purchase_id = claimed.purchase_id, error = %e, "could not read the Checkout Session for the purchase receipt; trying the account email");
+                tracing::warn!(purchase_id = claimed.purchase_id, error = %redact_addresses(&e.to_string()), "could not read the Checkout Session for the purchase receipt; trying the account email");
             }
         }
     }
@@ -313,8 +372,62 @@ fn non_empty(email: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// One pass: claim, resolve the recipient, send outside any transaction,
-/// record.
+fn reversed(status: &str) -> Outcome {
+    Outcome::Skipped(format!(
+        "the purchase is {status} before its receipt went out"
+    ))
+}
+
+/// The purchase's status now, if this claim (`attempts`) still holds its
+/// pending receipt; `None` when another claim took it over.
+async fn status_at_dispatch(pool: &PgPool, claimed: &Claimed) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT p.status FROM credits.purchase_receipts r \
+         JOIN credits.purchases p ON p.id = r.purchase_id \
+         WHERE r.purchase_id = $1 AND r.status = 'pending' AND r.attempts = $2",
+    )
+    .bind(claimed.purchase_id)
+    .bind(claimed.attempts)
+    .fetch_optional(pool)
+    .await
+}
+
+/// One claimed receipt's outcome; `None` when the claim was lost before the
+/// send, which leaves the row to the claim that holds it.
+async fn dispatch(
+    pool: &PgPool,
+    sender: &Sender,
+    stripe: Option<&StripeClient>,
+    row: &Claimed,
+    configured: bool,
+) -> anyhow::Result<Option<Outcome>> {
+    if row.purchase_status != "paid" {
+        return Ok(Some(reversed(&row.purchase_status)));
+    }
+    if !configured {
+        return Ok(Some(outcome_after(
+            row.attempts,
+            Err(SendFailure::NotConfigured),
+        )));
+    }
+    let Some(to) = recipient(pool, stripe, row).await? else {
+        return Ok(Some(Outcome::Skipped("no recipient".to_string())));
+    };
+    let email = sender.render(&row.address, &row.credits).await;
+    // The reversal cutoff: the lookups above can be slow, so the status the
+    // claim read is checked again just before the provider call.
+    match status_at_dispatch(pool, row).await? {
+        None => return Ok(None),
+        Some(status) if status != "paid" => return Ok(Some(reversed(&status))),
+        Some(_) => {}
+    }
+    let custom_args = json!({ "credits_purchase_id": row.purchase_id.to_string() });
+    let result = sender.deliver(&to, &email, &custom_args).await;
+    Ok(Some(outcome_after(row.attempts, result)))
+}
+
+/// One pass: claim, resolve the recipient, check the purchase again, send
+/// outside any transaction, record.
 pub async fn run_pass(
     pool: &PgPool,
     sender: &Sender,
@@ -327,24 +440,12 @@ pub async fn run_pass(
     };
     let configured = sender.mailer.is_configured();
     for row in &claimed {
-        let outcome = if row.purchase_status != "paid" {
-            Outcome::Skipped(format!(
-                "the purchase is {} before its receipt went out",
-                row.purchase_status
-            ))
-        } else if !configured {
-            outcome_after(row.attempts, Err(SendFailure::NotConfigured))
-        } else {
-            match recipient(pool, stripe, row).await? {
-                None => Outcome::Skipped("no recipient".to_string()),
-                Some(to) => {
-                    let custom_args = json!({ "credits_purchase_id": row.purchase_id.to_string() });
-                    let result = sender
-                        .send(&to, &row.address, &row.credits, &custom_args)
-                        .await;
-                    outcome_after(row.attempts, result)
-                }
-            }
+        let Some(outcome) = dispatch(pool, sender, stripe, row, configured).await? else {
+            tracing::info!(
+                purchase_id = row.purchase_id,
+                "purchase receipt claimed again elsewhere; left to that claim"
+            );
+            continue;
         };
         match &outcome {
             Outcome::Sent(_) => summary.sent += 1,

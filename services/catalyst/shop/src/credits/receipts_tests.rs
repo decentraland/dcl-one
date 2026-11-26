@@ -904,3 +904,289 @@ async fn the_operator_sends_a_test_receipt() {
     assert!(!v.to_string().contains("ops@example.org"));
     assert_eq!(mailer.sent().len(), 1, "a gated node sends nothing");
 }
+
+/// Signals when the name lookup starts and holds it until released: the slow
+/// lookup a reversal can land during.
+struct HeldName {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl BuyerNames for HeldName {
+    async fn claimed_name(&self, _address: &str) -> Option<String> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        None
+    }
+}
+
+/// A full refund committed after the claim, while the lookups run, stops
+/// the receipt: the dispatch check reads the purchase again right before the
+/// provider call.
+#[tokio::test]
+async fn a_reversal_during_the_lookups_stops_the_send() {
+    let Some(db) = OwnDatabase::create("receipt_race").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mailer = Recorder::configured();
+    let state = receipts_state(&pool, None, mailer.clone());
+    let app = app(state.clone());
+    let buyer = scratch_wallet().address;
+    let (_, session) = session_order_fixture(&state, &buyer).await;
+    let pi = unique("pi_receipt");
+    let paid = session_event(
+        "checkout.session.completed",
+        &session,
+        &pi,
+        true,
+        Some("buyer@example.org"),
+    );
+    assert_eq!(deliver(&app, &paid).await.1["detail"], "processed");
+
+    let held = Arc::new(HeldName {
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    let sender = Arc::new(Sender {
+        mailer: mailer.clone(),
+        names: Some(held.clone()),
+        links: links(),
+    });
+    let pass = tokio::spawn({
+        let (pool, sender) = (pool.clone(), sender.clone());
+        async move { receipts::run_pass(&pool, &sender, None).await.unwrap() }
+    });
+    held.entered.notified().await;
+    let refund = json!({ "id": unique("evt_receipt_refund"), "type": "charge.refunded", "data": { "object": { "payment_intent": pi, "amount_refunded": 500 } } }).to_string();
+    assert_eq!(deliver(&app, &refund).await.1["detail"], "processed");
+    held.release.notify_one();
+    let summary = pass.await.unwrap();
+    assert_eq!((summary.claimed, summary.sent, summary.skipped), (1, 0, 1));
+    assert!(
+        mailer.sent().is_empty(),
+        "no success email for a refunded purchase"
+    );
+    assert_eq!(
+        receipt(&pool, &session).await.map(|r| (r.0, r.3)),
+        Some((
+            "skipped".into(),
+            Some("the purchase is refunded before its receipt went out".into())
+        ))
+    );
+}
+
+/// Log lines written while a test runs, captured on its thread.
+#[derive(Clone, Default)]
+struct Logs(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Logs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+    type Writer = Logs;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl Logs {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// A Stripe that refuses every session read with an error naming an address.
+async fn refusing_stripe() -> String {
+    let app = Router::new().route(
+        "/v1/checkout/sessions/{id}",
+        axum::routing::get(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({ "error": { "type": "invalid_request_error", "code": "resource_missing", "param": "id", "message": "No such session for stripe-side@example.org" } })),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    url
+}
+
+/// A provider refusal that echoes the recipient, and a Stripe error that
+/// names an address, leave no address in a log line, a stored error or a
+/// response, the account email the operator never typed included.
+#[tokio::test]
+async fn an_echoed_recipient_reaches_no_log_row_or_response() {
+    let logs = Logs::default();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .finish(),
+    );
+    let Some(db) = OwnDatabase::create("receipt_echo").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let echo = |to: &str| {
+        SendFailure::Permanent(format!(
+            "sendgrid 400 Bad Request: {to} is not a valid recipient"
+        ))
+    };
+    let mailer = Recorder::failing(vec![
+        echo("account@example.org"),
+        echo("account@example.org"),
+        echo("given@example.org"),
+    ]);
+    let state = receipts_state(&pool, Some(refusing_stripe().await), mailer.clone());
+    let app = app(state.clone());
+    let buyer = scratch_wallet().address;
+    // Bound, not inlined: sqlx logs statements, and the check below is about
+    // the node's own lines.
+    sqlx::query("INSERT INTO social.subscriptions (address, email) VALUES ($1, $2)")
+        .bind(&buyer)
+        .bind("account@example.org")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let session = settle_by_intent(&app, &state, &buyer).await;
+    let summary = pass(&pool, state.receipts.get().unwrap(), &state).await;
+    assert_eq!(summary.failed, 1);
+    assert_eq!(
+        receipt(&pool, &session).await,
+        Some((
+            "failed".into(),
+            None,
+            1,
+            Some("sendgrid 400 Bad Request: <address> is not a valid recipient".into()),
+            None
+        ))
+    );
+
+    let mut bearer = HeaderMap::new();
+    bearer.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {ADMIN_TOKEN}").parse().unwrap(),
+    );
+    for body in [
+        json!({ "address": buyer }),
+        json!({ "address": buyer, "email": "given@example.org" }),
+    ] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/test-purchase-email",
+            bearer.clone(),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{v}");
+        assert!(!v.to_string().contains('@'), "{v}");
+        assert!(v.to_string().contains("<address>"), "{v}");
+    }
+
+    // A thread-scoped capture can miss a callsite another test thread hits at
+    // the same time (the worker's failure line logs the stored error checked
+    // above), so the presence check is on the Stripe read only this test
+    // reaches; nothing captured may hold an address.
+    let text = logs.text();
+    assert!(
+        text.contains("type=invalid_request_error code=resource_missing param=id"),
+        "{text}"
+    );
+    assert!(!text.contains("@example.org"), "{text}");
+}
+
+/// The test route reads its body by hand: a missing or non-string wallet, a
+/// non-string email or a body that is not an object is upstream's 400 on
+/// both mounts, never a 422.
+#[tokio::test]
+async fn a_malformed_test_send_is_a_400_on_both_mounts() {
+    let Some(db) = OwnDatabase::create("receipt_body").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mailer = Recorder::configured();
+    let state = receipts_state(&pool, None, mailer.clone());
+    let credits_mount = app(state.clone());
+    let shop_mount = Router::new().nest("/shop-api", super::shop_router(state.clone()));
+    let wallet = scratch_wallet().address;
+    let mut bearer = HeaderMap::new();
+    bearer.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {ADMIN_TOKEN}").parse().unwrap(),
+    );
+    for (mount, path) in [
+        (&credits_mount, "/credits/admin/test-purchase-email"),
+        (&shop_mount, "/shop-api/admin/credits/test-purchase-email"),
+    ] {
+        for body in [
+            json!({}),
+            json!({ "address": 5 }),
+            json!({ "address": null }),
+            json!({ "address": wallet, "email": 5 }),
+            json!([wallet]),
+        ] {
+            let (status, _, v) =
+                send(mount, "POST", path, bearer.clone(), Some(body.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{path} {body}: {v}");
+        }
+        let (status, _, v) = send(
+            mount,
+            "POST",
+            path,
+            bearer.clone(),
+            Some(json!({ "address": wallet })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {v}");
+        assert_eq!(v["reason"], "no recipient", "{path}: {v}");
+    }
+    assert!(mailer.sent().is_empty());
+}
+
+#[test]
+fn every_address_in_a_failure_is_redacted() {
+    for (raw, shown) in [
+        ("sendgrid 400: buyer@example.org", "sendgrid 400: <address>"),
+        (
+            "to <Buyer.Name+x@sub.example.org>, cc a@b",
+            "to <<address>>, cc <address>",
+        ),
+        ("sendgrid 503", "sendgrid 503"),
+        ("", ""),
+    ] {
+        assert_eq!(receipts::redact_addresses(raw), shown, "{raw}");
+    }
+}
+
+#[test]
+fn a_stripe_error_keeps_only_its_kind() {
+    assert_eq!(
+        super::stripe::stripe_error(
+            r#"{"error":{"type":"invalid_request_error","code":"resource_missing","param":"customer_email","message":"No such customer: buyer@example.org"}}"#
+        ),
+        "type=invalid_request_error code=resource_missing param=customer_email"
+    );
+    for body in [
+        "buyer@example.org",
+        "",
+        r#"{"error":{"message":"buyer@example.org"}}"#,
+        r#"{"error":{"type":"buyer@example.org"}}"#,
+    ] {
+        assert_eq!(super::stripe::stripe_error(body), "unclassified", "{body}");
+    }
+}
