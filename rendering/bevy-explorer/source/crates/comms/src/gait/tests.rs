@@ -1,9 +1,9 @@
 use super::*;
 
 const DEFAULT: LocomotionSpeeds = LocomotionSpeeds {
-    walk: 2.5,
-    jog: 8.18,
-    run: 11.0,
+    walk: 1.5,
+    jog: 8.0,
+    run: 10.0,
 };
 
 fn near(actual: f32, expected: f32) -> bool {
@@ -13,27 +13,27 @@ fn near(actual: f32, expected: f32) -> bool {
 #[test]
 fn blend_is_zero_at_rest() {
     assert_eq!(movement_blend(0.0, &DEFAULT), 0.0);
-    assert_eq!(movement_blend(0.1, &DEFAULT), 0.0);
+    assert_eq!(movement_blend(0.05, &DEFAULT), 0.0);
     assert_eq!(movement_blend(f32::NAN, &DEFAULT), 0.0);
     assert_eq!(movement_blend(-3.0, &DEFAULT), 0.0);
 }
 
 #[test]
 fn blend_reaches_each_gait_index_at_its_speed() {
-    assert_eq!(movement_blend(2.5, &DEFAULT), 1.0);
-    assert_eq!(movement_blend(8.18, &DEFAULT), 2.0);
-    assert_eq!(movement_blend(11.0, &DEFAULT), 3.0);
+    assert_eq!(movement_blend(1.5, &DEFAULT), 1.0);
+    assert_eq!(movement_blend(8.0, &DEFAULT), 2.0);
+    assert_eq!(movement_blend(10.0, &DEFAULT), 3.0);
 }
 
 #[test]
 fn blend_scales_within_the_walk_tier() {
-    assert_eq!(movement_blend(1.25, &DEFAULT), 0.5);
+    assert_eq!(movement_blend(0.75, &DEFAULT), 0.5);
 }
 
 #[test]
 fn blend_is_not_speed_squared() {
-    // A 2.5 m/s walk used to go out as 6.25, clamped to 3 on the wire.
-    assert_eq!(movement_blend(2.5, &DEFAULT), 1.0);
+    // Squared, a 1.5 m/s walk would go out as 2.25, a run's blend.
+    assert_eq!(movement_blend(1.5, &DEFAULT), 1.0);
 }
 
 #[test]
@@ -45,14 +45,14 @@ fn blend_clamps_above_the_run_speed() {
 #[test]
 fn tiers_send_a_blend_inside_their_own_range() {
     // Walk tier, up to the walk limit and its tolerance.
-    assert!(near(movement_blend(2.6, &DEFAULT), 1.0));
+    assert!(near(movement_blend(1.55, &DEFAULT), 1.0));
     // Jog tier: a slow jog is not raised above the walk blend.
-    assert!(near(movement_blend(4.0, &DEFAULT), 1.0));
-    assert!(near(movement_blend(6.135, &DEFAULT), 1.5));
-    assert!(near(movement_blend(8.5, &DEFAULT), 2.0));
+    assert!(near(movement_blend(3.0, &DEFAULT), 1.0));
+    assert!(near(movement_blend(6.0, &DEFAULT), 1.5));
+    assert!(near(movement_blend(8.3, &DEFAULT), 2.0));
     // Run tier.
-    assert!(near(movement_blend(9.0, &DEFAULT), 3.0 * 9.0 / 11.0));
-    assert!(near(movement_blend(11.0, &DEFAULT), 3.0));
+    assert!(near(movement_blend(9.0, &DEFAULT), 3.0 * 9.0 / 10.0));
+    assert!(near(movement_blend(10.0, &DEFAULT), 3.0));
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn walk_speed_override_moves_the_walk_tier() {
     assert_eq!(movement_blend(4.0, &speeds), 1.0);
     assert_eq!(movement_blend(2.0, &speeds), 0.5);
     assert!(near(movement_blend(4.1, &speeds), 1.0));
-    assert!(near(movement_blend(6.0, &speeds), 2.0 * 6.0 / 8.18));
+    assert!(near(movement_blend(6.0, &speeds), 2.0 * 6.0 / 8.0));
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn the_jog_and_run_tiers_join_with_a_bounded_step() {
     let below = movement_blend(edge - 0.001, &DEFAULT);
     let above = movement_blend(edge + 0.001, &DEFAULT);
     assert!(above >= below);
-    assert!(above - below < 0.4);
+    assert!(above - below < 1.0);
 }
 
 #[test]

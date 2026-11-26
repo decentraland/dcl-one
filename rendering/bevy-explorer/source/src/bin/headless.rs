@@ -195,7 +195,9 @@ fn parse_args() -> Args {
 }
 
 /// harness support: a seeded wallet gives a deterministic address, so livekit tokens
-/// (identity == address) can be minted before the process starts
+/// (identity == address) can be minted before the process starts. harness-util derives the
+/// same key through the wallet crate; services/catalyst/comms-e2e/src/identity.rs derives it
+/// on its own with rand_chacha and k256, so a change here or a rand or alloy bump must match it
 fn finalize_guest_wallet(wallet: &mut Wallet, seed: Option<u64>) {
     match seed {
         Some(seed) => {

@@ -257,9 +257,9 @@ State, in every build:
   on the player, nearest first, so part of the crowd is behind the camera.
   `seed <n>` gives the avatar at each position the same look in every session of one build, so
   two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
-  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
-  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range (1 to 100), and
+  `cap all` sets no cap, as the player's Unlimited Avatars setting does, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars and Unlimited Avatars settings, which it neither changes nor saves, until `cap` alone goes back
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
@@ -276,6 +276,15 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>)`: the time the sky shows. While
+  the scene the player stands in holds it (`/sky_state` `sceneLocked`), the Skybox menu is off
+  and a `/time` without `--force` moves the clock, not the sky. With the "Allow overriding
+  scene controls" setting on nothing is locked and a time the clock is stopped at here wins
+  until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
+  `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
+  `overrideAllowed`, the Skybox debug section's readings.
 - `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
   `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
   neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
@@ -304,6 +313,19 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
+- `/reaction_state`: the situational reactions, as JSON: `outbox` (the local user's picks not yet
+  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none
+  with no room to carry it), `received` (peers' messages), `queued` (the reactions waiting to
+  play, and the senders with any waiting or inside the gap after their last), `played`,
+  `streamed` (the reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause:
+  `blocked`, `duplicate`, `unknownEmoji`, `rateLimited` and `queueFull`. The counts are of the
+  session.
+  `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
+  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
+  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
@@ -420,6 +442,12 @@ On the web only:
 - `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
   reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
   each relay at its next step. The reply names the mode; an unknown name fails with the list.
+
+Movement:
+
+- `/movement_state`: the active locomotion settings, the last completed movement step's
+  `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
+  and its height over it (the debug panel's Locomotion section).
 
 The HUD and input:
 

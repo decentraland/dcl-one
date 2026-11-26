@@ -39,9 +39,9 @@ use collectibles::{
 use console::DoAddConsoleCommand;
 use hover_glow::{can_glow, set_hover_glows};
 use scene_material::{
-    SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-    SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-    SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
+    SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_MESH_TAG,
+    SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
 pub mod animate;
@@ -84,6 +84,8 @@ pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
 mod processing_timing;
+#[cfg(feature = "explorer")]
+mod reaction;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -232,6 +234,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(AvatarTexturePlugin);
         app.add_plugins(DynamicNametagPlugin);
         app.add_plugins(NametagPlugin);
+        app.add_plugins(reaction::ReactionPlugin);
         app.add_plugins(JumpMarkerPlugin);
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
@@ -714,8 +717,7 @@ impl AvatarRenderDefinition {
             SCENE_MATERIAL_NO_DITHERING_MESH_TAG
         } else {
             0
-        }) | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-            | SCENE_MATERIAL_TOON_MESH_TAG
+        }) | SCENE_MATERIAL_TOON_MESH_TAG
     }
 
     /// the body model is guaranteed by spawn_scenes

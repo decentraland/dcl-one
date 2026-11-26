@@ -20,7 +20,10 @@
 //!   whatever it was (`retired`, `released`, `expired`: a cancel or an expiry
 //!   is not proof a signed credit went unused), and its hash is queued for
 //!   revocation. A debit the balance cannot cover rolls back and is retried
-//!   by the reconciler's full pass.
+//!   by the reconciler's full pass. A credit used after its hold was released
+//!   or expired, one consumed near its MANA cap, and one its wallet cannot
+//!   cover each queue an alert (`alerts.rs`): the first two in the
+//!   settlement's transaction, the last once that rolled back.
 //! - **Revocation** ([`Revoker`], the `credits-settlement` job): the outbox
 //!   `credits.revocations` is drained with `revokeCredits(bytes32[])` from
 //!   the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is
@@ -37,8 +40,10 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use async_trait::async_trait;
 use sqlx::Row;
 
+use super::alerts;
 use super::errors::ApiError;
 use super::events;
+use super::metrics;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
@@ -468,7 +473,10 @@ impl Credits {
         let oracle_decimals: Option<i16> = row.get("oracle_decimals");
         let credit_hash: Option<String> = row.get("credit_hash");
         // Released or expired: its hold no longer counted against the balance.
-        let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        let status: String = row.get("status");
+        let recovered = matches!(status.as_str(), "released" | "expired");
+        // A later log of an already consumed credit (a remainder) moves no pledge.
+        let newly_consumed = status != "consumed";
         let trade_id: Option<String> = row.get("trade_id");
         // Another pass settled this log while this one waited for the lock.
         if let Some(recorded) = sqlx::query(
@@ -580,6 +588,25 @@ impl Credits {
             Err(e) => {
                 tx.rollback().await?;
                 tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
+                // Once per log, however often the fold retries it. A failed
+                // insert is logged and the pass goes on: the next fold retries
+                // the debit and queues the alert then.
+                let queued = async {
+                    alerts::record(
+                        &mut *self.pool.acquire().await?,
+                        alerts::UNPAID_CONSUMPTION,
+                        &format!("{chain_id}:{}:{}", c.block_number, c.log_index),
+                        serde_json::json!({
+                            "salt": c.salt, "address": address, "status": status, "kind": kind,
+                            "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                        }),
+                    )
+                    .await
+                }
+                .await;
+                if let Err(error) = queued {
+                    tracing::error!(credit = %c.salt, %error, "queueing the unpaid-consumption alert failed; the next fold retries it");
+                }
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,
@@ -609,7 +636,38 @@ impl Credits {
         if let Some(hash) = credit_hash {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
+        if recovered {
+            alerts::record(
+                &mut tx,
+                alerts::RECOVERED_CONSUMPTION,
+                &c.salt,
+                serde_json::json!({
+                    "salt": c.salt, "address": address, "status": status, "usdCents": usd_cents,
+                    "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                }),
+            )
+            .await?;
+        }
+        alerts::record_cap_near_limit(&mut tx, &c.salt, &c.tx_hash).await?;
+        // The feed's line, once: a replayed debit was reported when recorded.
+        if kind == "purchase" && !spent.replayed {
+            alerts::record_purchase_settled(
+                &mut tx,
+                &c.salt,
+                chain_id,
+                &c.tx_hash,
+                &c.value_wei,
+                recovered,
+            )
+            .await?;
+        }
         tx.commit().await?;
+        // This pass inserted the log's settlement row (its key), so the log
+        // and the pledge's move are counted once, after the commit.
+        metrics::settlement(kind, recovered);
+        if newly_consumed {
+            metrics::pledges(metrics::Pledge::Consumed, 1);
+        }
         // The settlement row's key makes this the one pass that recorded the
         // purchase, so it is reported once, after the commit: one event per
         // line, as credits-server reported one per intent. A purchase debit
@@ -923,6 +981,8 @@ pub fn spawn_settlement_job(
     }
     let gate = Arc::new(PassGate::new(JOB_NAME));
     let report = Arc::new(StaleProcessingReport::default());
+    // The pass's gauges are cleared when the lease they were set under ends.
+    let gauges = Arc::new(metrics::LeaseGauges::settlement());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -933,6 +993,7 @@ pub fn spawn_settlement_job(
             let revoker = revoker.clone();
             let gate = gate.clone();
             let report = report.clone();
+            gauges.arm(&ctx.cancel);
             async move {
                 settlement_job_pass(
                     &credits,
@@ -993,11 +1054,24 @@ pub(super) async fn settlement_pass(
             "retired pack orders nobody paid within a session's lifetime"
         );
     }
-    if let Some(revoker) = revoker {
-        revoker
-            .run_pass(ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let revoked = match revoker {
+        Some(revoker) => Some(revoker.run_pass(ctx).await),
+        None => None,
+    };
+    if let Some(Ok(outcome)) = &revoked {
+        metrics::revocations(outcome.sent, outcome.confirmed, outcome.failed);
+    }
+    // The settlement gauges, from one read per pass, taken whatever the
+    // revoker did (an RPC outage is when pending revocations matter); a
+    // failed read leaves them as they were and never fails the pass.
+    match metrics::Snapshot::read(credits).await {
+        Ok(snapshot) => snapshot.record(),
+        Err(e) => {
+            tracing::warn!(error = %e, "credits metrics snapshot failed; gauges keep their last values")
+        }
+    }
+    if let Some(Err(e)) = revoked {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(true)
 }

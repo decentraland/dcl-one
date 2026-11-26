@@ -6,13 +6,16 @@
     SELECT a.network,a.block_number,a.log_index,a.ordinal,a.currency,a.buyer,a.seller,e.kind AS venue_kind
     FROM shop.sale_asset a JOIN prefix p USING(network)
     JOIN shop.sale_execution e ON (e.network,e.block_number,e.log_index)=(a.network,a.block_number,a.log_index)
-    WHERE a.block_number<=p.block_number AND a.price>0
-      -- Fixed-price MANA orders and bids already record both participants
-      -- in the account totals. Store and trade payments can name others.
-      AND e.kind IN ('store','trade')
-      AND (e.kind<>'trade' OR NOT EXISTS (
-        SELECT FROM shop.sale_asset other WHERE (other.network,other.block_number,other.log_index)=
-            (a.network,a.block_number,a.log_index) AND other.ordinal<>a.ordinal))
+    WHERE a.block_number<=p.block_number AND e.kind IN ('store','trade')
+      -- Fixed-price orders and bids already record both participants in the
+      -- account totals. A single-token trade can prove them without a price.
+      AND ((e.kind='store' AND a.price>0) OR (e.kind='trade'
+        AND NOT EXISTS (
+            SELECT FROM shop.sale_asset other WHERE (other.network,other.block_number,other.log_index)=
+                (a.network,a.block_number,a.log_index) AND other.ordinal<>a.ordinal)
+        AND EXISTS (
+            SELECT FROM shop.sale_payment m WHERE (m.network,m.block_number,m.log_index)=
+                (a.network,a.block_number,a.log_index) AND m.consideration AND m.gross>0)))
 ), native_accounts AS (
     SELECT a.network,w.address
     FROM inventory_assets a
@@ -21,8 +24,8 @@
     UNION
     SELECT a.network,w.address
     FROM inventory_assets a JOIN shop.sale_payment m ON
-        (m.network,m.block_number,m.log_index,m.currency)=(a.network,a.block_number,a.log_index,a.currency)
-        AND (a.venue_kind='trade' OR m.ordinal=a.ordinal)
+        (m.network,m.block_number,m.log_index)=(a.network,a.block_number,a.log_index)
+        AND (a.venue_kind='trade' OR (m.ordinal=a.ordinal AND m.currency=a.currency))
     CROSS JOIN LATERAL (VALUES (nullif(m.payer,a.buyer)),(nullif(m.beneficiary,a.seller))) w(address)
     WHERE m.consideration AND m.gross>0 AND w.address IS NOT NULL
     UNION

@@ -2164,7 +2164,7 @@ mod bounds_tests {
             "fenced-replaced",
         ] {
             let bus = Arc::new(InProcessBus::new());
-            let plan = Arc::new(std::sync::Mutex::new(PeerClusterSnapshot {
+            let plan = Arc::new(parking_lot::Mutex::new(PeerClusterSnapshot {
                 selected_origin: 1,
                 selected_identity: Some(1),
                 assignment_state: 1,
@@ -2179,9 +2179,7 @@ mod bounds_tests {
                 pending_takeovers: vec![],
             }));
             let replies = plan.clone();
-            bus.respond_to_requests(Arc::new(move |_, _| {
-                Ok(replies.lock().unwrap().encode_to_vec())
-            }));
+            bus.respond_to_requests(Arc::new(move |_, _| Ok(replies.lock().encode_to_vec())));
             let state = crate::archipelago::test_support::state_over(
                 crate::archipelago::Settings::for_tests(),
                 bus.clone(),
@@ -2211,8 +2209,7 @@ mod bounds_tests {
             let queue = Arc::new(Queue::default());
             let mut credential = frame(Some(owner.clone()), true);
             credential.message = Message::Binary(vec![9].into());
-            credential.pulse_admission =
-                PulseAdmissionStamp::from_snapshot(&plan.lock().unwrap(), 0);
+            credential.pulse_admission = PulseAdmissionStamp::from_snapshot(&plan.lock(), 0);
             if change.starts_with("fenced-") {
                 credential.fence_bound = true;
                 credential.permit = state
@@ -2228,11 +2225,11 @@ mod bounds_tests {
                 pending.done = true;
             }
             match change {
-                "version" => plan.lock().unwrap().assignment_version += 1,
-                "source" => plan.lock().unwrap().source_incarnation = "next".into(),
-                "realm" => plan.lock().unwrap().realm = "next".into(),
-                "floor" => plan.lock().unwrap().token_not_before = Some(1),
-                "pass" => plan.lock().unwrap().pass += 1,
+                "version" => plan.lock().assignment_version += 1,
+                "source" => plan.lock().source_incarnation = "next".into(),
+                "realm" => plan.lock().realm = "next".into(),
+                "floor" => plan.lock().token_not_before = Some(1),
+                "pass" => plan.lock().pass += 1,
                 "fenced-current" => {}
                 "fenced-replaced" => {
                     state.registry.on_v4_peer_connected_with_realm_epoch(
@@ -2248,7 +2245,7 @@ mod bounds_tests {
                     let response = plan.clone();
                     bus.respond_to_requests(Arc::new(move |_, _| {
                         close.close();
-                        Ok(response.lock().unwrap().encode_to_vec())
+                        Ok(response.lock().encode_to_vec())
                     }));
                 }
                 _ => unreachable!(),

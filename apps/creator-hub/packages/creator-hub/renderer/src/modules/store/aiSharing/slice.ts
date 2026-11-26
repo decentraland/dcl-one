@@ -43,6 +43,8 @@ export interface DigestsState {
   generation: number;
   digests: api.AiSharingDigest[];
   next: string | null;
+  // Pages on screen, so a reload after an erasure brings back as many.
+  pages: number;
 }
 
 export interface WalletBackoff {
@@ -83,8 +85,15 @@ const initialState: AiSharingState = {
   queueShown: 0,
   versionMismatch: false,
   shared: { status: 'idle', generation: 0, turns: [], next: null, erasing: [] },
-  digests: { status: 'idle', generation: 0, digests: [], next: null },
+  digests: { status: 'idle', generation: 0, digests: [], next: null, pages: 0 },
 };
+
+/** A rejection from a load that a newer reset or erasure already replaced. */
+const isStale = (payload: unknown, generation: number) =>
+  typeof payload === 'object' &&
+  payload !== null &&
+  'generation' in payload &&
+  payload.generation !== generation;
 
 const slice = createSlice({
   name: 'aiSharing',
@@ -186,9 +195,11 @@ const slice = createSlice({
           ? payload.digests
           : [...state.digests.digests, ...payload.digests];
         state.digests.next = payload.next;
+        state.digests.pages = payload.reset ? payload.pages : state.digests.pages + payload.pages;
         state.digests.status = 'loaded';
       })
-      .addCase(loadDigests.rejected, state => {
+      .addCase(loadDigests.rejected, (state, { payload }) => {
+        if (isStale(payload, state.digests.generation)) return;
         state.digests.status = 'failed';
       })
       .addCase(eraseSharedTurn.pending, (state, { meta }) => {

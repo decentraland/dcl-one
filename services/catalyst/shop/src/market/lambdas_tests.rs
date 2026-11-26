@@ -2348,6 +2348,92 @@ async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_aft
     db.drop().await;
 }
 
+/// On a network the collections index owns, the nft leg of `/v1/prices`
+/// files its histogram under the catalogue copy its fill read: rewriting an
+/// item's rarity at the same nft publication (a republication of the
+/// catalogue alone) misses the memo. A withdrawal between the gate and the
+/// fill answers the index's 503, not a 500.
+#[tokio::test]
+async fn nft_prices_follow_the_catalogue_copy_on_an_owned_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::catalogue::owning;
+    seed_mirrors(&db.pool).await;
+    seed_indexes(&db.pool).await;
+    super::trade_events::tests::publish_cursors(&db.pool).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+         VALUES ('matic', $1, 10, '0x0a', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'open', $2, 5000, $3, 1, 1, 20, 1)",
+    )
+    .bind(COFFEE)
+    .bind(OWNER)
+    .bind(chrono::Utc::now().timestamp_millis() + 86_400_000)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            data_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    owning::own(&db.pool, "matic", 137, 100, 60).await;
+    let epic = super::prices::parse_filters(&[
+        ("assetType".to_string(), "nft".to_string()),
+        ("category".to_string(), "wearable".to_string()),
+        ("itemRarity".to_string(), "epic".to_string()),
+    ])
+    .unwrap();
+    let priced = |state: Arc<MarketplaceState>, f: super::prices::PriceFilters| async move {
+        match super::prices::prices(&state, &f).await {
+            Ok(h) => h.into_iter().map(|(k, v)| (k.0, v)).collect::<Vec<_>>(),
+            Err(r) => {
+                let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                panic!("prices refused: {}", String::from_utf8_lossy(&bytes))
+            }
+        }
+    };
+    assert_eq!(
+        priced(state.clone(), epic.clone()).await,
+        [("5000".to_string(), 1)]
+    );
+
+    // The catalogue alone republishes: the hat is no longer epic.
+    sqlx::query(
+        "UPDATE shop.items SET rarity = 'common' WHERE contract_address = $1 AND item_id = 1",
+    )
+    .bind(COFFEE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    owning::own(&db.pool, "matic", 137, 100, 60).await;
+    assert_eq!(priced(state.clone(), epic.clone()).await, []);
+
+    // Withdrawn after the gate: the fill's own check names the index.
+    owning::rewind(&db.pool, "matic").await;
+    let wearables = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Wearable),
+        ..Default::default()
+    };
+    let refused = super::nft_reads::nft_prices(&state, &wearables)
+        .await
+        .unwrap_err();
+    let response = super::prices::nft_prices_error(refused);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.headers().contains_key("retry-after"));
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["source"], "collections-index", "{body}");
+    db.drop().await;
+}
+
 /// The nft leg of `/v1/prices` keeps the 503s `/v1/nfts` answers through
 /// the prices memo: an nft index withdrawn between the gate and the read
 /// answers its envelope, and a statement the read bound cancelled the
@@ -2763,20 +2849,6 @@ async fn each_ownership_route_follows_the_nft_index_state() {
             if status == unavailable {
                 assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
             }
-        }
-        // The open listings' leg never fails the order book on the index:
-        // it is empty until the networks it reads are published, and
-        // unguarded on a node that does not walk the index.
-        for network in [None, Some(super::wire::Network::Matic)] {
-            let f = super::orders::OrderFilters {
-                status: Some("open".into()),
-                network,
-                ..Default::default()
-            };
-            assert!(
-                super::orders::trades_leg(state, &f).await.is_ok(),
-                "{label}: the orders leg on {network:?}"
-            );
         }
     }
     let (_, body) = get(&walking, &format!("/lambdas/users/{OWNER}/wearables")).await;

@@ -8,8 +8,12 @@
 //! ([`ChainRetry`]).
 
 use bevy::prelude::*;
-use common::structs::{
-    AvatarDynamicState, MoveKind, OutOfWorld, PlayerEmoteTriggered, PlayerTeleported, PrimaryUser,
+use common::{
+    dynamics::landed,
+    structs::{
+        AvatarDynamicState, MoveKind, OutOfWorld, PlayerEmoteTriggered, PlayerTeleported,
+        PrimaryUser,
+    },
 };
 
 use wallet::Wallet;
@@ -143,7 +147,7 @@ fn footing(dynamics: &AvatarDynamicState) -> Footing {
     if dynamics.own_displacement == Vec3::ZERO {
         return Footing::Standing;
     }
-    let airborne = dynamics.ground_height > 0.2
+    let airborne = !landed(dynamics.ground_height)
         || matches!(
             dynamics.move_kind,
             MoveKind::Jump

@@ -1271,6 +1271,12 @@ fn island_and_journey_refuse_any_variable_naming_an_outside_host() {
             "{key}={value}"
         );
     }
+    // The purchase receipt's images are a link mail clients follow, like
+    // SHOP_BASE_URL: a CDN never stops an island or a journey from starting.
+    for posture in ["island", "journey"] {
+        let images = ("SHOP_EMAIL_ASSETS_URL", "https://cdn.example.org/email");
+        assert_eq!(refusal(&[db, (ENV, posture), images]), None, "{posture}");
+    }
     let err = refusal(&[db, (ENV, "journey"), ("NATS_URL", "nats://192.0.2.7:4222")]).unwrap();
     assert!(err.contains("NATS_URL names 192.0.2.7"), "{err}");
     assert_eq!(

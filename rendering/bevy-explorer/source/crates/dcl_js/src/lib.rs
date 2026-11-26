@@ -234,7 +234,7 @@ pub fn init_state(
     state.put(Vec::<SceneLogMessage>::default());
     state.put(SceneResourceCounters::default());
     state.put(SceneElapsedTime(0.0));
-    state.put(TimeOfDay { time: 0. });
+    state.put(TimeOfDay::default());
     state.put(CameraFov::default());
     state.put(dcl_component::SceneOrigin(scene_origin));
     state.put(kill_flag);

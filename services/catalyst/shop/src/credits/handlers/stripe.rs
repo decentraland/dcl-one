@@ -1,6 +1,7 @@
 //! `POST /stripe/webhook`: the signature is verified over the raw body
 //! before any row is touched; then ONE transaction lands the event claim,
-//! the purchase flip and the wallet move, granting `purchases.credits`
+//! the purchase flip, the wallet move and the purchase's receipt row
+//! (`receipts.rs`, sent after the commit), granting `purchases.credits`
 //! (captured at intent/session creation), never the event's metadata, and
 //! only for a settled payment in the purchase's currency and amount. A
 //! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
@@ -37,11 +38,16 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
+use crate::credits::alerts;
 use crate::credits::errors::ApiError;
 use crate::credits::events;
+use crate::credits::metrics::{Facts, PurchaseOutcome, ReversalKind};
 use crate::credits::packs::{Charge, MarkPaidOutcome, ReversalOutcome, SettledPurchase};
+use crate::credits::receipts;
 use crate::credits::store::Credits;
-use crate::credits::stripe::{SIGNATURE_TOLERANCE_SECS, verify_stripe_signature};
+use crate::credits::stripe::{
+    SIGNATURE_TOLERANCE_SECS, session_buyer_email, verify_stripe_signature,
+};
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
@@ -115,6 +121,8 @@ pub async fn webhook(
         .unwrap_or(JsonValue::Null);
 
     let mut granted = None;
+    // What this transaction makes true, recorded once it commits.
+    let mut facts = Facts::default();
     match event_type.as_str() {
         "payment_intent.succeeded" => {
             let pi_id = object
@@ -130,11 +138,13 @@ pub async fn webhook(
                 event_id: &event_id,
                 event_type: &event_type,
                 by: SettledBy::PaymentIntent(pi_id),
+                buyer_email: None,
             };
-            granted = credit_settled(&state, &mut tx, outcome, settled).await?;
+            granted = credit_settled(&state, &mut tx, outcome, settled, &mut facts).await?;
         }
         "checkout.session.completed" | "checkout.session.async_payment_succeeded" => {
-            granted = settle_session(&state, &mut tx, &object, &event_id, &event_type).await?;
+            granted = settle_session(&state, &mut tx, &object, &event_id, &event_type, &mut facts)
+                .await?;
         }
         "checkout.session.expired" => {
             mark_session_terminal(&mut tx, &object, &event_id, "abandoned", None).await?;
@@ -147,21 +157,26 @@ pub async fn webhook(
             mark_session_terminal(&mut tx, &object, &event_id, "failed", reason).await?;
         }
         "charge.refunded" => {
-            apply_partial_refund(&state, &mut tx, &object, &event_id).await?;
+            apply_partial_refund(&state, &mut tx, &object, &event_id, &mut facts).await?;
         }
         "charge.dispute.created" if is_inquiry(&object) => {
             // An inquiry withdraws no funds; `charge.dispute.funds_withdrawn` reports one that escalates.
             tracing::info!(event_id = %event_id, status = object.get("status").and_then(|v| v.as_str()).unwrap_or(""), "dispute inquiry opened; nothing revoked");
         }
         "charge.dispute.created" | "charge.dispute.funds_withdrawn" => {
-            apply_full_reversal(&state, &mut tx, &object, &event_id, "disputed").await?;
+            apply_full_reversal(&state, &mut tx, &object, &event_id, "disputed", &mut facts)
+                .await?;
         }
         _ => {}
     }
 
+    if let Some(purchase) = &granted {
+        alerts::record_pack_credited(&mut tx, purchase, &event_id).await?;
+    }
     tx.commit().await?;
     // After the commit, so a rolled-back grant is never reported; past the
     // event's claim, so a redelivery never reports it twice.
+    facts.record();
     if let Some(purchase) = granted {
         report_pack_granted(&state, &purchase);
     }
@@ -229,6 +244,7 @@ async fn settle_session(
     object: &JsonValue,
     event_id: &str,
     event_type: &str,
+    facts: &mut Facts,
 ) -> Result<Option<SettledPurchase>, ApiError> {
     let session_id = object
         .get("id")
@@ -259,8 +275,9 @@ async fn settle_session(
         event_id,
         event_type,
         by: SettledBy::Session(session_id),
+        buyer_email: session_buyer_email(object),
     };
-    credit_settled(state, tx, outcome, settled).await
+    credit_settled(state, tx, outcome, settled, facts).await
 }
 
 /// The settled event a purchase flip answers, for its logs.
@@ -268,6 +285,9 @@ struct Settled<'a> {
     event_id: &'a str,
     event_type: &'a str,
     by: SettledBy<'a>,
+    /// The address the buyer typed into Checkout, which only a session
+    /// event carries: the receipt's first recipient.
+    buyer_email: Option<String>,
 }
 
 /// The key the event matched its purchase by.
@@ -293,18 +313,22 @@ impl<'a> SettledBy<'a> {
 /// the grant is the same whichever lands first. Its ledger row is described
 /// from the purchase row, and the reversals recorded before it are applied
 /// for the payment intent the purchase holds, which an unpaid completion
-/// may have recorded before an event that names none. Answers the purchase
-/// it granted, which the webhook reports once its transaction commits.
+/// may have recorded before an event that names none. The purchase's
+/// receipt is enqueued in the same transaction (`receipts.rs`), so it is
+/// sent only once the grant commits. Answers the purchase it granted, which
+/// the webhook reports once its transaction commits.
 async fn credit_settled(
     state: &SharedState,
     tx: &mut Tx<'_>,
     outcome: MarkPaidOutcome,
     settled: Settled<'_>,
+    facts: &mut Facts,
 ) -> Result<Option<SettledPurchase>, ApiError> {
     let Settled {
         event_id,
         event_type,
         by,
+        buyer_email,
     } = settled;
     let (matched_by, matched) = by.parts();
     match outcome {
@@ -346,11 +370,18 @@ async fn credit_settled(
                 .await?;
             match purchase.payment_intent.as_deref() {
                 Some(payment_intent) => {
-                    apply_recorded_reversals(state, tx, payment_intent, event_id).await?;
+                    apply_recorded_reversals(state, tx, payment_intent, event_id, facts).await?;
                 }
                 None => {
                     tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled purchase holds no payment_intent: a later refund or dispute cannot find it");
                 }
+            }
+            receipts::enqueue_in_tx(tx, purchase.id, buyer_email.as_deref()).await?;
+            facts.purchase(PurchaseOutcome::Granted);
+            // The counter is USD cents: a pack priced in another currency
+            // (the admin accepts any code) adds none.
+            if purchase.currency.eq_ignore_ascii_case("usd") {
+                facts.granted_cents(purchase.amount_cents);
             }
             return Ok(Some(purchase));
         }
@@ -358,29 +389,36 @@ async fn credit_settled(
             expected_cents,
             charged_cents,
         } => {
+            facts.purchase(PurchaseOutcome::AmountMismatch);
             tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, expected_cents, charged_cents, "settled payment's amount differs from its purchase; NOT granting credits: verify the payment at Stripe");
         }
         MarkPaidOutcome::CurrencyMismatch { expected, charged } => {
+            facts.purchase(PurchaseOutcome::CurrencyMismatch);
             tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, expected = %expected, charged = %charged, "settled payment's currency differs from its purchase; NOT granting credits: verify the payment at Stripe");
         }
         MarkPaidOutcome::NotSettleable { status } if status == "failed" => {
+            facts.purchase(PurchaseOutcome::PaymentFailed);
             tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled payment for an order whose payment failed; NOT granting credits: verify the payment at Stripe");
         }
         MarkPaidOutcome::NotSettleable { status } => {
+            facts.purchase(PurchaseOutcome::AlreadySettled);
             // The other settled event of a delayed payment, or a later
             // one: Stripe delivers both, in no set order.
             tracing::info!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, order_status = %status, "settled payment already credited by an earlier event; no grant");
         }
-        MarkPaidOutcome::NoPurchase => match by {
-            // A Checkout payment's intent is unknown until its session's
-            // event records it, and that event credits the order then.
-            SettledBy::PaymentIntent(_) => {
-                tracing::info!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled payment intent matched no purchase; no grant");
+        MarkPaidOutcome::NoPurchase => {
+            facts.purchase(PurchaseOutcome::NoPurchase);
+            match by {
+                // A Checkout payment's intent is unknown until its session's
+                // event records it, and that event credits the order then.
+                SettledBy::PaymentIntent(_) => {
+                    tracing::info!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled payment intent matched no purchase; no grant");
+                }
+                SettledBy::Session(_) => {
+                    tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled checkout.session matched no order; no grant");
+                }
             }
-            SettledBy::Session(_) => {
-                tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled checkout.session matched no order; no grant");
-            }
-        },
+        }
     }
     Ok(None)
 }
@@ -434,6 +472,7 @@ async fn apply_partial_refund(
     tx: &mut Tx<'_>,
     object: &JsonValue,
     event_id: &str,
+    facts: &mut Facts,
 ) -> Result<(), ApiError> {
     let Some(pi_id) = object.get("payment_intent").and_then(|v| v.as_str()) else {
         tracing::warn!(event_id = %event_id, "charge.refunded has no payment_intent; nothing to reverse");
@@ -448,7 +487,8 @@ async fn apply_partial_refund(
         .credits
         .record_charge_refund_in_tx(tx, pi_id, cumulative_refunded_cents, event_id)
         .await?;
-    log_reversal(&outcome, event_id, pi_id, "charge.refunded");
+    log_reversal(&outcome, event_id, pi_id, "charge.refunded", facts);
+    alerts::record_reversal(tx, &outcome, event_id, pi_id, "refund").await?;
     Ok(())
 }
 
@@ -458,6 +498,7 @@ async fn apply_full_reversal(
     object: &JsonValue,
     event_id: &str,
     status: &str,
+    facts: &mut Facts,
 ) -> Result<(), ApiError> {
     let Some(pi_id) = object.get("payment_intent").and_then(|v| v.as_str()) else {
         tracing::warn!(event_id = %event_id, status = %status, "reversal event has no payment_intent; nothing to reverse");
@@ -468,11 +509,20 @@ async fn apply_full_reversal(
         .credits
         .record_full_reversal_in_tx(tx, pi_id, status, event_id)
         .await?;
-    log_reversal(&outcome, event_id, pi_id, status);
+    log_reversal(&outcome, event_id, pi_id, status, facts);
+    alerts::record_reversal(tx, &outcome, event_id, pi_id, "chargeback").await?;
     Ok(())
 }
 
-fn log_reversal(outcome: &ReversalOutcome, event_id: &str, pi_id: &str, kind: &str) {
+/// Logs a reversal and adds it to the transaction's [`Facts`] when it
+/// charged credits back.
+fn log_reversal(
+    outcome: &ReversalOutcome,
+    event_id: &str,
+    pi_id: &str,
+    kind: &str,
+    facts: &mut Facts,
+) {
     match outcome {
         ReversalOutcome::Reversed {
             address,
@@ -480,7 +530,14 @@ fn log_reversal(outcome: &ReversalOutcome, event_id: &str, pi_id: &str, kind: &s
             removed,
             shortfall,
             has_shortfall,
+            dispute,
         } => {
+            let reversal = if *dispute {
+                ReversalKind::Dispute
+            } else {
+                ReversalKind::Refund
+            };
+            facts.reversal(reversal, *has_shortfall);
             tracing::info!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, address = %address, charged_back = %charged_back, removed = %removed, "fiat reversed: revoked the credits this purchase granted (atomic)");
             if *has_shortfall {
                 tracing::error!(
@@ -510,13 +567,28 @@ async fn apply_recorded_reversals(
     tx: &mut Tx<'_>,
     payment_intent: &str,
     event_id: &str,
+    facts: &mut Facts,
 ) -> Result<(), ApiError> {
     if let Some(outcome) = state
         .credits
         .apply_recorded_reversals_in_tx(tx, payment_intent, event_id)
         .await?
     {
-        log_reversal(&outcome, event_id, payment_intent, "recorded reversal");
+        log_reversal(
+            &outcome,
+            event_id,
+            payment_intent,
+            "recorded reversal",
+            facts,
+        );
+        alerts::record_reversal(
+            tx,
+            &outcome,
+            event_id,
+            payment_intent,
+            "refund or chargeback received before the payment settled",
+        )
+        .await?;
     }
     Ok(())
 }

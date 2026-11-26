@@ -36,8 +36,8 @@ use common::{
     sets::SceneSets,
     structs::{
         server_mode, AvatarDynamicState, CurrentRealm, EngineMovementControl, PermissionType,
-        PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser, ReturnedToWorld,
-        SceneMeta, StartupScenes, ZOrder,
+        PlayerAddress, PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser,
+        ReturnedToWorld, SceneMeta, StartupScenes, ZOrder,
     },
     util::{AsH160, TaskCompat, TaskExt, UrlLoopbackExt},
 };
@@ -1459,7 +1459,7 @@ impl ScenePresence<'_, '_> {
 }
 
 fn get_connected_players(
-    me: Res<Wallet>,
+    me: Query<&PlayerAddress, With<PrimaryUser>>,
     others: Query<&ForeignPlayer>,
     mut events: EventReader<RpcCallEvent>,
     presence: ScenePresence,
@@ -1480,7 +1480,7 @@ fn get_connected_players(
         // a headless server has no real local player — don't report its fake player as
         // a connected peer (it would appear as a ghost to every scene)
         let own = (!server_mode())
-            .then(|| me.address().map(|address| format!("{address:#x}")))
+            .then(|| me.single().ok().map(|address| format!("{:#x}", address.0)))
             .flatten();
         let results = others.chain(own).collect();
         response.send(results);
@@ -1488,8 +1488,7 @@ fn get_connected_players(
 }
 
 fn get_players_in_scene(
-    me: Query<Entity, With<PrimaryUser>>,
-    wallet: Res<Wallet>,
+    me: Query<(Entity, &PlayerAddress), With<PrimaryUser>>,
     others: Query<(Entity, &ForeignPlayer)>,
     mut events: EventReader<RpcCallEvent>,
     containing_scene: ContainingScene,
@@ -1504,11 +1503,9 @@ fn get_players_in_scene(
         let mut results = Vec::default();
         // skip the fake local player in server mode (see get_connected_players)
         if !server_mode() {
-            if let Ok(player) = me.single() {
+            if let Ok((player, &PlayerAddress(address))) = me.single() {
                 if containing_scene.get(player).contains(scene) {
-                    if let Some(address) = wallet.address() {
-                        results.push(format!("{address:#x}"));
-                    }
+                    results.push(format!("{address:#x}"));
                 }
             }
         }
@@ -1627,8 +1624,10 @@ fn event_player_moved_scene(
     mut enter_senders: Local<HashMap<Entity, RpcEventSender>>,
     mut leave_senders: Local<HashMap<Entity, RpcEventSender>>,
     mut current_scene: Local<HashMap<Address, Entity>>,
-    players: Query<(Entity, Option<&ForeignPlayer>), Or<(With<PrimaryUser>, With<ForeignPlayer>)>>,
-    me: Res<Wallet>,
+    players: Query<
+        (Entity, &PlayerAddress, Option<&ForeignPlayer>),
+        Or<(With<PrimaryUser>, With<ForeignPlayer>)>,
+    >,
     containing_scene: ContainingScene,
     scenes: Query<(Entity, &RendererSceneContext)>,
     contexts: Res<CrdtContexts>,
@@ -1669,18 +1668,14 @@ fn event_player_moved_scene(
     // ForeignPlayer is the PrimaryUser, which is not a real participant on a server)
     let new_scene: HashMap<_, _> = players
         .iter()
-        .filter(|(_, f)| !(server_mode() && f.is_none()))
-        .flat_map(|(p, f)| {
+        .filter(|(_, _, f)| !(server_mode() && f.is_none()))
+        .flat_map(|(p, address, f)| {
             if let Some(scene) = f.and_then(|f| scene_of_context.get(&f.context)) {
-                return Some((f.unwrap().address, *scene));
+                return Some((address.0, *scene));
             }
-            containing_scene.get_parcel(p).map(|parcel| {
-                (
-                    f.map(|f| f.address)
-                        .unwrap_or(me.address().unwrap_or_default()),
-                    parcel,
-                )
-            })
+            containing_scene
+                .get_parcel(p)
+                .map(|parcel| (address.0, parcel))
         })
         .collect();
 
