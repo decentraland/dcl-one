@@ -21,3 +21,6 @@ anyhow = "1"
 
 [dev-dependencies]
 livekit-api = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", default-features = false, features = ["access-token"] }
+
+[lints.clippy]
+unwrap_used = "deny"

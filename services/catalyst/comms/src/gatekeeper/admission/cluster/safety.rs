@@ -26,7 +26,7 @@ pub struct SafetyStore {
     pub(crate) pool: PgPool,
     generation_required: bool,
     quarantines:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, tokio::time::Instant>>>,
+        std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<Uuid, tokio::time::Instant>>>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SafetySnapshot {
@@ -519,7 +519,6 @@ impl SafetyStore {
         if matches!(outcome, Settlement::Quarantine(_)) {
             self.quarantines
                 .lock()
-                .unwrap()
                 .insert(id, tokio::time::Instant::now());
         }
         Ok(true)
@@ -652,7 +651,6 @@ impl SafetyStore {
         let first_seen = *self
             .quarantines
             .lock()
-            .unwrap()
             .entry(id)
             .or_insert_with(tokio::time::Instant::now);
         let durable_due:bool=sqlx::query_scalar("SELECT quarantine_until<=timezone('UTC',clock_timestamp()) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1")
@@ -701,7 +699,7 @@ impl SafetyStore {
             .bind(id).bind(next).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         Self::advance(&mut lease.tx, &wallet, None).await?;
         lease.commit().await?;
-        self.quarantines.lock().unwrap().remove(&id);
+        self.quarantines.lock().remove(&id);
         Ok(Some(Dispatch {
             dispatch_id: next,
             cutoff,
@@ -761,7 +759,7 @@ impl SafetyStore {
 
     #[cfg(test)]
     pub(crate) fn elapse_quarantine_for_test(&self, id: Uuid, seconds: u64) {
-        self.quarantines.lock().unwrap().insert(
+        self.quarantines.lock().insert(
             id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(seconds),
         );
@@ -1343,7 +1341,7 @@ mod durable_tests {
         );
         // A configured island TTL shorter than fixed60s refresh lifetime must
         // still not permit a final removal after only61 seconds of observation.
-        store.quarantines.lock().unwrap().insert(
+        store.quarantines.lock().insert(
             initial.dispatch_id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(61),
         );
@@ -1354,7 +1352,7 @@ mod durable_tests {
                 .unwrap()
                 .is_none()
         );
-        store.quarantines.lock().unwrap().insert(
+        store.quarantines.lock().insert(
             initial.dispatch_id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(123),
         );

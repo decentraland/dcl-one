@@ -434,7 +434,7 @@ mod tests {
             .await
             .unwrap();
         client.flush().await.unwrap();
-        let source = Arc::new(std::sync::Mutex::new(None::<PeerClusterSnapshot>));
+        let source = Arc::new(parking_lot::Mutex::new(None::<PeerClusterSnapshot>));
         let current = source.clone();
         let responder = client.clone();
         let worker = tokio::spawn(async move {
@@ -445,7 +445,7 @@ mod tests {
                 ) else {
                     continue;
                 };
-                let snapshot = current.lock().unwrap().clone();
+                let snapshot = current.lock().clone();
                 if let Some(snapshot) = snapshot
                     && snapshot.wallet == lookup.wallet
                     && snapshot.session == lookup.session
@@ -525,7 +525,7 @@ mod tests {
                 .pulse_admission
                 .unwrap();
             assert_eq!(restored, stamp, "{}", vector["id"]);
-            *source.lock().unwrap() = Some(snapshot.clone());
+            *source.lock() = Some(snapshot.clone());
             let (status, bytes) = call(&app, owner.headers("{}").await, b"").await;
             assert_eq!(status, StatusCode::OK, "{}", vector["id"]);
             let response = IslandRefreshResponse::decode(bytes).unwrap();
@@ -590,13 +590,13 @@ mod tests {
                         changed.selected_origin = 0;
                     }
                 }
-                *source.lock().unwrap() = Some(changed);
+                *source.lock() = Some(changed);
                 let (status, body) = call(&app, owner.headers("{}").await, b"").await;
                 assert_ne!(status, StatusCode::OK, "{} {field}", vector["id"]);
                 assert!(body.is_empty());
             }
             snapshot.pass += 1;
-            *source.lock().unwrap() = Some(snapshot);
+            *source.lock() = Some(snapshot);
             assert_eq!(
                 call(&app, owner.headers("{}").await, b"").await.0,
                 StatusCode::OK
@@ -604,19 +604,19 @@ mod tests {
         }
         // Pulse has no reply for another wallet or session whatever the vector,
         // so each case waits out the refresh deadline once, not per vector.
-        let current = source.lock().unwrap().clone().expect("a valid vector");
+        let current = source.lock().clone().expect("a valid vector");
         for field in ["wallet", "session"] {
             let mut changed = current.clone();
             match field {
                 "wallet" => changed.wallet = SESSION_A.into(),
                 _ => changed.session = SESSION_A.into(),
             }
-            *source.lock().unwrap() = Some(changed);
+            *source.lock() = Some(changed);
             let (status, body) = call(&app, owner.headers("{}").await, b"").await;
             assert_ne!(status, StatusCode::OK, "{field}");
             assert!(body.is_empty());
         }
-        *source.lock().unwrap() = Some(current);
+        *source.lock() = Some(current);
         assert_eq!(
             call(&app, owner.headers("{}").await, b"").await.0,
             StatusCode::OK
@@ -859,7 +859,7 @@ mod tests {
             let owner = Delegate::new();
             seed(&pool, &owner.wallet(), &owner.session(), "island-C7", false).await;
             let (entered, waiting) = std::sync::mpsc::channel();
-            let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+            let release = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
             let gate = release.clone();
             let hook = Arc::new(move |n| {
                 if n == 1 {
@@ -867,13 +867,12 @@ mod tests {
                     entered.send(()).unwrap();
                     tokio::task::block_in_place(|| {
                         let (lock, ready) = &*gate;
-                        let (guard, timeout) = ready
-                            .wait_timeout_while(
-                                lock.lock().unwrap(),
-                                Duration::from_secs(5),
-                                |released| !*released,
-                            )
-                            .unwrap();
+                        let mut guard = lock.lock();
+                        let timeout = ready.wait_while_for(
+                            &mut guard,
+                            |released| !*released,
+                            Duration::from_secs(5),
+                        );
                         assert!(
                             *guard && !timeout.timed_out(),
                             "test must release paused lookup"
@@ -940,7 +939,7 @@ mod tests {
                 }
                 _ => {}
             }
-            *release.0.lock().unwrap() = true;
+            *release.0.lock() = true;
             release.1.notify_one();
             let (status, body) = work.await.unwrap();
             if status != StatusCode::OK {
