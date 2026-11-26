@@ -283,9 +283,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
     same state (a focus pause is the exception, below).
-  - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
-    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
-    microphone; a device picker is next work.
+  - Don't play calls at the nearby-voice volume. Calls and community voice streams follow
+    `Voice Chat Volume` and nearby players `Voice Volume`, both scaled by `Master`. Capture uses
+    the system's default microphone; a device picker is next work.
   - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
     re-triggered every 3.056 s (its length) while ringing.
   - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
@@ -388,6 +388,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     unity-explorer's user menu has them; the request, blocked-list and community-member menus
     do not carry them.
   - Don't apply it to calls or community streams: as in unity-explorer it is nearby voice only.
+- **Videos and streams have their own volume.** unity-explorer
+  (`04c7a938ba06bffab6450070e49b5b6645b94bc5`) plays a scene's media players at the world
+  volume, the `In-World Music & SFX` slider. Here `Streaming Volume` sets the video players,
+  audio streams and livestreams that scenes play, and `Scene Volume` sets scene sounds only, so
+  a player can quiet one without the other. A saved configuration without a streaming value
+  starts at 100 and does not copy the saved Scene Volume: a missing value takes its default, as
+  for every other setting. A player who decreased Scene Volume sets the new slider once.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:

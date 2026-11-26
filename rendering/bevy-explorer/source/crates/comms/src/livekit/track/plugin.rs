@@ -566,7 +566,7 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    // a call's voices follow the voice chat volume, casts and streams the scene's
+    // a call's voices follow the voice chat volume, casts and streams the streaming volume
     let in_voice_room = published_by
         .get(entity)
         .ok()
@@ -575,7 +575,7 @@ fn audio_track_is_now_subscribed(
     let destination: kira::OutputDestination = if in_voice_room {
         (&livekit_audio_manager.voice_track).into()
     } else {
-        (&livekit_audio_manager.scene_track).into()
+        (&livekit_audio_manager.streaming_track).into()
     };
     let sound = StreamingSoundData::from_decoder(decoder)
         .output_destination(destination)
@@ -972,11 +972,11 @@ fn update_track_volume(
     audio_settings: Res<AudioSettings>,
 ) {
     for (livekit_track, multiplier, proximity_microphone, voice_room) in tracks.into_inner() {
-        let Some(volume) = scene_track_volume(
+        let Some(volume) = streaming_track_volume(
             proximity_microphone,
             voice_room,
             multiplier.map(|volume| **volume),
-            audio_settings.scene(),
+            audio_settings.streaming(),
         ) else {
             continue;
         };
@@ -988,18 +988,18 @@ fn update_track_volume(
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn scene_track_volume(
+fn streaming_track_volume(
     proximity_microphone: bool,
     voice_room: bool,
     multiplier: Option<f32>,
-    scene_volume: f32,
+    streaming_volume: f32,
 ) -> Option<f32> {
     // Nearby and call microphone gains are owned by their respective panning systems.
     if proximity_microphone || voice_room {
         return None;
     }
     Some(super::finite_gain(
-        super::transmitter_volume(multiplier) * scene_volume,
+        super::transmitter_volume(multiplier) * streaming_volume,
     ))
 }
 
@@ -1008,35 +1008,44 @@ mod browser_volume_tests {
     use super::*;
 
     #[test]
-    fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
-        assert_eq!(scene_track_volume(true, false, None, 0.5), None);
-        assert_eq!(scene_track_volume(true, false, Some(0.25), 0.5), None);
+    fn proximity_microphone_gain_is_never_written_by_the_streaming_volume_system() {
+        assert_eq!(streaming_track_volume(true, false, None, 0.5), None);
+        assert_eq!(streaming_track_volume(true, false, Some(0.25), 0.5), None);
         assert_eq!(
-            scene_track_volume(false, false, Some(0.25), 0.5),
+            streaming_track_volume(false, false, Some(0.25), 0.5),
             Some(0.125)
         );
     }
 
     #[test]
-    fn scene_volume_is_finite_and_within_unit_range() {
-        assert_eq!(scene_track_volume(false, false, Some(4.0), 0.5), Some(0.5));
-        assert_eq!(scene_track_volume(false, false, Some(-1.0), 0.5), Some(0.0));
+    fn streaming_volume_is_finite_and_within_unit_range() {
         assert_eq!(
-            scene_track_volume(false, false, Some(f32::NAN), 0.5),
+            streaming_track_volume(false, false, Some(4.0), 0.5),
+            Some(0.5)
+        );
+        assert_eq!(
+            streaming_track_volume(false, false, Some(-1.0), 0.5),
             Some(0.0)
         );
         assert_eq!(
-            scene_track_volume(false, false, Some(f32::INFINITY), 0.5),
+            streaming_track_volume(false, false, Some(f32::NAN), 0.5),
             Some(0.0)
         );
-        assert_eq!(scene_track_volume(false, false, None, f32::NAN), Some(0.0));
-        assert_eq!(scene_track_volume(false, false, None, 2.0), Some(1.0));
+        assert_eq!(
+            streaming_track_volume(false, false, Some(f32::INFINITY), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(
+            streaming_track_volume(false, false, None, f32::NAN),
+            Some(0.0)
+        );
+        assert_eq!(streaming_track_volume(false, false, None, 2.0), Some(1.0));
     }
 
     #[test]
-    fn call_microphone_gain_is_never_written_by_the_scene_volume_system() {
-        assert_eq!(scene_track_volume(false, true, None, 0.5), None);
-        assert_eq!(scene_track_volume(false, true, Some(0.25), 0.0), None);
+    fn call_microphone_gain_is_never_written_by_the_streaming_volume_system() {
+        assert_eq!(streaming_track_volume(false, true, None, 0.5), None);
+        assert_eq!(streaming_track_volume(false, true, Some(0.25), 0.0), None);
     }
 }
 

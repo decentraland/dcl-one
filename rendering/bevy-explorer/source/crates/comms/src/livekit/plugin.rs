@@ -245,8 +245,8 @@ fn verify_player_update_tasks(mut player_update_tasks: PlayerUpdateTasksMut) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn build_kira_audio_manager(mut commands: Commands, audio_settings: Option<Res<AudioSettings>>) {
-    let (scene, voice) = audio_settings
-        .map(|s| (s.scene(), s.voice_chat()))
+    let (streaming, voice) = audio_settings
+        .map(|s| (s.streaming(), s.voice_chat()))
         .unwrap_or((1.0, 1.0));
     let mut manager = match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
         Ok(manager) => manager,
@@ -254,14 +254,14 @@ fn build_kira_audio_manager(mut commands: Commands, audio_settings: Option<Res<A
             debug_panic!("Failed to livekit build AudioManager due to '{err}'.");
         }
     };
-    let scene_track = manager.add_sub_track(TrackBuilder::new().volume(scene as f64));
+    let streaming_track = manager.add_sub_track(TrackBuilder::new().volume(streaming as f64));
     let voice_track = manager.add_sub_track(TrackBuilder::new().volume(voice as f64));
-    match (scene_track, voice_track) {
-        (Ok(scene_track), Ok(voice_track)) => {
+    match (streaming_track, voice_track) {
+        (Ok(streaming_track), Ok(voice_track)) => {
             debug!("Livekit AudioManager built.");
             commands.insert_resource(LivekitAudioManager {
                 manager,
-                scene_track,
+                streaming_track,
                 voice_track,
             });
         }
@@ -277,8 +277,8 @@ fn respond_to_audio_settings_change(
     audio_settings: Res<AudioSettings>,
 ) {
     livekit_audio_manager
-        .scene_track
-        .set_volume(audio_settings.scene() as f64, Tween::default());
+        .streaming_track
+        .set_volume(audio_settings.streaming() as f64, Tween::default());
     livekit_audio_manager
         .voice_track
         .set_volume(audio_settings.voice_chat() as f64, Tween::default());
