@@ -91,7 +91,7 @@
 .flapIcon {
   position: absolute;
   left: 5px;
-  top: 4px;
+  top: var(--dcl-space-4);
   display: flex;
   color: var(--dcl-neutrals-snow);
 }
@@ -113,7 +113,7 @@
 .smart {
   position: absolute;
   left: 54px;
-  top: 8px;
+  top: var(--dcl-space-8);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -127,7 +127,7 @@
 }
 .slotNumber {
   position: absolute;
-  right: 8px;
+  right: var(--dcl-space-8);
   top: 6px;
   color: var(--dcl-neutrals-shadow);
   font-size: var(--dcl-font-size-body-sm);
@@ -237,7 +237,7 @@
 }
 .count {
   position: absolute;
-  right: 8px;
+  right: var(--dcl-space-8);
   bottom: 6px;
   padding: 0 6px;
   border-radius: var(--dcl-radius-sm);

@@ -693,7 +693,7 @@
   },
   "library/ui/components/EquippedItemCard/EquippedItemCard.module.css": {
     "primitives": 0,
-    "tokens": 12
+    "tokens": 13
   },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
@@ -861,7 +861,7 @@
   },
   "library/ui/components/WearableCard/WearableCard.module.css": {
     "primitives": 0,
-    "tokens": 30
+    "tokens": 34
   },
   "library/ui/components/WearableCard/rarity.module.css": {
     "primitives": 0,

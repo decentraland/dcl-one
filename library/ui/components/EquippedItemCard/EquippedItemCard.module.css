@@ -185,7 +185,7 @@
    the tab order, where a keyboard user would land on something they cannot see. */
 .shopBtn {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + var(--dcl-space-4));
   left: 10px;
   right: 10px;
   text-decoration: none;
