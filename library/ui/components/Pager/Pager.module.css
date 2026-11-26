@@ -1,0 +1,93 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not from Figma's pagination and page-number (Navigation): the Explorer HUD's pager. Its violet washes, the white hover of the `shop` arrows and the 10px
+   corners of the `shop` current page have no token. */
+@layer dcl.components {
+  .root {
+    display: flex;
+    align-items: center;
+    gap: 14.5px;
+  }
+  .pages {
+    display: flex;
+    gap: 6px;
+  }
+  .arrow,
+  .page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: var(--dcl-radius-sm);
+    color: var(--dcl-neutrals-snow);
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 100ms linear; /* = HUD --dur-tap */
+  }
+  .arrow {
+    width: 26px;
+    height: 26px;
+    background: rgba(161, 75, 243, 0.28);
+  }
+  .arrow:hover {
+    background: #a14bf3; /* = HUD --slot-edge */
+  }
+  .arrow:active {
+    background: var(--dcl-transparencies-black-10);
+  }
+  .glyph {
+    display: flex;
+  }
+  .next .glyph {
+    transform: scaleX(-1);
+  }
+  .page {
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 600;
+  }
+  .page:hover {
+    background: rgba(161, 75, 243, 0.28);
+  }
+  .current,
+  .current:hover {
+    background: var(--dcl-brand-orange);
+  }
+
+  /* The `shop` variant: 38px round pages, white-washed arrows, an ellipsis after the window. */
+  .shop {
+    gap: 10px;
+  }
+  .shop .pages {
+    gap: 4px;
+  }
+  .shop .arrow {
+    background: var(--dcl-transparencies-white-20);
+  }
+  .shop .arrow:hover {
+    background: rgba(255, 255, 255, 0.26); /* = HUD --tab-hover */
+  }
+  .shop .page,
+  .more {
+    width: 38px;
+    height: 38px;
+  }
+  .shop .page {
+    border-radius: var(--dcl-radius-full);
+  }
+  .shop .current,
+  .shop .current:hover {
+    border-radius: 10px; /* = HUD --r-control */
+  }
+  .more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dcl-neutrals-snow);
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 600;
+  }
+}

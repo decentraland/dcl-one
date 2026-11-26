@@ -1,0 +1,72 @@
+/* Not in Figma: the Explorer HUD's top bar button, as the Lobby draws it. Its translucent black, its 5 % white
+   border and its grey hover have no token. */
+@layer dcl.components {
+  .root {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 42px;
+    margin: 0;
+    padding: 0;
+    border: 2px solid rgba(255, 255, 255, 0.05);
+    border-radius: 21px;
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--dcl-neutrals-snow);
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 100ms;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .root:hover,
+  .open,
+  .open:active {
+    background: rgba(90, 90, 90, 0.55);
+  }
+
+  .root:active {
+    background: rgba(0, 0, 0, 0.55);
+  }
+
+  .root:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .pill {
+    padding: 0 18px 0 14px;
+  }
+
+  .round {
+    width: 42px;
+  }
+
+  .lg {
+    height: 46px;
+    border-radius: 23px;
+  }
+
+  .round.lg {
+    width: 46px;
+  }
+
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    box-sizing: border-box;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--dcl-primary-primary);
+    color: var(--dcl-neutrals-snow);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+  }
+}

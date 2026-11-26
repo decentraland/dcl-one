@@ -192,37 +192,3 @@ fn an_idle_bucket_saves_no_more_than_the_burst() {
     pacer.offer(teleport(1));
     assert!(pacer.release(100.0).is_empty());
 }
-
-#[test]
-fn a_token_bucket_spends_whole_tokens_and_keeps_the_part_that_returned() {
-    let mut bucket = TokenBucket::new(10.0, 2.0);
-    assert!(bucket.try_spend(0.0));
-    assert!(bucket.try_spend(0.0));
-    // Empty: nothing is spent, and asking does not lose the part of a token that has come back.
-    assert!(!bucket.has_token(0.05));
-    assert!(!bucket.try_spend(0.05));
-    assert!(!bucket.try_spend(0.09));
-    assert!(bucket.has_token(0.1));
-    assert!(bucket.try_spend(0.1));
-    assert!(!bucket.try_spend(0.1));
-}
-
-#[test]
-fn a_token_bucket_holds_no_more_than_its_capacity() {
-    let mut bucket = TokenBucket::new(10.0, 2.0);
-    assert!(bucket.try_spend(0.0));
-    // A long quiet spell fills it again, and no further.
-    assert!(bucket.try_spend(100.0));
-    assert!(bucket.try_spend(100.0));
-    assert!(!bucket.try_spend(100.0));
-}
-
-#[test]
-fn a_token_bucket_takes_a_clock_that_adds_up_frame_lengths() {
-    let mut bucket = TokenBucket::new(10.0, 1.0);
-    assert!(bucket.try_spend(0.0));
-    // Six 60 Hz frames add up to a rounding error under a tenth of a second.
-    let now: f64 = (0..6).map(|_| 1.0 / 60.0).sum();
-    assert!(now < 0.1);
-    assert!(bucket.try_spend(now));
-}

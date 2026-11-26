@@ -219,10 +219,10 @@ fn closest_point_on_segment_to_line(a: vec3<f32>, b: vec3<f32>, o: vec3<f32>, d:
     return a + ab * t;
 }
 
-// discards fragments between the camera and the player
+// discards fragments in the cone between the camera and the player
 // base_opacity: the opacity the dither fades towards; 0 fades out fully
 // capsule: dither by the avatar capsule standing at capsule_root instead of by the fragment
-fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32, distance_dither: bool, base_opacity: f32, capsule_root: vec3<f32>, capsule: bool) -> Dither {
+fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32, base_opacity: f32, capsule_root: vec3<f32>, capsule: bool) -> Dither {
     // player is left of the view forward by 0.25 * clamp(camera distance, 0, 3). we use half of that as our target
     let view_fwd = -view.world_from_view[2].xyz;
     let view_right = view.world_from_view[0].xyz;
@@ -255,30 +255,7 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32
             // expand cone at further camera distances
             / (1.0 + max(0.0, (projection_length - depth)) / 10.0);
 
-        var use_distance = cone_distance;
-        // add transparency to fullscreen for near fragments 
-        if distance_dither {
-            let full_transparent_start_distance = depth * 0.0;
-            let full_transparent_end_distance = depth * 0.75;
-
-            let full_transparent_factor = saturate((projection_length - full_transparent_start_distance) / (full_transparent_end_distance - full_transparent_start_distance));
-
-            if cone_distance < 1.0 {
-                use_distance = mix(
-                    min(cone_distance, full_transparent_factor * 0.75), 
-                    cone_distance,
-                    full_transparent_factor,
-                );
-            } else {
-                use_distance = mix(
-                    full_transparent_factor * 0.75,
-                    min(pow(cone_distance, 0.5), 2.0),
-                    full_transparent_factor,
-                );
-            }
-        }
-
-        let opacity = use_distance 
+        let opacity = cone_distance
             // add opacity
             + 0.5 
             // remove further from target
@@ -286,7 +263,7 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32
             // add behind target
             + saturate(projection_length - depth) * 5.0;
 
-        let result = Dither(max(0.1, base_opacity + opacity * (1.0 - base_opacity)), 1.0 - saturate(use_distance));
+        let result = Dither(max(0.1, base_opacity + opacity * (1.0 - base_opacity)), 1.0 - saturate(cone_distance));
         if result.opacity < dither_threshold(ndc_position) {
             discard;
         }
@@ -297,14 +274,15 @@ fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32
 }
 
 // the camera-to-player dither of a tagged mesh, for the scene material's passes and the face
-// masks alike: skipped under the no-dithering tag, by the cone alone under the cone-only tag.
+// masks alike: the cone fade, skipped under the no-dithering tag and under the camera-obstacle
+// tag, which marks a scene mesh holding a collider the player camera is kept in front of.
 // instance_index: the mesh, whose origin is the capsule's root
 // A pipeline importing this needs scene_material::avatar_style_shader_defs
 #ifdef NO_DITHERING_MESH_TAG
 fn camera_dither(mesh_tag: u32, frag_coord: vec2<f32>, world_position: vec3<f32>, instance_index: u32, base_opacity: f32, capsule: bool) -> Dither {
-    if (mesh_tag & #{NO_DITHERING_MESH_TAG}) != 0u {
+    if (mesh_tag & (#{NO_DITHERING_MESH_TAG} | #{CAMERA_OBSTACLE_MESH_TAG})) != 0u {
         return Dither(1.0, 0.0);
     }
-    return discard_dither(frag_coord, world_position, view.user_value, (mesh_tag & #{CONE_ONLY_DITHER_MESH_TAG}) == 0u, base_opacity, mesh_functions::get_world_from_local(instance_index)[3].xyz, capsule);
+    return discard_dither(frag_coord, world_position, view.user_value, base_opacity, mesh_functions::get_world_from_local(instance_index)[3].xyz, capsule);
 }
 #endif
