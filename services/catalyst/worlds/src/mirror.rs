@@ -503,6 +503,10 @@ mod tests {
     /// `skybox_time: null`; only what the columns accept is copied.
     #[test]
     fn upstream_settings_are_copied_as_the_columns_accept_them() {
+        assert_eq!(valid_spawn(&json!(" 02 , -002 ")).as_deref(), Some("2,-2"));
+        assert_eq!(valid_spawn(&json!("150,-150")).as_deref(), Some("150,-150"));
+        assert_eq!(valid_spawn(&json!("151,0")), None);
+        assert_eq!(valid_spawn(&json!("0,-151")), None);
         let copy = WorldSettingsCopy::parse(&json!({
             "title": "Globe", "description": "", "content_rating": "X",
             "categories": ["art", 1, "games"], "skybox_time": null, "single_player": true,

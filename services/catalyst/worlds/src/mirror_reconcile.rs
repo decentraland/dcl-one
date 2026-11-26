@@ -128,11 +128,10 @@ async fn still_stored(
     Ok(())
 }
 
-/// Writes a source's settings answer onto a mirrored row that is not disabled, unless the owner
-/// that set its settings here still holds the name ([`mirror_keeps_local`], with [`name_holder`]). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
-/// plus one when a copied column changes and the source's is not ahead, so a consumer ordering
-/// by it never sees an update out of order (a row bumped by earlier ingests can be ahead of its
-/// source). A verified thumbnail alias is renewed even when the owner keeps local settings.
+/// Applies source settings to an enabled mirrored row. A current holder's local override keeps
+/// the other settings while spawn still follows the source. An unreadable thumbnail preserves
+/// the stored one. The settings version never decreases and advances when a versioned field
+/// changes. A verified thumbnail alias is renewed even when other settings stay local.
 async fn apply_settings(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,

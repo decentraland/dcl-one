@@ -679,7 +679,7 @@ fn first_nonempty(fields: &HashMap<String, Vec<String>>, key: &str) -> Option<St
     first_value(fields, key).filter(|s| !s.is_empty())
 }
 
-fn parse_coordinate(s: &str) -> Option<(i32, i32)> {
+pub(crate) fn parse_coordinate(s: &str) -> Option<(i32, i32)> {
     let p = Parcel::parse(s).ok()?;
     if !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&i64::from(p.x))
         || !(MIN_PARCEL_COORDINATE..=MAX_PARCEL_COORDINATE).contains(&i64::from(p.y))

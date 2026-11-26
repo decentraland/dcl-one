@@ -578,6 +578,7 @@ A difference not listed here is a gap, not a decision.
   the world's own name.
 - **Mirrored spawn.** A scheduled mirror refresh reads valid `spawn_coordinates`
   from the source's world settings even when the scene set is unchanged.
+  It stores coordinates as `x,y` and accepts each axis from -150 to 150.
   A missing or invalid setting leaves the spawn in place on that path.
   Spawn follows the source independently of owner overrides for other
   mirrored settings. A spawn-only refresh leaves `settings_version` unchanged.

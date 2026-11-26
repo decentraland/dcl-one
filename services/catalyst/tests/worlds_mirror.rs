@@ -2156,7 +2156,7 @@ async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
 
     fake.state.lock().settings.insert(
         world.into(),
-        json!({"spawn_coordinates": "2,2", "settings_version": 7}),
+        json!({"spawn_coordinates": " 02 , 002 ", "settings_version": 7}),
     );
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
     assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
@@ -2168,6 +2168,7 @@ async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
         Some(json!({"settings_version": 7})),
         Some(json!({"spawn_coordinates": null, "settings_version": 7})),
         Some(json!({"spawn_coordinates": "bad", "settings_version": 7})),
+        Some(json!({"spawn_coordinates": "151,2", "settings_version": 7})),
         Some(json!({"spawn_coordinates": 7, "settings_version": 7})),
         None,
     ] {

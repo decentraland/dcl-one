@@ -1,6 +1,5 @@
 //! Worlds mirror upstream.
 use super::*;
-use crate::comms::world_identity::Parcel;
 
 /// `{source}/world/{name}/{tail}` with the name as one percent-encoded path segment, so no
 /// name can add a segment, a query or a fragment to the upstream request.
@@ -318,7 +317,7 @@ pub(super) struct WorldSettingsCopy {
     pub(super) present: bool,
     pub(super) title: Option<String>,
     pub(super) description: Option<String>,
-    /// An unusable answer preserves the stored spawn.
+    /// A valid source spawn. Full sync may supply a fallback from about or the scenes.
     pub(super) spawn_coordinates: Option<String>,
     /// One of the ratings the column accepts, else none.
     pub(super) content_rating: Option<String>,
@@ -339,9 +338,8 @@ pub(super) struct WorldSettingsCopy {
 }
 
 pub(super) fn valid_spawn(value: &Value) -> Option<String> {
-    let coordinates = value.as_str()?;
-    Parcel::parse(coordinates).ok()?;
-    Some(coordinates.to_owned())
+    let (x, y) = crate::core::settings::parse_coordinate(value.as_str()?)?;
+    Some(format!("{x},{y}"))
 }
 
 impl WorldSettingsCopy {
