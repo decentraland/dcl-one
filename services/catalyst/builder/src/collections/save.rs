@@ -165,7 +165,9 @@ impl Deployment {
 /// `data` present and no claim of publication.
 pub fn standard_request(save: &CollectionSave, signer: &str) -> Result<(), ApiError> {
     if save.data.as_deref().is_none_or(str::is_empty) {
-        return Err(ApiError::http(200, "Could not get data from request"));
+        return Err(ApiError::thrown_without_status(
+            "Could not get data from request",
+        ));
     }
     if save.claims_publication {
         return Err(
@@ -218,8 +220,7 @@ pub fn standard_deployment(
 fn linked_contract_refusal(e: sqlx::Error) -> ApiError {
     match &e {
         sqlx::Error::Database(db) if db.constraint() == Some("collections_linked_contract_key") => {
-            ApiError::http(
-                200,
+            ApiError::thrown_without_status(
                 "duplicate key value violates unique constraint \"linkedContract_linkedNetwork_thirdPartyId_unique\"",
             )
         }
@@ -227,8 +228,7 @@ fn linked_contract_refusal(e: sqlx::Error) -> ApiError {
             if db.code().as_deref() == Some("P0001")
                 && db.message().starts_with("Columns linked_contract_address") =>
         {
-            ApiError::http(
-                200,
+            ApiError::thrown_without_status(
                 "Columns linked_contract_address, linked_contract_network cannot be set to null if they were previously not null",
             )
         }

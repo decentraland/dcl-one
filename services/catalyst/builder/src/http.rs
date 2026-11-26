@@ -37,12 +37,69 @@ pub enum Subject {
     Item,
 }
 
+/// Why a builder route refused a request: the one place each reason gets its
+/// status ([`Refusal::status`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// 400: the request or its body is not one the route takes.
+    Invalid,
+    /// 401: the caller's identity is unknown (no, a malformed or an
+    /// unverifiable signature).
+    Unauthenticated,
+    /// 403: the signer is known and holds no role the request needs.
+    Denied,
+    /// 404.
+    NotFound,
+    /// 408: an upload did not arrive in time.
+    TimedOut,
+    /// 409: the request conflicts with the current state.
+    Conflict,
+    /// 413: a body, an upload or a wallet's unpublished share is past its bound.
+    TooLarge,
+    /// 423: the collection is locked.
+    Locked,
+    /// 429: the caller or the node is past a rate or a daily bound.
+    TooMany,
+    /// 200 with `ok:false`: upstream's handler throws without a status.
+    ThrownWithoutStatus,
+    /// 500 with upstream's words, unlike a hidden internal failure.
+    Failed,
+    /// 502: a service the route waits on did not answer it.
+    BadGateway,
+    /// 503: the node can't tell yet; the client retries.
+    Unavailable,
+    /// 507: the node's unpublished share is past its bound.
+    StorageFull,
+}
+
+impl Refusal {
+    /// The status the refusal answers with.
+    pub fn status(self) -> u16 {
+        match self {
+            Self::ThrownWithoutStatus => 200,
+            Self::Invalid => 400,
+            Self::Unauthenticated => 401,
+            Self::Denied => 403,
+            Self::NotFound => 404,
+            Self::TimedOut => 408,
+            Self::Conflict => 409,
+            Self::TooLarge => 413,
+            Self::Locked => 423,
+            Self::TooMany => 429,
+            Self::Failed => 500,
+            Self::BadGateway => 502,
+            Self::Unavailable => 503,
+            Self::StorageFull => 507,
+        }
+    }
+}
+
 /// A builder route's failure, answered in upstream's envelope.
 #[derive(Debug)]
 pub enum ApiError {
-    /// A refusal with its status, error text and `data`.
-    Http {
-        status: u16,
+    /// A refusal with its reason, error text and `data`.
+    Refused {
+        refusal: Refusal,
         error: String,
         data: Value,
     },
@@ -55,38 +112,65 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    /// A refusal with `status`, `error` and empty `data`.
-    pub fn http(status: u16, error: impl Into<String>) -> Self {
-        Self::Http {
-            status,
+    /// A refusal for `refusal` with `error` and empty `data`.
+    pub fn refused(refusal: Refusal, error: impl Into<String>) -> Self {
+        Self::Refused {
+            refusal,
             error: error.into(),
             data: json!({}),
         }
     }
-    /// 400.
+    /// [`Refusal::Invalid`].
     pub fn bad_request(error: impl Into<String>) -> Self {
-        Self::http(400, error)
+        Self::refused(Refusal::Invalid, error)
     }
-    /// 401: the caller's identity is unknown (no, a malformed or an
-    /// unverifiable signature).
+    /// [`Refusal::Unauthenticated`].
     pub fn unauthorized(error: impl Into<String>) -> Self {
-        Self::http(401, error)
+        Self::refused(Refusal::Unauthenticated, error)
     }
-    /// 403: the signer is known and holds no role the request needs.
+    /// [`Refusal::Denied`].
     pub fn forbidden(error: impl Into<String>) -> Self {
-        Self::http(403, error)
+        Self::refused(Refusal::Denied, error)
     }
-    /// 404.
+    /// [`Refusal::NotFound`].
     pub fn not_found(error: impl Into<String>) -> Self {
-        Self::http(404, error)
+        Self::refused(Refusal::NotFound, error)
     }
-    /// 409: the request conflicts with the current state.
+    /// [`Refusal::TimedOut`].
+    pub fn timed_out(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::TimedOut, error)
+    }
+    /// [`Refusal::Conflict`].
     pub fn conflict(error: impl Into<String>) -> Self {
-        Self::http(409, error)
+        Self::refused(Refusal::Conflict, error)
     }
-    /// 503: the node can't tell yet; the client retries.
+    /// [`Refusal::TooLarge`].
+    pub fn too_large(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::TooLarge, error)
+    }
+    /// [`Refusal::TooMany`].
+    pub fn too_many(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::TooMany, error)
+    }
+    /// [`Refusal::ThrownWithoutStatus`].
+    pub fn thrown_without_status(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::ThrownWithoutStatus, error)
+    }
+    /// [`Refusal::Failed`].
+    pub fn failed(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::Failed, error)
+    }
+    /// [`Refusal::BadGateway`].
+    pub fn bad_gateway(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::BadGateway, error)
+    }
+    /// [`Refusal::Unavailable`].
     pub fn service_unavailable(error: impl Into<String>) -> Self {
-        Self::http(503, error)
+        Self::refused(Refusal::Unavailable, error)
+    }
+    /// [`Refusal::StorageFull`].
+    pub fn storage_full(error: impl Into<String>) -> Self {
+        Self::refused(Refusal::StorageFull, error)
     }
     /// 500, with `detail` logged and never answered.
     pub fn internal(detail: impl Into<String>) -> Self {
@@ -96,8 +180,8 @@ impl ApiError {
     /// The refusal with upstream's `data` for it.
     pub fn with_data(self, data: Value) -> Self {
         match self {
-            Self::Http { status, error, .. } => Self::Http {
-                status,
+            Self::Refused { refusal, error, .. } => Self::Refused {
+                refusal,
                 error,
                 data,
             },
@@ -108,7 +192,7 @@ impl ApiError {
     /// `withAuthentication`'s refusal: 401 `Unauthenticated`, `message`
     /// under `data`.
     pub fn unauthenticated(message: &str) -> Self {
-        Self::http(401, "Unauthenticated").with_data(json!({ "message": message }))
+        Self::unauthorized("Unauthenticated").with_data(json!({ "message": message }))
     }
 
     /// 409 for a write to published content; `action` is upstream's
@@ -121,7 +205,7 @@ impl ApiError {
                 "The collection that contains this item has been already published. The item can't be {action}."
             ),
         };
-        Self::http(409, error).with_data(json!({ "id": id }))
+        Self::conflict(error).with_data(json!({ "id": id }))
     }
 
     /// 423 for a write to a locked collection or one of its items.
@@ -132,7 +216,7 @@ impl ApiError {
                 format!("The collection for the item is locked. The item can't be {action}.")
             }
         };
-        Self::http(423, error).with_data(json!({ "id": id }))
+        Self::refused(Refusal::Locked, error).with_data(json!({ "id": id }))
     }
 
     /// `GET /v1/items/:collectionAddress/:itemId/contents` for an item no
@@ -140,13 +224,13 @@ impl ApiError {
     /// status, so it answers 200 with `ok:false` (its `Item.router.spec.ts`
     /// asserts it).
     pub fn item_does_not_exist() -> Self {
-        Self::http(200, "The item doesn't exist.")
+        Self::thrown_without_status("The item doesn't exist.")
     }
 
     /// The status the failure answers with.
     pub fn status(&self) -> u16 {
         match self {
-            Self::Http { status, .. } => *status,
+            Self::Refused { refusal, .. } => refusal.status(),
             Self::Database(_) | Self::Internal(_) => 500,
             Self::Limited(_) => 429,
         }
@@ -156,7 +240,7 @@ impl ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Http { error, .. } => f.write_str(error),
+            Self::Refused { error, .. } => f.write_str(error),
             Self::Database(e) => write!(f, "database error: {e}"),
             Self::Internal(m) => f.write_str(m),
             Self::Limited(_) => f.write_str(TOO_MANY),
@@ -191,11 +275,11 @@ impl IntoResponse for ApiError {
                 )
                     .into_response();
             }
-            Self::Http {
-                status,
+            Self::Refused {
+                refusal,
                 error,
                 data,
-            } => (status, error, data, None),
+            } => (refusal.status(), error, data, None),
             Self::Database(e) => (
                 500,
                 INTERNAL_MESSAGE.to_string(),
@@ -215,17 +299,21 @@ impl IntoResponse for ApiError {
                 }),
             ),
         };
-        let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let mut response = (
-            status,
-            Json(json!({ "ok": false, "data": data, "error": error })),
-        )
-            .into_response();
+        let mut response = envelope(status, &error, data);
         if let Some(failure) = failure {
             response.extensions_mut().insert(failure);
         }
         response
     }
+}
+
+fn envelope(status: u16, error: &str, data: Value) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        Json(json!({ "ok": false, "data": data, "error": error })),
+    )
+        .into_response()
 }
 
 /// `t` as `Date.prototype.toISOString` writes it.
@@ -275,7 +363,7 @@ pub async fn enveloped(method: Method, route: MatchedPath, mut response: Respons
     let (mut parts, _) = response.into_parts();
     parts.headers.remove(header::CONTENT_TYPE);
     parts.headers.remove(header::CONTENT_LENGTH);
-    let mut answer = ApiError::http(status, error).into_response();
+    let mut answer = envelope(status, error, json!({}));
     answer.headers_mut().extend(parts.headers);
     answer
 }

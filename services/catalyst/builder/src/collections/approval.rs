@@ -107,7 +107,11 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
     let root = match (third_parties::provider(&registry, &provider), virtual_party) {
         (Some(record), _) => record.root.clone().map_or(Value::Null, Value::String),
         (None, true) => json!(""),
-        (None, false) => return Err(ApiError::http(200, "The Third Party doesn't exists.")),
+        (None, false) => {
+            return Err(ApiError::thrown_without_status(
+                "The Third Party doesn't exists.",
+            ));
+        }
     };
     let consumed = third_parties::cheque_consumed(state, &cheque_provider, &receipt)
         .await

@@ -80,8 +80,7 @@ pub async fn forward(state: &State, email: &str, source: &str) -> Result<(), Api
     };
     if let Some(why) = refused {
         tracing::warn!(answer = %why, "the newsletter service did not take a subscription");
-        return Err(ApiError::http(
-            502,
+        return Err(ApiError::bad_gateway(
             "The newsletter service did not take the subscription",
         ));
     }
