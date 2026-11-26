@@ -1,7 +1,6 @@
+import type { IEngine, Entity, VideoEventsSystem } from '../../../packages/@dcl/ecs/src'
 import {
   Engine,
-  IEngine,
-  Entity,
   components,
   PointerEventType,
   InputAction,
@@ -10,8 +9,7 @@ import {
   LoadingState,
   TriggerAreaEventType,
   createVideoEventsSystem,
-  createTriggerAreaEventsSystem,
-  VideoEventsSystem
+  createTriggerAreaEventsSystem
 } from '../../../packages/@dcl/ecs/src'
 import { Quaternion, Vector3 } from '../../../packages/@dcl/sdk/math'
 import { createTestPointerDownCommand } from './utils'

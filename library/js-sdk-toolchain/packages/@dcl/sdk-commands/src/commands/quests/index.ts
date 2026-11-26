@@ -1,16 +1,17 @@
-import { Result } from 'arg'
+import type { Result } from 'arg'
 import { isAddress } from 'eth-connect'
 import { validateCreateQuest } from '@dcl/quests-client/dist-cjs/utils'
 import i18next from 'i18next'
 
 import { declareArgs } from '../../logic/args'
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { createQuestByPrompting, executeSubcommand, setUpManager, urlRegex } from './utils'
-import { CreateQuest } from './types'
+import type { CreateQuest } from './types'
 import { colors } from '../../components/log'
 import { CliError } from '../../logic/error'
 import { drainResponse } from '../../logic/fetch'
-import { dAppOptions, runDapp } from '../../run-dapp'
+import type { dAppOptions } from '../../run-dapp'
+import { runDapp } from '../../run-dapp'
 import { printError, printSuccess } from '../../logic/beautiful-logs'
 
 interface Options {

@@ -2,7 +2,8 @@
 // validation suite. Ported from the legacy builder's lib/getModelData; rendering (metrics +
 // thumbnails) is NOT done here — that comes from the WearablePreview iframe controller.
 import { loadGltfLoader, loadThree, type GLTF } from './three'
-import { ArmatureId, WearableCategory } from '@dcl/schemas'
+import type { WearableCategory } from '@dcl/schemas'
+import { ArmatureId } from '@dcl/schemas'
 import { ItemType } from './items'
 import { ItemFileError, MAX_EMOTE_DURATION, isImageFile } from './itemFiles'
 import { suggestWearableCategory } from './suggestWearableCategory'

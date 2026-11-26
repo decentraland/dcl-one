@@ -17,7 +17,7 @@ import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/weara
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
 import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
-import PreviewFrame, { previewBase, type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
+import PreviewFrame, { previewBase, UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
 import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
@@ -255,7 +255,10 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
           key={frame}
           options={options}
           replay={replay}
+          loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
           onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
+          // A fresh iframe has drawn nothing yet, even for the same scene (Unity booting again).
+          onReplaced={() => setDrawn(null)}
           onError={() => {
             // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame. Before the
             // renderer: a preview that asked for Unity and drew with Babylon got this far on Babylon.

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { Analytics } from '@segment/analytics-node'
 
-import { CliComponents } from '.'
+import type { CliComponents } from '.'
 import { colors } from './log'
 import { getGlobalDclRcPath, readStringConfig, writeGlobalConfig } from './config'
 import { getInstalledPackageVersion, getSdkCommandsVersion, getSegmentKey, isCI, isEditor } from '../logic/config'

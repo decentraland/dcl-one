@@ -49,7 +49,7 @@ pub async fn get_deployments(
         .status(StatusCode::OK)
         .header("content-type", "application/json")
         .body(axum::body::Body::from(response_bytes))
-        .unwrap())
+        .expect("a constant status and header always build a response"))
 }
 
 async fn fetch_deployments_response(state: &SharedState, query_string: &str) -> AppResult<Bytes> {

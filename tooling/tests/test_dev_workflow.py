@@ -22,7 +22,7 @@ CREATOR_HUB = WORKFLOW.with_name('creator-hub-ci.yml')
 
 def jobs():
     source = WORKFLOW.read_text().split('jobs:\n', 1)[1]
-    return dict(re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', source))
+    return dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
 
 
 def disk_steps():
@@ -372,7 +372,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
-        for name in ('development.yml', 'social-voice-release.yml'):
+        for name in ('development.yml', 'social-voice-release.yml', 'sdk.yml'):
             jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
             for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
@@ -381,7 +381,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'cargo clippy' in job or 'social-voice-release-test.sh' in job else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
@@ -396,7 +396,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 7)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -629,6 +629,17 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(dry_run, found[name])
                 self.assertRegex(found[name], r'(?m)^    needs: \[ changes, ')
+
+    def test_every_pull_request_runs_the_workflow_tests(self):
+        changes = jobs()['changes']
+        self.assertNotIn('continue-on-error', changes)
+        last = re.split(r'(?m)^      - ', changes)[-1]
+        self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
+                         ['name: Run the workflow tests',
+                          '        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                          'tooling.tests.test_ui_gallery_receipt.WorkflowTest '
+                          'tooling.tests.test_image_cache.CompileWorkflowTest'],
+                         msg='Changes must end with exactly this step, after the steps that set its outputs')
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']

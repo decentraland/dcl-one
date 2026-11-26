@@ -123,14 +123,12 @@ impl<'a> Context<'a> {
             Some(_) => return Err(invalid()),
             None => None,
         };
-        let request = match &realm {
-            RealmId::World(_) if scene.is_world_shaped() && supplied_parcel.is_some() => {
-                RoomRequest::Parcel {
-                    realm: &realm,
-                    parcel: supplied_parcel.unwrap(),
-                }
-            }
-            RealmId::World(world) if !scene.is_world_shaped() => RoomRequest::WorldScene {
+        let request = match (&realm, supplied_parcel) {
+            (RealmId::World(_), Some(parcel)) if scene.is_world_shaped() => RoomRequest::Parcel {
+                realm: &realm,
+                parcel,
+            },
+            (RealmId::World(world), _) if !scene.is_world_shaped() => RoomRequest::WorldScene {
                 world,
                 scene: &scene,
             },

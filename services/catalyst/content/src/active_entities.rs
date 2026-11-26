@@ -13,6 +13,7 @@ use super::query_params::{
     QueryParams, parse_content_pagination, parse_entity_type, parse_query_string,
     qs_get_filter_array, qs_get_string,
 };
+use super::read_through::active_entity_docs;
 use super::validation::{
     BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
     ordered_refusal_json, too_many_ids_or_pointers,
@@ -50,15 +51,14 @@ async fn lookup(
     use_ids: bool,
     values: &[String],
 ) -> AppResult<Vec<EntityDoc>> {
-    let mut docs = if let Some(read_through) = state.read_through() {
-        read_through.active_docs(use_ids, values).await?
-    } else if use_ids {
-        queries::active_entity_docs_by_ids(&state.pool, values).await?
-    } else {
-        queries::active_entity_docs_by_pointers(&state.pool, values).await?
-    };
-    retain_non_denylisted(&mut docs, &state.denylist);
-    Ok(docs)
+    Ok(active_entity_docs(
+        &state.pool,
+        state.read_through().map(|r| r.as_ref()),
+        use_ids,
+        values,
+        Some(&state.denylist),
+    )
+    .await?)
 }
 
 /// `fields=` (empty) is no mask, as upstream's `if (fields)` reads it.

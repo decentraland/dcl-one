@@ -18,8 +18,7 @@ use catalyst::jobs::Jobs;
 use catalyst::storage::Storage;
 use catalyst::worlds::mirror::{MirrorSettings, run_pass};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const LIMIT: usize = 3;
 

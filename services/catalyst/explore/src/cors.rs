@@ -294,7 +294,7 @@ pub async fn explore_cors(
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
-            .unwrap();
+            .expect("a fixed status and an empty body are valid");
         let h = resp.headers_mut();
         if echo
             && let Some(origin) = origin

@@ -1,9 +1,9 @@
 import { promises as fsPromises } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import { readZip } from './zip'
-import { IFileSystemComponent } from '../components/fs'
-import { IFetchComponent } from '../components/fetch'
-import { CliComponents } from '../components'
+import type { IFileSystemComponent } from '../components/fs'
+import type { IFetchComponent } from '../components/fetch'
+import type { CliComponents } from '../components'
 
 /**
  * Check's if directory is empty
