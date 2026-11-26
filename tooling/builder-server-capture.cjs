@@ -63,8 +63,6 @@ function movedItem(id, collectionId) {
     }
   }
 }
-const OWNER_INITIALIZE = '0xd14fee77000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000180000000000000000000000000c1aba94a79ca07d9d15a62ff5c9b382777e0c70e0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017113b44fdd661a156cc01b5031e3acf72c32eb300000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000011436f6e666f726d616e6365207361766564000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e44434c2d434e46524d4e43535644000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004268747470733a2f2f706565722e646563656e7472616c616e642e6f72672f6c616d626461732f636f6c6c656374696f6e732f7374616e646172642f6572633732312f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
-const STRANGER_INITIALIZE = '0xd14fee77000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000180000000000000000000000000cd6884d4258edc833f31ac773e24affe6a7d31540000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017113b44fdd661a156cc01b5031e3acf72c32eb300000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000011436f6e666f726d616e6365207361766564000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e44434c2d434e46524d4e43535644000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004268747470733a2f2f706565722e646563656e7472616c616e642e6f72672f6c616d626461732f636f6c6c656374696f6e732f7374616e646172642f6572633732312f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
 const ITEM_MODEL = 'bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei'
 const ITEM_THUMBNAIL = 'bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma'
 const ITEM_OTHER_MODEL = 'bafkreidt4shc7ymjpyczl3qv7kuk4jf5r254fdi4lbycn5jjtiauqllvqa'
@@ -79,6 +77,12 @@ const ADDRESS = {
   committee: '0x01eba3f0e992f53debaf51ed3738dc2f23e09aee',
   manager: '0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0'
 }
+/** The selector of the standard collection's `initialize(string,string,string,address,bool,bool,address,(string,uint256,address,string)[])`. */
+const INITIALIZE = 'd14fee77'
+const TOKEN_BASE = 'https://peer.decentraland.org/lambdas/collections/standard/erc721/'
+const COLLECTION_RARITIES = '0x17113b44fdd661a156cc01b5031e3acf72c32eb3'
+const OWNER_INITIALIZE = initializeCalldata(ADDRESS.owner)
+const STRANGER_INITIALIZE = initializeCalldata(ADDRESS.stranger)
 const LINKED = 'urn:decentraland:matic:collections-thirdparty:conformance:items-linked'
 const id = n => `c011ec71-0000-4000-8000-000000000${n}`
 
@@ -2859,6 +2863,23 @@ function word(value) {
   return BigInt(value).toString(16).padStart(64, '0')
 }
 
+/** The ABI encoding of the string `text`: its byte length, then its UTF-8 bytes padded to whole words. */
+function abiString(text) {
+  const bytes = Buffer.from(text, 'utf8')
+  return word(bytes.length) + bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0')
+}
+
+/**
+ * The `initialize` calldata the dapp sends with a draft save: the collection `Conformance saved`
+ * (`DCL-CNFRMNCSVD`) that `creator` creates, completed, not approved and with no items.
+ */
+function initializeCalldata(creator) {
+  const tails = [...['Conformance saved', 'DCL-CNFRMNCSVD', TOKEN_BASE].map(abiString), word(0)]
+  const offsets = tails.map((_, n) => word(8 * 32 + tails.slice(0, n).join('').length / 2))
+  const [name, symbol, base, items] = offsets
+  return `0x${INITIALIZE}${name}${symbol}${base}${word(creator)}${word(1)}${word(0)}${word(COLLECTION_RARITIES)}${items}${tails.join('')}`
+}
+
 /**
  * The rarities-with-oracle contract's answer to an `eth_call` of `getRarityByName(string)`:
  * the seeded rarity `(name, maxSupply, mana_price)` ABI-encoded, a revert for a name it doesn't
@@ -2872,9 +2893,7 @@ function oracleAnswer(params, rarities) {
   const name = Buffer.from(data.slice(8 + 128, 8 + 128 + length * 2), 'hex').toString('utf8')
   const rarity = rarities.find(r => r.name === name)
   if (!rarity) return { error: { code: 3, message: 'execution reverted' } }
-  const bytes = Buffer.from(name, 'utf8')
-  const padded = bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0')
-  return { result: `0x${word('0x20')}${word('0x60')}${word(rarity.max_supply)}${word(rarity.mana_price)}${word(bytes.length)}${padded}` }
+  return { result: `0x${word('0x20')}${word('0x60')}${word(rarity.max_supply)}${word(rarity.mana_price)}${abiString(name)}` }
 }
 
 /** The value of a GraphQL argument node, with its variables substituted. */
@@ -3735,4 +3754,4 @@ if (require.main === module) {
   main().then(() => process.exit(0), failed)
 }
 
-module.exports = { EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, useUpstreamEnvironment, installFailureHandlers, selected }
+module.exports = { initializeCalldata, EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, useUpstreamEnvironment, installFailureHandlers, selected }
