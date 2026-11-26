@@ -762,7 +762,7 @@
           "queued_empty": "No hay nada pendiente de enviar.",
           "delete": "Borrar todo lo que compartí",
           "deleting": "Borrando…",
-          "deleted": "Se borraron {count} turnos compartidos.",
+          "deleted": "{count, plural, one {Se borró # turno compartido.} other {Se borraron # turnos compartidos.}}",
           "delete_failed": "No se pudieron borrar tus conversaciones compartidas. Revisa tu conexión e inténtalo de nuevo.",
           "viewer_show": "Ver lo que compartí",
           "viewer_hide": "Ocultar lo que compartí",

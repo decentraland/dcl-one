@@ -11,7 +11,8 @@ use dcl_component::{
 };
 use dcl_types::interface::ComponentPosition;
 use livestream_manager::{
-    ActiveReceiver, ReceiverImage, ReceiverVolume, SelectedVideoReceiver, TransmissionImageResized,
+    is_livekit_video, ActiveReceiver, ReceiverImage, ReceiverVolume, SelectedVideoReceiver,
+    TransmissionImageResized,
 };
 use scene_runner::{
     renderer_context::RendererSceneContext,
@@ -25,8 +26,6 @@ use crate::audio_sink::AudioSinkPlugin;
 use crate::audio_source_native::AudioSourcePluginImpl;
 #[cfg(feature = "html")]
 use crate::audio_source_wasm::AudioSourcePluginImpl;
-#[cfg(test)]
-use crate::LIVEKIT_VIDEO_STREAM;
 use crate::{
     audio_source::AudioSourcePlugin, AVPlayer, AVPlayerConfig, AudioStream, InScene,
     ShouldBePlaying, Stream, VideoPlayer,
@@ -436,7 +435,7 @@ fn video_player_should_be_playing(
     for (entity, source, config, has_in_scene, has_should_be_playing, global_transform) in
         av_players
     {
-        if !config.playing() || (source.starts_with("livekit-video://") && !has_in_scene) {
+        if !config.playing() || (is_livekit_video(source) && !has_in_scene) {
             if has_should_be_playing {
                 scratch_shouldnt_be_playing.push(entity);
             }
@@ -908,7 +907,7 @@ mod tests {
 
         let screen_1 = world
             .spawn((
-                VideoPlayerSource(LIVEKIT_VIDEO_STREAM.to_owned()),
+                VideoPlayerSource(livestream_manager::LIVEKIT_CURRENT_STREAM.to_owned()),
                 VideoPlayerConfig {
                     playing: true,
                     volume: 1.,

@@ -46,9 +46,6 @@ use crate::audio_sink::AudioSink;
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use crate::video_stream::VideoSink;
 
-#[cfg(any(test, feature = "ffmpeg", feature = "html"))]
-const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
-
 pub trait AVPlayer: Component + Clone + PartialEq {
     type Source: Component + Deref<Target = str> + PartialEq;
     type Config: Component + AVPlayerConfig + PartialEq;
