@@ -143,7 +143,6 @@ pub struct Volatility {
 }
 
 impl Volatility {
-    #[allow(dead_code)]
     pub fn load_or_default(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => match parse_toml(&contents) {

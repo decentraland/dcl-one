@@ -45,3 +45,6 @@ axum.workspace = true
 catalyst-content = { path = "../content" }
 async-trait.workspace = true
 rcgen = "0.14.10"
+
+[lints]
+workspace = true
