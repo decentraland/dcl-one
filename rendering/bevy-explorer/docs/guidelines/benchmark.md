@@ -640,9 +640,8 @@ cache. Each stop of the route is a leg of its own, standing at the spawn point f
 | `golfcraft` | GolfCraft minigolf | 47,-45 |
 | `meta-gamimall` | Meta GamiMall | 1,95 |
 
-The three scenes after Genesis Plaza were among the busiest SDK7 scenes of the public hot-scenes
-list on 2026-11-24, with 100, 10 and 30 parcels and 772, 1742 and 300 content files. Each stop is
-in the `main` realm; an SDK6 scene never leaves the loading backdrop ([Launch
+The three scenes after Genesis Plaza are busy SDK7 scenes of different sizes and numbers of content
+files, so each content type is read in quantity. Each stop is in the `main` realm; an SDK6 scene never leaves the loading backdrop ([Launch
 options](#launch-options)), so a replacement stop must be an SDK7 scene.
 
 ```bash
