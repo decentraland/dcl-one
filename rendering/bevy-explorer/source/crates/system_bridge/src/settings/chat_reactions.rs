@@ -3,8 +3,9 @@ use common::structs::AppConfig;
 
 use super::{AppSetting, EnumAppSetting, SettingCategory};
 
-/// Whether situational reactions are also shown on screen, rising from the chat's reactions
-/// button. Over avatars they show either way.
+/// Whether situational reactions are shown on screen, rising from the chat's reactions button.
+/// Whether they show over avatars is the chat bubbles setting's
+/// ([`ChatBubbleVisibility`](common::structs::ChatBubbleVisibility)), not this one's.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChatReactionsSetting {
     Off,
@@ -38,10 +39,10 @@ impl AppSetting for ChatReactionsSetting {
 
     fn description(&self) -> String {
         format!(
-            "Shows reactions on screen as they happen, rising from the chat's reactions button: yours and those of the players around you.\n\n{}",
+            "Shows reactions on screen as they happen, rising from the chat's reactions button: yours and those of the players around you. Reactions over avatars follow the Chat bubbles and reactions setting.\n\n{}",
             match self {
                 Self::On => "Show reactions on screen",
-                Self::Off => "Show reactions over avatars only",
+                Self::Off => "Don't show reactions on screen",
             }
         )
     }

@@ -3,6 +3,7 @@
 // while the "Chat Reactions" setting is on, so the lane has no switch of its own. It is part of the
 // chat: when the chat gives way to a panel or the HUD is hidden it goes too, with what is in flight,
 // so a screen with no HUD has no emoji over it. Reactions played meanwhile are not shown later.
+// The chat renders it as its next sibling: a panel opened over the chat covers its reactions too.
 
 import { memo, useEffect, useRef, useState } from 'react'
 import { getHudScale } from '@explorer-core/lib/hudScale'

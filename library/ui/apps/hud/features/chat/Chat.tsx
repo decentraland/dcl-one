@@ -5,7 +5,6 @@
 // Incoming messages come from the bridge getChatStream relay; sends go via BevyApi.sendChat.
 
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Toggle, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
@@ -1175,6 +1174,7 @@ export function Chat({
   if (hidden) return null
 
   return (
+    <>
     <div
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
@@ -1418,8 +1418,6 @@ export function Chat({
           </ControlButton>
         )}
       </span>
-      {/* on the page itself: the panel clips what it paints, and reactions rise out of it */}
-      {createPortal(<ReactionLane subscribe={chat.onReaction} anchor={heartRef} />, document.body)}
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
       {open && reactingLine != null && reacting?.kind === 'line' && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>
@@ -1441,5 +1439,9 @@ export function Chat({
         </div>
       )}
     </div>
+    {/* beside the panel, not in it: the panel clips what it paints, and reactions rise out of it.
+        Next after it, so a panel opened over the chat is over its reactions too. */}
+    <ReactionLane subscribe={chat.onReaction} anchor={heartRef} />
+    </>
   )
 }

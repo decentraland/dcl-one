@@ -260,6 +260,8 @@ scenario("the bar's Chat Reactions switch sets whether reactions are shown on sc
   await explorer.hud.wait(CHAT_REACTIONS, { timeoutMs: TEXT_TIMEOUT_MS })
   restore(async () => {
     if ((await reactionState(explorer)).screenLane === original.screenLane) return
+    // the Reactions button is there only while the chat is open, wherever the scenario stopped
+    await openChat(explorer)
     if (!(await explorer.hud.isVisible(REACTIONS_BAR))) await explorer.hud.click(REACTIONS)
     await explorer.hud.click(CHAT_REACTIONS)
     await shown(original.screenLane)

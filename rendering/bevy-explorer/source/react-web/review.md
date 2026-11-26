@@ -383,9 +383,10 @@ HUD offers the pick and shows each reaction the engine plays on screen
   place while the chat is collapsed and the button is not drawn, at every HUD scale. At most 30
   fly at once; more are not shown. The lane is part of the chat: while the chat gives way to a
   panel (Friends) or the HUD is hidden (a full-screen page, the camera, the scene editor, Hide
-  UI) none is shown, the ones in flight go with it and none is shown later. An emoji the wire
-  has no index for (a flag) plays nowhere, so the HUD shows none of its own accord. With reduced
-  motion a reaction fades in place.
+  UI) none is shown, the ones in flight go with it and none is shown later. A panel opened over
+  the chat (Notifications) is over its reactions too. An emoji the wire has no index for (a
+  flag) plays nowhere, so the HUD shows none of its own accord. With reduced motion a reaction
+  fades in place.
 - Mock: `?mock=1&mockreactions=1` (the setting on and the nearby players reacting). Tests:
   `library/ui/apps/hud/test/hosted/chatReactions.test.tsx`, `chatReactions.clicks.test.tsx` and
   `chatReactionLane.test.tsx`, `library/ui/apps/hud/features/chat/reactionMotion.test.ts`,

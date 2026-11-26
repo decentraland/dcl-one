@@ -1,12 +1,13 @@
-/* The lane of reactions on screen: over the chat, scaled as the HUD is, taking no pointer. A
-   reaction is four boxes with one movement each, so each runs on the compositor: the rise (the
-   lift nearly balances the drag from the start, so it is steady), the drift (eased out as the
-   kick is spent), the sway, and the glyph's size and fade. */
+/* The lane of reactions on screen: scaled as the HUD is, taking no pointer. It is on the chat's
+   layer and comes next after the chat, so it is over the chat and under a panel opened over it
+   (Notifications). A reaction is four boxes with one movement each, so each runs on the
+   compositor: the rise (the lift nearly balances the drag from the start, so it is steady), the
+   drift (eased out as the kick is spent), the sway, and the glyph's size and fade. */
 .lane {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: calc(var(--z-hud) + 1);
+  z-index: var(--z-hud);
   width: 0;
   height: 0;
   transform: scale(var(--ui-scale));
