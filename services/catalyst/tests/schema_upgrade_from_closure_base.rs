@@ -2695,6 +2695,66 @@ async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_r
     assert_eq!(steps, [BUILDER_NAMED_BY_STEP]);
 }
 
+/// The rollout order: `schema migrate` records step 0085 while
+/// `builder.uploaded_contents` still keeps one uploader per hash, and the
+/// uploaders release runs after it. A name whose bytes only a wallet outside
+/// the item's roles uploaded, which the earlier node published from that
+/// record, keeps a writer that holds one.
+#[tokio::test]
+async fn the_builder_named_by_step_before_the_uploaders_release_leaves_no_name_without_its_upload()
+{
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &scenes_release()).await.unwrap();
+    sqlx::raw_sql(
+        "ALTER TABLE builder.item_contents DROP CONSTRAINT item_contents_named_by_check; \
+         ALTER TABLE builder.item_contents DROP COLUMN named_by; \
+         DELETE FROM meta.schema_steps WHERE step = '0085_builder_item_contents_named_by'; \
+         INSERT INTO builder.items (id, eth_address, name, type) VALUES \
+           ('22222222-2222-4222-8222-000000000201', '0x' || repeat('0', 39) || '2', 'Hat', 'wearable'); \
+         INSERT INTO builder.item_contents (item_id, file, hash) VALUES \
+           ('22222222-2222-4222-8222-000000000201', 'own.glb', 'bafkown'), \
+           ('22222222-2222-4222-8222-000000000201', 'shared.glb', 'bafkshared'); \
+         INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES \
+           ('bafkown', 1, '0x' || repeat('0', 39) || '2'), ('bafkshared', 1, '0x' || repeat('0', 39) || '9');",
+    )
+    .execute(pool)
+    .await
+    .expect("item contents without a writer, uploads kept one per hash");
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &item_documents_release())
+        .await
+        .unwrap();
+    let writers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT file, right(named_by, 1) FROM builder.item_contents \
+         WHERE item_id = '22222222-2222-4222-8222-000000000201' ORDER BY file",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        writers,
+        [("own.glb", "2"), ("shared.glb", "9")].map(|(f, w)| (f.to_string(), w.to_string())),
+        "the owner when it uploaded the bytes, else the wallet whose upload the earlier node published from"
+    );
+    let unbacked: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM builder.item_contents f WHERE NOT EXISTS \
+           (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = f.hash AND u.uploaded_by = f.named_by)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(unbacked, 0);
+}
+
 const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0086_builder_item_video_named_by";
 
 #[tokio::test]
