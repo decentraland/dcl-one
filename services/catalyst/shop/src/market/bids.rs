@@ -276,29 +276,6 @@ fn trades_bids_scope(extra: &str) -> String {
     format!("SELECT * FROM ({sql}) b WHERE TRUE{extra}")
 }
 
-/// Whether the land-authz index of the node's LAND network may answer on
-/// `conn`'s snapshot: published, recent, bound to the served registries and
-/// with no event past its fold (`land_authz::indexer::observation_ready`).
-async fn land_ready_on(
-    conn: &mut PgConnection,
-    state: &MarketplaceState,
-) -> Result<bool, sqlx::Error> {
-    let Some(land) = state.land_network() else {
-        return Ok(false);
-    };
-    Ok(
-        crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
-            .await?
-            .is_some_and(|observed| {
-                crate::land_authz::indexer::observation_ready(
-                    &observed,
-                    land.land_registry,
-                    land.estate_registry,
-                )
-            }),
-    )
-}
-
 /// The mirror's bids of `f` at `now`, on `conn`.
 pub(super) async fn trades_rows(
     conn: &mut PgConnection,
@@ -350,6 +327,11 @@ pub(super) async fn trades_rows(
         }
         q
     };
+    // Check ownership source coverage before seller and pagination.
+    let affected = |ownership_filter: &str| {
+        let scope = trades_bids_scope(&format!("{extra} AND {ownership_filter}"));
+        query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
+    };
     if owned_items::walks_here(state) {
         for net in ChainNet::ALL {
             let network = match net {
@@ -371,20 +353,15 @@ pub(super) async fn trades_rows(
                         })
                 }
             };
-            // Check ownership source coverage before seller and pagination.
-            let affected = |owner: &str| {
-                let scope = trades_bids_scope(&format!(
-                    "{extra} AND lower(b.network) = '{}' AND {owner}",
-                    net.db_name()
-                ));
-                query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
-            };
             if !ready
-                && affected("b.uses_nft_owner")
-                    .fetch_one(&mut *conn)
-                    .await
-                    .map_err(read_error)?
-                    .get::<bool, _>("affected")
+                && affected(&format!(
+                    "lower(b.network) = '{}' AND b.uses_nft_owner",
+                    net.db_name()
+                ))
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(read_error)?
+                .get::<bool, _>("affected")
             {
                 return Err(nft_unavailable(
                     net,
@@ -394,17 +371,17 @@ pub(super) async fn trades_rows(
                     ),
                 ));
             }
-            if net == ChainNet::Ethereum
-                && !land_ready_on(&mut *conn, state).await.map_err(read_error)?
-                && affected("b.uses_land_owner")
-                    .fetch_one(&mut *conn)
-                    .await
-                    .map_err(read_error)?
-                    .get::<bool, _>("affected")
-            {
-                return Err(super::nft_reads::land_unavailable());
-            }
         }
+    }
+    // The legacy graph leg does not supply sellers for the local trades leg.
+    if f.network != Some(Network::Matic)
+        && affected("b.uses_land_owner")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(read_error)?
+            .get::<bool, _>("affected")
+    {
+        readers::require_land_on(&mut *conn, state).await?;
     }
     if let Some(v) = &f.seller {
         let p = next(&mut binds, v.to_lowercase());
@@ -1291,12 +1268,15 @@ mod tests {
     fn the_bid_scope_is_the_walked_catalogue_of_the_served_chain() {
         let mainnet = catalogued(137, false);
         assert!(
-            mainnet.contains("c.chain_id = 137") && !mainnet.contains("testnet_verified"),
+            mainnet.contains("c.chain_id = 137")
+                && !mainnet.contains("testnet_verified")
+                && !mainnet.contains("OFFSET 0"),
             "{mainnet}"
         );
         let amoy = catalogued(80_002, true);
         assert!(
-            amoy.contains("c.chain_id = 80002 AND c.testnet_verified)"),
+            amoy.contains("c.chain_id = 80002 AND c.testnet_verified)")
+                && amoy.contains("OFFSET 0"),
             "{amoy}"
         );
         assert_eq!(wire_chain(80_002, Network::Matic), ChainId::MaticAmoy);

@@ -38,6 +38,31 @@ pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
     }
 }
 
+/// Require the LAND publication for the served registries on the book's snapshot.
+pub(super) async fn require_land_on(
+    conn: &mut sqlx::PgConnection,
+    state: &MarketplaceState,
+) -> Result<(), Response> {
+    let unavailable = super::nft_reads::land_unavailable;
+    let land = state.land_network().ok_or_else(unavailable)?;
+    let observed = crate::land_authz::indexer::cursor_observed(conn, land.network)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
+            unavailable()
+        })?;
+    if !observed.is_some_and(|observed| {
+        crate::land_authz::indexer::observation_ready(
+            &observed,
+            land.land_registry,
+            land.estate_registry,
+        )
+    }) {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ttl {

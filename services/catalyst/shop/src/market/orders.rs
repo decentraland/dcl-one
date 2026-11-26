@@ -518,24 +518,7 @@ pub(super) async fn book_snapshot(
     .map_err(read_error)?;
     let land = land_possible && nets.contains(&ChainNet::Ethereum);
     if land {
-        let net = state
-            .land_network()
-            .ok_or_else(super::nft_reads::land_unavailable)?;
-        let cursor = crate::land_authz::indexer::cursor_observed(&mut *tx, net.network)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "cannot read the land-authz index for the order book");
-                super::nft_reads::land_unavailable()
-            })?;
-        if !cursor.as_ref().is_some_and(|cursor| {
-            crate::land_authz::indexer::observation_ready(
-                cursor,
-                net.land_registry,
-                net.estate_registry,
-            )
-        }) {
-            return Err(super::nft_reads::land_unavailable());
-        }
+        readers::require_land_on(&mut tx, state).await?;
     }
     owned_items::check(
         &mut tx,
