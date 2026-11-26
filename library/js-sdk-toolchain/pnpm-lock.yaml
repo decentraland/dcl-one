@@ -334,8 +334,11 @@ importers:
         specifier: 2.17.2
         version: 2.17.2(@dcl/ecs@packages+@dcl+ecs)
       '@dcl/crypto':
-        specifier: ^3.4.4
+        specifier: ^3.9.0
         version: 3.9.0
+      '@dcl/crypto-middleware':
+        specifier: 6.5.0
+        version: 6.5.0
       '@dcl/ecs':
         specifier: workspace:*
         version: link:../ecs
@@ -666,8 +669,15 @@ packages:
   '@dcl/catalyst-contracts@4.4.2':
     resolution: {integrity: sha512-gJZo3IB8U+jhBJWR0DgoLS+zaUDIb/u79e7Rp+MEM78uH3bvC19S3Dd8lxWEbPXNKlCB0saUptfK/Buw0c1y2Q==}
 
+  '@dcl/core-commons@0.10.1':
+    resolution: {integrity: sha512-iLBpIg15czlzV7No5Wzb3FyreXpqYx8YnVJ8xYKczXpl6C3eqBQoqEA02hRkd/UASbzqcPJeG1wH1wHSxYTmQw==}
+
   '@dcl/core-commons@0.11.0':
     resolution: {integrity: sha512-VJ6FgMQoF242slJy1EDJkfkOqYKrywSKJf/ZNg5buGsZj2CAc+RLyBnp0XSl/iCp3VJfpJA3lm5yuKCqWralCA==}
+
+  '@dcl/crypto-middleware@6.5.0':
+    resolution: {integrity: sha512-DQ535dUX1xhzuaO0Il05Do+C2FyGQ50oJyZFVEJodA19HwHHWTXUsuBlzlgABY8Ukd35edfgg79uYTbVDmnC/w==}
+    engines: {node: '>=22.0.0'}
 
   '@dcl/crypto@3.9.0':
     resolution: {integrity: sha512-ZMDTfkkEHEGCujtg5jNnpjyHu7+PUvBb0XWBPVftgWVJDoUNlVIGpbOZk4lP42hXIUrv5zLbodkMVI5lLRrx+g==}
@@ -4169,9 +4179,18 @@ snapshots:
 
   '@dcl/catalyst-contracts@4.4.2': {}
 
+  '@dcl/core-commons@0.10.1':
+    dependencies:
+      '@well-known-components/interfaces': 1.5.2
+
   '@dcl/core-commons@0.11.0':
     dependencies:
       '@well-known-components/interfaces': 1.5.2
+
+  '@dcl/crypto-middleware@6.5.0':
+    dependencies:
+      '@dcl/core-commons': 0.10.1
+      '@dcl/crypto': 3.9.0
 
   '@dcl/crypto@3.9.0':
     dependencies:

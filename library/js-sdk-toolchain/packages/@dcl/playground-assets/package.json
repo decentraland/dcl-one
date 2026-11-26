@@ -26,7 +26,8 @@
   "scripts": {
     "build": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run",
     "build-local": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run --local --verbose --diagnostics",
-    "build-playground": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint"
+    "build-playground": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint",
+    "server-logs": "sdk-commands scene-insights tail"
   },
   "tsdoc": {
     "tsdocFlavor": "AEDoc"
