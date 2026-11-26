@@ -52,9 +52,10 @@
 //! names the current one. A state names a slide only when its picture is
 //! kept; without one it has no composition field.
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -320,7 +321,7 @@ impl Slot {
     /// map with it as retiring; the caller stops them.
     fn admit(mut self, session: Arc<Session>) -> Vec<Arc<Session>> {
         let presenter = self.presenter.clone();
-        let mut sessions = presenter.sessions.lock().unwrap();
+        let mut sessions = presenter.sessions.lock();
         let replaced = presenter.take_room(&mut sessions, &self.seat.room);
         sessions.insert(session.id.clone(), session);
         presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
@@ -343,11 +344,7 @@ impl Drop for Slot {
     fn drop(&mut self) {
         if self.held {
             self.presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
-            self.presenter
-                .seats
-                .lock()
-                .unwrap()
-                .remove(&self.seat.identity);
+            self.presenter.seats.lock().remove(&self.seat.identity);
         }
     }
 }
@@ -360,7 +357,7 @@ struct SeatRelease<'a> {
 
 impl Drop for SeatRelease<'_> {
     fn drop(&mut self) {
-        self.seats.lock().unwrap().remove(self.identity);
+        self.seats.lock().remove(self.identity);
     }
 }
 
@@ -524,12 +521,12 @@ impl Presenter {
     }
 
     pub fn active_sessions(&self) -> usize {
-        self.sessions.lock().unwrap().len()
+        self.sessions.lock().len()
     }
 
     /// Whether every slot is taken now (a hint: [`Self::create`] decides).
     pub fn at_capacity(&self) -> bool {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock();
         self.full(sessions.len())
     }
 
@@ -569,7 +566,7 @@ impl Presenter {
     /// `session`, just out of the map, stops: later presentations of its room
     /// wait for its `presentation:stopped`. Called under the sessions lock.
     fn stopping_now(&self, session: &Session) {
-        let mut stopping = self.stopping.lock().unwrap();
+        let mut stopping = self.stopping.lock();
         let room = stopping.entry(session.seat.room.clone()).or_default();
         room.push(session.announced.subscribe());
     }
@@ -577,13 +574,7 @@ impl Presenter {
     /// Waits until every session of `room` that has left the map so far has
     /// announced its stop, whichever request replaced or stopped it.
     async fn earlier_stops(&self, room: &str) {
-        let pending = self
-            .stopping
-            .lock()
-            .unwrap()
-            .get(room)
-            .cloned()
-            .unwrap_or_default();
+        let pending = self.stopping.lock().get(room).cloned().unwrap_or_default();
         for mut stop in pending {
             // A stop whose task ended without announcing (cancelled) is done.
             let _ = stop.wait_for(|announced| *announced).await;
@@ -592,7 +583,7 @@ impl Presenter {
 
     /// Forgets the announced stops of `room`.
     fn prune_stops(&self, room: &str) {
-        let mut stopping = self.stopping.lock().unwrap();
+        let mut stopping = self.stopping.lock();
         if let Some(pending) = stopping.get_mut(room) {
             pending.retain(|stop| !*stop.borrow() && stop.has_changed().is_ok());
             if pending.is_empty() {
@@ -602,7 +593,7 @@ impl Presenter {
     }
 
     fn has_room_sessions(&self, room: &str) -> bool {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock();
         sessions.values().any(|session| session.seat.room == room)
     }
 
@@ -653,7 +644,7 @@ impl Presenter {
         let seat = self.verify_token(token)?;
         let replaces = self.has_room_sessions(&seat.room) && self.holds_credential(&seat).await;
         let replaced = {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock();
             let in_room = sessions
                 .values()
                 .filter(|session| replaces && session.seat.room == seat.room)
@@ -661,7 +652,7 @@ impl Presenter {
             if self.full(sessions.len() - in_room) {
                 return Err(self.capacity_error());
             }
-            if !self.seats.lock().unwrap().insert(seat.identity.clone()) {
+            if !self.seats.lock().insert(seat.identity.clone()) {
                 return Err(CreateError::TokenInUse);
             }
             self.in_flight.fetch_add(1, Ordering::SeqCst);
@@ -942,12 +933,12 @@ impl Presenter {
     }
 
     fn is_live(&self, id: &str) -> bool {
-        self.sessions.lock().unwrap().contains_key(id)
+        self.sessions.lock().contains_key(id)
     }
 
     /// The PNG of a slide a live session keeps, by its hash.
     pub async fn slide_picture(&self, id: &str, hash: &str) -> Option<bytes::Bytes> {
-        let session = self.sessions.lock().unwrap().get(id).cloned()?;
+        let session = self.sessions.lock().get(id).cloned()?;
         let state = session.state.lock().await;
         let (_, png) = state.pictures.iter().find(|(kept, _)| kept == hash)?;
         Some(png.clone())
@@ -961,7 +952,7 @@ impl Presenter {
     /// as the eviction removes the participant by that token's identity.
     pub async fn stop(&self, id: &str) {
         let session = {
-            let mut sessions = self.sessions.lock().unwrap();
+            let mut sessions = self.sessions.lock();
             let Some(session) = sessions.remove(id) else {
                 return;
             };
@@ -999,10 +990,10 @@ impl Presenter {
     /// One reaper pass at `now`: a session with participants is active; one
     /// without any for [`IDLE_TIMEOUT`] stops.
     pub async fn reap_idle(&self, now: Instant) {
-        let sessions: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
+        let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
         for session in sessions {
             let idle = {
-                let mut last_active = session.last_active.lock().unwrap();
+                let mut last_active = session.last_active.lock();
                 if session.room.borrow().participants > 0 {
                     *last_active = now;
                     false

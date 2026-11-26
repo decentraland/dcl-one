@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::util::AsH160;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use livestream_manager::{AutomaticVideoShown, SelectedVideoTransmitter};
 use serde_json::json;
 
 use super::{
@@ -14,6 +15,7 @@ use crate::{
     global_crdt::ForeignPlayer,
     livekit::{
         participant::{ConnectionQuality, HostedBy, LivekitParticipant, Local, ParticipantIndex},
+        track::{LivekitTrack, PublishedBy, Subscribed, Subscribing, Unsubscribing, Video},
         ConnectionAvailability, LivekitTransport,
     },
     private_chat::PrivateChatRoom,
@@ -54,6 +56,7 @@ impl Plugin for RoomDiagnosticsPlugin {
                 fields.extend([
                     ("Scene ID", "room.scene"),
                     ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
+                    ("Video tracks (first 32)", "room.videoTracks"),
                 ]);
             }
             let command = format!("/room_connection {scope} {{value}}");
@@ -172,6 +175,7 @@ fn room_diagnostics(
         Has<Local>,
         Option<&ConnectionQuality>,
     )>,
+    video_tracks: VideoTracks,
     players: Query<&ForeignPlayer>,
     indicators: Option<Res<RoomIndicators>>,
     definitions: Option<Res<Assets<ipfs::EntityDefinition>>>,
@@ -294,6 +298,14 @@ fn room_diagnostics(
                 "name": room.map(|r| r.name().to_string()), "sid": sid, "scene": scene.map(|s| s.0.as_str()),
                 "baseParcel": base, "baseParcelPosition": base_position, "attempts": status.recovery.retry.attempts,
                 "remoteCount": remote_count, "selfSid": local_sid, "quality": local_quality});
+            if kind == RoomKind::Scene {
+                let in_room = |participant: Entity| {
+                    participants
+                        .get(participant)
+                        .is_ok_and(|(_, hosted, ..)| hosted.get() == entity)
+                };
+                result["room"]["videoTracks"] = json!(video_track_rows(in_room, &video_tracks));
+            }
             result["unavailable"] = if connected {
                 json!({"room.quality": "Waiting for LiveKit to report connection quality",
                     "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates",
@@ -310,6 +322,51 @@ fn room_diagnostics(
         }
     }
     input.reply_ok(result.to_string());
+}
+
+/// The video tracks [`video_track_rows`] reads, as `room_diagnostics` queries them.
+type VideoTracks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LivekitTrack,
+        &'static PublishedBy,
+        Has<Subscribed>,
+        Has<Subscribing>,
+        Has<Unsubscribing>,
+        Has<AutomaticVideoShown>,
+        Has<SelectedVideoTransmitter>,
+    ),
+    With<Video>,
+>;
+
+/// Each video track published by a participant `in_room`: its subscription and the outputs
+/// that want it.
+fn video_track_rows(in_room: impl Fn(Entity) -> bool, tracks: &VideoTracks) -> BTreeSet<String> {
+    let mut rows = BTreeSet::new();
+    for (track, publisher, subscribed, subscribing, unsubscribing, automatic, selected) in tracks {
+        if in_room(publisher.get()) {
+            let state = match (subscribed, subscribing, unsubscribing) {
+                (true, ..) => "subscribed",
+                (_, true, _) => "subscribing",
+                (.., true) => "unsubscribing",
+                _ => "unsubscribed",
+            };
+            let outputs: Vec<_> = [(automatic, "automatic"), (selected, "selected")]
+                .into_iter()
+                .filter_map(|(wanted, name)| wanted.then_some(name))
+                .collect();
+            rows.insert(if outputs.is_empty() {
+                format!("{}: {state}", track.sid())
+            } else {
+                format!("{}: {state}, {}", track.sid(), outputs.join(", "))
+            });
+            if rows.len() > 32 {
+                rows.pop_last();
+            }
+        }
+    }
+    rows
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]

@@ -1,4 +1,5 @@
 use bevy::{
+    platform::collections::HashSet,
     prelude::*,
     render::view::ViewUserValue,
     window::{CursorGrabMode, PrimaryWindow},
@@ -16,10 +17,16 @@ use common::{
 };
 use dcl_component::proto_components::sdk::components::common::camera_transition::TransitionMode;
 use input_manager::{InputManager, InputPriority};
-use scene_runner::OutOfWorld;
+use scene_runner::{
+    update_world::mesh_collider::{GlobalGroundCollider, SceneColliderData},
+    ContainingScene, OutOfWorld,
+};
 use tween::SystemTween;
 
 use crate::{
+    camera_collision::{
+        self, CameraCollision, CameraCollisionState, CameraObstacles, CAMERA_RADIUS,
+    },
     camera_zoom::{pitch_limit, step_level, CameraZoom, ZoomDirection, FOCUS_HEIGHT},
     TRANSITION_TIME,
 };
@@ -180,7 +187,7 @@ pub fn update_camera(
     }
 }
 
-pub fn update_camera_position(
+pub(crate) fn update_camera_position(
     mut commands: Commands,
     mut camera: Query<
         (
@@ -190,6 +197,7 @@ pub fn update_camera_position(
             &mut CameraZoom,
             &mut Projection,
             Option<&mut SystemTween>,
+            &mut CameraCollisionState,
         ),
         Without<PhotoMode>,
     >,
@@ -208,10 +216,22 @@ pub fn update_camera_position(
     gt_helper: TransformHelper,
     time: Res<Time>,
     locks: Res<CursorLocks>,
+    containing_scene: ContainingScene,
+    mut scene_colliders: Query<&mut SceneColliderData, Without<GlobalGroundCollider>>,
+    mut ground_colliders: Query<&mut SceneColliderData, With<GlobalGroundCollider>>,
+    collision: Res<CameraCollision>,
 ) {
     let (
         Ok((player_transform, dynamic_state, is_oow, mut head_sync, emotes)),
-        Ok((camera_ent, camera_transform, options, mut zoom, mut projection, maybe_tween)),
+        Ok((
+            camera_ent,
+            camera_transform,
+            options,
+            mut zoom,
+            mut projection,
+            maybe_tween,
+            mut collision_state,
+        )),
     ) = (player.single_mut(), camera.single_mut())
     else {
         return;
@@ -306,11 +326,76 @@ pub fn update_camera_position(
         if let Some(pose) = zoom.pose(focus, options.yaw, options.pitch, options.roll) {
             target_transform = pose.transform();
             target_fov = pose.fov;
+
+            // the camera orbits the focus moved by the shoulder offset; a pose with no such
+            // point, in or blending through first person, leaves the focus itself
+            let shoulder = pose.look_at().map_or(Vec3::ZERO, |look_at| look_at - focus);
+            let arm = pose.position - (focus + shoulder);
+            let distance = arm.length();
+            // nearer than the camera's own radius it is in the player's head: nothing to collide
+            if collision.enabled && distance > CAMERA_RADIUS * 1.1 {
+                let margin = CAMERA_RADIUS + shoulder.length();
+                // the sweep runs from the shoulder, up to the whole offset beside the focus
+                let mut scenes: HashSet<Entity> = [focus, focus + shoulder]
+                    .into_iter()
+                    .flat_map(|pivot| containing_scene.get_ray(pivot, arm))
+                    .map(|(scene, _)| scene)
+                    .collect();
+                scenes.extend(containing_scene.get_area_at(focus, margin));
+                scenes.extend(containing_scene.get_area_at(focus + arm, margin));
+                for scene in &scenes {
+                    if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
+                        colliders.update_bvh();
+                    }
+                }
+                for mut colliders in &mut ground_colliders {
+                    colliders.update_bvh();
+                }
+                let obstacles = CameraObstacles(
+                    scenes
+                        .iter()
+                        .filter_map(|scene| scene_colliders.get(*scene).ok())
+                        .chain(ground_colliders.iter())
+                        .collect(),
+                );
+
+                let offset = camera_collision::shoulder_offset(
+                    &obstacles,
+                    &mut collision_state,
+                    focus,
+                    shoulder,
+                    time.delta_secs(),
+                );
+                let pivot = focus + offset;
+                let resolved = camera_collision::resolve(
+                    &obstacles,
+                    &mut collision_state,
+                    pivot,
+                    pivot + arm,
+                    time.elapsed_secs(),
+                    time.delta_secs(),
+                );
+                target_transform.translation = resolved.position;
+                collision_state.desired_distance = distance;
+                collision_state.collided_distance = resolved.position.distance(pivot);
+                collision_state.occluded = resolved.occluded;
+            } else {
+                collision_state.invalidate();
+                collision_state.desired_distance = distance;
+                collision_state.collided_distance = distance;
+                collision_state.occluded = false;
+                collision_state.damp_time = 0.0;
+            }
+
             // the camera-to-player fade aims at the focus
             commands
                 .entity(camera_ent)
                 .try_insert(ViewUserValue(focus.extend(1.0)));
         }
+    }
+
+    if !real_camera {
+        collision_state.invalidate();
     }
 
     // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities

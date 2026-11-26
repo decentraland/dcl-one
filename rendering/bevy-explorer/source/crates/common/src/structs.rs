@@ -70,6 +70,11 @@ impl Default for PrimaryUser {
     }
 }
 
+/// A player's wallet address: on every peer from its spawn, and on the local player while a
+/// profile is set (not between login and the profile being set, nor in server mode).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerAddress(pub Address);
+
 /// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
 /// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
 /// express the player's speed as a gait.

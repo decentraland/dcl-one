@@ -4,14 +4,16 @@ use common::{
     dynamics::landed,
     structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser},
 };
-
-use crate::camera_zoom::CameraZoom;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::common::Vector3;
 use serde_json::json;
 
-use crate::avatar_movement::{
-    ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, LastMovementStep,
+use crate::{
+    avatar_movement::{
+        ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, LastMovementStep,
+    },
+    camera_collision::{CameraCollision, CameraCollisionState},
+    camera_zoom::CameraZoom,
 };
 
 pub(super) struct InputDebugPanelPlugin;
@@ -21,6 +23,7 @@ impl Plugin for InputDebugPanelPlugin {
         app.add_console_command::<CameraState, _>(camera_state)
             .add_console_command::<MovementState, _>(movement_state)
             .add_preview_console_command::<CameraSensitivity, _>(camera_sensitivity)
+            .add_preview_console_command::<CameraCollisions, _>(camera_collisions)
             .add_preview_debug_inputs(DebugSection {
                 title: "Camera",
                 query: "/camera_state",
@@ -33,18 +36,30 @@ impl Plugin for InputDebugPanelPlugin {
                     ("Far clip (m)", "far"),
                     ("Vertical FOV (degrees)", "fov"),
                     ("Scene override", "override"),
+                    ("Collision: desired distance (m)", "desiredDistance"),
+                    ("Collision: distance (m)", "collidedDistance"),
+                    ("Collision: occluded", "occluded"),
+                    ("Collision: damping (s)", "dampTime"),
                 ],
                 actions: &[],
-                inputs: &[DebugInput {
-                    label: "Look sensitivity",
-                    field: "sensitivity",
-                    command: "/camera_sensitivity {value}",
-                    kind: DebugInputKind::Number {
-                        min: 0.01,
-                        max: 100.0,
-                        step: 0.01,
+                inputs: &[
+                    DebugInput {
+                        label: "Look sensitivity",
+                        field: "sensitivity",
+                        command: "/camera_sensitivity {value}",
+                        kind: DebugInputKind::Number {
+                            min: 0.01,
+                            max: 100.0,
+                            step: 0.01,
+                        },
                     },
-                }],
+                    DebugInput {
+                        label: "Camera collisions",
+                        field: "collisions",
+                        command: "/camera_collisions {value}",
+                        kind: DebugInputKind::Toggle,
+                    },
+                ],
             })
             .add_debug_section(DebugSection {
                 title: "Locomotion",
@@ -98,12 +113,39 @@ fn camera_sensitivity(
     }
 }
 
+/// Turn the third-person camera's collisions on or off in preview.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/camera_collisions")]
+struct CameraCollisions {
+    #[arg(action = clap::ArgAction::Set)]
+    enabled: bool,
+}
+
+fn camera_collisions(
+    mut cmd: ConsoleCommand<CameraCollisions>,
+    mut collision: ResMut<CameraCollision>,
+) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    collision.enabled = args.enabled;
+    cmd.reply_ok(if args.enabled {
+        "camera collisions on"
+    } else {
+        "camera collisions off"
+    });
+}
+
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
-    camera: Query<(&PrimaryCamera, &CameraZoom, &Projection)>,
+    camera: Query<(
+        &PrimaryCamera,
+        &CameraZoom,
+        &Projection,
+        &CameraCollisionState,
+    )>,
+    collision: Res<CameraCollision>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
-    let Ok((camera, zoom, projection)) = camera.single() else {
+    let Ok((camera, zoom, projection, state)) = camera.single() else {
         cmd.reply_failed("player camera unavailable");
         return;
     };
@@ -126,6 +168,11 @@ fn camera_state(
             "far": far,
             "fov": fov,
             "override": camera.scene_override.is_some(),
+            "collisions": collision.enabled,
+            "desiredDistance": state.desired_distance,
+            "collidedDistance": state.collided_distance,
+            "occluded": state.occluded,
+            "dampTime": state.damp_time,
         })
         .to_string(),
     );
@@ -217,6 +264,38 @@ mod tests {
         assert_eq!(report["requested"], json!([0.0, 0.0, 0.0]));
         assert_eq!(report["actual"], json!([0.0, 0.0, 0.0]));
         assert!(report["external"].is_null());
+    }
+
+    #[test]
+    fn a_primary_camera_reports_its_collision_state() {
+        let mut app = App::new();
+        app.add_event::<ConsoleCommandEntered>()
+            .add_event::<PrintConsoleLine>()
+            .init_resource::<CameraCollision>()
+            .add_systems(Update, camera_state);
+        crate::require_camera_state(&mut app);
+        let camera = app
+            .world_mut()
+            .spawn((PrimaryCamera::default(), Projection::default()))
+            .id();
+        app.world_mut()
+            .get_mut::<CameraCollisionState>(camera)
+            .expect("update_camera_position requires the state on the camera")
+            .collided_distance = 2.5;
+        let (tx, rx) = mpsc::channel();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/camera_state".into(),
+            args: vec![],
+            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+        });
+        app.update();
+        let reply = rx.try_recv().unwrap().unwrap();
+        let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(report["collisions"], json!(true));
+        assert_eq!(report["desiredDistance"], json!(0.0));
+        assert_eq!(report["collidedDistance"], json!(2.5));
+        assert_eq!(report["occluded"], json!(false));
+        assert_eq!(report["dampTime"], json!(0.0));
     }
 
     #[test]

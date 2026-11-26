@@ -36,6 +36,7 @@ tokio-util.workspace = true
 parking_lot.workspace = true
 ipnet.workspace = true
 hex.workspace = true
+ed25519-dalek.workspace = true
 urlencoding.workspace = true
 alloy-primitives.workspace = true
 sha2.workspace = true

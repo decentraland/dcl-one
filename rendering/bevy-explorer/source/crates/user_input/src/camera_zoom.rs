@@ -306,6 +306,11 @@ impl CameraPose {
     pub fn transform(&self) -> Transform {
         Transform::from_translation(self.position).with_rotation(self.rotation)
     }
+
+    /// The point an orbiting camera aims around: the focus moved by the shoulder offset.
+    pub fn look_at(&self) -> Option<Vec3> {
+        self.look_at
+    }
 }
 
 fn level_pose(
