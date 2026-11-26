@@ -1,8 +1,9 @@
 // The Create page: a menu page whose body belongs to the scene editor, which renders its home
 // (the creator's scenes) into it. Opening a scene closes the page and takes the screen.
 
+import { Spinner } from '@dcl/one-ui'
 import { useEffect, useRef } from 'react'
-import { showToast, Spinner } from '../../design'
+import { showToast } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { EditorOffered } from './EditorOffered'
 import type { EngineSession, ProfileState } from '../session/useEngineSession'
@@ -44,7 +45,7 @@ function Home({ entry, close }: { entry: EditorEntry; close: () => void }): Reac
       <div ref={ref} id="dcl-editor-home" className={styles.home} />
       {entry.loading && (
         <div className={styles.opening} role="status">
-          <Spinner size={20} />
+          <Spinner variant="thin" size={20} />
           Opening Create…
         </div>
       )}

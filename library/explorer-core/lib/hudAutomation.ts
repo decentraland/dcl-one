@@ -184,7 +184,7 @@ export function nameOf(el: Element, role: string): string {
   const label = normalize(el.getAttribute('aria-label') ?? '')
   if (label) return label
   // A <label> names every labelable element, a button as well as a field: the Skybox panel's
-  // `<label>Auto <Toggle/></label>` names its switch "Auto".
+  // `<label>Auto <input role="switch"></label>` names its switch "Auto".
   if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
     const labels = normalize(Array.from(el.labels ?? []).map((l) => l.textContent ?? '').join(' '))
     if (labels) return labels

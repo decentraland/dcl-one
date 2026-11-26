@@ -4,8 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
+import { Button, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Spinner, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Chip, ColorPicker, HintsButton, KeyCap, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -86,6 +87,7 @@ const HINTS = [
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Click items x1 to view their info. x2 to equip/unequip.' },
   { icon: <KeyCap label="1" />, text: 'Hover an emote, then press the numeral key of the slot where you want to equip it.' }
 ]
+const HINTS_MODAL = [HINTS[0], { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Double-click items to equip.' }, HINTS[2]]
 
 const RARITIES: Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const RARITY_RANK: Record<string, number> = Object.fromEntries(RARITIES.map((r, i) => [r, i]))
@@ -213,8 +215,7 @@ function EmptyResults({ search }: { search: boolean }): React.JSX.Element {
   )
 }
 
-// `onClose` is set where the panel lies over the avatar (the lobby's modal): it puts the selection away.
-function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose?: () => void }): React.JSX.Element {
+function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Element {
   if (!item) {
     return (
       <aside className={`${styles.detail} ${styles.detailEmpty}`} style={{ '--panel-art': `url(${rarityPanel(null)})` } as React.CSSProperties}>
@@ -226,11 +227,6 @@ function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose
   const category = 'category' in item ? item.category : 'emote'
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
-      {onClose != null && (
-        <Button size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
-          <MaskIcon src={closeIcon} size={10} />
-        </Button>
-      )}
       <div className={styles.detailImage}>
         <CatalystImg src={item.thumbnail} urn={item.urn} />
       </div>
@@ -297,7 +293,7 @@ function OutfitSlotCard({
   if (loading) {
     return (
       <div className={`${styles.outfitSlot} ${styles.outfitLocked}`}>
-        <Skeleton className={styles.outfitSkeleton} />
+        <Skeleton tone="sweep" className={styles.outfitSkeleton} />
       </div>
     )
   }
@@ -310,7 +306,7 @@ function OutfitSlotCard({
         aria-label={`${busy === 'save' ? 'Saving' : 'Deleting'} outfit ${index + 1}`}
         aria-busy="true"
       >
-        <Spinner size={50} />
+        <Spinner variant="thin" size={50} />
       </div>
     )
   }
@@ -350,7 +346,7 @@ function OutfitSlotCard({
         <MaskIcon src={deleteIcon} size={24} />
       </button>
       <button type="button" className={styles.outfitEquipBtn} disabled={equipping || inert} aria-busy={equipping} aria-label="EQUIP" onClick={onEquip}>
-        {equipping ? <Spinner size={20} color="var(--text)" /> : 'EQUIP'}
+        {equipping ? <Spinner variant="thin" size={20} style={{ '--spinner-arc': 'var(--text)' } as React.CSSProperties} /> : 'EQUIP'}
       </button>
     </div>
   )
@@ -654,7 +650,7 @@ export function BackpackPage({
           <h1 className={styles.title}>Backpack</h1>
           <Tabs variant="section" className={styles.tabs} items={BACKPACK_TABS} value={tab} onChange={(t) => { setTab(t); setSelected(null) }} aria-label="Backpack sections" />
           <div className={styles.filterWrap}>
-            <Button variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
+            <Button appearance="hud" variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
               <MaskIcon src={filterIcon} size={20} />
               FILTER &amp; SORT
               <MaskIcon src={arrowDownIcon} size={12} />
@@ -687,7 +683,7 @@ export function BackpackPage({
             <div className={styles.avatarDrag}>
               <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} view={() => previewBox.current?.getBoundingClientRect() ?? null} />
             </div>
-            <HintsButton className={styles.hints} hints={HINTS} />
+            <HintsButton className={styles.hints} hints={modal ? HINTS_MODAL : HINTS} />
             <RandomizeBar
               history={backpack.outfitHistory}
               locked={tab !== 'wearables' || backpack.bodyShape == null}
@@ -699,7 +695,7 @@ export function BackpackPage({
             {tab === 'wearables' && (
               <div className={styles.contentHead}>
                 <Tabs variant="subtab" className={styles.sectionTabs} items={SECTION_TABS} value={section} onChange={setSection} aria-label="Wearables sections" />
-                <Button variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
+                <Button appearance="hud" variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
                   <MaskIcon src={marketplaceIcon} />
                   SHOP
                 </Button>
@@ -799,7 +795,7 @@ export function BackpackPage({
                   </div>}
                   {backpack.loading ? (
                     <div className={styles.grid} aria-busy="true">
-                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton key={i} className={styles.skeleton} />)}
+                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton tone="sweep" key={i} className={styles.skeleton} />)}
                     </div>
                   ) : pageItems.length === 0 ? (
                     <EmptyResults search={searchDebounced !== ''} />
@@ -898,8 +894,8 @@ export function BackpackPage({
               </div>
             )}
 
-          {/* Right: the selected wearable/emote. Not in Saved Outfits, nor beside an empty wearables grid. */}
-          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} onClose={modal ? () => setSelected(null) : undefined} />}
+          {/* Right: the selected wearable/emote. Not in the lobby's modal, which has no room for it, nor in Saved Outfits, nor beside an empty wearables grid. */}
+          {!modal && !inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} />}
           </section>
           </div>
         </div>

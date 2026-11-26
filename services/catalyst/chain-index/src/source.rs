@@ -44,6 +44,8 @@ pub enum Source {
     CouponManager,
     /// Wert's partner keys and API (`POST /v1/wert/sign`).
     Wert,
+    /// Transak's partner API and gateway (`/v1/transak/*`).
+    Transak,
     /// A source v2 does not have yet; the label names the missing indexer.
     Deferred(&'static str),
 }
@@ -68,6 +70,7 @@ impl Source {
             Self::ThirdPartyRegistryIndex => "third-party-registry-index",
             Self::CouponManager => "coupon-manager",
             Self::Wert => "wert",
+            Self::Transak => "transak",
             Self::Deferred(label) => label,
         }
     }
@@ -97,6 +100,9 @@ impl Source {
             Self::CouponManager => Some("TRADE_RPC_URLS"),
             Self::Wert => Some(
                 "WERT_PRIVATE_KEY_FILE, WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE, WERT_API_URL, WERT_API_KEY",
+            ),
+            Self::Transak => Some(
+                "TRANSAK_API_URL, TRANSAK_API_GATEWAY_URL, TRANSAK_API_KEY, TRANSAK_API_SECRET, TRANSAK_REFRESH_ACCESS_TOKEN_AUTH, TRANSAK_REFERRER_DOMAIN",
             ),
             Self::Deferred(_) => None,
         }
