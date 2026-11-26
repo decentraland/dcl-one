@@ -710,9 +710,11 @@ impl Settings {
     }
 }
 
-/// `url` with `query` appended after `?`, or after `&` when it has one
-/// (credits-server's `appendQuery`). A `#` fragment stays last, so the query
-/// still reaches the page's server.
+/// `url` with `query` appended after `?`, or after `&` when it has one, as
+/// credits-server's `appendQuery` does, with one difference: a `#` fragment
+/// stays last, so the query reaches the page's server and `location.search`.
+/// credits-server appended after the fragment, so a hash-routed return page
+/// that read `order` from the fragment would not find it here.
 fn append_query(url: &str, query: &str) -> String {
     if query.is_empty() {
         return url.to_string();

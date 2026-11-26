@@ -73,6 +73,26 @@ to three with a custom plan and from 2,015 to three with a generic plan.
 The new index occupied 424 KiB. These synthetic plans measure read work and
 index size. Production cardinalities and write costs remain unmeasured.
 
+## Credit studio budget reads
+
+A local PostgreSQL 17 database held the studio tables as `schemas/60_ops.sql`
+defines them, with 200 studios, 800 operators and 200,000 budget entries over
+365 UTC days (one deposit in ten, the rest grants naming a ledger row). Each
+figure is one warm `EXPLAIN (ANALYZE, BUFFERS)` run after `ANALYZE`.
+
+| Query | Plan | Work |
+| --- | --- | --- |
+| The day's new budget (the ceiling, under the deposits lock) | Bitmap scan of `studio_budget_entries_inflow_idx`, 55 rows | 39 buffers, 0.06 ms |
+| A studio's balance or history total (1,000 entries) | Index-only scan of `studio_budget_entries_studio_idx` | 659 buffers before `VACUUM` (1,000 heap fetches), 16 after; 0.2 ms |
+| A studio's history page of 50, newest first, with each grant's recipient | Backward scan of `studio_budget_entries_studio_idx`, incremental sort on the id tie-break, the ledger key per row | 250 buffers, 0.19 ms |
+| An idempotency probe | `studio_budget_entries_idempotency_uidx` | 9 buffers, 0.03 ms |
+| The studio list (every studio's figures) | Parallel sequential scan and aggregate of every entry | 3,840 buffers, 14 to 18 ms |
+
+The studio and idempotency indexes occupied 13 MB each, the ledger index
+4.9 MB and the inflow index 648 kB, beside a 30 MB table. The list reads every
+entry, so its cost grows with the ledger; it is an operator route. Write
+costs, production cardinalities and latency are unmeasured.
+
 ## Seasonal photo progress
 
 A disposable PostgreSQL 18 fixture with 1,000,000 photo-goal receipts and

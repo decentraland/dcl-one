@@ -13,10 +13,13 @@
 //!
 //! Every write that changes a studio's operators or budget holds the
 //! studio's row lock; new budget first takes one service-wide advisory lock,
-//! with no date in it (the day is read from the database clock once the lock
-//! is held). Each statement reads a fresh snapshot after the lock is granted
-//! (READ COMMITTED, PostgreSQL's default), so a balance or a day's total is
-//! never read from before the previous holder committed.
+//! with no date in it (the database clock is read once the locks are held,
+//! and that one reading is both the day the ceiling counts and the time the
+//! entry records). The budget transaction pins READ COMMITTED whatever the
+//! session default, so each statement reads a snapshot taken after the lock
+//! was granted, and a balance or a day's total is never read from before the
+//! previous holder committed. A studio's page reads from one REPEATABLE READ,
+//! READ ONLY snapshot, so its figures and its history agree.
 //!
 //! Every refusal carries a stable `code` next to its message, as
 //! credits-server answers them.
@@ -26,6 +29,7 @@ use std::sync::LazyLock;
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use chrono::NaiveDateTime;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
@@ -274,7 +278,10 @@ pub fn parse_note(value: Option<&JsonValue>) -> Result<Option<String>, StudioErr
 pub fn parse_credits_change(value: Option<&JsonValue>) -> Result<i64, StudioError> {
     value
         .and_then(JsonValue::as_i64)
-        .filter(|c| *c != 0 && c.abs() <= MAX_CREDITS_PER_BUDGET_CHANGE)
+        // A range, not `abs`: `i64::MIN` has no absolute value.
+        .filter(|c| {
+            *c != 0 && (-MAX_CREDITS_PER_BUDGET_CHANGE..=MAX_CREDITS_PER_BUDGET_CHANGE).contains(c)
+        })
         .ok_or_else(|| {
             StudioError::Invalid(format!(
                 "\"credits\" must be a non-zero whole number of at most {MAX_CREDITS_PER_BUDGET_CHANGE} either way"
@@ -339,6 +346,16 @@ pub struct StudioBudgetEntry {
     pub created_at: i64,
     pub credit_id: Option<String>,
     pub recipient: Option<String>,
+}
+
+/// A studio's page: its figures, operators and a page of its history with the
+/// history's total, from one snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StudioDetail {
+    pub studio: StudioSummary,
+    pub operators: Vec<StudioOperator>,
+    pub entries: Vec<StudioBudgetEntry>,
+    pub total: i64,
 }
 
 /// What a budget change wrote, or what its key already wrote.
@@ -439,6 +456,35 @@ async fn balance_cents(tx: &mut PgConnection, studio_id: &str) -> Result<i64, St
 }
 
 impl Credits {
+    /// The studio, its operators and a page of its budget history, newest
+    /// first, all read from one snapshot, so the balance, the entries and
+    /// their total agree even while a change commits between the reads.
+    pub async fn studio_detail(
+        &self,
+        studio_id: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Option<StudioDetail>, StudioError> {
+        let mut tx = self.read_snapshot().await?;
+        let row = sqlx::query(concat!(summary_select!(), " WHERE s.id = $1::uuid"))
+            .bind(studio_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(studio) = row.as_ref().map(map_summary) else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let operators = Self::operators_on(&mut tx, studio_id).await?;
+        let (entries, total) = Self::entries_on(&mut tx, studio_id, limit, offset).await?;
+        tx.commit().await?;
+        Ok(Some(StudioDetail {
+            studio,
+            operators,
+            entries,
+            total,
+        }))
+    }
+
     pub async fn studio(&self, studio_id: &str) -> Result<Option<StudioSummary>, StudioError> {
         let row = sqlx::query(concat!(summary_select!(), " WHERE s.id = $1::uuid"))
             .bind(studio_id)
@@ -529,8 +575,8 @@ impl Credits {
         self.studio(studio_id).await?.ok_or(StudioError::NotFound)
     }
 
-    pub async fn studio_operators(
-        &self,
+    async fn operators_on(
+        conn: &mut PgConnection,
         studio_id: &str,
     ) -> Result<Vec<StudioOperator>, StudioError> {
         let rows = sqlx::query(
@@ -538,7 +584,7 @@ impl Credits {
              FROM credits.studio_operators WHERE studio_id = $1::uuid ORDER BY created_at, address",
         )
         .bind(studio_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
         Ok(rows
             .iter()
@@ -635,6 +681,12 @@ impl Credits {
         let adds_budget = req.usd_cents > 0;
         let request_hash = budget_request_hash(req.kind, req.usd_cents, req.note);
         let mut tx = self.pool.begin().await?;
+        // Each statement must see what the previous lock holder committed, so
+        // the level is pinned rather than inherited from the session default:
+        // under REPEATABLE READ a waiter's snapshot could predate it.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
         if adds_budget {
             sqlx::query("SELECT pg_advisory_xact_lock($1)")
                 .bind(*DEPOSITS_LOCK_ID)
@@ -642,6 +694,11 @@ impl Credits {
                 .await?;
         }
         let studio_name = lock_studio(&mut tx, req.studio_id).await?;
+        // One reading of the database clock, under the locks: the day the
+        // ceiling counts and the time the entry records are the same.
+        let now: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
+            .fetch_one(&mut *tx)
+            .await?;
 
         let existing = sqlx::query(
             "SELECT id::text AS id, request_hash FROM credits.studio_budget_entries \
@@ -674,9 +731,10 @@ impl Credits {
             let deposited_today_cents: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries \
                  WHERE usd_cents > 0 \
-                   AND created_at >= date_trunc('day', timezone('UTC', clock_timestamp())) \
-                   AND created_at < date_trunc('day', timezone('UTC', clock_timestamp())) + interval '1 day'",
+                   AND created_at >= date_trunc('day', $1::timestamp) \
+                   AND created_at < date_trunc('day', $1::timestamp) + interval '1 day'",
             )
+            .bind(now)
             .fetch_one(&mut *tx)
             .await?;
             if deposited_today_cents + req.usd_cents > limit_cents {
@@ -697,7 +755,7 @@ impl Credits {
         let entry_id: String = sqlx::query_scalar(
             "INSERT INTO credits.studio_budget_entries \
                  (studio_id, usd_cents, kind, note, idempotency_key, request_hash, created_by, created_at) \
-             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, timezone('UTC', clock_timestamp())) \
+             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8) \
              RETURNING id::text",
         )
         .bind(req.studio_id)
@@ -707,6 +765,7 @@ impl Credits {
         .bind(req.idempotency_key)
         .bind(&request_hash)
         .bind(req.actor)
+        .bind(now)
         .fetch_one(&mut *tx)
         .await?;
         Self::audit(
@@ -731,8 +790,8 @@ impl Credits {
     }
 
     /// A page of the studio's budget history, newest first, with its total.
-    pub async fn studio_budget_entries(
-        &self,
+    async fn entries_on(
+        conn: &mut PgConnection,
         studio_id: &str,
         limit: i64,
         offset: i64,
@@ -750,13 +809,13 @@ impl Credits {
         .bind(studio_id)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
         let total: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM credits.studio_budget_entries WHERE studio_id = $1::uuid",
         )
         .bind(studio_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         let entries = rows
             .iter()
@@ -859,6 +918,10 @@ mod tests {
             json!(1.5),
             json!("5"),
             json!(MAX_CREDITS_PER_BUDGET_CHANGE + 1),
+            json!(-MAX_CREDITS_PER_BUDGET_CHANGE - 1),
+            json!(i64::MIN),
+            json!(i64::MAX),
+            json!(u64::MAX),
         ] {
             assert!(parse_credits_change(Some(&bad)).is_err(), "{bad}");
         }

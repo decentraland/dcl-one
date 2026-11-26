@@ -11532,37 +11532,125 @@ async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
 }
 
 /// Two deposits that each fit the day's ceiling but not together: the
-/// deposits lock lets exactly one through, across studios.
+/// deposits lock lets exactly one through, across studios, round after round,
+/// even with every connection defaulting to REPEATABLE READ (the budget
+/// transaction pins its own level; inherited, a waiter's snapshot would
+/// predate the deposit it waited for).
 #[tokio::test]
 async fn concurrent_studio_deposits_never_pass_the_days_ceiling_together() {
     let Some(db) = OwnDatabase::create("studio_ceiling").await else {
         return;
     };
-    let app = app(studio_state(db.pool.clone(), Some(1000)));
-    let a = create_test_studio(&app, "A").await;
-    let b = create_test_studio(&app, "B").await;
-    let deposit = |studio: &str, key: &str| {
-        let app = app.clone();
-        let path = format!("/credits/admin/studios/{studio}/budget");
-        let body = json!({ "kind": "deposit", "credits": 60, "idempotencyKey": key });
-        async move { send(&app, "POST", &path, admin_bearer(), Some(body)).await }
-    };
-    let ((sa, _, va), (sb, _, vb)) =
-        tokio::join!(deposit(&a, "race-a-0001"), deposit(&b, "race-b-0001"));
-    let mut statuses = [sa, sb];
-    statuses.sort();
-    assert_eq!(
-        statuses,
-        [StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS],
-        "{va} {vb}"
-    );
+    sqlx::raw_sql(
+        "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation = %L', \
+         current_database(), 'repeatable read'); END $$",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let level: String = sqlx::query_scalar("SHOW transaction_isolation")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, "repeatable read");
+    let setup = app(studio_state(pool.clone(), Some(1_000_000)));
+    let a = create_test_studio(&setup, "A").await;
+    let b = create_test_studio(&setup, "B").await;
+    for round in 0..5_i64 {
+        // Room for one more 600-cent deposit this round, not two.
+        let app = app(studio_state(pool.clone(), Some(600 * round + 1000)));
+        let deposit = |studio: &str, key: String| {
+            let app = app.clone();
+            let path = format!("/credits/admin/studios/{studio}/budget");
+            let body = json!({ "kind": "deposit", "credits": 60, "idempotencyKey": key });
+            async move { send(&app, "POST", &path, admin_bearer(), Some(body)).await }
+        };
+        let ((sa, _, va), (sb, _, vb)) = tokio::join!(
+            deposit(&a, format!("race-a-{round:04}")),
+            deposit(&b, format!("race-b-{round:04}"))
+        );
+        let mut statuses = [sa, sb];
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            [StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS],
+            "round {round}: {va} {vb}"
+        );
+    }
     let inflow: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries",
     )
-    .fetch_one(&db.pool)
+    .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(inflow, 600);
+    assert_eq!(inflow, 5 * 600);
+    pool.close().await;
+    db.drop().await;
+}
+
+/// A studio's page reads one snapshot: while deposits commit, its balance,
+/// its entries and their total always agree.
+#[tokio::test]
+async fn a_studio_page_agrees_with_itself_while_deposits_commit() {
+    let Some(db) = OwnDatabase::create("studio_page").await else {
+        return;
+    };
+    let state = studio_state(db.pool.clone(), Some(1_000_000));
+    let id = create_test_studio(&app(state.clone()), "Page").await;
+    let writer = {
+        let state = state.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            for n in 0..40 {
+                state
+                    .credits
+                    .record_studio_budget_change(super::studios::BudgetChangeRequest {
+                        studio_id: &id,
+                        kind: "deposit",
+                        usd_cents: 10,
+                        note: None,
+                        idempotency_key: &format!("page-{n:04}"),
+                        daily_deposit_limit_cents: Some(1_000_000),
+                        actor: "token:test",
+                    })
+                    .await
+                    .unwrap();
+            }
+        })
+    };
+    let mut reads = 0;
+    while reads == 0 || !writer.is_finished() {
+        let page = state
+            .credits
+            .studio_detail(&id, 200, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        let sum: i64 = page.entries.iter().map(|e| e.usd_cents).sum();
+        assert_eq!(
+            (
+                page.studio.balance_cents,
+                page.studio.deposited_cents,
+                page.total
+            ),
+            (sum, sum, page.entries.len() as i64),
+            "read {reads}"
+        );
+        reads += 1;
+    }
+    writer.await.unwrap();
+    let page = state
+        .credits
+        .studio_detail(&id, 200, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((page.studio.balance_cents, page.total), (400, 40));
     db.drop().await;
 }
 
@@ -11728,4 +11816,182 @@ fn a_bad_write_admin_address_fails_startup() {
         err.to_string().contains("CREDITS_WRITE_ADMIN_ADDRESSES"),
         "{err}"
     );
+}
+
+/// A shared cache within its acceptance TTL after a contract wallet's owner
+/// was removed: the cached answer still accepts; the contract itself (the
+/// fresh path) refuses.
+struct RevokedContract;
+
+/// The contract asked directly: it refuses.
+struct ContractRefuses;
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for RevokedContract {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(&ContractRefuses)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(true)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for ContractRefuses {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(self)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(false)
+    }
+}
+
+/// A contract wallet's chain for `method path`: SIGNER (the contract), its
+/// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
+/// signs.
+async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+    let ephemeral = PrivateKeySigner::random();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let expiration =
+        (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let links = [
+        json!({ "type": "SIGNER", "payload": contract, "signature": "" }),
+        json!({ "type": "ECDSA_EIP_1654_EPHEMERAL",
+            "payload": format!("Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}", ephemeral.address()),
+            "signature": format!("0x{}", "11".repeat(65)) }),
+        json!({ "type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": signature }),
+    ];
+    let mut headers = HeaderMap::new();
+    for (index, link) in links.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+            link.to_string().parse().unwrap(),
+        );
+    }
+    headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
+    headers.insert("x-identity-metadata", "{}".parse().unwrap());
+    headers
+}
+
+/// A studio change asks the contract itself, so a contract wallet whose owner
+/// was removed stops changing studios at once while a read keeps the cached
+/// answer. The proxy's `x-original-path` counts only when it is the route
+/// (the credits host signs credits-server's own path); a signature over
+/// another path that merely ends with it opens nothing, on either mount.
+#[tokio::test]
+async fn studio_admin_writes_ask_the_contract_and_bind_their_route() {
+    let Some(pool) = pool().await else { return };
+    let contract = format!("0x{:0>40}", "c0de5");
+    let wallet = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        write_admin_addresses: format!("{contract},{}", wallet.address),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        Some(Arc::new(RevokedContract)),
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+    let list = "/credits/admin/studios";
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        list,
+        contract_wallet_headers(&contract, "get", list).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        contract_wallet_headers(&contract, "post", list).await,
+        Some(json!({ "name": unique("Revoked") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a write asks the contract: {v}"
+    );
+
+    let mut proxied = signed_headers(&wallet, "post", "/admin/studios").await;
+    proxied.insert("x-original-path", "/admin/studios".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        proxied,
+        Some(json!({ "name": unique("Proxied") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the credits host's own path: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+
+    for (router, path) in [(&app, list), (&canonical, "/shop-api/admin/studios")] {
+        let mut foreign = signed_headers(&wallet, "post", "/elsewhere/admin/studios").await;
+        foreign.insert(
+            "x-original-path",
+            "/elsewhere/admin/studios".parse().unwrap(),
+        );
+        let (status, _, v) = send(
+            router,
+            "POST",
+            path,
+            foreign,
+            Some(json!({ "name": unique("Foreign") })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {v}");
+    }
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }

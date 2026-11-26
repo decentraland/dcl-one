@@ -16,7 +16,9 @@ use serde_json::{Value, json};
 
 use super::SharedState;
 use super::errors::ApiError;
-use crate::shared::signed_fetch::ORIGINAL_PATH_HEADER;
+use crate::shared::signed_fetch::{
+    ORIGINAL_PATH_HEADER, PayloadPolicy, SignedPath, require_signer_at,
+};
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_CREDITS_ADMIN_TOKEN";
 
@@ -118,7 +120,10 @@ pub(crate) async fn require_write_admin(
 }
 
 /// The signer of a signed-fetch request over `method` and `route_path` when it
-/// is one of `admins`; otherwise `refused` as a 401.
+/// is one of `admins`; otherwise `refused` as a 401. A write (any method but
+/// GET) checks a contract wallet's signature with the uncached validator, so
+/// a revoked delegation stops authorizing at once, not after the cache's
+/// acceptance TTL; a validator with no uncached path refuses it.
 async fn signed_admin(
     state: &SharedState,
     headers: &HeaderMap,
@@ -145,9 +150,21 @@ async fn signed_admin(
     if foreign {
         headers.remove(ORIGINAL_PATH_HEADER);
     }
-    let signer = super::handlers::signer_from(state, &headers, method, route_path, original)
-        .await
-        .map_err(|_| ApiError::unauthorized(refused))?;
+    let validator = state.eip1654.as_deref();
+    let validator = if !method.eq_ignore_ascii_case("get") {
+        validator.and_then(|v| v.fresh_validator())
+    } else {
+        validator
+    };
+    let signer = require_signer_at(
+        &headers,
+        method,
+        &SignedPath::at(&original.0, route_path),
+        PayloadPolicy::V6ThenLegacy,
+        validator,
+    )
+    .await
+    .map_err(|_| ApiError::unauthorized(refused))?;
     if admins
         .iter()
         .any(|list| list.iter().any(|a| a == signer.as_str()))

@@ -20,8 +20,9 @@ use serde_json::{Map, Value as JsonValue, json};
 use crate::credits::SharedState;
 use crate::credits::admin::{normalize_address, require_read_admin, require_write_admin};
 use crate::credits::studios::{
-    BudgetChangeRequest, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, StudioError, USD_CENTS_PER_CREDIT,
-    parse_credits_change, parse_idempotency_key, parse_name, parse_note, parse_studio_id,
+    BudgetChangeRequest, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, StudioDetail, StudioError,
+    USD_CENTS_PER_CREDIT, parse_credits_change, parse_idempotency_key, parse_name, parse_note,
+    parse_studio_id,
 };
 use crate::shared::routing::{delete, erase, get, post};
 
@@ -136,16 +137,16 @@ async fn get_studio(
     read_gate(&state, &headers, &route, &original).await?;
     let studio_id = parse_studio_id(&studio_id)?;
     let (limit, offset) = page.page();
-    let studio = state
+    let StudioDetail {
+        studio,
+        operators,
+        entries,
+        total,
+    } = state
         .credits
-        .studio(&studio_id)
+        .studio_detail(&studio_id, limit, offset)
         .await?
         .ok_or(StudioError::NotFound)?;
-    let operators = state.credits.studio_operators(&studio_id).await?;
-    let (entries, total) = state
-        .credits
-        .studio_budget_entries(&studio_id, limit, offset)
-        .await?;
     Ok(Json(json!({
         "studio": studio,
         "operators": operators,

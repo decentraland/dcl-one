@@ -18,7 +18,9 @@
 //! A legacy alias is the same handler with the same wire shape: a signed
 //! request is verified over the method and path it was signed for, never
 //! redirected or rewritten. `library/shop/api/endpoints.ts` is the client's
-//! table of the same paths.
+//! table of the same paths, the operator routes excepted: the ops dashboard
+//! calls those, never the Shop UI, so neither that table nor the UI's pinned
+//! routes list them.
 
 /// The canonical backend prefix.
 pub const PREFIX: &str = "/shop-api";
