@@ -74,6 +74,7 @@ struct Upstream {
     blobs: HashMap<String, Vec<u8>>,
     about_calls: BTreeMap<String, usize>,
     index_hidden: Option<String>,
+    index_fill_to: Option<usize>,
     /// Scene base URL override per world (the loop-guard check).
     base_override: HashMap<String, String>,
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
@@ -199,7 +200,7 @@ fn set_scenes(state: &mut Upstream, world: &str, scenes: &[SceneSpec]) -> Vec<St
 
 async fn fake_index(State(s): State<(Shared, String)>) -> Json<Value> {
     let st = s.0.lock();
-    let data: Vec<Value> = st
+    let mut data: Vec<Value> = st
         .worlds
         .iter()
         .filter(|(name, scenes)| !scenes.is_empty() && st.index_hidden.as_ref() != Some(*name))
@@ -210,6 +211,15 @@ async fn fake_index(State(s): State<(Shared, String)>) -> Json<Value> {
             })).collect::<Vec<_>>()})
         })
         .collect();
+    if let Some(limit) = st.index_fill_to {
+        let scenes = data[0]["scenes"].clone();
+        data.extend((data.len()..limit).map(|i| {
+            json!({
+                "name": format!("page-{i}.dcl.eth"),
+                "scenes": scenes,
+            })
+        }));
+    }
     Json(json!({"data": data, "lastUpdated": "2026-09-24T00:00:00.000Z"}))
 }
 
@@ -1199,6 +1209,74 @@ async fn a_catalogue_that_would_unlist_most_of_the_mirror_is_refused() {
         (58, 2, true)
     );
     assert_eq!(summary.scenes.retired_scenes, 2);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// At the upstream page ceiling, a world omitted from the index can still be active.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_capped_index_preserves_live_omissions_and_still_reconciles_confirmed_removals() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "capped-index").await;
+    let live = "previously-indexed.dcl.eth";
+    let gone = "confirmed-gone.dcl.eth";
+    let added = "newly-indexed.dcl.eth";
+    node.settings.names = ["anchor.dcl.eth", live, gone, added]
+        .map(String::from)
+        .to_vec();
+    let at = now_ms() - 3_600_000;
+    let (live_id, gone_id) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        (
+            deploy_upstream(&mut st, live, "Still live", &["0,0"], at).0,
+            deploy_upstream(&mut st, gone, "Will be removed", &["0,0"], at).0,
+        )
+    };
+    for (world, id) in [(live, &live_id), (gone, &gone_id)] {
+        publish_here(&node.pool, world, id, &["0,0"], at).await;
+        forwarded(&node.pool, &fake.base, world, id, "accepted").await;
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 2);
+    let live_identity = active_identity(&node.pool, live, &live_id).await.unwrap();
+    let gone_identity = active_identity(&node.pool, gone, &gone_id).await.unwrap();
+
+    {
+        let mut st = fake.state.lock();
+        st.index_hidden = Some(live.into());
+        st.index_fill_to = Some(10_000);
+        st.worlds.remove(gone);
+        deploy_upstream(&mut st, added, "New", &["2,2"], at);
+    }
+    let pass = node.pass(&ctx).await;
+    assert_eq!(
+        active_identity(&node.pool, live, &live_id).await,
+        Some(live_identity),
+    );
+    assert_eq!(node.scene_rows(live).await.len(), 1);
+    assert!(!identity_active(&node.pool, gone_identity).await);
+    assert!(node.scene_rows(gone).await.is_empty());
+    assert_eq!(node.scene_rows(added).await.len(), 1);
+    assert_eq!(pass.catalogue.unlisted, 0);
+    assert!(!pass.catalogue.complete);
+    assert_eq!(pass.catalogue.listed, 10_000);
+    let (_, _, catalogue_passes, stats) = node.pass_row("catalogue").await;
+    assert_eq!(catalogue_passes, 1);
+    assert_eq!(stats["at_page_limit"], true);
+    let last_error: String = sqlx::query_scalar(
+        "SELECT last_error FROM worlds.mirror_passes WHERE mirror = 'catalogue'",
+    )
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert!(last_error.contains("page limit 10000"));
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

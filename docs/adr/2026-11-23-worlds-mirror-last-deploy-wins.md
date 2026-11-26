@@ -93,6 +93,13 @@ trimming whitespace and trailing slashes.
   scenes from that source, within any explicit name filter. A bounded pass
   checks its first-N catalogue names. A confirmed empty listing retires
   the matching scenes and preserves the world settings and grants.
+- **Catalogue coverage.** An `/index` response at the upstream ceiling of
+  10,000 rows keeps the previous catalogue entries and records the pass as
+  incomplete with a page-limit warning. The mirror continues reconciling
+  its scheduled names using their per-world listings. Below the ceiling,
+  the removal fuse still rejects unusually large drops. The operator
+  verifies complete catalogue coverage before enabling the scheduled mirror,
+  since a smaller response can also omit a live world without a signal.
 - **Hosting.** Mirrored scenes are served as copies. Handover ends local
   authoritative SDK7 hosting and local collaborator and `logsPermissions`
   eligibility for those scenes. Mirrored scenes stop counting toward local

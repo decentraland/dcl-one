@@ -1,6 +1,10 @@
 //! Worlds mirror catalogue.
 use super::*;
 
+/// The Worlds Content Server's default and maximum response size for `/index`.
+/// An answer at this ceiling cannot prove catalogue-wide absence.
+const INDEX_PAGE_LIMIT: usize = 10_000;
+
 pub(super) struct CatalogueEntry {
     pub(super) name: String,
     pub(super) scene_ids: Vec<String>,
@@ -68,6 +72,9 @@ pub(super) async fn catalogue_pass(
         .await
         .with_context(|| format!("reading {url}"))?;
     let index: Value = serde_json::from_slice(&body).with_context(|| format!("parsing {url}"))?;
+    // Count wire rows before dropping duplicates or entries without usable scenes.
+    let wire_rows = index["data"].as_array().map_or(0, Vec::len);
+    let at_page_limit = wire_rows >= INDEX_PAGE_LIMIT;
     let entries = parse_index(&index);
     if entries.is_empty() {
         bail!("{url} lists no world with scenes; refusing to treat an empty catalogue as complete");
@@ -111,7 +118,21 @@ pub(super) async fn catalogue_pass(
     .fetch_one(&mut *tx)
     .await?;
     let fuse = SWEEP_FUSE_MIN_CANDIDATES.max(previously_listed / 5);
-    let (unlisted, complete, error) = if candidates > fuse {
+    let (unlisted, complete, error) = if at_page_limit {
+        tracing::warn!(
+            wire_rows,
+            candidates,
+            page_limit = INDEX_PAGE_LIMIT,
+            "upstream catalogue reached its page limit; skipping retirement based on index absence"
+        );
+        (
+            0,
+            false,
+            Some(format!(
+                "upstream catalogue returned {wire_rows} rows (page limit {INDEX_PAGE_LIMIT}); index-based retirement skipped"
+            )),
+        )
+    } else if candidates > fuse {
         tracing::warn!(
             candidates,
             previously_listed,
@@ -140,6 +161,7 @@ pub(super) async fn catalogue_pass(
         listed: entries.len(),
         unlisted,
         complete,
+        at_page_limit,
     };
     sqlx::query(
         r#"INSERT INTO worlds.mirror_passes

@@ -149,6 +149,7 @@ pub struct CatalogueOutcome {
     pub listed: usize,
     pub unlisted: usize,
     pub complete: bool,
+    pub at_page_limit: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -206,7 +207,7 @@ pub async fn run_pass(
             },
         });
     }
-    let scenes = match scenes_pass(client, pool, storage, settings, owners, ctx).await {
+    let scenes = match scenes_pass(client, pool, storage, settings, owners, ctx, &catalogue).await {
         Ok(out) => out,
         Err(e) => {
             record_error(pool, "scenes", &settings.source, &format!("{e:#}")).await?;
@@ -263,6 +264,7 @@ async fn scenes_pass(
     settings: &MirrorSettings,
     owners: Option<Arc<Policy>>,
     ctx: &JobContext,
+    catalogue: &CatalogueOutcome,
 ) -> Result<ScenesOutcome> {
     let mut out = ScenesOutcome::default();
 
@@ -299,7 +301,9 @@ async fn scenes_pass(
             .bind(&settings.source)
             .execute(pool)
             .await?;
-            out.retired_scenes = retire_unlisted(pool).await?;
+            if catalogue.complete {
+                out.retired_scenes = retire_unlisted(pool).await?;
+            }
             String::new()
         }
     };
@@ -333,7 +337,14 @@ async fn scenes_pass(
                 settings.clone(),
                 owners.clone(),
             );
-            let (name, scene_ids) = (name.clone(), scene_ids.clone());
+            let name = name.clone();
+            // At the page ceiling, only a current per-world listing can confirm a
+            // held scene set. The retained catalogue may contain stale scene IDs.
+            let scene_ids = if catalogue.at_page_limit {
+                Vec::new()
+            } else {
+                scene_ids.clone()
+            };
             set.spawn(async move {
                 let result = mirror_world(
                     &client,
