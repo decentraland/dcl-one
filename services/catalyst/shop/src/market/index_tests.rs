@@ -157,6 +157,8 @@ struct FakeChain {
     omit_range_hint: std::sync::atomic::AtomicBool,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
+    by_hash_parents: Mutex<HashMap<u64, String>>,
+    by_number_parents: Mutex<HashMap<u64, String>>,
     requests: AtomicUsize,
     get_logs: AtomicUsize,
     /// Answer eth_getLogs without `blockTimestamp` (the Polygon backends that do).
@@ -259,6 +261,8 @@ impl FakeChain {
             omit_range_hint: Default::default(),
             max_addresses,
             forks: Mutex::new(HashMap::new()),
+            by_hash_parents: Mutex::new(HashMap::new()),
+            by_number_parents: Mutex::new(HashMap::new()),
             requests: AtomicUsize::new(0),
             get_logs: AtomicUsize::new(0),
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
@@ -510,6 +514,18 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 None => refuse("unknown collection at block hash".into()),
             }
         }
+        Some("eth_getBlockByHash") => {
+            let hash = body["params"][0].as_str().unwrap_or_default();
+            let Some(n) = hash.get(52..).and_then(|suffix| u64::from_str_radix(suffix,16).ok()) else {
+                return reply(Value::Null);
+            };
+            if chain.hash_of(n) != hash {
+                return reply(Value::Null);
+            }
+            let parent = chain.by_hash_parents.lock().get(&n).cloned()
+                .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
+            reply(json!({"number":format!("0x{n:x}"),"hash":hash,"parentHash":parent,"timestamp":format!("0x{:x}",time_of(n))}))
+        }
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {
                 if !chain.finalized_available.load(Ordering::SeqCst) {
@@ -525,8 +541,10 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 }
                 hex_u64(&body["params"][0])
             };
+            let parent = chain.by_number_parents.lock().get(&n).cloned()
+                .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
             let answered = reply(
-                json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "timestamp": format!("0x{:x}", time_of(n)) }),
+                json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "parentHash": parent, "timestamp": format!("0x{:x}", time_of(n)) }),
             );
             let mut gating = chain.gate_after.lock();
             if let Some(g) = gating.as_mut()
@@ -8392,7 +8410,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &ix, &a, before.0, chrono::Utc::now())
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)
@@ -9112,6 +9130,9 @@ mod supervisor {
                 gate.acquire().await.unwrap().forget();
             }
             self.inner().fold(pool, since, upto, owner).await
+        }
+        async fn publish(&self, conn: &mut sqlx::PgConnection, upto: i64) -> anyhow::Result<()> {
+            self.inner().publish(conn, upto).await
         }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
@@ -14912,5 +14933,6 @@ mod compare_sources_tests {
 mod sale_accounting;
 
 mod cancelled_trades;
+mod historical_routes;
 mod royalties;
 mod sale_routes;

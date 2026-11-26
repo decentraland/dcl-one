@@ -1,5 +1,7 @@
-//! `GET /v1/activity?address=` (signed by that address, a marketplace or
-//! builder signer): one wallet's market history, newest first: the sales
+//! `GET /v1/activity` (a marketplace or builder signer): the signing
+//! wallet's market history, newest first. Like marketplace-server, it needs no
+//! `address`; one that is sent must name the signer, or the read is refused
+//! rather than answered for another wallet. The history holds the sales
 //! it bought and sold, the bids it placed and received, the orders it
 //! created and filled, the trades it signed or is a beneficiary of, and the
 //! NFTs it sent and received outside a sale ([`super::activity_transfers`]).
@@ -276,12 +278,13 @@ async fn activity(
     .await
     .map_err(refusal)?
     .into_string();
-    let query_address = pairs
+    // The signer is the wallet read, as in marketplace-server. An `address`
+    // naming another wallet is refused, never answered with the signer's.
+    let requested = pairs
         .iter()
         .find(|(k, _)| k == "address")
-        .map(|(_, v)| v.to_lowercase())
-        .ok_or_else(|| ApiError::bad_request("Unauthorized"))?;
-    if recovered != query_address {
+        .map(|(_, v)| v.to_lowercase());
+    if requested.is_some_and(|requested| requested != recovered) {
         return Err(ApiError::bad_request("Forbidden: address mismatch"));
     }
     let limit = get_number_parameter("limit", pairs)?;
@@ -672,7 +675,8 @@ mod tests {
     /// The route over the local trades (no subgraph configured, so the
     /// reader legs contribute nothing, as a failing source did before): the
     /// signer's own trades and the ones naming it as beneficiary, not a
-    /// stranger's; the old status and wording of every refusal.
+    /// stranger's, with or without `address`; the old status and wording of
+    /// every refusal.
     #[tokio::test]
     async fn activity_answers_the_signer_its_trades_and_refuses_as_before() {
         use crate::shared::signed_fetch::test_support::{address, signed_headers};
@@ -746,6 +750,28 @@ mod tests {
             (axum::http::StatusCode::OK, Some(1)),
             "{body}"
         );
+
+        // No address, as marketplace-server's clients ask: the signer's own.
+        let (status, body) = call(
+            state.clone(),
+            "/v1/activity",
+            signed_headers("get", "/v1/activity", marketplace, true).await,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        let ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        for (id, want) in [(&mine, true), (&to_me, true), (&stranger, false)] {
+            assert_eq!(
+                ids.contains(&format!("trade_created:{id}").as_str()),
+                want,
+                "{id}: {ids:?}"
+            );
+        }
 
         let (status, body) = call(
             state.clone(),

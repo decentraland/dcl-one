@@ -446,8 +446,9 @@ pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
 /// cancelled; the route answers [`timed_out`]'s 503 for it.
 pub(crate) const NFT_PRICES_TIMED_OUT: &str = "the nft prices read ran past its statement bound";
 
-/// The prefix of [`nft_prices`]'s error for the nft index or the items
-/// mirror that stopped meeting its rule after [`require_prices_sources`]:
+/// The prefix of [`nft_prices`]'s error for the nft index, the items mirror
+/// or the collections index that stopped meeting its rule after
+/// [`require_prices_sources`]:
 /// then the source's name, `": "` and the envelope's message, which the
 /// route reads back ([`nft_prices_not_ready`]) into the envelope `/v1/nfts`
 /// answers in the same state.
@@ -461,13 +462,17 @@ fn nft_prices_not_ready_error(source: Source, message: &str) -> String {
 /// stopped being ready after the gate.
 pub(crate) fn nft_prices_not_ready(e: &str) -> Option<(Source, &str)> {
     let rest = e.strip_prefix(NFT_PRICES_NOT_READY)?;
-    [Source::NftIndex, Source::ItemsMirror]
-        .into_iter()
-        .find_map(|source| {
-            rest.strip_prefix(source.name())
-                .and_then(|m| m.strip_prefix(": "))
-                .map(|m| (source, m))
-        })
+    [
+        Source::NftIndex,
+        Source::ItemsMirror,
+        Source::CollectionsIndex,
+    ]
+    .into_iter()
+    .find_map(|source| {
+        rest.strip_prefix(source.name())
+            .and_then(|m| m.strip_prefix(": "))
+            .map(|m| (source, m))
+    })
 }
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published;
@@ -1717,12 +1722,28 @@ pub async fn require_prices_sources(
     require_sources(state, &f, sources_for(&f)).await
 }
 
-/// The nft leg of `/v1/prices`: the order price of every nft on sale that
-/// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
-/// and names); `category` narrows the sources as `/v1/nfts` does. Read
-/// only after [`require_prices_sources`]; if the LAND index stops being
-/// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
-pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
+/// The read the nft leg of `/v1/prices` fills on: its checked snapshot,
+/// and the key of what that snapshot sees (the nft index's publications and
+/// the catalogue's copies), so a memo filed under one read never answers for
+/// another publication of either.
+pub(crate) struct PricesRead {
+    conn: ReadConn,
+    key: String,
+}
+
+impl PricesRead {
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+/// Opens [`PricesRead`] for `f`, checking its sources on the snapshot. If
+/// one stopped being ready after [`require_prices_sources`], the error is
+/// the one [`nft_prices`] gives.
+pub(crate) async fn prices_read(
+    state: &MarketplaceState,
+    f: &NftFilters,
+) -> Result<PricesRead, String> {
     let f = on_sale(f);
     let sources = sources_for(&f);
     let land = state.land_network();
@@ -1734,6 +1755,39 @@ pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Hist
             ReadConnError::Pool(e) if cancelled(&e) => NFT_PRICES_TIMED_OUT.to_string(),
             ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
         })?;
+    let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
+    let seen = owned_items::Publications::read(&mut conn, catalogue)
+        .await
+        .map_err(|e| e.to_string())?
+        .naming(&mut conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PricesRead {
+        conn,
+        key: format!("{seen:?}"),
+    })
+}
+
+/// The nft leg of `/v1/prices`: the order price of every nft on sale that
+/// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
+/// and names); `category` narrows the sources as `/v1/nfts` does. Read
+/// only after [`require_prices_sources`]; if the LAND index stops being
+/// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
+pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
+    let mut read = prices_read(state, f).await?;
+    nft_prices_on(&mut read, state, f).await
+}
+
+/// [`nft_prices`] on the read [`prices_read`] opened.
+pub(crate) async fn nft_prices_on(
+    read: &mut PricesRead,
+    state: &MarketplaceState,
+    f: &NftFilters,
+) -> Result<Histogram, String> {
+    let f = on_sale(f);
+    let sources = sources_for(&f);
+    let land = state.land_network();
+    let conn: &mut PgConnection = &mut read.conn;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,
@@ -1832,6 +1886,23 @@ fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescriptio
 /// The source SQL that describes `contract`'s tokens; a LAND or estate
 /// registry of any network reads that network's rows.
 fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
+    let (catalogue, registry) = registry_of(net, contract, chain_id);
+    match registry {
+        Some(Registry::Land(land)) => land_source(Some(land), false, false, LastSale::default()),
+        Some(Registry::Names) => names_source(catalogue, LastSale::default()),
+        None => collection_source(net, catalogue, LastSale::default()),
+    }
+}
+
+/// A registry whose tokens another source than the catalogue describes.
+enum Registry {
+    Land(LandNetwork),
+    Names,
+}
+
+/// The catalogue `chain_id` names on `net`, and the registry `contract` is
+/// on it, if it is one: a LAND registry or the NAME registrar.
+fn registry_of(net: ChainNet, contract: &str, chain_id: i64) -> (Catalogue, Option<Registry>) {
     let catalogue = if chain_id == net.testnet_chain_id() {
         Catalogue::Testnet
     } else {
@@ -1841,19 +1912,28 @@ fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
         if let Some(land) = land_network_of_registry(contract)
             && Catalogue::from_land(land) == catalogue
         {
-            return land_source(Some(land), false, false, LastSale::default());
+            return (catalogue, Some(Registry::Land(land)));
         }
         if contract == catalogue.registrar() {
-            return names_source(catalogue, LastSale::default());
+            return (catalogue, Some(Registry::Names));
         }
     }
-    collection_source(net, catalogue, LastSale::default())
+    (catalogue, None)
+}
+
+/// Whether the catalogue (`shop.collections`, `shop.items`) describes
+/// `contract`'s tokens on `net`, as [`asset_metas`] reads them: every
+/// contract but the LAND registries and the NAME registrar.
+pub(crate) fn described_by_catalogue(net: ChainNet, contract: &str, chain_id: i64) -> bool {
+    registry_of(net, &contract.to_ascii_lowercase(), chain_id)
+        .1
+        .is_none()
 }
 
 /// [`asset_meta`] of many `(contract, token_id)` at once, one query per
 /// source, keyed as asked; non-numeric token ids describe nothing.
 pub async fn asset_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
     chain_id: i64,
@@ -1881,7 +1961,7 @@ pub async fn asset_metas(
         )))
         .bind(&contracts)
         .bind(&tokens)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         for r in &rows {
             out.insert(

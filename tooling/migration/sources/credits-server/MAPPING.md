@@ -14,6 +14,9 @@ stopped.
 | `wallet_flag` | `flagged_wallets` (live `multi-account`) | `credits.wallet_flags` |
 | `purchase` | `stripe_orders` + their `user_credits` | `credits.purchases` |
 | `ledger` | USD `user_credits`, SETTLED `usd_purchase_intents` | `credits.ledger`, `credits.wallets` balances |
+| `studio` | `studios` | `credits.studios` |
+| `studio_operator` | `studio_operators` | `credits.studio_operators` |
+| `studio_budget_entry` | `studio_budget_entries` | `credits.studio_budget_entries` (each studio's balance) |
 
 ## Known limitations
 
@@ -105,6 +108,47 @@ when every upstream flag really has expired or been lifted, rerun with
 `purchases` are not overwritten when the node row's `updated_at` is newer
 (the node refunded or abandoned it).
 
+## Studios
+
+Studios, their operators and their budgets are carried whole, after the
+ledger. Both sides keep a studio's balance as the sum of its budget entries
+in USD cents, so it is not a stored value: once the entries are loaded, each
+studio's balance is upstream's.
+
+- `studio`: one row per studio, keyed by upstream's `id` (operators and
+  entries name it). A studio the node renamed or paused after upstream's last
+  change (`updated_at`) keeps the node's values. A name the node already gives
+  another studio (compared case-insensitively, as on both sides) stops the
+  run; which studio keeps the name is an operator's decision.
+- `studio_operator`: each wallet acting for a studio.
+  `dcl_migration.credit_studio_operator_loaded` records the operators the
+  import added, and only those follow upstream. One upstream removed is
+  removed from the node too, so it stops granting from the budget. One the
+  node removed after the import is not added back, and one added on the node
+  is never touched. An empty upstream set while imported operators exist
+  aborts the batch; when upstream really has none, rerun with
+  `--allow-empty credits-server/studio_operator`.
+- `studio_budget_entry`: every entry, keyed by upstream's `id`, with its
+  amount, kind, note, idempotency key and request hash. Entries are
+  append-only on both sides, so a replay writes nothing.
+
+| Upstream entry | Node entry |
+| --- | --- |
+| `deposit` (`usd_cents > 0`) | `deposit` |
+| `adjustment` (`usd_cents <> 0`) | `adjustment` |
+| `grant` (`usd_cents < 0`), its `credit_id` imported by the ledger step | `grant`, `ledger_id` = the ledger row with `tx_ref` `credits-server:credit:<credit_id>` |
+| `grant` whose credit the ledger has not imported (a USD credit not yet available) | `adjustment` of the same amount, its note naming the credit; the run that imports the credit turns it into the `grant` |
+
+The money is never dropped. A grant whose credit is not imported yet still
+subtracts from the budget as an adjustment, so the balance stays exact, and it
+links to the credit on a later run. The studio grant's credit itself is a USD
+`user_credits` row (`studio_grant`), imported by the ledger step as a `grant`
+to the player like every other credit.
+
+Each entry keeps upstream's idempotency key and request hash. The node hashes
+a request differently from upstream, so a key first used before cutover and
+retried after it is refused as reused, never applied twice.
+
 ## Not migrated
 
 - MANA-denominated `user_credits` (goal, on_demand, legacy iap) and
@@ -120,8 +164,7 @@ when every upstream flag really has expired or been lifted, rerun with
   is in `purchases` and the refund ledger rows.
 - `iap_credits`, `iap_account_tokens` (no IAP on the node), `seasons`,
   `goals`, `season_goals`, `user_progress`, `sale_proceeds`,
-  `proceeds_cursor`, `proceeds_abandoned_fills`, `studios`,
-  `studio_operators`, `studio_budget_entries`, `shop_daily_summaries`,
+  `proceeds_cursor`, `proceeds_abandoned_fills`, `shop_daily_summaries`,
   `usd_purchase_alerts`: no target; money effects are `user_credits` rows.
 - Left to the node: `packs`, `idempotency`, `captcha_challenges`, `carts`,
   `cart_items`, `checkouts`, `fulfillment_outbox`, `authorizations`,

@@ -78,9 +78,11 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_bid_history;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
+mod historical;
 pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
@@ -262,6 +264,7 @@ pub struct MarketSettings {
     pub mirror_pages_per_tick: usize,
     pub trade_rpc_urls: listings::RpcEndpoints,
     pub admin_token: Option<String>,
+    pub historical_admin_token: Option<String>,
     pub catalog_cache_ttl: Duration,
     /// `MARKETPLACE_BASE_URL`: the site links the trade notification events point at.
     pub marketplace_base_url: String,
@@ -278,7 +281,7 @@ pub struct MarketSettings {
     pub portal: Option<chain_jobs::PortalSettings>,
 }
 
-/// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
+/// No derived `Debug`: prints only whether the bearer tokens are set,
 /// the `DirectSigner`/`Rpc` pattern.
 impl std::fmt::Debug for MarketSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -295,6 +298,10 @@ impl std::fmt::Debug for MarketSettings {
                     .collect::<Vec<_>>(),
             )
             .field("admin_token", &self.admin_token.is_some())
+            .field(
+                "historical_admin_token",
+                &self.historical_admin_token.is_some(),
+            )
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
@@ -312,6 +319,7 @@ impl Default for MarketSettings {
             mirror_pages_per_tick: mirrors::DEFAULT_PAGES_PER_TICK,
             trade_rpc_urls: listings::RpcEndpoints::default(),
             admin_token: None,
+            historical_admin_token: None,
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -358,6 +366,7 @@ impl MarketSettings {
             admin_token: admin_token
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty()),
+            historical_admin_token: None,
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -365,6 +374,11 @@ impl MarketSettings {
             trusted_proxy_cidrs: Vec::new(),
             portal: None,
         })
+    }
+
+    pub fn with_historical_admin_token(mut self, token: Option<String>) -> Self {
+        self.historical_admin_token = token;
+        self
     }
 
     /// The chain indexes' knobs (`main.rs` fills them from `Config`).
@@ -662,6 +676,8 @@ pub struct MarketplaceState {
     pub(crate) royalty_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
+    historical_slots: tokio::sync::Semaphore,
+    historical_body_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
     /// (`trades::require_ready`).
@@ -760,6 +776,8 @@ impl MarketplaceState {
             royalty_analytics_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
+            historical_slots: tokio::sync::Semaphore::new(2),
+            historical_body_slots: tokio::sync::Semaphore::new(2),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
             trades_list: parking_lot::Mutex::new(None),
@@ -1410,6 +1428,9 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
+        .merge(historical::routes(
+            state.settings.market.historical_admin_token.is_some(),
+        ))
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
@@ -1423,5 +1444,9 @@ pub fn market_router(state: SharedState) -> Router {
     } else {
         app
     };
-    DataWrites::guard(app.with_state(state), writes_enabled)
+    DataWrites::guard_open(
+        app.with_state(state),
+        writes_enabled,
+        historical::READ_PATHS,
+    )
 }

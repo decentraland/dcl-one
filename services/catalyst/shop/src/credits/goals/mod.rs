@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 pub use reads::{
     claim, claim_preflight, enroll, flag_reason, opt_out, progress, season_document, season_status,
-    status, user_credits,
+    status, user_credits, user_credits_on,
 };
 const GOAL: &str = "take-photo";
 const WEEKLY_CAP: &str = "40000000000000000000000";

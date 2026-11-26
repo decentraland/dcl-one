@@ -508,14 +508,14 @@ async fn save(
 
 /// Writes the receipts' payments of `(from, to]` and of the executions it
 /// retries below it. Returns the touched UTC days, whether a payment below
-/// `from` changed, and the executions whose minted token ids it set (any
-/// block, a retry's included).
+/// `from` changed, and the executions with a newly identified or priced asset.
 pub(super) async fn write(
     conn: &mut PgConnection,
     rpc: &Rpc<'_>,
     net: ChainNet,
     from: i64,
     to: i64,
+    mana: &str,
 ) -> anyhow::Result<(Vec<i64>, bool, Vec<(i64, i32)>)> {
     let retry:Vec<String>=sqlx::query_scalar(
        "SELECT tx_hash FROM shop.sale_execution WHERE network=$1 AND block_number <= $2 AND NOT receipt_read
@@ -576,7 +576,8 @@ pub(super) async fn write(
         .bind(net.db_name()).bind(&hashes).execute(&mut *conn).await?;
     let mut updated = Vec::new();
     let mut corrected_prefix = false;
-    let mut minted = Vec::new();
+    let mut asset_changes = Vec::new();
+    let mut settled_trades = Vec::new();
     // Only one response body is retained. Split an unreadable batch into
     // individual envelopes, each subject to the same transport limit.
     let mut pending: std::collections::VecDeque<_> =
@@ -678,7 +679,7 @@ pub(super) async fn write(
                         if kind == "trade"
                             && issued_tokens(conn, net, execution, &issue_logs).await?
                         {
-                            minted.push((execution.block, execution.index));
+                            asset_changes.push((execution.block, execution.index));
                         }
                         if let Some(slice) = payments.get(&(execution.block, index))
                             && let Some(splits) = if kind == "store" {
@@ -697,6 +698,9 @@ pub(super) async fn write(
                         {
                             for (p, split) in slice.iter().zip(splits) {
                                 save(conn, net, p, split).await?;
+                            }
+                            if kind == "trade" {
+                                settled_trades.push((execution.block, execution.index));
                             }
                         }
                     }
@@ -730,7 +734,9 @@ pub(super) async fn write(
     let days=sqlx::query_scalar(
         "SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND (tx_hash=ANY($2) OR (block_number>$3 AND block_number<=$4))")
         .bind(net.db_name()).bind(updated).bind(from).bind(to).fetch_all(&mut *conn).await?;
-    Ok((days, corrected_prefix, minted))
+    asset_changes
+        .extend(super::trade_prices::publish_proved(conn, net, &settled_trades, mana).await?);
+    Ok((days, corrected_prefix, asset_changes))
 }
 
 #[cfg(test)]

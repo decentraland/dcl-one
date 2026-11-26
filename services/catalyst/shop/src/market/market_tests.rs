@@ -2992,6 +2992,67 @@ fn item_order_json(signer: &str, contract: &str) -> String {
     )
 }
 
+/// On a network the collections index owns, a public item order's signer
+/// is checked against the item's creator under the index's authorizing
+/// publication, read in the statement that reads the creator.
+#[tokio::test]
+async fn on_an_owned_network_an_item_order_needs_an_authorizing_publication() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let contract = contract_of(&tag(), 9);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let mut trade = listings::test_support::parse(&item_order_json(
+        &listings::test_support::signer().address().to_checksum(None),
+        &contract,
+    ));
+    listings::test_support::sign(&mut trade, &marketplace);
+    let signer = trade.signer.clone();
+    seed_item_row(&pool, &contract, "1", WALLET_A).await;
+    sqlx::query("UPDATE shop.items SET creator = lower($2) WHERE contract_address = $1")
+        .bind(&contract)
+        .bind(&signer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unavailable = |e: listings::TradeCreationError| match e {
+        listings::TradeCreationError::CatalogueUnavailable(why) => why,
+        other => panic!("expected the index to refuse: {other}"),
+    };
+
+    // A creatorship transfer walked past the publication, a stale
+    // publication, a rewind: no order is authorized on them.
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::walk_past(&pool, "matic", 101, &contract).await;
+    let why = unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    assert!(why.contains("walked"), "{why}");
+    owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    owning::rewind(&pool, "matic").await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+
+    // Published a minute ago: the creator signs it.
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(open_item_order_ids(&pool).await.contains(&id));
+}
+
 #[tokio::test]
 async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     use alloy::signers::SignerSync;
@@ -4070,6 +4131,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     const CURATOR_ONLY: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const RELAY_ONLY: &str = "0x3434343434343434343434343434343434343434";
     const PAYER: &str = "0x5656565656565656565656565656565656565656";
+    const MIXED_PAYER: &str = "0x5757575757575757575757575757575757575757";
+    const MIXED_PAYEE: &str = "0x9191919191919191919191919191919191919191";
     const SELLER: &str = "0x7878787878787878787878787878787878787878";
     const OTHER_TOKEN: &str = "0x9090909090909090909090909090909090909090";
     const FORMER_MEMBER: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
@@ -4202,17 +4265,36 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         "INSERT INTO shop.committee_event(network,block_number,log_index,block_time,contract_address,member,is_member)
          VALUES('matic',$1-1,2,99,$2,$3,true),('matic',$1,2,100,$2,$3,false)",
     ).bind(height).bind(super::committee_index::CONTRACTS[0]).bind(FORMER_MEMBER).execute(pool).await.unwrap();
-    // A sale in another currency proves the seller and the payer who bought
-    // the NFT for WALLET_A. Their public MANA counters remain zero.
+    // A trade with an unsupported token proves both parties. The payer
+    // has no other evidence and paid for a different NFT recipient.
     let assets = json!({
         "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"5","beneficiary":WALLET_A}],
         "received":[{"assetType":"1","contractAddress":OTHER_TOKEN,"value":"25","beneficiary":SELLER}]
     });
-    sqlx::query(
-        "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
-               kind,caller,signer,assets,tx_hash,hashed_signature)
-         VALUES('matic',$1,9,100,$2,'traded',$3,$4,$5,$6,$6)",
-    ).bind(height).bind(venue).bind(PAYER).bind(SELLER).bind(assets).bind(&hash).execute(pool).await.unwrap();
+    let mixed = json!({
+        "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"6","beneficiary":WALLET_A}],
+        "received":[
+            {"assetType":"1","contractAddress":listings::mana_token(137).unwrap(),"value":"10","beneficiary":SELLER},
+            {"assetType":"1","contractAddress":OTHER_TOKEN,"value":"15","beneficiary":MIXED_PAYEE}
+        ]
+    });
+    for (log, payer, assets) in [(9, PAYER, assets), (11, MIXED_PAYER, mixed)] {
+        sqlx::query(
+            "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
+                   kind,caller,signer,assets,tx_hash,hashed_signature)
+             VALUES('matic',$1,$2,100,$3,'traded',$4,$5,$6,$7,$7)",
+        )
+        .bind(height)
+        .bind(log)
+        .bind(venue)
+        .bind(payer)
+        .bind(SELLER)
+        .bind(assets)
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('matic',$1,$2)")
         .bind(CREATOR).bind(height).execute(pool).await.unwrap();
     super::sale_fold::write_rows(
@@ -4224,13 +4306,23 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await
     .unwrap();
 
+    let (price, currency, payer): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT a.price::text,a.currency,m.payer FROM shop.sale_asset a
+         JOIN shop.sale_payment m USING(network,block_number,log_index,ordinal)
+         WHERE a.network='matic' AND a.block_number=$1 AND a.log_index=9",
+    )
+    .bind(height)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!((price, currency, payer.as_str()), (None, None, PAYER));
     let (status, list) = get(
         app.clone(),
         "/v1/accounts?network=MATIC&sortBy=most_collections",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{list}");
-    assert_eq!(list["total"], 707);
+    assert_eq!(list["total"], 709);
     assert_eq!(
         list["data"][0],
         json!({"id":CREATOR,"address":CREATOR,"sales":0,"purchases":0,
@@ -4242,6 +4334,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         MINT_RECIPIENT,
         FORMER_MEMBER,
         PAYER,
+        MIXED_PAYER,
+        MIXED_PAYEE,
         SELLER,
     ] {
         let (status, page) = get(
@@ -4299,9 +4393,9 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await;
     assert_eq!(status, StatusCode::OK, "{future}");
     assert_eq!(future, json!({"data":[],"total":0}));
-    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1407").await;
+    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1409").await;
     assert_eq!(status, StatusCode::OK, "{empty}");
-    assert_eq!(empty, json!({"data":[],"total":1407}));
+    assert_eq!(empty, json!({"data":[],"total":1409}));
     assert!(graph.requests.lock().unwrap().is_empty());
 
     sqlx::query(
@@ -4381,6 +4475,94 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
         panic!("the memo does not answer for an unpublished index")
     };
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    own.drop().await;
+}
+
+/// An inventory memo is filed under the catalogue copy its items were named
+/// from, read in the gate's snapshot. On a network the collections index
+/// owns, a row rewritten without a republication is still served from the
+/// warm memo, and a republication of the catalogue alone (an item renamed at
+/// the same nft publication) misses it, in the owner's copies and in the
+/// by-owner answer (`/lambdas/users/{a}/wearables`), whose key is the same.
+#[tokio::test]
+async fn a_warm_inventory_follows_a_catalogue_only_republication() {
+    use super::catalogue::owning;
+    use super::owned_items::{owned_copies, require_inventory, test_support};
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 9);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', '{c}', 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:{c}:0', '{WALLET_B}', 'rare', 1, 9, 1, 5, 'i', 'Hat', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', '{c}', 1, '{WALLET_A}', 0, 1, 1, 1, 1, 0, 1)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        true,
+        Duration::ZERO,
+    )
+    .await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let names = |state: SharedState| async move {
+        let Ok(gate) = require_inventory(&state, "wearable", super::internal_server_error).await
+        else {
+            panic!("the published index passes the gate")
+        };
+        let publications = gate.publications();
+        let copies = owned_copies(&state, gate, WALLET_A, "wearable")
+            .await
+            .unwrap();
+        (
+            copies.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
+            publications,
+        )
+    };
+    let by_owner = |state: SharedState| async move {
+        let (status, body) = get(
+            super::router(state),
+            &format!("/lambdas/users/{WALLET_A}/wearables"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["elements"][0]["name"].as_str().map(str::to_string)
+    };
+    let (before, first) = names(state.clone()).await;
+    assert_eq!(before, ["Hat"]);
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Hat"));
+
+    // Rewritten without a republication: the warm memos answer.
+    sqlx::query("UPDATE shop.items SET name = 'Cap' WHERE contract_address = $1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (warm, again) = names(state.clone()).await;
+    assert_eq!(
+        (warm, again),
+        (vec!["Hat".to_string()], first),
+        "a memo hit"
+    );
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Hat"));
+
+    // The catalogue alone republishes: both miss.
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let (after, second) = names(state.clone()).await;
+    assert_eq!(
+        (second.ethereum, second.matic),
+        (first.ethereum, first.matic)
+    );
+    assert_ne!(second, first, "the catalogue copy is in the key");
+    assert_eq!(after, ["Cap"]);
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Cap"));
     own.drop().await;
 }
 
