@@ -6398,3 +6398,193 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     assert_eq!(code, StatusCode::OK, "{result}");
     db.drop().await;
 }
+
+/// A shallow NAME page reads the index on a walker whose Ethereum latest
+/// sales are admitted, whatever its sort: the graph ranks the two names one
+/// way by its own `soldAt`, the ledger the other, and each token shows one
+/// soldAt across sorts. A failed admission check is the page's error with
+/// no graph request; confirmed not admitted, the page reads the graph.
+#[tokio::test]
+async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((mut state, own)) = state_over_own(&url, false).await else {
+        return;
+    };
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.market.indexes.sales_enabled = true;
+    settings.marketplace_subgraph_url = Some(url.clone());
+    // A configured trades mirror that has not completed a pass.
+    settings.trades_sync_upstream_url = Some("https://marketplace-api.example/v1/trades".into());
+    let pool = &own.pool;
+    let registrar = super::nft_index::DCL_REGISTRAR;
+    let owner = "0x00000000000000000000000000000000000000aa";
+    let name = |token: &str, label: &str, sold: &str| {
+        json!({ "id": format!("{registrar}-{token}"), "tokenId": token, "contractAddress": registrar,
+                "category": "ens", "image": "", "createdAt": "1", "updatedAt": "1", "soldAt": sold,
+                "name": label, "owner": { "address": owner }, "ens": { "subdomain": label },
+                "activeOrder": null })
+    };
+    // The graph sold alpha last; the ledger sold beta last.
+    graph.set(
+        "nfts",
+        vec![name("1001", "alpha", "2000"), name("1002", "beta", "1000")],
+    );
+    let (_, deployment, _) = super::trade_events::deployments(1)[0];
+    let height = deployment as i64 + 1;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+          full_history,fold_through,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+         SELECT ix,'ethereum',1,1,$1,$2,true,$1,$1,timezone('UTC',now()),$3,$1,0
+         FROM unnest(ARRAY['nft','sales','trade_events']) ix",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_history::VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_publication(network,block_number,block_hash,input_version,input_epochs,
+            input_revisions,late_collections,published_at,last_sale_through,generation,last_sale_generation)
+         SELECT network,$1,$2,$3,array_agg(sale_input_epoch ORDER BY indexer),
+                array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now()),$1,
+                '00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001'
+         FROM shop.chain_cursor WHERE indexer IN ('nft','sales','trade_events') GROUP BY network",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_fold::PUBLICATION_VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 1001, $2, 'alpha', 1, 1, 1, 0, 1), ('ethereum', $1, 1002, $2, 'beta', 2, 2, 2, 0, 2); \
+         ",
+    )
+    .bind(registrar)
+    .bind(owner)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+         VALUES ('ethereum', $1, 1001, 500, 1), ('ethereum', $1, 1002, 3000, 2)",
+    )
+    .bind(registrar)
+    .execute(pool)
+    .await
+    .unwrap();
+    let app = market_router(state.clone());
+    let sold_at = |body: &Value, token: &str| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["nft"]["tokenId"] == token)
+            .and_then(|r| r["nft"]["soldAt"].as_i64())
+    };
+    let graph_reads = || {
+        graph
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| *e == "nfts")
+            .count()
+    };
+    let by_sale = "/v1/nfts?category=ens&sortBy=recently_sold&first=2";
+    let browse = "/v1/nfts?category=ens&first=2";
+    // Admitted: every shallow NAME page reads the index, so a token shows
+    // the same soldAt whatever the sort.
+    let (status, sorted) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::OK, "{sorted}");
+    assert_eq!(sorted["data"][0]["nft"]["tokenId"], "1002", "{sorted}");
+    let (status, browsed) = get(app.clone(), browse).await;
+    assert_eq!(status, StatusCode::OK, "{browsed}");
+    for token in ["1001", "1002"] {
+        assert_eq!(sold_at(&sorted, token), sold_at(&browsed, token), "{token}");
+    }
+    assert_eq!(sold_at(&browsed, "1002"), Some(3_000_000));
+    assert_eq!(graph_reads(), 0);
+
+    // An admitted page keeps the index path's rules: an order filter waits
+    // for the trades mirror's pass, and the `first + skip` window is capped.
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&isOnSale=true&first=2").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "trades-mirror", "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=99999").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=100000").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(graph_reads(), 0);
+
+    // One clock: a page admitted at its request's clock keeps the latest
+    // sales for its values and order, though a later clock finds the
+    // publication past its freshness deadline (the sales inputs folded 31
+    // minutes ago, the names index 29).
+    let real = chrono::Utc::now();
+    for (indexers, ago) in [(vec!["sales", "trade_events"], 31), (vec!["nft"], 29)] {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at = $1 WHERE network = 'ethereum' AND indexer = ANY($2)",
+        )
+        .bind((real - chrono::Duration::minutes(ago)).naive_utc())
+        .bind(indexers)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE shop.sale_publication SET published_at = $1")
+        .bind((real - chrono::Duration::minutes(31)).naive_utc())
+        .execute(pool)
+        .await
+        .unwrap();
+    let filters =
+        super::nfts::parse_filters(&[("category".to_string(), "ens".to_string())]).unwrap();
+    let (rows, _) = super::nft_reads::names_page_if_admitted(
+        &state,
+        &filters,
+        2,
+        0,
+        real - chrono::Duration::minutes(2),
+    )
+    .await
+    .unwrap()
+    .expect("admitted at the request's clock");
+    let beta = rows.iter().find(|r| r.nft.token_id == "1002").unwrap();
+    assert_eq!(beta.nft.sold_at, 3_000_000);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'ethereum'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET published_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // An admission check that cannot run is the page's error, never the graph.
+    sqlx::query("ALTER TABLE shop.sale_publication RENAME TO sale_publication_hidden")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(graph_reads(), 0, "no graph request on a failed check");
+    sqlx::query("ALTER TABLE shop.sale_publication_hidden RENAME TO sale_publication")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Confirmed not admitted: the graph, as before.
+    sqlx::query("UPDATE shop.sale_publication SET last_sale_through = NULL")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app, by_sale).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["nft"]["tokenId"], "1001", "{body}");
+    assert_eq!(sold_at(&body, "1001"), Some(2_000_000));
+    assert!(graph_reads() > 0);
+    own.drop().await;
+}

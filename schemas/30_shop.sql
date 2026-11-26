@@ -17176,8 +17176,36 @@ CREATE TABLE shop.sale_publication (
     input_epochs uuid[] NOT NULL,
     input_revisions bigint[] NOT NULL,
     late_collections bigint NOT NULL,
-    published_at timestamp without time zone
+    published_at timestamp without time zone,
+    -- The block through which shop.nft_last_sale holds every published
+    -- sale of the network, and the generation it was kept for; NULL until
+    -- the fold has filled it. A table kept for another generation (history
+    -- replaced or a published sale corrected without it) is not read and is
+    -- rebuilt.
+    last_sale_through bigint,
+    last_sale_generation uuid
 );
+
+-- The latest public sale of each token (`sale_reads/public_sales.sql`: a
+-- positive price in the network's MANA; a trade only when it moved one
+-- asset), for the `soldAt` of /v1/nfts and its recently sold sort. The
+-- sales fold writes it in the transaction that publishes each window. A
+-- window's sales replace older ones. A changed history deletes the rows
+-- past the prefix it keeps and restores each token's earlier sale. A
+-- reader takes it only from a valid publication whose `last_sale_through`
+-- reaches the published block. Workload: one row per sold token, written by
+-- the fold (a window's tokens per pass), read by joining a page's
+-- candidates on the primary key.
+CREATE TABLE shop.nft_last_sale (
+    network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
+    contract_address text NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    sold_at bigint NOT NULL,
+    block_number bigint NOT NULL,
+    PRIMARY KEY (network, contract_address, token_id)
+);
+-- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
+CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.
