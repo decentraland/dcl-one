@@ -35,7 +35,7 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   byte-identical under `crates/dcl_deno/src/js/vendor/` with the fetch and webstorage scripts
   (MIT, versions and hashes in `upstream.lock.json`).
 - **Per scene, nothing shared:** a Blob store per runtime; deno_web registers the lock manager
-  and broadcast ops, and the runtime disables them (`DISABLED_OPS`), so a call throws. The
+  and broadcast ops, and the runtime disables them (`DISABLED_OPS`), so a call fails. The
   native BroadcastChannel stays our own bridge shim. deno_web's native classes are not installed.
 - **Upstream ops that panic on scene input:** `op_compile_function`, `op_serialize` and
   `op_deserialize` are disabled (nothing the runtime loads calls them), and `op_structured_clone`
