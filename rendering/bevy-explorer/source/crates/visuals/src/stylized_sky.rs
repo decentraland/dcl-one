@@ -1431,7 +1431,7 @@ mod tests {
             sky.disc_color = Vec3::splat(0.3);
         });
         assert!((disc_params(noon, false).size * 0.3 - 0.03).abs() < 1e-6);
-        red_of_the_middle_row(&mut app, &target)
+        middle_row(&mut app, &target, RED)
     }
 
     /// Depth of field fades distant geometry into the sky instead of leaving it a sharp outline,
@@ -1518,13 +1518,14 @@ mod tests {
             sky.body_direction = Vec3::Y;
             sky.set_disc(&disc_params(noon, false));
         });
-        let [sharp, blurred] = targets.map(|target| red_of_the_middle_row(&mut app, &target));
+        // in blue: the noon sky there is deep blue, its red near 0 like the wall's
+        let [sharp, blurred] = targets.map(|target| middle_row(&mut app, &target, BLUE));
 
         let step = |row: &[u8], x: usize| (row[x + 1] as i32 - row[x] as i32).abs();
         // without depth of field the edge is one step, after pixel 31
         let contrast = step(&sharp, 31);
         assert!(
-            contrast > 40 && sharp[..32].iter().all(|&red| red < 8),
+            contrast > 40 && sharp[..32].iter().all(|&blue| blue < 8),
             "the wall is not black against the sky; row {sharp:?}"
         );
         // with it, no step near the edge is more than a third of that
@@ -1544,8 +1545,12 @@ mod tests {
         }
     }
 
-    /// The red of the middle row of the 64 pixel `target`, from a screenshot.
-    fn red_of_the_middle_row(app: &mut App, target: &Handle<Image>) -> Vec<u8> {
+    const RED: usize = 0;
+    const BLUE: usize = 2;
+
+    /// One channel (`RED` or `BLUE`) of the middle row of the 64 pixel `target`, from a
+    /// screenshot.
+    fn middle_row(app: &mut App, target: &Handle<Image>, channel: usize) -> Vec<u8> {
         use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 
         #[derive(Resource, Default)]
@@ -1569,7 +1574,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
         let rgba = image.try_into_dynamic().unwrap().to_rgba8();
-        (0..64).map(|x| rgba.get_pixel(x, 32).0[0]).collect()
+        (0..64).map(|x| rgba.get_pixel(x, 32).0[channel]).collect()
     }
 
     #[test]
