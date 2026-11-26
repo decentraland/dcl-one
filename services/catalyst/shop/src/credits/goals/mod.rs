@@ -436,7 +436,7 @@ async fn grant(
     // cannot strand an in-flight goal or change its promised payout.
     let expires = (season.end_date + TimeDelta::days(i64::from(season.grace_days)))
         .with_nanosecond(0)
-        .expect("0 is a valid nanosecond");
+        .unwrap();
     let expires_seconds = u64::try_from(expires.and_utc().timestamp())
         .map_err(|_| ApiError::Internal("invalid goal expiry".into()))?;
     if expires <= now {
