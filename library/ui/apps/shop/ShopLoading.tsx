@@ -1,3 +1,4 @@
+import { ShopCardSkeleton } from '../../components/ShopCard/ShopCard'
 import { Skeleton } from '../../components/Skeleton/Skeleton'
 import styles from './ShopLoading.module.css'
 
@@ -6,13 +7,7 @@ export function ShopSkeletonCards({ count }: { count: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className={styles.card} aria-hidden="true" data-testid="skeleton-card">
-          <Skeleton className={styles.thumb} />
-          <div className={styles.info}>
-            <Skeleton className={styles.bar} />
-            <Skeleton className={styles.shortBar} />
-          </div>
-        </div>
+        <ShopCardSkeleton key={i} variant="catalogue" data-testid="skeleton-card" />
       ))}
     </>
   )

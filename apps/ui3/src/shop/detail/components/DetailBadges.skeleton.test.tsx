@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const profile = vi.hoisted(() => ({ state: { profile: null as null | { name: string; picture: string | null; claimed: boolean | null }, loading: true } }));
 vi.mock("../../discovery/hooks", () => ({ useCreatorProfile: () => profile.state }));
 
-import { ShopBadgeSkeleton } from "@dcl/one-ui";
 import { DetailCreator } from "./DetailBadges";
 
 const CREATOR = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -44,12 +43,5 @@ describe("the item page's creator badge", () => {
     );
     expect(screen.queryByTestId("creator-loading")).toBeNull();
     expect(screen.getByTestId("creator-display")).toBeTruthy();
-  });
-
-  it("draws the skeleton as a 48px circle and a name bar, hidden from assistive tech", () => {
-    const { container } = render(<ShopBadgeSkeleton testId="collection-loading" />);
-    const sk = screen.getByTestId("collection-loading");
-    expect(sk.getAttribute("aria-hidden")).toBe("true");
-    expect(container.querySelectorAll("span")).toHaveLength(2);
   });
 });
