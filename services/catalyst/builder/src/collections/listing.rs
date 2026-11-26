@@ -697,8 +697,8 @@ impl PublicSearch {
 impl PublishedAddresses {
     /// The listing `q` asks for: its `type` ignored, standard collections
     /// only, published ones only.
-    pub fn new(q: &ListQuery, review_flow: bool) -> Result<Self, ApiError> {
-        let mut listing = Listing::everyone(&q.without("type"), review_flow)?;
+    pub fn new(q: &ListQuery) -> Result<Self, ApiError> {
+        let mut listing = Listing::everyone(&q.without("type"))?;
         listing
             .filters
             .push(Filter::Fragment("c.third_party_id IS NULL"));
