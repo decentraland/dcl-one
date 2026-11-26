@@ -1543,7 +1543,11 @@ Invariants:
   take the same item part in the provider's collections.
 - Upload records follow the names. When a save or a delete leaves a hash no
   item names, in its contents or as its video, its upload records go in the
-  same transaction. The blob
+  same transaction. Before it writes a name or drops one, each takes an
+  advisory lock per hash the item names before and after the write
+  (`hashtextextended('builder content ' || hash, 0)`, in key order), so a
+  delete waits for a concurrent save naming the same file and then sees its
+  name. The blob
   collector keeps a blob while `builder.uploaded_contents.hash` names it; a
   name in `builder.item_contents.hash` keeps nothing, so once the last record
   goes the collector may take the bytes.
