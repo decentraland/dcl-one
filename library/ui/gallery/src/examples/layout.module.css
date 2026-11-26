@@ -211,3 +211,20 @@
   border-radius: var(--dcl-radius-md);
   background: var(--dcl-bg-surface-raised);
 }
+
+/* A stand-in for the screen a ModalBackdrop covers: `contain: layout` makes the box the containing block of the
+   backdrop's fixed position, so it covers the box and not the gallery. The picture gives its blur something to blur. */
+.screen {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  height: 360px;
+  overflow: hidden;
+  contain: layout;
+  border-radius: var(--dcl-radius-lg);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--dcl-neutrals-pale-black) 0 24px,
+    var(--dcl-neutrals-shadow) 24px 48px
+  );
+}

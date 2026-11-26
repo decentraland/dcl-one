@@ -111,7 +111,6 @@
 
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
-  --modal-scrim: rgba(18, 7, 33, 0.6);
   /* a soft round glow, as an alpha mask (an ellipse in a non-square box) */
   --glow-mask: radial-gradient(
     closest-side,
@@ -508,7 +507,6 @@
      Alphas are the sRGB equivalents of overlays designed for linear-space blending, each worked
      out over the surface it sits on. */
   --events-dot: rgba(255, 255, 255, 0.32); /* a carousel dot that is not the current one */
-  --modal-scrim-deep: rgba(0, 0, 0, 0.68);
   --tint-shade: rgba(0, 0, 0, 0.54);
   --tint-veil: rgba(255, 255, 255, 0.15); /* the detail's buttons, over its picture's shade */
   --tint-veil-hover: rgba(255, 255, 255, 0.25);
