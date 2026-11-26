@@ -3,9 +3,9 @@
 import { useEffect, useRef } from 'react'
 import type { ShareLinks } from '@explorer-core/features/map/shareLinks'
 import { ContextMenu, showToast } from '../../../design'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function ShareMenu({ links, onClose }: { links: ShareLinks; onClose: () => void }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)

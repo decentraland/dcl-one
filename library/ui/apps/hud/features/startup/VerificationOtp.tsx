@@ -6,7 +6,6 @@
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
 import { useEffect, useRef, useState } from 'react'
-import { Button, CodeInput, MaskIcon } from '../../design'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginFlow } from '../session/useEngineSession'
 import { StartupBack } from './StartupBack'
@@ -16,6 +15,7 @@ import padlock from '../../assets/startup/padlock.webp'
 import successIcon from '../../assets/startup/success.png'
 import incorrectIcon from '../../assets/startup/incorrect.png'
 import styles from './VerificationOtp.module.css'
+import { Button, CodeInput, MaskIcon } from '@dcl/one-ui'
 
 // how long a refused code shows before the row clears
 const REFUSED_MS = 1500
@@ -117,7 +117,7 @@ export function VerificationOtp({
           {result === 'success' ? 'Success' : 'Incorrect code'}
         </p>
       )}
-      <Button size="bare" variant="clear" className={styles.resend} disabled={resending || result === 'checking' || result === 'success'} onClick={resend}>
+      <Button appearance="hud" size="bare" variant="clear" className={styles.resend} disabled={resending || result === 'checking' || result === 'success'} onClick={resend}>
         Resend Code
       </Button>
       <img className={styles.padlock} src={padlock} alt="" draggable={false} />
