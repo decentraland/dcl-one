@@ -37,7 +37,7 @@
 //! page's notifications in one transaction; ids are reorg-stable
 //! (`notice_cursor::tx_log_key`), so a retried page inserts nothing twice.
 //! A bid on a collection token no index describes yet holds the cursor
-//! while [`ItemWait::awaited`], as the sale producers do.
+//! while [`ItemWait::decide`] holds it, as the sale producers do.
 
 use std::time::Duration;
 
@@ -46,7 +46,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::catalogue::{self, ItemWait};
+use super::catalogue::{self, ItemWait, Waited};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta};
@@ -133,36 +133,33 @@ fn rows_sql() -> String {
     )
 }
 
-/// Whether a bid holds the cursor at `now`: its collection or item may still
-/// reach the catalogue, or its owner at the bid awaits the contract's
-/// backfill. Under the mirrors a contract the catalogue does not list never
-/// holds (the bid contract takes bids on any ERC721). On an owned network it
-/// holds until the publication covers its block, since a collection created
-/// by then may not be published yet.
-fn holds(
+/// What becomes of a bid at `now` ([`ItemWait::decide`]). It holds the
+/// cursor while its owner at the bid awaits the contract's backfill, or while
+/// its collection or item may still reach the catalogue. Under the mirrors a
+/// contract the catalogue does not list never waits (the bid contract takes
+/// bids on any ERC721); on an owned network it waits for the publication over
+/// its block like any other, since a collection created by then may not be
+/// published yet.
+fn decided(
     row: &BidRow,
     described: bool,
     items_mirror_enabled: bool,
     wait: ItemWait,
     now: i64,
-) -> bool {
-    if !row.collection {
-        return matches!(wait, ItemWait::Index(_))
-            && wait.awaited(
-                items_mirror_enabled,
-                false,
-                row.block_number,
-                row.block_time,
-                now,
-            );
+) -> Waited {
+    if row.collection
+        && row.backfill_owed
+        && now.saturating_sub(row.block_time) < ITEM_HOLD_MAX_SECS
+    {
+        return Waited::Hold;
     }
-    wait.awaited(
-        items_mirror_enabled,
+    wait.decide(
+        items_mirror_enabled && row.collection,
         described,
         row.block_number,
         row.block_time,
         now,
-    ) || (row.backfill_owed && now.saturating_sub(row.block_time) < ITEM_HOLD_MAX_SECS)
+    )
 }
 
 /// The notification of one bid; `None` off a Decentraland collection,
@@ -293,14 +290,19 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
                 &keys,
             )
             .await?;
-            let wait = ItemWait::read(&mut snap, NET, NET.chain_id(), now).await?;
+            let wait = ItemWait::read(&mut snap, NET.db_name(), NET.chain_id(), now).await?;
             (metas, wait)
         };
         let ts = now.timestamp();
-        let held = rows.iter().position(|r| {
-            let described = metas.contains_key(&(r.contract_address.clone(), r.token_id.clone()));
-            holds(r, described, settings.items_mirror_enabled, wait, ts)
-        });
+        let decisions: Vec<Waited> = rows
+            .iter()
+            .map(|r| {
+                let described =
+                    metas.contains_key(&(r.contract_address.clone(), r.token_id.clone()));
+                decided(r, described, settings.items_mirror_enabled, wait, ts)
+            })
+            .collect();
+        let held = decisions.iter().position(|d| *d == Waited::Hold);
         let ready = &rows[..held.unwrap_or(rows.len())];
         let Some(last) = ready.last() else {
             tracing::debug!(
@@ -322,9 +324,23 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
                 "bid_received: the contract's nft backfill outlasted the hold; the bid is not announced"
             );
         }
+        for r in ready
+            .iter()
+            .zip(&decisions)
+            .filter(|(_, d)| **d == Waited::Skip)
+        {
+            tracing::warn!(
+                block = r.0.block_number,
+                log = r.0.log_index,
+                contract = %r.0.contract_address,
+                "bid_received: the collections index has not covered this bid for a day; it is not announced"
+            );
+        }
         let batch: Vec<NewNotification> = ready
             .iter()
-            .filter_map(|r| {
+            .zip(&decisions)
+            .filter(|(_, d)| **d == Waited::Describe)
+            .filter_map(|(r, _)| {
                 let asset = metas.get(&(r.contract_address.clone(), r.token_id.clone()))?;
                 notice(settings, r, asset)
             })
@@ -400,111 +416,91 @@ mod tests {
 
     #[test]
     fn only_a_collection_bid_holds_and_never_past_the_bound() {
+        use Waited::{Describe, Hold, Skip};
         let t = T0;
-        assert!(holds(
-            &row(true, false, t),
-            false,
-            true,
-            ItemWait::Mirror(None),
-            t + 60
-        ));
-        assert!(
-            !holds(
-                &row(true, false, t),
-                true,
-                true,
-                ItemWait::Mirror(None),
-                t + 60
-            ),
+        let mirror = ItemWait::Mirror(None);
+        let at = |r: &BidRow, described, mirror_on, wait, now| {
+            decided(r, described, mirror_on, wait, now)
+        };
+        assert_eq!(at(&row(true, false, t), false, true, mirror, t + 60), Hold);
+        assert_eq!(
+            at(&row(true, false, t), true, true, mirror, t + 60),
+            Describe,
             "described"
         );
-        assert!(
-            !holds(
-                &row(false, true, t),
-                false,
-                true,
-                ItemWait::Mirror(None),
-                t + 60
-            ),
+        assert_eq!(
+            at(&row(false, true, t), false, true, mirror, t + 60),
+            Describe,
             "another contract never holds"
         );
-        assert!(
-            holds(
-                &row(true, true, t),
-                true,
-                false,
-                ItemWait::Mirror(None),
-                t + 60
-            ),
+        assert_eq!(
+            at(&row(true, true, t), true, false, mirror, t + 60),
+            Hold,
             "a backfill holds with the mirror off"
         );
-        assert!(
-            !holds(
+        assert_eq!(
+            at(
                 &row(true, true, t),
                 true,
                 false,
-                ItemWait::Mirror(None),
+                mirror,
                 t + ITEM_HOLD_MAX_SECS
             ),
+            Describe,
             "a stalled backfill"
         );
         // On a network the collections index owns, a bid on a token no index
         // describes holds until the publication covers its block.
         let bid = row(true, false, t);
-        assert!(holds(&bid, false, false, ItemWait::Index(None), t + 60));
-        assert!(
-            holds(
+        let index = |covered| ItemWait::Index(covered);
+        assert_eq!(at(&bid, false, false, index(None), t + 60), Hold);
+        assert_eq!(
+            at(
                 &bid,
                 false,
                 false,
-                ItemWait::Index(Some(bid.block_number - 1)),
+                index(Some(bid.block_number - 1)),
                 t + 60
             ),
+            Hold,
             "published below the bid"
         );
-        assert!(
-            !holds(
-                &bid,
-                false,
-                false,
-                ItemWait::Index(Some(bid.block_number)),
-                t + 60
-            ),
+        assert_eq!(
+            at(&bid, false, false, index(Some(bid.block_number)), t + 60),
+            Describe,
             "published through the bid: the item never comes"
         );
-        assert!(
-            !holds(
-                &bid,
-                false,
-                true,
-                ItemWait::Index(None),
-                t + ITEM_HOLD_MAX_SECS
-            ),
-            "a stalled index"
-        );
-        assert!(
-            holds(&bid, true, false, ItemWait::Index(None), t + 60),
+        assert_eq!(
+            at(&bid, true, false, index(None), t + 60),
+            Hold,
             "a row read while the index refuses never describes the bid"
         );
+        assert_eq!(
+            at(&bid, true, true, index(None), t + ITEM_HOLD_MAX_SECS),
+            Skip,
+            "past the bound an unverified row passes without a notice"
+        );
         let unlisted = row(false, false, t);
-        assert!(
-            holds(
+        assert_eq!(
+            at(
                 &unlisted,
                 false,
                 false,
-                ItemWait::Index(Some(unlisted.block_number - 1)),
+                index(Some(unlisted.block_number - 1)),
                 t + 60
             ),
+            Hold,
             "a contract not listed yet may be a collection the publication does not cover"
         );
-        assert!(
-            !holds(
+        assert_eq!(
+            at(
                 &unlisted,
                 false,
                 false,
-                ItemWait::Index(Some(unlisted.block_number)),
+                index(Some(unlisted.block_number)),
                 t + 60
             ),
+            Describe,
             "covered: another contract"
         );
         assert_ne!(

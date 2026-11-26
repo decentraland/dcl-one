@@ -445,8 +445,24 @@ pub struct ShopConfig {
     /// cross-wallet credits list and its grant reasons), comma-separated: the
     /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
     /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    /// A write admin (`CREDITS_WRITE_ADMIN_ADDRESSES`) reads them too.
     #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
     pub credits_read_admin_addresses: String,
+
+    /// Wallets whose signed requests may change the studios (create, rename,
+    /// pause, operators, budget) and read what a read admin reads,
+    /// comma-separated: the old credits server's `READ_WRITE_ADMIN_ADDRESSES`.
+    /// Empty leaves the changes to the bearer. An entry that is not a wallet
+    /// address fails startup.
+    #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_write_admin_addresses: String,
+
+    /// Refuse a write admin's wallet-signed change that does not sign its
+    /// body's SHA-256 (`bodySha256` in the signed metadata). Off, such a change
+    /// is accepted with a warning, as the old server accepted it; a signed hash
+    /// that does not match the body is refused either way.
+    #[arg(long, env = "CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_admin_writes_require_bound_body: bool,
 
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
@@ -458,6 +474,11 @@ pub struct ShopConfig {
         default_value = "https://hcaptcha.com/siteverify"
     )]
     pub credits_captcha_verify_url: String,
+
+    /// The Slack incoming webhook the credits alerts are posted to (or
+    /// `_FILE`), a public https URL; unset, each alert is logged at error.
+    #[arg(long, env = "CREDITS_ALERTS_SLACK_WEBHOOK", hide_env_values = true)]
+    pub credits_alerts_slack_webhook: Option<String>,
 
     /// Enables the Stripe client (or `_FILE`); unset, the card routes answer 501/503.
     #[arg(long, env = "STRIPE_SECRET_KEY", hide_env_values = true)]
@@ -639,6 +660,17 @@ pub struct ShopConfig {
 
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL_BUILDER")]
     pub credits_checkout_cancel_url_builder: Option<String>,
+
+    /// The most new studio budget (deposits and upward adjustments, every
+    /// studio together) one UTC day may add, in USD cents (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`). Unset or negative refuses new
+    /// budget.
+    #[arg(
+        long,
+        env = "CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_daily_studio_deposit_limit_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.

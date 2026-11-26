@@ -36,6 +36,7 @@ use sqlx::PgConnection;
 
 use super::super::evaluators as ev;
 use super::{Pass, award, completed, init_cursor, lock_cursor};
+use crate::chain_index::catalogue::{self, ItemWait, Waited};
 use crate::identity::Address;
 
 pub(crate) use crate::shared::collections::{ITEM_SHIFT, ITEM_WAIT_SECS};
@@ -272,34 +273,31 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
     };
     super::report_lag(log.source(), until - block);
     let limit = pass.batch();
+    let now = crate::shared::now_utc();
+    // The page, its goods' item types and the catalogue's wait from one
+    // snapshot; the awards re-read each wallet's progress in `tx`.
+    let mut snap = catalogue::read_snapshot(&pass.pool).await?;
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(log.rows_sql()))
         .bind(block)
         .bind(log_index)
         .bind(until)
         .bind(limit)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *snap)
         .await?;
     if rows.is_empty() {
         tx.rollback().await?;
         return Ok((0, false));
     }
-    // The last complete items pass, unix seconds.
-    let items_pass: Option<i64> = sqlx::query_scalar(
-        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-         WHERE mirror = 'items' AND network = 'matic'",
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    .flatten();
+    let wait = ItemWait::read(&mut snap, "matic", super::POLYGON_CHAIN, now.and_utc()).await?;
     // (buyer, tx key, sale time, badges)
     let mut sales: Vec<(String, String, i64, Vec<&'static str>)> = Vec::new();
-    let now = crate::shared::now_utc();
     let goods: Vec<Good> = if log == Log::Trade {
         rows.iter().flat_map(trade).map(|(_, g)| g).collect()
     } else {
         Vec::new()
     };
-    let traded = trade_item_types(&mut tx, &goods).await?;
+    let traded = trade_item_types(&mut snap, &goods).await?;
+    drop(snap);
     let mut passed = 0;
     for row in &rows {
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
@@ -324,24 +322,61 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             let buys = row.buyer.clone().map(|b| (b, row.item_types.clone()));
             (buys.into_iter().collect(), missing)
         };
-        if unmirrored && !pass.too_old(at, now) {
-            let waited = items_pass
-                .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
-            if !waited {
+        let decision = match wait {
+            // Under the mirrors, a sale of an item they lack waits until a
+            // complete items pass an hour after it, within the event age.
+            ItemWait::Mirror(items_pass) => {
+                if unmirrored && !pass.too_old(at, now) {
+                    let waited = items_pass
+                        .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
+                    if waited {
+                        tracing::debug!(
+                            source = log.source(),
+                            block = row.block_number,
+                            log = row.log_index,
+                            "sale of an item the mirror never held: passed"
+                        );
+                        Waited::Describe
+                    } else {
+                        Waited::Hold
+                    }
+                } else {
+                    Waited::Describe
+                }
+            }
+            // On a network the collections index owns, every sale with a
+            // good waits for the publication over its block: an item row
+            // read before then may be a rewound branch's.
+            ItemWait::Index(_) if unmirrored || !buys.is_empty() => wait.decide(
+                false,
+                !unmirrored,
+                row.block_number,
+                row.block_time,
+                now.and_utc().timestamp(),
+            ),
+            ItemWait::Index(_) => Waited::Describe,
+        };
+        match decision {
+            Waited::Hold => {
                 tracing::debug!(
                     source = log.source(),
                     block = row.block_number,
                     log = row.log_index,
-                    "sale of an item not mirrored yet: held"
+                    "sale of an item the catalogue does not describe yet: held"
                 );
                 break;
             }
-            tracing::debug!(
-                source = log.source(),
-                block = row.block_number,
-                log = row.log_index,
-                "sale of an item the mirror never held: passed"
-            );
+            Waited::Skip => {
+                tracing::warn!(
+                    source = log.source(),
+                    block = row.block_number,
+                    log = row.log_index,
+                    "the collections index has not covered this sale for a day: passed without a badge"
+                );
+                passed += 1;
+                continue;
+            }
+            Waited::Describe => {}
         }
         passed += 1;
         if pass.too_old(at, now) {

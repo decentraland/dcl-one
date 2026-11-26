@@ -382,6 +382,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a CreditsManager credit digest",
     ),
     ("credits.revocations.tx_hash", "a transaction hash"),
+    ("land_authz.authz_event.tx_hash", "a transaction hash"),
+    (
+        "credits.studio_budget_entries.request_hash",
+        "the digest of a budget request's body, which an idempotent retry must repeat",
+    ),
     (
         "social.community_signed_actions.signature_hash",
         "an envelope digest",
