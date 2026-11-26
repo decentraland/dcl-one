@@ -33,8 +33,12 @@ struct Mock {
     flags: Mutex<Value>,
     flags_etag: Mutex<String>,
     /// The `events` application's document (`events.json`), the one
-    /// `events::foundation` reads.
+    /// `events::foundation` reads: answered only to the decentraland.org Referer.
     events_flags: Mutex<Value>,
+    /// The status `events.json` answers with.
+    events_status: Mutex<StatusCode>,
+    /// The Referer and `X-Address-Hash` of the last `events.json` request.
+    events_headers: Mutex<(Option<String>, Option<String>)>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
     hits: Mutex<HashMap<String, usize>>,
@@ -60,6 +64,9 @@ fn entity(id: &str, pointers: &[&str]) -> Value {
     })
 }
 
+/// The optional `X-Address-Hash` a node may send.
+const EVENTS_HASH: &str = "events-test-hash";
+
 fn mock() -> Arc<Mock> {
     Arc::new(Mock {
         pois: Mutex::new(vec!["0,0".into(), "16,83".into(), "-148,131".into()]),
@@ -79,6 +86,8 @@ fn mock() -> Arc<Mock> {
                 "payload": {"type": "json", "value": "[\"0xF0000000000000000000000000000000000000F0\"]"}
             }}
         })),
+        events_status: Mutex::new(StatusCode::OK),
+        events_headers: Mutex::new((None, None)),
         entities: Mutex::new(vec![
             entity("bafyscene", &["0,0", "0,1"]),
             entity("bafyother", &["5,5"]),
@@ -129,17 +138,25 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
     }
     async fn events_flags(AxState(m): AxState<Arc<Mock>>, headers: HeaderMap) -> Response {
         m.hit("events-flags");
+        let text = |name| {
+            headers
+                .get(name)
+                .and_then(|v: &header::HeaderValue| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let hash = text("x-address-hash");
+        *m.events_headers.lock() = (text(header::REFERER.as_str()), hash.clone());
+        let status = *m.events_status.lock();
+        if !status.is_success() {
+            return status.into_response();
+        }
+        // As the live service: only the decentraland.org Referer sees the variant.
         if headers.get(header::REFERER).and_then(|v| v.to_str().ok())
             != Some("https://decentraland.org")
         {
-            return (StatusCode::OK, Json(json!({"flags": {}, "variants": {}}))).into_response();
+            return Json(json!({"flags": {}, "variants": {}})).into_response();
         }
-        (
-            StatusCode::OK,
-            [(header::ETAG, "\"events-flags-1\"")],
-            Json(m.events_flags.lock().clone()),
-        )
-            .into_response()
+        Json(m.events_flags.lock().clone()).into_response()
     }
     async fn entities(
         AxState(m): AxState<Arc<Mock>>,
@@ -1684,55 +1701,95 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     db.teardown().await;
 }
 
-/// Review architecture-1 explore-change-4: the pass also mirrors the
-/// `events` document, so `events::foundation` reads a real row.
+/// The Foundation names follow `EVENTS_FEATURE_FLAGS_URL` with the explorer
+/// mirrors off, asked with the decentraland.org Referer.
 #[tokio::test]
-async fn feature_flags_mirror_stores_the_events_document_for_the_foundation_names() {
+async fn events_flags_refresh_labels_foundation_creators_with_the_mirrors_off() {
     let Some(db) = scratch_database().await else {
         return;
     };
     let mock = mock();
     let addr = serve_mock(mock.clone()).await;
-    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
-    let (jobs, ctx) = job_ctx().await;
+    let mut settings = Settings::for_tests(sources_at(addr));
+    settings.mirrors_enabled = false;
+    settings.events_flags_url = format!("http://{addr}");
+    settings.events_flags_user_id = Some(EVENTS_HASH.into());
+    let node = node_with_db(settings, db.pool.clone()).await;
+    let foundation_wallet = "0xf0000000000000000000000000000000000000f0";
+    let labelled = || async {
+        let foundation = crate::events::foundation::Foundation::default();
+        foundation.refresh_if_stale(&db.pool).await;
+        crate::events::foundation::display_name(
+            &foundation.snapshot(),
+            Some(foundation_wallet),
+            Some("Alice".into()),
+        )
+    };
 
-    feature_flags::run_pass(&node.state, &ctx).await.unwrap();
+    feature_flags::refresh_events(&node.state).await.unwrap();
     assert_eq!(
-        mock.hits("events-flags"),
-        1,
-        "the referer-gated events document"
+        *mock.events_headers.lock(),
+        (
+            Some("https://decentraland.org".to_string()),
+            Some(EVENTS_HASH.to_string())
+        ),
+        "the Referer and the configured address hash"
     );
-    let (stored, etag): (Value, Option<String>) =
-        sqlx::query_as("SELECT document, etag FROM explore_api.feature_flags WHERE app = 'events'")
+    let (stored,): (Value,) =
+        sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = 'events'")
             .fetch_one(&db.pool)
             .await
             .unwrap();
     assert_eq!(stored, *mock.events_flags.lock());
-    assert_eq!(etag.as_deref(), Some("\"events-flags-1\""));
-
-    let foundation = crate::events::foundation::Foundation::default();
-    foundation.refresh_if_stale(&db.pool).await;
     assert_eq!(
-        crate::events::foundation::display_name(
-            &foundation.snapshot(),
-            Some("0xf0000000000000000000000000000000000000f0"),
-            Some("Alice".into())
-        ),
+        labelled().await,
         Some(crate::events::foundation::FOUNDATION_NAME.into())
     );
-    let (explorer,): (Value,) =
-        sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = 'explorer'")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert!(
-        explorer["variants"]
-            .get("events-decentraland-foundation-addresses")
-            .is_none(),
-        "the two documents stay apart"
+    let (explorer,): (Option<Value>,) = sqlx::query_as(
+        "SELECT (SELECT document FROM explore_api.feature_flags WHERE app = 'explorer')",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(explorer, None, "the explorer document stays unmirrored");
+
+    *mock.events_status.lock() = StatusCode::SERVICE_UNAVAILABLE;
+    assert!(feature_flags::refresh_events(&node.state).await.is_err());
+    assert_eq!(
+        labelled().await,
+        Some(crate::events::foundation::FOUNDATION_NAME.into()),
+        "a failed fetch keeps the stored list"
     );
 
-    jobs.shutdown(Duration::from_secs(1)).await;
+    *mock.events_status.lock() = StatusCode::OK;
+    let mut no_hash = Settings::for_tests(sources_at(addr));
+    no_hash.events_flags_url = format!("http://{addr}");
+    let no_hash = node_with_db(no_hash, db.pool.clone()).await;
+    *mock.events_flags.lock() = json!({"flags": {}, "variants": {}});
+    feature_flags::refresh_events(&no_hash.state).await.unwrap();
+    assert_eq!(
+        labelled().await,
+        Some("Alice".into()),
+        "an absent variant labels no creator"
+    );
+    *mock.events_flags.lock() = json!({
+        "flags": {},
+        "variants": {"events-decentraland-foundation-addresses": {
+            "name": "addresses", "enabled": true,
+            "payload": {"type": "json", "value": format!("[\"{foundation_wallet}\"]")}
+        }}
+    });
+    feature_flags::refresh_events(&no_hash.state).await.unwrap();
+    assert_eq!(
+        *mock.events_headers.lock(),
+        (Some("https://decentraland.org".to_string()), None)
+    );
+    assert_eq!(
+        labelled().await,
+        Some(crate::events::foundation::FOUNDATION_NAME.into()),
+        "the Referer alone labels the creators"
+    );
+
     db.teardown().await;
 }
 
@@ -4035,6 +4092,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
     let mut settings = Settings::for_tests(sources_at("127.0.0.1:1".parse().unwrap()));
     settings.satellite_upstream = Some("http://127.0.0.1:1".to_string());
     settings.world_manifest_upstream = "http://127.0.0.1:1/WorldManifest.json".to_string();
+    settings.events_flags_url = "http://127.0.0.1:1".to_string();
     let node = node_without_db(settings).await;
     let jobs = Jobs::new();
     node.state.spawn_jobs(&jobs);
@@ -4045,6 +4103,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
             "auth-api-socket-push",
+            "events-foundation-flags",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",
@@ -4099,7 +4158,44 @@ async fn blank_sources_spawn_no_mirror_and_read_no_builtin_upstream() {
     node.state.spawn_jobs(&jobs);
     let names: BTreeSet<String> = jobs.report().into_iter().map(|r| r.name).collect();
     assert!(names.iter().all(|n| !n.ends_with("-mirror")), "{names:?}");
+    assert!(!names.contains(feature_flags::EVENTS_JOB), "{names:?}");
     jobs.shutdown(Duration::from_secs(5)).await;
+}
+
+/// The Foundation names job runs whatever `EXPLORER_MIRRORS_ENABLED` says,
+/// and only with `EVENTS_FEATURE_FLAGS_URL` set.
+#[tokio::test]
+async fn the_events_flags_job_follows_its_url_not_the_mirror_switch() {
+    let config = crate::config::Config::parse_for_tests(&[
+        "x",
+        "--database-url",
+        "postgres:///catalyst",
+        "--events-feature-flags-url",
+        "https://feature-flags.example.org/",
+        "--events-feature-flags-user-id",
+        " hash ",
+    ])
+    .unwrap();
+    let from_config = Settings::from_config(&config, Sources::from_config(&config));
+    assert!(!from_config.mirrors_enabled);
+    assert_eq!(
+        from_config.events_flags_url,
+        "https://feature-flags.example.org"
+    );
+    assert_eq!(from_config.events_flags_user_id.as_deref(), Some("hash"));
+
+    for (url, runs) in [("http://127.0.0.1:1", true), ("", false)] {
+        let mut settings = Settings::for_tests(sources_at("127.0.0.1:1".parse().unwrap()));
+        settings.mirrors_enabled = false;
+        settings.events_flags_url = url.to_string();
+        let node = node_without_db(settings).await;
+        let jobs = Jobs::new();
+        node.state.spawn_jobs(&jobs);
+        let names: BTreeSet<String> = jobs.report().into_iter().map(|r| r.name).collect();
+        assert_eq!(names.contains(feature_flags::EVENTS_JOB), runs, "{url:?}");
+        assert!(names.iter().all(|n| !n.ends_with("-mirror")), "{names:?}");
+        jobs.shutdown(Duration::from_secs(5)).await;
+    }
 }
 
 #[tokio::test]

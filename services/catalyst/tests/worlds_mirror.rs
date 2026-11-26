@@ -36,8 +36,7 @@ use catalyst::worlds::mirror::{MirrorSettings, run_pass};
 use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 use catalyst::worlds::{Settings, WorldsState, ZERO_ADDRESS};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 // ── the fake upstream ──────────────────────────────────────────────────────
 
@@ -1263,7 +1262,8 @@ async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
     );
     let held_before = node.scene_rows(world).await;
     let hidden = ids[3].clone();
-    let faults: Vec<Box<dyn Fn(&mut Upstream)>> = vec![
+    type Fault = Box<dyn Fn(&mut Upstream)>;
+    let faults: Vec<Fault> = vec![
         Box::new(|st| st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE)),
         Box::new(|st| st.scenes_status = Some(StatusCode::NOT_FOUND)),
         Box::new(|st| st.scenes_ignore_offset = true),

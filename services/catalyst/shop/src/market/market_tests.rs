@@ -116,6 +116,19 @@ async fn call(
     (status, value)
 }
 
+/// Whether the catalogue gate lets a descriptive read of the items through.
+async fn items_ready(state: &super::MarketplaceState) -> Result<(), axum::response::Response> {
+    super::catalogue::begin(
+        state,
+        super::catalogue::Purpose::Describe,
+        &[mirrors::Mirror::Items],
+        None,
+        super::catalogue::Access::ReadOnly,
+    )
+    .await
+    .map(|_| ())
+}
+
 async fn get(router: Router, uri: &str) -> (StatusCode, Value) {
     call(router, "GET", uri, HeaderMap::new(), None).await
 }
@@ -149,10 +162,16 @@ fn bearer(token: &str) -> HeaderMap {
 /// One GraphQL endpoint answering every entity the mirrors and readers ask
 /// for from canned rows: `items` and `collections` by their keysets, the
 /// rest by `first`/`skip`/`id_gt`. `fail_next_items_page` makes every
-/// items page past the first answer 500 (through the client's retries) until cleared.
+/// items page past the first answer 500 (through the client's retries) until cleared;
+/// `hang` makes every request wait without an answer; `pause` holds the
+/// next request between `arrived` and `release`.
 struct FakeGraph {
     rows: std::sync::Mutex<BTreeMap<&'static str, Vec<Value>>>,
     fail_next_items_page: AtomicBool,
+    hang: AtomicBool,
+    pause: AtomicBool,
+    arrived: tokio::sync::Notify,
+    release: tokio::sync::Notify,
     requests: std::sync::Mutex<Vec<String>>,
 }
 
@@ -161,6 +180,10 @@ impl FakeGraph {
         Arc::new(Self {
             rows: std::sync::Mutex::new(BTreeMap::new()),
             fail_next_items_page: AtomicBool::new(false),
+            hang: AtomicBool::new(false),
+            pause: AtomicBool::new(false),
+            arrived: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
             requests: std::sync::Mutex::new(Vec::new()),
         })
     }
@@ -315,6 +338,13 @@ async fn serve_graph(up: Arc<FakeGraph>) -> String {
         State(up): State<Arc<FakeGraph>>,
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
+        if up.hang.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        if up.pause.swap(false, Ordering::SeqCst) {
+            up.arrived.notify_one();
+            up.release.notified().await;
+        }
         let query = body.get("query").and_then(Value::as_str).unwrap_or("");
         let vars = body.get("variables").cloned().unwrap_or(json!({}));
         match up.answer(query, &vars) {
@@ -534,11 +564,7 @@ async fn upgrading_a_completed_mainnet_mirror_keeps_the_catalogue_available() {
     assert_eq!(after.last_complete_pass_at, before.last_complete_pass_at);
     assert_eq!(after.last_complete_pass_rows, Some(17));
     assert_eq!(after.cursor_id.as_deref(), Some("old-key"));
-    assert!(
-        mirrors::require_ready(&state, mirrors::Mirror::Items)
-            .await
-            .is_ok()
-    );
+    assert!(items_ready(&state).await.is_ok());
     own.drop().await;
 }
 
@@ -693,7 +719,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     .execute(&pool)
     .await
     .unwrap();
-    state.mirror_ready.clear();
 
     // A native (USD-pegged) primary listing, a MANA nft resale and a bid over the mirrored items.
     let (primary_id, primary_hash) = insert_trade(
@@ -1282,6 +1307,54 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
         "the nft leg waits for the nft index to publish"
     );
+    // A memo is filed under every mirror pass it read, not only the oldest:
+    // Polygon's newer pass with a new price answers the new histogram,
+    // though Ethereum's older pass stays the oldest.
+    let pass = |network: &'static str, minutes_ago: i32| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE shop.mirror_state SET last_complete_pass_at = \
+                   date_trunc('second', timezone('UTC', now())) - make_interval(mins => $2) \
+                 WHERE network = $1",
+            )
+            .bind(network)
+            .bind(minutes_ago)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    pass("ethereum", 3).await;
+    pass("matic", 2).await;
+    let prices_uri = format!("/v1/prices?contractAddress={c1}&category=wearable");
+    let (_, warm) = get(app(), &prices_uri).await;
+    let repriced: Vec<String> = sqlx::query_scalar(
+        "UPDATE shop.items SET price = 7000000000000000000 \
+         WHERE contract_address = $1 AND price = 5000000000000000000 RETURNING item_id::text",
+    )
+    .bind(&c1)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!repriced.is_empty());
+    pass("matic", 1).await;
+    let (status, fresh) = get(app(), &prices_uri).await;
+    assert_eq!(status, StatusCode::OK, "{fresh}");
+    assert!(
+        fresh["data"]["7000000000000000000"].as_i64().is_some(),
+        "{fresh}"
+    );
+    assert_ne!(warm, fresh);
+    sqlx::query(
+        "UPDATE shop.items SET price = 5000000000000000000 \
+         WHERE contract_address = $1 AND item_id::text = ANY($2)",
+    )
+    .bind(&c1)
+    .bind(&repriced)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // The readers: canned subgraph rows merged with the mirror legs.
     let now_s = chrono::Utc::now().timestamp();
@@ -1465,6 +1538,95 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // Every catalogue route answers on a pool of one connection: no request
+    // waits on a second connection while its catalogue read holds the first.
+    // Each answer, cold, is the one a cold state on a wide pool gives (a leg
+    // that timed out on the pool would answer 200 with fewer rows), and each
+    // request must finish well inside the pool's acquire timeout (a wait for
+    // a second connection panics here rather than degrade).
+    let cold = |p: sqlx::PgPool| {
+        let st = Arc::new(super::MarketplaceState::new(
+            p,
+            crate::http::Outbound::for_tests(),
+            state.settings.clone(),
+        ));
+        st.test_allow_loopback.store(true, Ordering::Relaxed);
+        st
+    };
+    let single = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(20))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let one = cold(single.clone());
+    let wide = cold(pool.clone());
+    let routes = [
+        "/v1/catalog?first=2".to_string(),
+        "/v2/catalog?first=2".to_string(),
+        format!("/v1/items?contractAddress={c1}&itemId=1"),
+        format!("/v3/catalog/items?contractAddress={c1}&first=3"),
+        "/v1/trendings?size=3".to_string(),
+        format!("/v1/prices?contractAddress={c1}&category=wearable"),
+        format!("/v3/catalog/shop?contractAddress={c1}"),
+        "/v3/catalog/legacy?first=2&search=Item%200004".to_string(),
+        "/v3/catalog/unified?groupBy=item&first=3".to_string(),
+        "/v3/catalog/trending?first=3".to_string(),
+        "/v3/catalog/creators?days=7".to_string(),
+        "/v3/catalog/suggested?first=2".to_string(),
+        format!("/v3/catalog/related?contractAddress={c1}&itemId=1&first=3"),
+        format!("/v3/catalog/importable?seller={CREATOR}"),
+        "/v3/catalog/suggest?search=item".to_string(),
+        format!("/v1/collections?contractAddress={c2}"),
+        "/v1/contracts?first=1000".to_string(),
+    ];
+    let lambdas = [
+        "/lambdas/collections".to_string(),
+        "/lambdas/collections/wearables?textSearch=item".to_string(),
+    ];
+    let on = |st: &Arc<super::MarketplaceState>, uri: &str| {
+        if uri.starts_with("/lambdas/") {
+            super::router(st.clone())
+        } else {
+            market_router(st.clone())
+        }
+    };
+    // This fixture lists no MANA-priced trade (legacy, importable) and
+    // deploys no wearable entity (lambdas wearables: its one-connection
+    // answer with rows is `cold_wearables_answer_the_base_leg_on_a_one_
+    // connection_pool`); their bodies are still compared.
+    const EMPTY_BY_FIXTURE: [&str; 3] = [
+        "/v3/catalog/legacy?first=2&search=Item%200004",
+        "/v3/catalog/importable?seller=0xcccccccccccccccccccccccccccccccccccccccc",
+        "/lambdas/collections/wearables?textSearch=item",
+    ];
+    let mut empty = Vec::new();
+    for uri in routes.iter().chain(&lambdas) {
+        let (status, expected) = get(on(&wide, uri), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri} (wide pool): {expected}");
+        fn has_rows(v: &Value) -> bool {
+            match v {
+                Value::Array(a) => !a.is_empty(),
+                // `/v1/prices` answers its buckets as a `data` map.
+                Value::Object(o) => o.iter().any(|(k, v)| {
+                    has_rows(v) || (k == "data" && v.as_object().is_some_and(|d| !d.is_empty()))
+                }),
+                _ => false,
+            }
+        }
+        if !has_rows(&expected) && !EMPTY_BY_FIXTURE.contains(&uri.as_str()) {
+            empty.push(format!("{uri}: {expected}"));
+        }
+        let (status, body) = tokio::time::timeout(Duration::from_secs(10), get(on(&one, uri), uri))
+            .await
+            .unwrap_or_else(|_| panic!("{uri} waited on the pool"));
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body, expected, "{uri} answered otherwise on one connection");
+    }
+    assert!(empty.is_empty(), "routes that answered no rows: {empty:#?}");
+    drop((one, wide));
+    single.close().await;
+
     let (status, body) = get(
         app(),
         &format!(
@@ -1604,7 +1766,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!carries_primary(&body), "{body}");
     // A read that names its item never reads the creator directory; a browse read does.
     use super::readers::Ttl;
-    use super::search::CREATOR_DIRECTORY_KEY;
+    let directory = super::search::directory_key("mirror");
     state.readers.clear();
     let (status, body) = get(
         app(),
@@ -1612,13 +1774,13 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    assert!(!state.readers.holds(Ttl::M15, &directory));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     // The browse read started the directory's read in the background; it may land after the
     // answer, which waits at most 500 ms for it.
     tokio::time::timeout(Duration::from_secs(20), async {
-        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+        while !state.readers.holds(Ttl::M15, &directory) {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -1649,7 +1811,14 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
     // feeds below then find it fresh, start no refresh of their own, and never depend on how
     // fast a cold read is.
-    super::search::creator_directory(&state).await.unwrap();
+    {
+        // Dropped at once: an open snapshot would hold its connection to the end.
+        let mut read = Some(super::catalogue::begin_unchecked(&state).await);
+        super::search::creator_directory(&state, &mut read)
+            .await
+            .unwrap()
+            .unwrap();
+    }
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1709,7 +1878,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     state.readers.clear();
     let hold = state
         .readers
-        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .begin_refresh(&directory, Duration::ZERO)
         .expect("a reset frees the directory's refresh");
     for uri in [
         "/v3/catalog/trending?first=10&days=3650",
@@ -1726,7 +1895,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         );
         assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
     }
-    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
+    state.readers.end_refresh(&directory, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -2502,6 +2671,204 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .unwrap();
 }
 
+/// The routes that read the sales reader (a per-network subgraph query) or
+/// the signer's EIP-1654 call make that call with no catalogue read open:
+/// with the subgraph hanging, the requests waiting on it hold no pooled
+/// connection, and the other catalogue routes keep answering on a pool of two.
+#[tokio::test]
+async fn a_hanging_subgraph_holds_no_catalogue_connection() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&pool).await;
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.02, timezone('UTC', now()))")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A subgraph that accepts and never answers.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hanging = format!("http://{}/subgraph", listener.local_addr().unwrap());
+    let held = tokio::spawn(async move {
+        let mut sockets = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            sockets.push(socket);
+        }
+    });
+    let narrow = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        narrow.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            eth_collections_subgraph_url: Some(hanging.clone()),
+            matic_collections_subgraph_url: Some(hanging),
+            data_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let waiting: Vec<_> = [
+        "/v1/trendings",
+        "/v1/trendings",
+        "/v3/catalog/trending?first=3",
+        "/v3/catalog/creators",
+        "/v3/catalog/suggested?first=2",
+        "/v3/catalog/suggest?search=hat",
+    ]
+    .into_iter()
+    .map(|uri| {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), uri).await })
+    })
+    .collect();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    for task in &waiting {
+        assert!(!task.is_finished(), "a route answered without its subgraph");
+    }
+    for uri in [
+        "/v1/collections?first=1",
+        "/v1/contracts?first=1",
+        "/v1/catalog?first=1",
+    ] {
+        let (status, body) = tokio::time::timeout(
+            Duration::from_secs(10),
+            get(market_router(state.clone()), uri),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{uri} waited behind the hanging subgraph"));
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+    for task in waiting {
+        task.abort();
+    }
+    held.abort();
+    drop(state);
+    narrow.close().await;
+    pool.close().await;
+}
+
+/// The pages of one read are read at its instant: a native listing and a
+/// coupon that expire between the read's first and second OFFSET page are
+/// counted and priced alike on both; a later read no longer has them, and a
+/// read held at the first one's instant still does.
+#[tokio::test]
+async fn the_pages_of_one_read_decide_expiries_at_its_instant() {
+    use super::shop::{parse_shop_filters, shop_listings};
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let t = tag();
+    let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
+    let mut trades = Vec::new();
+    for c in [&c1, &c2] {
+        seed_item_row(&pool, c, "0", CREATOR).await;
+        let sent = Asset {
+            asset_type: 4,
+            contract: c.clone(),
+            value: "0".into(),
+        };
+        let received = Asset {
+            asset_type: 2,
+            contract: "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0".into(),
+            value: "250000000000000000".into(),
+        };
+        trades.push(
+            insert_trade(&pool, "public_item_order", CREATOR, sent, received)
+                .await
+                .0,
+        );
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // c1's listing (first page, the newer) and c2's coupon (second page;
+    // half off: a sale the card shows) end 3 s from now.
+    sqlx::query("UPDATE shop.trades SET expires_at = timezone('UTC', now()) + interval '3 seconds' WHERE id = $1::uuid")
+        .bind(&trades[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.trades SET created_at = created_at - interval '1 hour' WHERE id = $1::uuid",
+    )
+    .bind(&trades[1])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
+            discount_type, discount_ppm, root, collections, effective_since, expires_at) \
+            VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
+                '{\"uses\": 10}', 1, 500000, '0x00', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '3 seconds')")
+        .bind(CREATOR)
+        .bind(format!("0x{}", tag()))
+        .bind(&c2)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let page = |skip: &str| {
+        parse_shop_filters(&[
+            ("first".to_string(), "1".to_string()),
+            ("skip".to_string(), skip.to_string()),
+        ])
+    };
+    let mut read = super::catalogue::begin_unchecked(&state).await;
+    let instant = read.now;
+    let (first, total) = shop_listings(&state, &mut read, &page("0")).await.unwrap();
+    assert_eq!((first.len(), total), (1, 2));
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    let (second, total) = shop_listings(&state, &mut read, &page("1")).await.unwrap();
+    assert_eq!((second.len(), total), (1, 2), "the second page of the read");
+    assert_eq!(
+        (first[0].trade_id.as_str(), second[0].trade_id.as_str()),
+        (trades[0].as_str(), trades[1].as_str())
+    );
+    assert!(
+        second[0].sale.coupon.is_some(),
+        "the coupon holds at the read's instant"
+    );
+    drop(read);
+
+    let mut later = super::catalogue::begin_unchecked(&state).await;
+    let (rows, total) = shop_listings(&state, &mut later, &page("0")).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(rows[0].trade_id, trades[1]);
+    assert!(rows[0].sale.coupon.is_none(), "the coupon ended");
+    drop(later);
+
+    // The read's clock decides, not the database's: a read held at the
+    // first one's instant still has both.
+    let mut held = super::catalogue::begin_unchecked(&state).await;
+    held.now = instant;
+    let all = parse_shop_filters(&[("first".to_string(), "10".to_string())]);
+    let (rows, total) = shop_listings(&state, &mut held, &all).await.unwrap();
+    assert_eq!(total, 2);
+    assert!(
+        rows[1].sale.coupon.is_some(),
+        "the coupon at the read's instant"
+    );
+    drop(held);
+    pool.close().await;
+}
+
 /// One contract and one item id on both networks: the read that names both
 /// pages the two rows itself and keeps the exact total on every page, as the
 /// paged read and its count do over the whole contract.
@@ -2544,7 +2911,8 @@ async fn an_item_on_two_networks_keeps_its_total_on_every_page() {
         };
         let state = state.clone();
         async move {
-            let (items, total) = list_items(&state, &f).await.unwrap();
+            let mut read = crate::market::catalogue::begin_unchecked(&state).await;
+            let (items, total) = list_items(&state, &mut read, &f).await.unwrap();
             let chains: Vec<i64> = items
                 .iter()
                 .map(|i| {
@@ -2601,6 +2969,67 @@ fn item_order_json(signer: &str, contract: &str) -> String {
              "sent": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "1", "extra": "0x"}} ],
              "received": [ {{"assetType": 1, "contractAddress": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4", "amount": "1000000000000000000", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
     )
+}
+
+/// On a network the collections index owns, a public item order's signer
+/// is checked against the item's creator under the index's authorizing
+/// publication, read in the statement that reads the creator.
+#[tokio::test]
+async fn on_an_owned_network_an_item_order_needs_an_authorizing_publication() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let contract = contract_of(&tag(), 9);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let mut trade = listings::test_support::parse(&item_order_json(
+        &listings::test_support::signer().address().to_checksum(None),
+        &contract,
+    ));
+    listings::test_support::sign(&mut trade, &marketplace);
+    let signer = trade.signer.clone();
+    seed_item_row(&pool, &contract, "1", WALLET_A).await;
+    sqlx::query("UPDATE shop.items SET creator = lower($2) WHERE contract_address = $1")
+        .bind(&contract)
+        .bind(&signer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unavailable = |e: listings::TradeCreationError| match e {
+        listings::TradeCreationError::CatalogueUnavailable(why) => why,
+        other => panic!("expected the index to refuse: {other}"),
+    };
+
+    // A creatorship transfer walked past the publication, a stale
+    // publication, a rewind: no order is authorized on them.
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::walk_past(&pool, "matic", 101, &contract).await;
+    let why = unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    assert!(why.contains("walked"), "{why}");
+    owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    owning::rewind(&pool, "matic").await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+
+    // Published a minute ago: the creator signs it.
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(open_item_order_ids(&pool).await.contains(&id));
 }
 
 #[tokio::test]
@@ -3245,7 +3674,7 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
 #[tokio::test]
 async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
     use super::shop::{
-        build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
+        FeedClock, build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
         parse_shop_filters, parse_unified_filters,
     };
     let Some(state) = state_with_db(Settings::for_tests()).await else {
@@ -3287,9 +3716,13 @@ async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
 
     let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
     let build = |kind: &str, pairs: &[(String, String)]| match kind {
-        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), None),
-        "items" => build_unified_items_sql(&parse_unified_filters(pairs), rate, None),
-        _ => build_unified_listings_sql(&parse_unified_filters(pairs), rate, None),
+        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), FeedClock::unbounded()),
+        "items" => {
+            build_unified_items_sql(&parse_unified_filters(pairs), rate, FeedClock::unbounded())
+        }
+        _ => {
+            build_unified_listings_sql(&parse_unified_filters(pairs), rate, FeedClock::unbounded())
+        }
     };
     let rows = async |b: super::catalog::Builder| -> Vec<Value> {
         let sql = format!("SELECT to_jsonb(q) - 'total' FROM ({}) q", b.sql);
@@ -3604,18 +4037,17 @@ async fn every_reader_route_names_its_missing_source_instead_of_answering_empty(
         ("/v1/accounts", "sales-index"),
         ("/v1/rankings/wearables/week", "sales-index"),
         ("/v1/volume/week", "sales-index"),
-        ("/v1/trendings", "collections-subgraph:matic"),
         (
             "/v1/users/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/wearables",
             "nft-index",
         ),
-        ("/v1/catalog", "collections-subgraph:matic"),
-        ("/v1/items", "collections-subgraph:matic"),
-        // `/v1/collections` and `/v1/contracts` serve the copy their tables
-        // record, so they need the database
-        // (`tests::without_a_subgraph_descriptive_reads_serve_the_recorded_copy`).
-        ("/v3/catalog/shop", "collections-subgraph:matic"),
-        ("/v1/prices?category=wearable", "collections-subgraph:matic"),
+        // The catalogue routes (`/v1/collections`, `/v1/contracts`,
+        // `/v1/catalog`, `/v1/items`, `/v1/trendings`, `/v3/catalog/shop`,
+        // the item prices)
+        // read which source owns each network from the database: an index
+        // that owns one answers without a subgraph
+        // (`tests::without_a_subgraph_descriptive_reads_serve_the_recorded_copy`,
+        // `catalogue::tests::without_a_subgraph_a_priced_read_needs_a_source_per_network`).
         ("/v1/nfts?search=hat", "nft-index"),
         ("/v1/nfts?first=1&skip=6000", "nft-index"),
         ("/v1/stats/estate/size", "nft-index"),
@@ -3675,6 +4107,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     const CURATOR_ONLY: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const RELAY_ONLY: &str = "0x3434343434343434343434343434343434343434";
     const PAYER: &str = "0x5656565656565656565656565656565656565656";
+    const MIXED_PAYER: &str = "0x5757575757575757575757575757575757575757";
+    const MIXED_PAYEE: &str = "0x9191919191919191919191919191919191919191";
     const SELLER: &str = "0x7878787878787878787878787878787878787878";
     const OTHER_TOKEN: &str = "0x9090909090909090909090909090909090909090";
     const FORMER_MEMBER: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
@@ -3807,17 +4241,36 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         "INSERT INTO shop.committee_event(network,block_number,log_index,block_time,contract_address,member,is_member)
          VALUES('matic',$1-1,2,99,$2,$3,true),('matic',$1,2,100,$2,$3,false)",
     ).bind(height).bind(super::committee_index::CONTRACTS[0]).bind(FORMER_MEMBER).execute(pool).await.unwrap();
-    // A sale in another currency proves the seller and the payer who bought
-    // the NFT for WALLET_A. Their public MANA counters remain zero.
+    // A trade with an unsupported token proves both parties. The payer
+    // has no other evidence and paid for a different NFT recipient.
     let assets = json!({
         "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"5","beneficiary":WALLET_A}],
         "received":[{"assetType":"1","contractAddress":OTHER_TOKEN,"value":"25","beneficiary":SELLER}]
     });
-    sqlx::query(
-        "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
-               kind,caller,signer,assets,tx_hash,hashed_signature)
-         VALUES('matic',$1,9,100,$2,'traded',$3,$4,$5,$6,$6)",
-    ).bind(height).bind(venue).bind(PAYER).bind(SELLER).bind(assets).bind(&hash).execute(pool).await.unwrap();
+    let mixed = json!({
+        "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"6","beneficiary":WALLET_A}],
+        "received":[
+            {"assetType":"1","contractAddress":listings::mana_token(137).unwrap(),"value":"10","beneficiary":SELLER},
+            {"assetType":"1","contractAddress":OTHER_TOKEN,"value":"15","beneficiary":MIXED_PAYEE}
+        ]
+    });
+    for (log, payer, assets) in [(9, PAYER, assets), (11, MIXED_PAYER, mixed)] {
+        sqlx::query(
+            "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
+                   kind,caller,signer,assets,tx_hash,hashed_signature)
+             VALUES('matic',$1,$2,100,$3,'traded',$4,$5,$6,$7,$7)",
+        )
+        .bind(height)
+        .bind(log)
+        .bind(venue)
+        .bind(payer)
+        .bind(SELLER)
+        .bind(assets)
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('matic',$1,$2)")
         .bind(CREATOR).bind(height).execute(pool).await.unwrap();
     super::sale_fold::write_rows(
@@ -3829,13 +4282,23 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await
     .unwrap();
 
+    let (price, currency, payer): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT a.price::text,a.currency,m.payer FROM shop.sale_asset a
+         JOIN shop.sale_payment m USING(network,block_number,log_index,ordinal)
+         WHERE a.network='matic' AND a.block_number=$1 AND a.log_index=9",
+    )
+    .bind(height)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!((price, currency, payer.as_str()), (None, None, PAYER));
     let (status, list) = get(
         app.clone(),
         "/v1/accounts?network=MATIC&sortBy=most_collections",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{list}");
-    assert_eq!(list["total"], 707);
+    assert_eq!(list["total"], 709);
     assert_eq!(
         list["data"][0],
         json!({"id":CREATOR,"address":CREATOR,"sales":0,"purchases":0,
@@ -3847,6 +4310,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         MINT_RECIPIENT,
         FORMER_MEMBER,
         PAYER,
+        MIXED_PAYER,
+        MIXED_PAYEE,
         SELLER,
     ] {
         let (status, page) = get(
@@ -3904,9 +4369,9 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await;
     assert_eq!(status, StatusCode::OK, "{future}");
     assert_eq!(future, json!({"data":[],"total":0}));
-    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1407").await;
+    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1409").await;
     assert_eq!(status, StatusCode::OK, "{empty}");
-    assert_eq!(empty, json!({"data":[],"total":1407}));
+    assert_eq!(empty, json!({"data":[],"total":1409}));
     assert!(graph.requests.lock().unwrap().is_empty());
 
     sqlx::query(
@@ -3986,6 +4451,73 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
         panic!("the memo does not answer for an unpublished index")
     };
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    own.drop().await;
+}
+
+/// An inventory memo is filed under the catalogue copy its items were named
+/// from, read in the gate's snapshot: on a network the collections index
+/// owns, a republication of the catalogue alone (an item renamed at the same
+/// nft publication) misses a warm memo: the gate's publications, which also
+/// key the by-owner answer and the backpack, change with it.
+#[tokio::test]
+async fn a_warm_inventory_follows_a_catalogue_only_republication() {
+    use super::catalogue::owning;
+    use super::owned_items::{owned_copies, require_inventory, test_support};
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 9);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', '{c}', 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:{c}:0', '{WALLET_B}', 'rare', 1, 9, 1, 5, 'i', 'Hat', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', '{c}', 1, '{WALLET_A}', 0, 1, 1, 1, 1, 0, 1)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        true,
+        Duration::ZERO,
+    )
+    .await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let names = |state: SharedState| async move {
+        let Ok(gate) = require_inventory(&state, "wearable", super::internal_server_error).await
+        else {
+            panic!("the published index passes the gate")
+        };
+        let publications = gate.publications();
+        let copies = owned_copies(&state, gate, WALLET_A, "wearable")
+            .await
+            .unwrap();
+        (
+            copies.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
+            publications,
+        )
+    };
+    let (before, first) = names(state.clone()).await;
+    assert_eq!(before, ["Hat"]);
+    assert_eq!(names(state.clone()).await.1, first, "a warm memo");
+
+    sqlx::query("UPDATE shop.items SET name = 'Cap' WHERE contract_address = $1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let (after, second) = names(state.clone()).await;
+    assert_eq!(
+        (second.ethereum, second.matic),
+        (first.ethereum, first.matic)
+    );
+    assert_ne!(second, first, "the catalogue copy is in the key");
+    assert_eq!(after, ["Cap"]);
     own.drop().await;
 }
 
@@ -4372,7 +4904,7 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
                     ..Default::default()
                 };
                 let b = match feed {
-                    "shop" => build_shop_listings_sql(&base, None),
+                    "shop" => build_shop_listings_sql(&base, FeedClock::unbounded()),
                     "legacy" => build_legacy_listings_sql(
                         &LegacyCatalogFilters {
                             first: base.first,
@@ -4381,10 +4913,14 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
                             sort_by: base.sort_by,
                             ..Default::default()
                         },
-                        None,
+                        FeedClock::unbounded(),
                     ),
-                    "unified listings" => build_unified_listings_sql(&unified, rate, None),
-                    "unified items" => build_unified_items_sql(&unified, rate, None),
+                    "unified listings" => {
+                        build_unified_listings_sql(&unified, rate, FeedClock::unbounded())
+                    }
+                    "unified items" => {
+                        build_unified_items_sql(&unified, rate, FeedClock::unbounded())
+                    }
                     _ => unreachable!(),
                 };
                 let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
@@ -4538,11 +5074,8 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
             .await
             .unwrap()
     );
-    state.mirror_ready.clear();
     assert_eq!(contracts("matic").await, Vec::<String>::new());
-    let err = mirrors::require_ready(&state, mirrors::Mirror::Items)
-        .await
-        .unwrap_err();
+    let err = items_ready(&state).await.unwrap_err();
     assert_eq!(
         err.status(),
         StatusCode::SERVICE_UNAVAILABLE,
@@ -4557,12 +5090,7 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     assert_eq!((owned, generation), (false, 2));
 
     tick().await;
-    state.mirror_ready.clear();
-    assert!(
-        mirrors::require_ready(&state, mirrors::Mirror::Items)
-            .await
-            .is_ok()
-    );
+    assert!(items_ready(&state).await.is_ok());
     assert_eq!(
         contracts("matic").await,
         vec![mirrored.clone()],
@@ -4600,6 +5128,860 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     .await
     .unwrap();
     assert_eq!(generation, 2);
+    own.drop().await;
+}
+
+/// The collections index owns Polygon, published at block 100.
+async fn own_polygon(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                full_history, chain_id, folded_block, folded_at) \
+         VALUES ('collections', 'matic', 1, 100, $1, true, 137, 100, timezone('UTC', now()))",
+    )
+    .bind("0xabababababababababababababababababababababababababababababababab")
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 0, 1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Both mirrors' complete passes on `network` now, proven on `chain`.
+async fn mirror_passes(pool: &PgPool, network: &str, chain: Option<i64>) {
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id, marks_item_rows) \
+         SELECT m, $1, 'test', timezone('UTC', now()), $2, m = 'items' AND $2 IN (11155111, 80002) \
+         FROM unnest(ARRAY['collections', 'items']) m \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
+             chain_id = EXCLUDED.chain_id, marks_item_rows = EXCLUDED.marks_item_rows",
+    )
+    .bind(network)
+    .bind(chain)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The contracts of a `/v1/collections` answer, sorted.
+fn collection_contracts(body: &Value) -> Vec<String> {
+    let mut out: Vec<String> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["contractAddress"].as_str().unwrap().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+/// A read returns rows only of networks the gate checked: a network left by
+/// an older configuration (no subgraph for it now) still has its mirror
+/// pass bound to this node's chain checked, whether the index owns the
+/// other network or a mirror serves it. A testnet reader never reads a
+/// projection bound to Polygon mainnet.
+#[tokio::test]
+async fn the_catalogue_reads_only_networks_and_chains_it_checked() {
+    let Some(own) = super::tests::support::OwnDb::create("collections-chains").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let t = tag();
+    let (polygon, ethereum) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (network, chain, contract) in [
+        (super::graph::Network::Matic, 137, &polygon),
+        (super::graph::Network::Ethereum, 1, &ethereum),
+    ] {
+        mirrors::collections::upsert(
+            &pool,
+            network,
+            chain,
+            false,
+            &[mirrors::collections::fixture(contract, "C", CREATOR, true)],
+        )
+        .await
+        .unwrap();
+    }
+    let mut both = vec![polygon.clone(), ethereum.clone()];
+    both.sort();
+    let state_with = |settings: Settings| {
+        let state = Arc::new(super::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        move || market_router(state.clone())
+    };
+    let only_polygon = Settings {
+        eth_collections_subgraph_url: None,
+        ..market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", false)
+    };
+
+    // The index owns Polygon, the only network with a subgraph; Ethereum's
+    // rows were left by an older configuration.
+    own_polygon(&pool).await;
+    let app = state_with(only_polygon.clone());
+    mirror_passes(&pool, "ethereum", Some(11155111)).await;
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror");
+    mirror_passes(&pool, "ethereum", Some(1)).await;
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), both);
+
+    // Nothing owned: an explicit read of the network without a subgraph,
+    // beside Polygon's pass.
+    sqlx::query("UPDATE shop.collection_projection SET owned_at = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    mirror_passes(&pool, "matic", Some(137)).await;
+    mirror_passes(&pool, "ethereum", Some(11155111)).await;
+    let (code, body) = get(app(), "/v1/collections?network=ETHEREUM").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    mirror_passes(&pool, "ethereum", Some(1)).await;
+    let (code, body) = get(app(), "/v1/collections?network=ETHEREUM").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(collection_contracts(&body), vec![ethereum.clone()]);
+
+    // A testnet reader: Polygon owned again, its projection bound to 137.
+    sqlx::query("UPDATE shop.collection_projection SET owned_at = timezone('UTC', now())")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let amoy = state_with(Settings {
+        eth_network: "sepolia".into(),
+        ..market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", false)
+    });
+    let (code, body) = get(amoy(), "/v1/collections?network=MATIC").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-index");
+    own.drop().await;
+}
+
+/// The lambdas catalogue never stands in a subgraph for a network the index
+/// owns: rewound, it answers the index's envelope; published beside an
+/// Ethereum mirror with no pass, the mirror's; neither asks the graph. With
+/// nothing owned and the mirrors refusing, the legacy graph path answers.
+#[tokio::test]
+async fn lambdas_never_read_a_subgraph_for_a_network_the_index_owns() {
+    let (matic, eth) = (FakeGraph::new(), FakeGraph::new());
+    let (matic_url, eth_url) = (
+        serve_graph(matic.clone()).await,
+        serve_graph(eth.clone()).await,
+    );
+    let Some(own) = super::tests::support::OwnDb::create("collections-lambdas").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&matic_url, &eth_url, false),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let app = || super::router(state.clone());
+    let routes = [
+        "/lambdas/collections/wearables?textSearch=hat",
+        "/lambdas/collections/emotes?textSearch=hat",
+    ];
+    let asked = || matic.requests.lock().unwrap().len() + eth.requests.lock().unwrap().len();
+
+    own_polygon(&pool).await;
+    mirror_passes(&pool, "ethereum", Some(1)).await;
+    mirror_passes(&pool, "matic", Some(137)).await;
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for route in routes {
+        let (code, body) = get(app(), route).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+        assert_eq!(body["source"], "collections-index", "{route}");
+    }
+    assert_eq!(asked(), 0, "no graph read for an owned network");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block = 100, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'collections'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM shop.mirror_state WHERE network = 'ethereum'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for route in routes {
+        let (code, body) = get(app(), route).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{route}: {body}");
+        assert_eq!(body["source"], "items-mirror", "{route}");
+    }
+    assert_eq!(
+        asked(),
+        0,
+        "a healthy owned network is never replaced by the graph"
+    );
+
+    // Nothing owned, the mirrors refusing: the legacy graph path.
+    sqlx::query("UPDATE shop.collection_projection SET owned_at = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (code, body) = get(app(), routes[0]).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(asked() > 0, "the graph answered for the mirrors");
+    own.drop().await;
+}
+
+/// A catalogue whose Polygon the collections index owns, published now at
+/// block 100: one approved Polygon item, both mirrors' passes, local trades,
+/// a MANA price, and both subgraph readers on `up` (one sale of the item).
+async fn owned_polygon_market(up: &Arc<FakeGraph>) -> Option<(PgPool, SharedState, String)> {
+    let pool = crate::db::scratch::isolated_pool(4).await?;
+    let url = serve_graph(up.clone()).await;
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let polygon = contract_of(&tag(), 1);
+    seed_item_row(&pool, &polygon, "0", CREATOR).await;
+    up.set(
+        "sales",
+        vec![json!({
+            "id": "sale-1", "searchItemId": "0", "searchContractAddress": polygon,
+            "price": "1000000000000000000", "timestamp": "1", "type": "mint",
+            "seller": CREATOR, "buyer": WALLET_A,
+            "item": { "id": format!("{polygon}-0"), "creator": CREATOR }
+        })],
+    );
+    // On sale in the store, so the trending rail has its row.
+    sqlx::query(
+        "UPDATE shop.items SET search_is_collection_approved = true, search_is_store_minter = true, \
+                price = 1000000000000000000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.25, timezone('UTC', now()))")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                full_history, chain_id, folded_block, folded_at) \
+         VALUES ('collections', 'matic', 1, 100, '0xabababababababababababababababababababababababababababababababab', true, 137, 100, timezone('UTC', now()))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 0, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    Some((pool, state, polygon))
+}
+
+/// The routes that call the sales reader or the signer check decide the gate
+/// and their page memo first, on a short read: with the subgraph stalled and
+/// the sales memo lapsed, a warm page answers from its memo and an unready
+/// publication answers the index's 503, well inside a short request deadline.
+#[tokio::test]
+async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
+    use super::readers::Ttl;
+    let up = FakeGraph::new();
+    let Some((pool, state, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let app = || market_router(state.clone());
+    let within = |uri: &'static str| {
+        let app = app();
+        async move {
+            tokio::time::timeout(Duration::from_secs(3), get(app, uri))
+                .await
+                .unwrap_or_else(|_| panic!("{uri} waited on the stalled subgraph"))
+        }
+    };
+    let warm = ["/v3/catalog/creators", "/v3/catalog/trending?first=3"];
+    let mut pages = Vec::new();
+    for uri in warm {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        pages.push(body);
+    }
+    assert_eq!(
+        pages[1]["data"].as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        pages[1]
+    );
+
+    up.hang.store(true, Ordering::SeqCst);
+    state.readers.forget_all(Ttl::M10);
+    for (uri, page) in warm.into_iter().zip(&pages) {
+        let (status, body) = within(uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert_eq!(body["data"], page["data"], "{uri} answers its warm page");
+    }
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in [
+        "/v1/trendings",
+        "/v3/catalog/trending?first=3",
+        "/v3/catalog/creators",
+        "/v3/catalog/suggested?first=2",
+        "/v3/catalog/suggest?search=item",
+        "/v1/catalog?first=1",
+    ] {
+        let (status, body) = within(uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("collections-index")),
+            "{uri}: {body}"
+        );
+    }
+    drop(state);
+    pool.close().await;
+}
+
+/// Requests that wait on another's memo fetch hold no connection. A lock on
+/// a table only the fetch reads (the creator directory's deployments, read by
+/// the creator search and the search suggest; the v2 page's trades) holds the
+/// leader; four identical cold requests wait on it, and another catalogue
+/// route still gets a connection on a pool of two. Once the lock goes, every
+/// waiter answers. A burst of eight identical cold `/v1/catalog` pages (whose
+/// query reads only tables the gate reads too, so no lock can hold it alone)
+/// all answer on the same pool.
+#[tokio::test]
+async fn memo_waiters_hold_no_connection() {
+    let up = FakeGraph::new();
+    let Some((pool, wide, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let mut settings = wide.settings.clone();
+    settings.market.catalog_cache_ttl = Duration::from_secs(60);
+    let narrow = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(2))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        narrow.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    for (table, uri) in [
+        (
+            "content.deployments",
+            "/v3/catalog/creators/search?search=cc",
+        ),
+        ("content.deployments", "/v3/catalog/suggest?search=item"),
+        ("shop.trades", "/v2/catalog?first=2"),
+    ] {
+        state.readers.clear();
+        state.catalog_cache.invalidate();
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+        )))
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let waiting: Vec<_> = (0..4)
+            .map(|_| {
+                let state = state.clone();
+                tokio::spawn(async move { get(market_router(state), uri).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            waiting.iter().all(|t| !t.is_finished()),
+            "{uri}: the fetch waits on the lock"
+        );
+        let (status, body) = tokio::time::timeout(
+            Duration::from_secs(10),
+            get(market_router(state.clone()), "/v1/collections?first=1"),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("/v1/collections waited behind {uri}'s memo"));
+        assert_eq!(status, StatusCode::OK, "beside {uri}: {body}");
+        lock.rollback().await.unwrap();
+        let mut bodies = Vec::new();
+        for task in waiting {
+            let (status, body) = task.await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            bodies.push(body);
+        }
+        assert!(bodies.windows(2).all(|w| w[0] == w[1]), "{uri}: one page");
+    }
+    state.catalog_cache.invalidate();
+    let burst = futures::future::join_all(
+        (0..8).map(|_| get(market_router(state.clone()), "/v1/catalog?first=2")),
+    )
+    .await;
+    for (status, body) in &burst {
+        assert_eq!(*status, StatusCode::OK, "{body}");
+        assert_eq!(body, &burst[0].1, "one page for the burst");
+    }
+    drop((state, wide));
+    narrow.close().await;
+    pool.close().await;
+}
+
+/// A suggested page is read on one snapshot. A full personal page answers
+/// from its first read without the sales reader; one that falls back to the
+/// trending rail rebuilds its personal rows on the read it opens after the
+/// sales call, so a publication committed meanwhile never mixes into it.
+#[tokio::test]
+async fn a_suggested_page_never_mixes_two_publications() {
+    let up = FakeGraph::new();
+    let Some((pool, state, c)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    for i in 1..=4 {
+        seed_item_row(&pool, &c, &i.to_string(), CREATOR).await;
+    }
+    sqlx::query(
+        "UPDATE shop.items SET name = 'before', search_is_collection_approved = true, \
+                search_is_store_minter = true, price = 1000000000000000000",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.item_neighbors_meta (id, built_at, algorithm, wallets, items, rows_written) VALUES (1, now(), 'test', 10, 5, 4)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.item_neighbors (network, contract_address, item_id, neighbor_network, \
+                neighbor_contract_address, neighbor_item_id, sim, support, rank) \
+         SELECT 'matic', $1, 0, 'matic', $1, g, 0.9, 5, g FROM generate_series(1, 4) g",
+    )
+    .bind(&c)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let asked = || up.requests.lock().unwrap().len();
+
+    // Four personal rows fill a page of four: no sales call.
+    let before = asked();
+    let (status, body) = get(
+        market_router(state.clone()),
+        &format!("/v3/catalog/suggested?first=4&seeds={c}-0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"].as_array().map(Vec::len), Some(4), "{body}");
+    assert_eq!(asked(), before, "a full personal page reads no sales");
+
+    // A page of five falls back to the trending rail; the catalogue is
+    // republished while its sales call is held.
+    up.pause.store(true, Ordering::SeqCst);
+    let uri = format!("/v3/catalog/suggested?first=5&seeds={c}-0");
+    let task = {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), &uri).await })
+    };
+    tokio::time::timeout(Duration::from_secs(15), up.arrived.notified())
+        .await
+        .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("UPDATE shop.items SET name = 'after', price = 2000000000000000000")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET generation = generation + 1 WHERE network = 'matic'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    up.release.notify_one();
+    let (status, body) = task.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows: Vec<(Value, Value)> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].clone(), r["reason"]["kind"].clone()))
+        .collect();
+    assert_eq!(rows.len(), 5, "{body}");
+    assert!(
+        rows.iter().all(|(name, _)| name == "after"),
+        "one publication: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|(_, kind)| kind == "trending")
+            && rows.iter().any(|(_, kind)| kind != "trending"),
+        "{rows:?}"
+    );
+    assert_eq!(body["personalized"], true);
+    drop(state);
+    pool.close().await;
+}
+
+/// A page is stamped with the copy it was read from: a trending page read on
+/// the snapshot opened after its sales call carries that publication's
+/// `as_of`, not the one the discarded preflight read saw.
+#[tokio::test]
+async fn a_page_is_stamped_with_the_copy_it_was_read_from() {
+    let up = FakeGraph::new();
+    let Some((pool, state, _)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let old: chrono::NaiveDateTime = sqlx::query_scalar(
+        "UPDATE shop.chain_cursor SET folded_at = date_trunc('second', timezone('UTC', now())) - interval '10 minutes' \
+         WHERE network = 'matic' AND indexer = 'collections' RETURNING folded_at",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    up.pause.store(true, Ordering::SeqCst);
+    let task = {
+        let state = state.clone();
+        tokio::spawn(async move { get(market_router(state), "/v3/catalog/trending?first=3").await })
+    };
+    tokio::time::timeout(Duration::from_secs(15), up.arrived.notified())
+        .await
+        .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("UPDATE shop.items SET name = 'after'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET generation = generation + 1 WHERE network = 'matic'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'matic' AND indexer = 'collections'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    up.release.notify_one();
+    let (status, body) = task.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["name"], "after", "{body}");
+    // The final read's copies: Ethereum's items pass and Polygon's new
+    // publication; the oldest stamps the page.
+    let expected: chrono::NaiveDateTime = sqlx::query_scalar(
+        "SELECT least( \
+           (SELECT last_complete_pass_at FROM shop.mirror_state WHERE mirror = 'items' AND network = 'ethereum'), \
+           (SELECT folded_at FROM shop.chain_cursor WHERE indexer = 'collections' AND network = 'matic'))",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let stamp = chrono::DateTime::parse_from_rfc3339(body["as_of"].as_str().unwrap())
+        .unwrap()
+        .timestamp_millis();
+    assert_ne!(
+        stamp,
+        old.and_utc().timestamp_millis(),
+        "not the preflight's copy"
+    );
+    assert_eq!(stamp, expected.and_utc().timestamp_millis(), "{body}");
+    drop(state);
+    pool.close().await;
+}
+
+/// The shop's priced and descriptive routes and the import check follow an
+/// owned network's publication: all answer a fresh one; a publication older
+/// than the money window refuses the priced and authorizing routes (503
+/// `collections-index`) while the descriptive ones answer; a rewind refuses
+/// them all. (The lambdas catalogue's owned-network case is
+/// `lambdas_never_read_a_subgraph_for_a_network_the_index_owns`; credits,
+/// campaign tags and the favourites job go through the same gate.) The creator directory is filed
+/// under the sources that serve each network, so a hand-back files it anew.
+#[tokio::test]
+async fn every_gated_route_follows_an_owned_networks_publication() {
+    use super::readers::Ttl;
+    let up = FakeGraph::new();
+    let Some((pool, state, polygon)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let app = || market_router(state.clone());
+    let priced = [
+        "/v1/catalog?first=1".to_string(),
+        "/v2/catalog?first=1".to_string(),
+        "/v1/items?first=1".to_string(),
+        "/v3/catalog/items?first=1".to_string(),
+        format!("/v1/prices?contractAddress={polygon}&category=wearable"),
+        "/v3/catalog/shop".to_string(),
+        "/v3/catalog/legacy".to_string(),
+        "/v3/catalog/unified?groupBy=item".to_string(),
+        format!("/v3/catalog/importable?seller={CREATOR}"),
+        "/v3/catalog/suggest?search=item".to_string(),
+        "/v1/trendings".to_string(),
+        "/v3/catalog/trending?first=3".to_string(),
+        "/v3/catalog/suggested?first=2".to_string(),
+        "/v3/catalog/creators".to_string(),
+    ];
+    let descriptive = [
+        "/v1/collections".to_string(),
+        "/v1/contracts?first=10".to_string(),
+        "/v3/catalog/creators/search?search=cc".to_string(),
+    ];
+    let import = || async {
+        let path = crate::import::CHECK_PATH;
+        call(
+            app(),
+            "POST",
+            path,
+            signed_headers("post", path, "{}", true).await,
+            Some(json!({ "chainId": 137, "contractAddress": polygon, "itemId": "0" })),
+        )
+        .await
+    };
+    let index = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Some("collections-index".to_string()),
+    );
+    let refused =
+        |status: StatusCode, body: &Value| (status, body["source"].as_str().map(str::to_string));
+    for uri in priced.iter().chain(&descriptive) {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(status, StatusCode::OK, "a fresh publication: {uri}: {body}");
+    }
+    let (status, body) = import().await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a fresh publication: import: {body}"
+    );
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in &priced {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(
+            refused(status, &body),
+            index,
+            "an old publication: {uri}: {body}"
+        );
+    }
+    let (status, body) = import().await;
+    assert_eq!(
+        refused(status, &body),
+        index,
+        "an old publication: import: {body}"
+    );
+    for uri in &descriptive {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a description of an old publication: {uri}: {body}"
+        );
+    }
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in priced.iter().chain(&descriptive) {
+        let (status, body) = get(app(), uri).await;
+        assert_eq!(refused(status, &body), index, "a rewind: {uri}: {body}");
+    }
+    let (status, body) = import().await;
+    assert_eq!(refused(status, &body), index, "a rewind: import: {body}");
+
+    // The creator directory: filed under the index serving Polygon, then
+    // anew under the mirrors once Polygon is handed back.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = 100, folded_at = timezone('UTC', now()) WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let filed = |sources: &'static str| {
+        let state = state.clone();
+        async move {
+            let key = super::search::directory_key(sources);
+            tokio::time::timeout(Duration::from_secs(20), async {
+                while !state.readers.holds(Ttl::M15, &key) {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .is_ok()
+        }
+    };
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(filed("mirror|index:matic").await);
+    assert!(
+        !state
+            .readers
+            .holds(Ttl::M15, &super::search::directory_key("mirror"))
+    );
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, 'matic', 'test', timezone('UTC', now()) FROM unnest(ARRAY['collections', 'items']) m \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        filed("mirror").await,
+        "an ownership change files the directory anew"
+    );
+    drop(state);
+    pool.close().await;
+}
+
+/// A catalogue route answers owned Polygon from the index's publication and
+/// Ethereum from the mirror in one read: a rewind on Polygon makes it answer
+/// the index's envelope, its republication answers again, and after a
+/// hand-back it follows the mirror, which has no Polygon pass yet.
+#[tokio::test]
+async fn a_route_reads_owned_polygon_beside_mirrored_ethereum() {
+    let Some(own) = super::tests::support::OwnDb::create("collections-readers").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings("http://127.0.0.1:9", "http://127.0.0.1:9", false),
+    ));
+    let t = tag();
+    let (polygon, ethereum) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (network, chain, contract) in [
+        (super::graph::Network::Matic, 137, &polygon),
+        (super::graph::Network::Ethereum, 1, &ethereum),
+    ] {
+        mirrors::collections::upsert(
+            &pool,
+            network,
+            chain,
+            false,
+            &[mirrors::collections::fixture(contract, "C", CREATOR, true)],
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         SELECT m, n, 'test', timezone('UTC', now()) \
+         FROM unnest(ARRAY['collections', 'items']) m CROSS JOIN unnest(ARRAY['ethereum', 'matic']) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                full_history, chain_id, folded_block, folded_at) \
+         VALUES ('collections', 'matic', 1, 100, '0xabababababababababababababababababababababababababababababababab', true, 137, 100, timezone('UTC', now()))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 0, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = || market_router(state.clone());
+    let contracts = |body: &Value| -> Vec<String> {
+        let mut out: Vec<String> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["contractAddress"].as_str().unwrap().to_string())
+            .collect();
+        out.sort();
+        out
+    };
+    let mut both = vec![polygon.clone(), ethereum.clone()];
+    both.sort();
+
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(contracts(&body), both);
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET projected_through = NULL WHERE network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-index");
+    let (code, _) = get(app(), "/v1/collections?network=ETHEREUM").await;
+    assert_eq!(
+        code,
+        StatusCode::OK,
+        "a read of Ethereum alone does not wait on Polygon's index"
+    );
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block = 100, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'collections'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET projected_through = 100 WHERE network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(contracts(&body), both);
+
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    let (code, body) = get(app(), "/v1/collections").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror");
     own.drop().await;
 }
 
@@ -5176,4 +6558,194 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     let (code, result) = get(app.clone(), &format!("{owner_url}&category=wearable")).await;
     assert_eq!(code, StatusCode::OK, "{result}");
     db.drop().await;
+}
+
+/// A shallow NAME page reads the index on a walker whose Ethereum latest
+/// sales are admitted, whatever its sort: the graph ranks the two names one
+/// way by its own `soldAt`, the ledger the other, and each token shows one
+/// soldAt across sorts. A failed admission check is the page's error with
+/// no graph request; confirmed not admitted, the page reads the graph.
+#[tokio::test]
+async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((mut state, own)) = state_over_own(&url, false).await else {
+        return;
+    };
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.market.indexes.sales_enabled = true;
+    settings.marketplace_subgraph_url = Some(url.clone());
+    // A configured trades mirror that has not completed a pass.
+    settings.trades_sync_upstream_url = Some("https://marketplace-api.example/v1/trades".into());
+    let pool = &own.pool;
+    let registrar = super::nft_index::DCL_REGISTRAR;
+    let owner = "0x00000000000000000000000000000000000000aa";
+    let name = |token: &str, label: &str, sold: &str| {
+        json!({ "id": format!("{registrar}-{token}"), "tokenId": token, "contractAddress": registrar,
+                "category": "ens", "image": "", "createdAt": "1", "updatedAt": "1", "soldAt": sold,
+                "name": label, "owner": { "address": owner }, "ens": { "subdomain": label },
+                "activeOrder": null })
+    };
+    // The graph sold alpha last; the ledger sold beta last.
+    graph.set(
+        "nfts",
+        vec![name("1001", "alpha", "2000"), name("1002", "beta", "1000")],
+    );
+    let (_, deployment, _) = super::trade_events::deployments(1)[0];
+    let height = deployment as i64 + 1;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+          full_history,fold_through,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+         SELECT ix,'ethereum',1,1,$1,$2,true,$1,$1,timezone('UTC',now()),$3,$1,0
+         FROM unnest(ARRAY['nft','sales','trade_events']) ix",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_history::VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_publication(network,block_number,block_hash,input_version,input_epochs,
+            input_revisions,late_collections,published_at,last_sale_through,generation,last_sale_generation)
+         SELECT network,$1,$2,$3,array_agg(sale_input_epoch ORDER BY indexer),
+                array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now()),$1,
+                '00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001'
+         FROM shop.chain_cursor WHERE indexer IN ('nft','sales','trade_events') GROUP BY network",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_fold::PUBLICATION_VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 1001, $2, 'alpha', 1, 1, 1, 0, 1), ('ethereum', $1, 1002, $2, 'beta', 2, 2, 2, 0, 2); \
+         ",
+    )
+    .bind(registrar)
+    .bind(owner)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+         VALUES ('ethereum', $1, 1001, 500, 1), ('ethereum', $1, 1002, 3000, 2)",
+    )
+    .bind(registrar)
+    .execute(pool)
+    .await
+    .unwrap();
+    let app = market_router(state.clone());
+    let sold_at = |body: &Value, token: &str| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["nft"]["tokenId"] == token)
+            .and_then(|r| r["nft"]["soldAt"].as_i64())
+    };
+    let graph_reads = || {
+        graph
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| *e == "nfts")
+            .count()
+    };
+    let by_sale = "/v1/nfts?category=ens&sortBy=recently_sold&first=2";
+    let browse = "/v1/nfts?category=ens&first=2";
+    // Admitted: every shallow NAME page reads the index, so a token shows
+    // the same soldAt whatever the sort.
+    let (status, sorted) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::OK, "{sorted}");
+    assert_eq!(sorted["data"][0]["nft"]["tokenId"], "1002", "{sorted}");
+    let (status, browsed) = get(app.clone(), browse).await;
+    assert_eq!(status, StatusCode::OK, "{browsed}");
+    for token in ["1001", "1002"] {
+        assert_eq!(sold_at(&sorted, token), sold_at(&browsed, token), "{token}");
+    }
+    assert_eq!(sold_at(&browsed, "1002"), Some(3_000_000));
+    assert_eq!(graph_reads(), 0);
+
+    // An admitted page keeps the index path's rules: an order filter waits
+    // for the trades mirror's pass, and the `first + skip` window is capped.
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&isOnSale=true&first=2").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "trades-mirror", "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=99999").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=100000").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(graph_reads(), 0);
+
+    // One clock: a page admitted at its request's clock keeps the latest
+    // sales for its values and order, though a later clock finds the
+    // publication past its freshness deadline (the sales inputs folded 31
+    // minutes ago, the names index 29).
+    let real = chrono::Utc::now();
+    for (indexers, ago) in [(vec!["sales", "trade_events"], 31), (vec!["nft"], 29)] {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at = $1 WHERE network = 'ethereum' AND indexer = ANY($2)",
+        )
+        .bind((real - chrono::Duration::minutes(ago)).naive_utc())
+        .bind(indexers)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE shop.sale_publication SET published_at = $1")
+        .bind((real - chrono::Duration::minutes(31)).naive_utc())
+        .execute(pool)
+        .await
+        .unwrap();
+    let filters =
+        super::nfts::parse_filters(&[("category".to_string(), "ens".to_string())]).unwrap();
+    let (rows, _) = super::nft_reads::names_page_if_admitted(
+        &state,
+        &filters,
+        2,
+        0,
+        real - chrono::Duration::minutes(2),
+    )
+    .await
+    .unwrap()
+    .expect("admitted at the request's clock");
+    let beta = rows.iter().find(|r| r.nft.token_id == "1002").unwrap();
+    assert_eq!(beta.nft.sold_at, 3_000_000);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'ethereum'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET published_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // An admission check that cannot run is the page's error, never the graph.
+    sqlx::query("ALTER TABLE shop.sale_publication RENAME TO sale_publication_hidden")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app.clone(), by_sale).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(graph_reads(), 0, "no graph request on a failed check");
+    sqlx::query("ALTER TABLE shop.sale_publication_hidden RENAME TO sale_publication")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Confirmed not admitted: the graph, as before.
+    sqlx::query("UPDATE shop.sale_publication SET last_sale_through = NULL")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app, by_sale).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"][0]["nft"]["tokenId"], "1001", "{body}");
+    assert_eq!(sold_at(&body, "1001"), Some(2_000_000));
+    assert!(graph_reads() > 0);
+    own.drop().await;
 }

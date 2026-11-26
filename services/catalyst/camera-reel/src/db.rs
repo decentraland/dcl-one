@@ -26,7 +26,7 @@ use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
 use super::dto::{Image, Metadata};
-use crate::shared::cache::{TtlCache, cache_get, cache_put};
+use crate::shared::cache::{TtlCache, cache_get, cache_put, cache_remove};
 
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 
@@ -757,7 +757,7 @@ impl Database {
     }
 
     fn forget_servable(&self, hash: &str) {
-        self.servable.lock().unwrap().remove(hash);
+        cache_remove(&self.servable, hash);
     }
 
     /// `None`: no such image. `Some(false)`: not the owner's, unchanged.

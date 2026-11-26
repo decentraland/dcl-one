@@ -1,4 +1,5 @@
-import { Entity, EntityState } from '../../engine/entity'
+import type { Entity } from '../../engine/entity'
+import { EntityState } from '../../engine/entity'
 import type { ComponentDefinition } from '../../engine'
 import type { PreEngine } from '../../engine/types'
 import { ReadWriteByteBuffer } from '../../serialization/ByteBuffer'
@@ -11,15 +12,16 @@ import {
 import { DeleteComponent } from '../../serialization/crdt/deleteComponent'
 import { DeleteEntity } from '../../serialization/crdt/deleteEntity'
 import { PutComponentOperation } from '../../serialization/crdt/putComponent'
-import { CrdtMessageType, CrdtMessageHeader, CrdtMessage } from '../../serialization/crdt/types'
-import { ReceiveMessage, Transport } from './types'
+import type { CrdtMessageHeader, CrdtMessage } from '../../serialization/crdt/types'
+import { CrdtMessageType } from '../../serialization/crdt/types'
+import type { ReceiveMessage, Transport } from './types'
 import { PutNetworkComponentOperation } from '../../serialization/crdt/network/putComponentNetwork'
 import {
   NetworkEntity as defineNetworkEntity,
   NetworkParent as defineNetworkParent,
   Transform as defineTransform
 } from '../../components'
-import { INetowrkEntityType } from '../../components/types'
+import type { INetowrkEntityType } from '../../components/types'
 import * as networkUtils from '../../serialization/crdt/network/utils'
 
 // NetworkMessages can only have a MAX_SIZE of 12kb. So we need to send it in chunks.

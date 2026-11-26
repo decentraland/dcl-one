@@ -1,8 +1,6 @@
 //! Runtime socket limits over real local WebSockets. No external database/broker required.
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::archipelago;
+use crate::nats_broker;
 use alloy::signers::{SignerSync, local::PrivateKeySigner};
 use catalyst::comms::archipelago::{AppState, config::Settings};
 use catalyst::comms::protocol::archipelago::{
@@ -149,7 +147,7 @@ async fn send_eoa_chain(
     let mut chain =
         vec![serde_json::json!({ "type": "SIGNER", "payload": address, "signature": "" })];
     if device.is_some() {
-        chain.push(serde_json::json!({ "type": "ECDSA_EPHEMERAL", "payload": mandate, "signature": sign(&wallet, &mandate) }));
+        chain.push(serde_json::json!({ "type": "ECDSA_EPHEMERAL", "payload": mandate, "signature": sign(wallet, &mandate) }));
     }
     chain.push(serde_json::json!({ "type": "ECDSA_SIGNED_ENTITY", "payload": challenge, "signature": sign(device.unwrap_or(wallet), challenge) }));
     socket
@@ -610,7 +608,10 @@ async fn claimed_deny_and_verified_deny_or_ban_fail_before_admission() {
                 receive(&mut socket).await,
                 server_packet::Message::Kicked(_)
             ));
-            assert_eq!(*bans.actors.lock().unwrap(), [principal.clone()]);
+            assert_eq!(
+                *bans.actors.lock().unwrap(),
+                std::slice::from_ref(&principal)
+            );
         } else {
             assert!(bans.actors.lock().unwrap().is_empty());
         }

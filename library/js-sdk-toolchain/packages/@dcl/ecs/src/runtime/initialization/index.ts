@@ -3,8 +3,10 @@
  * init and it'll be changing.
  */
 
-import { Engine, IEngine } from '../../engine'
-import { Task, createTaskSystem } from '../../systems/async-task'
+import type { IEngine } from '../../engine'
+import { Engine } from '../../engine'
+import type { Task } from '../../systems/async-task'
+import { createTaskSystem } from '../../systems/async-task'
 import { createPointerEventsSystem, PointerEventsSystem } from '../../systems/events'
 import { createInputSystem, IInputSystem } from './../../engine/input'
 import { createRaycastSystem, RaycastSystem } from '../../systems/raycast'
