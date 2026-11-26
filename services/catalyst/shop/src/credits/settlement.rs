@@ -39,6 +39,7 @@ use sqlx::Row;
 
 use super::errors::ApiError;
 use super::events;
+use super::metrics;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
@@ -469,6 +470,8 @@ impl Credits {
         let credit_hash: Option<String> = row.get("credit_hash");
         // Released or expired: its hold no longer counted against the balance.
         let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        // A later log of an already consumed credit (a remainder) moves no pledge.
+        let newly_consumed = row.get::<&str, _>("status") != "consumed";
         let trade_id: Option<String> = row.get("trade_id");
         // Another pass settled this log while this one waited for the lock.
         if let Some(recorded) = sqlx::query(
@@ -610,6 +613,12 @@ impl Credits {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
         tx.commit().await?;
+        // This pass inserted the log's settlement row (its key), so the log
+        // and the pledge's move are counted once, after the commit.
+        metrics::settlement(kind, recovered);
+        if newly_consumed {
+            metrics::pledges(metrics::Pledge::Consumed, 1);
+        }
         // The settlement row's key makes this the one pass that recorded the
         // purchase, so it is reported once, after the commit: one event per
         // line, as credits-server reported one per intent. A purchase debit
@@ -994,10 +1003,19 @@ pub(super) async fn settlement_pass(
         );
     }
     if let Some(revoker) = revoker {
-        revoker
+        let outcome = revoker
             .run_pass(ctx)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        metrics::revocations(outcome.sent, outcome.confirmed, outcome.failed);
+    }
+    // The settlement gauges, from one read per pass; a failed read leaves
+    // them as they were and never fails the pass.
+    match metrics::Snapshot::read(credits).await {
+        Ok(snapshot) => snapshot.record(),
+        Err(e) => {
+            tracing::warn!(error = %e, "credits metrics snapshot failed; gauges keep their last values")
+        }
     }
     Ok(true)
 }

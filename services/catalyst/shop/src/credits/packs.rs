@@ -85,6 +85,8 @@ pub enum ReversalOutcome {
         shortfall: String,
         /// Whether `shortfall` is strictly positive (decided in NUMERIC).
         has_shortfall: bool,
+        /// A dispute's reversal; else a refund's.
+        dispute: bool,
     },
     NothingToReverse,
     NoPaidPurchase,
@@ -781,6 +783,7 @@ impl Credits {
             removed: outcome.removed,
             shortfall: outcome.shortfall,
             has_shortfall: outcome.has_shortfall,
+            dispute: status_label == Some("disputed"),
         })
     }
 

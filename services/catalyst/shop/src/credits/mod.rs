@@ -69,7 +69,10 @@
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
 //! the log either way), and `credits-purchase-receipts` (the receipt
-//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Not carried: the `ts-rs`
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Metrics: the
+//! Prometheus families in `metrics.rs`, recorded by serve after each fact's
+//! commit (its doc maps credits-server's series to them).
+//! Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -94,6 +97,7 @@ pub mod goals;
 pub mod handlers;
 pub mod history;
 pub mod ledger_stats;
+pub mod metrics;
 pub mod money;
 pub mod orders;
 pub mod packs;
@@ -112,6 +116,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod metrics_tests;
 #[cfg(test)]
 mod receipts_tests;
 #[cfg(test)]
