@@ -253,8 +253,10 @@ jobs:
           # GitHub's LFS batch API times out on large batches: ask for 20 objects at a time, and retry before failing the job.
           for attempt in 1 2 3 4; do
             git -c lfs.transfer.batchSize=20 lfs pull --include="$ERROR_PAGE_LFS" --exclude='' && exit 0
-            echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
-            sleep $((attempt * 15))
+            if [ "$attempt" -lt 4 ]; then
+              echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
+              sleep $((attempt * 15))
+            fi
           done
           exit 1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
@@ -409,8 +411,10 @@ jobs:
           # GitHub's LFS batch API times out on large batches: ask for 20 objects at a time, and retry before failing the job.
           for attempt in 1 2 3 4; do
             git -c lfs.transfer.batchSize=20 lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude='' && exit 0
-            echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
-            sleep $((attempt * 15))
+            if [ "$attempt" -lt 4 ]; then
+              echo "::warning::git lfs pull failed (attempt $attempt of 4); retrying"
+              sleep $((attempt * 15))
+            fi
           done
           exit 1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
