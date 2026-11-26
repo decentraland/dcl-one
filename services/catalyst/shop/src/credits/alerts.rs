@@ -461,7 +461,14 @@ impl Delivery {
         for (alerts, text) in messages {
             if let Some(until) = held_until {
                 for alert in &alerts {
-                    retry(credits, alert.id, until, "held while Slack rate limits").await?;
+                    retry(
+                        credits,
+                        alert.id,
+                        until,
+                        "held while Slack rate limits",
+                        true,
+                    )
+                    .await?;
                     outcome.retried += 1;
                 }
                 continue;
@@ -483,6 +490,7 @@ impl Delivery {
                             alert.id,
                             until,
                             "Slack answered 429 Too Many Requests",
+                            false,
                         )
                         .await?;
                         outcome.retried += 1;
@@ -498,6 +506,7 @@ impl Delivery {
                             alert.id,
                             failed_at + backoff(alert.attempts),
                             &error,
+                            false,
                         )
                         .await?;
                         outcome.retried += 1;
@@ -560,19 +569,22 @@ fn clock(now: chrono::NaiveDateTime) -> chrono::NaiveDateTime {
     now.max(super::store::now())
 }
 
-/// Schedules `id`'s next attempt at `at`, keeping why this one failed.
+/// Schedules `id`'s next attempt at `at`, undoing the claim for an unposted alert.
 async fn retry(
     credits: &Credits,
     id: i64,
     at: chrono::NaiveDateTime,
     error: &str,
+    unposted: bool,
 ) -> Result<(), ApiError> {
     sqlx::query(
-        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3 WHERE id = $1 AND status = 'pending'",
+        "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3, attempts = attempts - $4 \
+         WHERE id = $1 AND status = 'pending'",
     )
     .bind(id)
     .bind(at)
     .bind(error)
+    .bind(i32::from(unposted))
     .execute(&credits.pool)
     .await?;
     Ok(())
