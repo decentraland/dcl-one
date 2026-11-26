@@ -204,6 +204,8 @@ def pre_push_steps(changed):
         steps += web_steps()
         steps.append(Step('catalyst clippy', 'cd services/catalyst && cargo clippy --locked '
                           '--workspace --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('catalyst clippy (ts)', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets --features catalyst/ts -- -D warnings', tools=('cargo',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
     elif triggered('sdk.yml', changed):
         # the workspace clippy above covers it otherwise

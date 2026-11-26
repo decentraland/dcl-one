@@ -6,7 +6,6 @@
 //! package nesting (`decentraland::social_service::v2` reaches `Color3` as
 //! `super::super::common::Color3`).
 
-#[allow(clippy::all)]
 pub mod decentraland {
     pub mod common {
         include!(concat!(env!("OUT_DIR"), "/decentraland.common.rs"));
