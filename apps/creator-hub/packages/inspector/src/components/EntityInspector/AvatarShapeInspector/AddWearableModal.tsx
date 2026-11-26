@@ -7,6 +7,7 @@ import {
   WEARABLE_CATEGORY_GROUPS,
   getCategoryLabel,
   getSceneWearableCategory,
+  isSceneWearableCategory,
   isWearableUrn,
 } from '../../../lib/logic/wearables';
 import { Modal } from '../../Modal';
@@ -91,7 +92,7 @@ export function AddWearableModal({
     : getSceneWearableCategory(manualValue);
   const manualError =
     manualValue && !manualCategory
-      ? 'Enter a wearable URN, or the path of a scene file named name_category.glb'
+      ? 'Enter a wearable URN, or the path of a scene file named name_category.glb, from the project folder (assets/…)'
       : undefined;
 
   const handleManualAdd = useCallback(() => {
@@ -197,7 +198,11 @@ export function AddWearableModal({
           <PickerResults
             title="This scene"
             items={scene}
-            empty={`No ${label.toLowerCase()} models in the scene. A wearable is a GLB rigged to the avatar skeleton; import one into Local Assets.`}
+            empty={
+              isSceneWearableCategory(category)
+                ? `No ${label.toLowerCase()} models in the scene. A wearable is a GLB rigged to the avatar skeleton; import one into Local Assets.`
+                : `${label} is a texture, not a model, so a scene file can't fill it. Choose one from the base avatars or the catalog.`
+            }
             onSelect={handleSelect}
           />
           <PickerResults

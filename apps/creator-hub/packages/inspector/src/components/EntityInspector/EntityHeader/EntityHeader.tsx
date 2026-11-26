@@ -131,7 +131,7 @@ export default React.memo(
             {
               description:
                 "Changes how each visitor's avatar looks while they are in this scene: body, colours and wearables. Only they see it, and fields you leave unset keep their own look.",
-              link: 'https://docs.decentraland.org/creator/scenes-sdk7/interactivity/npc-avatars',
+              link: 'https://docs.decentraland.org/creator/sdk7/interactivity/avatars/scene-wearables/',
             },
             {},
             { id: '', wearables: [], emotes: [] },

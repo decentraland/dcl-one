@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { WearableCategory } from '../../../lib/logic/wearables';
+import { isSceneWearableCategory } from '../../../lib/logic/wearables';
 import type { WearableItem } from './catalog';
 import { fetchBaseWearables, searchCatalogWearables } from './catalog';
 
@@ -75,7 +76,9 @@ export function useWearableSearch(
   const scene = useMemo(
     () =>
       sceneWearables.filter(
-        $ => ($.category === category || $.fitsAnySlot) && matchesName($, search),
+        $ =>
+          ($.category === category || ($.fitsAnySlot && isSceneWearableCategory(category))) &&
+          matchesName($, search),
       ),
     [sceneWearables, category, search],
   );

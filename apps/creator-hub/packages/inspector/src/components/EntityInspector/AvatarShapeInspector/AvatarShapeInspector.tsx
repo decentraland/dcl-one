@@ -18,6 +18,7 @@ import {
   BODY_SHAPE_A,
   BODY_SHAPE_B,
   DEFAULT_BODY_SHAPE,
+  MAX_WEARABLES,
   getSceneWearableCategory,
   getSceneWearableName,
   isSceneWearablePath,
@@ -258,7 +259,11 @@ export default withSdk<Props>(({ sdk, entity, initialOpen = true }) => {
               ? "Changes how each visitor's avatar looks while they are in this scene. Only they see the change."
               : 'Draws an avatar on this entity, for example an NPC. Dress it with wearables from the scene, the base avatars or the catalog.'
           }
-          link="https://docs.decentraland.org/creator/scenes-sdk7/interactivity/npc-avatars"
+          link={
+            isPlayer
+              ? 'https://docs.decentraland.org/creator/sdk7/interactivity/avatars/scene-wearables/'
+              : 'https://docs.decentraland.org/creator/sdk7/interactivity/avatars/npc-avatars/'
+          }
           type="help"
         />
       }
@@ -269,7 +274,8 @@ export default withSdk<Props>(({ sdk, entity, initialOpen = true }) => {
       {isPlayer ? (
         <p className={styles.callout}>
           Each visitor keeps their own look in every field you leave unset. Only they see the
-          change, and only while they are in this scene.
+          change, and only while they are in this scene. To dress the other players too, write
+          Avatar Shape on their entities from code.
         </p>
       ) : (
         <>
@@ -427,9 +433,18 @@ export default withSdk<Props>(({ sdk, entity, initialOpen = true }) => {
           <AddIcon aria-hidden="true" />
           Add wearable
         </button>
+        {isPlayer && wearables.length > MAX_WEARABLES && (
+          <p
+            className={styles.warning}
+            role="status"
+          >
+            Explorers use up to {MAX_WEARABLES} wearables on a player. Remove the ones the avatar
+            doesn't wear.
+          </p>
+        )}
         <p className={styles.hint}>
           {isPlayer
-            ? "Leave the list empty to keep each visitor's own wearables. A list replaces all of them, and the slots it leaves empty stay empty."
+            ? "Leave the list empty to keep each visitor's own wearables. A list replaces all of them: the slots it leaves empty stay empty, and the eyes, eyebrows and mouth it leaves out show the default ones."
             : 'Slots you leave empty stay empty, except the eyes, eyebrows and mouth. Drop a wearable from Local Assets here.'}
         </p>
       </div>

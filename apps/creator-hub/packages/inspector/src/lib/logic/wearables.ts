@@ -3,7 +3,7 @@
  *
  * Besides wearable URNs, `AvatarShape.wearables` accepts the path of a GLB file in the scene
  * content named `<name>_<category>.glb`, for example `cap_hat.glb`. The category in the name is
- * the body slot it takes.
+ * the body slot it takes. Eyes, eyebrows and mouth are textures, so a scene file cannot fill them.
  */
 
 export type WearableCategory =
@@ -70,14 +70,31 @@ export function getCategoryLabel(category: WearableCategory): string {
   return WEARABLE_CATEGORIES.find($ => $.id === category)?.label ?? category;
 }
 
+/** The slots an explorer fills by itself when the list leaves them empty. */
+export const FACE_SLOTS: readonly WearableCategory[] = ['eyes', 'eyebrows', 'mouth'];
+
+/** The slots a scene GLB can take: every slot that is a model. */
+export const SCENE_WEARABLE_CATEGORIES: readonly WearableCategory[] = WEARABLE_CATEGORIES.map(
+  $ => $.id,
+).filter($ => !FACE_SLOTS.includes($));
+
+export function isSceneWearableCategory(category: WearableCategory): boolean {
+  return SCENE_WEARABLE_CATEGORIES.includes(category);
+}
+
+/** The most wearables an explorer uses from the list on a player entity. */
+export const MAX_WEARABLES = 32;
+
 // The leftmost `_<category>.glb` wins, so `beard_facial_hair.glb` is facial hair, not hair.
-const SCENE_WEARABLE_PATTERN = new RegExp(
-  `_(${WEARABLE_CATEGORIES.map($ => $.id).join('|')})\\.glb$`,
-  'i',
-);
+const SCENE_WEARABLE_PATTERN = new RegExp(`_(${SCENE_WEARABLE_CATEGORIES.join('|')})\\.glb$`, 'i');
+
+// Explorers look the path up in the scene content as written: from the project root, with
+// forward slashes. They skip a full URL, a backslash and a leading `/` or `./`.
+const SKIPPED_PATH_FORM = /^\.{0,2}\/|\\|:\/\//;
 
 /** The body slot of a scene wearable file, or undefined when the path is not one. */
 export function getSceneWearableCategory(path: string): WearableCategory | undefined {
+  if (SKIPPED_PATH_FORM.test(path)) return undefined;
   const fileName = path.split('/').pop() ?? '';
   const match = SCENE_WEARABLE_PATTERN.exec(fileName);
   if (!match || match.index === 0) return undefined;
@@ -132,9 +149,6 @@ export const BASE_OUTFITS: Record<string, Partial<Record<WearableCategory, strin
     feet: `${BASE}citycomfortableshoes`,
   },
 };
-
-/** The slots an explorer fills by itself when the list leaves them empty. */
-export const FACE_SLOTS: readonly WearableCategory[] = ['eyes', 'eyebrows', 'mouth'];
 
 export function getBaseOutfit(bodyShape: string): Partial<Record<WearableCategory, string>> {
   return BASE_OUTFITS[bodyShape] ?? BASE_OUTFITS[DEFAULT_BODY_SHAPE];

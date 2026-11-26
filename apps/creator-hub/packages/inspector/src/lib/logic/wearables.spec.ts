@@ -46,7 +46,24 @@ describe('scene wearable paths', () => {
       'cap_hat.gltf',
       'cap_hat.png',
       'cap_body_shape.glb',
+      'iris_eyes.glb',
+      'brow_eyebrows.glb',
+      'smile_mouth.glb',
     ])('should not read %s as one', path => {
+      expect(isSceneWearablePath(path)).toBe(false);
+    });
+  });
+
+  describe('when the path is in a form explorers skip', () => {
+    it.each([
+      '/assets/cap_hat.glb',
+      './assets/cap_hat.glb',
+      '../cap_hat.glb',
+      'assets\\cap_hat.glb',
+      'https://example.com/cap_hat.glb',
+      'assets/cap_hat.glb?v=2',
+      'assets/cap_hat.glb ',
+    ])('should not read %s as a wearable', path => {
       expect(isSceneWearablePath(path)).toBe(false);
     });
   });
