@@ -15,8 +15,9 @@
     "access": "public"
   },
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/js-runtime"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/js-runtime"
   },
   "types": "./index.d.ts",
   "typings": "./index.d.ts"

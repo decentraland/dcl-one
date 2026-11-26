@@ -285,6 +285,11 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "EVENTS_FEATURE_FLAGS_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream(
+        "mirrors",
         "SHOP_FEATURE_FLAGS_URL",
         "https://feature-flags.decentraland.org",
     ),
@@ -1041,6 +1046,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("MARKETPLACE_BASE_URL", LINK),
     ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
+    ("SHOP_EMAIL_ASSETS_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
     ("EVENTS_SITE_URL", LINK),

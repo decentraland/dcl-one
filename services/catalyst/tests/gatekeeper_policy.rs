@@ -1039,7 +1039,6 @@ mod stream_access {
         STREAM_ACCESS_NOT_FOUND_MSG,
     };
     use catalyst::comms::gatekeeper::{CommsState, LiveKit, Settings, SharedState, router};
-    use catalyst::comms::interfaces::StreamingNotificationKind;
     use catalyst::http::Outbound;
     use catalyst::shared::test_keys::{address_of, random_key, signed};
     use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};

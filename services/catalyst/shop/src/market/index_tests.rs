@@ -1962,7 +1962,7 @@ fn estate_document(
 
 #[tokio::test]
 async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
-    use super::mirrors::{self, Mirror};
+    use super::mirrors::Mirror;
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1981,18 +1981,22 @@ async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
             crate::http::Outbound::for_tests(),
             settings,
         );
-        let error = mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap_err();
+        let read = || {
+            super::catalogue::begin(
+                &state,
+                super::catalogue::Purpose::Describe,
+                &[Mirror::Collections],
+                None,
+                super::catalogue::Access::ReadOnly,
+            )
+        };
+        let error = read().await.err().unwrap();
         assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
         sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
             .execute(&db.pool)
             .await
             .unwrap();
-        state.mirror_ready.clear();
-        mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap();
+        assert!(read().await.is_ok());
         sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
             .execute(&db.pool)
             .await
@@ -2465,7 +2469,18 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     assert_eq!(retried.pass_started_at, pending.pass_started_at);
     assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
     assert_eq!(stored_price().await.unwrap(), "100");
-    assert!(mirrors::require_priced(&state).await.is_ok());
+    // The catalogue gate still prices from the last complete pass.
+    assert!(
+        super::catalogue::begin(
+            &state,
+            super::catalogue::Purpose::Priced,
+            &[Mirror::Items],
+            None,
+            super::catalogue::Access::ReadOnly,
+        )
+        .await
+        .is_ok()
+    );
 
     // Advance the persisted RPC outage clock without a wall-clock wait.
     age_proof().await.unwrap();
@@ -5120,6 +5135,62 @@ async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
     .await
     .unwrap();
     assert_eq!(kept, (Some("0xbuyer".into()), Some(a)));
+    db.drop().await;
+}
+
+/// A transfer indexed before the walk recorded transfers' transactions
+/// gains its hash when the same log is read again, and keeps it after; a
+/// different log at its position never supplies one.
+#[tokio::test]
+async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let transfer = |token: &str, tx_hash: Option<&str>| nft_index::NftEvent {
+        block_number: 100,
+        log_index: 0,
+        block_time: 1,
+        kind: nft_index::KIND_TRANSFER,
+        emitter: "0xnft".into(),
+        contract_address: "0xnft".into(),
+        token_id: token.into(),
+        from_address: Some("0xseller".into()),
+        to_address: Some("0xbuyer".into()),
+        amount: None,
+        expires_at: None,
+        detail: None,
+        tx_hash: tx_hash.map(str::to_string),
+    };
+    let (a, b) = (
+        format!("0x{}", "a".repeat(64)),
+        format!("0x{}", "b".repeat(64)),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    let mut write = async |row| {
+        nft_index::insert_events(&mut conn, ChainNet::Matic, &[row])
+            .await
+            .unwrap()
+    };
+    assert_eq!(write(transfer("7", None)).await, 1);
+    assert_eq!(
+        write(transfer("8", Some(&b))).await,
+        0,
+        "another token's log at the position"
+    );
+    assert_eq!(
+        write(transfer("7", Some(&a))).await,
+        1,
+        "the hash is filled"
+    );
+    assert_eq!(write(transfer("7", Some(&b))).await, 0, "a kept hash stays");
+    drop(conn);
+    let kept: Option<String> = sqlx::query_scalar(
+        "SELECT tx_hash FROM shop.nft_event WHERE network = 'matic' AND block_number = 100",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, Some(a));
     db.drop().await;
 }
 
@@ -14802,4 +14873,6 @@ mod compare_sources_tests {
 
 mod sale_accounting;
 
+mod cancelled_trades;
+mod royalties;
 mod sale_routes;

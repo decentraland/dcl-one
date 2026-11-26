@@ -441,6 +441,13 @@ pub struct ShopConfig {
     #[arg(long, env = "CATALYRST_CREDITS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_credits_admin_token: Option<String>,
 
+    /// Wallets whose signed requests may read the credits reports (the
+    /// cross-wallet credits list and its grant reasons), comma-separated: the
+    /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
+    /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_read_admin_addresses: String,
+
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
     pub credits_captcha_secret: Option<String>,
@@ -613,9 +620,14 @@ pub struct ShopConfig {
     #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
     pub shop_feature_flags_refresh_secs: u64,
 
-    /// The availability alert outbox worker's cadence.
+    /// The cadence of the Shop's email outboxes: the availability alerts and the purchase receipts.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
+
+    /// Where the purchase receipt's images are served from; empty uses `SHOP_BASE_URL/email`, the
+    /// Shop app's `public/email`.
+    #[arg(long, env = "SHOP_EMAIL_ASSETS_URL", default_value = "")]
+    pub shop_email_assets_url: String,
 
     /// How often the watcher compares the waited-for items against the items mirror.
     #[arg(long, env = "SHOP_NOTIFY_WATCH_INTERVAL_SECS", default_value_t = 60)]

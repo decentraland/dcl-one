@@ -1089,6 +1089,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (const [ty, allowed] of [['Fetch', true], ['OpenUrl', false], ['MovePlayer', true]] as const) {
         reply({ kind: 'permissionUsed', ty, sceneName: 'Genesis Plaza', scene, realm, allowed })
       }
+      // and the scene holding the camera, for the list's "In force now"
+      reply({ kind: 'permissionUsed', ty: 'ForceCamera', sceneName: 'Genesis Plaza', scene, realm, allowed: true, inForce: true })
       setTimeout(
         () =>
           reply({

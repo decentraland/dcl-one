@@ -287,6 +287,7 @@ async fn store_deployment_files(
     }
 }
 
+#[cfg(test)]
 fn happened_before_cmp(a_ts: i64, a_id: &str, b_ts: i64, b_id: &str) -> std::cmp::Ordering {
     a_ts.cmp(&b_ts)
         .then_with(|| a_id.to_lowercase().cmp(&b_id.to_lowercase()))

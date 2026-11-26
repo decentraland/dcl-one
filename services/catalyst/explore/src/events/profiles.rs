@@ -168,41 +168,22 @@ fn envelope(body: Value) -> Result<Value, ApiError> {
     }
 }
 
-/// The profile entity this node holds for `address` (`id`, deployed
-/// metadata), as `/lambdas/profiles` reads it; `None` for a non-address or
-/// a wallet without a profile here or one `denylist` hides.
-pub(super) async fn local_profile(
-    pool: &PgPool,
-    denylist: Option<&crate::content::Denylist>,
-    address: &str,
-) -> Result<Option<(String, Value)>, ApiError> {
-    let Ok(address) = Address::parse(address) else {
-        return Ok(None);
-    };
-    let mut docs =
-        crate::content::queries::active_entity_docs_by_pointers(pool, &[address.into_string()])
-            .await?;
-    if let Some(denylist) = denylist {
-        crate::content::queries::retain_non_denylisted(&mut docs, denylist);
-    }
-    Ok(profile_of(docs))
-}
-
-/// [`local_profile`], else read through; a failing source is a miss, as gatsby's `API.catch` made it.
+/// The profile entity for `address`, read through when configured; a failing source is a miss, as gatsby's `API.catch` made it.
 pub(super) async fn profile(
     state: &ExploreState,
     address: &str,
 ) -> Result<Option<(String, Value)>, ApiError> {
-    let Some(read_through) = &state.read_through else {
-        let denylist = state.storage.as_ref().map(|s| s.denylist().as_ref());
-        return local_profile(&state.pool, denylist, address).await;
-    };
     let Ok(address) = Address::parse(address) else {
         return Ok(None);
     };
-    let docs = read_through
-        .active_docs(false, &[address.into_string()])
-        .await?;
+    let docs = crate::content::read_through::active_entity_docs(
+        &state.pool,
+        state.read_through.as_deref(),
+        false,
+        &[address.into_string()],
+        state.storage.as_ref().map(|s| s.denylist().as_ref()),
+    )
+    .await?;
     Ok(profile_of(docs))
 }
 
@@ -1444,6 +1425,21 @@ pub(crate) mod test_support {
     use serde_json::{Value, json};
     use sqlx::PgPool;
 
+    /// The profile entity this node holds for `address` (`id`, metadata).
+    pub async fn held_profile(pool: &PgPool, address: &str) -> Option<(String, Value)> {
+        let address = crate::shared::identity::Address::parse(address).ok()?;
+        let docs = crate::content::read_through::active_entity_docs(
+            pool,
+            None,
+            false,
+            &[address.into_string()],
+            None,
+        )
+        .await
+        .unwrap();
+        super::profile_of(docs)
+    }
+
     /// A profile deployment this node holds for `address`, its first avatar
     /// carrying `avatar` (the `{"v": ...}`-wrapped metadata the deployers store).
     /// A wallet that already has a profile keeps it (the shared test wallet is
@@ -2634,7 +2630,7 @@ mod tests {
         let [rsvp, creator, uploader] = &wallets;
         let user = &users[0];
         for user in &users {
-            assert!(local_profile(&pool, None, user).await.unwrap().is_none());
+            assert!(test_support::held_profile(&pool, user).await.is_none());
         }
         let event = visible_event(&pool).await;
         let (status, body) = call(
@@ -2649,7 +2645,7 @@ mod tests {
         assert_eq!(body["data"][0]["user"], *user);
         assert_eq!(body["data"][0]["user_name"], "Remote");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(local_profile(&pool, None, user).await.unwrap().is_some());
+        assert!(test_support::held_profile(&pool, user).await.is_some());
         assert_eq!(
             redirect(&app, &format!("/api/profile/{user}/face.png")).await,
             face

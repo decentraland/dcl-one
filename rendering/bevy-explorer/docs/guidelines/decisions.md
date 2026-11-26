@@ -425,6 +425,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
+  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
+  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
+  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
+  by the other room is told by its stamp and its index together, and the stamps sent only move
+  on: the sender's uptime as a float stops telling two messages of one send apart after a few
+  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
+  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
+  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
+  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
+  messages play twenty a second.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
@@ -718,6 +729,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **What a scene is doing to the player is listed with its permissions.** A held camera, a
+  hidden avatar or passport and changed movement all happen under a permission that allows by
+  default, so nothing asks. The permissions popover lists them under "In force now" for the
+  scene the player stands in, and each row opens that scene's rule, so the player can refuse
+  it there. There is no separate restrictions list.
+  - The engine reports a start and an end on the permission-used stream (`inForce`), read
+    from the effect itself, not from the grant: a granted camera permission with no camera
+    held lists nothing. A stream that attaches is sent everything in force.
+  - Each effect is reported under the scene that causes it, recorded where it is applied
+    (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
+    `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
+    counts like a hidden avatar or passport.
+  - Movement is listed only while a setting or a block is on: an area with nothing set, or an
+    input modifier whose flags are all off, lists nothing.
+  - A row opens a stored rule, never "This visit": that answer forgets the rules of every
+    level and would not end what the scene is doing.
+  - The popover lists the scene the player stands in. What a portable experience or a
+    neighbouring scene's area does to the player is reported under that scene and is not
+    shown there; `/permissions_in_force` has it.
+  - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a

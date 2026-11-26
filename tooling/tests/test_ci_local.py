@@ -43,6 +43,15 @@ class CiLocalTest(unittest.TestCase):
         names = [s.name for s in ci.pre_push_steps({'docs/README.md'})]
         self.assertEqual(names, ['ownership catalogue', 'module layers'])
 
+    def test_clippy_runs_from_the_catalyst_folder_and_lints_scene_cli_only_changes(self):
+        steps = {s.name: s.command for s in ci.pre_push_steps({'services/catalyst/src/lib.rs'})}
+        self.assertTrue(steps['catalyst clippy'].startswith('cd services/catalyst && cargo clippy --locked --workspace '))
+        self.assertNotIn('scene cli clippy', steps)
+        steps = {s.name: s.command for s in ci.pre_push_steps({'apps/dcl-scene-cli/src/main.rs'})}
+        self.assertNotIn('catalyst clippy', steps)
+        self.assertEqual(steps['scene cli clippy'],
+                         'cd services/catalyst && cargo clippy --locked -p dcl-scene-cli --all-targets -- -D warnings')
+
     def test_documentation_is_excluded_from_development_and_image_inputs(self):
         docs = {'DATABASE.md', 'services/catalyst/docs/events.md',
                 'services/catalyst/docs/example.json', 'library/example/README.md',
