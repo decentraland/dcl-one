@@ -1115,3 +1115,56 @@ fn test_despawn_av_player() {
 
     app.world_mut().entity_mut(video_player).despawn();
 }
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn selected_cast_track_is_a_stream_without_a_url_decoder() {
+    let mut app = min_test_app();
+    let screen = spawn_playing_video_player(&mut app, "livekit-video://speaker/TR_camera");
+    assert!(app.world().entity(screen).contains::<Stream>());
+    assert!(!app
+        .world()
+        .entity(screen)
+        .contains::<AVSinks<VideoPlayer>>());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn selected_cast_source_switches_back_to_automatic_and_clears() {
+    use livestream_manager::SelectedVideoReceiver;
+    let mut app = min_test_app();
+    let screen = spawn_playing_video_player(&mut app, "livekit-video://stream:camera/TR_camera");
+    assert_eq!(
+        app.world()
+            .get::<SelectedVideoReceiver>(screen)
+            .unwrap()
+            .0
+            .identity,
+        "stream:camera"
+    );
+    for src in ["livekit-video://speaker/TR_screen", LIVEKIT_VIDEO_STREAM] {
+        app.world_mut()
+            .entity_mut(screen)
+            .insert(VideoPlayer(PbVideoPlayer {
+                src: src.to_owned(),
+                ..Default::default()
+            }));
+        assert!(app.world().get::<Stream>(screen).is_some());
+        assert!(app.world().get::<ActiveReceiver>(screen).is_some());
+        assert!(!app
+            .world()
+            .entity(screen)
+            .contains::<AVSinks<VideoPlayer>>());
+        assert_eq!(
+            app.world().get::<SelectedVideoReceiver>(screen).is_none(),
+            src == LIVEKIT_VIDEO_STREAM
+        );
+    }
+    app.world_mut()
+        .entity_mut(screen)
+        .insert(VideoPlayer(PbVideoPlayer::default()));
+    assert!(app.world().get::<Stream>(screen).is_none());
+    assert!(app.world().get::<SelectedVideoReceiver>(screen).is_none());
+    assert!(app.world().get::<ReceiverImage>(screen).is_none());
+    assert!(is_black(&app, &video_texture_output(&app, screen)));
+}

@@ -1292,7 +1292,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
 
     mark("collections", 300).await.unwrap();
     mark("items", 5).await.unwrap();
-    state.mirror_ready.clear();
     let interval = state.settings.market.mirror_interval.as_secs();
     let (status, body) = get_json(app(), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1324,7 +1323,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
     }
 
     mark("items", 120).await.unwrap();
-    state.mirror_ready.clear();
     for uri in [
         "/v1/catalog?first=1",
         "/v2/catalog?first=1",
@@ -1355,7 +1353,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
         "the job off, the copy past its budget: {body}"
     );
     mark("items", 5).await.unwrap();
-    frozen.mirror_ready.clear();
     let (status, body) = get_json(super::market_router(frozen), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "the job off, a fresh copy: {body}");
     assert_eq!(body["as_of"], marker("items").await.as_str());
@@ -1387,7 +1384,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
         .await
         .unwrap();
     let app = || super::market_router(state.clone());
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(
@@ -1409,7 +1405,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
     .execute(pool)
     .await
     .unwrap();
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");

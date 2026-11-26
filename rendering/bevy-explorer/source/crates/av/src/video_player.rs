@@ -14,7 +14,7 @@ use common::{
 };
 use dcl_component::proto_components::sdk::components::{PbAudioEvent, PbVideoEvent};
 use ipfs::IpfsResource;
-use livestream_manager::{ReceiverImage, ReceiverVolume};
+use livestream_manager::{ReceiverImage, ReceiverVolume, SelectedVideoReceiver, VideoTrackSource};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -146,20 +146,31 @@ fn new_video_player_source(
         sinks.command_sender.send(AVCommand::Dispose).report();
     }
 
-    let livestream = &**source == LIVEKIT_VIDEO_STREAM;
-    if livestream != has_stream {
-        if livestream {
-            debug!("VideoPlayer {} now a stream.", entity);
-            commands.entity(entity).try_insert(Stream);
-        } else {
-            debug!("VideoPlayer {} no longer a stream.", entity);
-            commands.entity(entity).try_remove::<Stream>();
-            let _ = maybe_video_texture_output.take();
-        }
+    // Refresh the receiver when its source changes, including between live tracks.
+    if has_stream {
+        commands.entity(entity).try_remove::<Stream>();
+        maybe_video_texture_output = None;
+    }
+    commands
+        .entity(entity)
+        .try_remove::<SelectedVideoReceiver>();
+    if let Some((identity, track_sid)) = selected_track(source) {
+        commands
+            .entity(entity)
+            .try_insert(SelectedVideoReceiver(VideoTrackSource {
+                scene_hash: context.hash.to_string(),
+                identity: identity.to_owned(),
+                track_sid: track_sid.to_owned(),
+            }));
+        commands.entity(entity).try_insert(Stream);
+        return;
+    }
+    if &**source == LIVEKIT_VIDEO_STREAM {
+        commands.entity(entity).try_insert(Stream);
+        return;
     }
 
     let image = match (&(**source), maybe_video_texture_output) {
-        (LIVEKIT_VIDEO_STREAM, _) => return,
         // a cleared source shows black, never the last frame of what played before
         ("", _) => images.add(video_output_image(basic::BLACK)),
         (_, Some(texture)) => {
@@ -188,6 +199,11 @@ fn new_video_player_source(
     commands
         .entity(entity)
         .try_insert((VideoTextureOutput(image), sinks));
+}
+
+fn selected_track(source: &str) -> Option<(&str, &str)> {
+    let (identity, sid) = source.strip_prefix("livekit-video://")?.split_once('/')?;
+    (!identity.is_empty() && !sid.is_empty() && !sid.contains('/')).then_some((identity, sid))
 }
 
 /// An 8x8 image of `color` that a player's frames are copied into.

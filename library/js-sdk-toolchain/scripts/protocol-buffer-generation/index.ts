@@ -11,7 +11,10 @@ import fs from 'fs-extra'
 import { FileDescriptorStandardOption, runCommand } from '../utils/shellCommand'
 import { PROTO_COMPILER_PATH, TS_PROTO_PLUGIN_PATH } from './protoConst'
 
-const NON_EXPOSED_LIST: number[] = [1097]
+// MapPin, then the components only the Bevy Explorer implements and no scene here uses:
+// GltfNode, GltfNodeState, UiScrollResult, UiCanvas, GlobalLight, AvatarMovementInfo,
+// AvatarMovement, UiLayoutFeedback, ExplorerConfiguration.
+const NON_EXPOSED_LIST: number[] = [1097, 1200, 1201, 1202, 1203, 1206, 1500, 1501, 1504, 1505]
 
 /**
  * @param componentPath - Argument of execution '--component-path'
