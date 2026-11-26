@@ -677,7 +677,7 @@ async fn a_creator_appeals_a_rejection_and_the_curators_see_it() {
         assert_eq!(
             (got, body["error"].clone()),
             (
-                401,
+                403,
                 json!(format!(
                     "Unauthorized user {} for collections {id}",
                     address(key)
@@ -829,7 +829,7 @@ async fn comments_are_written_by_role_holders_and_the_committee_and_stored_as_te
         json!({ "message": "hi" }),
     )
     .await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
     for body in [
         json!({ "message": "   " }),
         json!({ "message": "x".repeat(2001) }),
@@ -1070,7 +1070,7 @@ async fn a_creator_retries_the_automated_review_once_something_changed() {
         )
     );
     for key in [STRANGER_KEY, CURATOR_KEY] {
-        assert_eq!(post(&node, key, id, "validations", json!({})).await.0, 401);
+        assert_eq!(post(&node, key, id, "validations", json!({})).await.0, 403);
     }
     resave(&node, id, items[1], 1, &unique("retried model")).await;
     advance(Duration::milliseconds(1));
@@ -1197,6 +1197,7 @@ async fn the_sixth_retry_of_a_utc_day_is_refused_until_the_next_day() {
         "refused before anything is written"
     );
     set_clock(tomorrow);
+    super::support::copy_pass_at(&node.pool, tomorrow).await;
     assert_eq!(
         post(&node, OWNER_KEY, id, "validations", json!({})).await.0,
         200
@@ -1368,6 +1369,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
         200
     );
     advance(Duration::days(1));
+    super::support::copy_pass_at(&node.pool, clock()).await;
     assert_eq!(
         post(&node, OWNER_KEY, first, "comments", comment.clone())
             .await
@@ -1475,7 +1477,8 @@ async fn concurrent_appeals_open_one_review_and_concurrent_comments_keep_the_bou
             "a comment was written while another of the wallet's texts was being counted"
         );
         waited = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory')",
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() \
+             AND wait_event_type = 'Lock' AND wait_event = 'advisory')",
         )
         .fetch_one(&node.pool)
         .await

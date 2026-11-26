@@ -345,7 +345,7 @@ impl ItemsComponent {
         let (id, signer) = (edit.id(), edit.signer());
         let provider = save.urn.as_deref().and_then(third_party_urn);
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         let stored: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT third_party_id, urn_suffix FROM builder.collections WHERE id = $1 FOR UPDATE",
         )
@@ -381,7 +381,7 @@ impl ItemsComponent {
                 .with_data(json!({ "id": id })));
             }
             (Some((Some(_), _)), None) => {
-                return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+                return Err(ApiError::forbidden("Unauthorized to upsert collection")
                     .with_data(json!({ "id": id, "eth_address": signer })));
             }
             (Some((Some(stored), _)), Some((provider, _))) if stored != provider => {

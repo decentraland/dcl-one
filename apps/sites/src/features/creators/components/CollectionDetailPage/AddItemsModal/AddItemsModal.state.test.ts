@@ -150,7 +150,7 @@ describe('review flow', () => {
     expect(retried.drafts).toHaveLength(1)
   })
 
-  it("a failed upload keeps the node's words for the error view, and Try again leaves them behind", () => {
+  it("should keep a failed upload's node words for the error view and leave them behind on Try again", () => {
     const draft = readyDraft({ checked: true })
     const refusal = { message: 'The upload is too large' }
     const state = addItemsReducer(stateWith([draft]), {

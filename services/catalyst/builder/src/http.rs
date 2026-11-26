@@ -2,14 +2,16 @@
 //! `{"ok":true,"data":...}` ([`ApiData`]); failures are
 //! `{"ok":false,"data":...,"error":msg}` with the refusal's status and
 //! `data` (`{}` unless the refusal names more). A database or internal
-//! failure answers 500 `Internal Server Error` and never its detail. Every
+//! failure answers 500 `Internal Server Error` and never its detail, which
+//! [`enveloped`] logs with the request's method and route. Every
 //! timestamp is written as a JavaScript `Date` serializes:
 //! `YYYY-MM-DDTHH:MM:SS.mmmZ` ([`iso`]).
 
 use std::fmt;
 
 use axum::Json;
-use axum::http::{StatusCode, header};
+use axum::extract::MatchedPath;
+use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use serde::Serializer;
@@ -18,6 +20,13 @@ use serde_json::{Value, json};
 pub use crate::shared::errors::ApiData;
 
 const INTERNAL_MESSAGE: &str = "Internal Server Error";
+
+/// A 500's cause, carried from [`ApiError::into_response`] to [`enveloped`].
+#[derive(Clone)]
+struct Failure {
+    kind: &'static str,
+    detail: String,
+}
 const TOO_MANY: &str = "Too many requests, try again in a minute";
 
 /// What a published or locked refusal is about: upstream words the two
@@ -28,20 +37,25 @@ pub enum Subject {
     Item,
 }
 
+/// A builder route's failure, answered in upstream's envelope.
 #[derive(Debug)]
 pub enum ApiError {
+    /// A refusal with its status, error text and `data`.
     Http {
         status: u16,
         error: String,
         data: Value,
     },
+    /// A database failure: logged, answered as a bare 500.
     Database(sqlx::Error),
+    /// Any other failure: logged, answered as a bare 500.
     Internal(String),
     /// 429 with a `Retry-After` of the wait, in whole seconds.
     Limited(std::time::Duration),
 }
 
 impl ApiError {
+    /// A refusal with `status`, `error` and empty `data`.
     pub fn http(status: u16, error: impl Into<String>) -> Self {
         Self::Http {
             status,
@@ -49,24 +63,32 @@ impl ApiError {
             data: json!({}),
         }
     }
+    /// 400.
     pub fn bad_request(error: impl Into<String>) -> Self {
         Self::http(400, error)
     }
+    /// 401: the caller's identity is unknown (no, a malformed or an
+    /// unverifiable signature).
     pub fn unauthorized(error: impl Into<String>) -> Self {
         Self::http(401, error)
     }
+    /// 403: the signer is known and holds no role the request needs.
     pub fn forbidden(error: impl Into<String>) -> Self {
         Self::http(403, error)
     }
+    /// 404.
     pub fn not_found(error: impl Into<String>) -> Self {
         Self::http(404, error)
     }
+    /// 409: the request conflicts with the current state.
     pub fn conflict(error: impl Into<String>) -> Self {
         Self::http(409, error)
     }
+    /// 503: the node can't tell yet; the client retries.
     pub fn service_unavailable(error: impl Into<String>) -> Self {
         Self::http(503, error)
     }
+    /// 500, with `detail` logged and never answered.
     pub fn internal(detail: impl Into<String>) -> Self {
         Self::Internal(detail.into())
     }
@@ -121,6 +143,7 @@ impl ApiError {
         Self::http(200, "The item doesn't exist.")
     }
 
+    /// The status the failure answers with.
     pub fn status(&self) -> u16 {
         match self {
             Self::Http { status, .. } => *status,
@@ -158,7 +181,7 @@ impl From<sqlx::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, error, data) = match self {
+        let (status, error, data, failure) = match self {
             Self::Limited(wait) => {
                 let seconds = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
                 return (
@@ -172,22 +195,36 @@ impl IntoResponse for ApiError {
                 status,
                 error,
                 data,
-            } => (status, error, data),
-            Self::Database(e) => {
-                tracing::error!(error = %e, "sqlx error on a builder route");
-                (500, INTERNAL_MESSAGE.to_string(), json!({}))
-            }
-            Self::Internal(m) => {
-                tracing::error!(error = %m, "internal error on a builder route");
-                (500, INTERNAL_MESSAGE.to_string(), json!({}))
-            }
+            } => (status, error, data, None),
+            Self::Database(e) => (
+                500,
+                INTERNAL_MESSAGE.to_string(),
+                json!({}),
+                Some(Failure {
+                    kind: "database",
+                    detail: e.to_string(),
+                }),
+            ),
+            Self::Internal(m) => (
+                500,
+                INTERNAL_MESSAGE.to_string(),
+                json!({}),
+                Some(Failure {
+                    kind: "internal",
+                    detail: m,
+                }),
+            ),
         };
         let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        (
+        let mut response = (
             status,
             Json(json!({ "ok": false, "data": data, "error": error })),
         )
-            .into_response()
+            .into_response();
+        if let Some(failure) = failure {
+            response.extensions_mut().insert(failure);
+        }
+        response
     }
 }
 
@@ -215,7 +252,11 @@ pub fn iso_timestamp_opt<S: Serializer>(
 /// A refusal the router answered itself (an extractor's, a method the route
 /// does not serve) in the envelope, with the status's own words instead of
 /// the parser's; an unusable JSON body is upstream's `Invalid request body`.
-pub async fn enveloped(response: Response) -> Response {
+/// A 500's cause is logged here with the request's method and route.
+pub async fn enveloped(method: Method, route: MatchedPath, mut response: Response) -> Response {
+    if let Some(Failure { kind, detail }) = response.extensions_mut().remove::<Failure>() {
+        tracing::error!(%method, route = route.as_str(), kind, error = %detail, "builder route failed");
+    }
     let status = response.status();
     let is_json = response
         .headers()

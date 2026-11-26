@@ -98,7 +98,7 @@ the curation committee from the Polygon collections subgraph.
 - `MARKETPLACE_MIRRORS_ENABLED` with `MATIC_COLLECTIONS_SUBGRAPH_URL`: the
   collections mirror. Until its first complete pass, listings and bodies
   answer 503; once a pass is more than 30 minutes old, saves and deletes
-  answer 503 and a publish 401.
+  answer 503 and a publish 409.
 - The collections subgraph (see "Network"), read for the committee: the
   accounts it marks `isCommitteeMember`, in pages of 1,000. A write's decision takes a
   read that started after the decision began; a read-only decision also
@@ -320,6 +320,7 @@ step, or a bound of the review, validator or outside-service areas).
 | Entries of a collection's address lists | 1,000 | `collections::save::LIST_MAX` |
 | Bytes of a collection save's `data` | 1 MiB | `collections::save::DATA_MAX` |
 | Items one bulk item curation write names | 1,000 | `handlers::curation::MAX_BULK_ITEMS` |
+| Characters of a publication's `revision` | 128 | `handlers::publication::MAX_REVISION` |
 | Body of a newsletter subscription | 4 KiB | `handlers::newsletter::MAX_BODY` |
 | Characters of a subscription's `source` | 100 | `handlers::newsletter::MAX_SOURCE` |
 | Body of a validator claim or lease | 4 KiB | `handlers::validator::SMALL_BODY` |

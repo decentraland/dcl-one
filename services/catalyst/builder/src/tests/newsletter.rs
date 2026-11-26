@@ -116,8 +116,9 @@ async fn node_tuned(url: Option<String>, tune: impl FnOnce(&mut crate::State)) -
         chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
     );
     let pool = crate::db::scratch::isolated_pool(2).await?;
-    let mut state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, .. } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         None,
         crate::Settings {
             writes_enabled: true,
@@ -128,13 +129,12 @@ async fn node_tuned(url: Option<String>, tune: impl FnOnce(&mut crate::State)) -
             }),
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = clock;
+            tune(state);
+        },
     )
     .await;
-    state.now = clock;
-    state.guarded = dcl_http::Outbound::for_tests();
-    tune(&mut state);
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
     Some(Node { app, pool })
 }
 

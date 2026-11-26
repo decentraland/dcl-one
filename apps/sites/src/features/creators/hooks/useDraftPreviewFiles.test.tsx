@@ -63,7 +63,7 @@ describe('when the item is a draft', () => {
     expect(api.fetchContent.mock.calls.map(([hash]) => hash).sort()).toEqual(['baffemale', 'bafmale', 'baftex'])
   })
 
-  it('should give nothing when a file cannot be read', async () => {
+  it('should give nothing for a file that cannot be read', async () => {
     api.fetchContent.mockRejectedValueOnce(new Error('404'))
     const { result } = renderHook(() => useDraftPreviewFiles(item(false)), { wrapper })
     await waitFor(() => expect(api.fetchContent).toHaveBeenCalled())

@@ -499,9 +499,9 @@ fn not_found(id: Uuid, table: &str) -> ApiError {
         .with_data(json!({ "id": id, "tableName": table }))
 }
 
-/// `withModelAuthorization`'s 401.
+/// `withModelAuthorization`'s refusal, as 403.
 fn unauthorized_user(signer: &str, table: &str, id: Uuid) -> ApiError {
-    ApiError::unauthorized(format!("Unauthorized user {signer} for {table} {id}"))
+    ApiError::forbidden(format!("Unauthorized user {signer} for {table} {id}"))
         .with_data(json!({ "ethAddress": signer, "tableName": table }))
 }
 
@@ -740,7 +740,7 @@ async fn decision(
     state: &SharedState,
 ) -> Result<(sqlx::pool::PoolConnection<sqlx::Postgres>, DecisionView), ApiError> {
     let mut conn = state.items.pool().acquire().await?;
-    let view = chain_state::for_decision(&mut conn).await?;
+    let view = chain_state::for_decision(&mut conn, &state.items.clock).await?;
     Ok((conn, view))
 }
 
@@ -796,7 +796,7 @@ pub async fn own_address(
     let address = address.to_ascii_lowercase();
     if address != signer.as_str() {
         return Err(
-            ApiError::unauthorized("Unauthorized").with_data(json!({ "eth_address": address }))
+            ApiError::forbidden("Unauthorized").with_data(json!({ "eth_address": address }))
         );
     }
     managing(state, signer).await
@@ -821,7 +821,7 @@ impl ProviderManage {
 
 /// `GET /v1/thirdParties/:id/slots`: a manager of the provider `id`
 /// ([`provider_managers`]); anyone else, an unknown provider included, is
-/// refused with builder-server's 401.
+/// refused with 403.
 pub async fn manage_provider(
     state: &SharedState,
     signer: &Signer,
@@ -837,7 +837,7 @@ pub async fn manage_provider(
         &provider_managers(Some(&registry), id, listed.as_deref()),
         signer.as_str(),
     ) {
-        return Err(ApiError::unauthorized(
+        return Err(ApiError::forbidden(
             "Unauthorized access. Account is not manager of the collection",
         )
         .with_data(json!({ "eth_address": signer.as_str() })));
@@ -862,7 +862,7 @@ impl ApprovalRead {
 }
 
 /// `GET /v1/collections/:id/approvalData`: the collection must exist (400,
-/// 404), then the signer must be a current committee member (401; 503
+/// 404), then the signer must be a current committee member (403; 503
 /// while the committee can't be read).
 pub async fn read_approval(
     state: &SharedState,
@@ -885,7 +885,7 @@ pub async fn read_approval(
 /// The signer must be a current committee member.
 pub async fn committee(state: &SharedState, signer: &Signer) -> Result<OnCommittee, ApiError> {
     if !on_committee(state, Since::read(), signer.as_str()).await? {
-        return Err(ApiError::unauthorized("Unauthorized")
+        return Err(ApiError::forbidden("Unauthorized")
             .with_data(json!({ "eth_address": signer.as_str() })));
     }
     Ok(OnCommittee {
@@ -911,11 +911,12 @@ type StaleRow = (
 /// pass.
 async fn own_draft_while_stale(
     conn: &mut PgConnection,
+    clock: &chain_state::Clock,
     signer: &Signer,
     id: Uuid,
     registry: Option<&[Provider]>,
 ) -> Result<Option<bool>, ApiError> {
-    let view = chain_state::for_read(conn).await?;
+    let view = chain_state::for_read(conn, clock).await?;
     let row: Option<StaleRow> =
         sqlx::query_as(
             "SELECT c.eth_address, c.third_party_id, c.contract_address, v.managers, v.is_programmatic \
@@ -991,10 +992,18 @@ pub async fn read_collection(
     let id = parse(raw)?;
     let registry = registry_for(state, Since::read(), &[id], &[]).await?;
     let mut conn = state.items.pool().acquire().await?;
-    let view = match chain_state::for_decision(&mut conn).await {
+    let view = match chain_state::for_decision(&mut conn, &state.items.clock).await {
         Ok(view) => view,
         Err(stale) => {
-            return match own_draft_while_stale(&mut conn, signer, id, providers(&registry)).await? {
+            return match own_draft_while_stale(
+                &mut conn,
+                &state.items.clock,
+                signer,
+                id,
+                providers(&registry),
+            )
+            .await?
+            {
                 Some(programmatic) => Ok(CollectionRead {
                     id,
                     full: true,
@@ -1010,7 +1019,7 @@ pub async fn read_collection(
     drop(conn);
     let s = signer.as_str();
     collection_read(state, &c, id, s).await?.ok_or_else(|| {
-        ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "eth_address": s }))
+        ApiError::forbidden("Unauthorized").with_data(json!({ "id": raw, "eth_address": s }))
     })
 }
 
@@ -1061,9 +1070,9 @@ pub async fn collection_items(
             .with_data(json!({ "id": raw, "status": status })));
     }
     let s = signer.as_str();
-    collection_read(state, &c, id, s).await?.ok_or_else(|| {
-        ApiError::unauthorized("Unauthorized").with_data(json!({ "eth_address": s }))
-    })
+    collection_read(state, &c, id, s)
+        .await?
+        .ok_or_else(|| ApiError::forbidden("Unauthorized").with_data(json!({ "eth_address": s })))
 }
 
 /// `GET /v1/items/:id`: any signer reads a minted item of a published
@@ -1107,7 +1116,7 @@ pub async fn read_item(
     if on_committee(state, Since::read(), s).await? {
         return Ok(ItemRead { id, full: true });
     }
-    Err(ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "eth_address": s })))
+    Err(ApiError::forbidden("Unauthorized").with_data(json!({ "id": raw, "eth_address": s })))
 }
 
 /// `PUT /v1/collections/:id`: anyone creates a standard collection under a
@@ -1129,7 +1138,7 @@ pub async fn edit_collection(
     let edit = CollectionEdit {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         provider: provider.map(str::to_string),
         registry,
         own_content: state.content_sync.is_own_content_authority(),
@@ -1161,7 +1170,7 @@ pub(crate) async fn confirm_collection_edit(
 ) -> Result<EditState, ApiError> {
     let s = edit.signer.as_str();
     let refused = || {
-        ApiError::unauthorized("Unauthorized to upsert collection")
+        ApiError::forbidden("Unauthorized to upsert collection")
             .with_data(json!({ "id": edit.id.to_string(), "eth_address": s }))
     };
     let Some(c) = collection(conn, view, edit.id, providers(&edit.registry)).await? else {
@@ -1218,7 +1227,7 @@ pub async fn save_item(
         id,
         signer: signer.as_str().to_string(),
         collection: intent.collection,
-        at: (state.now)(),
+        at: state.now(),
         registry,
         own_content: state.content_sync.is_own_content_authority(),
     };
@@ -1389,7 +1398,7 @@ fn missing_collection(id: Uuid) -> ApiError {
 
 /// [`save_item`]'s decision, builder-server's `upsertItem` rules in its
 /// order: a missing collection (404); a move into, out of or between
-/// third-party collections (401); then the third-party rules (the
+/// third-party collections (409); then the third-party rules (the
 /// provider's manager, 423 while the node publishes the collection, a URN
 /// another item holds or the URN of a submitted item, 409) or the standard
 /// ones (the owner of an item with no collection; each collection's owner,
@@ -1430,28 +1439,24 @@ pub(crate) async fn confirm_item_save(
     let any_third_party = home.as_ref().is_some_and(|c| c.third_party)
         || target.as_ref().is_some_and(|c| c.third_party);
     if (moving && any_third_party) || (joining && target.as_ref().is_some_and(|c| c.third_party)) {
-        return Err(
-            ApiError::unauthorized("Item can't change between collections.")
-                .with_data(with_id(item_id.as_deref(), json!({}))),
-        );
+        return Err(ApiError::conflict("Item can't change between collections.")
+            .with_data(with_id(item_id.as_deref(), json!({}))));
     }
     if let (Some(c), Some(home_id)) = (&home, home_id)
         && c.third_party
     {
         if stored.is_some() && save.collection != current {
-            return Err(
-                ApiError::unauthorized("Item can't change between collections.")
-                    .with_data(with_id(item_id.as_deref(), json!({}))),
-            );
+            return Err(ApiError::conflict("Item can't change between collections.")
+                .with_data(with_id(item_id.as_deref(), json!({}))));
         }
         if matches!(intent.urn, UrnField::Null) {
             return Err(ApiError::bad_request("The item URN is invalid."));
         }
         if !c.provider_manager(s) {
-            return Err(ApiError::unauthorized(
-                "The user is unauthorized to upsert the collection.",
-            )
-            .with_data(with_id(item_id.as_deref(), json!({ "eth_address": s }))));
+            return Err(
+                ApiError::forbidden("The user is unauthorized to upsert the collection.")
+                    .with_data(with_id(item_id.as_deref(), json!({ "eth_address": s }))),
+            );
         }
         if c.pending {
             return Err(ApiError::locked(Subject::Item, "", UPSERT)
@@ -1505,12 +1510,12 @@ pub(crate) async fn confirm_item_save(
         && item.owner != s
     {
         return Err(
-            ApiError::unauthorized("The user is unauthorized to upsert the collection.")
+            ApiError::forbidden("The user is unauthorized to upsert the collection.")
                 .with_data(with_id(item_id.as_deref(), json!({ "eth_address": s }))),
         );
     }
     let not_yours = || {
-        ApiError::unauthorized("You're not authorized to to change this collection.").with_data(
+        ApiError::forbidden("You're not authorized to to change this collection.").with_data(
             with_id(
                 item_id.as_deref(),
                 json!({ "eth_address": s, "collection_id": save.collection }),
@@ -1533,7 +1538,11 @@ pub(crate) async fn confirm_item_save(
             if save.collection.is_none() {
                 return Err(published("deleted"));
             }
-            let stored = stored.as_ref().expect("an item in a collection is stored");
+            let Some(stored) = stored.as_ref() else {
+                return Err(ApiError::internal(
+                    "an item in a published collection is not stored",
+                ));
+            };
             if let (Some(next), Some(before)) = (intent.rarity.as_deref(), stored.rarity.as_deref())
                 && next != before
             {
@@ -1583,7 +1592,7 @@ pub async fn change_item(
     let change = ItemChange {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         registry: registry_for(state, Since::write(), &[], &[id]).await?,
     };
     let (mut conn, view) = decision(state).await?;
@@ -1647,7 +1656,7 @@ pub async fn lock_collection(
     let lock = CollectionLock {
         id: parse(raw)?,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
     };
     let (mut conn, view) = decision(state).await?;
     confirm_collection_lock(&mut conn, &view, &lock).await?;
@@ -1680,7 +1689,7 @@ pub async fn manage_collection(
     let manage = CollectionManage {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         registry: registry_for(state, Since::write(), &[id], &[]).await?,
     };
     let (mut conn, view) = decision(state).await?;
@@ -1742,7 +1751,7 @@ impl ForumReply {
 }
 
 /// `POST /v1/collections/:id/curation/post`: a current committee member
-/// (401, or 503 while the committee can't be read), then the collection
+/// (403, or 503 while the committee can't be read), then the collection
 /// must exist (404).
 pub async fn reply_on_forum(
     state: &SharedState,
@@ -1752,7 +1761,7 @@ pub async fn reply_on_forum(
     let s = signer.as_str();
     if !on_committee(state, Since::write(), s).await? {
         return Err(
-            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "ethAddress": s }))
+            ApiError::forbidden("Unauthorized").with_data(json!({ "id": raw, "ethAddress": s }))
         );
     }
     let id = parse(raw)?;
@@ -1857,7 +1866,7 @@ pub(crate) async fn confirm_third_party_publish(
     if c.is_none_or(|c| {
         c.provider.as_deref() != Some(grant.provider.as_str()) || !c.provider_manager(&grant.signer)
     }) {
-        return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+        return Err(ApiError::forbidden("Unauthorized to upsert collection")
             .with_data(json!({ "id": grant.id, "eth_address": grant.signer })));
     }
     Ok(())
@@ -1905,7 +1914,7 @@ pub async fn curation_scope(
 
 /// The curation routes of the collection `raw`: the collection must exist
 /// (404) and be published (409), then the signer must hold a role on it or
-/// be on the committee (401).
+/// be on the committee (403).
 /// A curation read decides on [`Since::read`], a write on [`Since::write`].
 pub async fn curate_collection(
     state: &SharedState,
@@ -1926,7 +1935,7 @@ pub async fn curate_collection(
 
 /// The curation routes of the item `raw`: its collection must exist (404)
 /// and be published (409), then the signer must hold a role on its
-/// collection or be on the committee (401).
+/// collection or be on the committee (403).
 /// A curation read decides on [`Since::read`], a write on [`Since::write`].
 pub async fn curate_item(
     state: &SharedState,
@@ -1993,7 +2002,7 @@ pub async fn read_review(
 }
 
 /// `POST /v1/collections/:id/comments`: the collection must exist (404),
-/// then the signer must hold a role on it or be on the committee (401). A
+/// then the signer must hold a role on it or be on the committee (403). A
 /// role holder writes as the committee only when the committee shows it on it.
 pub async fn review_member(
     state: &SharedState,
@@ -2010,7 +2019,7 @@ pub async fn review_member(
     };
     if !role && !committee {
         return Err(
-            ApiError::unauthorized("Unauthorized").with_data(json!({ "id": id, "ethAddress": s }))
+            ApiError::forbidden("Unauthorized").with_data(json!({ "id": id, "ethAddress": s }))
         );
     }
     Ok(Curator {
@@ -2025,7 +2034,7 @@ pub async fn review_member(
 
 /// `POST /v1/collections/:id/validations` and `.../curation/appeal`: the
 /// collection must exist (404), then the signer must hold a role on it
-/// (401); the committee gets nothing here.
+/// (403); the committee gets nothing here.
 pub async fn review_creator(
     state: &SharedState,
     signer: &Signer,
@@ -2077,7 +2086,7 @@ async fn admit(
     }
     let committee = !role && on_committee(state, since, s).await?;
     if !role && !committee {
-        return Err(ApiError::unauthorized("Unauthorized")
+        return Err(ApiError::forbidden("Unauthorized")
             .with_data(json!({ "id": item.unwrap_or(collection), "ethAddress": s })));
     }
     Ok(Curator {
@@ -2209,7 +2218,7 @@ pub(crate) async fn confirm_curator(
     curated_state(conn, curator, c).await
 }
 
-/// 401 when the committee admitted `curator`, no `role` on the collection
+/// 403 when the committee admitted `curator`, no `role` on the collection
 /// still admits it, and a committee read that started after the decision no
 /// longer lists it.
 async fn keeps_committee(state: &State, curator: &Curator, role: bool) -> Result<(), ApiError> {
@@ -2217,7 +2226,7 @@ async fn keeps_committee(state: &State, curator: &Curator, role: bool) -> Result
         && !role
         && !on_committee(state, Since::write(), curator.signer.as_str()).await?
     {
-        return Err(ApiError::unauthorized("Unauthorized").with_data(
+        return Err(ApiError::forbidden("Unauthorized").with_data(
             json!({ "id": curator.item.unwrap_or(curator.collection), "ethAddress": curator.signer }),
         ));
     }
@@ -2261,7 +2270,7 @@ async fn curated(
 
 fn keeps_role(curator: &Curator, role: bool) -> Result<(), ApiError> {
     if curator.role && !role && !curator.committee {
-        return Err(ApiError::unauthorized("Unauthorized").with_data(
+        return Err(ApiError::forbidden("Unauthorized").with_data(
             json!({ "id": curator.item.unwrap_or(curator.collection), "ethAddress": curator.signer }),
         ));
     }

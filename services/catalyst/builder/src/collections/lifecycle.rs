@@ -31,7 +31,7 @@ const CHAIN_UNKNOWN: &str = "The collection's chain state is not available. Try 
 pub async fn lock(state: &State, lock: &CollectionLock) -> Result<DateTime<Utc>, ApiError> {
     let at = DateTime::from_timestamp_millis(lock.at().timestamp_millis()).unwrap_or(lock.at());
     let mut tx = state.items.pool().begin().await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     sqlx::query("SELECT id FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(lock.id())
         .fetch_optional(&mut *tx)
@@ -104,7 +104,7 @@ pub async fn delete(state: &State, manage: &CollectionManage) -> Result<(), ApiE
         _ => None,
     };
     let mut tx = state.items.pool().begin().await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     sqlx::query("SELECT id FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -176,7 +176,7 @@ pub struct Published {
 }
 
 fn not_published(id: Uuid) -> ApiError {
-    ApiError::unauthorized("The collection is not published.").with_data(json!({ "id": id }))
+    ApiError::conflict("The collection is not published.").with_data(json!({ "id": id }))
 }
 
 /// The collection's contract, whether the node publishes it itself, its
@@ -191,8 +191,12 @@ struct Snapshot {
     approved: bool,
 }
 
-async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, ApiError> {
-    let view = chain_state::for_decision(conn).await?;
+async fn snapshot(
+    conn: &mut sqlx::PgConnection,
+    clock: &chain_state::Clock,
+    id: Uuid,
+) -> Result<Snapshot, ApiError> {
+    let view = chain_state::for_decision(conn, clock).await?;
     let (contract, pending): (Option<String>, bool) = sqlx::query_as(
         "SELECT contract_address, publication_pending FROM builder.collections WHERE id = $1",
     )
@@ -237,9 +241,10 @@ async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, A
 /// chain holds the collection every item is given the on-chain id of its
 /// place in creation order, which the client deployed it at. The copy
 /// tells when it holds the collection and an item at every place; else the
-/// Polygon RPC's item count at the stored address does. 401 while neither
-/// can tell (the client retries), 409 for a place at or past the chain's
-/// count. A collection whose items all hold their ids answers as it is.
+/// Polygon RPC's item count at the stored address does. 409 `The
+/// collection is not published.` while neither holds it and 503 while the
+/// RPC can't tell (the client retries both), 409 for a place at or past the
+/// chain's count. A collection whose items all hold their ids answers as it is.
 /// Its items are answered as their listing answers `listing`'s reader, after
 /// the ids are kept and the notices sent.
 pub async fn publish(
@@ -250,7 +255,7 @@ pub async fn publish(
     let id = sync.id();
     let before = {
         let mut conn = state.items.pool().acquire().await?;
-        snapshot(&mut conn, id).await?
+        snapshot(&mut conn, &state.items.clock, id).await?
     };
     if before.pending {
         return Err(not_published(id));
@@ -262,7 +267,8 @@ pub async fn publish(
     let chain_count = if (missing && !copy_tells) || (before.copy.is_none() && !before.published) {
         match state.deployments.of(state, &contract).await {
             Onchain::Deployed(items) => Some(items),
-            _ => return Err(not_published(id)),
+            Onchain::Unknown => return Err(ApiError::service_unavailable(CHAIN_UNKNOWN)),
+            Onchain::Absent | Onchain::Unconfigured => return Err(not_published(id)),
         }
     } else {
         None
@@ -286,9 +292,9 @@ pub async fn publish(
             .bind(id)
             .fetch_all(&mut *tx)
             .await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
         access::confirm_collection_sync(&mut tx, &view, state, sync).await?;
-        let now = snapshot(&mut tx, id).await?;
+        let now = snapshot(&mut tx, &state.items.clock, id).await?;
         let same_items = now
             .items
             .iter()

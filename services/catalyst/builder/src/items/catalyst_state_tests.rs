@@ -44,8 +44,10 @@ async fn node_with(own: bool) -> Option<Node> {
         temp_storage().await,
         denylist.clone(),
         dcl_http::Outbound::for_tests(),
+        dcl_http::Outbound::for_tests(),
         Some(registry_index(&committee, &registry).await),
         None,
+        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: true,
             ..crate::Settings::default()

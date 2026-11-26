@@ -6,21 +6,21 @@
 //! tried once right after, through the guarded client that follows no
 //! redirect, and then by [`forward_due`] (the leased `builder-terms-forward`
 //! job) at most [`MAX_ATTEMPTS`] times, doubling the wait from a minute. A
-//! delivery the warehouse answers with a non-2xx status is retried; one it
+//! delivery the warehouse answers with a 5xx, 408 or 429 status, or that
+//! fails on the way, is retried; any other refusal ends its attempts. One it
 //! received but whose answer was lost is sent again. No route answers the
 //! stored rows, and a signer's acceptance replaces its earlier one of the
 //! same collection and event, so they stay one per collection, signer and
 //! event, each naming at most as many hashes as the collection has items.
 
-use crate::shared::writes::PassGate;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use crate::State;
 use crate::access::{self, CollectionManage};
 use crate::chain_state;
-use crate::handlers::newsletter::is_valid_email;
 use crate::http::ApiError;
+use crate::newsletter::is_valid_email;
 
 /// The most attempts an acceptance's forward gets.
 pub const MAX_ATTEMPTS: i32 = 6;
@@ -120,7 +120,7 @@ pub async fn accept(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::not_found("Collection not found"))?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_collection_manage(&mut tx, &view, manage).await?;
     if let Some(hashes) = &acceptance.hashes {
         let items: i64 =
@@ -128,7 +128,7 @@ pub async fn accept(
                 .bind(manage.id())
                 .fetch_one(&mut *tx)
                 .await?;
-        if hashes.len() as i64 > items {
+        if i64::try_from(hashes.len()).unwrap_or(i64::MAX) > items {
             return Err(invalid_body());
         }
     }
@@ -179,8 +179,8 @@ pub async fn accept(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    if configured && send(state, acceptance.event, &body).await {
-        delivered(state, id, &body).await?;
+    if configured {
+        forward(state, id, acceptance.event, &body).await?;
     }
     Ok(())
 }
@@ -220,10 +220,41 @@ pub(crate) async fn delivered(state: &State, id: Uuid, body: &Value) -> Result<(
     Ok(())
 }
 
-/// One delivery to the warehouse; whether it answered 2xx.
-async fn send(state: &State, event: &str, body: &Value) -> bool {
+/// What one delivery to the warehouse came to.
+enum Sent {
+    Delivered,
+    Retried,
+    Refused,
+}
+
+/// Sends acceptance `id` and records the outcome: forwarded once the
+/// warehouse took it, no attempts left once it refused it, unless a newer
+/// acceptance merged into it after `body` was sent; whether it was taken.
+async fn forward(state: &State, id: Uuid, event: &str, body: &Value) -> Result<bool, sqlx::Error> {
+    match send(state, event, body).await {
+        Sent::Delivered => {
+            delivered(state, id, body).await?;
+            Ok(true)
+        }
+        Sent::Refused => {
+            sqlx::query(
+                "UPDATE builder.terms_acceptances SET attempts = $3 WHERE id = $1 AND body = $2",
+            )
+            .bind(id)
+            .bind(body)
+            .bind(MAX_ATTEMPTS)
+            .execute(state.items.pool())
+            .await?;
+            Ok(false)
+        }
+        Sent::Retried => Ok(false),
+    }
+}
+
+/// One delivery to the warehouse.
+async fn send(state: &State, event: &str, body: &Value) -> Sent {
     let Some(warehouse) = &state.settings.warehouse else {
-        return false;
+        return Sent::Retried;
     };
     let context = match &warehouse.context_prefix {
         Some(prefix) => format!("{prefix}-builder"),
@@ -236,18 +267,29 @@ async fn send(state: &State, event: &str, body: &Value) -> bool {
         .json(&json!({ "context": context, "event": event, "body": body }))
         .send()
         .await;
-    match sent {
-        Ok(response) if response.status().is_success() => true,
-        Ok(response) => {
-            tracing::warn!(status = %response.status(), "warehouse refused a terms acceptance; it is retried");
-            false
+    match sent.map(|response| response.status()) {
+        Ok(status) if status.is_success() => Sent::Delivered,
+        Ok(status)
+            if status.is_server_error()
+                || matches!(
+                    status,
+                    reqwest::StatusCode::REQUEST_TIMEOUT | reqwest::StatusCode::TOO_MANY_REQUESTS
+                ) =>
+        {
+            tracing::warn!(%status, event, "warehouse could not take a terms acceptance; it is retried");
+            Sent::Retried
+        }
+        Ok(status) => {
+            tracing::error!(%status, event, "warehouse refused a terms acceptance; it is not sent again");
+            Sent::Refused
         }
         Err(error) => {
             tracing::warn!(
                 connect = error.is_connect(),
+                event,
                 "warehouse forward of a terms acceptance failed; it is retried"
             );
-            false
+            Sent::Retried
         }
     }
 }
@@ -257,8 +299,11 @@ async fn send(state: &State, event: &str, body: &Value) -> bool {
 /// answers how many the warehouse took. Nothing without a warehouse or
 /// while creator writes are off.
 pub async fn forward_due(state: &State) -> anyhow::Result<u64> {
-    static GATE: PassGate = PassGate::new("builder-terms-forward");
-    if state.settings.warehouse.is_none() || !GATE.allows(state.settings.writes_enabled) {
+    if state.settings.warehouse.is_none()
+        || !state
+            .terms_forward_gate
+            .allows(state.settings.writes_enabled)
+    {
         return Ok(0);
     }
     let due: Vec<(Uuid, String, Value)> = sqlx::query_as(
@@ -275,8 +320,7 @@ pub async fn forward_due(state: &State) -> anyhow::Result<u64> {
     .await?;
     let mut forwarded = 0;
     for (id, event, body) in due {
-        if send(state, &event, &body).await {
-            delivered(state, id, &body).await?;
+        if forward(state, id, &event, &body).await? {
             forwarded += 1;
         }
     }

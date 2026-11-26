@@ -1,3 +1,7 @@
+//! `/v1/collections/{id}/publication`: the owner's standard publication
+//! attempt, begun for a reviewed revision, claimed for one wallet request,
+//! recorded with its transaction, read and cancelled.
+
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Deserialize;
@@ -11,13 +15,28 @@ use crate::publication_store::PublicationState;
 
 use crate::auth::Signed;
 
+/// The most characters of a publication's `revision`.
+pub const MAX_REVISION: usize = 128;
+
+/// The body that begins or claims a publication: the revision it reviewed.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BeginPublication {
     revision: String,
 }
+
+/// The body that records a publication's transaction.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicationTransaction {
     tx_hash: String,
+}
+
+fn bounded(body: BeginPublication) -> Result<BeginPublication, ApiError> {
+    if body.revision.chars().count() > MAX_REVISION {
+        return Err(ApiError::bad_request("Invalid request body"));
+    }
+    Ok(body)
 }
 
 fn rpc_url(state: &SharedState) -> Result<&str, ApiError> {
@@ -28,12 +47,14 @@ fn rpc_url(state: &SharedState) -> Result<&str, ApiError> {
     })
 }
 
+/// `POST`: begins the attempt for the body's `revision`.
 pub async fn begin(
     State(state): State<SharedState>,
     Signed(owner): Signed,
     Path(id): Path<Uuid>,
     Json(body): Json<BeginPublication>,
 ) -> Result<Json<ApiData<PublicationState>>, ApiError> {
+    let body = bounded(body)?;
     let publisher = access::publisher(&state, &owner, id).await?;
     rpc_url(&state)?;
     Ok(Json(ApiData::ok(
@@ -44,6 +65,7 @@ pub async fn begin(
     )))
 }
 
+/// `GET .../status`: the attempt, `null` without one.
 pub async fn status(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -55,6 +77,7 @@ pub async fn status(
     )))
 }
 
+/// `PUT`: records the body's `tx_hash` and verifies it on Polygon.
 pub async fn transaction(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -73,6 +96,7 @@ pub async fn transaction(
     )))
 }
 
+/// `DELETE`: cancels an attempt with no transaction.
 pub async fn cancel(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -83,12 +107,15 @@ pub async fn cancel(
     Ok(Json(ApiData::ok(true)))
 }
 
+/// `PATCH`: claims the attempt of the body's `revision` for one wallet
+/// request.
 pub async fn claim(
     State(state): State<SharedState>,
     Signed(owner): Signed,
     Path(id): Path<Uuid>,
     Json(body): Json<BeginPublication>,
 ) -> Result<Json<ApiData<bool>>, ApiError> {
+    let body = bounded(body)?;
     let publisher = access::publisher(&state, &owner, id).await?;
     rpc_url(&state)?;
     state

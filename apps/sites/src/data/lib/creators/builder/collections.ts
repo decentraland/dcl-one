@@ -38,7 +38,7 @@ export async function fetchCollections(address: string, params: FetchCollections
   return { ...remote, results: remote.results.map(fromRemoteCollection) }
 }
 
-/** A single collection: GET /collections/{id}. 401/404 when the signer can't see it. */
+/** A single collection: GET /collections/{id}. 403/404 when the signer can't see it. */
 export async function fetchCollection(address: string, collectionId: string): Promise<Collection> {
   const remote = await request<RemoteCollection>(address, 'GET', `/collections/${collectionId}`)
   return fromRemoteCollection(remote)
@@ -125,8 +125,9 @@ export async function syncCollectionOwner(address: string, collectionId: string)
 
 /**
  * Consolidates a published collection with the chain: POST /collections/{id}/publish. builder-server
- * reads the collection from the subgraph and assigns every item its on-chain id; it answers 401
- * while the graph hasn't indexed the transaction yet, so callers retry on that status.
+ * reads the collection from the subgraph and assigns every item its on-chain id; it answers 409 "The
+ * collection is not published." while the graph hasn't indexed the transaction yet and 503 while it can't
+ * tell, so callers retry on those.
  */
 export async function publishCollectionItems(
   address: string,

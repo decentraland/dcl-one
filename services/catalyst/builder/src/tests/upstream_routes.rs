@@ -152,8 +152,10 @@ async fn app() -> Router {
             temp_storage().await,
             Arc::default(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             None,
             None,
+            std::sync::Arc::default(),
             Settings {
                 writes_enabled: true,
                 ..Settings::default()

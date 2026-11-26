@@ -1180,7 +1180,7 @@ database without step 0090, one that still holds the linked forum column or
 the builder collection flags (whose release reads this table), and one with a
 submitted row whose cheque a cheque row can't keep, a missing field included.
 A second run notes the table is gone. Until it runs,
-`approvalData` answers 401 for a collection whose only cheque is in that
+`approvalData` answers 409 for a collection whose only cheque is in that
 table.
 
 ## Builder chain state workload
@@ -1917,7 +1917,8 @@ Invariants:
 - A delete leaves no upload record that no item names, and touches no row
   of another collection.
 - The forward is at least once: at most six attempts, the wait doubling from
-  a minute; a row the warehouse took is never claimed again.
+  a minute; a row the warehouse took is never claimed again, and one it
+  refused with a status other than 5xx, 408 or 429 gets no attempt left.
 
 Upgrade: step `0087_builder_collection_lock` adds `collections.lock`; the
 schema's object pass creates `builder.terms_acceptances` and its indexes.
@@ -4641,7 +4642,7 @@ marks `isCommitteeMember`), not from a table.
 requests, like the curation console's bearer, open only the operator's item
 status routes and `GET /v1/collections/curation`). A curation write reads the
 committee again inside its transaction, after its row locks: a curator the
-committee admitted and the assignee it names must still be members (401
+committee admitted and the assignee it names must still be members (403
 otherwise).
 
 Shop's mainnet `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks

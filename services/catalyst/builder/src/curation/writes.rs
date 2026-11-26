@@ -169,10 +169,10 @@ fn refused(refusal: Refusal, id: Uuid) -> ApiError {
     let data = json!({ "id": id });
     match refusal {
         Refusal::StatusIsCommittees => {
-            ApiError::unauthorized("Only committee members can approve or reject a curation")
+            ApiError::forbidden("Only committee members can approve or reject a curation")
         }
         Refusal::AssigneeIsCommittees => {
-            ApiError::unauthorized("Only committee members can modify the assignee")
+            ApiError::forbidden("Only committee members can modify the assignee")
         }
         Refusal::NoCuration => ApiError::not_found("Curation does not exist"),
         Refusal::Ongoing => ApiError::bad_request("There is already an ongoing review request"),
@@ -231,7 +231,7 @@ async fn newest_status(state: &SharedState, curator: &Curator) -> Result<Option<
     .and_then(Status::parse))
 }
 
-/// 401 when a committee read that started after the decision no longer
+/// 403 when a committee read that started after the decision no longer
 /// lists `assignee`.
 async fn unassignable(
     state: &crate::State,
@@ -242,7 +242,7 @@ async fn unassignable(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }
@@ -395,13 +395,13 @@ pub async fn update_collection(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
     unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
@@ -552,14 +552,14 @@ pub async fn open_collection(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }
     let known_committee = access::known_curator(state, &curator).await;
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
     unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
@@ -706,7 +706,7 @@ pub async fn update_item(
     }
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
@@ -793,7 +793,7 @@ pub async fn operate_items(
     let collection = operator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, collection).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_operator(&mut tx, &view, &operator).await?;
     let members: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM builder.items WHERE collection_id = $1 AND id = ANY($2) ORDER BY id",
@@ -846,7 +846,7 @@ pub async fn open_item(
         .map_err(|r| refused(r, item))?;
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
@@ -912,7 +912,7 @@ mod tests {
             json!({ "status": "rejected", "rejectionReasons": ["<script>"] }),
             json!({ "status": "rejected", "rejectionMessage": "" }),
             json!({ "status": "rejected", "rejectionMessage": "x".repeat(MAX_MESSAGE + 1) }),
-            json!({ "status": "approved", "note": "x".repeat(MAX_NOTE + 1) }),
+            json!({ "status": "approved", "note": "x".repeat(2001) }),
             json!([]),
             json!("approved"),
         ] {
@@ -924,6 +924,7 @@ mod tests {
             )
             .is_ok()
         );
+        assert!(parse_update(&json!({ "status": "approved", "note": "é".repeat(2000) })).is_ok());
     }
 
     #[test]
@@ -942,12 +943,13 @@ mod tests {
             None
         );
         for refused in [
-            json!({ "note": "x".repeat(MAX_NOTE + 1) }),
+            json!({ "note": "x".repeat(2001) }),
             json!({ "assignee": 1 }),
             json!({ "status": "approved" }),
             json!(null),
         ] {
             assert!(parse_open(Some(&refused)).is_err(), "{refused}");
         }
+        assert!(parse_open(Some(&json!({ "note": "é".repeat(2000) }))).is_ok());
     }
 }

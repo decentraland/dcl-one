@@ -2650,8 +2650,10 @@ async fn replay_setup() -> Option<Replay> {
         storage.clone(),
         storage.denylist().clone(),
         Outbound::for_tests(),
+        Outbound::for_tests(),
         Some(Arc::new(index)),
         None,
+        std::sync::Arc::default(),
         Settings {
             writes_enabled: true,
             polygon_rpc_url: Some(oracle(&seed_data).await),
@@ -2677,8 +2679,7 @@ async fn replay_setup() -> Option<Replay> {
         },
     )
     .unwrap();
-    state.now = capture_clock;
-    state.guarded = Outbound::for_tests();
+    state.items.clock.now = capture_clock;
     state.content_sync.set_own_content_authority(true);
     let state = Arc::new(state);
     Some(Replay {

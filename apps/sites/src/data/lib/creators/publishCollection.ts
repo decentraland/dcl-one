@@ -388,9 +388,16 @@ export type ConsolidateDeps = SyncDeps & {
 const CONSOLIDATE_RETRY_DELAY_MS = 5000
 const CONSOLIDATE_RETRIES = (60 * 60 * 1000) / CONSOLIDATE_RETRY_DELAY_MS
 
+const NOT_PUBLISHED = 'The collection is not published.'
+
+const isNotIndexedYet = (error: unknown): boolean =>
+  error instanceof BuilderServerError &&
+  (error.status === 503 || (error.status === 409 && error.message === NOT_PUBLISHED))
+
 /**
  * Asks builder-server to sync a published collection with the chain (item token ids). The server
- * answers 401 until the subgraph indexes the block, so that status is retried.
+ * answers 409 "The collection is not published." until the chain copy or its RPC holds the collection,
+ * and 503 while it can't tell, so both are retried.
  */
 export async function syncPublishedItems(
   collectionId: string,
@@ -403,8 +410,7 @@ export async function syncPublishedItems(
       await deps.publishCollectionItems(collectionId)
       return
     } catch (error) {
-      const notIndexedYet = error instanceof BuilderServerError && error.status === 401
-      if (!notIndexedYet || attempt >= retries) throw error
+      if (!isNotIndexedYet(error) || attempt >= retries) throw error
       await new Promise(resolve => setTimeout(resolve, retryDelayMs))
     }
   }

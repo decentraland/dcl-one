@@ -264,7 +264,7 @@ describe('LinkedCollectionView', () => {
     expect(await rows()).toHaveLength(1)
   })
 
-  it("says the node's own reason when it refused the listing at one of its bounds", async () => {
+  it("should say the node's own reason for a listing it refused at one of its bounds", async () => {
     setup({ page: [item('1')] })
     const reason = 'Too many requests, try again in a minute'
     vi.mocked(fetchLinkedCollectionItems).mockRejectedValue(

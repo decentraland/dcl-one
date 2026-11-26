@@ -1730,6 +1730,7 @@ dependencies = [
  "catalyst-chain-index",
  "catalyst-content",
  "catalyst-db",
+ "catalyst-jobs",
  "catalyst-shared",
  "catalyst-storage",
  "chrono",

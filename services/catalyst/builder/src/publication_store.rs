@@ -20,6 +20,9 @@ use super::publication::{
     PublicationPreparation, SNAPSHOT_QUERY, mark_missing_bytes, prepare, refuse_before_snapshot,
 };
 
+/// A publication attempt: its preparation, `status` (`prepared`, `signing`,
+/// `submitted`, `published` or `reverted`), transaction and deployed
+/// contract.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct PublicationState {
@@ -42,6 +45,7 @@ fn decode(value: Value) -> Result<PublicationState, ApiError> {
 }
 
 impl ItemsComponent {
+    /// The publisher's attempt, `None` without one.
     pub async fn publication_state(
         &self,
         publisher: &Publisher,
@@ -55,6 +59,8 @@ impl ItemsComponent {
         value.map(decode).transpose()
     }
 
+    /// Begins an attempt for `revision`; 409 when the collection changed
+    /// since it was reviewed or another revision is being published.
     pub async fn begin_publication(
         &self,
         publisher: &Publisher,
@@ -62,7 +68,7 @@ impl ItemsComponent {
     ) -> Result<PublicationState, ApiError> {
         let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         let owned: Option<Uuid> = sqlx::query_scalar(LOCK_OWNED)
             .bind(id)
             .bind(signer)
@@ -122,6 +128,8 @@ impl ItemsComponent {
         })
     }
 
+    /// Claims the prepared attempt of `revision` for one wallet request; 409
+    /// while another one holds it.
     pub async fn claim_publication(
         &self,
         publisher: &Publisher,
@@ -155,6 +163,7 @@ impl ItemsComponent {
         Ok(())
     }
 
+    /// Cancels an attempt that has no transaction yet.
     pub async fn cancel_publication(&self, publisher: &Publisher) -> Result<(), ApiError> {
         let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
@@ -251,19 +260,40 @@ impl ItemsComponent {
             return Ok(state);
         }
         if let Some(contract) = contract {
-            for (token, item) in state.preparation.items.iter().enumerate() {
-                let item_id = Uuid::parse_str(&item.id)
-                    .map_err(|_| ApiError::internal("Invalid saved item id"))?;
-                let changed = sqlx::query("UPDATE builder.items SET is_published=true, blockchain_item_id=$2, urn_suffix=$3, \
-                    price=$4, beneficiary=$5, updated_at=timezone('UTC', now()) WHERE id=$1 AND collection_id=$6 AND eth_address=$7 AND NOT is_published")
-                    .bind(item_id).bind(token.to_string()).bind(self.network.item_urn(contract, &token.to_string()))
-                    .bind(&item.price).bind(&item.beneficiary).bind(id).bind(signer).execute(&mut *tx).await?.rows_affected();
-                if changed != 1 {
-                    return Err(ApiError::http(
-                        409,
-                        "Collection items changed during publication",
-                    ));
-                }
+            let items = &state.preparation.items;
+            let ids = items
+                .iter()
+                .map(|item| Uuid::parse_str(&item.id))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| ApiError::internal("Invalid saved item id"))?;
+            let tokens: Vec<String> = (0..items.len()).map(|token| token.to_string()).collect();
+            let urns: Vec<String> = tokens
+                .iter()
+                .map(|token| self.network.item_urn(contract, token))
+                .collect();
+            let prices: Vec<&str> = items.iter().map(|item| item.price.as_str()).collect();
+            let beneficiaries: Vec<&str> =
+                items.iter().map(|item| item.beneficiary.as_str()).collect();
+            let changed = sqlx::query(
+                "UPDATE builder.items i SET is_published = true, blockchain_item_id = p.token, urn_suffix = p.urn, \
+                 price = p.price, beneficiary = p.beneficiary, updated_at = timezone('UTC', now()) \
+                 FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[]) AS p (id, token, urn, price, beneficiary) \
+                 WHERE i.id = p.id AND i.collection_id = $6 AND i.eth_address = $7 AND NOT i.is_published",
+            )
+            .bind(&ids)
+            .bind(&tokens)
+            .bind(&urns)
+            .bind(&prices)
+            .bind(&beneficiaries)
+            .bind(id)
+            .bind(signer)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if usize::try_from(changed).ok() != Some(items.len()) {
+                return Err(ApiError::conflict(
+                    "Collection items changed during publication",
+                ));
             }
             sqlx::query(
                 "UPDATE builder.collections SET publication_pending=false, contract_address=$2, \

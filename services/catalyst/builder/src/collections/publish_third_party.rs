@@ -133,7 +133,7 @@ pub async fn publish(
         .fetch_optional(&mut *tx)
         .await?;
     third_parties::lock_provider(&mut tx, grant.provider()).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_third_party_publish(&mut tx, &view, grant).await?;
     if request.items.len() as i128 > free_slots(&mut tx, grant).await? {
         return Err(refused(

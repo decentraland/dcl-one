@@ -14,7 +14,8 @@ use crate::access;
 use crate::auth::Signed;
 use crate::http::{ApiData, ApiError};
 use crate::third_parties::{
-    has_manager, lock_provider, managed_by, provider, provider_view, virtual_by_id, virtual_view,
+    has_manager, lock_provider, managed_by, provider, provider_view, remove_virtual,
+    set_programmatic, submitted_items, virtual_by_id, virtual_view,
 };
 
 pub(crate) const ID_MAX: usize = 512;
@@ -24,7 +25,7 @@ fn missing(id: &str) -> ApiError {
 }
 
 fn not_its_manager(id: &str) -> ApiError {
-    ApiError::unauthorized("You are not the manager of this Third Party.")
+    ApiError::forbidden("You are not the manager of this Third Party.")
         .with_data(json!({ "id": id }))
 }
 
@@ -68,14 +69,15 @@ pub async fn get(
 
 /// `GET /v1/thirdParties/:id/slots` (`getThirdPartyAvailableSlots`): the
 /// provider's `maxItems` (the registry's, or `0` for a virtual third party)
-/// less its items submitted for curation; 0 when that can't be read.
+/// less its items submitted for curation; 0 when `maxItems` isn't a number,
+/// 500 when the items can't be counted.
 pub async fn slots(
     State(state): State<SharedState>,
     Signed(signer): Signed,
     Path(id): Path<String>,
 ) -> Result<Json<ApiData<Value>>, ApiError> {
     if id.len() > ID_MAX {
-        return Err(ApiError::unauthorized(
+        return Err(ApiError::forbidden(
             "Unauthorized access. Account is not manager of the collection",
         )
         .with_data(json!({ "eth_address": signer.as_str() })));
@@ -85,19 +87,11 @@ pub async fn slots(
         .map_or("0", |p| p.max_items.as_str())
         .parse::<i128>()
         .ok();
-    let submitted: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT count(DISTINCT i.id) FROM builder.collections c JOIN builder.items i ON i.collection_id = c.id \
-         WHERE c.third_party_id = $1 AND {}",
-        crate::curation::ITEM_CURATED
-    )))
-    .bind(grant.id())
-    .fetch_one(state.items.pool())
-    .await
-    .ok();
-    let free = match (max_items, submitted) {
-        (Some(max), Some(submitted)) => max - i128::from(submitted),
-        _ => 0,
+    let submitted = {
+        let mut conn = state.items.pool().acquire().await?;
+        submitted_items(&mut conn, grant.id()).await?
     };
+    let free = max_items.map_or(0, |max| max - i128::from(submitted));
     Ok(Json(ApiData::ok(match i64::try_from(free) {
         Ok(free) => json!(free),
         Err(_) => json!(free as f64),
@@ -108,7 +102,7 @@ pub async fn slots(
 /// the virtual third party that also manages the provider
 /// ([`access::changes_virtual_third_party`]) removes it once the registry
 /// has the provider;
-/// a missing one is 404, another signer 401, a provider the registry
+/// a missing one is 404, another signer 403, a provider the registry
 /// doesn't have yet 400.
 pub async fn delete(
     State(state): State<SharedState>,
@@ -153,10 +147,7 @@ pub async fn delete(
         )
         .with_data(json!({ "id": id })));
     }
-    sqlx::query("DELETE FROM builder.virtual_third_parties WHERE id = $1")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    remove_virtual(&mut tx, &id).await?;
     tx.commit().await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -165,7 +156,7 @@ pub async fn delete(
 /// `isProgrammatic`, a boolean (400 otherwise), and anything else is ignored; a manager of the virtual
 /// third party that also manages the provider
 /// ([`access::changes_virtual_third_party`]) sets it; a missing one is 404,
-/// another signer 401, 503 while the registry can't be read.
+/// another signer 403, 503 while the registry can't be read.
 pub async fn update(
     State(state): State<SharedState>,
     Signed(signer): Signed,
@@ -198,14 +189,7 @@ pub async fn update(
         }
         Some(_) => {}
     }
-    sqlx::query(
-        "UPDATE builder.virtual_third_parties SET is_programmatic = $2, updated_at = timezone('UTC', now()) \
-         WHERE id = $1 AND is_programmatic IS DISTINCT FROM $2",
-    )
-    .bind(&id)
-    .bind(programmatic)
-    .execute(&mut *tx)
-    .await?;
+    set_programmatic(&mut tx, &id, programmatic).await?;
     tx.commit().await?;
     Ok(Json(json!({ "ok": true })))
 }

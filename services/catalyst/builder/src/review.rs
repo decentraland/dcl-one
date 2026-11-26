@@ -84,7 +84,7 @@ fn in_progress_refusal(collection: Uuid) -> ApiError {
 }
 
 fn now(state: &State) -> NaiveDateTime {
-    (state.now)().naive_utc()
+    state.now().naive_utc()
 }
 
 fn next_day(at: NaiveDateTime) -> NaiveDateTime {
@@ -114,26 +114,6 @@ pub struct EventsPage {
     pub results: Vec<EventOut>,
 }
 
-/// A query parameter read as JavaScript's `parseInt` reads it: optional
-/// space and sign, then the leading digits; none without a digit.
-pub fn js_int(raw: &str) -> Option<i64> {
-    let trimmed = raw.trim_start();
-    let (negative, digits) = match trimmed.as_bytes().first() {
-        Some(b'-') => (true, &trimmed[1..]),
-        Some(b'+') => (false, &trimmed[1..]),
-        _ => (false, trimmed),
-    };
-    let digits: String = digits.chars().take_while(char::is_ascii_digit).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let value = digits.chars().fold(0i64, |n, d| {
-        n.saturating_mul(10)
-            .saturating_add(i64::from(d as u8 - b'0'))
-    });
-    Some(if negative { -value } else { value })
-}
-
 /// The page and length a query asks for, as builder-server reads and bounds
 /// them.
 pub fn pagination(query: Option<&str>) -> (i64, i64) {
@@ -146,10 +126,13 @@ pub fn pagination(query: Option<&str>) -> (i64, i64) {
             _ => {}
         }
     }
-    let page = page.as_deref().and_then(js_int).unwrap_or(1);
+    let page = page
+        .as_deref()
+        .and_then(crate::collections::listing::js_int)
+        .unwrap_or(1);
     let limit = limit
         .as_deref()
-        .and_then(js_int)
+        .and_then(crate::collections::listing::js_int)
         .filter(|l| *l < 100_000)
         .unwrap_or(DEFAULT_EVENTS);
     (page.clamp(1, MAX_PAGE), limit.clamp(1, MAX_EVENTS))
@@ -217,7 +200,7 @@ pub async fn comment(
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     if !curated.published {
         return Err(not_published(id));
@@ -301,7 +284,7 @@ pub async fn appeal(
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     let latest: Option<String> = sqlx::query_scalar(
         "SELECT type FROM builder.collection_events WHERE collection_id = $1 AND type <> 'review.comment' \
@@ -474,7 +457,7 @@ pub async fn retry(state: &SharedState, curator: Curator) -> Result<EventOut, Ap
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     if !curated.published {
         return Err(not_published(id));
@@ -570,7 +553,7 @@ pub(crate) async fn submit(
     signer: &str,
     note: &str,
 ) -> Result<Submitted, ApiError> {
-    let view = chain_state::for_decision(conn).await?;
+    let view = chain_state::for_decision(conn, &state.items.clock).await?;
     let changed =
         match validator::changed(conn, &view, &state.settings.network, collection, contract).await?
         {

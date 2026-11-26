@@ -26,7 +26,6 @@ const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333
 const FORMER_KEY: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 const ADMIN_KEY: &str = "0x8888888888888888888888888888888888888888888888888888888888888888";
 const NEW_CREATOR_KEY: &str = "0x9999999999999999999999999999999999999999999999999999999999999999";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:curation";
 const TOKEN: &str = "xoxb-example123";
 
 fn hash(n: u8) -> String {
@@ -103,6 +102,9 @@ struct Node {
     pool: PgPool,
     app: Router,
     state: crate::SharedState,
+    /// The third-party provider of this node's own, whose virtual third
+    /// party the owner manages.
+    provider: String,
 }
 
 struct Options {
@@ -122,17 +124,22 @@ impl Default for Options {
 }
 
 async fn node_over(pool: PgPool, options: Options) -> Node {
+    let provider = format!(
+        "urn:decentraland:matic:collections-thirdparty:curation-{}",
+        Uuid::new_v4().simple()
+    );
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Curation:') \
          ON CONFLICT (id) DO NOTHING",
     )
-    .bind(PROVIDER)
+    .bind(&provider)
     .bind(vec![address(OWNER_KEY)])
     .execute(&pool)
     .await
     .unwrap();
-    let mut state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         Some(registry_index(&options.committee, &options.registry).await),
         crate::Settings {
             writes_enabled: true,
@@ -148,14 +155,16 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             },
             ..crate::Settings::default()
         },
+        |_| {},
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
-    let state = Arc::new(state);
-    let app = options
-        .registry
-        .published(&pool, super::support::mounted(&state));
-    Node { pool, app, state }
+    let app = options.registry.published(&pool, app);
+    Node {
+        pool,
+        app,
+        state,
+        provider,
+    }
 }
 
 async fn node(options: Options) -> Option<Node> {
@@ -180,9 +189,10 @@ async fn standard(pool: &PgPool, name: &str) -> Uuid {
 /// of the owner's whose content hash is `hash(1)`; `anchored` adds a second
 /// item with an approved curation, so the collection is published whatever
 /// the first one's curations.
-async fn third_party(pool: &PgPool, anchored: bool) -> (Uuid, Uuid) {
+async fn third_party(n: &Node, anchored: bool) -> (Uuid, Uuid) {
+    let pool = &n.pool;
     let id = Uuid::new_v4();
-    let urn = format!("{PROVIDER}:{}", id.simple());
+    let urn = format!("{}:{}", n.provider, id.simple());
     sqlx::query(
         "INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) \
          VALUES ($1, $2, $3, $4, $5)",
@@ -190,7 +200,7 @@ async fn third_party(pool: &PgPool, anchored: bool) -> (Uuid, Uuid) {
     .bind(id)
     .bind(format!("Curated {}", &id.simple().to_string()[..8]))
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
+    .bind(&n.provider)
     .bind(&urn)
     .execute(pool)
     .await
@@ -283,7 +293,7 @@ async fn audits(pool: &PgPool, target: Uuid) -> i64 {
 
 fn refusal_status(refusal: Refusal) -> u16 {
     match refusal {
-        Refusal::StatusIsCommittees | Refusal::AssigneeIsCommittees => 401,
+        Refusal::StatusIsCommittees | Refusal::AssigneeIsCommittees => 403,
         Refusal::NoCuration => 404,
         Refusal::Ongoing | Refusal::NeverCurated | Refusal::ItemAssignee => 400,
         Refusal::VerdictOnly | Refusal::Decided | Refusal::ItemStatusOnly => {
@@ -342,7 +352,7 @@ async fn every_cell_of_the_transition_table_answers_and_writes_as_the_table_says
                             (id, format!("/v1/collections/{id}/curation"))
                         }
                         Curation::Item => {
-                            let (_, item) = third_party(&n.pool, true).await;
+                            let (_, item) = third_party(&n, true).await;
                             if let Some(from) = from {
                                 item_curation(&n.pool, item, from.as_str()).await;
                             }
@@ -454,7 +464,7 @@ async fn the_operator_sets_an_item_status_only_as_the_table_gives_it_and_every_w
         Some(Status::Rejected),
     ] {
         for to in Status::ALL {
-            let (collection, item) = third_party(&n.pool, true).await;
+            let (collection, item) = third_party(&n, true).await;
             if let Some(from) = from {
                 item_curation(&n.pool, item, from.as_str()).await;
             }
@@ -522,9 +532,10 @@ async fn an_operator_write_waits_for_the_collection_lock_and_decides_the_newest_
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, true).await;
+    let (collection, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "rejected").await;
     let mut holder = n.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(collection)
         .execute(&mut *holder)
@@ -542,8 +553,10 @@ async fn an_operator_write_waits_for_the_collection_lock_and_decides_the_newest_
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert!(!operator.is_finished(), "the operator waits for the lock");
+    assert!(
+        super::support::blocked_by(&n.pool, holding, 1).await && !operator.is_finished(),
+        "the operator waits for the lock"
+    );
     crate::curation::record_item_curation(&mut holder, item, "pending", &hash(1), false)
         .await
         .unwrap();
@@ -563,9 +576,10 @@ async fn an_operator_bulk_write_on_a_collection_deleted_meanwhile_answers_not_fo
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, true).await;
+    let (collection, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "pending").await;
     let mut holder = n.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(collection)
         .execute(&mut *holder)
@@ -583,7 +597,10 @@ async fn an_operator_bulk_write_on_a_collection_deleted_meanwhile_answers_not_fo
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&n.pool, holding, 1).await,
+        "the operator waits for the lock"
+    );
     sqlx::query("DELETE FROM builder.collections WHERE id = $1")
         .bind(collection)
         .execute(&mut *holder)
@@ -600,7 +617,7 @@ async fn the_operator_cannot_set_the_status_of_an_item_of_an_unpublished_collect
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, item) = third_party(&n.pool, false).await;
+    let (collection, item) = third_party(&n, false).await;
     for (path, body) in [
         (
             format!("/v1/collections/{collection}/items/{item}/status"),
@@ -740,7 +757,7 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
         .execute(&n.pool)
         .await
         .unwrap();
-    let (_, item) = third_party(&n.pool, true).await;
+    let (_, item) = third_party(&n, true).await;
     item_curation(&n.pool, item, "pending").await;
     let path = format!("/v1/collections/{id}/curation");
     for key in [FORMER_KEY, ADMIN_KEY, STRANGER_KEY] {
@@ -763,7 +780,7 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
             let (status, answer) = call(&n.app, Some(key), method, &path, body).await;
             assert_eq!(
                 (status, answer["error"].as_str()),
-                (401, Some("Unauthorized")),
+                (403, Some("Unauthorized")),
                 "{method} {path}"
             );
         }
@@ -795,7 +812,7 @@ async fn a_registry_that_cant_be_read_answers_503_to_third_party_curations() {
         },
     )
     .await;
-    let (collection, item) = third_party(&n.pool, false).await;
+    let (collection, item) = third_party(&n, false).await;
     item_curation(&n.pool, item, "approved").await;
     registry.fail(true);
     for (method, path) in [
@@ -919,7 +936,7 @@ async fn slack_hears_of_a_decision_only_after_it_is_committed() {
         call(&n.app, Some(OWNER_KEY), "PATCH", &path, approve.clone())
             .await
             .0,
-        401
+        403
     );
     assert_eq!(
         call(&n.app, Some(COMMITTEE_KEY), "PATCH", &path, approve.clone())
@@ -1139,7 +1156,7 @@ async fn hostile_curation_input_is_refused_or_matches_nothing() {
     .await;
     assert_eq!(
         (status, answer["error"].as_str()),
-        (401, Some("The assignee must be a committee member"))
+        (403, Some("The assignee must be a committee member"))
     );
     let (status, answer) = call(
         &n.app,
@@ -1169,7 +1186,7 @@ async fn the_item_list_filters_by_each_items_newest_curation() {
     let Some(n) = node(Options::default()).await else {
         return;
     };
-    let (collection, synced) = third_party(&n.pool, false).await;
+    let (collection, synced) = third_party(&n, false).await;
     let mut ids = vec![synced];
     for (label, hash_of_item) in [("changed", 2), ("pending", 3), ("mapped", 4), ("never", 5)] {
         let item = Uuid::new_v4();
@@ -1265,7 +1282,7 @@ async fn a_role_lost_after_the_decision_writes_nothing() {
     let refused = crate::curation::writes::open_collection(&n.state, curator, Default::default())
         .await
         .unwrap_err();
-    assert_eq!(refused.status(), 401);
+    assert_eq!(refused.status(), 403);
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
         ["approved"]
@@ -1468,7 +1485,7 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
             owner_rejected.err().map(|e| e.status()),
             commented.err().map(|e| e.status())
         ),
-        (Some(401), Some(401), Some(401), Some(401))
+        (Some(403), Some(403), Some(403), Some(403))
     );
     assert_eq!(assignee, None);
     assert_eq!(
@@ -1517,7 +1534,7 @@ async fn a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_r
     .await;
     assert_eq!(
         (kept, write, body["error"].as_str(), late_reply),
-        (200, 401, Some("Unauthorized"), 401)
+        (200, 403, Some("Unauthorized"), 403)
     );
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
@@ -1525,7 +1542,7 @@ async fn a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_r
     );
     n.state.committee.outdate();
     let (late, _) = call(&n.app, Some(COMMITTEE_KEY), "GET", &path, None).await;
-    assert_eq!(late, 401);
+    assert_eq!(late, 403);
 }
 
 /// A committee member who also creates the collection on chain decides its
@@ -1551,7 +1568,7 @@ async fn a_creator_on_the_committee_approves_as_the_committee() {
     .await
     .unwrap();
     let (both, body) = call(&n.app, Some(COMMITTEE_KEY), "PATCH", &path, approve()).await;
-    assert_eq!((creator_alone, both), (401, 200), "{body}");
+    assert_eq!((creator_alone, both), (403, 200), "{body}");
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
         ["approved"]

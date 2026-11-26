@@ -22,7 +22,6 @@ const STRANGER_KEY: &str = "0x22222222222222222222222222222222222222222222222222
 const COMMITTEE_KEY: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
 const MANAGER_KEY: &str = "0x4444444444444444444444444444444444444444444444444444444444444444";
 const CREATOR_KEY: &str = "0x5555555555555555555555555555555555555555555555555555555555555555";
-const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:lifecycle";
 
 /// A collection name unique to `id`.
 fn short(label: &str, id: Uuid) -> String {
@@ -51,6 +50,9 @@ struct Node {
     pool: PgPool,
     app: Router,
     state: crate::SharedState,
+    /// The third-party provider of this node's own, whose virtual third
+    /// party the owner manages.
+    provider: String,
 }
 
 struct Options {
@@ -78,11 +80,15 @@ impl Default for Options {
 }
 
 async fn node_over(pool: PgPool, options: Options) -> Node {
+    let provider = format!(
+        "urn:decentraland:matic:collections-thirdparty:lifecycle-{}",
+        Uuid::new_v4().simple()
+    );
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Lifecycle:') \
          ON CONFLICT (id) DO NOTHING",
     )
-    .bind(PROVIDER)
+    .bind(&provider)
     .bind(vec![address(OWNER_KEY)])
     .execute(&pool)
     .await
@@ -91,8 +97,9 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
         Some(committee) => Some(committee_index(committee).await),
         None => Some(super::support::registry_only_index().await),
     };
-    let mut state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         market,
         crate::Settings {
             network: options.network,
@@ -105,14 +112,18 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             }),
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = options.now;
+            (options.tune)(state);
+        },
     )
     .await;
-    state.now = options.now;
-    state.guarded = dcl_http::Outbound::for_tests();
-    (options.tune)(&mut state);
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
-    Node { pool, app, state }
+    Node {
+        pool,
+        app,
+        state,
+        provider,
+    }
 }
 
 async fn node(options: Options) -> Option<Node> {
@@ -325,8 +336,8 @@ async fn only_the_owner_of_a_standard_collection_sets_its_lock() {
     )
     .bind(third_party)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", third_party.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, third_party.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -347,7 +358,7 @@ async fn only_the_owner_of_a_standard_collection_sets_its_lock() {
         assert_eq!(
             answer(refused),
             (
-                401,
+                403,
                 format!("Unauthorized user {} for collections {id}", address(key))
             ),
             "{key} on {id}"
@@ -580,7 +591,7 @@ async fn the_owner_deletes_a_draft_with_its_items_and_the_upload_records_no_othe
     assert_eq!(
         (status, body["error"].clone()),
         (
-            401,
+            403,
             json!(format!(
                 "Unauthorized user {} for collections {id}",
                 address(STRANGER_KEY)
@@ -697,8 +708,8 @@ async fn a_submitted_third_party_collection_is_never_deleted() {
     )
     .bind(id)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", id.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, id.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -735,6 +746,17 @@ async fn a_submitted_third_party_collection_is_never_deleted() {
             json!({ "ok": false, "data": { "id": id }, "error": "The third party collection already has published items. It can't be deleted." })
         )
     );
+    let kept: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM builder.collections WHERE id = $1), \
+                (SELECT count(*) FROM builder.items WHERE id = $2), \
+                (SELECT count(*) FROM builder.item_curations WHERE item_id = $2)",
+    )
+    .bind(id)
+    .bind(item)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, (1, 1, 1), "the refused delete removed nothing");
 }
 
 /// A third-party collection that holds a slot cheque but no submitted item
@@ -751,8 +773,8 @@ async fn a_third_party_collection_with_a_cheque_but_no_submission_is_deleted_and
     )
     .bind(id)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", id.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, id.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -764,7 +786,7 @@ async fn a_third_party_collection_with_a_cheque_but_no_submission_is_deleted_and
     )
     .bind(cheque)
     .bind(id)
-    .bind(PROVIDER)
+    .bind(&node.provider)
     .bind(format!("0x{}1b", "cd".repeat(64)))
     .bind(&salt)
     .execute(&node.pool)
@@ -810,7 +832,7 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
         assert_eq!(body["data"]["id"], json!(id));
     }
     let (status, _) = call(&node.app, Some(STRANGER_KEY), "POST", &path, None).await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
     let stored: (String, String) = sqlx::query_as(
         "SELECT c.eth_address, i.eth_address FROM builder.collections c JOIN builder.items i ON i.collection_id = c.id \
          WHERE c.id = $1 AND i.id = $2",
@@ -831,8 +853,8 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
     )
     .bind(third_party)
     .bind(address(OWNER_KEY))
-    .bind(PROVIDER)
-    .bind(format!("{PROVIDER}:{}", third_party.simple()))
+    .bind(&node.provider)
+    .bind(format!("{}:{}", node.provider, third_party.simple()))
     .execute(&node.pool)
     .await
     .unwrap();
@@ -856,12 +878,12 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
 /// A delivery the fake warehouse received: its `x-token` and its body.
 type Delivery = (Option<String>, Value);
 
-/// A loopback warehouse that records each delivery and answers 500 while
-/// `failing`, 200 otherwise.
+/// A loopback warehouse that records each delivery and answers the status
+/// [`FakeWarehouse::answer`] set, 200 until one is set.
 #[derive(Clone, Default)]
 struct FakeWarehouse {
     received: Arc<std::sync::Mutex<Vec<Delivery>>>,
-    failing: Arc<std::sync::atomic::AtomicBool>,
+    status: Arc<std::sync::atomic::AtomicU16>,
 }
 
 impl FakeWarehouse {
@@ -878,10 +900,9 @@ impl FakeWarehouse {
                             .and_then(|v| v.to_str().ok())
                             .map(str::to_string);
                         fake.received.lock().unwrap().push((token, body));
-                        if fake.failing.load(std::sync::atomic::Ordering::SeqCst) {
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                        } else {
-                            axum::http::StatusCode::OK
+                        match fake.status.load(std::sync::atomic::Ordering::SeqCst) {
+                            0 => axum::http::StatusCode::OK,
+                            status => axum::http::StatusCode::from_u16(status).unwrap(),
                         }
                     }
                 },
@@ -895,6 +916,11 @@ impl FakeWarehouse {
 
     fn received(&self) -> Vec<Delivery> {
         self.received.lock().unwrap().clone()
+    }
+
+    fn answer(&self, status: u16) {
+        self.status
+            .store(status, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -953,9 +979,7 @@ async fn accepted_terms_are_stored_and_forwarded_to_the_warehouse() {
 #[tokio::test]
 async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once() {
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let Some(pool) = own_pool(6).await else {
         return;
     };
@@ -987,9 +1011,7 @@ async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once
         0,
         "not due yet"
     );
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = next_attempt_at - interval '1 hour' WHERE collection_id = $1")
         .bind(id)
         .execute(&node.pool)
@@ -1029,9 +1051,7 @@ async fn an_acceptance_is_stored_without_a_warehouse_and_attempts_are_bounded() 
         0
     );
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let configured = node_over(
         pool.clone(),
         Options {
@@ -1050,6 +1070,63 @@ async fn an_acceptance_is_stored_without_a_warehouse_and_attempts_are_bounded() 
     }
     assert_eq!(pending_terms(&pool, id).await, vec![(false, 6)]);
     assert_eq!(warehouse.received().len(), 6, "at most six attempts");
+}
+
+#[tokio::test]
+async fn an_acceptance_the_warehouse_refuses_is_never_sent_again_and_a_throttled_one_is() {
+    let warehouse = FakeWarehouse::default();
+    let Some(pool) = own_pool(6).await else {
+        return;
+    };
+    let node = node_over(
+        pool,
+        Options {
+            warehouse: Some(warehouse.url().await),
+            ..Options::default()
+        },
+    )
+    .await;
+    for (status, retried) in [
+        (400, false),
+        (401, false),
+        (403, false),
+        (404, false),
+        (408, true),
+        (429, true),
+        (502, true),
+        (503, true),
+    ] {
+        warehouse.answer(status);
+        let (id, _, _) = draft(&node, 0).await;
+        let (answered, _) = call(
+            &node.app,
+            Some(OWNER_KEY),
+            "POST",
+            &format!("/v1/collections/{id}/tos"),
+            Some(json!({ "email": "jane.doe@example.com" })),
+        )
+        .await;
+        assert_eq!(answered, 200, "{status}");
+        sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
+            .bind(id)
+            .execute(&node.pool)
+            .await
+            .unwrap();
+        let sent = warehouse.received().len();
+        crate::terms::forward_due(&node.state).await.unwrap();
+        assert_eq!(
+            (
+                warehouse.received().len() - sent,
+                pending_terms(&node.pool, id).await
+            ),
+            if retried {
+                (1, vec![(false, 2)])
+            } else {
+                (0, vec![(false, crate::terms::MAX_ATTEMPTS)])
+            },
+            "{status}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1126,7 +1203,7 @@ async fn the_terms_route_takes_upstreams_schema_after_the_role_check() {
         Some(json!({})),
     )
     .await;
-    assert_eq!(status, 401, "the role is checked before the body");
+    assert_eq!(status, 403, "the role is checked before the body");
     for refused in [
         json!({}),
         json!({ "email": "not an email" }),
@@ -1186,7 +1263,7 @@ async fn publish_answers_not_published_until_the_chain_holds_the_collection() {
     for node in [&with_rpc, &without_rpc] {
         assert_eq!(
             call(&node.app, Some(OWNER_KEY), "POST", &path, None).await,
-            (401, not_published.clone())
+            (409, not_published.clone())
         );
     }
     let (unknown, _, _) = draft(&with_rpc, 1).await;
@@ -1202,15 +1279,15 @@ async fn publish_answers_not_published_until_the_chain_holds_the_collection() {
         )
         .await,
         (
-            401,
-            json!({ "ok": false, "data": { "id": unknown }, "error": "The collection is not published." })
+            503,
+            json!({ "ok": false, "data": {}, "error": "The collection's chain state is not available. Try again later." })
         ),
         "an RPC that can't tell keeps the client retrying"
     );
     assert_eq!(chain_ids(&pool, unknown).await, vec![None]);
     assert_eq!(chain_ids(&pool, id).await, vec![None, None]);
     let (status, _) = call(&with_rpc.app, Some(STRANGER_KEY), "POST", &path, None).await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
 }
 
 #[tokio::test]
@@ -1276,7 +1353,7 @@ async fn publish_waits_for_the_items_copy_to_catch_up_with_the_collections_copy(
         )
         .await,
         (
-            401,
+            409,
             json!({ "ok": false, "data": { "id": waiting }, "error": "The collection is not published." })
         ),
         "neither the copy nor a chain read can tell yet"
@@ -1504,7 +1581,7 @@ async fn concurrent_publish_calls_ask_the_rpc_once() {
         })
         .collect();
     for answered in calls {
-        assert_eq!(answered.await.unwrap().0, 401);
+        assert_eq!(answered.await.unwrap().0, 409);
     }
     assert_eq!(oracle.code_reads(), 1);
 }
@@ -1601,7 +1678,7 @@ async fn an_rpc_of_another_network_shows_no_deployment() {
         None,
     )
     .await;
-    assert_eq!(status, 401, "only Polygon's facts publish a collection");
+    assert_eq!(status, 503, "only Polygon's facts publish a collection");
     let (status, _) = call(
         &node.app,
         Some(OWNER_KEY),
@@ -1823,7 +1900,7 @@ async fn publish_waits_while_the_node_publishes_the_collection_itself() {
     .await;
     assert_eq!(
         (status, body["error"].clone()),
-        (401, json!("The collection is not published."))
+        (409, json!("The collection is not published."))
     );
     assert_eq!(
         chain_ids(&node.pool, id).await,
@@ -1854,7 +1931,7 @@ async fn a_terms_acceptance_rechecks_the_signers_role_when_it_writes() {
     let error = crate::terms::accept(&node.state, &grant, acceptance)
         .await
         .unwrap_err();
-    assert_eq!(error.status(), 401);
+    assert_eq!(error.status(), 403);
     assert_eq!(pending_terms(&node.pool, id).await, Vec::new());
 }
 
@@ -1866,9 +1943,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
         return;
     };
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let on = |writes: bool| {
         let (pool, url) = (pool.clone(), warehouse.url());
         async move {
@@ -1894,9 +1969,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
     )
     .await;
     assert_eq!(status, 200);
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     let sent = warehouse.received().len();
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
         .bind(id)
@@ -1921,9 +1994,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
 #[tokio::test]
 async fn an_acceptance_waiting_for_the_warehouse_keeps_every_batch_it_covers() {
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let Some(pool) = own_pool(6).await else {
         return;
     };
@@ -1949,9 +2020,7 @@ async fn an_acceptance_waiting_for_the_warehouse_keeps_every_batch_it_covers() {
         .await;
         assert_eq!(status, 200);
     }
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
         .bind(id)
         .execute(&node.pool)
@@ -2058,6 +2127,6 @@ async fn a_committee_member_dropped_before_the_publish_writes_nothing() {
     }
     assert_eq!(
         outcomes,
-        [(None, vec![Some("0".to_string())]), (Some(401), vec![None])]
+        [(None, vec![Some("0".to_string())]), (Some(403), vec![None])]
     );
 }

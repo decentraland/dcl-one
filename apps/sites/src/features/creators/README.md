@@ -165,8 +165,8 @@ suite drives these pages with every service faked; see its README.
   retries instead of waiting a day. The retry is read-only and safe: the address is CREATE2-derived from the frozen
   salt, so once one `createCollection` lands any other reverts, and a retry reverted that way counts as published.
 - **The sync after publishing is recoverable.** The page waits for the receipt and calls `POST /collections/:id/publish`,
-  retrying on 401 for up to an hour while the subgraph catches up; the detail page runs it again whenever the
-  collection reads published with an item still lacking a token id.
+  retrying on 409 "The collection is not published." and on 503 for up to an hour while the subgraph catches up;
+  the detail page runs it again whenever the collection reads published with an item still lacking a token id.
 - **Publishing opens the first review request** once the publication is synced.
 
 ## Sell, edit price, remove from sale

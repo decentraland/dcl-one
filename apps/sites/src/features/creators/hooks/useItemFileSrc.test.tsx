@@ -74,7 +74,7 @@ describe('when the item is a draft', () => {
     expect(revoked).toEqual(['blob:test/0'])
   })
 
-  it('should revoke the previous object URL when the file changes', async () => {
+  it('should revoke the previous object URL once the file changes', async () => {
     const { result, rerender } = renderHook(({ hash }) => useItemFileSrc(draft, hash), {
       wrapper,
       initialProps: { hash: 'bafone' }
@@ -85,7 +85,7 @@ describe('when the item is a draft', () => {
     expect(revoked).toEqual(['blob:test/0'])
   })
 
-  it('should show nothing when the file cannot be read', async () => {
+  it('should show nothing for a file that cannot be read', async () => {
     api.fetchContent.mockRejectedValue(new Error('404'))
     const { result } = renderHook(() => useItemFileSrc(draft, 'bafthumb'), { wrapper })
     await waitFor(() => expect(api.fetchContent).toHaveBeenCalled())

@@ -346,11 +346,10 @@ impl Notices {
         };
         let text = self.links.text(collection, name, actor, &notice);
         let client = client.clone();
-        let in_flight = self.in_flight.clone();
-        in_flight.fetch_add(1, Ordering::SeqCst);
+        let held = InFlight::hold(&self.in_flight);
         tokio::spawn(async move {
             post(&client, &slack, &text).await;
-            in_flight.fetch_sub(1, Ordering::SeqCst);
+            drop(held);
         });
     }
 
@@ -359,6 +358,23 @@ impl Notices {
         while self.in_flight.load(Ordering::SeqCst) > 0 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+}
+
+/// One notice counted in flight until it is dropped, its task's panic
+/// included.
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn hold(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

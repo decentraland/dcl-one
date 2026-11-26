@@ -36,18 +36,17 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let registry = FakeRegistry::up();
-    let mut state = super::support::state(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
+        super::support::temp_storage().await,
         Some(registry_index(&committee, &registry).await),
         crate::Settings {
             writes_enabled: true,
             ..settings
         },
+        |_| {},
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
     let app = match state.registry_indexed() {
         true => registry.published(&pool, app),
         false => app,
@@ -435,19 +434,19 @@ async fn every_refusal_answers_before_anything_is_written() {
             "a stranger",
             Some(STRANGER_KEY),
             json!({ "itemIds": both, "cheque": cheque(STRANGER_KEY, &provider, 2, &salt()) }),
-            (401, unauthorized.replace("{}", &address(STRANGER_KEY))),
+            (403, unauthorized.replace("{}", &address(STRANGER_KEY))),
         ),
         (
             "the committee",
             Some(COMMITTEE_KEY),
             json!({ "itemIds": both, "cheque": cheque(COMMITTEE_KEY, &provider, 2, &salt()) }),
-            (401, unauthorized.replace("{}", &address(COMMITTEE_KEY))),
+            (403, unauthorized.replace("{}", &address(COMMITTEE_KEY))),
         ),
         (
             "another provider's manager",
             Some(OTHER_KEY),
             json!({ "itemIds": both, "cheque": cheque(OTHER_KEY, &elsewhere, 2, &salt()) }),
-            (401, unauthorized.replace("{}", &other)),
+            (403, unauthorized.replace("{}", &other)),
         ),
         (
             "more items than slots",
@@ -630,7 +629,7 @@ async fn a_former_manager_and_a_virtual_holder_publish_nothing_and_the_registry_
         )
         .await
         .0,
-        401
+        403
     );
     let unlisted = format!(
         "urn:decentraland:matic:collections-thirdparty:v{}",
@@ -676,7 +675,7 @@ async fn a_former_manager_and_a_virtual_holder_publish_nothing_and_the_registry_
         )
         .await
         .0,
-        401
+        403
     );
     w.registry.set(&provider, "managers", json!([manager]));
     w.registry.fail(true);
@@ -1052,7 +1051,7 @@ async fn approval_data_is_the_committee_s_and_needs_its_sources() {
         (
             Some(MANAGER_KEY),
             approval(id),
-            (401, "Unauthorized".to_string()),
+            (403, "Unauthorized".to_string()),
             json!({ "eth_address": manager }),
         ),
         (
@@ -1076,7 +1075,7 @@ async fn approval_data_is_the_committee_s_and_needs_its_sources() {
         (
             Some(COMMITTEE_KEY),
             approval(unpublished),
-            (401, "The collection is not published.".to_string()),
+            (409, "The collection is not published.".to_string()),
             json!({ "id": unpublished }),
         ),
     ] {
@@ -1113,7 +1112,7 @@ async fn the_publish_decides_again_inside_its_transaction() {
         .unwrap_err();
     assert_eq!(
         (refused.status(), refused.to_string().as_str()),
-        (401, "Unauthorized to upsert collection")
+        (403, "Unauthorized to upsert collection")
     );
     assert_eq!(written(&w.pool).await, before);
 }
@@ -1390,6 +1389,7 @@ async fn a_save_queued_behind_the_approval_leaves_the_approved_content() {
     let (id, item, urn) = submitted(&w).await;
     let reviewed = newest_curation(&w, item).await.1;
     let mut holder = w.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .execute(&mut *holder)
@@ -1407,13 +1407,19 @@ async fn a_save_queued_behind_the_approval_leaves_the_approved_content() {
         )
         .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&w.pool, holding, 1).await,
+        "the approval waits for the collection"
+    );
     let w = Arc::new(w);
     let saving = {
         let w = w.clone();
         tokio::spawn(async move { edit(&w, id, item, &urn, "edited while approving").await })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        super::support::blocked_by(&w.pool, holding, 2).await,
+        "the save queues behind the approval"
+    );
     holder.commit().await.unwrap();
     assert_eq!(approve.await.unwrap().0, 200);
     let edited = saving.await.unwrap();
@@ -1618,6 +1624,7 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
             .await
             .unwrap();
     let mut holder = w.pool.begin().await.unwrap();
+    let holding = super::support::backend_pid(&mut holder).await;
     sqlx::query("SELECT 1 FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .execute(&mut *holder)
@@ -1674,7 +1681,8 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
             })
         }),
     ];
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let queued =
+        super::support::blocked_by(&w.pool, holding, i64::try_from(writes.len()).unwrap()).await;
     let ran: Vec<&str> = writes
         .iter()
         .filter(|(_, write)| write.is_finished())
@@ -1685,7 +1693,7 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
         write.await.unwrap();
     }
     assert!(
-        ran.is_empty(),
+        queued && ran.is_empty(),
         "{ran:?} ran while another write held the collection"
     );
 }
@@ -1804,7 +1812,7 @@ async fn on_polygon_the_registry_is_the_index_at_its_published_block() {
     w.state.third_parties.outdate();
     let (status, body) = get(&w.app, Some(MANAGER_KEY), "/v1/thirdParties".into()).await;
     assert_eq!((status, &body["data"]), (200, &json!([])), "{body}");
-    assert_eq!(get(&w.app, Some(MANAGER_KEY), slots).await.0, 401);
+    assert_eq!(get(&w.app, Some(MANAGER_KEY), slots).await.0, 403);
 }
 
 #[tokio::test]

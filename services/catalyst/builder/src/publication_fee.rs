@@ -109,7 +109,7 @@ pub async fn for_call(
         ));
     }
     let mut conn = state.items.pool().acquire().await?;
-    let view = chain_state::for_decision(&mut conn).await?;
+    let view = chain_state::for_decision(&mut conn, &state.items.clock).await?;
     refuse_before_snapshot(&mut conn, &view, publisher.id(), publisher.signer()).await?;
     let stored = access::confirm_collection_manage(&mut conn, &view, &manage).await?;
     drop(conn);

@@ -174,13 +174,10 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
         Some(storage) => storage,
         None => temp_storage().await,
     };
-    let mut state = crate::State::new(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
         storage.clone(),
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         Some(registry_index(&options.committee, &options.registry).await),
-        None,
         crate::Settings {
             writes_enabled: options.writes,
             polygon_rpc_url: Some(oracle.url().await),
@@ -196,18 +193,16 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
             validator_secret: options.secret.map(crate::validator::Secret::from),
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = clock;
+            if options.unbounded {
+                state.limits = crate::limits::Limits::unbounded();
+            }
+            (options.tune)(state);
+        },
     )
-    .unwrap();
-    state.now = clock;
-    state.guarded = dcl_http::Outbound::for_tests();
-    if options.unbounded {
-        state.limits = crate::limits::Limits::unbounded();
-    }
-    (options.tune)(&mut state);
-    let state = Arc::new(state);
-    let app = options
-        .registry
-        .published(&pool, super::support::mounted(&state));
+    .await;
+    let app = options.registry.published(&pool, app);
     Node {
         pool,
         storage,
@@ -1405,6 +1400,7 @@ async fn unclaimed_requests_expire_after_seven_days_and_settled_ones_are_deleted
     sweep(&node).await;
     assert_eq!(requests(&node.pool, id).await[0].4, None);
     set_clock(created + Duration::days(7));
+    super::support::copy_pass_at(&node.pool, clock()).await;
     let (second, _) = published(&node, "Raced sweeps", 1).await;
     set_clock(created + Duration::days(7) + Duration::milliseconds(1));
     tokio::join!(sweep(&node), sweep(&node));

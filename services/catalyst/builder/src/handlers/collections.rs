@@ -1,3 +1,7 @@
+//! The collection and item reads: a collection's body and items, the
+//! committee's listings, an address's listings, the public search of
+//! published collections and the curation committee.
+
 use axum::Json;
 use axum::extract::{OriginalUri, Path, RawQuery, State};
 use axum::http::{HeaderMap, Uri};
@@ -66,9 +70,8 @@ pub(crate) async fn review_flow_asked(
     crate::review::enabled(&mut conn, state).await
 }
 
-/// builder-server's `HTTPError('Unauthorized', { eth_address }, 401)`: a
-/// listing refusal names the wallet the request was about (the path's
-/// address, the signer's, `""` anonymously).
+/// builder-server's `HTTPError('Unauthorized', { eth_address }, 401)` for
+/// an anonymous listing request; `eth_address` is `""`.
 fn unauthorized_for(eth_address: &str) -> ApiError {
     ApiError::unauthorized("Unauthorized").with_data(json!({ "eth_address": eth_address }))
 }
@@ -292,7 +295,7 @@ mod tests {
     }
 
     /// The four listings, builder-server's rule: a wallet that owns nothing
-    /// and is not on the committee gets the upstream 401 envelope naming the
+    /// and is not on the committee gets the 403 envelope naming the
     /// wallet the request was about, the owner its own set, the committee
     /// every wallet's drafts but no other wallet's address listing, the
     /// anonymous published search its matches.
@@ -378,12 +381,12 @@ mod tests {
         let (status, body) = get(&app, "/v1/items", Some(STRANGER_KEY)).await;
         assert_eq!(
             (status, body),
-            (StatusCode::UNAUTHORIZED, refusal_of(&stranger))
+            (StatusCode::FORBIDDEN, refusal_of(&stranger))
         );
         let (status, body) = get(&app, "/v1/items", Some(OWNER_KEY)).await;
         assert_eq!(
             (status, body),
-            (StatusCode::UNAUTHORIZED, refusal_of(&owner)),
+            (StatusCode::FORBIDDEN, refusal_of(&owner)),
             "an owner is not the committee either"
         );
         let (status, body) = get(&app, "/v1/items", Some(COMMITTEE_KEY)).await;
@@ -405,7 +408,7 @@ mod tests {
         let (status, body) = get(&app, "/v1/collections", Some(STRANGER_KEY)).await;
         assert_eq!(
             (status, body),
-            (StatusCode::UNAUTHORIZED, refusal_of(&stranger))
+            (StatusCode::FORBIDDEN, refusal_of(&stranger))
         );
         let (status, body) = get(&app, "/v1/collections", Some(COMMITTEE_KEY)).await;
         assert_eq!(status, StatusCode::OK);
@@ -460,7 +463,7 @@ mod tests {
                 let (status, body) = get(&app, &path, Some(key)).await;
                 assert_eq!(
                     (status, body),
-                    (StatusCode::UNAUTHORIZED, refusal_of(&owner)),
+                    (StatusCode::FORBIDDEN, refusal_of(&owner)),
                     "{route}: the refusal names the path's wallet; the committee is no exception"
                 );
             }
