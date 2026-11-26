@@ -762,8 +762,9 @@ describe('in-world shop', () => {
   it('tells the engine where its stage image is drawn, and takes it back on close', () => {
     serve({})
     const { props, rerender } = renderShop()
-    // jsdom lays nothing out: the image's 1920×1080 at scale 1, its top 70px above the page (under the top bar).
-    expect(props.stage).toHaveBeenLastCalledWith({ x: 0, y: -70, width: 1920, height: 1080 })
+    // jsdom lays nothing out: the image's 1920×1080 at scale 1, its top 70px above the page (under the top bar). The
+    // avatar framed as the catalogue draws it.
+    expect(props.stage).toHaveBeenLastCalledWith({ x: 0, y: -70, width: 1920, height: 1080 }, 'catalog')
     rerender({ shop: { open: false, toggle: vi.fn() } })
     expect(props.stage).toHaveBeenLastCalledWith(null)
   })

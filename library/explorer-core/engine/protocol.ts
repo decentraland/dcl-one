@@ -2328,11 +2328,17 @@ export interface PreviewFocusRequest {
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
  *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
  *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
- *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back.
+ *  `framing` is how the Shop's page draws the avatar in its window: the catalogue's, unless given. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
   rect: { x: number; y: number; width: number; height: number } | null
+  framing?: PreviewStageFraming
 }
+
+/** How the Shop's page draws its avatar: the catalogue's whole body, or Names' (smaller and lower, with room
+ *  over the head for the nametag). */
+export type PreviewStageFraming = 'catalog' | 'names'
 
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */
