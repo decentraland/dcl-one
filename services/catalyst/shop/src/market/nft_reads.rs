@@ -158,13 +158,13 @@ fn page_networks(f: &NftFilters, sources: Sources) -> Vec<ChainNet> {
 /// held to the index path's rules: the `first + skip` window, and the trades
 /// mirror's readiness on the same snapshot when it filters or sorts on
 /// orders. The snapshot carries the reads' statement timeout.
-pub async fn names_page_if_admitted(
+pub(super) async fn names_page_if_admitted(
     state: &MarketplaceState,
     f: &NftFilters,
     first: i64,
     skip: i64,
     now: chrono::DateTime<Utc>,
-) -> Result<Option<(Vec<NftResult>, i64)>, Response> {
+) -> Result<Option<(Vec<NftResult>, i64, ReadConn)>, Response> {
     if first.saturating_add(skip) > MAX_WINDOW {
         return Err(
             ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
@@ -187,7 +187,7 @@ pub async fn names_page_if_admitted(
     if needs_orders(f) {
         super::trades::ready_on(state, &mut conn, now).await?;
     }
-    list_page_at(
+    let (data, total) = list_page_at(
         state,
         f,
         first,
@@ -197,8 +197,8 @@ pub async fn names_page_if_admitted(
         now,
         LastSale::of(&admitted),
     )
-    .await
-    .map(Some)
+    .await?;
+    Ok(Some((data, total, conn)))
 }
 
 /// The networks the collection source reads for `f`.
@@ -291,6 +291,14 @@ impl std::ops::DerefMut for ReadConn {
 /// deepest page sorted by price naming no category.
 pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+pub(super) async fn set_read_timeout(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!("{}ms", READ_STATEMENT_TIMEOUT.as_millis()))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Past this many tokens, an owner's page sorted by price or listing time
 /// is read in two parts like a page without an owner: one part looks up
 /// the listing of every token the owner holds (7 to 8 s for 32,000 tokens),
@@ -299,7 +307,7 @@ pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::fro
 pub const LARGE_OWNER_TOKENS: i64 = 1_000;
 
 /// Whether Postgres cancelled the statement ([`READ_STATEMENT_TIMEOUT`]).
-fn cancelled(e: &sqlx::Error) -> bool {
+pub(super) fn cancelled(e: &sqlx::Error) -> bool {
     e.as_database_error()
         .is_some_and(|d| d.code().as_deref() == Some("57014"))
 }
@@ -369,9 +377,7 @@ async fn open_read_conn(
         ReadConn::Pool(tx)
     };
     // Transaction-local: the bound ends with the read.
-    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-        .bind(format!("{}ms", READ_STATEMENT_TIMEOUT.as_millis()))
-        .execute(&mut *conn)
+    set_read_timeout(&mut conn)
         .await
         .map_err(ReadConnError::Pool)?;
     check_nft(
@@ -435,10 +441,8 @@ async fn check_nft(
     owned_items::check(conn, catalogue, &others, Rule::Fresh, false, now).await
 }
 
-/// [`nft_prices`]'s error when the LAND index stopped being ready after
-/// [`require_prices_sources`] passed. It is a string because the prices memo
-/// shares errors as strings; the route answers [`land_unavailable`] for it,
-/// the envelope `/v1/nfts` answers in the same state.
+/// The LAND publication was withdrawn before the NFT histogram snapshot.
+/// The route uses the same envelope as `/v1/nfts`.
 pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
     "the nft prices read LAND, and the land-authz index is not published";
 
@@ -1512,25 +1516,27 @@ pub(super) async fn land_page_snapshot(
     state: &MarketplaceState,
     f: &NftFilters,
     sources: Sources,
+    now: chrono::DateTime<Utc>,
 ) -> Result<ReadConn, Response> {
     let mut conn = read_conn(&state.pool, state.land_network(), f, sources).await?;
     if sources.land && state.settings.catalogue() == Catalogue::Testnet {
         super::rentals::require_sepolia_listings(&mut conn).await?;
     }
     if needs_orders(f) {
-        super::trades::ready_on(state, &mut conn, Utc::now()).await?;
+        super::trades::ready_on(state, &mut conn, now).await?;
     }
     Ok(conn)
 }
 
 /// `/v1/nfts` from the indexes: the page over the `first + skip` window and
 /// its total (exact up to [`MAX_WINDOW`]).
-pub async fn list_nfts(
+pub(super) async fn indexed_page(
     state: &MarketplaceState,
     f: &NftFilters,
     first: i64,
     skip: i64,
-) -> Result<(Vec<NftResult>, i64), Response> {
+    now: chrono::DateTime<Utc>,
+) -> Result<(Vec<NftResult>, i64, ReadConn), Response> {
     if first.saturating_add(skip) > MAX_WINDOW {
         return Err(
             ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
@@ -1567,7 +1573,6 @@ pub async fn list_nfts(
             None => false,
         };
     }
-    require_sources(state, f, sources).await?;
     // The page, its total and the estates' parcels read one state.
     let land = state.land_network();
     let mut conn = match open_read_conn(&state.pool, land, f, sources).await {
@@ -1576,13 +1581,24 @@ pub async fn list_nfts(
             sources.land = false;
             read_conn(&state.pool, land, f, sources).await?
         }
-        other => other.map_err(|e| match e {
-            ReadConnError::LandUnavailable => land_unavailable(),
-            ReadConnError::NftUnavailable(source, m) => unavailable(source, &m),
-            ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
-        })?,
+        Ok(conn) => conn,
+        Err(ReadConnError::LandUnavailable) => {
+            // When no LAND snapshot can open, preserve the NFT source's
+            // refusal first if that publication is also unavailable.
+            require_ready(&state.pool, land, f, sources).await?;
+            return Err(land_unavailable());
+        }
+        Err(ReadConnError::NftUnavailable(source, m)) => return Err(unavailable(source, &m)),
+        Err(ReadConnError::Pool(e)) => {
+            tracing::warn!(error = %e, "cannot open the NFT index snapshot");
+            return Err(owned_items::not_ready("the nft index state cannot be read"));
+        }
     };
-    list_page_on(state, f, first, skip, sources, &mut conn).await
+    if needs_orders(f) {
+        super::trades::ready_on(state, &mut conn, now).await?;
+    }
+    let (data, total) = list_page_on(state, f, first, skip, sources, &mut conn, now).await?;
+    Ok((data, total, conn))
 }
 
 pub(super) async fn list_page_on(
@@ -1592,8 +1608,8 @@ pub(super) async fn list_page_on(
     skip: i64,
     sources: Sources,
     conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
 ) -> Result<(Vec<NftResult>, i64), Response> {
-    let now = Utc::now();
     // The latest sales of a network whose sales publication is valid on
     // this read's snapshot; elsewhere `sold_at` keeps the legacy orders.
     // Only the networks the page can return are checked.
@@ -1657,7 +1673,7 @@ async fn list_page_at(
         first,
         skip,
         now_ms,
-        trades_since(state),
+        super::trades::mirrored_since(&state.settings, now.naive_utc()),
         large_owner,
         last_sale,
     );
@@ -1700,8 +1716,7 @@ fn on_sale(f: &NftFilters) -> NftFilters {
 }
 
 /// The sources `nft_prices` reads (the indexes, and the trades mirror for
-/// its order legs), checked apart so a memo of its answer is never served
-/// past their budgets.
+/// its order legs), preserving the missing-source response order.
 pub async fn require_prices_sources(
     state: &MarketplaceState,
     f: &NftFilters,
@@ -1710,18 +1725,16 @@ pub async fn require_prices_sources(
     require_sources(state, &f, sources_for(&f)).await
 }
 
-/// The read the nft leg of `/v1/prices` fills on: its checked snapshot,
-/// and the key of what that snapshot sees (the nft index's publications and
-/// the catalogue's copies), so a memo filed under one read never answers for
-/// another publication of either.
+/// The snapshot and clock for the NFT price histogram.
 pub(crate) struct PricesRead {
     conn: ReadConn,
-    key: String,
+    now: chrono::DateTime<Utc>,
 }
 
 impl PricesRead {
-    pub(crate) fn key(&self) -> &str {
-        &self.key
+    pub(super) async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
+        super::trades::ready_on(state, &mut self.conn, self.now).await?;
+        Ok(())
     }
 }
 
@@ -1735,7 +1748,7 @@ pub(crate) async fn prices_read(
     let f = on_sale(f);
     let sources = sources_for(&f);
     let land = state.land_network();
-    let mut conn = open_read_conn(&state.pool, land, &f, sources)
+    let conn = open_read_conn(&state.pool, land, &f, sources)
         .await
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => NFT_PRICES_LAND_UNAVAILABLE.to_string(),
@@ -1743,16 +1756,9 @@ pub(crate) async fn prices_read(
             ReadConnError::Pool(e) if cancelled(&e) => NFT_PRICES_TIMED_OUT.to_string(),
             ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
         })?;
-    let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
-    let seen = owned_items::Publications::read(&mut conn, catalogue)
-        .await
-        .map_err(|e| e.to_string())?
-        .naming(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
     Ok(PricesRead {
         conn,
-        key: format!("{seen:?}"),
+        now: Utc::now(),
     })
 }
 
@@ -1761,6 +1767,7 @@ pub(crate) async fn prices_read(
 /// and names); `category` narrows the sources as `/v1/nfts` does. Read
 /// only after [`require_prices_sources`]; if the LAND index stops being
 /// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
+#[cfg(test)]
 pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
     let mut read = prices_read(state, f).await?;
     nft_prices_on(&mut read, state, f).await
@@ -1782,8 +1789,8 @@ pub(crate) async fn nft_prices_on(
         &f,
         sources,
         land,
-        Utc::now().timestamp_millis(),
-        trades_since(state),
+        read.now.timestamp_millis(),
+        super::trades::mirrored_since(&state.settings, read.now.naive_utc()),
     );
     let mut wheres = Vec::new();
     push_filters(&mut b, &f, &mut wheres);
@@ -2397,7 +2404,7 @@ mod tests {
                     ('ethereum', '{DCL_REGISTRAR}', 1002, 'o4', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '{a}', 20, 4000000000000, 13, 13, 1, 0), \
                     ('ethereum', '{LAND_REGISTRY_MAINNET}', 2, 'o5', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '{a}', 25, 4000000000000, 13, 13, 1, 0); \
              INSERT INTO shop.trades (id, network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract, created_at) \
-             SELECT md5('t' || v.n)::uuid, 'MATIC', 137, 's' || v.n, 'h' || v.n, '{{}}', v.signer, 'public_nft_order', '2100-01-01', '2000-01-01', '0xmarket', \
+             SELECT md5('t' || v.n)::uuid, 'MATIC', 137, 's' || v.n, 'h' || v.n, '{{}}', v.signer, 'public_nft_order', '2100-01-01', '2000-01-01', '{marketplace}', \
                     timestamp '2023-01-01' + make_interval(days => v.n) \
              FROM (VALUES (1, '{b}', 5, 7), (2, '{b}', 5, 9), (3, '{b}', 6, 3), (4, '{a}', 4, 5)) v(n, signer, token, price); \
              INSERT INTO shop.trade_assets (id, trade_id, direction, asset_type, contract_address, extra) \
@@ -2416,8 +2423,24 @@ mod tests {
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
              SELECT g, 0, 102 + g / 2, '{LAND_REGISTRY_MAINNET}', 'transfer', g, '{a}' FROM generate_series(1, 4) g; \
              UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1",
+            marketplace = crate::market::trade_events::marketplaces(ChainNet::Matic)[0].0,
             venue = crate::rentals::index::RENTALS_MAINNET
         )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id)
+             VALUES ('nft', 'matic', 0, 100, 100, 100, $1, true, 137)",
+        )
+        .bind(chrono::DateTime::from_timestamp_millis(now).unwrap().naive_utc())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block)
+             SELECT id, 'matic', 'open', 0 FROM shop.trades",
+        )
         .execute(&pool)
         .await
         .unwrap();

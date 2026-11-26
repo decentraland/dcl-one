@@ -39,9 +39,9 @@ use collectibles::{
 use console::DoAddConsoleCommand;
 use hover_glow::{can_glow, set_hover_glows};
 use scene_material::{
-    SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-    SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-    SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
+    SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_MESH_TAG,
+    SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
 pub mod animate;
@@ -717,8 +717,7 @@ impl AvatarRenderDefinition {
             SCENE_MATERIAL_NO_DITHERING_MESH_TAG
         } else {
             0
-        }) | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-            | SCENE_MATERIAL_TOON_MESH_TAG
+        }) | SCENE_MATERIAL_TOON_MESH_TAG
     }
 
     /// the body model is guaranteed by spawn_scenes

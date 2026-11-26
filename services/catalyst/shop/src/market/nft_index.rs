@@ -14,7 +14,8 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest parcel Update or latest
+//! legacy order event per token), `legacy_order` (every legacy order,
+//! `legacy_orders`) and `land_data` (the latest parcel Update or latest
 //! valid estate document). The LAND fold reads the window.
 //! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
@@ -561,14 +562,21 @@ ON CONFLICT (network, contract_address, token_id) DO UPDATE SET
     created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log";
 
-/// The contracts of a network (`$1`) whose backfill is not finished.
-const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-     AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+/// Predicate on one `shop.nft_contract` row with a backfill still outstanding.
+pub(super) const BACKFILL_PENDING_SQL: &str = "backfill_from_block IS NOT NULL AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+
+fn backfills_owed_sql() -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL}"
+    ))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
+    /// The rows of `shop.legacy_order` written (`legacy_orders`).
+    pub legacy_orders: u64,
     pub land_data: u64,
     /// The contracts whose backfill the lane still owes, counted in the
     /// fold's transaction.
@@ -634,6 +642,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    let legacy_orders = super::legacy_orders::fold(&mut tx, net, since).await?;
     let land_data = if net == ChainNet::Ethereum {
         fold_land_data(&mut tx, since).await?
     } else {
@@ -646,7 +655,7 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
-    let backfills_owed: i64 = sqlx::query_scalar(BACKFILLS_OWED_SQL)
+    let backfills_owed: i64 = sqlx::query_scalar(backfills_owed_sql())
         .bind(net.db_name())
         .fetch_one(&mut *tx)
         .await?;
@@ -664,6 +673,7 @@ pub async fn fold(
     Ok(FoldCounts {
         nfts,
         orders,
+        legacy_orders,
         land_data,
         backfills_owed,
     })
@@ -897,11 +907,9 @@ impl ChainIndex for NftIndex {
 
     /// A walk that owes a backfill runs its lanes, alone.
     async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
-        )
+        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL})"
+        )))
         .bind(self.net.db_name())
         .fetch_one(pool)
         .await?)
@@ -1067,6 +1075,7 @@ impl ChainIndex for NftIndex {
         .bind(&tokens)
         .execute(&mut *conn)
         .await?;
+        super::legacy_orders::rewind(&mut *conn, self.net, to, &contracts, &tokens).await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
         // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
@@ -1115,6 +1124,7 @@ impl ChainIndex for NftIndex {
             network = self.net.db_name(),
             nfts = counts.nfts,
             orders = counts.orders,
+            legacy_orders = counts.legacy_orders,
             land_data = counts.land_data,
             "nft index: folded"
         );
@@ -1147,12 +1157,10 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
-        let owed: Vec<WalkedContract> = sqlx::query_as(
+        let owed: Vec<WalkedContract> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1 \
-             ORDER BY walked_from_block, contract_address",
-        )
+             WHERE network = $1 AND {BACKFILL_PENDING_SQL} ORDER BY walked_from_block, contract_address"
+        )))
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
@@ -1261,14 +1269,11 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
             .await
             .ok()
             .flatten();
-        let owed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1",
-        )
-        .bind(net.db_name())
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        let owed: i64 = sqlx::query_scalar(backfills_owed_sql())
+            .bind(net.db_name())
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
             "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,

@@ -4,7 +4,6 @@
 // Laid out on the startup screens' canvas: the header from its top, the slots and CONTINUE from its
 // middle, the body type from its bottom-right corner, the avatar's stage in the column on the right.
 import { useEffect, useState } from 'react'
-import { Button, MaskIcon } from '../../design'
 import { StartupBack } from './StartupBack'
 import { PRESETS, type BodyType } from './presets'
 import bodyA from '../../assets/startup/body-a.png'
@@ -13,6 +12,7 @@ import chevron from '../../assets/startup/chevron-down.png'
 import check from '../../assets/startup/check-orange.png'
 import jumpIn from '../../assets/startup/jump-in.png'
 import styles from './NewAccountLook.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 const BODY: Record<BodyType, { label: string; icon: string }> = {
   a: { label: 'BODY TYPE A', icon: bodyA },
@@ -69,7 +69,7 @@ export function NewAccountLook({
             </button>
           ))}
         </div>
-        <Button
+        <Button appearance="hud"
           size="bare"
           variant="primary"
           className={styles.continue}
@@ -104,7 +104,7 @@ export function NewAccountLook({
             ))}
           </div>
         )}
-        <Button
+        <Button appearance="hud"
           size="bare"
           variant="whisper"
           className={styles.bodyButton}

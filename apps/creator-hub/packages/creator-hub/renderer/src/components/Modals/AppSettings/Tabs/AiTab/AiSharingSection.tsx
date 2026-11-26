@@ -77,9 +77,12 @@ export function AiSharingSection() {
   }, [showShared, address, dispatch]);
 
   useEffect(() => {
-    if (showDigests && address !== null) {
-      void dispatch(aiSharingActions.loadDigests({ reset: true }));
-    }
+    if (!showDigests || address === null) return;
+    void dispatch(aiSharingActions.loadDigests({ reset: true }));
+    // Hidden summaries are dropped, so an erasure doesn't load them again.
+    return () => {
+      dispatch(aiSharingActions.clearDigests());
+    };
   }, [showDigests, address, dispatch]);
 
   if (!visible) return null;

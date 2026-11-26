@@ -18,6 +18,7 @@ before planning, dispatching or merging work.
 - When what runs where changes, describe the changed deployment boundaries in the report and update the public ownership guidance. Keep accepted, public architectural decisions in root `docs/adr/`.
 - Put helpers other crates' tests use behind a `test-support` feature.
 - Catalyst code must pass clippy with no warnings, with and without the `ts` feature: `cd services/catalyst && cargo clippy --workspace --all-targets -- -D warnings`, then again with `--features catalyst/ts`. Every `#[allow]`/`#[expect]` carries a `reason`.
+- Catalyst dependencies must pass cargo-deny (`deny.toml`; give every ignored advisory a reason). Run the commands at the top of `deny.toml`; they take cargo-deny from the flake's nixpkgs, as CI does.
 
 Agents (`.claude/agents/`, start the session here): `comms-architect`,
 `comms-ci-engineer` (`build`, `gate`, `audit`, `release`), `divergence-analyst`.
