@@ -3,6 +3,14 @@
 //! upper key, so new arrivals cannot indefinitely postpone retries. Selection and progress commit together, before external work. A
 //! crash can defer selected work until the next sweep, never remove it.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
 pub(crate) struct Sweep<'a> {

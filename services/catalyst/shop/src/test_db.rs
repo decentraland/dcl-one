@@ -4,6 +4,14 @@
 //! beside them, and the mirrors' completeness rows (`shop.mirror_state`) are
 //! deleted and reset by other tests. Dropped at the end.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use sqlx::PgPool;
 
 pub(crate) struct OwnDatabase {

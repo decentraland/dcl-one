@@ -18,6 +18,14 @@
 //! moved to credits, an eligible one is not moved to MANA, and missing facts
 //! answer [`Refusal::Incomplete`] rather than a narrower choice.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use std::collections::HashMap;
 
 use serde::Serialize;

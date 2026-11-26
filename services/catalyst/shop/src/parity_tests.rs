@@ -6,6 +6,14 @@
 //! mirrors' pass markers (`shop.mirror_state`) are shared rows: the tests
 //! that need a ready mirror take `MIRROR_STATE_LOCK` while they run.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
