@@ -24,6 +24,20 @@ describe('CardActionButton', () => {
     })
   })
 
+  describe('when the size is sm', () => {
+    it('adds the small class and keeps the consumer class and the pressed state', () => {
+      render(<CardActionButton aria-label="Interested" size="sm" aria-pressed={false} className="extra" />)
+      const button = screen.getByRole('button', { name: 'Interested', pressed: false })
+      expect(button.className).toMatch(/sm/)
+      expect(button.className).toMatch(/extra/)
+    })
+
+    it('does not add the small class by default', () => {
+      render(<CardActionButton aria-label="Like" />)
+      expect(screen.getByRole('button', { name: 'Like' }).className).not.toMatch(/sm/)
+    })
+  })
+
   describe('when disabled', () => {
     it('does not call onClick', () => {
       const onClick = vi.fn()

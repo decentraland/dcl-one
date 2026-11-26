@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 26] = [
+    pub const OPERATOR_SECRETS: [&'static str; 27] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -214,6 +214,7 @@ impl Config {
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
         "HISTORICAL_ADMIN_TOKEN",
+        "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
         "PRICE_ADMIN_TOKEN",
         "CATALYRST_ECONOMY_ADMIN_TOKEN",
         "CATALYRST_CREDITS_ADMIN_TOKEN",
@@ -282,7 +283,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 87] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 90] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -448,6 +449,15 @@ impl Config {
                 &mut self.marketplace.wert_publication_fees_private_key,
             ),
             ("WERT_API_KEY", &mut self.marketplace.wert_api_key),
+            ("TRANSAK_API_KEY", &mut self.marketplace.transak_api_key),
+            (
+                "TRANSAK_API_SECRET",
+                &mut self.marketplace.transak_api_secret,
+            ),
+            (
+                "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+                &mut self.marketplace.transak_refresh_access_token_auth,
+            ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
             ("OZ_RELAYER_API_KEY", &mut self.economy.oz_relayer_api_key),
@@ -859,6 +869,9 @@ mod tests {
         "WERT_PRIVATE_KEY",
         "WERT_PUBLICATION_FEES_PRIVATE_KEY",
         "WERT_API_KEY",
+        // Transak's partner credentials: their shape is Transak's.
+        "TRANSAK_API_KEY",
+        "TRANSAK_API_SECRET",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
@@ -1330,6 +1343,9 @@ mod tests {
             "WERT_PRIVATE_KEY",
             "WERT_PUBLICATION_FEES_PRIVATE_KEY",
             "WERT_API_KEY",
+            "TRANSAK_API_KEY",
+            "TRANSAK_API_SECRET",
+            "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",

@@ -4,9 +4,8 @@
 
 import { Avatar } from './Avatar'
 import { Icon, type IconName } from './icons'
-import { Tooltip } from './Tooltip'
-import { MaskIcon } from './MaskIcon'
 import styles from './IconButton.module.css'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 interface IconButtonProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'title'> {
@@ -58,7 +57,7 @@ export function IconButton({
   ...rest
 }: IconButtonProps): React.JSX.Element {
   return (
-    <Tooltip label={tooltip ?? label} shortcut={shortcut} side="right" variant="rail" quiet={quiet}>
+    <Tooltip appearance="hud" label={tooltip ?? label} shortcut={shortcut} side="right" variant="rail" disabled={quiet}>
     <button
       type={type}
       className={`${styles.btn} ${avatar ? styles.portrait : ''} ${active ? styles.active : ''} ${className}`.replace(/\s+/g, ' ').trim()}

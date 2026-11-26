@@ -46,11 +46,13 @@ transaction as its rows. Two rules:
 - The other readers need the index complete and published within 30 minutes
   on the networks they read (wearables both, emotes Polygon), and the lists
   also the items mirror's first complete pass; otherwise they answer the
-  `nft-index` unavailable envelope. The open listings legs of `/v1/orders`
-  and `/v1/orders/open-by-items` require ownership for every off-chain NFT
-  listing. They count the listings backed by the NFT or land-authz
-  publication and report `x-listings-owner-check: checked`. The legacy
-  orders continue to use the configured graph readers.
+  `nft-index` unavailable envelope. `/v1/orders` and
+  `/v1/orders/open-by-items` require proof of ownership for every off-chain
+  NFT listing and report `x-listings-owner-check: checked`. A walking node
+  reads both order legs on the same
+  [legacy book snapshot](2026-11-24-legacy-orders-from-the-nft-index.md).
+  A graph-backed legacy reader also requires the NFT or land-authz
+  publication for its off-chain listings.
 
 Neither rule compares `folded_block` with `last_block`: each pass advances
 `last_block` before it folds and publishes, so that equality is false for part

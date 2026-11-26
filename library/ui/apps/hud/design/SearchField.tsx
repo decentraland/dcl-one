@@ -1,8 +1,9 @@
-// SearchField — pill input with a leading magnifier. Controlled (`value`) or
-// uncontrolled (`defaultValue`); design references eordano/dcl-react-ui.
+// SearchField — the shared SearchBar in its HUD look, with a leading magnifier. Controlled (`value`) or
+// uncontrolled (`defaultValue`), with an Enter handler.
 
 import { useState } from 'react'
-import styles from './SearchField.module.css'
+import { MaskIcon, SearchBar } from '@dcl/one-ui'
+import closeIcon from '../assets/backpack/icon-close.webp'
 
 interface SearchFieldProps {
   /** 'light': off-white field with dark ink and a clear button (menu pages). */
@@ -40,36 +41,33 @@ export function SearchField({
     if (!isControlled) setInternal(next)
     onChange?.(next)
   }
-  const set = (e: React.ChangeEvent<HTMLInputElement>): void => setValue(e.target.value)
-
+  const clears = variant === 'light' || clearable
   return (
-    <label className={`${styles.search} ${variant === 'light' ? styles.light : ''} ${size === 'sm' ? styles.sm : ''}`.trim()}>
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" className={styles.icon}>
-        <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-      <input
-        className={styles.input}
-        type="text"
-        aria-label={placeholder}
-        placeholder={placeholder}
-        value={v}
-        onChange={set}
-        onKeyDown={onSubmit != null ? (e) => { if (e.key === 'Enter') onSubmit(e.currentTarget.value) } : undefined}
-      />
-      {(variant === 'light' || clearable) && v !== '' && (
-        <button
-          type="button"
-          className={`${styles.clear} ${variant === 'light' ? '' : styles.clearDark}`.trim()}
-          aria-label="Clear search"
-          onClick={() => {
-            setValue('')
-            onClear?.()
-          }}
-        >
-          <span className={styles.clearGlyph} aria-hidden="true" />
-        </button>
-      )}
-    </label>
+    <SearchBar
+      appearance="hud"
+      variant={variant}
+      fieldSize={size}
+      label={placeholder}
+      placeholder={placeholder}
+      autoComplete={undefined}
+      value={v}
+      onValueChange={setValue}
+      onKeyDown={onSubmit != null ? (e) => { if (e.key === 'Enter') onSubmit(e.currentTarget.value) } : undefined}
+      leading={
+        <svg viewBox="0 0 16 16" width="15" height="15">
+          <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      }
+      clearIcon={<MaskIcon src={closeIcon} size={10} />}
+      onClear={
+        clears
+          ? () => {
+              setValue('')
+              onClear?.()
+            }
+          : undefined
+      }
+    />
   )
 }
