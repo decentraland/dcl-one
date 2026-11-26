@@ -8,7 +8,7 @@ use bevy::{
     },
     prelude::*,
     render::camera::CameraUpdateSystem,
-    transform::systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
+    transform::plugins::propagate_transforms,
 };
 use common::{anim_last_system, sets::PostUpdateSets, util::ModifyComponentExt};
 use dcl_types::{
@@ -53,20 +53,11 @@ impl Plugin for TransformAndParentPlugin {
                 .in_set(PostUpdateSets::AttachSync),
         );
 
-        // rerun the entire transform tree update
-        // TODO efficiency, either:
-        // - make propagate_parent_transforms generic over TransformTreeChanged type?
-        // - only update things with colliders below?
-        // - manually calculate collider global transforms?
+        // the same propagation systems as bevy's `TransformPropagate`, so each of the two runs
+        // walks only the trees changed since the other
         app.add_systems(
             PostUpdate,
-            (
-                mark_dirty_trees,
-                propagate_parent_transforms,
-                sync_simple_transforms,
-            )
-                .chain()
-                .in_set(PostUpdateSets::EarlyTransformPropagate),
+            propagate_transforms.in_set(PostUpdateSets::EarlyTransformPropagate),
         );
     }
 }

@@ -23,7 +23,7 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    default_color_grading, scatter_bloom, scatter_lerp, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
     GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
@@ -108,6 +108,10 @@ pub struct PlayerModifiers {
     pub block_jump: bool,
     pub block_emote: bool,
     pub areas: Vec<ActiveAvatarArea>,
+    /// The scenes whose areas hide the primary player's avatar, passport or nametag now.
+    pub hide_scenes: Vec<Entity>,
+    /// The scenes whose areas or input modifiers change or block the primary player's movement now.
+    pub locomotion_scenes: Vec<Entity>,
 }
 
 #[derive(Clone, Debug)]
@@ -300,6 +304,13 @@ pub struct PlayerEmoteTriggered {
     pub source: &'static str,
 }
 
+/// The local player reacted with an emoji over their avatar: `emoji_index` is the emoji's index
+/// on the wire, the `react_situation` reaction id.
+#[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerReacted {
+    pub emoji_index: i32,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from
@@ -463,6 +474,8 @@ pub struct PrimaryCamera {
     pub roll: f32,
     // override
     pub scene_override: Option<CameraOverride>,
+    /// The scene whose camera mode area or virtual camera set `scene_override`.
+    pub scene_override_owner: Option<Entity>,
 }
 
 /// Where the camera sits relative to the player, with a scene's override applied.
@@ -540,6 +553,7 @@ impl Default for PrimaryCamera {
             roll: Default::default(),
             distance: 1.0,
             scene_override: None,
+            scene_override_owner: None,
         }
     }
 }
@@ -691,6 +705,9 @@ pub struct AppConfig {
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
     pub constrain_scene_ui: bool,
+    /// "Allow overriding scene controls": the player may change what the scene they stand in
+    /// controls, today the time of day.
+    pub allow_scene_control_override: bool,
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
@@ -767,6 +784,7 @@ impl Default for AppConfig {
             scene_log_to_console: false,
             max_avatars: 20,
             constrain_scene_ui: false,
+            allow_scene_control_override: false,
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,
@@ -872,7 +890,8 @@ impl AppConfig {
 
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
-    /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 2: moved configs off an old bloom level; bloom is only on or off now (`BloomSetting`),
+    /// so there is nothing left to move.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
@@ -885,9 +904,6 @@ impl AppConfig {
         let default = Self::default();
         if self.settings_generation < 1 {
             self.reset_preset_settings(&default);
-        }
-        if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
-            self.graphics.bloom = default.graphics.bloom;
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
@@ -1188,7 +1204,7 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
+            bloom: BloomSetting::On,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
@@ -1457,11 +1473,13 @@ pub enum FogSetting {
     On,
 }
 
+/// Bloom is on or off. A saved config may name one of the two levels there used to be: both
+/// read as on. On is saved as `High`, the old level it draws, so an older client reads it.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BloomSetting {
     Off,
-    Low,
-    High,
+    #[serde(rename = "High", alias = "Low", alias = "On")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1711,6 +1729,11 @@ impl std::str::FromStr for PortableExperiencesToggle {
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
 
+/// On the scene whose request to turn nearby voice off the player is visiting: the answer of
+/// the `DisableVoice` permission, `None` until there is one. Removed when the player leaves.
+#[derive(Component)]
+pub struct VoiceOffAnswer(pub Option<bool>);
+
 /// On the root of a scene loaded as a portable experience whose scene.json also declares
 /// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
 #[derive(Component)]
@@ -1844,6 +1867,11 @@ pub struct PermissionUsed {
     pub additional: Option<String>,
     pub scene: String,
     pub was_allowed: bool,
+    /// `None` for a use: the scene asked and was allowed or refused. `Some` reports instead that
+    /// what the permission allows started (`true`) or stopped (`false`) acting on the player,
+    /// such as a camera the scene holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_force: Option<bool>,
 }
 
 #[derive(Resource)]
@@ -2128,10 +2156,18 @@ pub struct SceneGlobalLight {
     pub layers: RenderLayers,
 }
 
-#[derive(Resource)]
+/// The time the sky shows and who sets it. Sent whole to every scene, which reads it with
+/// `~system/Runtime.getWorldTime`.
+#[derive(Resource, Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct TimeOfDay {
     /// secs since midnight
     pub time: f32,
+    /// The scene the player stands in holds the time of day and the player may not change it.
+    pub locked: bool,
+    /// The speed of the player's clock; 0 when it is stopped.
+    pub speed: f32,
+    /// The player's clock sets the sky: no scene's time does.
+    pub follows_clock: bool,
 }
 
 impl TimeOfDay {
@@ -2274,7 +2310,8 @@ pub struct MicState {
     /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
     scene_blocked: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// The scene the player stands in turns nearby voice off, and the player's `DisableVoice`
+    /// permission allows it.
     #[serde(skip)]
     scene_disabled: bool,
     /// The current scene's room refused the player as banned.
@@ -2377,7 +2414,7 @@ pub struct DebugInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GlobalCrdtStateUpdate {
     Crdt(Vec<u8>, dcl_component::Localizer),
-    Time(f32),
+    Time(TimeOfDay),
     /// Vertical FOV of the active camera, in radians. Pushed when the value
     /// changes (camera zoom etc.).
     CameraFov(f32),
@@ -2756,22 +2793,26 @@ mod tests {
 
     #[test]
     fn bloom_weighs_mips_by_scatter() {
-        let b = scatter_bloom();
-        assert_eq!(b.prefilter.threshold, 1.0);
-        // the knee is threshold * 0.5; bevy: knee = threshold * softness
-        assert_eq!(b.prefilter.threshold_softness, 0.5);
-        assert_eq!(b.high_pass_frequency, 1.0);
-        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
-        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
-        let max_mip = 7.0;
-        let mut weight = 1.0;
-        for mip in 0..=7 {
-            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
-            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
-            assert!(
-                (weight - scatter).abs() < 0.002,
-                "mip {mip}: bevy {weight} vs scatter {scatter}"
-            );
+        // the Explorer's scatter and the avatar preview's
+        for setting in [BLOOM_SCATTER, 0.6] {
+            let b = scatter_bloom(setting);
+            assert_eq!(b.prefilter.threshold, 1.0);
+            // the knee is threshold * 0.5; bevy: knee = threshold * softness
+            assert_eq!(b.prefilter.threshold_softness, 0.5);
+            assert_eq!(b.high_pass_frequency, 1.0);
+            // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once:
+            // mip i weighs (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+            let s = scatter_lerp(setting);
+            let max_mip = 7.0;
+            let mut weight = 1.0;
+            for mip in 0..=7 {
+                weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+                let scatter = (1.0 - s) * s.powi(mip);
+                assert!(
+                    (weight - scatter).abs() < 0.002,
+                    "scatter {setting}, mip {mip}: bevy {weight} vs scatter {scatter}"
+                );
+            }
         }
     }
 
@@ -2968,7 +3009,7 @@ mod tests {
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
-        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::On, true));
         assert_eq!(
             (
                 g.shadow_settings,
@@ -3033,6 +3074,19 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_bloom_level_reads_as_on() {
+        let read = |saved: &str| serde_json::from_str::<BloomSetting>(saved).unwrap();
+        assert_eq!(read(r#""Low""#), BloomSetting::On);
+        assert_eq!(read(r#""High""#), BloomSetting::On);
+        assert_eq!(read(r#""On""#), BloomSetting::On);
+        assert_eq!(read(r#""Off""#), BloomSetting::Off);
+        // saved under the old name an older client reads
+        let write = |setting| serde_json::to_string(&setting).unwrap();
+        assert_eq!(write(BloomSetting::On), r#""High""#);
+        assert_eq!(write(BloomSetting::Off), r#""Off""#);
+    }
+
+    #[test]
     fn generation_4_lands_on_medium_and_keeps_the_rest() {
         let mut config = AppConfig {
             settings_generation: 3,
@@ -3042,7 +3096,7 @@ mod tests {
         };
         let g = &mut config.graphics;
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
-        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::Off, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
         g.lens_flare = false;
         (g.ambient_brightness, g.oob) = (10, 0.0);

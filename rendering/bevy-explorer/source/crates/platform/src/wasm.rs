@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{default_color_grading, scatter_bloom};
+use crate::{default_color_grading, scatter_bloom, BLOOM_SCATTER};
 use anyhow::anyhow;
 use bevy::log::{error, warn};
 use bevy::{
@@ -255,7 +255,7 @@ pub fn default_camera_components() -> impl Bundle {
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
         default_color_grading(),
-        scatter_bloom(),
+        scatter_bloom(BLOOM_SCATTER),
         ShadowFilteringMethod::Gaussian,
     )
 }

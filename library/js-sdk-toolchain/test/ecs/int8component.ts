@@ -1,12 +1,13 @@
-import { ByteBuffer, ComponentType, Entity, IEngine } from '../../packages/@dcl/ecs/src/engine'
-import { ISchema } from '../../packages/@dcl/ecs/src/schemas/ISchema'
+import type { ByteBuffer, Entity, IEngine } from '../../packages/@dcl/ecs/src/engine'
+import { ComponentType } from '../../packages/@dcl/ecs/src/engine'
+import type { ISchema } from '../../packages/@dcl/ecs/src/schemas/ISchema'
 import { componentNumberFromName } from '../../packages/@dcl/ecs/src/components/component-number'
 import {
   createGetCrdtMessagesForLww,
   createDumpLwwFunctionFromCrdt,
   createUpdateLwwFromCrdt
 } from '../../packages/@dcl/ecs/src/engine/lww-element-set-component-definition'
-import * as components from '../../packages/@dcl/ecs/src/components'
+import type * as components from '../../packages/@dcl/ecs/src/components'
 
 export const componentName = 'int8'
 export const ID = componentNumberFromName(componentName)

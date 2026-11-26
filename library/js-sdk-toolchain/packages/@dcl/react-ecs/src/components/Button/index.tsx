@@ -1,10 +1,10 @@
-import { PBUiText } from '@dcl/ecs'
+import type { PBUiText } from '@dcl/ecs'
 
 import { ReactEcs } from '../../react-ecs'
 import { getFont, getFontSize, getTextAlign, getTextWrap } from '../Label/utils'
 import { parseUiBackground } from '../uiBackground'
 import { parseUiTransform } from '../uiTransform'
-import { UiButtonProps } from './types'
+import type { UiButtonProps } from './types'
 
 function getButtonProps(props: UiButtonProps) {
   if (props.variant === 'secondary') {
@@ -35,7 +35,18 @@ function getButtonProps(props: UiButtonProps) {
  */
 /* @__PURE__ */
 export function Button(props: UiButtonProps) {
-  const { uiTransform, uiBackground, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, ...otherProps } = props
+  const {
+    uiTransform,
+    uiBackground,
+    onMouseDown,
+    onMouseUp,
+    onMouseEnter,
+    onMouseLeave,
+    onMouseDrag,
+    onMouseDragLocked,
+    onMouseDragEnd,
+    ...otherProps
+  } = props
   const buttonProps = getButtonProps(props)
   const uiBackgroundProps = parseUiBackground({
     ...buttonProps.uiBackground,
@@ -71,6 +82,9 @@ export function Button(props: UiButtonProps) {
       onMouseUp={!!props.disabled ? undefined : onMouseUp}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onMouseDrag={onMouseDrag}
+      onMouseDragLocked={onMouseDragLocked}
+      onMouseDragEnd={onMouseDragEnd}
       uiTransform={uiTransformProps}
       uiText={textProps}
       uiBackground={uiBackgroundProps}

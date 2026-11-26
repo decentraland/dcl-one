@@ -1,7 +1,11 @@
+import type {
+  Entity,
+  PBMaterial_PbrMaterial,
+  PBMaterial_UnlitMaterial,
+} from '@dcl/sdk/ecs'
 import {
   AvatarModifierArea,
   AvatarModifierType,
-  Entity,
   GltfContainer,
   GltfNodeModifiers,
   InputAction,
@@ -9,8 +13,6 @@ import {
   Material,
   MaterialTransparencyMode,
   MeshRenderer,
-  PBMaterial_PbrMaterial,
-  PBMaterial_UnlitMaterial,
   PointerEventType,
   TextAlignMode,
   TextShape,

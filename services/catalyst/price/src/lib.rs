@@ -62,6 +62,7 @@ pub mod poller;
 pub mod store;
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;

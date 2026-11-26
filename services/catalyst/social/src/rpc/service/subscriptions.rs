@@ -109,10 +109,10 @@ impl SocialServiceImpl {
                 else {
                     break;
                 };
-                if page.is_empty() {
+                let Some(last) = page.last() else {
                     break;
-                }
-                after = page.last().unwrap().clone();
+                };
+                after = last.clone();
                 let Ok(Ok(profiles)) = tokio::time::timeout(
                     crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
                     ctx.profiles().get_profiles_with_actors_result(&page),

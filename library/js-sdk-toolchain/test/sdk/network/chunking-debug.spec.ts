@@ -1,9 +1,11 @@
-import { Entity, Schemas, Engine } from '../../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../../packages/@dcl/ecs/dist'
+import { Schemas, Engine } from '../../../packages/@dcl/ecs/dist'
 import * as components from '../../../packages/@dcl/ecs/dist/components'
 import { engineToCrdt } from '../../../packages/@dcl/sdk/network/state'
 import { ReadWriteByteBuffer } from '../../../packages/@dcl/ecs/dist/serialization/ByteBuffer'
 import { readMessage } from '../../../packages/@dcl/ecs/dist/serialization/crdt/message'
-import { CrdtMessage, CrdtMessageType } from '../../../packages/@dcl/ecs'
+import type { CrdtMessage } from '../../../packages/@dcl/ecs'
+import { CrdtMessageType } from '../../../packages/@dcl/ecs'
 
 function getEngineWithComponents() {
   const engine = Engine()

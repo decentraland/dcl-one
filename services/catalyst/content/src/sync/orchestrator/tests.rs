@@ -398,7 +398,7 @@ struct TestPeer {
     http: tokio::task::JoinHandle<()>,
     down: Arc<AtomicBool>,
     snapshots: watch::Sender<Value>,
-    files: Arc<StdMutex<HashMap<String, Vec<u8>>>>,
+    files: Arc<SyncMutex<HashMap<String, Vec<u8>>>>,
     snapshot_gate: RequestGate,
     content_gate: RequestGate,
 }
@@ -416,7 +416,6 @@ impl TestPeer {
         let hash = crate::auth::hash_bytes_v1(&snapshot);
         self.files
             .lock()
-            .unwrap()
             .extend([(id.clone(), entity), (hash.clone(), snapshot)]);
         self.snapshots.send_replace(json!([{
             "hash": hash,
@@ -496,7 +495,7 @@ async fn spawn_test_peer(
         deltas.push(deployment);
         ids.push(id);
     }
-    let files = Arc::new(StdMutex::new(files));
+    let files = Arc::new(SyncMutex::new(files));
     let (snapshots, listed) = watch::channel(snapshots);
     let snapshot_gate = RequestGate::default();
     let content_gate = RequestGate::default();
@@ -532,7 +531,6 @@ async fn spawn_test_peer(
                     gate.enter().await;
                     files
                         .lock()
-                        .unwrap()
                         .get(&id)
                         .cloned()
                         .ok_or(axum::http::StatusCode::NOT_FOUND)
