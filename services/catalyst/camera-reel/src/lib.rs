@@ -279,7 +279,8 @@ impl State {
     }
 
     /// The verified signer of a write; every refusal is 401, a request a
-    /// scene signed included.
+    /// scene signed included, except a contract-wallet check the client
+    /// source's budget refused (429).
     pub async fn require_auth(
         &self,
         headers: &HeaderMap,
@@ -295,6 +296,9 @@ impl State {
         .await
         .map_err(|e| {
             tracing::debug!(error = %e, "auth chain verification failed");
+            if matches!(e, SignedFetchError::RateLimited) {
+                return ApiError::TooManyRequests(e.to_string());
+            }
             ApiError::SignedFetchUnauthorized
         })
     }

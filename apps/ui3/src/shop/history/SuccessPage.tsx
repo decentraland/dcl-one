@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router";
 
-import Spinner from "../../atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import { useShopWallet } from "../wallet/context";
 import { explorerTxUrl } from "../checkout/chain/config";
 import { formatCredits } from "@shop/checkout/lib/currency";
@@ -60,7 +60,7 @@ function SuccessScreen({ state }: { state: SuccessNavState }) {
       <main className="shop-success" aria-labelledby="shop-success-title">
         {settlement === "pending" || settlement === "indexing" ? (
           <section className="shop-success__status" role="status" aria-live="polite" data-testid={settlement === "indexing" ? "success-indexing" : "success-pending"}>
-            <Spinner size={40} />
+            <Spinner variant="light" size={40} aria-hidden />
             <h1 id="shop-success-title" className="shop-success__title">
               {settlement === "indexing" ? "Finalizing your purchase…" : "Processing your purchase…"}
             </h1>

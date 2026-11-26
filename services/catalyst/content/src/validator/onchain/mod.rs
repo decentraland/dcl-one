@@ -177,13 +177,15 @@ struct L2Contracts {
 static CONTRACTS: LazyLock<VendoredContracts> =
     LazyLock::new(|| serde_json::from_str(CONTRACTS_JSON).expect("vendored contracts.json"));
 
+/// An `ETH_NETWORK` as a static label: `mainnet`, `sepolia`, else `unknown`.
+fn l1_network(eth_network: &str) -> &'static str {
+    crate::shared::network::ChainPair::from_eth_network(eth_network)
+        .map_or("unknown", |pair| pair.names().0)
+}
+
 /// The L2 network paired with an `ETH_NETWORK`.
 fn l2_network(eth_network: &str) -> Option<&'static str> {
-    match eth_network {
-        "mainnet" => Some("polygon"),
-        "sepolia" => Some("amoy"),
-        _ => None,
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network).map(|pair| pair.names().1)
 }
 
 /// The `eth_chainId` each network's RPC answers.
@@ -261,7 +263,13 @@ fn transient(e: &BlockError) -> bool {
 
 /// One block, read again after a [`transient`] error, each wait doubling with
 /// up to as much again in jitter.
-async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, BlockError> {
+/// Each retry counts in `dcl_block_fetch_retries_total` under `network`.
+async fn read_block(
+    http: &Outbound,
+    url: &str,
+    network: &'static str,
+    tag: BlockTag,
+) -> Result<BlockInfo, BlockError> {
     let rpc = Rpc::new(http, url).with_timeout(BLOCK_READ_TIMEOUT);
     let rpc = &rpc;
     let mut attempt = 0;
@@ -280,6 +288,7 @@ async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockIn
                 Ok(match rpc.block(tag).await {
                     Err(e) if !last && transient(&e) => {
                         tracing::debug!(error = %e, ?tag, attempt, "block read failed, asking again");
+                        crate::series::block_fetch_retried(network);
                         RetryDecision::Retry {
                             after: Some(wait),
                             rate_limited: false,
@@ -306,18 +315,21 @@ struct Chain {
     /// The blocks of recent entity timestamps (ms), when they were found.
     memo: parking_lot::Mutex<HashMap<i64, (Instant, Blocks)>>,
     name: &'static str,
+    /// `mainnet`, `sepolia`, `polygon` or `amoy`.
+    network: &'static str,
     chain_id: Option<u64>,
 }
 
 impl Chain {
-    fn new(http: Outbound, url: String, name: &'static str, chain_id: Option<u64>) -> Self {
+    fn new(http: Outbound, url: String, name: &'static str, network: &'static str) -> Self {
         Self {
             http,
             url,
             search: BlockSearch::new(),
             memo: parking_lot::Mutex::new(HashMap::new()),
             name,
-            chain_id,
+            network,
+            chain_id: chain_id(network),
         }
     }
 
@@ -327,7 +339,9 @@ impl Chain {
 
     async fn block_at(&self, timestamp: i64) -> Result<Option<BlockInfo>, ValidatorError> {
         self.search
-            .block_at(timestamp, |tag| read_block(&self.http, &self.url, tag))
+            .block_at(timestamp, |tag| {
+                read_block(&self.http, &self.url, self.network, tag)
+            })
             .await
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }
@@ -656,13 +670,13 @@ impl OnChainAccess {
         l1_url: Option<String>,
         l2_url: Option<String>,
     ) -> Self {
-        let l1 = match (CONTRACTS.l1.get(eth_network), l1_url) {
+        let l1 = match (CONTRACTS.l1.get(l1_network(eth_network)), l1_url) {
             (None, _) => Err(format!(
                 "ETH_NETWORK {eth_network} has no checker contracts"
             )),
             (_, None) => Err("no L1 RPC is configured (ETH_RPC_URL)".to_string()),
             (Some(c), Some(url)) => Ok(L1 {
-                chain: Chain::new(http.clone(), url, "L1", chain_id(eth_network)),
+                chain: Chain::new(http.clone(), url, "L1", l1_network(eth_network)),
                 contracts: c.clone(),
             }),
         };
@@ -673,7 +687,7 @@ impl OnChainAccess {
             )),
             (_, None) => Err("no L2 RPC is configured (RPC_ENDPOINT_POLYGON)".to_string()),
             (Some(c), Some(url)) => Ok(L2 {
-                chain: Chain::new(http, url, "L2", l2_name.and_then(chain_id)),
+                chain: Chain::new(http, url, "L2", l2_name.unwrap_or("unknown")),
                 contracts: c.clone(),
             }),
         };

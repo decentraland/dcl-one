@@ -26,6 +26,13 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
@@ -239,8 +246,10 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
-  only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
+- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|catalog [urns]|emote <name>|...]` (scene preview
+  only): local demo avatars with random base wearables, up to 1024. `catalog <urn,urn,...>`
+  adds wearable URNs to a catalog the random looks (`spawn`, `randomize`) draw from instead;
+  `catalog` alone empties it. `layout grid` (the default)
   stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
   outwards; `layout around` fills a disc centred
   on the player, nearest first, so part of the crowd is behind the camera.
@@ -252,7 +261,7 @@ State, in every build:
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
-  `layout`, `seed`, `maleOnly`, `wearables`, `emote`; the avatars a `clear` or `remove-random`
+  `layout`, `seed`, `maleOnly`, `wearables`, `catalog` (its size), `emote`; the avatars a `clear` or `remove-random`
   removes are not counted in its own reply. The Avatar debug section of the debug panel shows
   the counts and sets the cap, layout and seed. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
@@ -265,8 +274,14 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
+  `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
+  neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
+  `HideAvatarsNametags` while it hides the player's avatar, passport or nametag,
+  `SetLocomotion` while it changes or blocks the player's movement). The HUD's permissions
+  popover lists the ones of the scene the player stands in under "In force now".
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
-  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
+  stands in turns nearby voice off or its room refuses the player) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
   `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the

@@ -2,7 +2,7 @@ import { areConnected } from '../../../packages/@dcl/ecs/src/runtime/helpers/coo
 import { initComponents } from '../../../packages/@dcl/sdk-commands/src/components'
 import * as v from '../../../packages/@dcl/sdk-commands/src/logic/scene-validations'
 import * as projectFiles from '../../../packages/@dcl/sdk-commands/src/logic/project-files'
-import { Stats } from 'fs'
+import type { Stats } from 'fs'
 
 describe('scene validations', () => {
   it('sanity scene validations', async () => {

@@ -292,5 +292,12 @@ async fn replace_registry(conn: &mut PgConnection) -> anyhow::Result<()> {
         .execute(&mut *conn)
         .await?;
     fold_registry_data(conn, -1, Some(ESTATE_REGISTRY_MAINNET)).await?;
+    // The refold rewrites names in place, which no log position or count has
+    // to show: the explorer map's marks (`land_map::marks_sql`) read this.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET rebuilds = rebuilds + 1 WHERE indexer='nft' AND network='ethereum'",
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }

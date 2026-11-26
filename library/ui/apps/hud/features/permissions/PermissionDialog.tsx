@@ -59,18 +59,21 @@ export function LockIcon(): React.JSX.Element {
 
 type Mode =
   | { kind: 'request'; request: PermissionRequestMessage; onResolve: (allow: boolean, level: PermissionLevelChoice) => void }
-  | { kind: 'review'; subject: PermissionSubject; initial: PermissionRuleLevel; onRule: (allow: boolean, level: PermissionRuleLevel) => void }
+  | { kind: 'review'; subject: PermissionSubject; initial: PermissionRuleLevel; storedOnly?: boolean; onRule: (allow: boolean, level: PermissionRuleLevel) => void }
 
 function Card({
   label,
   prompt,
   additional,
   initial,
+  storedOnly = false,
   onChoose
 }: {
   label: string
   prompt: React.ReactNode
   additional?: string
+  /** Leave "This visit" out: the choice is about a stored rule. */
+  storedOnly?: boolean
   initial: PermissionRuleLevel
   onChoose: (allow: boolean, level: PermissionRuleLevel) => void
 }): React.JSX.Element {
@@ -87,7 +90,7 @@ function Card({
       {additional ? <div className={styles.additional}>{additional}</div> : null}
 
       <div className={styles.options} role="radiogroup" aria-label="Apply this decision">
-        {LEVELS.map((opt) => (
+        {LEVELS.filter((opt) => !storedOnly || opt.value !== 'visit').map((opt) => (
           <label key={opt.value} className={styles.option}>
             <input
               className={styles.input}
@@ -133,8 +136,8 @@ export function PermissionDialog(mode: Mode): React.JSX.Element {
       />
     )
   }
-  const { subject, initial, onRule } = mode
-  return <Card label="Scene permission review" prompt={describeSubject(subject)} initial={initial} onChoose={onRule} />
+  const { subject, initial, storedOnly, onRule } = mode
+  return <Card label="Scene permission review" prompt={describeSubject(subject)} initial={initial} storedOnly={storedOnly} onChoose={onRule} />
 }
 
 /** A visit answer or a scene rule: "The scene X may / may not / asks before it can …" (a visit
@@ -186,17 +189,20 @@ export function openPermissionDialog(
 }
 
 /** Review a visit answer or a stored rule: the same card and scopes, applied to next time, opening
- *  on `initial` (a stored rule's own level). Dismissing it changes nothing. */
+ *  on `initial` (a stored rule's own level). Dismissing it changes nothing. `storedOnly` leaves
+ *  "This visit" out, whose answer forgets the rules of every level. */
 export function openPermissionReview(
   subject: PermissionSubject,
   setRule: (subject: PermissionSubject, allow: boolean, level: PermissionRuleLevel) => void,
-  initial: PermissionRuleLevel = 'visit'
+  initial: PermissionRuleLevel = 'visit',
+  storedOnly = false
 ): () => void {
   return openPopup((close) => (
     <PermissionDialog
       kind="review"
       subject={subject}
       initial={initial}
+      storedOnly={storedOnly}
       onRule={(allow, level) => {
         setRule(subject, allow, level)
         close()
