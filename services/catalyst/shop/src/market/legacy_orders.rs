@@ -49,9 +49,10 @@ use sqlx::PgConnection;
 use super::chain_walk::ChainNet;
 
 /// The fold of one network (`$1`): the tokens with an order event past
-/// `$2`, and those a sale-history repair queued (`shop.legacy_order_refold`,
-/// consumed here), every order of each refolded over the token's history.
-/// An unchanged order is left alone. The event that ends an order is one
+/// `$2`, and those queued because a writer changed an order event at or
+/// below the book's marker (`shop.legacy_order_refold`, filled by a trigger
+/// on `shop.nft_event` for every writer and consumed here), every order of
+/// each refolded over the token's history. An unchanged order is left alone. The event that ends an order is one
 /// backward probe of `nft_event_token_idx` per order (`LATERAL ... LIMIT
 /// 1`), not a join of two derived sets: the planner estimates those at one
 /// row each, and as a join it rescanned every order per order (a rebuild of
@@ -178,39 +179,6 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     .execute(&mut *conn)
     .await?;
     Ok(written)
-}
-
-/// Writes the sales a sale-history repair read back and queues their tokens
-/// for the next order fold of `net`, on the repair's transaction.
-/// `nft_index::insert_events` fills a sale's missing buyer, seller or block
-/// time, or inserts a sale the walk missed. Those sales lie at or below the
-/// book's marker, and the fold refolds only the tokens touched past it, so
-/// without the queue (`shop.legacy_order_refold`) a repair would reach the
-/// book only on a rebuild.
-pub async fn repair_sales(
-    conn: &mut PgConnection,
-    net: ChainNet,
-    sales: &[super::nft_index::NftEvent],
-) -> sqlx::Result<()> {
-    super::nft_index::insert_events(&mut *conn, net, sales).await?;
-    if sales.is_empty() {
-        return Ok(());
-    }
-    let (contracts, tokens): (Vec<&str>, Vec<&str>) = sales
-        .iter()
-        .map(|e| (e.contract_address.as_str(), e.token_id.as_str()))
-        .unzip();
-    sqlx::query(
-        "INSERT INTO shop.legacy_order_refold (network, contract_address, token_id) \
-         SELECT DISTINCT $1, c, t::numeric FROM UNNEST($2::text[], $3::text[]) AS u(c, t) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(net.db_name())
-    .bind(contracts)
-    .bind(tokens)
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
 }
 
 /// Whether `net`'s order book may be read beside the published nft fold on
@@ -765,12 +733,14 @@ mod tests {
         db.drop().await;
     }
 
-    /// A sale-history repair rewrites sales at or below the book's marker:
-    /// it fills the block time of `b`'s sale at 30 (only `updated_at`
-    /// changes), and inserts `e`'s sale at 42, which the walk missed (so
-    /// `f`'s creation at 41 had cancelled `e`); then it fills `b`'s missing
-    /// buyer. The next fold has no order event past its marker each time,
-    /// and refolds the tokens the repair queued; the queue is then empty.
+    /// A sale-history repair, by this binary or an earlier one (both write
+    /// through `nft_index::insert_events`), rewrites sales at or below the
+    /// book's marker: it fills the block time of `b`'s sale at 30 (only
+    /// `updated_at` changes), and inserts `e`'s sale at 42, which the walk
+    /// missed (so `f`'s creation at 41 had cancelled `e`); then it fills
+    /// `b`'s missing buyer. The trigger on `shop.nft_event` queues those
+    /// tokens; the next fold has no order event past its marker each time,
+    /// refolds them, and empties the queue.
     #[tokio::test]
     async fn a_sale_repaired_below_the_marker_reaches_the_book_on_the_next_fold() {
         let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_repair").await
@@ -797,8 +767,11 @@ mod tests {
         let repair = |sales: Vec<nft_index::NftEvent>| {
             let pool = db.pool.clone();
             async move {
+                // The repair's write as every binary makes it, an earlier
+                // one's included: nothing here queues the tokens but the
+                // trigger on `shop.nft_event`.
                 let mut tx = pool.begin().await.unwrap();
-                repair_sales(&mut tx, ChainNet::Matic, &sales)
+                nft_index::insert_events(&mut tx, ChainNet::Matic, &sales)
                     .await
                     .unwrap();
                 tx.commit().await.unwrap();

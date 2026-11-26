@@ -719,14 +719,14 @@ CREATE TABLE shop.legacy_order_cursor (
     CONSTRAINT legacy_order_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
--- The tokens whose order events a sale-history repair rewrote at or below the
--- book's marker (`shop.legacy_order_cursor`): the repair fills a sale's buyer,
--- seller or block time, or inserts a sale the walk missed, on blocks the
--- book has already folded, so a fold that refolds only the tokens touched
--- past its marker would never see them. The repair inserts the tokens in its
--- own transaction (sale_history.rs); the next order fold refolds them and
--- deletes them in its transaction, and a rebuild clears the network's.
--- Workload: a few rows per repair window, emptied by the next fold.
+-- The tokens whose order events a writer changed at or below the book's
+-- marker (`shop.legacy_order_cursor`): the sale-history repair fills a sale's
+-- buyer, seller or block time, or inserts a sale the walk missed, on blocks
+-- the book has already folded, so a fold that refolds only the tokens touched
+-- past its marker would never see them. The trigger below queues them for
+-- every writer, an earlier binary's included; the next order fold refolds
+-- them and deletes them in its transaction, and a rebuild clears the
+-- network's. Workload: a few rows per repair window, emptied by the next fold.
 CREATE TABLE shop.legacy_order_refold (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -734,6 +734,27 @@ CREATE TABLE shop.legacy_order_refold (
     PRIMARY KEY (network, contract_address, token_id),
     CONSTRAINT legacy_order_refold_network_known CHECK (network IN ('ethereum', 'matic'))
 );
+
+-- Queues the token of an order event written at or below its network's book
+-- marker. Only order events fire it; one past the marker is the fold's own.
+-- An `ON CONFLICT DO UPDATE` whose `WHERE` is false updates nothing and does
+-- not fire it.
+CREATE FUNCTION shop.queue_legacy_order_refold() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO shop.legacy_order_refold (network, contract_address, token_id)
+    SELECT NEW.network, NEW.contract_address, NEW.token_id
+    FROM shop.legacy_order_cursor c
+    WHERE c.network = NEW.network AND NEW.block_number <= c.folded_through
+    ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_event_order_refold
+AFTER INSERT OR UPDATE ON shop.nft_event
+FOR EACH ROW WHEN (NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.queue_legacy_order_refold();
 
 -- A database that predates the order book records the block its seed below
 -- covers (what the nft fold has folded, never a walked block past it) and

@@ -457,7 +457,7 @@ async fn repair_window(
             ensure!(order.tx_hash.is_some(), "legacy sale with no transaction");
             orders.push(order);
         }
-        super::legacy_orders::repair_sales(&mut tx, owner.net, &orders).await?;
+        nft_index::insert_events(&mut tx, owner.net, &orders).await?;
     } else {
         ix.write(&mut tx, &window.logs, &times.value).await?;
     }

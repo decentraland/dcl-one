@@ -5006,12 +5006,15 @@ Invariants:
   earlier binary ran during a rollout without writing it.
 - The sale-history repair rewrites `order_successful` rows at or below that
   block: it fills a missing buyer, seller or block time, and inserts a sale
-  the walk missed. In the same transaction it queues those tokens in
-  `shop.legacy_order_refold` (network, contract, token; primary key only).
-  The next order fold refolds them with the tokens touched past its marker,
-  and deletes them in its own transaction. A rebuild clears the network's.
-  The queue holds a repair window's tokens until the next fold, so it stays
-  small; the fold reads it by its primary key's leading `network`.
+  the walk missed. A row trigger on `shop.nft_event`, firing only for order
+  events, queues the token of any order event written at or below the
+  book's block in `shop.legacy_order_refold` (network, contract, token;
+  primary key only), whichever binary wrote it, an earlier one's included.
+  The next order fold refolds those tokens with the ones touched past its
+  marker, and deletes them in its own transaction; a rebuild clears the
+  network's. The queue holds a repair window's tokens until the next fold.
+  The trigger costs one primary-key read of `shop.legacy_order_cursor` per
+  order event written; transfers do not fire it.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries
