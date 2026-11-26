@@ -695,6 +695,7 @@ class SelectionTest(unittest.TestCase):
         for name in ('build.rs', 'crates/assets/build.rs', 'crates/dcl_component/build_quant.rs',
                      'local-harness/benchmark/src/main.rs', 'local-harness/web-driver/driver.mjs',
                      'crates/platform/src/native/deeplink/windows.rs', 'crates/platform/src/native/deeplink/macos.rs',
+                     'crates/platform/src/native.rs', 'crates/platform/src/native/dm_history.rs',
                      'deploy/macos/Info.plist'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
