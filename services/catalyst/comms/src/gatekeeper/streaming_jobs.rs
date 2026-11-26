@@ -1913,7 +1913,7 @@ mod tests {
             CleanupCommand::DurationExpiry,
         ] {
             // A world key names its scene; a key without one tells no scene admin.
-            let key = world.then(|| "fanout-scene");
+            let key = world.then_some("fanout-scene");
             let id = fanout_access_bound(&state, &place, command, key).await;
             cleanup_access(&state, id).await.unwrap();
             {

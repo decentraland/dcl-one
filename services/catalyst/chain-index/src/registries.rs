@@ -2,6 +2,8 @@
 //! authorization's `tokenAddress` is, where the land-authz index starts and
 //! the `index_cursor.network` row it keeps. `land_authz` re-exports these.
 
+use crate::shared::network::ChainPair;
+
 pub const LAND_REGISTRY_MAINNET: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
 pub const ESTATE_REGISTRY_MAINNET: &str = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
 pub const LAND_REGISTRY_SEPOLIA: &str = "0x42f4ba48791e2de32f5fbf553441c2672864bb33";
@@ -45,11 +47,10 @@ pub const LAND_SEPOLIA: LandNetwork = LandNetwork {
 /// The registries of `eth_network` (`mainnet` | `sepolia`, the
 /// `ETH_NETWORK` spellings); `None` for another network.
 pub fn land_network(eth_network: &str) -> Option<LandNetwork> {
-    match eth_network.trim().to_ascii_lowercase().as_str() {
-        "mainnet" | "ethereum" | "ethereum-mainnet" => Some(LAND_MAINNET),
-        "sepolia" | "ethereum-sepolia" => Some(LAND_SEPOLIA),
-        _ => None,
-    }
+    ChainPair::from_eth_network(eth_network).map(|pair| match pair {
+        ChainPair::Mainnet => LAND_MAINNET,
+        ChainPair::Testnet => LAND_SEPOLIA,
+    })
 }
 
 /// The network whose LAND or estate registry is `address` (any case);

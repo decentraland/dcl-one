@@ -26,6 +26,13 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
@@ -267,6 +274,21 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>)`: the time the sky shows. While
+  the scene the player stands in holds it (`/sky_state` `sceneLocked`), the Skybox menu is off
+  and a `/time` without `--force` moves the clock, not the sky. With the "Allow overriding
+  scene controls" setting on nothing is locked and a time the clock is stopped at here wins
+  until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
+  `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
+  `overrideAllowed`, the Skybox debug section's readings.
+- `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
+  `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
+  neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
+  `HideAvatarsNametags` while it hides the player's avatar, passport or nametag,
+  `SetLocomotion` while it changes or blocks the player's movement). The HUD's permissions
+  popover lists the ones of the scene the player stands in under "In force now".
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off or its room refuses the player) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
@@ -289,6 +311,19 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
+- `/reaction_state`: the situational reactions, as JSON: `outbox` (the local user's picks not yet
+  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none
+  with no room to carry it), `received` (peers' messages), `queued` (the reactions waiting to
+  play, and the senders with any waiting or inside the gap after their last), `played`,
+  `streamed` (the reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause:
+  `blocked`, `duplicate`, `unknownEmoji`, `rateLimited` and `queueFull`. The counts are of the
+  session.
+  `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
+  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
+  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile

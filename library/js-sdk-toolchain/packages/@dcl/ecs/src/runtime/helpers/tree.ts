@@ -1,8 +1,8 @@
 import * as components from '../../components'
-import { Entity } from '../../engine/entity'
-import { ComponentDefinition, IEngine } from '../../engine'
-import { Vector3Type } from '../../schemas/custom/Vector3'
-import { QuaternionType } from '../../schemas/custom/Quaternion'
+import type { Entity } from '../../engine/entity'
+import type { ComponentDefinition, IEngine } from '../../engine'
+import type { Vector3Type } from '../../schemas/custom/Vector3'
+import type { QuaternionType } from '../../schemas/custom/Quaternion'
 
 /**
  * @internal

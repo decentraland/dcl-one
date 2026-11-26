@@ -25,3 +25,15 @@ pub struct ReceiverImage {
     pub sent_event: f64,
     pub sent_state: VideoState,
 }
+
+/// A published video track, scoped to the scene room that exposes it.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct VideoTrackSource {
+    pub scene_hash: String,
+    pub identity: String,
+    pub track_sid: String,
+}
+
+/// A receiver choosing a particular track instead of the automatic showcase.
+#[derive(Component)]
+pub struct SelectedVideoReceiver(pub VideoTrackSource);

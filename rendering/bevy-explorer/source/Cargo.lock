@@ -1418,6 +1418,7 @@ dependencies = [
  "alloy-core",
  "anyhow",
  "assets",
+ "ban_block",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -1429,6 +1430,7 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
+ "half",
  "input_manager",
  "ipfs",
  "naga_oil",
@@ -1445,6 +1447,7 @@ dependencies = [
  "texture_camera",
  "tokio",
  "ui_core",
+ "wallet",
 ]
 
 [[package]]

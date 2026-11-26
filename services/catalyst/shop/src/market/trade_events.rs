@@ -938,22 +938,37 @@ pub async fn require_current_on(
     conn: &mut PgConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), Response> {
+    current_on(conn, now)
+        .await
+        .map_err(|(source, why)| unavailable(source, &why))
+}
+
+/// [`require_current_on`], typed: the source that refused and why, for a
+/// caller that carries them through its own error (a cursor read that
+/// failed is not current either).
+pub async fn current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), (Source, String)> {
     match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
-        Ok(stale) => Err(unavailable(
-            Source::TradeEventsIndex,
-            &stale_message(&stale),
-        )),
-        Err(e) => Err(unreadable(e)),
+        Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
+        Err(e) => Err(unreadable_reason(e)),
     }
 }
 
 /// The envelope of a cursor read that failed: not current, never a guess.
 fn unreadable(e: sqlx::Error) -> Response {
+    let (source, why) = unreadable_reason(e);
+    unavailable(source, &why)
+}
+
+/// [`unreadable`]'s source and reason.
+fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
-    unavailable(
+    (
         Source::TradeEventsIndex,
-        "the trade-events index state cannot be read",
+        "the trade-events index state cannot be read".to_string(),
     )
 }
 
@@ -964,7 +979,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 /// ([`super::catalog::served_chains`], the trade-events walk's
 /// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
 /// lends its verdicts.
-fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
     chain_walk::published_sql_on(alias, now_p, ethereum, matic)
 }
@@ -1254,7 +1269,7 @@ pub(crate) async fn item_meta<'e>(
 
 /// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
 pub(crate) async fn item_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     network: &str,
     chain_id: i64,
     keys: &[(String, String)],
@@ -1273,7 +1288,7 @@ pub(crate) async fn item_metas(
     .bind(&contracts)
     .bind(&items)
     .bind(chain_id as i32)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
@@ -1296,14 +1311,14 @@ pub(crate) async fn item_metas(
 
 /// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
 pub(crate) async fn nft_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
     chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
     let found =
-        super::nft_reads::asset_metas(pool, land_image_base, network, chain_id, keys).await?;
+        super::nft_reads::asset_metas(conn, land_image_base, network, chain_id, keys).await?;
     Ok(found
         .into_iter()
         .map(|((contract, token), n)| {

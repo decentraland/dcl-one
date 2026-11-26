@@ -63,13 +63,16 @@ pub async fn ws_upgrade(
     // The mounted alias is retained for shipped clients; proxy headers do not
     // choose the signed path. The source protocol path remains accepted.
     let paths = vec!["/".to_owned(), "/social-rpc".to_owned()];
-    ws.max_message_size(state.settings.ws_max_payload_bytes)
-        .on_upgrade(move |socket| async move {
+    // The handshake verifies after the upgrade, in the task it spawns: it
+    // keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(
+        ws.max_message_size(state.settings.ws_max_payload_bytes),
+        move |socket| async move {
             if let Err(err) = handle_connection(state, paths, socket).await {
                 tracing::warn!(error = %err, "social-rpc ws connection ended");
             }
-        })
-        .into_response()
+        },
+    )
 }
 
 async fn handle_connection(state: Arc<State>, paths: Vec<String>, socket: WebSocket) -> Result<()> {
@@ -159,6 +162,7 @@ async fn auth_handshake(
             },
         }
     };
+    crate::shared::eip1654_budget::debug_assert_scoped("the social-rpc socket");
     let verification = super::auth::verify_frame(state, paths, &frame);
     tokio::pin!(verification);
     // Upstream's timer runs until the verdict, and a frame sent meanwhile is
