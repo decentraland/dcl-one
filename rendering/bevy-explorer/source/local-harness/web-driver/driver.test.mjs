@@ -409,6 +409,23 @@ for (const isolated of [true, false]) {
   });
 }
 
+// The start screen: the page's commands are there before the engine's console.
+describe('a page whose engine has not started', { skip: noChrome || noStrip }, () => {
+  const page = openPage({ isolated: true, mode: 'hud', query: '&engine=off' });
+
+  test('runs the page\'s own commands', async () => {
+    assert.equal((await json(page.driver, '/fixture_state')).value, 'old');
+  });
+
+  test('clicks a control with real input', async () => {
+    assert.equal(JSON.parse(await page.driver.console('/hud_click Save')).input, 'trusted');
+  });
+
+  test('says an engine command has nowhere to go yet', async () => {
+    await assert.rejects(page.driver.console('/teleport 0 0'), /^Error: the engine has not started, and \/teleport is not a page command$/);
+  });
+});
+
 // A frame of another origin has the binding too, and must get nothing from it.
 describe('a frame of another origin', { skip: noChrome }, () => {
   const page = {};

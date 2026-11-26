@@ -593,7 +593,7 @@ class Driver {
     return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
   }
 
-  // The context that has the console and the binding: the app frame's, not the shell's.
+  // The context that has the binding and the console, or before the engine starts the page's own commands.
   async #findApp() {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
     this.#app = null;
@@ -602,7 +602,7 @@ class Driver {
       const answer = await this.#send(
         'Runtime.evaluate',
         {
-          expression: `typeof window.engine_console_command === 'function' && typeof window.${BINDING} === 'function'`,
+          expression: `(typeof window.engine_console_command === 'function' || typeof window.__dclPageCommands === 'object') && typeof window.${BINDING} === 'function'`,
           contextId: context.id,
           returnByValue: true
         },
@@ -613,9 +613,9 @@ class Driver {
     return null;
   }
 
-  /** Resolves once a context of the page's origin has both `window.engine_console_command` and
-   *  `window.__dclTrustedInput`, and the page has drawn that document (`#presented`): input
-   *  can then be aimed at it. */
+  /** Resolves once a context of the page's origin has `window.__dclTrustedInput` and either
+   *  `window.engine_console_command` or, on the start screen, `window.__dclPageCommands`, and the
+   *  page has drawn that document (`#presented`): input can then be aimed at it. */
   async ready({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
     const deadline = Date.now() + timeout;
     const exited = this.#exit.then((info) => {
@@ -638,15 +638,15 @@ class Driver {
           .filter((context) => context.isDefault)
           .map((context) => context.origin);
         throw new Error(
-          `${this.url} did not get window.engine_console_command and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
+          `${this.url} did not get window.engine_console_command or window.__dclPageCommands, and window.${BINDING}, in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
         );
       }
       await Promise.race([sleep(POLL_MS), exited]);
     }
   }
 
-  /** `await window.engine_console_command(line)` in the app frame: what it resolves with, or a
-   *  rejection with the message the page failed with. */
+  /** `await window.engine_console_command(line)` in the app frame, or the page command itself before
+   *  the engine starts: what it resolves with, or a rejection with the message the page failed with. */
   async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
     const started = Date.now();
     for (const secret of secretsOf(line)) this.#secrets.add(secret);
@@ -656,7 +656,11 @@ class Driver {
     // a rejection arrives as a value, so the page's message is not wrapped in a protocol error
     const expression = `(async (line) => {
       try {
-        return { ok: true, value: await window.engine_console_command(line) };
+        if (typeof window.engine_console_command === 'function') return { ok: true, value: await window.engine_console_command(line) };
+        const name = line.trim().split(/\\s+/, 1)[0] || '';
+        const command = window.__dclPageCommands?.[name.startsWith('/') ? name : \`/\${name}\`];
+        if (!command) throw new Error(\`the engine has not started, and \${name} is not a page command\`);
+        return { ok: true, value: await command.run(line.trim().slice(name.length)) };
       } catch (e) {
         const error = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
         return { ok: false, error: error ?? String(e) };
