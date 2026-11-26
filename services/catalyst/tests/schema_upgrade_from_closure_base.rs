@@ -88,10 +88,10 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0070_shop_mirror_chain",
             "0071_shop_testnet_sale_and_trade_venues",
             "0072_shop_verified_item_rows",
-            "0073_explore_place_removal_live_world",
             "0078_shop_nft_last_sale",
             "0079_credits_seasonal_visit_goals",
         ])
+        .chain(["0097_explore_place_removal_live_world"])
         .collect()
 }
 
