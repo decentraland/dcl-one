@@ -182,5 +182,16 @@ describe("when handing off place travel", () => {
       expect(track).toHaveBeenCalledWith("jump_in_failed", { place_id: PLACE_ID, error: "Travel is temporarily unavailable. Please retry." }, expect.anything());
       expect(track).not.toHaveBeenCalledWith("jump_in_completed", expect.anything(), expect.anything());
     });
+    it("should offer Retry travel as the shared secondary Button, enabled while nothing loads", () => {
+      const retry = /<button[^>]*>.*?Retry travel.*?<\/button>/.exec(renderToString(<>{props.detailSlot}</>))?.[0] ?? "";
+      expect(retry).toContain('data-variant="secondary"');
+      expect(retry).toContain('data-size="md"');
+      expect(retry).not.toMatch(/\sdisabled=""/);
+    });
+  });
+  describe("and travel resolved", () => {
+    it("should show no Retry travel", () => {
+      expect(props.detailSlot).toBeUndefined();
+    });
   });
 });

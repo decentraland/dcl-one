@@ -245,65 +245,6 @@ button.creatorName:focus-visible {
   white-space: nowrap;
 }
 
-/* The reference's bar buttons do not inherit the page font, so they compute to Arial. */
-.explore,
-.jump {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(5px, 0.417vw, var(--dcl-space-8));
-  padding: clamp(5px, 0.417vw, var(--dcl-space-8)) clamp(14px, 1.146vw, 22px);
-  border: none;
-  border-radius: var(--dcl-radius-xs);
-  font-family: Arial, sans-serif;
-  font-size: clamp(var(--dcl-font-size-body-xs), 0.781vw, var(--dcl-font-size-button-lg));
-  font-weight: 600;
-  line-height: 24px;
-  letter-spacing: 0.46px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.explore {
-  background-color: var(--dcl-neutrals-snow);
-  color: #242129;
-}
-
-.explore:hover {
-  background-color: #e6e5e8;
-}
-
-.explore:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.jump {
-  background-color: var(--dcl-primary-primary);
-  color: var(--dcl-neutrals-snow);
-}
-
-.jump:hover,
-.modalJump:hover {
-  background-color: var(--dcl-primary-primary-dark-1);
-}
-
-.explore:focus-visible,
-.jump:focus-visible,
-.modalJump:focus-visible,
-.copy:focus-visible,
-.close:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
-.jumpGlyph {
-  width: 20px;
-  height: 20px;
-}
-
 .chatColumn {
   position: relative;
   min-width: 0;
@@ -477,23 +418,10 @@ button.creatorName:focus-visible {
   color: var(--dcl-neutrals-silver);
 }
 
-.pickerSelect {
-  appearance: none;
-  padding: var(--dcl-space-8) var(--dcl-space-32) var(--dcl-space-8) var(--dcl-space-12);
-  border: 1px solid var(--dcl-transparencies-white-40);
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-40)
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'><path d='M1 1l4 4 4-4' stroke='%23FCFCFC' stroke-width='1.5' stroke-linecap='round'/></svg>")
-    no-repeat right var(--dcl-space-12) center;
-  font: inherit;
-  font-size: var(--dcl-font-size-body-sm);
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.pickerSelect:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
+/* The shared select keeps its own width beside the label instead of filling the row. */
+.pickerField {
+  display: inline-flex;
+  min-width: 0;
 }
 
 .notFound {
@@ -538,23 +466,6 @@ button.creatorName:focus-visible {
   top: clamp(14px, 1.042vw, 20px);
   right: clamp(14px, 1.042vw, 20px);
   z-index: 2;
-  width: clamp(32px, 2.083vw, 40px);
-  height: clamp(32px, 2.083vw, 40px);
-  padding: 0;
-  border: none;
-  border-radius: 10px;
-  background-color: var(--dcl-transparencies-black-40);
-  cursor: pointer;
-}
-
-.close:hover {
-  background-color: var(--dcl-transparencies-black-60);
-}
-
-.closeGlyph {
-  display: block;
-  width: clamp(32px, 2.083vw, 40px);
-  height: clamp(32px, 2.083vw, 40px);
 }
 
 .heroWrap {
@@ -690,58 +601,12 @@ button.creatorName:focus-visible {
   padding-top: 20px;
 }
 
+/* The shared JumpInCTA's width: the row's free space on a phone, the reference's width from 900px. */
 .modalJump {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8.198px;
   flex: 1 1 auto;
-  height: clamp(38px, 2.396vw, 46px);
-  padding: 0 clamp(14px, 1.068vw, 20.5px);
-  border: none;
-  border-radius: var(--dcl-radius-md);
-  background-color: var(--dcl-primary-primary);
-  color: var(--dcl-neutrals-snow);
-  font-family: Arial, sans-serif;
-  font-size: var(--text-size);
-  font-weight: 700;
-  line-height: normal;
-  letter-spacing: normal;
-  text-transform: uppercase;
-  text-decoration: none;
-  cursor: pointer;
 }
 
-.modalJumpGlyph {
-  width: clamp(19px, 1.25vw, 24px);
-  height: clamp(19px, 1.25vw, 24px);
-}
-
-.copy {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: clamp(38px, 2.396vw, 46px);
-  height: clamp(38px, 2.396vw, 46px);
-  padding: 10px;
-  border: 1px solid var(--dcl-neutrals-snow);
-  border-radius: var(--dcl-radius-md);
-  background-color: transparent;
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.copy:hover {
-  background-color: var(--dcl-transparencies-white-10);
-}
-
-.copyGlyph {
-  width: clamp(16px, 1.042vw, 20px);
-  height: clamp(16px, 1.042vw, 20px);
-  flex-shrink: 0;
-}
-
+/* Over the copy button, which positions it. */
 .copied {
   position: absolute;
   bottom: calc(100% + var(--dcl-space-8));
@@ -851,22 +716,4 @@ button.creatorName:focus-visible {
     flex: 0 0 auto;
     width: clamp(200px, 12.969vw, 249px);
   }
-}
-
-/* The SVG glyphs' paint, as tokens instead of presentation attributes. */
-.glyphFill {
-  fill: var(--dcl-primary-primary);
-}
-
-.glyphFrame,
-.closeStroke {
-  stroke: var(--dcl-neutrals-snow);
-}
-
-.glyphArrow {
-  fill: var(--dcl-neutrals-white);
-}
-
-.copyStroke {
-  stroke: var(--dcl-neutrals-white);
 }

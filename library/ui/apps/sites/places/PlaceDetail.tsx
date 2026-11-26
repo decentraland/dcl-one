@@ -1,8 +1,13 @@
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { Button } from '../../../components/Button/Button'
 import { CardActionButton } from '../../../components/CardActionButton/CardActionButton'
+import { CloseButton } from '../../../components/CloseButton/CloseButton'
+import { WebSelect } from '../../../components/InputField/InputFieldWebControls'
+import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { textClasses } from '../../../text-styles'
 import {
+  GeneralCopy,
   GeneralDislike,
   GeneralDislikeFilled,
   GeneralFavorites,
@@ -98,28 +103,6 @@ function PinGlyph() {
   )
 }
 
-function JumpInGlyph({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24.8735 24.8735" fill="none" aria-hidden="true">
-      <rect className={styles.glyphFill} width="24.8735" height="24.8735" rx="8.29118" />
-      <rect
-        x="0.777298"
-        y="0.777298"
-        width="23.3189"
-        height="23.3189"
-        rx="7.51388"
-        className={styles.glyphFrame}
-        strokeOpacity="0.3"
-        strokeWidth="1.5546"
-      />
-      <path
-        className={styles.glyphArrow}
-        d="M18.9554 11.031L14.1081 6.1861C13.244 5.32244 11.7898 5.93332 11.7898 7.15508V8.75601C11.7476 8.75601 11.7265 8.75601 11.6844 8.75601H7.08641C6.30662 8.75601 5.67436 9.36689 5.67436 10.1463V13.8326C5.67436 14.612 6.30662 15.244 7.08641 15.244H11.6633C11.7055 15.244 11.7265 15.244 11.7687 15.244V16.8449C11.7687 18.0667 13.244 18.6776 14.087 17.8139L18.9343 12.969C19.4823 12.4213 19.4823 11.5576 18.9554 11.031Z"
-      />
-    </svg>
-  )
-}
-
 function Avatar({ creator }: { creator: PlaceDetailCreator }) {
   const avatar = creator.foundation ? foundationLogo : creator.avatarUrl
   if (!avatar) return null
@@ -133,31 +116,22 @@ function Avatar({ creator }: { creator: PlaceDetailCreator }) {
   )
 }
 
+/** The shared Jump in: a link to the scene, or a button while there is no link yet (the host retries travel). */
 function JumpIn({
   href,
   onClick,
-  className,
-  glyph
+  size,
+  className
 }: {
   href?: string
   onClick?: () => void
+  size: 'xl' | 'md'
   className?: string
-  glyph?: string
 }) {
-  const body = (
-    <>
-      Jump in
-      <JumpInGlyph className={glyph} />
-    </>
-  )
   return href ? (
-    <a className={className} href={href} onClick={onClick}>
-      {body}
-    </a>
+    <JumpInCTA size={size} className={className} href={href} onClick={onClick} />
   ) : (
-    <button type="button" className={className} onClick={onClick}>
-      {body}
-    </button>
+    <JumpInCTA size={size} className={className} onClick={onClick} />
   )
 }
 
@@ -324,24 +298,12 @@ function SceneJumpIn({
         aria-label={place.title}
         onKeyDown={keepFocus}
       >
-        <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>
-          <svg className={styles.closeGlyph} viewBox="0 0 40 40" fill="none" aria-hidden="true">
-            <path
-              d="M25.8828 14.1174L14.1184 25.8818"
-              className={styles.closeStroke}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M25.8828 25.8826L14.1184 14.1182"
-              className={styles.closeStroke}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        <CloseButton
+          variant="filled"
+          className={styles.close}
+          aria-label="Close"
+          onClick={onClose}
+        />
         <div className={styles.heroWrap}>
           <div className={styles.hero} style={coverStyle(place.image)}>
             <div className={styles.heroFade} />
@@ -392,47 +354,21 @@ function SceneJumpIn({
               )}
             </div>
             <div className={styles.ctaRow}>
-              <JumpIn
-                href={jumpHref}
-                onClick={onJumpIn}
-                className={styles.modalJump}
-                glyph={styles.modalJumpGlyph}
-              />
-              <button
-                type="button"
-                className={styles.copy}
+              <JumpIn href={jumpHref} onClick={onJumpIn} size="xl" className={styles.modalJump} />
+              <Button
+                iconOnly
+                variant="outline"
+                size="lg"
                 aria-label="Copy link"
                 onClick={copyLink}
               >
-                <svg
-                  className={styles.copyGlyph}
-                  viewBox="0 0 20 20"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M15.3854 15H16C17.6569 15 19 13.6569 19 12V4C19 2.34315 17.6569 1 16 1H8C6.34315 1 5 2.34315 5 4V4.88124"
-                    className={styles.copyStroke}
-                    strokeWidth="2"
-                    strokeLinejoin="round"
-                  />
-                  <rect
-                    x="1"
-                    y="5"
-                    width="14"
-                    height="14"
-                    rx="3"
-                    className={styles.copyStroke}
-                    strokeWidth="2"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <GeneralCopy size={20} aria-hidden="true" />
                 {copied && (
                   <span className={styles.copied} role="status">
                     Copied!
                   </span>
                 )}
-              </button>
+              </Button>
             </div>
             {rating}
           </div>
@@ -570,25 +506,20 @@ function SceneWatcher({
         {rating}
         <div className={styles.controlButtons}>
           {launched ? (
-            <button type="button" className={styles.explore} onClick={() => setLaunched(false)}>
+            <Button variant="inverse" size="md" onClick={() => setLaunched(false)}>
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              className={styles.explore}
+            <Button
+              variant="inverse"
+              size="md"
               disabled={!jumpHref}
               onClick={() => setLaunched(true)}
             >
               Explore the scene
-            </button>
+            </Button>
           )}
-          <JumpIn
-            href={jumpHref}
-            onClick={onJumpIn}
-            className={styles.jump}
-            glyph={styles.jumpGlyph}
-          />
+          <JumpIn href={jumpHref} onClick={onJumpIn} size="md" />
         </div>
       </div>
     </div>
@@ -605,17 +536,15 @@ function ScenePicker({ options, value, onChange }: ScenePickerProps) {
   return (
     <label className={styles.pickerRow}>
       <span className={styles.pickerLabel}>Scene</span>
-      <select
-        className={styles.pickerSelect}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      <span className={styles.pickerField}>
+        <WebSelect value={value} onChange={(e) => onChange(e.target.value)}>
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </WebSelect>
+      </span>
     </label>
   )
 }
