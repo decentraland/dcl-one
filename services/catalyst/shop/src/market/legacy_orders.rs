@@ -49,16 +49,21 @@ use sqlx::PgConnection;
 use super::chain_walk::ChainNet;
 
 /// The fold of one network (`$1`): the tokens with an order event past
-/// `$2`, every order of each refolded over the token's history. An
-/// unchanged order is left alone. The event that ends an order is one
+/// `$2`, and those a sale-history repair queued (`shop.legacy_order_refold`,
+/// consumed here), every order of each refolded over the token's history.
+/// An unchanged order is left alone. The event that ends an order is one
 /// backward probe of `nft_event_token_idx` per order (`LATERAL ... LIMIT
 /// 1`), not a join of two derived sets: the planner estimates those at one
 /// row each, and as a join it rescanned every order per order (a rebuild of
 /// 300,000 orders did not finish in ten minutes).
 const FOLD_SQL: &str = "
-WITH touched AS (
-    SELECT DISTINCT contract_address, token_id FROM shop.nft_event
+WITH queued AS (
+    DELETE FROM shop.legacy_order_refold WHERE network = $1 RETURNING contract_address, token_id
+), touched AS (
+    SELECT contract_address, token_id FROM shop.nft_event
     WHERE network = $1 AND block_number > $2 AND kind IN ('order_created', 'order_successful', 'order_cancelled')
+    UNION
+    SELECT contract_address, token_id FROM queued
 ), created AS (
     SELECT DISTINCT ON (c.network, c.emitter, c.detail) c.*
     FROM (
@@ -97,11 +102,11 @@ ON CONFLICT (network, marketplace_address, order_id) DO UPDATE SET
     created_block = EXCLUDED.created_block, created_log = EXCLUDED.created_log, created_at = EXCLUDED.created_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log, updated_at = EXCLUDED.updated_at
 WHERE (legacy_order.contract_address, legacy_order.token_id, legacy_order.seller, legacy_order.buyer, legacy_order.price,
-       legacy_order.expires_at, legacy_order.status, legacy_order.created_block, legacy_order.created_log,
-       legacy_order.updated_block, legacy_order.updated_log)
+       legacy_order.expires_at, legacy_order.status, legacy_order.created_block, legacy_order.created_log, legacy_order.created_at,
+       legacy_order.updated_block, legacy_order.updated_log, legacy_order.updated_at)
     IS DISTINCT FROM (EXCLUDED.contract_address, EXCLUDED.token_id, EXCLUDED.seller, EXCLUDED.buyer, EXCLUDED.price,
-       EXCLUDED.expires_at, EXCLUDED.status, EXCLUDED.created_block, EXCLUDED.created_log,
-       EXCLUDED.updated_block, EXCLUDED.updated_log)";
+       EXCLUDED.expires_at, EXCLUDED.status, EXCLUDED.created_block, EXCLUDED.created_log, EXCLUDED.created_at,
+       EXCLUDED.updated_block, EXCLUDED.updated_log, EXCLUDED.updated_at)";
 
 /// Whether `net`'s book stands on `conn`'s snapshot: its marker names a
 /// recovery point of the nft walk that still has the hash it recorded.
@@ -173,6 +178,39 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     .execute(&mut *conn)
     .await?;
     Ok(written)
+}
+
+/// Writes the sales a sale-history repair read back and queues their tokens
+/// for the next order fold of `net`, on the repair's transaction.
+/// `nft_index::insert_events` fills a sale's missing buyer, seller or block
+/// time, or inserts a sale the walk missed. Those sales lie at or below the
+/// book's marker, and the fold refolds only the tokens touched past it, so
+/// without the queue (`shop.legacy_order_refold`) a repair would reach the
+/// book only on a rebuild.
+pub async fn repair_sales(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    sales: &[super::nft_index::NftEvent],
+) -> sqlx::Result<()> {
+    super::nft_index::insert_events(&mut *conn, net, sales).await?;
+    if sales.is_empty() {
+        return Ok(());
+    }
+    let (contracts, tokens): (Vec<&str>, Vec<&str>) = sales
+        .iter()
+        .map(|e| (e.contract_address.as_str(), e.token_id.as_str()))
+        .unzip();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order_refold (network, contract_address, token_id) \
+         SELECT DISTINCT $1, c, t::numeric FROM UNNEST($2::text[], $3::text[]) AS u(c, t) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(net.db_name())
+    .bind(contracts)
+    .bind(tokens)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Whether `net`'s order book may be read beside the published nft fold on
@@ -724,6 +762,105 @@ mod tests {
             "b's sale at 30 is folded too"
         );
         assert_eq!(book_through(&db.pool).await, Some(100));
+        db.drop().await;
+    }
+
+    /// A sale-history repair rewrites sales at or below the book's marker:
+    /// it fills the block time of `b`'s sale at 30 (only `updated_at`
+    /// changes), and inserts `e`'s sale at 42, which the walk missed (so
+    /// `f`'s creation at 41 had cancelled `e`); then it fills `b`'s missing
+    /// buyer. The next fold has no order event past its marker each time,
+    /// and refolds the tokens the repair queued; the queue is then empty.
+    #[tokio::test]
+    async fn a_sale_repaired_below_the_marker_reaches_the_book_on_the_next_fold() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_repair").await
+        else {
+            return;
+        };
+        let (m1, m2) = markets();
+        let sale =
+            |block: i64, market: &str, token: i64, order: u8, price: i64| nft_index::NftEvent {
+                block_number: block,
+                log_index: 0,
+                block_time: block * 10,
+                kind: "order_successful",
+                emitter: market.to_string(),
+                contract_address: C.to_string(),
+                token_id: token.to_string(),
+                from_address: Some(SELLER.to_string()),
+                to_address: Some(BUYER.to_string()),
+                amount: Some(price.to_string()),
+                expires_at: None,
+                detail: Some(id(order)),
+                tx_hash: Some(format!("0x{block:064x}")),
+            };
+        let repair = |sales: Vec<nft_index::NftEvent>| {
+            let pool = db.pool.clone();
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                repair_sales(&mut tx, ChainNet::Matic, &sales)
+                    .await
+                    .unwrap();
+                tx.commit().await.unwrap();
+            }
+        };
+        let queued = || async {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM shop.legacy_order_refold")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap()
+        };
+        seed_log(&db.pool, 41).await;
+        sqlx::query("UPDATE shop.nft_event SET block_time = 0 WHERE block_number = 30")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        fold_matic(&db.pool, -1).await;
+        let mut before = expected();
+        before[1].5 = 0;
+        before[4] = (id(0xe), "cancelled".into(), None, "500".into(), 41, 410);
+        assert_eq!(
+            book(&db.pool).await,
+            before,
+            "folded from the incomplete sales"
+        );
+        repair(vec![sale(30, m2, 1, 0xb, 210), sale(42, m1, 4, 0xe, 500)]).await;
+        assert_eq!(
+            book(&db.pool).await,
+            before,
+            "the repair alone leaves the book"
+        );
+        assert_eq!(queued().await, 2);
+        fold_matic(&db.pool, 50).await;
+        assert_eq!(
+            book(&db.pool).await,
+            expected(),
+            "the next fold takes the repaired sales"
+        );
+        assert_eq!(queued().await, 0, "the fold consumed the queue");
+
+        sqlx::query("UPDATE shop.nft_event SET to_address = NULL WHERE block_number = 30")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        fold_matic(&db.pool, -1).await;
+        let mut buyerless = expected();
+        buyerless[1].2 = None;
+        assert_eq!(
+            book(&db.pool).await,
+            buyerless,
+            "folded from a sale with no buyer"
+        );
+        repair(vec![sale(30, m2, 1, 0xb, 210)]).await;
+        fold_matic(&db.pool, 50).await;
+        assert_eq!(
+            book(&db.pool).await,
+            expected(),
+            "the repaired buyer reaches the book"
+        );
+        assert_eq!(book_through(&db.pool).await, Some(50));
+        assert_eq!(queued().await, 0);
         db.drop().await;
     }
 

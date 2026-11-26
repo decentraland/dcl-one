@@ -444,7 +444,8 @@ pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descri
 /// published before it (a fold published while the request waited for a
 /// connection is not read as published in the future), and shared by the
 /// checks, the rows and the totals. `Err` is the unavailable envelope naming
-/// the source that is not ready, or a 500.
+/// the source that is not ready, a check cancelled at the statement bound
+/// (`read_error`'s 503), or a 500.
 pub(crate) async fn book_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
@@ -485,7 +486,10 @@ pub(crate) async fn book_snapshot(
         now,
     )
     .await
-    .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    .map_err(|e| match e {
+        owned_items::ReadError::Db(e) => read_error(e),
+        e => e.into_response(|m| ApiError::internal(m.to_string()).into_response()),
+    })?;
     // The owners the book's statuses and the listings' guard read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
@@ -498,7 +502,7 @@ pub(crate) async fn book_snapshot(
             projections,
         )
         .await
-        .map_err(db)?
+        .map_err(read_error)?
         {
             UNPUBLISHED_FOLD_READS.handle([net.db_name()]).increment(1);
             return Err(owned_items::not_ready(&format!(
@@ -510,7 +514,7 @@ pub(crate) async fn book_snapshot(
     for &net in nets {
         if !super::legacy_orders::caught_up(&mut tx, net)
             .await
-            .map_err(db)?
+            .map_err(read_error)?
         {
             return Err(owned_items::not_ready(&format!(
                 "the {} legacy order book has not caught up with the published nft fold",
