@@ -206,7 +206,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
         return Ok(Served::Miss);
     }
     let lock = state.posters.locks.claim(&key);
-    let result = async {
+    async {
         let _guard = lock.lock().await;
         if let Some(hit) = lookup(state, kind, file).await? {
             return Ok(hit);
@@ -251,8 +251,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
             Conditional::NotModified => anyhow::bail!("{} answered 304 to an unconditional GET", mirror::shown(&url)),
         }
     }
-    .await;
-    result
+    .await
 }
 
 fn not_found() -> Response {

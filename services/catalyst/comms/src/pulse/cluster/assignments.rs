@@ -462,16 +462,15 @@ impl CurrentAssignments {
             if record.current.is_some() || record.blocked || !record.pending.is_empty() {
                 return None;
             }
-            if let Some((retained, version)) = &record.retained {
-                if *version != lookup.assignment_version
+            if let Some((retained, version)) = &record.retained
+                && (*version != lookup.assignment_version
                     || retained.session != lookup.session
                     || lookup.selected.as_ref().is_some_and(|selected| {
                         selected.origin != retained.selected_origin
                             || selected.identity != retained.owner_epoch
-                    })
-                {
-                    return None;
-                }
+                    }))
+            {
+                return None;
             }
         }
         // Record reclamation retains every current, blocked and pending record.

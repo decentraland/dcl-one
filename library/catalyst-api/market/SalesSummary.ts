@@ -3,4 +3,4 @@ import type { SalesSummaryCollection } from "./SalesSummaryCollection";
 import type { SalesSummaryItem } from "./SalesSummaryItem";
 import type { SalesSummaryRoyalties } from "./SalesSummaryRoyalties";
 
-export type SalesSummary = { total: number, mints: number, resales: number, earnedWei: string, byCollection: Array<SalesSummaryCollection>, byItem: Array<SalesSummaryItem>, royalties: SalesSummaryRoyalties, };
+export type SalesSummary = { total: number, mints: number, resales: number, earnedWei: string, earnedUsd: string, unpricedSales: number, byCollection: Array<SalesSummaryCollection>, byItem: Array<SalesSummaryItem>, royalties: SalesSummaryRoyalties, };

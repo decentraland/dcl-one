@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 #[cfg(test)]
 use crate::interfaces::StreamingNotification;
+#[cfg(test)]
 use crate::world_identity::WorldName;
 #[cfg(test)]
 use crate::{Address, world_identity::Parcel};

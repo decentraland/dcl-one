@@ -29,7 +29,8 @@ use super::catalog::{
     Builder, FRAGMENT_SMART_WEARABLE_V1, FRAGMENT_WEARABLE_V1, FRAGMENT_WEARABLE_V2,
     WEARABLE_ITEM_TYPES, escape_like, expand_urn_network_forms, unified_trades_cte, v3_minter_expr,
 };
-use super::mirrors::require_priced;
+use super::catalogue::{self, Access, CatalogueRead, Purpose};
+use super::mirrors::Mirror;
 use super::readers::{self, Ttl, cached, int_of, str_of};
 use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
@@ -827,12 +828,15 @@ fn key_fixed_rows(f: &ItemFilters) -> Option<i64> {
 /// first page came back short, one key-only count when it is full.
 async fn run_items(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     f: &ItemFilters,
     rate: Option<&str>,
     catalog: Option<&CatalogItemsParams>,
 ) -> Result<(Vec<sqlx::postgres::PgRow>, i64), ApiError> {
-    let now = Utc::now().naive_utc();
+    // The read's clock: the trades check decided on the same instant.
+    let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
+    let conn = &mut *read.tx;
     let whole = key_fixed_rows(f).map(|rows| ItemFilters {
         first: Some(rows),
         skip: None,
@@ -847,7 +851,7 @@ async fn run_items(
         false,
     );
     let mut rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *conn)
         .await?;
     let (limit, offset) = (clamp_first(f.first, DEFAULT_LIMIT), clamp_skip(f.skip));
     let total = if whole.is_some() {
@@ -863,18 +867,20 @@ async fn run_items(
     } else {
         let (sql, args) = build_items_query(f, rate, catalog, now, since, true);
         sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-            .fetch_one(&state.pool)
+            .fetch_one(&mut *conn)
             .await?
             .get("count")
     };
     Ok((rows, total))
 }
 
+/// The items `f` selects, read in `read`'s snapshot.
 pub async fn list_items(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     f: &ItemFilters,
 ) -> Result<(Vec<Item>, i64), ApiError> {
-    let (rows, total) = run_items(state, f, None, None).await?;
+    let (rows, total) = run_items(state, read, f, None, None).await?;
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
@@ -936,44 +942,94 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
     }
 }
 
-/// The items mirror and the trades mirror (the open item trade every row
-/// carries: `tradeId`, the trade price, `isOnSale`) must both have a pass,
-/// the items one within its money budget (the minter price).
-async fn require_sources(state: &MarketplaceState) -> Result<(), Response> {
-    require_priced(state).await?;
-    super::trades::require_ready(state).await
+/// [`priced_read`] as a [`catalogue::preflight`]: the gate and the trades
+/// check, with no copy recorded for the answer unless the route says this
+/// read supplied it ([`CatalogueRead::note`], [`CatalogueRead::stamp`]).
+pub(crate) async fn priced_preflight(
+    state: &MarketplaceState,
+    scope: Option<Network>,
+) -> Result<CatalogueRead, Response> {
+    let mut read = catalogue::preflight(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        scope.map(Network::graph),
+    )
+    .await?;
+    read.trades_ready(state).await?;
+    Ok(read)
+}
+
+/// The read an items route answers from: the catalogue (every row carries
+/// the minter price and `available`, so priced: [`catalogue::begin`]) over
+/// `scope`, and the trades mirror's pass and verdicts (the open item trade
+/// every row carries: `tradeId`, the trade price, `isOnSale`), read in the
+/// same snapshot at the same instant.
+pub(crate) async fn priced_read(
+    state: &MarketplaceState,
+    scope: Option<Network>,
+) -> Result<CatalogueRead, Response> {
+    let mut read = catalogue::begin(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        scope.map(Network::graph),
+        Access::ReadOnly,
+    )
+    .await?;
+    read.trades_ready(state).await?;
+    Ok(read)
 }
 
 pub async fn get_items(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    if let Err(envelope) = require_sources(&state).await {
-        return envelope;
-    }
     let filters = match parse_filters(&pairs) {
         Ok(f) => f,
         Err(e) => return e.into_response(),
     };
-    match list_items(&state, &filters).await {
-        Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
-        Err(e) => e.into_response(),
+    let mut read = match priced_read(&state, filters.network).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    let (mut data, total) = match list_items(&state, &mut read, &filters).await {
+        Ok(page) => page,
+        Err(e) => return e.into_response(),
+    };
+    // The picks are no catalogue rows: the read's connection goes back first,
+    // so their pool read never waits on the one this request holds.
+    drop(read);
+    let ids = data.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+    let counts = match super::lists::picks_stats(&state.pool, &ids, None).await {
+        Ok(stats) => stats
+            .into_iter()
+            .map(|s| (s.item_id, s.count))
+            .collect::<HashMap<_, _>>(),
+        Err(e) => return e.into_response(),
+    };
+    for item in &mut data {
+        item.picks.count = counts.get(&item.id).copied().unwrap_or_default();
     }
+    Json(DataTotal { data, total }).into_response()
 }
 
 /// `/v3/catalog/items` for these parameters: the page and its total, or the
 /// response a source that cannot answer gives (the search dropdown reads
 /// the same grid).
 #[allow(clippy::result_large_err)]
+/// `rate` is read before the catalogue read opens: no pool work waits while
+/// the read holds its connection.
 pub async fn catalog_items_page(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     pairs: &[(String, String)],
+    rate: ManaUsdRate,
 ) -> Result<(Vec<CreditCatalogItem>, i64), Response> {
-    require_sources(state).await?;
     let filters = parse_filters(pairs).map_err(IntoResponse::into_response)?;
     let catalog = parse_catalog_items_params(pairs);
-    let rate = rate_to_numeric_string(mana_usd_rate(state).await?);
-    let (rows, total) = run_items(state, &filters, Some(&rate), Some(&catalog))
+    let rate = rate_to_numeric_string(rate);
+    let (rows, total) = run_items(state, read, &filters, Some(&rate), Some(&catalog))
         .await
         .map_err(IntoResponse::into_response)?;
     let data = rows
@@ -990,7 +1046,19 @@ pub async fn get_catalog_items(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
-    match catalog_items_page(&state, &pairs).await {
+    let scope = match parse_filters(&pairs) {
+        Ok(f) => f.network,
+        Err(e) => return e.into_response(),
+    };
+    let rate = match mana_usd_rate(&state).await {
+        Ok(rate) => rate,
+        Err(envelope) => return envelope,
+    };
+    let mut read = match priced_read(&state, scope).await {
+        Ok(read) => read,
+        Err(envelope) => return envelope,
+    };
+    match catalog_items_page(&state, &mut read, &pairs, rate).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(r) => r,
     }
@@ -1148,7 +1216,10 @@ pub async fn get_trendings(
         .unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
-    if let Err(envelope) = require_sources(&state).await {
+    // The gate first, on a short read: a refusal answers without waiting on
+    // the sales reader's subgraph call, which runs with no connection held;
+    // the read is then opened again, rechecked, for the rows.
+    if let Err(envelope) = priced_preflight(&state, None).await {
         return envelope;
     }
     let cache_control = [(CACHE_CONTROL, "public,max-age=3600,s-maxage=3600")];
@@ -1157,6 +1228,10 @@ pub async fn get_trendings(
     }
     let sales = match recent_sales(&state, TRENDING_WINDOW_DAYS).await {
         Ok(s) => s,
+        Err(envelope) => return envelope,
+    };
+    let mut read = match priced_read(&state, None).await {
+        Ok(read) => read,
         Err(envelope) => return envelope,
     };
     let mut counts: HashMap<(String, String), i64> = HashMap::new();
@@ -1182,7 +1257,7 @@ pub async fn get_trendings(
         include_social_emotes,
         ..Default::default()
     };
-    let got = match list_items(&state, &filters).await {
+    let got = match list_items(&state, &mut read, &filters).await {
         Ok((items, _)) => items,
         Err(e) => return e.into_response(),
     };

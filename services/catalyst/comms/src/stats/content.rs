@@ -203,7 +203,7 @@ pub fn project_hot_scenes<'a>(
             description: metadata.get("display").and_then(|v| v.get("description")),
         });
     }
-    out.sort_by(|a, b| b.users_total_count.cmp(&a.users_total_count));
+    out.sort_by_key(|b| std::cmp::Reverse(b.users_total_count));
     out.truncate(100);
     Ok(out)
 }
