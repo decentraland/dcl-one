@@ -62,6 +62,10 @@ class CiLocalTest(unittest.TestCase):
         self.assertNotIn('catalyst clippy (ts)', steps)
         self.assertEqual(steps['scene cli clippy'],
                          'cd services/catalyst && cargo clippy --locked -p dcl-scene-cli --all-targets -- -D warnings')
+        self.assertEqual(steps['scene cli unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
+        self.assertIn('.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli\n',
+                      (ci.ROOT / '.github/workflows/sdk.yml').read_text())
 
     def test_documentation_is_excluded_from_development_and_image_inputs(self):
         docs = {'DATABASE.md', 'services/catalyst/docs/events.md',

@@ -125,6 +125,9 @@ STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', to
 # The development workflow's unused-dependency check, from the flake's nixpkgs.
 MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
            '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli')
+# sdk.yml's check for the scene CLI alone.
+SCENE_CLI_MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+                     '.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
 # The Changes job runs these on every pull request.
 WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
@@ -215,6 +218,7 @@ def pre_push_steps(changed):
         # the workspace clippy above covers it otherwise
         steps.append(Step('scene cli clippy', 'cd services/catalyst && cargo clippy --locked '
                           '-p dcl-scene-cli --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('scene cli unused dependencies', SCENE_CLI_MACHETE, tools=('nix',)))
     if images:
         system = image_system()
         if system is None:

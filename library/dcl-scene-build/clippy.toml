@@ -1,2 +1,4 @@
+# Mirrors services/catalyst/clippy.toml; clippy reads only the nearest file.
+large-error-threshold = 256
 allow-unwrap-in-tests = true
 allow-print-in-tests = true
