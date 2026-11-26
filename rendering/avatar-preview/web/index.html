@@ -106,9 +106,8 @@
     window.addEventListener('message', e => { if (e.source === window && e.data && e.data.type) window.__messages.push(e.data); });
   </script>
   <script type="module">
-    // the page script itself is fetched by build id too (see preview.js for the module)
-    const build = await fetch('./pkg/build.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : { build: 'dev' }).then(j => j.build).catch(() => 'dev');
-    const { boot } = await import(`./preview.js?v=${build}`);
+    // tools/package.py points this at the published build's content-hashed script
+    const { boot } = await import('./preview.js');
     const status = document.getElementById('status');
     const t0 = performance.now();
     try {

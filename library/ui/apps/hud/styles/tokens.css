@@ -258,9 +258,6 @@
   /* sidebar rail — sRGB equivalents of the reference's linear-space blends */
   --rail-bg: rgba(0, 0, 0, 0.7); /* a navigation button's circle */
   --rail-divider: var(--dcl-transparencies-white-20);
-  --rail-me-ring: rgba(255, 255, 255, 0.7); /* the ring inside the Me button */
-  --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
-  --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */
   --rail-tag: #727272; /* the #tag after the player's name in the Me panel */
   --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups; the shared MenuDivider copies this value */
   --rail-panel-left: 66px; /* where a panel beside the navigation column starts */
