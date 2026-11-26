@@ -259,8 +259,10 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
 }
 
 // One Saved-Outfits slot: an empty slot (silhouette; the first one invites saving), or a saved
-// outfit with a hover EQUIP button and a delete button. Double-click also equips. A slot is a
-// skeleton until the saved outfits arrive and a spinner while its outfit is saved or deleted.
+// outfit with a hover EQUIP button and a delete button. A click shows the outfit on the avatar
+// without equipping it. A slot is a skeleton until the saved outfits arrive and a spinner while its
+// outfit is saved or deleted; while the avatar loads an outfit, shown or equipped, the spinner is in
+// that slot's EQUIP button and no slot answers.
 function OutfitSlotCard({
   index,
   outfit,
@@ -272,6 +274,7 @@ function OutfitSlotCard({
   equipping,
   inert,
   onSave,
+  onPreview,
   onEquip,
   onDelete
 }: {
@@ -282,10 +285,12 @@ function OutfitSlotCard({
   equipped: boolean
   loading: boolean
   busy: 'save' | 'delete' | null
+  /** The avatar is loading this slot's outfit, shown or equipped. */
   equipping: boolean
   /** Another slot's outfit is being saved, deleted or put on: this one answers nothing. */
   inert: boolean
   onSave: () => void
+  onPreview: () => void
   onEquip: () => void
   onDelete: () => void
 }): React.JSX.Element {
@@ -339,9 +344,9 @@ function OutfitSlotCard({
         )}
       </span>
       {/* the card's own button starts under the delete button's strip: the two never share an area */}
-      <button type="button" className={styles.outfitThumbs} disabled={equipping || inert} onDoubleClick={onEquip} aria-label={`Outfit ${index + 1}`} />
+      <button type="button" className={styles.outfitThumbs} disabled={equipping || inert} onClick={onPreview} aria-label={`Outfit ${index + 1}`} />
       <span className={styles.outfitRing} aria-hidden="true" />
-      <button type="button" className={styles.outfitDelete} disabled={inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
+      <button type="button" className={styles.outfitDelete} disabled={equipping || inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
         <MaskIcon src={deleteIcon} size={24} />
       </button>
       <button type="button" className={styles.outfitEquipBtn} disabled={equipping || inert} aria-busy={equipping} aria-label="EQUIP" onClick={onEquip}>
@@ -570,6 +575,12 @@ export function BackpackPage({
   useEffect(() => {
     if (!showingOutfits) backpack.dismissOutfitError()
   }, [showingOutfits, backpack.dismissOutfitError])
+  // An outfit shown but not equipped leaves the avatar with the Saved Outfits.
+  const outfitsWereShown = useRef(false)
+  useEffect(() => {
+    if (outfitsWereShown.current && !showingOutfits) backpack.restoreOutfitPreview()
+    outfitsWereShown.current = showingOutfits
+  }, [showingOutfits, backpack.restoreOutfitPreview])
 
   if (!backpack.open) return null
 
@@ -736,7 +747,8 @@ export function BackpackPage({
                               equipping={backpack.outfitEquipping === i}
                               inert={outfitWorkSlot != null && outfitWorkSlot !== i}
                               onSave={() => backpack.saveOutfit(i)}
-                              onEquip={() => backpack.equipOutfit(i)}
+                              onPreview={() => backpack.previewOutfit(i)}
+                    onEquip={() => backpack.equipOutfit(i)}
                               onDelete={() => confirmDeleteOutfit(i)}
                             />
                           )

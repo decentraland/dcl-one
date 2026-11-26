@@ -7,16 +7,22 @@
 //                 a save only fills an empty slot
 //                 with no name owned, deleting an extra slot clears every extra slot
 //                 a refused one → outfitSaveFailed to the page
-//   busy → outfitBusy to the page around every save, delete and equip, whatever its outcome
-//   pictures → localStorage, per account and slot: a cache, never deployed, recaptured on equip
-//   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
+//   busy → outfitBusy to the page around every save, delete, preview and equip, whatever its outcome;
+//          a preview's and an equip's lasts until the Backpack's avatar has loaded the outfit
+//   pictures → localStorage, per account and slot: a cache, never deployed, a missing one taken once
+//              the outfit is on the avatar
+//   preview → the Backpack's look, as an equip, until restoreOutfitPreview puts back the look from
+//             before the first preview (the page: leaving Saved Outfits, closing the Backpack)
+//   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close);
+//           it keeps a previewed look
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
 import { catalystBase, getJson, HttpError } from '../http'
 import { readOwnedNames } from './profile'
 import { sendEquipped } from './wearables'
 import { currentLook, editLook } from './avatarDraft'
-import { captureAvatarThumbnail, waitFrames } from './avatarPreview'
+import { captureAvatarThumbnail, lookShown } from './avatarPreview'
+import { identity } from '../identity'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import type { OutfitColor, OutfitData, OutfitsData } from '@explorer-core/engine/generated'
 import type { Ctx } from '../bridge'
@@ -35,8 +41,6 @@ const GREY: OutfitColor = { r: 0.5, g: 0.5, b: 0.5, a: 1 }
 const FREE_SLOTS = 5
 // Each listed name is an ownership check at the catalyst.
 const MAX_NAMES = 5
-// Wait for an equipped outfit's wearables to load before picturing it.
-const EQUIP_THUMBNAIL_DELAY_FRAMES = 180
 
 // Pictures are rendered as <img src>, so only a PNG data URL up to 1 MiB is kept or shown.
 const THUMBNAIL_PREFIX = 'data:image/png;base64,'
@@ -188,6 +192,18 @@ function currentOutfit(look: AvatarLook): Outfit {
   }
 }
 
+// What an outfit changes on the Backpack's look as it was before the first preview: what leaving the
+// Saved Outfits puts back. An equip keeps the previewed look, so it forgets this.
+type OutfitLook = Pick<AvatarLook, 'bodyShape' | 'eyes' | 'hair' | 'skin' | 'wearables' | 'forceRender'>
+let beforePreview: OutfitLook | null = null
+// Counts previews and restores: a preview still reading its outfit when a later one, or the restore,
+// arrives puts nothing on.
+let previews = 0
+identity.onChange(() => {
+  beforePreview = null
+  previews++
+})
+
 export function registerOutfits(ctx: Ctx): void {
   // Pictures of the account the outfits belong to, even if the player changed meanwhile.
   const emit = async (address: string | null, metadata: OutfitsMetadata): Promise<void> => {
@@ -219,7 +235,7 @@ export function registerOutfits(ctx: Ctx): void {
   }
 
   // Tells the page the slot is busy until `work` settles: some outcomes send nothing else.
-  const busy = async <T>(slot: number, action: 'save' | 'delete' | 'equip', work: () => Promise<T>): Promise<T> => {
+  const busy = async <T>(slot: number, action: 'save' | 'delete' | 'preview' | 'equip', work: () => Promise<T>): Promise<T> => {
     ctx.send({ kind: 'outfitBusy', slot, action, busy: true })
     try {
       return await work()
@@ -292,17 +308,17 @@ export function registerOutfits(ctx: Ctx): void {
   })
 
   // Put a saved outfit's body shape, colors and wearables on the Backpack's look (keeps emotes).
-  ctx.on('equipOutfit', async (msg) => {
+  const wear = async (slot: number, action: 'preview' | 'equip', current: () => boolean): Promise<void> => {
     const me = getPlayer()
-    // Busy until the look is on the Backpack's avatar; the missing picture below is taken after.
-    const equipped = await busy(msg.slot, 'equip', async (): Promise<Outfit | null> => {
+    // Busy until the Backpack's avatar has loaded the look; the missing picture below is taken after.
+    const worn = await busy(slot, action, async (): Promise<Outfit | null> => {
       if (me == null) return null
       const metadata = await loadMetadata(me.userId, me.isGuest).catch((e: unknown) => {
         console.error('[outfits] read failed', e)
         return null
       })
-      const found = metadata?.outfits.find((o) => o.slot === msg.slot)?.outfit
-      if (found == null) return null
+      const found = metadata?.outfits.find((o) => o.slot === slot)?.outfit
+      if (found == null || !current()) return null
       editLook({
         bodyShape: found.bodyShape,
         eyes: rgb(found.eyes.color),
@@ -314,25 +330,52 @@ export function registerOutfits(ctx: Ctx): void {
       // Re-emit the equipped set resolved from the outfit's wearables (by urn, independent of the
       // loaded catalog page). Otherwise off-page outfit items never reach the HUD's category slots
       // and the next single-item equip drops them.
+      // Watched from now: the preview takes the look up on its own before the set is resolved.
+      const shown = lookShown()
       await sendEquipped(ctx)
+      await shown
       return found
     })
-    if (me == null || equipped == null) return
-    if (thumbnailOf(me.userId, msg.slot) == null) {
-      await waitFrames(EQUIP_THUMBNAIL_DELAY_FRAMES)
+    if (me == null || worn == null) return
+    if (thumbnailOf(me.userId, slot) == null) {
       // Changed since: the preview no longer shows this outfit.
-      if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(equipped.wearables)) return
+      if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(worn.wearables)) return
       const thumbnail = await captureAvatarThumbnail()
       if (thumbnail == null) return
       await serially(async () => {
         // A save or delete may have changed the slot meanwhile.
         const now = await loadMetadata(me.userId, me.isGuest).catch(() => null)
-        const held = now?.outfits.find((o) => o.slot === msg.slot)
-        if (now == null || held == null || !sameOutfit(held.outfit, equipped)) return
-        if (thumbnailOf(me.userId, msg.slot) != null) return
-        writeThumbnail(me.userId, msg.slot, thumbnail)
+        const held = now?.outfits.find((o) => o.slot === slot)
+        if (now == null || held == null || !sameOutfit(held.outfit, worn)) return
+        if (thumbnailOf(me.userId, slot) != null) return
+        writeThumbnail(me.userId, slot, thumbnail)
         await emit(me.userId, now)
       })
     }
+  }
+
+  ctx.on('previewOutfit', async (msg) => {
+    const look = currentLook()
+    if (beforePreview == null && look != null) {
+      const { bodyShape, eyes, hair, skin, wearables, forceRender } = look
+      beforePreview = { bodyShape, eyes, hair, skin, wearables, forceRender }
+    }
+    const preview = ++previews
+    await wear(msg.slot, 'preview', () => preview === previews)
+  })
+
+  ctx.on('equipOutfit', async (msg) => {
+    beforePreview = null
+    await wear(msg.slot, 'equip', () => true)
+  })
+
+  // The look is put back before anything is awaited: the commitAvatar that follows a closing
+  // Backpack's restore deploys it.
+  ctx.on('restoreOutfitPreview', async () => {
+    previews++
+    if (beforePreview == null) return
+    editLook(beforePreview)
+    beforePreview = null
+    await sendEquipped(ctx)
   })
 }
