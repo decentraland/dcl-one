@@ -3,8 +3,9 @@
 These files compare the node's builder routes with
 `github.com/decentraland/builder-server` at
 `98897af692f26063a088aebb2ea5bb3f683168a2`. Each capture is a request and
-the answer the pinned upstream gave to it. The node replays every capture
-and the parity ledger records, per operation, what the replay shows.
+the answer the pinned upstream gave to it. The parity ledger records, per
+operation, what the node's replay of the captures shows. The replay and its
+tests are pending (see Tests).
 
 ## Files
 
@@ -20,9 +21,10 @@ captures.
 
 Captures use the shared conformance fixture format
 (`services/catalyst/testing/src/conformance/fixture.rs`): `request` with
-`method`, `path`, `query`, `headers` and `body`, or `multipart` parts (each
-part's field `name`, `filename`, `type` and synthetic `text`), which the replay
-sends as form data; `response` with `status`,
+`method`, `path`, `query`, `headers` and `body`; an upload's capture carries
+`multipart` parts instead of a body (each part's field `name`, `filename`,
+`type` and synthetic `text`), a field the builder port adds to that format,
+and the replay sends them as form data; `response` with `status`,
 the kept headers and `body_json` or `body_bytes_b64`; `captured_from`,
 `captured_at` and `volatile_paths`. A capture whose request made upstream
 post to Slack carries `slack`: the JSON bodies upstream posted to Slack's
@@ -57,7 +59,8 @@ exercises the operation of the method it asks for. Upstream and the replay
 run with the same `CORS_ORIGIN`. A capture's response records
 `content-type`, `cache-control` and `location`, and the other headers its case
 is about. A capture with `repeat` was the last of that many plus one equal
-requests in a row; the replay sends it as many times first, with the signer's
+requests in a row, each of which the capture required to answer its case's
+`repeat_status`; the replay sends it as many times first, with the signer's
 review budgets fresh before and after. A volatile leaf is recorded as
 `<<VOLATILE>>`, which matches any value on replay. A capture whose
 volatile timestamps were equal before masking lists them in
@@ -78,9 +81,10 @@ these rules, as the ledger test refuses such a capture.
 
 ## Parity ledger
 
-`parity.json` lists every route of the route ledger
-(`services/catalyst/builder/src/tests/upstream_routes.rs`) that is `Routed`
-or `Todo`. Its schema is the social family's (`../social/parity.json`): each operation has
+`parity.json` lists the operations of the pinned upstream that the builder
+port serves; the port's route ledger
+(`services/catalyst/builder/src/tests/upstream_routes.rs`) names each one
+`Routed` or `Todo`. Its schema is the social family's (`../social/parity.json`): each operation has
 `id` (`api_http:<METHOD>:/v1<path>`), `owner`, `status`, `result`,
 `evidence`, `gaps` and `remaining_verification`.
 
@@ -129,8 +133,8 @@ query string and a trailing slash are ignored), and must carry `replay`: the
 exact notes the replay produces for it, empty for a match. A capture whose
 request matches more than one in-scope operation is refused. A capture's
 `volatile_paths` may only end in a field named in `volatile_fields`
-(`created_at`, `updated_at`, `last_activity_at` and `id`, for a row the database
-names), and the recorded value there must be
+(`created_at`, `updated_at`, `last_activity_at`, `reviewed_at` and `id`, for a
+row the database names), and the recorded value there must be
 `<<VOLATILE>>`. A note is `status: ...`,
 `header ...`, a body path with `missing`, `extra` or `value`, `body bytes
 differ: ...`, `candidate body is not JSON: ...`, `slack: ...` or `newsletter: ...`, as
@@ -142,42 +146,17 @@ function in it, which the ledger test requires to be there.
 
 ## Tests
 
-The tests in `services/catalyst/tests/builder_conformance.rs` (test group
-`node_1`) hold the ledger to the captures and the route ledger.
-
-- `the_parity_ledger_names_every_in_scope_route` checks that the parity
-  ledger and the route ledger name the same in-scope operations, that every
-  status has its evidence or gaps, that every cited file exists, that every
-  JSON file in this folder other than `parity.json` and `seed.json` is a
-  capture directly in `source/` or `live/`, and that every capture is cited
-  by exactly one operation with its `replay` notes. The tests named
-  `a_..._is_refused` hold each of those rules against a ledger built in the
-  test.
-- `the_builder_captures_replay_against_the_mounted_router` seeds a scratch
-  database from `seed.json`, builds the builder routers as `serve` composes
-  them (at the root and under `/builder-api`), replays every capture in the
-  order of its number (`live/` first) and requires each one's notes to equal its `replay` list. A
-  `GET` or `HEAD` capture is also replayed under `/builder-api` and must
-  produce the same notes. A signed capture is signed again for the replay by
-  the same wallet, over the path it is sent to, with its recorded metadata,
-  a delegated key valid until 2099 and a timestamp of now, plus its `sign`
-  defect; one marked `"auth": "recorded"` is sent as recorded. It
-  needs `CATALYST_TEST_DATABASE_URL` and does nothing without it. The outer
-  layers `serve` adds around every service are not part of the replay.
-  The builder replay compares every key, `id` and `url` included (the
-  social replays keep the shared differ's list of keys it never compares).
-  Beyond the differ's notes, it adds `<path> volatile value is not a
-  timestamp` when the node answers anything but a string or a number at a
-  volatile path, and `<a> and <b> differ` when the node breaks a recorded
-  `volatile_equal` group. The node posts its curation notices to a loopback
-  Slack that takes the capture's bot token; after each capture the replay
-  waits for the node's notices and adds `slack: fixture=<recorded>
-  candidate=<sent>` when the messages differ from the capture's `slack`
-  (none when it has none). The node has the validator's secret and the
-  `builder-auto-curation` flag on; after each capture the replay claims every
-  validation request the node recorded through `POST /v1/validator/claims`
-  and compares each claim's `collectionId` and `items` with the capture's
-  `queue`, noting each difference under `queue`.
+Pending: the tests that hold the ledger to the captures and replay every
+capture against the node are `services/catalyst/tests/builder_conformance.rs`,
+which arrives with the builder port, and the ledger's evidence entries outside
+this folder name builder tests that arrive with the port too. Until then the
+statuses in `parity.json` record the review of the captures against the port,
+not a replay, and no test checks them against the node. What this file says
+the ledger test and the replay test refuse or require describes those tests.
+`node --test tooling/tests/builder-server-capture.test.cjs` checks this folder
+now: every capture parses into the shape the replay reads and is a case of the
+capture script, the seed holds only the fields both seeders apply, and every
+`source/` capture a gap lists is a case.
 
 `seed.json` accepts only the fields both seeders apply; any other field
 fails the replay test with its name. `collections` are the builder's rows,
@@ -199,7 +178,15 @@ both sides insert them as virtual third party rows (`tp:1:<name>:`).
 managers, whether it is programmatic and, with `approved: false`, an
 unapproved one (approved otherwise): the capture serves them from its fake
 third-party subgraph to upstream, and the replay from a loopback registry to
-the node. A provider can be in both. The
+the node. A provider can be in both.
+`receipts` are the slot cheques the registry already consumed, each with its
+provider, quantity, salt and signing wallet role: the capture serves them as
+the third-party subgraph's `receipts`, and the replay records them in the
+node's registry index under their provider, which the registry must list.
+`entities` are the catalyst's active entities, each with its entity id, type,
+pointer and metadata: the capture's fake answers an active-entities read with
+the seeded ones whose pointers it asks for, and the replay deploys them in the
+node's content tables. The
 `admin` wallet is upstream's `ADMIN_ADDRESSES`. `chain` names, once, what
 the Polygon collections subgraph holds: the committee's roles, its
 collections (contract, name, creator and owner roles, approval, manager and
@@ -219,11 +206,6 @@ rarity has its prices on both sides exactly when `chain` says so. The node's
 clock, which sets and compares a collection's lock, is the capture's fixed
 clock.
 
-```sh
-cd services/catalyst
-CATALYST_TEST_JOBS=4 cargo test --test node_1 -- builder_conformance::
-```
-
 ## Capturing the pinned upstream
 
 `tooling/builder-server-capture.cjs` runs upstream's own Express app and
@@ -233,9 +215,13 @@ database-URL checks with the social captures
 (`tooling/social-capture-common.cjs`).
 
 The script refuses a checkout that isn't the Git working tree root, isn't
-at the pinned revision, has staged, unstaged or untracked changes, or whose
-`node_modules` doesn't match `package-lock.json` as `npm ci` installs it.
-Then it:
+at the pinned revision or has staged, unstaged or untracked changes. It
+installs upstream's locked dependencies with `npm ci --ignore-scripts`, which
+replaces whatever `node_modules` held. Upstream and its migration process
+run with the capture's settings and only `PATH`, `HOME`, `TMPDIR` and `TZ`
+of the shell's environment, and the migration process runs in an empty
+directory; upstream's settings are loaded into its `decentraland-commons`
+env, so no `.env` file is read. Then it:
 
 1. Creates its own database, `builder_capture_<pid>_<random>`, on the
    cluster `CATALYST_TEST_DATABASE_URL` names, and drops it at the end of
@@ -244,7 +230,8 @@ Then it:
    created; a second signal waits for the same drop. An uncaught error is
    reported redacted after the same drop. Upstream runs with that URL's credentials, so use a role that
    can create databases and owns nothing else.
-2. Runs upstream's migrations and inserts the rows of `seed.json`.
+2. Runs upstream's migrations, stopping the run if they take more than
+   five minutes, and inserts the rows of `seed.json`.
 3. Starts a loopback fake for the collections and third-party subgraphs,
    which answers the collections subgraph's `accounts`, `collections` and
    `items` fields with the `seed.json` `chain` rows their `where` argument
@@ -256,8 +243,8 @@ Then it:
    `price` and `maxSupply`, ordered by id) and the third-party subgraph's `thirdParties` with
    the `seed.json` `registry` rows (by `id`, `managers_contains` or
    `managers_contains_nocase`; with no `__typename`, which The Graph answers
-   only when a query selects it). It answers the catalyst's active-entities read with no entities
-   and the Polygon JSON-RPC's `eth_chainId`, `net_version`, `eth_getCode`
+   only when a query selects it). It answers the catalyst's active-entities read with the
+   `seed.json` `entities` whose pointers it names, and the Polygon JSON-RPC's `eth_chainId`, `net_version`, `eth_getCode`
    (code only at a `chain` collection's contract) and the `eth_call` of the
    rarities-with-oracle contract's `getRarityByName` (a `chain` rarity's
    `max_supply` and `mana_price`; a revert for another name), records the
@@ -283,9 +270,12 @@ Then it:
    upstream started in the background has ended: in a message on the events
    topic, a curators' notice that none was requested, or no changed item.
 4. Loads `tooling/builder-server-offline.cjs` into its own process and,
-   with `--require`, into the migration process: proxy variables are
-   removed, and a TCP connection to anything but localhost or a loopback
-   address is refused, as is a `dns.lookup` of any other hostname. The
+   with `--require`, into the migration process. The guard refuses to load
+   while `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` or `NODE_USE_ENV_PROXY` is
+   set in either spelling, so no proxy configured before it can carry a
+   request. It refuses a TCP connection or a UDP datagram to anything but
+   localhost or a loopback address, and a lookup or DNS query (`dns`,
+   `dns.promises` and their resolvers) of any other name. The
    capture fails if anything was refused, if upstream asked the fake for
    another subgraph field or filtered by a `where` key the fake doesn't
    apply, called another JSON-RPC method, or called a fake route other than the subgraphs, the JSON-RPC, the
@@ -294,9 +284,8 @@ Then it:
    that needs another answer adds it to the fake first. The guard covers
    `net` connections and `dns.lookup` on the main thread of the capture
    process and on every thread of the migration process. It
-   doesn't cover worker threads the capture process starts, DNS queries sent
-   through `dns.resolve*` or `dns.promises` (a TCP connection they lead to is
-   still refused), UDP, other child processes or native code.
+   doesn't cover worker threads the capture process starts, other child
+   processes or native code.
 5. Fixes the clock at `2026-01-01T00:00:00.000Z`, so timestamps and
    signatures are the same on every run. Values the database clock sets are
    listed in the case's `volatile` paths. A volatile path must end in a
@@ -323,16 +312,16 @@ Then it:
    derive these keys: never configure the addresses as an admin or committee
    member anywhere.
 7. Writes the captures to a staging folder beside the output folder and
-   moves them into it only after every check passed, so a failed run leaves
-   the output untouched.
+   replaces the output folder with it only after every check passed, so a
+   failed run leaves the output untouched and a passing one leaves no capture
+   of a removed or renamed case behind.
 
-To capture, install upstream's locked dependencies in a scratch checkout
-and write into an empty folder:
+To capture, check upstream out at the pin in a scratch folder and write into
+a folder of its own:
 
 ```sh
 git clone --no-checkout https://github.com/decentraland/builder-server.git "$SCRATCH/builder-server"
 git -C "$SCRATCH/builder-server" checkout --detach 98897af692f26063a088aebb2ea5bb3f683168a2
-(cd "$SCRATCH/builder-server" && npm ci --ignore-scripts)
 CATALYST_TEST_DATABASE_URL=<disposable-cluster-url> \
   node tooling/builder-server-capture.cjs "$SCRATCH/builder-server" "$SCRATCH/out"
 diff -r "$SCRATCH/out" services/catalyst/tests/fixtures/conformance/builder/source
