@@ -160,19 +160,6 @@ impl RateLimiter {
         f(&mut b)
     }
 
-    /// The tokens `key` has spent and not yet got back at `now`: beyond the
-    /// capacity while its bucket is in debt.
-    pub fn spent_at(&self, key: &str, now: Instant) -> f64 {
-        self.buckets
-            .get(&key.to_ascii_lowercase())
-            .map_or(0.0, |entry| {
-                let b = entry.lock();
-                let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
-                let level = (b.tokens + elapsed * self.refill_per_sec).min(self.capacity);
-                (self.capacity - level).max(0.0)
-            })
-    }
-
     /// Returns `cost` tokens spent on work that did not happen.
     pub fn refund(&self, key: &str, cost: u32) {
         if let Some(entry) = self.buckets.get(&key.to_ascii_lowercase()) {
