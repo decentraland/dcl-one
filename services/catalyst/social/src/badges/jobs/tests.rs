@@ -1473,7 +1473,7 @@ async fn a_sale_of_an_unmirrored_item_holds_until_the_item_or_a_later_pass() {
         "UPDATE shop.mirror_state SET last_complete_pass_at = to_timestamp($1)::timestamp \
          WHERE mirror = 'items'",
     )
-    .bind((sale_at + sales::ITEM_WAIT_SECS) as f64)
+    .bind((sale_at + crate::shared::collections::ITEM_WAIT_SECS) as f64)
     .execute(&pool)
     .await
     .unwrap();
@@ -1606,4 +1606,349 @@ async fn a_referral_recount_never_lowers_imported_steps() {
     );
     assert_eq!(progress(&pool, r, "referral").await.unwrap().0, 9);
     assert!(tiers(&pool, r, "referral").await.is_empty());
+}
+
+/// Once the collections index owns Polygon, a recount reads the catalogue
+/// only while the index's descriptive verdict holds: a rewind stops it,
+/// though the mirrors' passes a takeover leaves are recorded.
+#[tokio::test]
+async fn a_recount_follows_the_index_on_an_owned_polygon() {
+    let Some(pool) = private_pool("badges_recount_owned").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let p = pass(&pool);
+    let creator = fresh_address();
+    let c = contract();
+    item(&pool, &c, 0, "wearable_v2", creator.as_str()).await;
+    mirror_ready(&pool, "items").await;
+    mirror_ready(&pool, "collections").await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(
+        recount::run_one(&p, Recount::WearableDesigner)
+            .await
+            .unwrap(),
+        0,
+        "the index refuses"
+    );
+    assert_eq!(
+        progress(&pool, creator.as_str(), "wearable_designer").await,
+        None
+    );
+    owning::own(&pool, "matic", 137, 100, 2 * 3600).await;
+    assert_eq!(
+        recount::run_one(&p, Recount::WearableDesigner)
+            .await
+            .unwrap(),
+        1,
+        "an old publication still describes"
+    );
+    assert_eq!(
+        progress(&pool, creator.as_str(), "wearable_designer")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+}
+
+/// Once the collections index owns Polygon, a sale waits until the index's
+/// publication covers its block, whether or not its item has a row (a row
+/// read before then may be a rewound branch's), and however long the index
+/// refuses: a day-old sale is awarded once covered.
+#[tokio::test]
+async fn on_an_owned_polygon_a_sale_waits_for_the_publication_over_its_block() {
+    let Some(pool) = private_pool("badges_sales_owned").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let p = pass(&pool);
+    chain_ready(&pool, "sales", 100).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    let creator = fresh_address();
+    let (buyer, late) = (fresh_address(), fresh_address());
+    let sale = |block: i64, at: i64, by: String, tx: String| {
+        let pool = pool.clone();
+        let c = c.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
+                 VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, 2, $4, $5)",
+            )
+            .bind(block)
+            .bind(at)
+            .bind(&c)
+            .bind(by)
+            .bind(tx)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    item(&pool, &c, 2, "wearable_v2", creator.as_str()).await;
+    mirror_ready(&pool, "items").await;
+    let recent = now().and_utc().timestamp() - 60;
+    sale(
+        101,
+        recent,
+        buyer.to_string(),
+        format!("0x{}", "a".repeat(64)),
+    )
+    .await;
+    chain_ready(&pool, "sales", 101).await;
+
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(
+        cursor(&pool, Log::Sale.source()).await,
+        Some((100, i32::MAX))
+    );
+    assert_eq!(progress(&pool, buyer.as_str(), "fashionista").await, None);
+
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(
+        progress(&pool, buyer.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+
+    // A refusal longer than ITEM_HOLD_MAX_SECS gives up nothing: the
+    // day-old sale holds until the publication covers it.
+    let old = recent - 2 * crate::shared::collections::ITEM_HOLD_MAX_SECS;
+    sale(102, old, late.to_string(), format!("0x{}", "b".repeat(64))).await;
+    chain_ready(&pool, "sales", 102).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((101, 0)));
+    assert_eq!(progress(&pool, late.as_str(), "fashionista").await, None);
+    owning::own(&pool, "matic", 137, 102, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((102, 0)));
+    assert_eq!(
+        progress(&pool, late.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+}
+
+/// A CollectionStore mint of `contract`'s item 2 at `block`, `at`, to `buyer`.
+async fn mint(pool: &PgPool, contract: &str, block: i64, at: i64, buyer: &str, tx: char) {
+    sqlx::query(
+        "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
+         VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, 2, $4, $5)",
+    )
+    .bind(block)
+    .bind(at)
+    .bind(contract)
+    .bind(buyer)
+    .bind(format!("0x{}", tx.to_string().repeat(64)))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A listing Traded at `block`, `at`: `caller` buys `sent` (the goods) for MANA.
+async fn traded(pool: &PgPool, block: i64, at: i64, caller: &str, sent: Value, tx: char) {
+    sqlx::query(
+        "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, marketplace_address, kind, caller, hashed_signature, signer, assets, tx_hash) \
+         VALUES ('matic', $1, 0, $2, '0xm', 'traded', $3, '0xsig', $4, $5, $6)",
+    )
+    .bind(block)
+    .bind(at)
+    .bind(caller)
+    .bind(fresh_address().as_str())
+    .bind(json!({"sent": sent,
+                 "received": [{"assetType": 1, "contractAddress": "0xmana", "value": "5"}]}))
+    .bind(format!("0x{}", tx.to_string().repeat(64)))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A pass walks `indexer`'s Polygon cursor to `block` before it folds and
+/// publishes it: the publication stays where it was.
+async fn walk_past(pool: &PgPool, indexer: &str, block: i64) {
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = $2, fold_through = $2 \
+         WHERE indexer = $1 AND network = 'matic'",
+    )
+    .bind(indexer)
+    .bind(block)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The sales are read up to the index's publish marker, which a pass walking
+/// past it does not withdraw, and no further; a stale publication is not
+/// read.
+#[tokio::test]
+async fn sales_are_read_up_to_the_publication_while_a_pass_walks_past_it() {
+    let Some(pool) = private_pool("badges_sales_publish_marker").await else {
+        return;
+    };
+    let p = pass(&pool);
+    chain_ready(&pool, "sales", 100).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    item(&pool, &c, 2, "wearable_v2", fresh_address().as_str()).await;
+    mirror_ready(&pool, "items").await;
+    let (first, second, third) = (fresh_address(), fresh_address(), fresh_address());
+    let recent = now().and_utc().timestamp() - 60;
+    mint(&pool, &c, 101, recent, first.as_str(), 'a').await;
+    mint(&pool, &c, 103, recent, second.as_str(), 'b').await;
+    chain_ready(&pool, "sales", 101).await;
+    walk_past(&pool, "sales", 103).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((101, 0)));
+    assert_eq!(
+        progress(&pool, first.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+    assert_eq!(progress(&pool, second.as_str(), "fashionista").await, None);
+
+    chain_ready(&pool, "sales", 103).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(
+        progress(&pool, second.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+
+    mint(&pool, &c, 104, recent, third.as_str(), 'c').await;
+    chain_ready(&pool, "sales", 104).await;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes' \
+         WHERE indexer = 'sales' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((103, 0)));
+    assert_eq!(progress(&pool, third.as_str(), "fashionista").await, None);
+}
+
+/// On an owned Polygon a sale with a good waits for the publication over its
+/// block whether or not its item has a row: a mint of an item without one,
+/// and a trade none of whose goods has one (it buys nothing the catalogue
+/// describes yet). A trade without goods never waits.
+#[tokio::test]
+async fn on_an_owned_polygon_a_sale_without_an_item_row_waits_too() {
+    let Some(pool) = private_pool("badges_sales_owned_unmirrored").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let p = pass(&pool);
+    for (log, indexer) in [(Log::Sale, "sales"), (Log::Trade, "trade_events")] {
+        chain_ready(&pool, indexer, 100).await;
+        sales::batch(&p, log).await.unwrap();
+    }
+    let (c, rowless) = (contract(), contract());
+    item(&pool, &c, 2, "wearable_v2", fresh_address().as_str()).await;
+    let (minter, buyer, other) = (fresh_address(), fresh_address(), fresh_address());
+    let recent = now().and_utc().timestamp() - 60;
+    mint(&pool, &rowless, 101, recent, minter.as_str(), 'a').await;
+    traded(
+        &pool,
+        101,
+        recent,
+        buyer.as_str(),
+        json!([{"assetType": 4, "contractAddress": rowless, "value": "2"}]),
+        'b',
+    )
+    .await;
+    traded(
+        &pool,
+        102,
+        recent,
+        other.as_str(),
+        json!([{"assetType": 4, "contractAddress": c, "value": "2"}]),
+        'c',
+    )
+    .await;
+    chain_ready(&pool, "sales", 101).await;
+    chain_ready(&pool, "trade_events", 102).await;
+
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    for log in [Log::Sale, Log::Trade] {
+        assert_eq!(sales::batch(&p, log).await.unwrap(), (0, false), "{log:?}");
+        assert_eq!(cursor(&pool, log.source()).await, Some((100, i32::MAX)));
+    }
+
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((101, 0)));
+    assert_eq!(progress(&pool, minter.as_str(), "fashionista").await, None);
+    assert_eq!(sales::batch(&p, Log::Trade).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Trade.source()).await, Some((101, 0)));
+    assert_eq!(progress(&pool, buyer.as_str(), "fashionista").await, None);
+
+    owning::own(&pool, "matic", 137, 102, 60).await;
+    assert_eq!(sales::batch(&p, Log::Trade).await.unwrap(), (1, false));
+    assert_eq!(
+        progress(&pool, other.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+
+    traded(
+        &pool,
+        103,
+        recent,
+        fresh_address().as_str(),
+        json!([{"assetType": 1, "contractAddress": "0xmana", "value": "1"}]),
+        'd',
+    )
+    .await;
+    chain_ready(&pool, "trade_events", 103).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(sales::batch(&p, Log::Trade).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Trade.source()).await, Some((103, 0)));
+}
+
+/// With `max_event_age` set, a sale too old for a badge passes at once on an
+/// owned Polygon, however the index stands.
+#[tokio::test]
+async fn on_an_owned_polygon_a_sale_too_old_for_a_badge_never_waits() {
+    let Some(pool) = private_pool("badges_sales_owned_too_old").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let mut p = pass(&pool);
+    p.settings.max_event_age = Some(std::time::Duration::from_secs(3_600));
+    chain_ready(&pool, "sales", 100).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    item(&pool, &c, 2, "wearable_v2", fresh_address().as_str()).await;
+    let buyer = fresh_address();
+    mint(
+        &pool,
+        &c,
+        101,
+        now().and_utc().timestamp() - 7_200,
+        buyer.as_str(),
+        'a',
+    )
+    .await;
+    chain_ready(&pool, "sales", 101).await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((101, 0)));
+    assert_eq!(progress(&pool, buyer.as_str(), "fashionista").await, None);
 }

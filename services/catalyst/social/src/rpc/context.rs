@@ -631,7 +631,7 @@ impl Context {
                 .db
                 .connectivity_friends_page(&address, &cursor.friend_after, true)
                 .await?;
-            if !friends.is_empty() {
+            if let Some(last) = friends.last() {
                 // Upstream's live loop skips a connectivity update whose
                 // wallet the registry holds no profile for.
                 let Some(mut profile) = self.0.profiles.existing_friend_profile(&address).await
@@ -662,7 +662,7 @@ impl Context {
                         return Ok((cursor, false));
                     }
                 }
-                cursor.friend_after = friends.last().unwrap().clone();
+                cursor.friend_after = last.clone();
             }
             cursor.friends_done = friends.len() < 256;
             return Ok((cursor, false));

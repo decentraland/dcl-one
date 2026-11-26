@@ -2,6 +2,7 @@
 //! in `schemas/releases/v3/`, ordered by filename, into `$OUT_DIR/schema.sql`.
 //! `db::SCHEMA_SQL` embeds it and `catalyst schema print` writes the same
 //! rendering. The gitignored root `schema.sql` is output, never a source.
+#![allow(clippy::unwrap_used, reason = "build script")]
 
 use std::path::PathBuf;
 use std::{env, fs};

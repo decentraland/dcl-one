@@ -110,8 +110,14 @@ class HostAliasTest(unittest.TestCase):
         deep |= set(re.findall(r'/credits/credits/([a-z-]+)/', table))
         self.assertTrue(deep, "the credits router's /credits/<x>/... routes")
         self.assertLessEqual(deep, set(gateway.CREDITS_SERVER_MOUNTS))
-        own = set(re.findall(r'\.route\(\s*"/([^/"{]+)/', router)) - {"credits"}
+        # The node's own routes include those of the routers the mount merges
+        # (the operator routes among them).
+        merged = re.findall(r'\.merge\(handlers::(\w+)::router\(\)\)', router)
+        self.assertIn("admin", merged, "the routers the credits mount merges")
+        sources = [router] + [(shop / f"credits/handlers/{name}.rs").read_text() for name in merged]
+        own = set().union(*(re.findall(r'\.route\(\s*"/([^/"{]+)/', src) for src in sources)) - {"credits"}
         self.assertTrue(own, "the credits router's own /<x>/... routes")
+        self.assertIn("admin", own)
         self.assertTrue(own.isdisjoint(gateway.CREDITS_SERVER_MOUNTS), own & set(gateway.CREDITS_SERVER_MOUNTS))
 
     def test_worlds_host_reaches_the_prefixed_worlds_routes(self):

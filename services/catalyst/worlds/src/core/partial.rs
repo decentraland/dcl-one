@@ -575,6 +575,7 @@ async fn stage_batch(
     response
 }
 
+#[allow(clippy::too_many_arguments, reason = "one caller")]
 async fn stage_batch_on(
     state: &SharedState,
     session: &mut SessionEntityGuard,
@@ -1111,6 +1112,7 @@ enum Reservation {
 
 /// Charges the batch's bytes against the per-minute rate, then its receipts against the
 /// scene cap and the account, world, source and node staging budgets, atomically.
+#[allow(clippy::too_many_arguments, reason = "each limit is a distinct budget")]
 async fn reserve(
     state: &CoreState,
     conn: &mut PgConnection,

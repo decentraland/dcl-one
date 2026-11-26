@@ -306,10 +306,21 @@ mod tests {
     fn an_isolated_profile_contains_every_persistent_directory() {
         let profile = std::env::temp_dir().join("isolated_explorer_profile");
         let dirs = project_directories_for(Some(profile.clone().into_os_string())).unwrap();
-        assert_eq!(dirs.config_dir(), profile);
-        assert_eq!(dirs.cache_dir(), profile);
-        assert_eq!(dirs.data_dir(), profile);
-        assert_eq!(dirs.data_local_dir(), profile);
+        // Windows keeps each kind in its own subdirectory (`<profile>\config`, `<profile>\data`);
+        // every platform keeps them all inside the profile.
+        for dir in [
+            dirs.config_dir(),
+            dirs.cache_dir(),
+            dirs.data_dir(),
+            dirs.data_local_dir(),
+        ] {
+            assert!(
+                dir.starts_with(&profile),
+                "{} is outside {}",
+                dir.display(),
+                profile.display()
+            );
+        }
     }
 
     #[test]

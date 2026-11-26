@@ -92,7 +92,9 @@ impl ProducerSession {
         if self.confirmed {
             return true;
         }
-        let grant = self.grant.clone().unwrap();
+        let Some(grant) = self.grant.clone() else {
+            return false;
+        };
         match control(bus, ProducerRequest::Confirm(grant.clone())).await {
             Some(ProducerReply::Active(active)) if active == grant => {
                 self.confirmed = true;
@@ -121,7 +123,9 @@ async fn submit_observation(
     if !session.prepare(bus, producer, hint).await || tokio::time::Instant::now() >= deadline {
         return false;
     }
-    let grant = session.grant.as_ref().unwrap();
+    let Some(grant) = session.grant.as_ref() else {
+        return false;
+    };
     {
         let mut current = source.lock();
         if *current == hint {
@@ -224,7 +228,7 @@ impl Observations {
                     tokio::pin!(submission);
                     let submitted =
                         if terminal {
-                            let outcome = loop {
+                            loop {
                                 tokio::select! {
                                     biased;
                                     _ = async { match deadline { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => {
@@ -243,8 +247,7 @@ impl Observations {
                                     _ = warnings.tick() => warn_dropped(&failures, &mut reported),
                                     outcome = &mut submission => break outcome,
                                 }
-                            };
-                            outcome
+                            }
                         } else { tokio::time::timeout_at(publication_deadline, &mut submission).await.unwrap_or(false) };
                     if !submitted {
                         failures.fetch_add(1, Ordering::Relaxed);

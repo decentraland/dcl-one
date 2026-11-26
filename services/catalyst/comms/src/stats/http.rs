@@ -122,7 +122,10 @@ pub fn mount_services(shared: Router, state: State, stats: Router, connector: Ro
                         // Dispatch without an outer route match: wildcard captures would leak
                         // into the inner Path extractor and alter its metrics route label.
                         use tower::ServiceExt;
-                        camera_reel.oneshot(request).await.unwrap()
+                        camera_reel
+                            .oneshot(request)
+                            .await
+                            .unwrap_or_else(|e| match e {})
                     } else {
                         next.run(request).await
                     }
@@ -329,14 +332,13 @@ impl Reply {
             Body::from_stream(futures::stream::empty::<Result<bytes::Bytes, std::io::Error>>())
         } else {
             let body = self.body.unwrap_or_default();
-            self.headers.insert(
-                "content-length",
-                HeaderValue::from_str(&body.len().to_string()).unwrap(),
-            );
+            self.headers
+                .insert("content-length", HeaderValue::from(body.len()));
             Body::from(body)
         };
         let mut response = Response::new(body);
-        *response.status_mut() = StatusCode::from_u16(self.status).unwrap();
+        *response.status_mut() =
+            StatusCode::from_u16(self.status).expect("replies use valid HTTP status codes");
         *response.headers_mut() = self.headers;
         response
     }
