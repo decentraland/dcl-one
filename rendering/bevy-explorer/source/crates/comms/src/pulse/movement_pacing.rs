@@ -28,7 +28,7 @@
 //! A pure object, like [`super::pacing`]: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
 
-use super::pacing::TokenBucket;
+use common::token_bucket::TokenBucket;
 
 /// Tokens the bucket regains each second: half of the server's 20 inputs a second, and the rate of
 /// ordinary movement.
