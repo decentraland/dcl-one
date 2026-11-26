@@ -5,8 +5,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::limits::{Call, node_over, send};
+use super::support::address;
 use super::support::{OWNER_KEY, collection_body};
-use super::validator::{address, own_pool};
+use super::validator::own_pool;
 
 async fn contract(pool: &sqlx::PgPool, id: Uuid) -> Option<String> {
     sqlx::query_scalar("SELECT contract_address FROM builder.collections WHERE id = $1")

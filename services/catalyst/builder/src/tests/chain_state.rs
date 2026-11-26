@@ -790,7 +790,7 @@ async fn a_standard_collection_this_node_published_waits_in_the_committees_queue
     let Some(pool) = super::validator::own_pool().await else {
         return;
     };
-    let member = super::validator::address(OWNER_KEY);
+    let member = super::support::address(OWNER_KEY);
     let mut queued = Vec::new();
     for urn_suffix in [false, true] {
         let mut conn = pool.acquire().await.unwrap();
