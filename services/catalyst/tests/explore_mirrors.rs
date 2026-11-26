@@ -31,8 +31,7 @@ use catalyst::explore::places::mirror::{Leg, SweepOutcome};
 use catalyst::explore::{ExploreState, MirrorSource, Settings, mirror_state, router};
 use catalyst::jobs::{JobState, Jobs};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const WORLDS_PAGE: &str = include_str!("fixtures/explore_mirrors/worlds_page.json");
 const ACTIVE_PAGE: &str =

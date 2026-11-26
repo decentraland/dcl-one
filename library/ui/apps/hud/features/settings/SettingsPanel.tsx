@@ -107,6 +107,7 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
     { title: 'Physics', match: /jiggle|physics|bones/i }
   ],
   audio: [{ title: 'Volume' }, { title: 'Voice Chat & Streams', match: /microphone|\bmic\b|device|mute|^voice[ _]chat$/i }],
+  performance: [{ title: 'Avatars', match: /avatars/i }, { title: 'General' }],
   controls: [{ title: 'Mouse' }, { title: 'Point At', match: /point|marker/i }]
 }
 function sections(category: string, items: Setting[]): { title: string | null; items: Setting[] }[] {
