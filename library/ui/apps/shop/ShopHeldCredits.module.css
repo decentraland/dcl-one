@@ -1,0 +1,49 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-hover);
+  color: var(--dcl-text-primary);
+  font: inherit;
+  font-size: var(--dcl-font-size-body-xs);
+  cursor: help;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  /* Shop overlays use layer 60 in the host (the --z-overlay primitive). */
+  z-index: 60;
+  display: grid;
+  gap: 6px;
+  width: min(300px, 80vw);
+  padding: 12px 14px;
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface);
+  box-shadow: 0 var(--dcl-space-8) var(--dcl-space-24) var(--dcl-transparencies-black-40);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-button-sm);
+  line-height: 1.45;
+}
+
+.panel p {
+  margin: 0;
+}
+
+.title {
+  font-weight: 700;
+}
+
+.caveat {
+  color: var(--dcl-text-secondary);
+}

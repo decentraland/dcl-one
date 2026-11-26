@@ -1,4 +1,5 @@
-import { Engine, Entity, Schemas } from '../../packages/@dcl/ecs/src'
+import type { Entity } from '../../packages/@dcl/ecs/src'
+import { Engine, Schemas } from '../../packages/@dcl/ecs/src'
 
 describe('when a component is defined straight from a number schema', () => {
   let engine: ReturnType<typeof Engine>

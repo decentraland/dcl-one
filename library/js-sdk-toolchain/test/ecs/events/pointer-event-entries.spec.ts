@@ -1,7 +1,9 @@
 import * as components from '../../../packages/@dcl/ecs/src/components'
-import { Engine, Entity } from '../../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../../packages/@dcl/ecs/src/engine'
 import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
-import { createPointerEventsSystem, PointerEventsSystem } from '../../../packages/@dcl/ecs/src/systems/events'
+import type { PointerEventsSystem } from '../../../packages/@dcl/ecs/src/systems/events'
+import { createPointerEventsSystem } from '../../../packages/@dcl/ecs/src/systems/events'
 import {
   InputAction,
   InteractionType,

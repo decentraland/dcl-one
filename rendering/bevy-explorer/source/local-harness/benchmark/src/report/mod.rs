@@ -5,7 +5,10 @@
 //! the workflow posts what it writes.
 //!
 //! A section is a folder holding `runs_on.txt` (the leg's label) and its runs' files:
-//! `change_build_<i>.csv/.log` and `base_build_<i>.csv/.log`. A run without a CSV crashed; a
+//! `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and, when the leg measured the latest
+//! release, `release_build_<i>.csv/.log`. The release's frame times get a table and an
+//! **Against the latest release** line of their own, with the same verdicts; the **Overall** line
+//! stays the comparison with the base. A run without a CSV crashed; a
 //! `.csv.partial` is not read, so its run counts as crashed too. A section whose files cannot be
 //! read becomes a note, as do the expected labels that left no section.
 
@@ -20,7 +23,7 @@ use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
-use crate::cli::{BASE_BUILD, CHANGE_BUILD};
+use crate::cli::{BASE_BUILD, CHANGE_BUILD, RELEASE_BUILD, RELEASE_NOT_MEASURED};
 use crate::failure::Failure;
 use crate::out;
 
@@ -46,6 +49,8 @@ pub struct ReportOptions {
     pub change: Option<String>,
     /// The baseline build, as the header names it.
     pub base: Option<String>,
+    /// The latest release, as the header names it; None when the legs did not measure it.
+    pub release: Option<String>,
     /// The workflow run that measured.
     pub run_url: Option<String>,
     /// Measured runs of each build; fewer CSVs mean the app crashed in the missing runs.
@@ -104,6 +109,12 @@ struct BaselineComparison {
     peak_memory_verdict: PeakMemoryVerdict,
 }
 
+/// The change against the latest release: frame times only.
+struct ReleaseComparison {
+    release: BuildBenchmarkRunsStatistics,
+    frame_time_verdicts: [FrameTimeVerdict; 6],
+}
+
 /// A caveat shown under a section's table.
 enum RunnerCaveat {
     MissingRuns {
@@ -119,8 +130,18 @@ enum RunnerCaveat {
     SessionsNotComparable(SessionsNotComparable),
     /// Exception kinds the change threw at least twice and the baseline never did.
     NewExceptionKinds(Vec<(String, u64)>),
-    /// No baseline run produced data: the table shows the change alone, with no verdicts.
-    NoBaselineData,
+    /// No baseline run produced data: the table shows the change alone, with no verdicts;
+    /// `release_compared` when the section still has a release table.
+    NoBaselineData {
+        release_compared: bool,
+    },
+    /// The legs measured the latest release, and none of this section's release runs produced
+    /// data: it has no release table.
+    NoReleaseData,
+    /// The leg was given the latest release but could not download or warm it up.
+    ReleaseNotMeasured,
+    /// The change and release sessions cannot be compared: the release table has no verdicts.
+    ReleaseSessionsNotComparable(SessionsNotComparable),
 }
 
 struct RunnerSection {
@@ -128,55 +149,77 @@ struct RunnerSection {
     change: BuildBenchmarkRunsStatistics,
     /// None when no baseline run produced data: the table shows the change alone.
     baseline_comparison: Option<BaselineComparison>,
+    /// None when no release run produced data: the section has no release table.
+    release_comparison: Option<ReleaseComparison>,
     caveats: Vec<RunnerCaveat>,
 }
 
 impl RunnerSection {
-    /// Its 🟢 and 🔴 verdicts, for the headline.
-    fn significant_metric_changes(&self) -> Vec<SignificantMetricChange> {
-        let Some(comparison) = &self.baseline_comparison else {
-            return Vec::new();
-        };
-        let found = |metric, improved, relative_change| SignificantMetricChange {
+    fn found(
+        &self,
+        metric: &'static str,
+        improved: bool,
+        relative_change: f32,
+    ) -> SignificantMetricChange {
+        SignificantMetricChange {
             runner: self.title.clone(),
             metric,
             improved,
             relative_change,
-        };
-        let mut findings: Vec<SignificantMetricChange> = comparison
-            .frame_time_verdicts
+        }
+    }
+
+    /// The 🟢 and 🔴 frame-time verdicts.
+    fn frame_time_changes(&self, verdicts: &[FrameTimeVerdict; 6]) -> Vec<SignificantMetricChange> {
+        verdicts
             .iter()
             .zip(stats::FRAME_TIME_METRICS)
             .filter_map(|(verdict, metric)| match *verdict {
-                FrameTimeVerdict::Faster(by) => Some(found(metric, true, by)),
-                FrameTimeVerdict::Slower(by) => Some(found(metric, false, by)),
+                FrameTimeVerdict::Faster(by) => Some(self.found(metric, true, by)),
+                FrameTimeVerdict::Slower(by) => Some(self.found(metric, false, by)),
                 _ => None,
             })
-            .collect();
+            .collect()
+    }
+
+    /// Its 🟢 and 🔴 frame-time verdicts against the latest release, for its headline.
+    fn release_metric_changes(&self) -> Vec<SignificantMetricChange> {
+        self.release_comparison
+            .as_ref()
+            .map(|comparison| self.frame_time_changes(&comparison.frame_time_verdicts))
+            .unwrap_or_default()
+    }
+
+    /// Its 🟢 and 🔴 verdicts against the base, for the headline.
+    fn significant_metric_changes(&self) -> Vec<SignificantMetricChange> {
+        let Some(comparison) = &self.baseline_comparison else {
+            return Vec::new();
+        };
+        let mut findings = self.frame_time_changes(&comparison.frame_time_verdicts);
         match comparison.exceptions_per_run_verdict {
             IncidentsPerRunVerdict::More => {
-                findings.push(found(stats::EXCEPTIONS_METRIC, false, 0.0))
+                findings.push(self.found(stats::EXCEPTIONS_METRIC, false, 0.0))
             }
             IncidentsPerRunVerdict::Fewer => {
-                findings.push(found(stats::EXCEPTIONS_METRIC, true, 0.0))
+                findings.push(self.found(stats::EXCEPTIONS_METRIC, true, 0.0))
             }
             _ => {}
         }
         match comparison.cpu_hiccups_per_run_verdict {
             IncidentsPerRunVerdict::More => {
-                findings.push(found(stats::CPU_HICCUPS_METRIC, false, 0.0))
+                findings.push(self.found(stats::CPU_HICCUPS_METRIC, false, 0.0))
             }
             IncidentsPerRunVerdict::Fewer => {
-                findings.push(found(stats::CPU_HICCUPS_METRIC, true, 0.0))
+                findings.push(self.found(stats::CPU_HICCUPS_METRIC, true, 0.0))
             }
             _ => {}
         }
         match comparison.peak_memory_verdict {
             PeakMemoryVerdict::LessMemory(by) => {
-                findings.push(found(stats::PEAK_MEMORY_METRIC, true, by))
+                findings.push(self.found(stats::PEAK_MEMORY_METRIC, true, by))
             }
             PeakMemoryVerdict::MoreMemory(by) => {
-                findings.push(found(stats::PEAK_MEMORY_METRIC, false, by))
+                findings.push(self.found(stats::PEAK_MEMORY_METRIC, false, by))
             }
             _ => {}
         }
@@ -198,19 +241,34 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
 
     let mut sections = String::new();
     let mut findings = Vec::new();
+    let mut release_findings = Vec::new();
     let mut labels = Vec::new();
     let mut has_data = false;
-    // whether a section had baseline runs to compare with
+    // whether a section had baseline runs to compare with, and release runs
     let mut compared = false;
+    let mut release_compared = false;
+    // whether every section with data is one whose leg could not run the release
+    let mut release_never_measured = true;
     for folder in &folders {
         let result = read_label(folder).and_then(|label| {
             labels.push(label.clone());
-            read_section(folder, label, options.expected_runs)
+            read_section(
+                folder,
+                label,
+                options.expected_runs,
+                options.release.is_some(),
+            )
         });
         match result {
             Ok(section) => {
                 compared |= section.baseline_comparison.is_some();
+                release_compared |= section.release_comparison.is_some();
+                release_never_measured &= section
+                    .caveats
+                    .iter()
+                    .any(|caveat| matches!(caveat, RunnerCaveat::ReleaseNotMeasured));
                 findings.extend(section.significant_metric_changes());
+                release_findings.extend(section.release_metric_changes());
                 sections += &render::runner_section(&section);
                 has_data = true;
             }
@@ -243,7 +301,17 @@ pub fn build_report(options: &ReportOptions) -> Result<BenchmarkReport, Failure>
     } else if has_data {
         markdown += render::NOTHING_COMPARED;
     }
-    markdown += &render::legend(options.expected_runs);
+    if release_compared {
+        markdown += &render::release_headline(
+            &stats::headline_metrics(&release_findings, false),
+            &stats::headline_metrics(&release_findings, true),
+        );
+    } else if has_data && release_never_measured {
+        markdown += render::RELEASE_NOT_MEASURED_ANYWHERE;
+    } else if has_data && options.release.is_some() {
+        markdown += render::NOTHING_COMPARED_WITH_RELEASE;
+    }
+    markdown += &render::legend(options.expected_runs, release_compared);
     markdown += &sections;
     Ok(BenchmarkReport {
         markdown,
@@ -278,13 +346,46 @@ fn read_label(folder: &Path) -> Result<String, String> {
     Ok(text.trim_start_matches('\u{FEFF}').trim_end().to_string())
 }
 
-fn read_section(folder: &Path, label: String, expected_runs: u64) -> Result<RunnerSection, String> {
+/// What a section without release runs says.
+#[derive(Clone, Copy, PartialEq)]
+enum ReleaseExpectation {
+    /// No release was given: nothing.
+    NotGiven,
+    /// The legs were given the latest release: none of its runs produced data.
+    Measured,
+    /// The leg could not download or warm it up (`release_not_measured.txt`).
+    NotMeasured,
+}
+
+/// `expected_release`: the legs were given the latest release, so a section without its runs
+/// says so.
+fn read_section(
+    folder: &Path,
+    label: String,
+    expected_runs: u64,
+    expected_release: bool,
+) -> Result<RunnerSection, String> {
     let change = read_runs(folder, CHANGE_BUILD)?;
     if change.is_empty() {
         return Err(format!("no {CHANGE_BUILD} run CSVs were found"));
     }
     let base = read_runs(folder, BASE_BUILD)?;
-    Ok(compare_builds(label, change, base, expected_runs))
+    let release = read_runs(folder, RELEASE_BUILD)?;
+    let expected_release = if folder.join(RELEASE_NOT_MEASURED).is_file() {
+        ReleaseExpectation::NotMeasured
+    } else if expected_release {
+        ReleaseExpectation::Measured
+    } else {
+        ReleaseExpectation::NotGiven
+    };
+    Ok(compare_builds(
+        label,
+        change,
+        base,
+        release,
+        expected_runs,
+        expected_release,
+    ))
 }
 
 /// A build's runs (`<build>_<i>.csv` and its `.log`) in name order.
@@ -333,7 +434,9 @@ fn compare_builds(
     label: String,
     change: Vec<BuildBenchmarkRun>,
     base: Vec<BuildBenchmarkRun>,
+    release: Vec<BuildBenchmarkRun>,
     expected_runs: u64,
+    expected_release: ReleaseExpectation,
 ) -> RunnerSection {
     let mut caveats = Vec::new();
     let change = build_benchmark_runs_statistics(&exclude_outlier_runs(
@@ -348,17 +451,45 @@ fn compare_builds(
         expected_runs,
         &mut caveats,
     ));
+    let release = build_benchmark_runs_statistics(&exclude_outlier_runs(
+        release,
+        "Release",
+        expected_runs,
+        &mut caveats,
+    ));
     if base.run_count == 0 {
-        caveats.push(RunnerCaveat::NoBaselineData);
+        caveats.push(RunnerCaveat::NoBaselineData {
+            release_compared: release.run_count > 0,
+        });
+    }
+    if release.run_count == 0 {
+        match expected_release {
+            ReleaseExpectation::NotGiven => {}
+            ReleaseExpectation::Measured => caveats.push(RunnerCaveat::NoReleaseData),
+            ReleaseExpectation::NotMeasured => caveats.push(RunnerCaveat::ReleaseNotMeasured),
+        }
     }
 
+    // the frame-time verdicts alone, as against the base; a session the release cannot be
+    // compared with withholds them, and a note says why
+    let release_comparison = (release.run_count > 0).then(|| {
+        let incomparable = sessions_not_comparable(&change, &release);
+        // too few change runs is already the base table's note
+        let base_says_so = incomparable == Some(SessionsNotComparable::TooFewRuns)
+            && change.run_count < 2
+            && base.run_count > 0;
+        if let Some(incomparable) = incomparable.filter(|_| !base_says_so) {
+            caveats.push(RunnerCaveat::ReleaseSessionsNotComparable(incomparable));
+        }
+        let frame_time_verdicts = frame_time_verdicts(&label, &change, &release, incomparable);
+        ReleaseComparison {
+            release,
+            frame_time_verdicts,
+        }
+    });
+
     let baseline_comparison = (base.run_count > 0).then(|| {
-        let incomparable = stats::sessions_not_comparable(
-            change.run_count,
-            base.run_count,
-            change.median_sample_count,
-            base.median_sample_count,
-        );
+        let incomparable = sessions_not_comparable(&change, &base);
         if let Some(incomparable) = incomparable {
             caveats.push(RunnerCaveat::SessionsNotComparable(incomparable));
         }
@@ -375,22 +506,7 @@ fn compare_builds(
             caveats.push(RunnerCaveat::NewExceptionKinds(new_kinds));
         }
 
-        let gpu_withheld = if stats::gpu_timing_broken(&change.frame_time_ms, &base.frame_time_ms) {
-            Some(stats::GPU_TIMING_BROKEN)
-        } else if fleet::gpu_timing_unreliable(&label) {
-            Some(stats::GPU_TIMING_UNRELIABLE)
-        } else {
-            None
-        };
-        let frame_time_verdicts = std::array::from_fn(|m| {
-            stats::frame_time_verdict(
-                m,
-                &change.frame_time_ms[m],
-                &base.frame_time_ms[m],
-                incomparable,
-                gpu_withheld,
-            )
-        });
+        let frame_time_verdicts = frame_time_verdicts(&label, &change, &base, incomparable);
         let exceptions_per_run_verdict = stats::incidents_per_run_verdict(
             change.exceptions_per_run,
             base.exceptions_per_run,
@@ -436,8 +552,47 @@ fn compare_builds(
         title: render::display_name(&label),
         change,
         baseline_comparison,
+        release_comparison,
         caveats,
     }
+}
+
+fn sessions_not_comparable(
+    change: &BuildBenchmarkRunsStatistics,
+    other: &BuildBenchmarkRunsStatistics,
+) -> Option<SessionsNotComparable> {
+    stats::sessions_not_comparable(
+        change.run_count,
+        other.run_count,
+        change.median_sample_count,
+        other.median_sample_count,
+    )
+}
+
+/// The change's frame-time verdicts against another build, in the order of
+/// [`stats::FRAME_TIME_METRICS`].
+fn frame_time_verdicts(
+    label: &str,
+    change: &BuildBenchmarkRunsStatistics,
+    other: &BuildBenchmarkRunsStatistics,
+    incomparable: Option<SessionsNotComparable>,
+) -> [FrameTimeVerdict; 6] {
+    let gpu_withheld = if stats::gpu_timing_broken(&change.frame_time_ms, &other.frame_time_ms) {
+        Some(stats::GPU_TIMING_BROKEN)
+    } else if fleet::gpu_timing_unreliable(label) {
+        Some(stats::GPU_TIMING_UNRELIABLE)
+    } else {
+        None
+    };
+    std::array::from_fn(|m| {
+        stats::frame_time_verdict(
+            m,
+            &change.frame_time_ms[m],
+            &other.frame_time_ms[m],
+            incomparable,
+            gpu_withheld,
+        )
+    })
 }
 
 /// Drops the outlier runs from a build; a build with fewer runs than expected, and every dropped
@@ -600,6 +755,73 @@ mod tests {
     }
 
     #[test]
+    fn a_release_session_that_cannot_be_compared_withholds_its_verdicts_and_says_why() {
+        let run = || BuildBenchmarkRun {
+            sample_count: 1000,
+            frame_time_ms: [10.0; 6],
+            exception_count: 0,
+            exception_kinds: ExceptionKindCounts::default(),
+            perf_summary: None,
+        };
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run(), run(), run()],
+            vec![run(), run(), run()],
+            vec![run()],
+            3,
+            ReleaseExpectation::Measured,
+        );
+        let comparison = section.release_comparison.as_ref().unwrap();
+        assert!(comparison
+            .frame_time_verdicts
+            .iter()
+            .all(|verdict| *verdict == FrameTimeVerdict::Withheld("too few runs")));
+        assert!(section.caveats.iter().any(|caveat| matches!(
+            caveat,
+            RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns)
+        )));
+        assert!(!section
+            .caveats
+            .iter()
+            .any(|caveat| matches!(caveat, RunnerCaveat::SessionsNotComparable(_))));
+
+        // one change run: the base's note says it once, the release adds none
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run()],
+            vec![run(), run(), run()],
+            vec![run(), run(), run()],
+            3,
+            ReleaseExpectation::Measured,
+        );
+        let too_few = |caveat: &&RunnerCaveat| {
+            matches!(
+                caveat,
+                RunnerCaveat::SessionsNotComparable(SessionsNotComparable::TooFewRuns)
+                    | RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns)
+            )
+        };
+        assert_eq!(section.caveats.iter().filter(too_few).count(), 1);
+
+        // no baseline runs: the note says the release table still compares
+        let section = compare_builds(
+            "apple-m1".to_owned(),
+            vec![run(), run(), run()],
+            Vec::new(),
+            vec![run(), run(), run()],
+            3,
+            ReleaseExpectation::Measured,
+        );
+        assert!(section.release_comparison.is_some());
+        assert!(section.caveats.iter().any(|caveat| matches!(
+            caveat,
+            RunnerCaveat::NoBaselineData {
+                release_compared: true
+            }
+        )));
+    }
+
+    #[test]
     fn the_hiccup_and_memory_verdicts_each_need_two_runs_a_build_that_measured_the_value() {
         let run = |summary: Option<ExplorerPerfSummary>| BuildBenchmarkRun {
             sample_count: 1000,
@@ -616,9 +838,16 @@ mod tests {
             })
         };
         let compare = |change, base| {
-            compare_builds("apple-m1".to_owned(), change, base, 3)
-                .baseline_comparison
-                .unwrap()
+            compare_builds(
+                "apple-m1".to_owned(),
+                change,
+                base,
+                Vec::new(),
+                3,
+                ReleaseExpectation::NotGiven,
+            )
+            .baseline_comparison
+            .unwrap()
         };
         // three runs a build, the summary in one change run only
         let comparison = compare(
@@ -695,10 +924,17 @@ mod tests {
         let verdicts = |label: &str| {
             let change = vec![run(30.0, 18.0), run(30.5, 18.2), run(31.0, 18.4)];
             let base = vec![run(20.0, 9.0), run(20.5, 9.2), run(21.0, 9.4)];
-            compare_builds(label.to_owned(), change, base, 3)
-                .baseline_comparison
-                .unwrap()
-                .frame_time_verdicts
+            compare_builds(
+                label.to_owned(),
+                change,
+                base,
+                Vec::new(),
+                3,
+                ReleaseExpectation::NotGiven,
+            )
+            .baseline_comparison
+            .unwrap()
+            .frame_time_verdicts
         };
         let unreliable = FrameTimeVerdict::Withheld(stats::GPU_TIMING_UNRELIABLE);
         let on_macos = verdicts("apple-m1-chrome");

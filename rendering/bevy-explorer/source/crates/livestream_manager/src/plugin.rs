@@ -35,6 +35,7 @@ impl Plugin for LivestreamManagerPlugin {
         app.add_systems(
             Update,
             (
+                selected_video_receivers,
                 transmission_kind,
                 manage_streams.run_if(in_state(TransmissionState::NeedStream)),
                 manage_casts.run_if(in_state(TransmissionState::Cast)),
@@ -42,6 +43,7 @@ impl Plugin for LivestreamManagerPlugin {
                 .chain(),
         );
         app.add_systems(OnEnter(Receiver::Off), drop_transmissions);
+        app.add_systems(OnEnter(TransmissionKind::Off), clear_automatic_image);
         app.add_systems(
             OnEnter(TransmissionState::Cast),
             enter_transmission_kind::<ManagingAudioCasts>,
@@ -91,6 +93,7 @@ impl ComputedStates for TransmissionState {
 struct LivestreamManager {
     image: Handle<Image>,
     state: tokio::sync::watch::Sender<VideoState>,
+    selected_fallback: ActiveTransmitter,
 }
 
 #[derive(Component)]
@@ -149,7 +152,7 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn empty_automatic_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -157,7 +160,7 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[255, 0, 255, 255],
+        &[0, 0, 0, 255],
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     );
@@ -166,12 +169,17 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     {
         image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     }
-    let handle = images.add(image);
+    image
+}
+
+fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let handle = images.add(empty_automatic_image());
     let (state_sender, _) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     commands.spawn(LivestreamManager {
         image: handle,
         state: state_sender,
+        selected_fallback: selected_output(&mut images),
     });
     debug!("LivestreamManager setup");
 }
@@ -311,16 +319,19 @@ fn receiver_on(
     trigger: Trigger<OnAdd, ActiveReceiver>,
     mut commands: Commands,
     livestream_manager: Single<&LivestreamManager>,
+    selected_receivers: Query<(), With<SelectedVideoReceiver>>,
     mut next_state: ResMut<NextState<Receiver>>,
 ) {
     let entity = trigger.target();
     debug!("New receiver {}", entity);
-    commands.entity(entity).try_insert(ReceiverImage {
-        image: livestream_manager.image.clone(),
-        state: livestream_manager.state.subscribe(),
-        sent_event: 0.,
-        sent_state: VideoState::VsNone,
-    });
+    if !selected_receivers.contains(entity) {
+        commands.entity(entity).try_insert(ReceiverImage {
+            image: livestream_manager.image.clone(),
+            state: livestream_manager.state.subscribe(),
+            sent_event: 0.,
+            sent_state: VideoState::VsNone,
+        });
+    }
     next_state.set(Receiver::On);
 }
 
@@ -430,6 +441,19 @@ fn drop_transmissions(
         .try_remove::<ActiveTransmitter>();
 }
 
+fn clear_automatic_image(
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    let Some(image) = images.get_mut(&manager.image) else {
+        return;
+    };
+    *image = empty_automatic_image();
+    manager.state.send_replace(VideoState::VsLoading);
+    resized.write(TransmissionImageResized);
+}
+
 fn manage_streams(
     mut commands: Commands,
     livestream_manager: Single<(&LivestreamManager, &ManagingVideoStreams)>,
@@ -491,5 +515,100 @@ fn transfer_receiver_volume(
 
     for mut audio_transmitter_volume in audio_transmitters.into_inner() {
         audio_transmitter_volume.0 = global_volume;
+    }
+}
+
+fn selected_output(images: &mut Assets<Image>) -> ActiveTransmitter {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: 8,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
+    );
+    image.texture_descriptor.usage = TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
+    #[cfg(target_arch = "wasm32")]
+    {
+        image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    }
+    ActiveTransmitter {
+        image: images.add(image),
+        state: tokio::sync::watch::channel(VideoState::VsLoading).0,
+    }
+}
+
+fn selected_video_receivers(
+    mut commands: Commands,
+    manager: Single<&LivestreamManager>,
+    receivers: Query<
+        (Entity, &SelectedVideoReceiver, Option<&ReceiverImage>),
+        With<ActiveReceiver>,
+    >,
+    tracks: Query<(Entity, &VideoTrackSource, Option<&SelectedVideoTransmitter>)>,
+    changed: Query<
+        (),
+        Or<(
+            Added<ActiveReceiver>,
+            Changed<SelectedVideoReceiver>,
+            Changed<VideoTrackSource>,
+        )>,
+    >,
+    mut removed_receivers: RemovedComponents<ActiveReceiver>,
+    mut removed_selections: RemovedComponents<SelectedVideoReceiver>,
+    mut removed_tracks: RemovedComponents<VideoTrackSource>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let removed_receivers = removed_receivers.read().count();
+    let removed_selections = removed_selections.read().count();
+    let removed_tracks = removed_tracks.read().count();
+    if changed.is_empty() && removed_receivers + removed_selections + removed_tracks == 0 {
+        return;
+    }
+    // One image and subscription per requested track, shared by all its screens.
+    let mut requested =
+        bevy::platform::collections::HashMap::<Entity, ActiveTransmitter>::default();
+    for (receiver, selected, previous) in &receivers {
+        let output = if let Some((track, _, existing)) =
+            tracks.iter().find(|(_, source, _)| **source == selected.0)
+        {
+            requested.entry(track).or_insert_with(|| {
+                if let Some(existing) = existing {
+                    ActiveTransmitter {
+                        image: existing.image.clone(),
+                        state: existing.state.clone(),
+                    }
+                } else {
+                    let output = selected_output(&mut images);
+                    commands.entity(track).try_insert(SelectedVideoTransmitter(
+                        ActiveTransmitter {
+                            image: output.image.clone(),
+                            state: output.state.clone(),
+                        },
+                    ));
+                    output
+                }
+            })
+        } else {
+            &manager.selected_fallback
+        };
+        if previous.is_none_or(|previous| previous.image != output.image) {
+            commands.entity(receiver).try_insert(ReceiverImage {
+                image: output.image.clone(),
+                state: output.state.subscribe(),
+                sent_event: 0.,
+                sent_state: VideoState::VsNone,
+            });
+        }
+    }
+    for (track, _, output) in &tracks {
+        if output.is_some() && !requested.contains_key(&track) {
+            commands
+                .entity(track)
+                .try_remove::<SelectedVideoTransmitter>();
+        }
     }
 }

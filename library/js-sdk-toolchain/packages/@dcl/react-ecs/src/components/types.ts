@@ -1,8 +1,8 @@
-import { PBUiInputBinding } from '@dcl/ecs'
-import { ReactEcs } from '../react-ecs'
-import { Listeners } from './listeners/types'
-import { UiBackgroundProps } from './uiBackground/types'
-import { UiTransformProps } from './uiTransform/types'
+import type { PBUiInputBinding } from '@dcl/ecs'
+import type { ReactEcs } from '../react-ecs'
+import type { Listeners } from './listeners/types'
+import type { UiBackgroundProps } from './uiBackground/types'
+import type { UiTransformProps } from './uiTransform/types'
 
 /**
  * @public

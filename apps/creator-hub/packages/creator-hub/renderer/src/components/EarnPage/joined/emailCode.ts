@@ -63,15 +63,19 @@ function useResendAt() {
   return held ? Date.parse(held) : null;
 }
 
-/** Whether a resend is held by the last send's answer; wakes when the hold ends, with no countdown. */
+/**
+ * Whether a resend is held by the last send's answer; wakes when the hold ends, with no countdown.
+ * A timer can fire a millisecond before `Date.now()` reaches the hold's end, so each wake that
+ * still finds the hold arms the next one.
+ */
 export function useResendHeld() {
   const resendAt = useResendAt();
-  const [, wake] = useState(0);
+  const [wakes, wake] = useState(0);
   const held = resendAt !== null && resendAt > Date.now();
   useEffect(() => {
     if (!held || resendAt === null || !Number.isFinite(resendAt)) return;
     const timer = setTimeout(() => wake(count => count + 1), resendAt - Date.now());
     return () => clearTimeout(timer);
-  }, [held, resendAt]);
+  }, [held, resendAt, wakes]);
   return held;
 }

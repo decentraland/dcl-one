@@ -1,4 +1,5 @@
-import { Entity, engine, pointerEventsSystem, Transform, MeshRenderer, MeshCollider, InputAction } from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { engine, pointerEventsSystem, Transform, MeshRenderer, MeshCollider, InputAction } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math'
 
 // Cube factory

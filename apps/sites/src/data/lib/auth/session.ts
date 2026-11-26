@@ -17,11 +17,12 @@ function syncWalletCookie(identity: AuthIdentity | null): void {
 }
 
 export const SESSION_STORAGE_KEY = "dcl:auth:identity:v1";
-const SUSPENDED_WALLET_KEY = "dcl:auth:suspended-wallet";
+export const SUSPENDED_WALLET_KEY = "dcl:auth:suspended-wallet";
 
 /**
  * The host's session, this site's own record, or the freshest one other dapps on this origin share. During a
  * wallet switch this tab waits for the selected account instead of adopting a fallback from another dapp.
+ * `head-account.ts` repeats these rules for the cart document's head script.
  */
 function readStorage(): AuthIdentity | null {
   if (typeof window === "undefined") return null;
