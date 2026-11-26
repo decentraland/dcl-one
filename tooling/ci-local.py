@@ -122,6 +122,9 @@ def web_steps(changed_ui3=True):
 
 STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', tools=('python3',)),
              Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('bash', 'rg'))]
+# The development workflow's unused-dependency check, from the flake's nixpkgs.
+MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+           '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli')
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
 # The Changes job runs these on every pull request.
 WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
@@ -206,6 +209,7 @@ def pre_push_steps(changed):
                           '--workspace --all-targets -- -D warnings', tools=('cargo',)))
         steps.append(Step('catalyst clippy (ts)', 'cd services/catalyst && cargo clippy --locked '
                           '--workspace --all-targets --features catalyst/ts -- -D warnings', tools=('cargo',)))
+        steps.append(Step('unused dependencies', MACHETE, tools=('nix',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
     elif triggered('sdk.yml', changed):
         # the workspace clippy above covers it otherwise

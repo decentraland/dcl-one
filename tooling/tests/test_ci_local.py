@@ -52,6 +52,11 @@ class CiLocalTest(unittest.TestCase):
         self.assertEqual(steps['catalyst clippy (ts)'], 'cd services/catalyst && cargo clippy --locked '
                          '--workspace --all-targets --features catalyst/ts -- -D warnings')
         self.assertNotIn('scene cli clippy', steps)
+        names = list(steps)
+        self.assertEqual(names.index('unused dependencies'), names.index('catalyst clippy (ts)') + 1)
+        self.assertEqual(steps['unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete services/catalyst '
+                         'library/dcl-* apps/dcl-scene-cli')
         steps = {s.name: s.command for s in ci.pre_push_steps({'apps/dcl-scene-cli/src/main.rs'})}
         self.assertNotIn('catalyst clippy', steps)
         self.assertNotIn('catalyst clippy (ts)', steps)
