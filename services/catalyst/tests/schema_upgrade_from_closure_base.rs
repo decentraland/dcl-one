@@ -91,6 +91,7 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0073_land_authz_transfer_parties",
             "0078_shop_nft_last_sale",
             "0079_credits_seasonal_visit_goals",
+            "0094_shop_historical_holdings",
         ])
         .collect()
 }

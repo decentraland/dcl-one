@@ -185,6 +185,7 @@ CREATE TABLE land_authz.index_cursor (
     estate_registry varchar(42) NOT NULL,
     last_block bigint NOT NULL,
     folded_block bigint,
+    folded_block_hash text,
     folded_at timestamp without time zone,
     full_replay_started boolean NOT NULL DEFAULT false,
     -- Set only after the indexer repairs legacy missing block timestamps.
@@ -201,6 +202,19 @@ CREATE TABLE land_authz.index_cursor (
     CONSTRAINT index_cursor_network_known CHECK (network IN ('ethereum-mainnet', 'ethereum-sepolia')),
     CONSTRAINT index_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block)
 );
+
+-- Retain the published header identity while later windows advance the walk.
+CREATE OR REPLACE FUNCTION land_authz.remember_folded_block_hash() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.folded_block_hash := CASE WHEN NEW.folded_block IS NOT NULL THEN NEW.last_block_hash END;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER remember_folded_block_hash
+BEFORE UPDATE OF folded_block ON land_authz.index_cursor
+FOR EACH ROW EXECUTE FUNCTION land_authz.remember_folded_block_hash();
 
 -- Bounded scene-footprint probes use token_right_xy_idx and authz_event_ownership_idx.
 -- The source deployment must have passed signed-entity validation (including its

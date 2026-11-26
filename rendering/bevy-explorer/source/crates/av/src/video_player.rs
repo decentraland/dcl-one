@@ -14,7 +14,9 @@ use common::{
 };
 use dcl_component::proto_components::sdk::components::{PbAudioEvent, PbVideoEvent};
 use ipfs::IpfsResource;
-use livestream_manager::{ReceiverImage, ReceiverVolume, SelectedVideoReceiver, VideoTrackSource};
+use livestream_manager::{
+    ReceiverImage, ReceiverVolume, SelectedVideoReceiver, VideoTrackSource, LIVEKIT_CURRENT_STREAM,
+};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -27,7 +29,6 @@ use crate::{
     plugin::push_state_to_crdt,
     video_stream::{av_sinks, noop_sinks},
     AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
 };
 
 pub struct VideoPlayerPlugin;
@@ -154,18 +155,14 @@ fn new_video_player_source(
     commands
         .entity(entity)
         .try_remove::<SelectedVideoReceiver>();
-    if let Some((identity, track_sid)) = selected_track(source) {
+    if let Some(track) = VideoTrackSource::from_url(&context.hash, source) {
         commands
             .entity(entity)
-            .try_insert(SelectedVideoReceiver(VideoTrackSource {
-                scene_hash: context.hash.to_string(),
-                identity: identity.to_owned(),
-                track_sid: track_sid.to_owned(),
-            }));
+            .try_insert(SelectedVideoReceiver(track));
         commands.entity(entity).try_insert(Stream);
         return;
     }
-    if &**source == LIVEKIT_VIDEO_STREAM {
+    if &**source == LIVEKIT_CURRENT_STREAM {
         commands.entity(entity).try_insert(Stream);
         return;
     }
@@ -199,11 +196,6 @@ fn new_video_player_source(
     commands
         .entity(entity)
         .try_insert((VideoTextureOutput(image), sinks));
-}
-
-fn selected_track(source: &str) -> Option<(&str, &str)> {
-    let (identity, sid) = source.strip_prefix("livekit-video://")?.split_once('/')?;
-    (!identity.is_empty() && !sid.is_empty() && !sid.contains('/')).then_some((identity, sid))
 }
 
 /// An 8x8 image of `color` that a player's frames are copied into.

@@ -2,25 +2,23 @@
 //! The ops dashboard's cross-wallet credits list and its grant reasons, read
 //! from this node's tables in the old server's row shape:
 //!
-//! - an operator grant (`credits.ledger` kind `grant` with its
-//!   `ops.admin_audit` row): a USD row, source `grant`, goal
+//! - an audited USD grant (`credits.ledger` kind `grant` with its
+//!   `ops.admin_audit` row: an admin's or operator's grant, or one imported
+//!   with credits-server's grant metadata): source `grant`, goal
 //!   `on-demand-granted-credits`, its reason and annotation from the audit
 //!   detail, and the granter when the audit actor is a wallet (a bearer grant
 //!   records `token:<VARIABLE>`, so it has no granter);
 //! - a studio grant, source `studio_grant`, on proof that a studio paid for
 //!   it: a studio budget entry names the row (`studio_budget_entries.ledger_id`:
-//!   an operator's grant, or a migrated one the budget import linked), or its
-//!   audit is credits-server's own record of a studio grant (an imported
-//!   audit, `upstreamCreditId`, that carries `studioName`, null when the
-//!   studio's name was unavailable). An operator's has the granter, reason and
-//!   annotation of its audit row. A `studioName` alone proves nothing: the
-//!   admin route once wrote one on grants that spent no budget, and those stay
-//!   `grant`;
-//! - any other grant migrated from the old server (kind `grant`, no audit
-//!   row): a USD row, source `migrated`, no goal, reason or granter. The migration folded
-//!   every positive non-purchase credit (grants, studio grants, IAP, sale
-//!   proceeds and royalties, won disputes) into `grant` without its source,
-//!   so these rows are not claimed as the operator's grants;
+//!   a studio operator's grant, or an imported one the budget import linked),
+//!   or its audit is credits-server's own record of a studio grant (an
+//!   imported audit, `upstreamCreditId`, that carries `studioName`, null when
+//!   the studio's name was unavailable). One with no audit row has no goal,
+//!   reason or granter. A `studioName` alone proves nothing: the admin route
+//!   once wrote one on grants that spent no budget, and those stay `grant`;
+//! - an imported credit of kind `grant` without an audit row and no budget
+//!   entry: source `migrated`, no goal, reason or granter. This includes IAP,
+//!   sale proceeds and royalties, and won disputes;
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
 //! - a claimed goal credit (`credits.goal_grants` with `claimed_at`): a MANA row with its season,

@@ -1,28 +1,23 @@
 //! `/v1/prices`: the price histogram of what is on sale. The item leg runs
 //! the v2 catalog query over the items mirror with `isOnSale`, tallies each
-//! item's `COALESCE(min listing price, store price)` and memoizes the
-//! histogram 5 min per filter set. The nft leg (LAND, estates, names and
+//! item's `COALESCE(min listing price, store price)`. The NFT leg (LAND,
+//! estates, names and
 //! `assetType=nft`) tallies the order price of every matching nft on sale
 //! from the nft index (`nft_reads::nft_prices`, upstream's rule; the old port
 //! answered `{}` for LAND and names), the envelope until it is published.
-
-use std::collections::BTreeMap;
 
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
-use serde_json::Value;
 use sqlx::Row;
 
 use super::catalog::{CatalogFilters, MAX_NUMERIC_NUMBER, build_catalog_query};
-use super::catalogue::{self, CatalogueRead, Purpose};
+use super::catalogue::{self, Purpose};
 use super::mirrors::Mirror;
 use super::nfts::NftFilters;
-use super::readers::{Ttl, memoized_holding};
 use super::wire::{
-    ApiError, Histogram, InvalidParameterError, Network, NftCategory, NumericKey, Params,
-    consolidate,
+    ApiError, Histogram, InvalidParameterError, Network, NftCategory, Params, consolidate,
 };
 use super::{MarketplaceState, SharedState};
 
@@ -157,93 +152,36 @@ pub async fn prices(
         || f.asset_type == Some(AssetType::Nft)
     {
         let nf = to_nft_filters(f);
-        // Checked ahead of the memo, so a held answer never outlives its sources' budgets.
         super::nft_reads::require_prices_sources(state, &nf).await?;
-        // Filed under what the fill's own snapshot sees (the nft index's
-        // publications and the catalogue's copies), so a republication of
-        // either misses it. The read is held only by the request that fills;
-        // one that waits drops it first, and starts again if that fill failed.
-        let value = loop {
-            let read = super::nft_reads::prices_read(state, &nf)
-                .await
-                .map_err(nft_prices_error)?;
-            let key = format!("prices-nft:{f:?}:{}", read.key());
-            let mut held = Some(read);
-            let fetched = memoized_holding(
-                state,
-                Ttl::M5,
-                key,
-                &mut held,
-                async |read: &mut super::nft_reads::PricesRead| {
-                    let h = super::nft_reads::nft_prices_on(read, state, &nf).await?;
-                    Ok::<Value, String>(Value::Array(
-                        h.into_iter()
-                            .map(|(k, v)| serde_json::json!([k.0, v]))
-                            .collect(),
-                    ))
-                },
-            )
-            .await;
-            match fetched {
-                Ok(Some(value)) => break value,
-                Ok(None) => continue,
-                Err(e) => return Err(nft_prices_error(e)),
-            }
-        };
-        return Ok(histogram_from(&value));
-    }
-    // The item prices read the trade legs too (`build_catalog_query`). The
-    // memo holds the read only in the request that fetches it; one that
-    // waits drops it first, and starts again if that fetch failed.
-    let value = loop {
-        let mut read = catalogue::preflight(
-            state,
-            Purpose::Priced,
-            &[Mirror::Items],
-            f.network.map(super::wire::Network::graph),
-        )
-        .await?;
+        let mut read = super::nft_reads::prices_read(state, &nf)
+            .await
+            .map_err(nft_prices_error)?;
         read.trades_ready(state).await?;
-        let (key, stamp) = (format!("prices:{f:?}:{}", read.key()), read.stamp());
-        // The read's clock: the trades check decided on the same instant.
-        let now = read.now.naive_utc();
-        let mut held = Some(read);
-        let fetched = memoized_holding(
-            state,
-            Ttl::M5,
-            key,
-            &mut held,
-            async move |read: &mut CatalogueRead| {
-                let since = super::trades::mirrored_since(&state.settings, now);
-                let (sql, args) = build_prices_query(f, now, since);
-                let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-                    .fetch_all(&mut *read.tx)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let prices: Vec<String> = rows
-                    .iter()
-                    .filter_map(|r| r.try_get::<Option<String>, _>("price").ok().flatten())
-                    .collect();
-                let tally = consolidate(prices);
-                Ok::<Value, String>(Value::Array(
-                    tally
-                        .into_iter()
-                        .map(|(k, v)| serde_json::json!([k.0, v]))
-                        .collect(),
-                ))
-            },
-        )
-        .await;
-        match fetched {
-            Ok(Some(value)) => {
-                stamp.note(state);
-                break value;
-            }
-            Ok(None) => continue,
-            Err(e) => return Err(ApiError::internal(e).into_response()),
-        }
-    };
-    Ok(histogram_from(&value))
+        return super::nft_reads::nft_prices_on(&mut read, state, &nf)
+            .await
+            .map_err(nft_prices_error);
+    }
+
+    let mut read = catalogue::preflight(
+        state,
+        Purpose::Priced,
+        &[Mirror::Items],
+        f.network.map(Network::graph),
+    )
+    .await?;
+    read.trades_ready(state).await?;
+    let now = read.now.naive_utc();
+    let since = super::trades::mirrored_since(&state.settings, now);
+    let (sql, args) = build_prices_query(f, now, since);
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+        .fetch_all(&mut *read.tx)
+        .await
+        .map_err(super::nft_reads::read_error)?;
+    read.note(state);
+    Ok(consolidate(
+        rows.iter()
+            .filter_map(|r| r.get::<Option<String>, _>("price")),
+    ))
 }
 
 /// The answer to a failed nft leg, as `/v1/nfts` answers the same state: a
@@ -261,19 +199,6 @@ pub(crate) fn nft_prices_error(e: String) -> Response {
         return super::unavailable(source, message);
     }
     ApiError::internal(e).into_response()
-}
-
-fn histogram_from(value: &Value) -> PricesResponse {
-    let mut out: PricesResponse = BTreeMap::new();
-    for pair in value.as_array().into_iter().flatten() {
-        if let (Some(price), Some(count)) = (
-            pair.get(0).and_then(Value::as_str),
-            pair.get(1).and_then(Value::as_i64),
-        ) {
-            out.insert(NumericKey(price.to_string()), count);
-        }
-    }
-    out
 }
 
 pub fn parse_filters(pairs: &[(String, String)]) -> Result<PriceFilters, InvalidParameterError> {
@@ -336,6 +261,7 @@ pub async fn get_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::market::wire::NumericKey;
 
     #[test]
     fn consolidate_prices_tallies_and_serializes_in_numeric_order() {
