@@ -35,6 +35,12 @@ catalogue scope, the seller rule, the statuses), with these differences:
   (`shop.chain_checkpoint`). A common hash proves the two logs equal up to
   it. A bid past it fails the read closed with the `land-authz-index`
   envelope, as one past the land index's publication does.
+- A mirrored (v3) bid on a LAND or Estate token reads its seller from the
+  land-authz fold (`land_authz.token_right`). Besides the nft publication
+  every mirrored token bid needs, it needs the land-authz index ready on
+  the read's snapshot, else the `land-authz-index` envelope. This applies
+  only when such a bid is in the read's scope, as with the item-only reads
+  that skip the legacy book.
 - The wire is the marketplace subgraph's: `fingerprint` 0x-prefixed hex
   (`0x` when empty or not kept), `bidAddress` the chain's ERC721Bid.
 - Each network's total is capped as the subgraph reader capped it, and the

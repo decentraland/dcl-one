@@ -9244,6 +9244,168 @@ async fn a_mirrored_token_bid_waits_for_its_sellers_nft_publication() {
     own.drop().await;
 }
 
+/// The Ethereum side of the mirrored token-bid gates. `itemId=0` skips the
+/// legacy book, so only the mirror leg and its ownership proofs are in play:
+/// a collection token's seller needs the nft fold fresh and published on the
+/// read's snapshot, and a LAND token's (from `land_authz.token_right`) the
+/// land-authz index ready there, each failing closed only for the bids in
+/// the read's scope that depend on it.
+#[tokio::test]
+async fn a_mirrored_ethereum_bid_waits_for_its_sellers_fresh_published_owner() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let c = contract_of(&tag(), 1);
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase();
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase();
+    const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,last_block_hash,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',100,'0x' || repeat('a', 64),100,timezone('UTC',now()),true);
+         INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log)
+         VALUES ('{land}', 5, '{CARL}', 40, 0);
+         INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id)
+         VALUES ('nft', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1);
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('ethereum', '{c}', 1, '{WALLET_A}', 10, 10, 100, 0, 100);"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    let mana = || Asset {
+        asset_type: 1,
+        contract: "0x2222222222222222222222222222222222222222".into(),
+        value: "100".into(),
+    };
+    let token = |contract: &str, id: &str| Asset {
+        asset_type: 3,
+        contract: contract.to_string(),
+        value: id.into(),
+    };
+    let (trade, _) =
+        insert_trade_on(pool, "ETHEREUM", 1, "bid", CREATOR, mana(), token(&c, "1")).await;
+    let (land_trade, _) = insert_trade_on(
+        pool,
+        "ETHEREUM",
+        1,
+        "bid",
+        CREATOR,
+        mana(),
+        token(&land, "5"),
+    )
+    .await;
+    // Fixtures written since the last publication are pending writes.
+    let publish = || {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET fold_through = last_block, folded_block = last_block, \
+                 folded_at = timezone('UTC', now()) WHERE indexer = 'nft' AND network = 'ethereum'",
+        )
+        .execute(pool)
+    };
+    publish().await.unwrap();
+    let url = |seller: &str| {
+        format!("/v1/bids?network=ETHEREUM&itemId=0&contractAddress={c}&seller={seller}")
+    };
+    let land_url = format!("/v1/bids?network=ETHEREUM&itemId=0&contractAddress={land}");
+    let app = market_router(state);
+    let served = |body: &Value, total: i64, trade: &str, seller: &str| {
+        assert_eq!(body["data"]["total"], total, "{body}");
+        if total > 0 {
+            assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+            assert_eq!(body["data"]["results"][0]["seller"], seller, "{body}");
+        }
+    };
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 1, &trade, WALLET_A);
+    let (status, body) = get(app.clone(), &land_url).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 1, &land_trade, CARL);
+
+    // A pending owner correction at the published height (Auditor 2's
+    // fd1de28f9 finding, on Ethereum): both seller scopes wait.
+    sqlx::query("UPDATE shop.nft SET owner = $2 WHERE network = 'ethereum' AND contract_address = $1 AND token_id = 1")
+        .bind(&c)
+        .bind(WALLET_B)
+        .execute(pool)
+        .await
+        .unwrap();
+    for seller in [WALLET_A, WALLET_B] {
+        let (status, body) = get(app.clone(), &url(seller)).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{body}"
+        );
+    }
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 0, "", "");
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 1, &trade, WALLET_B);
+
+    // An expired nft publication with nothing pending (Auditor 2's
+    // a050cacf5 finding, on Ethereum).
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' \
+         WHERE indexer = 'nft' AND network = 'ethereum'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 1, &trade, WALLET_B);
+
+    // The LAND bid's seller is the land-authz fold's: a stale land index, or
+    // one with an event past its fold, fails it closed, while the collection
+    // bid's page, which does not depend on it, keeps answering.
+    for unready in [
+        "UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours'",
+        // The walk recorded a transfer at 150 and has not folded it yet.
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (150, 0, 150, (SELECT land_registry FROM land_authz.index_cursor), 'transfer', 5, '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'); \
+         UPDATE land_authz.index_cursor SET last_block = 150",
+    ] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(unready.to_string()))
+            .execute(pool)
+            .await
+            .unwrap();
+        let (status, body) = get(app.clone(), &land_url).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+            "{unready}: {body}"
+        );
+        let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+        assert_eq!(status, StatusCode::OK, "{unready}: {body}");
+        served(&body, 1, &trade, WALLET_B);
+        sqlx::raw_sql(
+            "DELETE FROM land_authz.authz_event WHERE block_number = 150; \
+             UPDATE land_authz.index_cursor SET last_block = 100, folded_at = timezone('UTC', now())",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    let (status, body) = get(app, &land_url).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    served(&body, 1, &land_trade, CARL);
+    own.drop().await;
+}
+
 #[tokio::test]
 async fn item_only_bids_on_a_walker_do_not_require_an_ethereum_graph() {
     let Some(own) = super::tests::support::OwnDb::create("item_only_bids").await else {

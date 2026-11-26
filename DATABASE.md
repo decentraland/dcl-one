@@ -5347,6 +5347,12 @@ awaited, whose instant the subgraph's filter takes. On an NFT walker, a
 mirrored ERC721 bid in the request's scope requires a fresh NFT ownership
 publication for the served chain. The check runs before any seller filter or pagination, so
 a pending owner change cannot move bids between seller pages or totals.
+On Ethereum, a mirrored LAND or Estate bid takes its seller from
+`land_authz.token_right`, not `shop.nft`. It also requires the land-authz
+index ready on the read's snapshot: published, recent, bound to the served
+registries, and with no event walked past its fold. Otherwise the read
+answers the `land-authz-index` envelope when such a bid is in its scope.
+Bids on other contracts keep answering.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and

@@ -263,6 +263,29 @@ fn trades_bids_scope(extra: &str) -> String {
     format!("SELECT * FROM ({sql}) b WHERE TRUE{extra}")
 }
 
+/// Whether the land-authz index of the node's LAND network may answer on
+/// `conn`'s snapshot: published, recent, bound to the served registries and
+/// with no event past its fold (`land_authz::indexer::observation_ready`).
+async fn land_ready_on(
+    conn: &mut PgConnection,
+    state: &MarketplaceState,
+) -> Result<bool, sqlx::Error> {
+    let Some(land) = state.land_network() else {
+        return Ok(false);
+    };
+    Ok(
+        crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
+            .await?
+            .is_some_and(|observed| {
+                crate::land_authz::indexer::observation_ready(
+                    &observed,
+                    land.land_registry,
+                    land.estate_registry,
+                )
+            }),
+    )
+}
+
 /// The mirror's bids of `f` at `now`, on `conn`.
 pub(super) async fn trades_rows(
     conn: &mut PgConnection,
@@ -327,29 +350,48 @@ pub(super) async fn trades_rows(
                 .await
                 .map_err(read_error)?
                 .is_some();
-            if fresh
+            let nft_proven = fresh
                 && chain_walk::rows_published_on(&mut *conn, INDEXER_NFT, net, &["nft"])
                     .await
-                    .map_err(read_error)?
-            {
-                continue;
-            }
+                    .map_err(read_error)?;
             // Test the full scope before seller and pagination. An unpublished
             // owner can otherwise make a bid disappear from the seller's count.
-            let scope = trades_bids_scope(&format!(
-                "{extra} AND lower(b.network) = '{}' AND b.token_id IS NOT NULL",
-                net.db_name()
-            ));
-            let affected = query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(read_error)?
-                .get("affected");
-            if affected {
+            let affected = |only: String| {
+                let scope = trades_bids_scope(&format!(
+                    "{extra} AND lower(b.network) = '{}' AND b.token_id IS NOT NULL{only}",
+                    net.db_name()
+                ));
+                query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
+            };
+            if !nft_proven
+                && affected(String::new())
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(read_error)?
+                    .get::<bool, _>("affected")
+            {
                 return Err(owned_items::not_ready(&format!(
                     "the {} bids in this read need an up-to-date nft ownership publication on chain {chain}",
                     net.db_name()
                 )));
+            }
+            // A LAND or Estate token's owner is the land-authz fold's
+            // (`land_authz.token_right`), not `shop.nft`'s: it needs that index
+            // ready on this snapshot, or the bids on them in scope fail closed.
+            let book = book_of(state, net);
+            if net == ChainNet::Ethereum
+                && !book.land.is_empty()
+                && !land_ready_on(&mut *conn, state).await.map_err(read_error)?
+                && affected(format!(
+                    " AND lower(b.contract_address) IN ('{}', '{}')",
+                    book.land, book.estate
+                ))
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(read_error)?
+                .get::<bool, _>("affected")
+            {
+                return Err(super::nft_reads::land_unavailable());
             }
         }
     }
