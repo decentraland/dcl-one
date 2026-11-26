@@ -1113,3 +1113,34 @@ async fn an_inexact_gift_is_left_out_of_the_block() {
     assert_eq!(v["gifts"]["items"][0]["credits"], json!(2.5));
     db.drop().await;
 }
+
+/// A whole number of Credits written as a decimal (`2.0`, as a client that
+/// serializes every amount as a float sends it) is granted like `2`.
+#[tokio::test]
+async fn a_whole_credit_amount_sent_as_a_decimal_is_granted() {
+    let Some(db) = OwnDatabase::create("studio_grant_decimal").await else {
+        return;
+    };
+    let app = app(grant_state(db.pool.clone(), Some(500)));
+    let operator = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Decimal", 10, &operator).await;
+    let body = json!({ "address": player.address, "credits": 2.0, "reason": "Event winner", "idempotencyKey": "decimal-key-1" });
+    assert_eq!(body["credits"].to_string(), "2.0");
+    let (status, v) = call(
+        &app,
+        &operator,
+        "post",
+        &format!("/credits/operator/studios/{studio}/grants"),
+        &[],
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    assert_eq!(
+        (v["credits"].clone(), v["usdCents"].clone()),
+        (json!(2), json!(20))
+    );
+    assert_eq!(balance_cents(&db.pool, &studio).await, 80);
+    db.drop().await;
+}

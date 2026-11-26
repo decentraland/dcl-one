@@ -126,17 +126,30 @@ pub fn grant_request_hash(
 pub const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 
 /// Whole Credits to grant: a positive whole number whose cents stay exact,
-/// as credits-server requires (`Number.isSafeInteger(credits * 10)`), whatever
-/// the configured ceiling.
+/// as credits-server requires (`Number.isSafeInteger(credits)` and
+/// `Number.isSafeInteger(credits * 10)`), whatever the configured ceiling. A
+/// JSON number is a number however it is spelled: `5`, `5.0` and `5e0` are
+/// all five Credits, as in credits-server; `5.5` is not whole.
 pub fn parse_grant_credits(value: Option<&JsonValue>) -> Result<i64, StudioError> {
     value
-        .and_then(JsonValue::as_i64)
+        .and_then(whole_number)
         .filter(|c| {
             *c > 0
                 && c.checked_mul(USD_CENTS_PER_CREDIT)
                     .is_some_and(|cents| cents <= MAX_SAFE_INTEGER)
         })
         .ok_or_else(|| StudioError::Invalid("\"credits\" must be a positive whole number".into()))
+}
+
+/// A JSON number that is a whole number within the safe-integer range, in
+/// any spelling; the cents are then computed on the integer.
+fn whole_number(value: &JsonValue) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        let f = value.as_f64()?;
+        // Within ±(2^53 − 1) every f64 is exactly an integer or not, so the
+        // conversion below is exact.
+        (f.fract() == 0.0 && f.abs() <= MAX_SAFE_INTEGER as f64).then_some(f as i64)
+    })
 }
 
 /// The grant's reason: required, trimmed, one printable line of at most
@@ -516,6 +529,34 @@ mod tests {
             assert!(parse_grant_credits(Some(&bad)).is_err(), "{bad}");
         }
         assert!(parse_grant_credits(None).is_err());
+        // Raw JSON as a client sends it: a whole number in any spelling is
+        // that many Credits, as `Number.isSafeInteger` reads it upstream.
+        let raw = |text: &str| parse_grant_credits(Some(&serde_json::from_str(text).unwrap()));
+        for (text, credits) in [
+            ("5", 5),
+            ("5.0", 5),
+            ("5e0", 5),
+            ("5E0", 5),
+            ("0.5e1", 5),
+            ("900719925474099", 900_719_925_474_099),
+            ("900719925474099.0", 900_719_925_474_099),
+            ("9.00719925474099e14", 900_719_925_474_099),
+        ] {
+            assert_eq!(raw(text).unwrap(), credits, "{text}");
+        }
+        for text in [
+            "5.5",
+            "0.0",
+            "-5.0",
+            "5e-1",
+            "900719925474100",
+            "900719925474100.0",
+            "9.007199254741e14",
+            "1e300",
+            "\"5\"",
+        ] {
+            assert!(raw(text).is_err(), "{text}");
+        }
         assert_eq!(parse_reason(Some(&json!(" thanks "))).unwrap(), "thanks");
         assert!(parse_reason(None).is_err());
         assert!(parse_reason(Some(&json!("  "))).is_err());
