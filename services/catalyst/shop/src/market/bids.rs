@@ -228,11 +228,14 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
 #[cfg(test)]
 pub(crate) fn test_trades_bids_sql() -> String {
-    format!("SELECT q.id, q.status FROM ({}) q", trades_bids_sql(""))
+    format!(
+        "SELECT q.id, q.status FROM ({}) q",
+        trades_bids_scope(" ORDER BY b.created_at DESC LIMIT 1000")
+    )
 }
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
-fn trades_bids_sql(extra: &str) -> String {
+fn trades_bids_scope(extra: &str) -> String {
     let sql = TRADES_BIDS_SQL
         .replace("COUNTED", &super::trades::counted_sql("t.", "$2"))
         .replace("SERVED_CHAIN", &super::catalog::served_chain_sql("t"))
@@ -257,7 +260,7 @@ fn trades_bids_sql(extra: &str) -> String {
                 super::trade_events::unverifiable_sql("t")
             ),
         );
-    format!("SELECT * FROM ({sql}) b WHERE TRUE{extra} ORDER BY b.created_at DESC LIMIT 1000")
+    format!("SELECT * FROM ({sql}) b WHERE TRUE{extra}")
 }
 
 /// The mirror's bids of `f` at `now`, on `conn`.
@@ -266,7 +269,7 @@ pub(super) async fn trades_rows(
     state: &MarketplaceState,
     f: &BidFilters,
     now: DateTime<Utc>,
-) -> Result<Vec<Bid>, sqlx::Error> {
+) -> Result<Vec<Bid>, Response> {
     if f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
         return Ok(Vec::new());
     }
@@ -279,10 +282,6 @@ pub(super) async fn trades_rows(
     if let Some(v) = &f.bidder {
         let p = next(&mut binds, v.to_lowercase());
         extra.push_str(&format!(" AND lower(b.bidder) = {p}"));
-    }
-    if let Some(v) = &f.seller {
-        let p = next(&mut binds, v.to_lowercase());
-        extra.push_str(&format!(" AND lower(b.seller) = {p}"));
     }
     if let Some(v) = &f.contract_address {
         let p = next(&mut binds, v.to_lowercase());
@@ -304,14 +303,57 @@ pub(super) async fn trades_rows(
         let placeholders: Vec<String> = nets.iter().map(|n| next(&mut binds, n.clone())).collect();
         extra.push_str(&format!(" AND b.network IN ({})", placeholders.join(", ")));
     }
-    let now = now.naive_utc();
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(trades_bids_sql(&extra)))
-        .bind(now)
-        .bind(super::trades::mirrored_since(&state.settings, now));
-    for b in &binds {
-        q = q.bind(b);
+    let cutoff = now.naive_utc();
+    let query = |sql: String, binds: &[String]| {
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(cutoff)
+            .bind(super::trades::mirrored_since(&state.settings, cutoff));
+        for b in binds {
+            q = q.bind(b.clone());
+        }
+        q
+    };
+    if owned_items::walks_here(state) {
+        for net in ChainNet::ALL {
+            let network = match net {
+                ChainNet::Ethereum => Network::Ethereum,
+                ChainNet::Matic => Network::Matic,
+            };
+            if f.network.is_some_and(|asked| asked != network)
+                || chain_walk::rows_published_on(&mut *conn, INDEXER_NFT, net, &["nft"])
+                    .await
+                    .map_err(read_error)?
+            {
+                continue;
+            }
+            // Test the full scope before seller and pagination. An unpublished
+            // owner can otherwise make a bid disappear from the seller's count.
+            let scope = trades_bids_scope(&format!(
+                "{extra} AND lower(b.network) = '{}' AND b.token_id IS NOT NULL",
+                net.db_name()
+            ));
+            let affected = query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(read_error)?
+                .get("affected");
+            if affected {
+                return Err(owned_items::not_ready(&format!(
+                    "the {} nft index has not published the ownership used by the bids in this read",
+                    net.db_name()
+                )));
+            }
+        }
     }
-    let rows = q.fetch_all(conn).await?;
+    if let Some(v) = &f.seller {
+        let p = next(&mut binds, v.to_lowercase());
+        extra.push_str(&format!(" AND lower(b.seller) = {p}"));
+    }
+    extra.push_str(" ORDER BY b.created_at DESC LIMIT 1000");
+    let rows = query(trades_bids_scope(&extra), &binds)
+        .fetch_all(conn)
+        .await
+        .map_err(read_error)?;
     Ok(rows
         .iter()
         .map(|r| {
@@ -1102,14 +1144,18 @@ pub async fn list_bids(
         let read = async {
             let mut legs = Vec::new();
             for b in &bounds {
-                legs.push(book_rows(&mut tx, &book_of(state, b.net), b, f, window, now_ms).await?);
+                legs.push(
+                    book_rows(&mut tx, &book_of(state, b.net), b, f, window, now_ms)
+                        .await
+                        .map_err(read_error)?,
+                );
             }
             let trades = trades_rows(&mut tx, state, f, now).await?;
-            Ok::<_, sqlx::Error>((legs, trades))
+            Ok::<_, Response>((legs, trades))
         }
         .await;
         tx.rollback().await.ok();
-        let (legs, trades) = read.map_err(read_error)?;
+        let (legs, trades) = read?;
         let mut rows = Vec::new();
         let mut total = 0;
         for leg in legs {
@@ -1125,7 +1171,7 @@ pub async fn list_bids(
         let (mut tx, _, now) = bids_snapshot(state, &[]).await?;
         let trades = trades_rows(&mut tx, state, f, now).await;
         tx.rollback().await.ok();
-        let trades = trades.map_err(read_error)?;
+        let trades = trades?;
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
@@ -1339,7 +1385,8 @@ mod tests {
 
     #[test]
     fn the_mirror_leg_reads_bid_trades_and_the_legacy_where_binds_the_graph_fields() {
-        let sql = trades_bids_sql(" AND lower(b.bidder) = $3");
+        let sql =
+            trades_bids_scope(" AND lower(b.bidder) = $3 ORDER BY b.created_at DESC LIMIT 1000");
         assert!(
             sql.contains("t.type = 'bid'")
                 && sql.contains("trade_cancellations")
