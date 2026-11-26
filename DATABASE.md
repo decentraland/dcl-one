@@ -2691,7 +2691,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   waits instead until the index's publication covers its block, row or not,
   however long that takes (the notices' rule, `ItemWait::decide` in
   `catalyst_chain_index::catalogue`); a sale older than
-  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits. The page,
+  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits, and one that
+  grows older than it while it waits passes without a badge, as under the
+  mirrors. The page,
   its goods' item types and the wait come from one snapshot. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
@@ -3860,8 +3862,10 @@ its current check (a mirror pass, or none):
     `MARKETPLACE_COLLECTIONS_INDEX_OWNS`; they then drain under whichever
     rule applies. A frozen producer shows as a growing lag:
     `shop_notification_cursor_lag{producer}` for the sale, bid and royalty
-    notices (blocks between the cursor and the published block it reads up
-    to, set each time a pass locks the cursor) and
+    notices (set after each page: 0 once a page reads everything up to the
+    published block, for bids the lower of the sales and nft indexes',
+    otherwise the blocks still ahead of the cursor; a pass whose index is
+    not published leaves it as it was) and
     `badges_processor_cursor_lag{source}` for the badge sales logs.
   - A sale's description, its collection membership and its wait come from
     one snapshot (the royalty notices' from the statement that joins the
