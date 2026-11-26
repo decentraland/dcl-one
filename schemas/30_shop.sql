@@ -759,22 +759,33 @@ CREATE TABLE shop.legacy_order_refold (
 -- A whole refold of a network's legacy order book in progress
 -- (services/catalyst/shop/src/market/legacy_orders.rs, `rebuild_batch`). The
 -- nft fold never refolds the book itself: a book that does not stand (never
--- folded, rewound, on a lost branch, or the nft walk rebuilt) is emptied and
--- this row opened, and the nft walk's pass then refolds it a batch of
--- contracts per transaction, from `next_contract` (the last contract done;
--- NULL: none yet), so a slow network never holds back the nft fold's
--- publication and a restart resumes where the last batch committed. `upto`
--- is the nft walk's block when the rebuild opened (lowered by a rewind): the
--- last step refolds every token with an order event past it, takes the
--- queued refolds, writes the book's marker and deletes this row. While it
--- exists the book does not stand and is not read. Workload: one row per
--- network at most, for the length of a rebuild.
+-- folded, rewound, on a lost branch, or the nft walk rebuilt) gets this row
+-- and the nft walk's pass (walking alone while it exists) runs it in small
+-- bounded transactions: first it deletes the network's old orders a slice at
+-- a time (`cleared`), then it reads `shop.nft_event` in `nft_event_token_idx`
+-- order a slice of rows at a time from the position after
+-- (`next_contract`, `next_token`, `next_block`, `next_log`), refolding whole
+-- every token with an order event in the slice. A restart resumes at the last
+-- slice committed. `upto` is the nft walk's block when the rebuild opened
+-- (lowered by a rewind): the last step refolds every token with an order
+-- event past it and the queued refolds (a rewind queues the tokens it
+-- reaches), writes the book's marker and deletes this row. While it exists
+-- the book does not stand and is not read. Workload: one row per network at
+-- most, for the length of a rebuild.
 CREATE TABLE shop.legacy_order_rebuild (
     network text PRIMARY KEY,
     upto bigint NOT NULL,
+    cleared boolean NOT NULL DEFAULT false,
     next_contract varchar(42),
+    next_token numeric(78,0),
+    next_block bigint,
+    next_log integer,
     started_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic'))
+    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT legacy_order_rebuild_position_whole CHECK (
+        (next_contract IS NULL) = (next_token IS NULL)
+        AND (next_contract IS NULL) = (next_block IS NULL)
+        AND (next_contract IS NULL) = (next_log IS NULL))
 );
 
 -- Queues the token of an order event written at or below its network's book

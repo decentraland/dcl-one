@@ -438,9 +438,10 @@ use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 /// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
 /// How long one pass of the nft walk spends on the legacy order book's
 /// open rebuild (`legacy_orders::run_rebuild`) before it walks: long enough
-/// that a rebuild runs nearly back to back (the book is refused meanwhile),
-/// short enough that the pass still folds and publishes the nft index well
-/// inside its 30-minute freshness window.
+/// that a rebuild runs nearly back to back (the book is refused meanwhile).
+/// A step is bounded (60 s statements, 10 s lock waits), so the pass folds
+/// and publishes the nft index at most about three minutes after the last,
+/// well inside its 30-minute freshness window.
 const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// fold's `touched`.
@@ -910,10 +911,12 @@ impl ChainIndex for NftIndex {
         self.reset();
     }
 
-    /// A walk that owes a backfill runs its lanes, alone.
+    /// A walk that owes a backfill, or whose legacy order book has a rebuild
+    /// open, runs its lanes, alone: a shared pass skips them.
     async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
         Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL})"
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL}) \
+                 OR EXISTS (SELECT 1 FROM shop.legacy_order_rebuild WHERE network = $1)"
         )))
         .bind(self.net.db_name())
         .fetch_one(pool)

@@ -5539,18 +5539,21 @@ Invariants:
   without folding leaves the book at the published block, still read.
 - The nft fold never refolds the book whole. A book that does not stand
   (a database that predates the table, a rewind, a lost branch, an nft
-  rebuild) is emptied in the nft fold's transaction and a rebuild opened in
-  `shop.legacy_order_rebuild` at the nft walk's last block; the nft fold
-  publishes as usual and only the book's readers answer the `nft-index`
-  envelope. Each nft walk pass then spends up to 2 minutes on it, so it runs
-  nearly back to back while the pass still publishes the nft index: a batch of 100
-  contracts with an order event (a loose scan of `nft_event_token_idx`)
-  refolded whole per transaction, the last contract done recorded, so a
-  restart resumes there. The last step refolds every token with an order
-  event past the rebuild's block and the refolds queued meanwhile (the
-  trigger keeps queueing while the marker holds that block without a hash),
-  writes the marker and deletes the row. A rewind during a rebuild lowers its
-  block. The schema run reads no log.
+  rebuild) gets a rebuild opened in `shop.legacy_order_rebuild` at the nft
+  walk's last block, in the nft fold's transaction (one row, no bulk work);
+  the nft fold publishes as usual and only the book's readers answer the
+  `nft-index` envelope. While a rebuild is open the nft walk walks alone (a
+  shared pass would skip its lanes), and each pass spends up to 2 minutes on
+  it in bounded steps (50,000 rows each, 60 s statements, 10 s lock waits):
+  first the old orders deleted a slice at a time, then `shop.nft_event` read
+  in `nft_event_token_idx` order a slice of rows at a time, every token with
+  an order event in a slice refolded whole, the last row read recorded, so a
+  restart resumes there and one huge contract is just more slices. The last
+  step refolds every token with an order event past the rebuild's block and
+  the queued refolds (a repair's, through the trigger, and a rewind's: a
+  rewind during a rebuild queues the tokens it reaches and lowers the
+  block), writes the marker and deletes the row. The schema run reads no
+  log.
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT
