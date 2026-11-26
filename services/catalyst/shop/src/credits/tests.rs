@@ -322,6 +322,7 @@ struct StateCfg {
     admin_token: Option<&'static str>,
     writes_enabled: bool,
     daily_studio_deposit_limit_cents: Option<i64>,
+    studio_grant_max_cents: Option<i64>,
     revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
 }
 
@@ -337,6 +338,7 @@ impl Default for StateCfg {
             admin_token: None,
             writes_enabled: true,
             daily_studio_deposit_limit_cents: None,
+            studio_grant_max_cents: None,
             revenue_events: None,
         }
     }
@@ -359,6 +361,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
         daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
+        studio_grant_max_cents: cfg.studio_grant_max_cents,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
@@ -382,6 +385,7 @@ fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
     state_with(pool, cfg, FakeMarket::default(), MockBroker::configured())
 }
 
+#[derive(Clone)]
 pub(super) struct Wallet {
     signer: PrivateKeySigner,
     pub(super) address: String,
@@ -11739,10 +11743,24 @@ async fn a_balance_stream_retries_a_failed_read() {
 }
 
 /// The operator bearer the studio tests send.
-fn admin_bearer() -> HeaderMap {
+pub(super) fn admin_bearer() -> HeaderMap {
     let mut bearer = HeaderMap::new();
     bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
     bearer
+}
+
+/// A studio state whose grants may each give up to `grant_max_cents`
+/// (`None` refuses them), with room for any day's deposits.
+pub(super) fn grant_state(pool: PgPool, grant_max_cents: Option<i64>) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: Some(i64::MAX / 2),
+            studio_grant_max_cents: grant_max_cents,
+            ..StateCfg::default()
+        },
+    )
 }
 
 fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
@@ -11757,7 +11775,7 @@ fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
 }
 
 /// Creates a studio over the admin route and answers its id.
-async fn create_test_studio(app: &Router, name: &str) -> String {
+pub(super) async fn create_test_studio(app: &Router, name: &str) -> String {
     let (status, _, v) = send(
         app,
         "POST",

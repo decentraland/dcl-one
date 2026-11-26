@@ -152,6 +152,8 @@ impl Credits {
         address: &str,
         limit: i64,
         offset: i64,
+        gifts_limit: i64,
+        gifts_offset: i64,
     ) -> Result<CreditOrdersOut, ApiError> {
         let total: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM credits.purchases WHERE address = $1 AND method = 'card'",
@@ -190,11 +192,62 @@ impl Credits {
                 }
             })
             .collect();
+        // An additive block: it never breaks the purchase history.
+        let gifts = match self.gifts(address, gifts_limit, gifts_offset).await {
+            Ok(gifts) => gifts,
+            Err(e) => {
+                tracing::warn!(error = %e, "gifts unavailable, answering an empty block");
+                Gifts::none()
+            }
+        };
         Ok(CreditOrdersOut {
             total,
             orders,
             earnings: Earnings::none(),
+            gifts,
         })
+    }
+
+    /// A page of the wallet's gifts ([`GIFTS_FROM`]), newest first, with
+    /// their total. A studio grant has one budget entry (`ledger_id` is
+    /// unique), so the joins never multiply a row.
+    pub async fn gifts(&self, address: &str, limit: i64, offset: i64) -> Result<Gifts, ApiError> {
+        let total: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) {GIFTS_FROM}")))
+                .bind(address)
+                .fetch_one(&self.pool)
+                .await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT l.id::text AS id, (l.amount * 10)::bigint AS usd_cents, \
+                    (EXTRACT(EPOCH FROM l.created_at) * 1000)::bigint AS created_at, s.name AS studio_name \
+             {GIFTS_FROM} ORDER BY l.created_at DESC, l.id LIMIT $2 OFFSET $3"
+        )))
+        .bind(address)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                let usd_cents: i64 = r.get("usd_cents");
+                // Whole Credits as an integer, as credits-server's JSON has them.
+                let credits = if usd_cents % 10 == 0 {
+                    serde_json::Number::from(usd_cents / 10)
+                } else {
+                    serde_json::Number::from_f64(usd_cents as f64 / 10.0)
+                        .unwrap_or_else(|| serde_json::Number::from(0))
+                };
+                GiftOut {
+                    id: r.get("id"),
+                    credits,
+                    usd_cents,
+                    created_at: r.get("created_at"),
+                    studio_name: r.get("studio_name"),
+                }
+            })
+            .collect();
+        Ok(Gifts { total, items })
     }
 
     /// The credits held by the wallet's live pledges, for the balance's
@@ -315,7 +368,51 @@ pub struct CreditOrdersOut {
     pub total: i64,
     pub orders: Vec<CreditOrderOut>,
     pub earnings: Earnings,
+    pub gifts: Gifts,
 }
+
+/// The Credits the wallet was given rather than bought (credits-server's
+/// `gifts` block): a studio's gift, with the studio's name, or a grant from
+/// Decentraland, with none. Kept out of `orders`, which clients list as
+/// purchases.
+#[derive(Debug, Clone, Serialize)]
+pub struct Gifts {
+    pub total: i64,
+    pub items: Vec<GiftOut>,
+}
+
+impl Gifts {
+    pub fn none() -> Self {
+        Self {
+            total: 0,
+            items: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GiftOut {
+    /// The ledger row: the id a studio's grant list gives as `creditId`.
+    pub id: String,
+    pub credits: serde_json::Number,
+    pub usd_cents: i64,
+    /// Epoch milliseconds.
+    pub created_at: i64,
+    pub studio_name: Option<String>,
+}
+
+/// The wallet's gifts (`$1`): its ledger `grant` rows that an admin or a
+/// studio operator granted (the grant's `ops.admin_audit` row), and those a
+/// studio budget entry names, which covers studio grants imported from
+/// credits-server. A migrated Decentraland grant has neither and is not
+/// listed until #2473: the import keeps no source that tells it from a
+/// migrated purchase-like credit.
+const GIFTS_FROM: &str = "FROM credits.ledger l \
+     LEFT JOIN credits.studio_budget_entries e ON e.ledger_id = l.id \
+     LEFT JOIN credits.studios s ON s.id = e.studio_id \
+     LEFT JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
+     WHERE l.address = $1 AND l.kind = 'grant' AND (e.id IS NOT NULL OR a.action = 'grant')";
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "credits/"))]

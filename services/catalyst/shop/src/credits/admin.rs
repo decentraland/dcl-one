@@ -302,24 +302,18 @@ pub fn validated_reason(reason: &Option<String>) -> Result<Option<String>, ApiEr
     }
 }
 
-/// An optional grant's studio: one printable line of at most
-/// [`MAX_STUDIO_NAME_CHARS`](super::admin_store::MAX_STUDIO_NAME_CHARS); blank is none.
-pub fn validated_studio_name(name: &Option<String>) -> Result<Option<String>, ApiError> {
-    let Some(name) = name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else {
-        return Ok(None);
-    };
-    if name.chars().count() > super::admin_store::MAX_STUDIO_NAME_CHARS {
-        return Err(ApiError::bad_request(format!(
-            "\"studioName\" must be at most {} characters",
-            super::admin_store::MAX_STUDIO_NAME_CHARS
-        )));
+/// An admin grant is Decentraland's: a studio's gift is granted by one of its
+/// operators out of its budget (`POST /operator/studios/{studioId}/grants`),
+/// which names the studio from its own row. A body that still names a
+/// studio is refused rather than granted without one.
+pub fn refuse_studio_name(value: Option<&Value>) -> Result<(), ApiError> {
+    match value {
+        None | Some(Value::Null) => Ok(()),
+        Some(_) => Err(ApiError::bad_request(
+            "\"studioName\" is not accepted: a studio's gift is granted by one of its operators, \
+             with POST /operator/studios/{studioId}/grants",
+        )),
     }
-    if name.chars().any(char::is_control) {
-        return Err(ApiError::bad_request(
-            "\"studioName\" must be a single line of printable characters",
-        ));
-    }
-    Ok(Some(name.to_string()))
 }
 
 pub(crate) fn validate_escrow_ref(raw: &str) -> Result<String, ApiError> {
@@ -399,17 +393,16 @@ mod tests {
     }
 
     #[test]
-    fn a_studio_name_is_one_printable_line_of_at_most_80_characters() {
-        let v = |s: &str| validated_studio_name(&Some(s.to_string()));
-        assert_eq!(validated_studio_name(&None).unwrap(), None);
-        assert_eq!(v("   ").unwrap(), None);
-        assert_eq!(v(" Acme ").unwrap().as_deref(), Some("Acme"));
-        assert_eq!(
-            v(&"é".repeat(80)).unwrap().map(|s| s.chars().count()),
-            Some(80)
-        );
-        assert!(v(&"a".repeat(81)).is_err());
-        assert!(v("Acme\nEvil").is_err());
+    fn an_admin_grant_names_no_studio() {
+        assert!(refuse_studio_name(None).is_ok());
+        assert!(refuse_studio_name(Some(&json!(null))).is_ok());
+        for named in [json!("Acme"), json!(""), json!(3)] {
+            let refused = refuse_studio_name(Some(&named)).unwrap_err();
+            assert!(
+                refused.to_string().contains("/operator/studios/"),
+                "{refused}"
+            );
+        }
     }
 
     #[tokio::test]
