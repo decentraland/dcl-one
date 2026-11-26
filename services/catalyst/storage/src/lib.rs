@@ -33,8 +33,11 @@ const SPOOL_CLEANUP_FAILURES: dcl_metrics::CounterFamily<1> = dcl_metrics::Count
     Some(dcl_metrics::Unit::Count),
     &["route"],
 );
-pub const FAMILIES: &[dcl_metrics::Descriptor] =
-    &[COPY_FALLBACKS.descriptor, SPOOL_CLEANUP_FAILURES.descriptor];
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    COPY_FALLBACKS.descriptor,
+    SPOOL_CLEANUP_FAILURES.descriptor,
+    gc::LOCK_WRITER_TIMEOUTS.descriptor,
+];
 
 mod denylist;
 mod file_ids;

@@ -11,7 +11,7 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import Spinner from "../../atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { CHAIN, chainLabel, type ChainId } from "@shop/model/chain";
 import { useMarketplace } from "../market/access";
@@ -155,7 +155,7 @@ function Authorization({ grant, account, canChange }: { grant: Grant; account: s
       <div className="shop-settings-auth__field">
         {pending ? (
           <span className="shop-settings-auth__loader" title={busy ? "Transaction pending" : undefined}>
-            <Spinner size={16} />
+            <Spinner variant="light" size={16} aria-hidden />
           </span>
         ) : (
           <button

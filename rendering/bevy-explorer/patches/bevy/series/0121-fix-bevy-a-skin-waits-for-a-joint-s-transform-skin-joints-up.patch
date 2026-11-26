@@ -1,0 +1,781 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy): a skin waits for a joint's transform; skin joints upload only what changed
+Date: 2026-11-20T11:32:01+00:00
+
+---
+diff --git a/crates/bevy_pbr/src/render/skin.rs b/crates/bevy_pbr/src/render/skin.rs
+index 60f4bc4826b40244628b0dc3c5516e158cc1070a..96dd66dfa69093dd7ee56655a6dd67912bd708ca 100644
+--- a/crates/bevy_pbr/src/render/skin.rs
++++ b/crates/bevy_pbr/src/render/skin.rs
+@@ -1,4 +1,5 @@
+ use core::mem::{self, size_of};
++use core::ops::Range;
+ use std::sync::OnceLock;
+ 
+ use bevy_asset::{prelude::AssetChanged, Assets};
+@@ -103,20 +104,15 @@ pub struct SkinUniforms {
+     /// The GPU-side buffer that stores the joint matrices for skinned meshes in
+     /// the previous frame.
+     pub prev_buffer: Buffer,
+-    /// The CPU-side copy of the skin joints buffer (storage buffers only).
+-    skin_joints_staging: Vec<Mat4>,
++    /// The CPU-side bookkeeping of joint slots and skin joint entries (storage
++    /// buffers only).
++    storage: StorageSkins,
+     /// The GPU-side buffer of per-skin inverse bindposes and joint slots
+-    /// (storage buffers only). It is only written when a skin is added.
++    /// (storage buffers only). It is only written when a skin is added or one of
++    /// its joints gains a transform.
+     pub skin_joints_buffer: Buffer,
+-    /// Whether [`Self::skin_joints_staging`] must be uploaded.
+-    skin_joints_dirty: bool,
+     /// Whether skins use uniform buffers on this platform.
+     use_uniform_buffers: bool,
+-    /// The slot and reference count of the joint matrix of each joint entity
+-    /// (storage buffers only).
+-    joint_slots: MainEntityHashMap<(u32, u32)>,
+-    /// Slots in [`Self::current_staging_buffer`] that no skin references.
+-    free_slots: Vec<u32>,
+     /// The offset allocator that manages the placement of the joints within the
+     /// skin joints buffer, or [`Self::current_buffer`] with uniform buffers.
+     allocator: Allocator,
+@@ -185,12 +181,9 @@ impl FromWorld for SkinUniforms {
+             },
+             current_buffer,
+             prev_buffer,
+-            skin_joints_staging: vec![],
++            storage: StorageSkins::default(),
+             skin_joints_buffer,
+-            skin_joints_dirty: false,
+             use_uniform_buffers,
+-            joint_slots: MainEntityHashMap::default(),
+-            free_slots: vec![],
+             allocator: Allocator::new(MAX_TOTAL_JOINTS),
+             skin_uniform_info: MainEntityHashMap::default(),
+             joint_to_skins: MainEntityHashMap::default(),
+@@ -214,9 +207,172 @@ impl SkinUniforms {
+         })
+     }
+ 
++    /// Returns an iterator over all skins in the scene.
++    pub fn all_skins(&self) -> impl Iterator<Item = &MainEntity> {
++        self.skin_uniform_info.keys()
++    }
++}
++
++/// The skin joints entries and joint matrix slots of the skins that use
++/// storage buffers.
++///
++/// This holds no GPU state: the joint matrices live in a `Vec<Mat4>` that the
++/// caller passes in, and a joint's world matrix is passed in as an `Option`.
++#[derive(Default)]
++struct StorageSkins {
++    /// The CPU-side copy of the skin joints buffer.
++    skin_joints_staging: Vec<Mat4>,
++    /// The range of [`Self::skin_joints_staging`], in matrices, written since
++    /// the last upload.
++    dirty: Option<Range<usize>>,
++    /// The slot and reference count of the joint matrix of each joint entity.
++    joint_slots: MainEntityHashMap<(u32, u32)>,
++    /// Slots in the joint matrices that no skin references.
++    free_slots: Vec<u32>,
++    /// Maps each joint that has an inverse bindpose but no transform to the
++    /// skins waiting for it. Such a joint holds no slot.
++    pending_joints: MainEntityHashMap<SmallVec<[MainEntity; 1]>>,
++    /// The entries of each skin.
++    skins: MainEntityHashMap<StorageSkin>,
++}
++
++/// The joints of one skin that uses storage buffers.
++struct StorageSkin {
++    /// The offset in matrices of the skin's first entry.
++    offset: usize,
++    /// The joint entities of the skin.
++    joints: Vec<MainEntity>,
++    /// The inverse bindposes. A joint past the end has none.
++    inverse_bindposes: Vec<Mat4>,
++    /// Whether each joint holds a reference to a slot.
++    held: Vec<bool>,
++}
++
++impl StorageSkins {
++    /// Writes the entries of a skin at `offset` (in matrices) and takes a
++    /// reference to the slot of each joint that has an inverse bindpose and a
++    /// transform. A joint without a transform is recorded as pending, and one
++    /// without an inverse bindpose stays at the identity in slot 0.
++    fn add_skin(
++        &mut self,
++        matrices: &mut Vec<Mat4>,
++        skin: MainEntity,
++        offset: usize,
++        joints: Vec<MainEntity>,
++        inverse_bindposes: Vec<Mat4>,
++        world: impl Fn(MainEntity) -> Option<Mat4>,
++    ) {
++        // Grow the staging buffer to cover the whole allocation.
++        let end = offset
++            + joints
++                .len()
++                .next_multiple_of(JOINTS_PER_ALLOCATION_UNIT as usize);
++        if self.skin_joints_staging.len() < end {
++            self.skin_joints_staging.resize(end, Mat4::IDENTITY);
++        }
++
++        let mut state = StorageSkin {
++            offset,
++            held: vec![false; joints.len()],
++            joints,
++            inverse_bindposes,
++        };
++        for joint_index in 0..state.joints.len() {
++            self.write_entry(matrices, skin, &mut state, joint_index, &world);
++        }
++        self.mark_dirty(offset..offset + state.joints.len());
++        self.skins.insert(skin, state);
++    }
++
++    /// Writes the entry of one joint of a skin, taking a reference to the
++    /// joint's slot if it has an inverse bindpose and a transform.
++    fn write_entry(
++        &mut self,
++        matrices: &mut Vec<Mat4>,
++        skin: MainEntity,
++        state: &mut StorageSkin,
++        joint_index: usize,
++        world: &impl Fn(MainEntity) -> Option<Mat4>,
++    ) {
++        let joint = state.joints[joint_index];
++        let entry = match state.inverse_bindposes.get(joint_index) {
++            None => Mat4::IDENTITY,
++            Some(&inverse_bindpose) => match world(joint) {
++                Some(world_matrix) => {
++                    let slot = self.acquire_joint_slot(matrices, joint, world_matrix);
++                    state.held[joint_index] = true;
++                    self.remove_pending(joint, skin);
++                    let mut entry = inverse_bindpose;
++                    entry.x_axis.w = slot as f32;
++                    entry
++                }
++                None => {
++                    let waiting = self.pending_joints.entry(joint).or_default();
++                    if !waiting.contains(&skin) {
++                        waiting.push(skin);
++                    }
++                    Mat4::IDENTITY
++                }
++            },
++        };
++        self.skin_joints_staging[state.offset + joint_index] = entry;
++    }
++
++    /// Releases the slots of a skin and forgets that it waits for any joint.
++    fn remove_skin(&mut self, skin: MainEntity) {
++        let Some(state) = self.skins.remove(&skin) else {
++            return;
++        };
++        for (joint_index, &joint) in state.joints.iter().enumerate() {
++            if state.held[joint_index] {
++                self.release_joint_slot(joint);
++            } else if joint_index < state.inverse_bindposes.len() {
++                self.remove_pending(joint, skin);
++            }
++        }
++    }
++
++    /// Writes the new world matrix of a joint into its slot. Every skin that
++    /// was waiting for the joint gets the entry of each of its joints that now
++    /// has a transform.
++    fn joint_changed(
++        &mut self,
++        matrices: &mut Vec<Mat4>,
++        joint: MainEntity,
++        world_matrix: Mat4,
++        world: impl Fn(MainEntity) -> Option<Mat4>,
++    ) {
++        if let Some(&(slot, _)) = self.joint_slots.get(&joint) {
++            matrices[slot as usize] = world_matrix;
++        }
++        if self.pending_joints.is_empty() {
++            return;
++        }
++        let Some(waiting) = self.pending_joints.remove(&joint) else {
++            return;
++        };
++        for skin in waiting {
++            let Some(mut state) = self.skins.remove(&skin) else {
++                continue;
++            };
++            for joint_index in 0..state.joints.len() {
++                if !state.held[joint_index] && joint_index < state.inverse_bindposes.len() {
++                    self.write_entry(matrices, skin, &mut state, joint_index, &world);
++                }
++            }
++            self.mark_dirty(state.offset..state.offset + state.joints.len());
++            self.skins.insert(skin, state);
++        }
++    }
++
+     /// Returns the slot of the joint's matrix, taking a reference to it. A new
+-    /// slot starts out holding the joint's current world matrix.
+-    fn acquire_joint_slot(&mut self, joint: MainEntity, joints: &Query<&GlobalTransform>) -> u32 {
++    /// slot starts out holding the joint's world matrix.
++    fn acquire_joint_slot(
++        &mut self,
++        matrices: &mut Vec<Mat4>,
++        joint: MainEntity,
++        world_matrix: Mat4,
++    ) -> u32 {
+         match self.joint_slots.entry(joint) {
+             Entry::Occupied(mut entry) => {
+                 entry.get_mut().1 += 1;
+@@ -224,12 +380,10 @@ impl SkinUniforms {
+             }
+             Entry::Vacant(entry) => {
+                 let slot = self.free_slots.pop().unwrap_or_else(|| {
+-                    self.current_staging_buffer.push(Mat4::IDENTITY);
+-                    self.current_staging_buffer.len() as u32 - 1
++                    matrices.push(Mat4::IDENTITY);
++                    matrices.len() as u32 - 1
+                 });
+-                self.current_staging_buffer[slot as usize] = joints
+-                    .get(*joint)
+-                    .map_or(Mat4::IDENTITY, GlobalTransform::compute_matrix);
++                matrices[slot as usize] = world_matrix;
+                 entry.insert((slot, 1));
+                 slot
+             }
+@@ -247,9 +401,27 @@ impl SkinUniforms {
+         }
+     }
+ 
+-    /// Returns an iterator over all skins in the scene.
+-    pub fn all_skins(&self) -> impl Iterator<Item = &MainEntity> {
+-        self.skin_uniform_info.keys()
++    /// Removes the skin from the list of skins waiting for the joint.
++    fn remove_pending(&mut self, joint: MainEntity, skin: MainEntity) {
++        if let Entry::Occupied(mut entry) = self.pending_joints.entry(joint) {
++            entry.get_mut().retain(|waiting| *waiting != skin);
++            if entry.get().is_empty() {
++                entry.remove();
++            }
++        }
++    }
++
++    /// Adds a range of entries, in matrices, to those to upload.
++    fn mark_dirty(&mut self, range: Range<usize>) {
++        self.dirty = Some(match self.dirty.take() {
++            Some(dirty) => dirty.start.min(range.start)..dirty.end.max(range.end),
++            None => range,
++        });
++    }
++
++    /// Returns the range of entries written since the last call.
++    fn take_dirty(&mut self) -> Option<Range<usize>> {
++        self.dirty.take()
+     }
+ }
+ 
+@@ -258,8 +430,7 @@ struct SkinUniformInfo {
+     /// The allocation of the joints within the skin joints buffer, or
+     /// [`SkinUniforms::current_buffer`] with uniform buffers.
+     allocation: Allocation,
+-    /// The entities that comprise the joints. With storage buffers, these are
+-    /// the joints that hold a reference to a joint matrix slot.
++    /// The entities that comprise the joints (uniform buffers only).
+     joints: Vec<MainEntity>,
+ }
+ 
+@@ -295,15 +466,17 @@ pub fn prepare_skins(
+     let nothing_to_upload = if uniform.use_uniform_buffers {
+         uniform.current_staging_buffer.is_empty()
+     } else {
+-        uniform.skin_joints_staging.is_empty()
++        uniform.storage.skin_joints_staging.is_empty()
+     };
+     if nothing_to_upload {
+         return;
+     }
+ 
+-    // Grow the skin joints buffer if necessary and upload it if it changed.
++    // Grow the skin joints buffer if necessary and upload what changed.
+     if !uniform.use_uniform_buffers {
+-        let needed_size = uniform.skin_joints_staging.len() as u64 * size_of::<Mat4>() as u64;
++        let staging_len = uniform.storage.skin_joints_staging.len();
++        let mut upload = uniform.storage.take_dirty();
++        let needed_size = staging_len as u64 * size_of::<Mat4>() as u64;
+         if uniform.skin_joints_buffer.size() < needed_size {
+             let mut new_size = uniform.skin_joints_buffer.size();
+             while new_size < needed_size {
+@@ -316,15 +489,15 @@ pub fn prepare_skins(
+                 size: new_size,
+                 mapped_at_creation: false,
+             });
+-            uniform.skin_joints_dirty = true;
++            // The new buffer is empty, so upload everything.
++            upload = Some(0..staging_len);
+         }
+-        if uniform.skin_joints_dirty {
++        if let Some(range) = upload {
+             render_queue.write_buffer(
+                 &uniform.skin_joints_buffer,
+-                0,
+-                bytemuck::must_cast_slice(&uniform.skin_joints_staging[..]),
++                (range.start * size_of::<Mat4>()) as u64,
++                bytemuck::must_cast_slice(&uniform.storage.skin_joints_staging[range]),
+             );
+-            uniform.skin_joints_dirty = false;
+         }
+     }
+ 
+@@ -456,11 +629,15 @@ pub fn extract_skins(
+             &joints,
+         );
+     } else {
+-        // Write the world matrix of every changed joint entity into its slot.
++        // Write the world matrix of every changed joint entity into its slot,
++        // and complete the skins that were waiting for it.
+         for (joint, transform) in changed_transforms.iter() {
+-            if let Some(&(slot, _)) = skin_uniforms.joint_slots.get(&MainEntity::from(joint)) {
+-                skin_uniforms.current_staging_buffer[slot as usize] = transform.compute_matrix();
+-            }
++            skin_uniforms.storage.joint_changed(
++                &mut skin_uniforms.current_staging_buffer,
++                MainEntity::from(joint),
++                transform.compute_matrix(),
++                |joint| joints.get(*joint).ok().map(GlobalTransform::compute_matrix),
++            );
+         }
+     }
+ 
+@@ -662,13 +839,28 @@ fn add_skin(
+     };
+ 
+     if !skin_uniforms.use_uniform_buffers {
+-        add_skin_joints(
++        let inverse_bindposes = skinned_mesh_inverse_bindposes
++            .get(&skinned_mesh.inverse_bindposes)
++            .map(|bindposes| bindposes.iter().copied().collect())
++            .unwrap_or_default();
++        skin_uniforms.storage.add_skin(
++            &mut skin_uniforms.current_staging_buffer,
+             skinned_mesh_entity,
+-            skinned_mesh,
+-            allocation,
+-            skin_uniforms,
+-            skinned_mesh_inverse_bindposes,
+-            joints,
++            (allocation.offset * JOINTS_PER_ALLOCATION_UNIT) as usize,
++            skinned_mesh
++                .joints
++                .iter()
++                .map(|entity| MainEntity::from(*entity))
++                .collect(),
++            inverse_bindposes,
++            |joint| joints.get(*joint).ok().map(GlobalTransform::compute_matrix),
++        );
++        skin_uniforms.skin_uniform_info.insert(
++            skinned_mesh_entity,
++            SkinUniformInfo {
++                allocation,
++                joints: vec![],
++            },
+         );
+         return;
+     }
+@@ -726,57 +918,6 @@ fn add_skin(
+         .insert(skinned_mesh_entity, skin_uniform_info);
+ }
+ 
+-/// Writes the entries of a new skin into the skin joints buffer, and takes a
+-/// reference to the joint matrix slot of each joint.
+-fn add_skin_joints(
+-    skinned_mesh_entity: MainEntity,
+-    skinned_mesh: &SkinnedMesh,
+-    allocation: Allocation,
+-    skin_uniforms: &mut SkinUniforms,
+-    skinned_mesh_inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
+-    joints: &Query<&GlobalTransform>,
+-) {
+-    let mut skin_uniform_info = SkinUniformInfo {
+-        allocation,
+-        joints: Vec::with_capacity(skinned_mesh.joints.len()),
+-    };
+-    let inverse_bindposes = skinned_mesh_inverse_bindposes.get(&skinned_mesh.inverse_bindposes);
+-
+-    // Grow the staging buffer to cover the whole allocation.
+-    let end = skin_uniform_info.offset() as usize
+-        + skinned_mesh
+-            .joints
+-            .len()
+-            .next_multiple_of(JOINTS_PER_ALLOCATION_UNIT as usize);
+-    if skin_uniforms.skin_joints_staging.len() < end {
+-        skin_uniforms
+-            .skin_joints_staging
+-            .resize(end, Mat4::IDENTITY);
+-    }
+-
+-    for (joint_index, &joint) in skinned_mesh.joints.iter().enumerate() {
+-        // A joint without an inverse bindpose stays at the identity in slot 0.
+-        let entry = match inverse_bindposes.and_then(|bindposes| bindposes.get(joint_index)) {
+-            Some(&inverse_bindpose) => {
+-                let joint = MainEntity::from(joint);
+-                let slot = skin_uniforms.acquire_joint_slot(joint, joints);
+-                skin_uniform_info.joints.push(joint);
+-                let mut entry = inverse_bindpose;
+-                entry.x_axis.w = slot as f32;
+-                entry
+-            }
+-            None => Mat4::IDENTITY,
+-        };
+-        skin_uniforms.skin_joints_staging[skin_uniform_info.offset() as usize + joint_index] =
+-            entry;
+-    }
+-
+-    skin_uniforms.skin_joints_dirty = true;
+-    skin_uniforms
+-        .skin_uniform_info
+-        .insert(skinned_mesh_entity, skin_uniform_info);
+-}
+-
+ /// Deallocates a skin and removes it from the [`SkinUniforms`].
+ fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity) {
+     let Some(old_skin_uniform_info) = skin_uniforms.skin_uniform_info.remove(&skinned_mesh_entity)
+@@ -790,9 +931,7 @@ fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity
+         .free(old_skin_uniform_info.allocation);
+ 
+     if !skin_uniforms.use_uniform_buffers {
+-        for &joint in &old_skin_uniform_info.joints {
+-            skin_uniforms.release_joint_slot(joint);
+-        }
++        skin_uniforms.storage.remove_skin(skinned_mesh_entity);
+         return;
+     }
+ 
+@@ -828,3 +967,327 @@ pub fn no_automatic_skin_batching(
+         commands.entity(entity).try_insert(NoAutomaticBatching);
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use std::collections::HashMap;
++
++    use bevy_math::Vec3;
++
++    use super::*;
++
++    fn entity(index: u32) -> MainEntity {
++        MainEntity::from(Entity::from_raw(index))
++    }
++
++    fn bindpose(index: usize) -> Mat4 {
++        Mat4::from_translation(Vec3::new(index as f32 + 1.0, 0.0, 0.0))
++    }
++
++    fn world_matrix(index: usize) -> Mat4 {
++        Mat4::from_translation(Vec3::new(0.0, index as f32 + 10.0, 0.0))
++    }
++
++    /// The entry a joint with this bindpose and slot must have.
++    fn expected_entry(bindpose: Mat4, slot: u32) -> Mat4 {
++        let mut entry = bindpose;
++        entry.x_axis.w = slot as f32;
++        entry
++    }
++
++    /// The joint matrices with slot 0 as the identity.
++    fn matrices() -> Vec<Mat4> {
++        vec![Mat4::IDENTITY]
++    }
++
++    fn slot_of(storage: &StorageSkins, skin: MainEntity, joint_index: usize) -> u32 {
++        let state = &storage.skins[&skin];
++        storage.skin_joints_staging[state.offset + joint_index]
++            .x_axis
++            .w as u32
++    }
++
++    fn entry_of(storage: &StorageSkins, skin: MainEntity, joint_index: usize) -> Mat4 {
++        let state = &storage.skins[&skin];
++        storage.skin_joints_staging[state.offset + joint_index]
++    }
++
++    fn add(
++        storage: &mut StorageSkins,
++        matrices: &mut Vec<Mat4>,
++        skin: MainEntity,
++        offset: usize,
++        joints: &[MainEntity],
++        world: &HashMap<MainEntity, Mat4>,
++    ) {
++        let bindposes = (0..joints.len()).map(bindpose).collect();
++        storage.add_skin(
++            matrices,
++            skin,
++            offset,
++            joints.to_vec(),
++            bindposes,
++            |joint| world.get(&joint).copied(),
++        );
++    }
++
++    #[test]
++    fn skins_share_joint_slots_and_keep_their_bindposes() {
++        let (skin_a, skin_b) = (entity(100), entity(101));
++        let joints = [entity(1), entity(2)];
++        let world: HashMap<_, _> = [(joints[0], world_matrix(0)), (joints[1], world_matrix(1))]
++            .into_iter()
++            .collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++
++        add(&mut storage, &mut matrices, skin_a, 0, &joints, &world);
++        let slots = [slot_of(&storage, skin_a, 0), slot_of(&storage, skin_a, 1)];
++        // Two joints share no slot with each other, and neither uses slot 0.
++        assert_ne!(slots[0], slots[1]);
++        assert!(slots.iter().all(|&slot| slot != 0));
++
++        // The second skin gets different inverse bindposes for the same joints.
++        let other_bindposes = vec![bindpose(5), bindpose(6)];
++        storage.add_skin(
++            &mut matrices,
++            skin_b,
++            4,
++            joints.to_vec(),
++            other_bindposes.clone(),
++            |joint| world.get(&joint).copied(),
++        );
++
++        for index in 0..2 {
++            assert_eq!(slot_of(&storage, skin_b, index), slots[index]);
++            assert_eq!(
++                entry_of(&storage, skin_a, index),
++                expected_entry(bindpose(index), slots[index])
++            );
++            assert_eq!(
++                entry_of(&storage, skin_b, index),
++                expected_entry(other_bindposes[index], slots[index])
++            );
++            assert_eq!(matrices[slots[index] as usize], world_matrix(index));
++            assert_eq!(storage.joint_slots[&joints[index]].1, 2);
++        }
++        // Slot 0 and one slot per distinct joint.
++        assert_eq!(matrices.len(), 3);
++    }
++
++    #[test]
++    fn joint_without_transform_is_identity_in_slot_zero() {
++        let skin = entity(100);
++        let joints = [entity(1), entity(2)];
++        let world: HashMap<_, _> = [(joints[0], world_matrix(0))].into_iter().collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++
++        add(&mut storage, &mut matrices, skin, 0, &joints, &world);
++
++        assert_eq!(entry_of(&storage, skin, 1), Mat4::IDENTITY);
++        assert_eq!(slot_of(&storage, skin, 1), 0);
++        assert!(!storage.joint_slots.contains_key(&joints[1]));
++        assert_eq!(matrices.len(), 2);
++        assert_eq!(storage.pending_joints[&joints[1]].as_slice(), &[skin]);
++        assert!(!storage.pending_joints.contains_key(&joints[0]));
++    }
++
++    #[test]
++    fn joint_without_bindpose_is_identity_and_not_pending() {
++        let skin = entity(100);
++        let joints = [entity(1), entity(2)];
++        let world: HashMap<_, _> = [(joints[0], world_matrix(0)), (joints[1], world_matrix(1))]
++            .into_iter()
++            .collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++
++        storage.add_skin(
++            &mut matrices,
++            skin,
++            0,
++            joints.to_vec(),
++            vec![bindpose(0)],
++            |joint| world.get(&joint).copied(),
++        );
++
++        assert_eq!(entry_of(&storage, skin, 1), Mat4::IDENTITY);
++        assert!(!storage.joint_slots.contains_key(&joints[1]));
++        assert!(storage.pending_joints.is_empty());
++    }
++
++    #[test]
++    fn pending_joint_completes_when_it_gets_a_transform() {
++        let (skin_a, skin_b) = (entity(100), entity(101));
++        let joints = [entity(1), entity(2)];
++        let mut world: HashMap<_, _> = [(joints[0], world_matrix(0))].into_iter().collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        add(&mut storage, &mut matrices, skin_a, 0, &joints, &world);
++        add(&mut storage, &mut matrices, skin_b, 4, &joints, &world);
++        storage.take_dirty();
++
++        world.insert(joints[1], world_matrix(1));
++        storage.joint_changed(&mut matrices, joints[1], world_matrix(1), |joint| {
++            world.get(&joint).copied()
++        });
++
++        let slot = slot_of(&storage, skin_a, 1);
++        assert_ne!(slot, 0);
++        assert_eq!(slot_of(&storage, skin_b, 1), slot);
++        assert_eq!(matrices[slot as usize], world_matrix(1));
++        assert_eq!(
++            entry_of(&storage, skin_a, 1),
++            expected_entry(bindpose(1), slot)
++        );
++        assert_eq!(
++            entry_of(&storage, skin_b, 1),
++            expected_entry(bindpose(1), slot)
++        );
++        assert_eq!(storage.joint_slots[&joints[1]], (slot, 2));
++        assert!(storage.pending_joints.is_empty());
++        // Both skins were rewritten.
++        assert_eq!(storage.take_dirty(), Some(0..6));
++
++        // Later changes only move the matrix.
++        storage.joint_changed(&mut matrices, joints[1], world_matrix(7), |_| None);
++        assert_eq!(matrices[slot as usize], world_matrix(7));
++        assert_eq!(storage.take_dirty(), None);
++    }
++
++    #[test]
++    fn skin_with_several_pending_joints_completes_in_one_pass() {
++        let skin = entity(100);
++        let joints = [entity(1), entity(2)];
++        let mut world = HashMap::new();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        add(&mut storage, &mut matrices, skin, 0, &joints, &world);
++        assert_eq!(matrices.len(), 1);
++
++        world.insert(joints[0], world_matrix(0));
++        world.insert(joints[1], world_matrix(1));
++        storage.joint_changed(&mut matrices, joints[0], world_matrix(0), |joint| {
++            world.get(&joint).copied()
++        });
++        // The second joint was completed by the same pass.
++        assert!(storage.pending_joints.is_empty());
++        storage.joint_changed(&mut matrices, joints[1], world_matrix(1), |joint| {
++            world.get(&joint).copied()
++        });
++
++        assert_eq!(storage.joint_slots[&joints[0]].1, 1);
++        assert_eq!(storage.joint_slots[&joints[1]].1, 1);
++        assert_eq!(matrices.len(), 3);
++    }
++
++    #[test]
++    fn removing_skins_releases_slots() {
++        let (skin_a, skin_b, skin_c) = (entity(100), entity(101), entity(102));
++        let joints = [entity(1), entity(2)];
++        let world: HashMap<_, _> = [(joints[0], world_matrix(0)), (joints[1], world_matrix(1))]
++            .into_iter()
++            .collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        add(&mut storage, &mut matrices, skin_a, 0, &joints, &world);
++        add(&mut storage, &mut matrices, skin_b, 4, &joints, &world);
++        let slots = [slot_of(&storage, skin_a, 0), slot_of(&storage, skin_a, 1)];
++
++        // A shared joint keeps its slot while one skin remains.
++        storage.remove_skin(skin_a);
++        assert_eq!(storage.joint_slots[&joints[0]], (slots[0], 1));
++        assert!(storage.free_slots.is_empty());
++
++        storage.remove_skin(skin_b);
++        assert!(storage.joint_slots.is_empty());
++        assert_eq!(storage.free_slots.len(), 2);
++
++        // A freed slot is reused instead of growing the matrices.
++        let new_joint = entity(3);
++        let new_world: HashMap<_, _> = [(new_joint, world_matrix(3))].into_iter().collect();
++        add(
++            &mut storage,
++            &mut matrices,
++            skin_c,
++            0,
++            &[new_joint],
++            &new_world,
++        );
++        assert!(slots.contains(&slot_of(&storage, skin_c, 0)));
++        assert_eq!(matrices.len(), 3);
++        assert_eq!(storage.free_slots.len(), 1);
++
++        // Removing a skin that was never added changes nothing.
++        storage.remove_skin(entity(999));
++        assert_eq!(storage.free_slots.len(), 1);
++    }
++
++    #[test]
++    fn removing_a_skin_with_a_pending_joint_balances_everything() {
++        let (skin_a, skin_b) = (entity(100), entity(101));
++        let joints = [entity(1), entity(2)];
++        let mut world: HashMap<_, _> = [(joints[0], world_matrix(0))].into_iter().collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        add(&mut storage, &mut matrices, skin_a, 0, &joints, &world);
++        add(&mut storage, &mut matrices, skin_b, 4, &joints, &world);
++
++        // Only skin A leaves; skin B keeps waiting.
++        storage.remove_skin(skin_a);
++        assert_eq!(storage.pending_joints[&joints[1]].as_slice(), &[skin_b]);
++        assert_eq!(storage.joint_slots[&joints[0]].1, 1);
++
++        storage.remove_skin(skin_b);
++        assert!(storage.pending_joints.is_empty());
++        assert!(storage.joint_slots.is_empty());
++        assert_eq!(storage.free_slots.len(), 1);
++
++        // A joint that appears later finds nobody waiting.
++        world.insert(joints[1], world_matrix(1));
++        storage.joint_changed(&mut matrices, joints[1], world_matrix(1), |joint| {
++            world.get(&joint).copied()
++        });
++        assert!(storage.joint_slots.is_empty());
++        assert_eq!(storage.take_dirty().map(|range| range.start), Some(0));
++    }
++
++    #[test]
++    fn dirty_range_covers_the_entries_written_since_the_last_take() {
++        let joints = [entity(1), entity(2), entity(3)];
++        let world: HashMap<_, _> = joints
++            .iter()
++            .enumerate()
++            .map(|(index, &joint)| (joint, world_matrix(index)))
++            .collect();
++        let mut storage = StorageSkins::default();
++        let mut matrices = matrices();
++        assert_eq!(storage.take_dirty(), None);
++
++        // One skin of three joints at matrix 8.
++        add(&mut storage, &mut matrices, entity(100), 8, &joints, &world);
++        assert_eq!(storage.take_dirty(), Some(8..11));
++        assert_eq!(storage.take_dirty(), None);
++
++        // Adds within a frame merge into one range.
++        add(
++            &mut storage,
++            &mut matrices,
++            entity(101),
++            16,
++            &joints[..2],
++            &world,
++        );
++        add(
++            &mut storage,
++            &mut matrices,
++            entity(102),
++            4,
++            &joints[..1],
++            &world,
++        );
++        assert_eq!(storage.take_dirty(), Some(4..18));
++        assert_eq!(storage.take_dirty(), None);
++    }
++}

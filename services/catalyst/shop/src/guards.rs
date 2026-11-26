@@ -88,17 +88,20 @@ impl Refused {
             }
         }
     }
-}
 
-impl IntoResponse for Refused {
-    fn into_response(self) -> Response {
+    pub(crate) fn respond(&self, body: Value) -> Response {
         let status = self.status();
-        let body = self.body();
         if status == StatusCode::SERVICE_UNAVAILABLE {
             (status, [(header::RETRY_AFTER, "60")], Json(body)).into_response()
         } else {
             (status, Json(body)).into_response()
         }
+    }
+}
+
+impl IntoResponse for Refused {
+    fn into_response(self) -> Response {
+        self.respond(self.body())
     }
 }
 

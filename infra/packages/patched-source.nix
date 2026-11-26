@@ -1,7 +1,7 @@
 # One Explorer source under rendering/bevy-explorer/patches/<name>: a fetch of the upstream commit,
 # then tooling/patched-sources.py applies the patch series offline. The tool fails when the result
-# is not the `tree` of source.toml. The Explorer (bevy-explorer.nix) and `cast-bot` (cast-bot.nix)
-# build their patched sources, and vendor the crates of those sources, here.
+# is not the `tree` of source.toml. The Explorer (bevy-explorer.nix), `cast-bot` (cast-bot.nix) and
+# the message router (message-router.nix) build their patched sources, and vendor their crates, here.
 { pkgs }:
 let
   inherit (pkgs) lib;

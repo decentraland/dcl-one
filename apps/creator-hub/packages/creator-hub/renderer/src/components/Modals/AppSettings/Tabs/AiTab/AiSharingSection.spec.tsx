@@ -196,6 +196,29 @@ describe('when looking at the summaries', () => {
     expect(await screen.findByText(/A lamp that glows at night · Partly achieved/)).toBeTruthy();
     expect(screen.getByText('Problems: wrong SDK knowledge')).toBeTruthy();
   });
+
+  it('should leave the goal out of a summary whose notes were dropped', async () => {
+    vi.mocked(api.listDigests).mockResolvedValue(
+      ok({
+        digests: [
+          {
+            conversationId: 's3',
+            goal: null,
+            outcome: 'partial',
+            frictions: [{ kind: 'tool_failed' }],
+            createdAt: '2026-11-12T09:00:00.000Z',
+          },
+        ],
+        next: null,
+      }),
+    );
+    mount({ consent: granted });
+
+    fireEvent.click(screen.getByRole('button', { name: copy.digests_show }));
+
+    const line = await screen.findByText(/Partly achieved/);
+    expect(line.textContent).not.toMatch(/·\s*·/);
+  });
 });
 
 describe('when deleting everything', () => {

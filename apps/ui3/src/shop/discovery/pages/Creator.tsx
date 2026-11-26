@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";

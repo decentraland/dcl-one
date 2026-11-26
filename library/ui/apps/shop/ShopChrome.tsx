@@ -1,18 +1,12 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type AnchorHTMLAttributes,
-  type ComponentType,
-  type ReactNode
-} from 'react'
+import { useEffect, useRef, type ComponentType, type ReactNode, type RefObject } from 'react'
+import { TabsBar, type TabsBarItem, type TabsBarLinkProps } from '../../components/TabsBar/TabsBar'
 import ChromeBody from '../../components/AppChrome/ChromeBody'
 import SiteLayout from '../../components/AppChrome/SiteLayout'
 
 export type ShopSection =
   'overview' | 'event' | 'collectibles' | 'names' | 'lands' | 'my-items' | 'activity'
 export type ShopNavSet = 'shop' | 'marketplace'
-export type ShopNavTab = { id: ShopSection; label: string; href: string; mobileOnly?: boolean }
+export type ShopNavTab = TabsBarItem & { id: ShopSection }
 
 type ShopChromeProps = {
   topbar?: ReactNode
@@ -37,7 +31,8 @@ type ShopNavigationProps = {
   iap: boolean
   set: ShopNavSet
   label: string
-  Link: ComponentType<Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & { to: string }>
+  Link: ComponentType<TabsBarLinkProps>
+  search: ReactNode
   children?: ReactNode
 }
 
@@ -48,42 +43,26 @@ export function ShopNavigation({
   set,
   label,
   Link,
+  search,
   children
 }: ShopNavigationProps) {
-  const tabsRef = useRef<HTMLElement>(null)
-  const scrolled = useScrolled()
-  useEffect(() => {
-    const nav = tabsRef.current
-    const current = nav?.querySelector<HTMLElement>('[aria-current="page"]')
-    if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return
-    const left = current.offsetLeft - nav.offsetLeft
-    if (left < nav.scrollLeft || left + current.offsetWidth > nav.scrollLeft + nav.clientWidth) {
-      nav.scrollLeft = Math.max(0, left - (nav.clientWidth - current.offsetWidth) / 2)
-    }
-  }, [active, tabs])
+  const subnavRef = useRef<HTMLDivElement>(null)
+  useScrolledMark(subnavRef)
   return (
-    <div
-      className="shop-subnav"
-      data-testid="subnav"
-      data-iap={iap || undefined}
-      data-set={set}
-      data-scrolled={scrolled || undefined}
-    >
-      <nav ref={tabsRef} className="shop-subnav__tabs" aria-label={label} data-testid="subnav-tabs">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.id}
-            to={tab.href}
-            className={tab.id === active ? 'active' : undefined}
-            aria-current={tab.id === active ? 'page' : undefined}
-            data-event={tab.id === 'event' || undefined}
-            data-mobile-only={tab.mobileOnly || undefined}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </nav>
+    <div ref={subnavRef} className="shop-subnav" data-testid="subnav" data-iap={iap || undefined} data-set={set}>
+      <div className="shop-subnav__tabs" data-testid="subnav-tabs">
+        <TabsBar
+          mode="navigation"
+          page="shop"
+          layout="links"
+          label={label}
+          items={tabs}
+          activeId={active ?? null}
+          LinkComponent={Link}
+        />
+      </div>
       <hr className="shop-subnav__divider" aria-hidden="true" />
+      {search}
       {children}
     </div>
   )
@@ -93,13 +72,14 @@ const SCROLL_ENTER = 24
 const SCROLL_EXIT = 4
 
 // The bars deepen once the page scrolls, with hysteresis so a page resting near the threshold does not flicker.
-function useScrolled(): boolean {
-  const [scrolled, setScrolled] = useState(false)
+// The scroll event sets the marks itself, so the bars change in that frame, not after a render. The body mark is
+// for the site nav's rule (shoptheme.css).
+function useScrolledMark(subnav: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     let on = false
     const apply = (next: boolean) => {
       on = next
-      setScrolled(next)
+      subnav.current?.toggleAttribute('data-scrolled', next)
       document.body.toggleAttribute('data-shop-scrolled', next)
     }
     const onScroll = () => {
@@ -112,6 +92,5 @@ function useScrolled(): boolean {
       window.removeEventListener('scroll', onScroll)
       document.body.removeAttribute('data-shop-scrolled')
     }
-  }, [])
-  return scrolled
+  }, [subnav])
 }
