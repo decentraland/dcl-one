@@ -6,11 +6,12 @@
 // works the same on every Chromium and needs no Windows settings; pasted, never linked: Chromium
 // blocks web pages from opening chrome:// targets (see FlagStep).
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell } from '../../design'
 import type { GpuAdapterInfo } from '@explorer-core/lib/gpu'
 import { chromiumBrowser } from '@explorer-core/lib/integratedGpu'
 import { FlagStep } from './FlagStep'
 import styles from './IntegratedGpuGuide.module.css'
+import { Button } from '@dcl/one-ui'
 
 export interface IntegratedGpuGuideOptions {
   adapter: GpuAdapterInfo
@@ -31,10 +32,10 @@ export function openIntegratedGpuGuide({ adapter, onDontShowAgain }: IntegratedG
       actionsEqual
       actions={
         <>
-          <Button variant="ghost" onClick={close}>
+          <Button appearance="hud" variant="ghost" onClick={close}>
             Later
           </Button>
-          <Button
+          <Button appearance="hud"
             variant="primary"
             onClick={() => {
               onDontShowAgain()

@@ -3,7 +3,7 @@
 // by props, and a row whose action the bar does not pass is not drawn.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, MenuList, MenuPanel, MenuRow, showConfirm, showToast } from '../../../design'
+import { Avatar, showConfirm, showToast } from '../../../design'
 import { isAddress, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Profile } from '@explorer-core/engine/protocol'
 import backpackIcon from '../../../assets/sidebar-rail/me-backpack.svg?no-inline'
@@ -13,6 +13,7 @@ import signOutIcon from '../../../assets/sidebar-rail/me-sign-out.svg?no-inline'
 import exitIcon from '../../../assets/sidebar-rail/me-exit.svg?no-inline'
 import copyIcon from '../../../assets/sidebar-rail/me-copy.svg?no-inline'
 import styles from './MePanel.module.css'
+import { MenuList, MenuPanel, MenuRow } from '@dcl/one-ui'
 
 export interface MePanelProps {
   /** The local player; the head is left out until the profile has loaded. */

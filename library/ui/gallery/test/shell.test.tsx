@@ -71,13 +71,12 @@ describe('when the sidebar lists foundations, components, the HUD and the Figma 
     expect(reference.open).toBe(false)
     expect(screen.getByRole('link', { name: 'Colors' }).textContent).toBe('Colors')
     expect(link('Switch').textContent).toBe('Switch')
-    // The runtime and Figma Buttons carry their source; the HUD's sits under its own heading.
+    // The runtime and Figma Buttons carry their source; a HUD section sits under its own heading and carries none.
     expect(screen.getAllByRole('link', { name: /^Button/ }).map((a) => a.textContent)).toEqual([
       'Buttonruntime',
-      'Button',
       'ButtonFigma'
     ])
-    expect(hudLink('Button').textContent).toBe('Button')
+    expect(hudLink('Modal').textContent).toBe('Modal')
     expect(
       [...reference.querySelectorAll('a')].find((a) => a.textContent?.startsWith('ShopModals'))
         ?.textContent
@@ -133,9 +132,9 @@ describe('when a reviewer opens the HUD Showcase', () => {
   })
 
   it('should open a component on the section that renders it, and name a missing section', () => {
-    const { unmount } = render(<Shell search="?hud=MenuRow" />)
-    expect(screen.getByText('MenuRow is shown on the MenuPanel page.')).toBeTruthy()
-    expect(heading()).toBe('MenuPanelHUD')
+    const { unmount } = render(<Shell search="?hud=TextArea" />)
+    expect(screen.getByText('TextArea is shown on the FormControls page.')).toBeTruthy()
+    expect(heading()).toBe('FormControlsHUD')
     unmount()
     render(<Shell search="?hud=Nope" />)
     expect(screen.getByRole('alert').textContent).toBe(

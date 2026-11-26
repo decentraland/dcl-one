@@ -363,3 +363,43 @@ describe("talking to the iframe", () => {
     expect(thumb()).not.toBeNull();
   });
 });
+
+describe("the Bevy avatar preview", () => {
+  const bevy = (unity: boolean) => primeRemoteFlags({ "dapps-unity-wearable-preview": unity, "dapps-shop-bevy-avatar-preview": true });
+  const fromBevy = (data: unknown) => fromPreview(data, frame()!.contentWindow, window.location.origin);
+
+  test("with its flag on, the item page draws with Bevy in marketplace mode, with no controls of the page's own", () => {
+    bevy(true);
+    render(<ItemPreview item={item()} renderer="full" />);
+    expect(frame()!.src.startsWith(`${window.location.origin}/avatar-preview/?`)).toBe(true);
+    expect(params().get("mode")).toBe("marketplace");
+    expect(params().get("profile")).toBe("default");
+    expect(params().has("unity")).toBe(false);
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(thumb()).toBeNull();
+    expect(screen.queryByTestId("preview-toggle")).toBeNull();
+  });
+
+  test("an emote leaves Bevy its own controls, its playback among them: no framing that hides them, and no second playbar", () => {
+    bevy(false);
+    render(<ItemPreview item={item({ category: "emote" } as Partial<CatalogItem>)} renderer="full" />);
+    for (const hides of ["wheelZoom", "zoom", "hideControls", "camera", "showThumbnailBoundaries"]) expect(params().has(hides)).toBe(false);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(screen.queryByRole("button", { name: "Play emote" })).toBeNull();
+  });
+
+  test("Bevy failing gives way to Unity, then Babylon; a new item tries Bevy again", () => {
+    bevy(true);
+    const view = render(<ItemPreview item={item()} renderer="full" />);
+    fromBevy({ type: "error", payload: { message: "renderer failed to start" } });
+    expect(frame()!.src.startsWith(`${PREVIEW}/?`)).toBe(true);
+    expect(params().get("unity")).toBe("true");
+    fromPreview({ type: "error", payload: { message: "unity failed" } });
+    expect(params().has("unity")).toBe(false);
+    expect(frame()!.src.startsWith(`${PREVIEW}/?`)).toBe(true);
+
+    view.rerender(<ItemPreview item={item({ urn: "urn:decentraland:matic:collections-v2:0x0768847951fddd4e73e670800da26d953a77059b:1" } as Partial<CatalogItem>)} renderer="full" />);
+    expect(frame()!.src.startsWith(`${window.location.origin}/avatar-preview/?`)).toBe(true);
+  });
+});

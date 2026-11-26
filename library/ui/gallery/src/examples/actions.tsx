@@ -1,6 +1,8 @@
 import {
   Button,
+  BarButton,
   CardActionButton,
+  Chip,
   CloseButton,
   CopyFeedback,
   FriendCTA,
@@ -110,6 +112,143 @@ export const actionEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud',
+        title: 'Explorer HUD',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              {(
+                ['primary', 'accent', 'secondary', 'ghost', 'dark', 'tint', 'darkOutline'] as const
+              ).map((variant) => (
+                <Button key={variant} appearance="hud" variant={variant}>
+                  {variant}
+                </Button>
+              ))}
+              <Button appearance="hud" disabled>
+                Disabled
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(
+                [
+                  'sm',
+                  'md',
+                  'lg',
+                  'row',
+                  'card',
+                  'header',
+                  'modal',
+                  'dialog',
+                  'cta',
+                  'start'
+                ] as const
+              ).map((size) => (
+                <Button key={size} appearance="hud" size={size}>
+                  {size}
+                </Button>
+              ))}
+            </div>
+            <div className={layout.strip}>
+              <Button appearance="hud" variant="light">
+                light
+              </Button>
+              <Button appearance="hud" variant="outline">
+                outline
+              </Button>
+              <Button appearance="hud" variant="whisper" size="start">
+                whisper
+              </Button>
+              <Button appearance="hud" variant="method" size="start">
+                method
+              </Button>
+              <Button appearance="hud" size="row" variant="secondary">
+                row
+              </Button>
+              <Button appearance="hud" size="sm" radius="md">
+                radius md
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(
+                [
+                  'scrim',
+                  'faint',
+                  'veil',
+                  'glass',
+                  'shade',
+                  'primary',
+                  'clear',
+                  'navigate',
+                  'navigateExit'
+                ] as const
+              ).map((variant) => (
+                <Button
+                  key={variant}
+                  appearance="hud"
+                  size="bare"
+                  variant={variant}
+                  style={{ height: 46, padding: '0 20px' }}
+                >
+                  {variant}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )
+      },
+      {
+        id: 'hud-controls',
+        title: 'Explorer HUD controls',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              {(['ghost', 'solid', 'dark', 'faint'] as const).map((variant) => (
+                <Button
+                  key={variant}
+                  appearance="hud"
+                  control="square"
+                  variant={variant}
+                  aria-label={`${variant} control`}
+                >
+                  ×
+                </Button>
+              ))}
+              <Button appearance="hud" control="square" variant="solid" active aria-label="Active">
+                ×
+              </Button>
+              <Button appearance="hud" control="square" disabled aria-label="Disabled">
+                ×
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(['sm', 'md', 'lg'] as const).map((size) => (
+                <Button
+                  key={size}
+                  appearance="hud"
+                  control="circle"
+                  variant="solid"
+                  size={size}
+                  aria-label={`${size} circle`}
+                >
+                  ×
+                </Button>
+              ))}
+              <Button appearance="hud" control="pill" variant="dark">
+                12 online
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              <Button appearance="hud" control="header" aria-label="Close">
+                ×
+              </Button>
+              <Button appearance="hud" control="headerPill" style={{ padding: '0 16px' }}>
+                Ada
+              </Button>
+            </div>
+          </div>
+        )
+      },
+      {
         id: 'content',
         title: 'Icons, links and icon-only',
         render: () => (
@@ -156,6 +295,76 @@ export const actionEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'Chip',
+    group: 'Actions',
+    summary: 'A filter chip: a toggle with an optional icon and an optional clear button.',
+    components: ['Chip'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Light and dark, at rest, selected, and selected with a clear button',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              <Chip label="All" />
+              <Chip label="Hats" selected />
+              <Chip label="Hats" selected onClear={() => {}} clearLabel="Clear Hats" />
+              <Chip
+                label="Starred"
+                icon={<GeneralStar size={24} aria-hidden="true" />}
+                selected
+                onClear={() => {}}
+                clearLabel="Clear Starred"
+              />
+            </div>
+            <div className={layout.strip}>
+              <Chip variant="dark" label="Wearables" />
+              <Chip
+                variant="dark"
+                label="Emotes"
+                icon={<GeneralStar size={24} aria-hidden="true" />}
+                selected
+              />
+            </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'BarButton',
+    group: 'Actions',
+    summary: 'A button of the Explorer HUD top bar, over a scene or a backdrop.',
+    components: ['BarButton'],
+    examples: [
+      {
+        id: 'shapes',
+        title: 'Pill, round, open with a badge, large round and disabled',
+        render: () => (
+          <div className={layout.row}>
+            <BarButton>Map</BarButton>
+            <BarButton shape="round" aria-label="Share">
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton
+              shape="round"
+              open
+              badge={3}
+              aria-label="Notifications, 3 unread"
+              aria-expanded
+            >
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton shape="round" size="lg" aria-label="Close">
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton disabled>Places</BarButton>
+          </div>
+        )
+      }
+    ]
+  },
+  {
     name: 'CardActionButton',
     group: 'Actions',
     summary: 'The round icon action on a card.',
@@ -163,12 +372,13 @@ export const actionEntries: GalleryEntry[] = [
     examples: [
       {
         id: 'states',
-        title: 'Default glyph, custom glyph and disabled',
+        title: 'Default glyph, custom glyph, disabled and small',
         render: () => (
           <div className={layout.row}>
             <CardActionButton aria-label="Like" />
             <CardActionButton aria-label="Share" icon={<MenusShare size={24} />} />
             <CardActionButton aria-label="Like" disabled />
+            <CardActionButton aria-label="Share" size="sm" icon={<MenusShare size={24} />} />
           </div>
         )
       }
@@ -219,6 +429,16 @@ export const actionEntries: GalleryEntry[] = [
             {sizes.map((size) => (
               <JumpInCTA key={size} size={size} />
             ))}
+          </div>
+        )
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD appearance, large and small',
+        render: () => (
+          <div className={layout.row}>
+            <JumpInCTA appearance="hud" size="xl" label="JUMP IN" style={{ width: 240 }} />
+            <JumpInCTA appearance="hud" size="md" label="JUMP IN" style={{ width: 200 }} />
           </div>
         )
       },

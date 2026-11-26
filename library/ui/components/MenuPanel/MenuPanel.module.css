@@ -1,0 +1,96 @@
+/* Not in Figma: the panel a button of the Explorer HUD's navigation bar opens, and its rows. These rules sit
+   outside the cascade layer, as the Panel's do: HUD panels restyle the surface and its rows by class. The row's
+   hover grey, the key's grey and 13.239px size, the hairline's grey, the shadow, the 10px corners and the HUD's
+   font stack have no token. */
+/* A navigation panel: 10px corners, 16px padding, 16px between its parts. `div.root` outranks the Panel's
+   own surface, which it replaces. */
+div.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-sizing: border-box;
+  width: 274px;
+  padding: 16px;
+  border: 0;
+  border-radius: 10px; /* = HUD --r-control */
+  background: var(--dcl-neutrals-shadow);
+  box-shadow: 2px 2px 2.5px rgba(0, 0, 0, 0.25); /* = HUD --shadow-rail-button */
+  color: var(--dcl-neutrals-snow);
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
+}
+div.wide {
+  width: 400px;
+}
+.title {
+  margin: 0;
+  font-size: 18px; /* = HUD --type-18 */
+  font-weight: 700;
+  line-height: 22px;
+  color: var(--dcl-neutrals-white);
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+/* A row: 36px high, the icon in a 28px box 12px before the label, the key 4px after it. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px; /* = HUD --r-control */
+  background: transparent;
+  color: var(--dcl-neutrals-snow);
+  font-family: inherit;
+  font-size: 14px; /* = HUD --type-14 */
+  font-weight: 600;
+  line-height: 17px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.row:hover,
+.row:focus-visible {
+  background: #2e2d30;
+}
+.row:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+}
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+}
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hint {
+  font-size: 13.239px;
+  font-weight: 400;
+  color: #797979;
+}
+.trailing {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+/* Between two lists of a panel. The hairline falls across two pixel rows, each at a quarter of its colour; it
+   takes no room of its own, so it sits centred where the two 16px gaps meet. */
+.divider {
+  flex: none;
+  height: 2px;
+  margin: -1px 0;
+  background: color-mix(in srgb, #7e7e7e 25%, transparent); /* = HUD --rail-rule */
+}
