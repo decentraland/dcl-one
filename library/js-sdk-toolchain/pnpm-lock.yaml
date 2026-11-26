@@ -175,7 +175,7 @@ overrides:
   react@^18.2.0: 18.3.1
   react-reconciler@^0.29.0: 0.29.0
   scheduler@^0.23.0: 0.23.0
-  '@dcl/asset-packs': 2.17.2
+  '@dcl/asset-packs': 2.30.2
   '@dcl/hashing': workspace:*
   '@dcl/quests-client>@dcl/sdk': '-'
   protobufjs: 7.6.6
@@ -331,8 +331,8 @@ importers:
   packages/@dcl/sdk-commands:
     dependencies:
       '@dcl/asset-packs':
-        specifier: 2.17.2
-        version: 2.17.2(@dcl/ecs@packages+@dcl+ecs)
+        specifier: 2.30.2
+        version: 2.30.2(@dcl/ecs@packages+@dcl+ecs)
       '@dcl/crypto':
         specifier: ^3.4.4
         version: 3.9.0
@@ -346,8 +346,8 @@ importers:
         specifier: workspace:*
         version: link:../../../../hashing
       '@dcl/inspector':
-        specifier: 7.59.0
-        version: 7.59.0(@dcl/ecs@packages+@dcl+ecs)
+        specifier: 7.71.4
+        version: 7.71.4(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)
       '@dcl/linker-dapp':
         specifier: 0.16.0
         version: 0.16.0
@@ -658,8 +658,8 @@ packages:
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
 
-  '@dcl/asset-packs@2.17.2':
-    resolution: {integrity: sha512-/YMQEBYkdZCcpPOP58l8fYDduGqtNnO0JYgOwI0RNMZ8MW/Dl902RW5KExhlGBfto+X2BwFH3aY8yAG/qbW2OQ==}
+  '@dcl/asset-packs@2.30.2':
+    resolution: {integrity: sha512-WYFNgshEjKdhaOE7x0PVwO2B46ta47ErL2yECwMTWu/pzwHN34v0Vw8asm4/bAHuD66hK+kMHaabg1n+jgMJTA==}
     peerDependencies:
       '@dcl/ecs': ^7.15.2
 
@@ -704,8 +704,13 @@ packages:
     resolution: {integrity: sha512-2sfCvyLKEJlmUrgkWQh57NnjvYeynJWyGCr/WMcUFFur1xlbJEC3kgqbkkNEmVKuOhM/DeYoL5fQDV/BGcxHQg==}
     engines: {node: '>=18.0.0'}
 
-  '@dcl/inspector@7.59.0':
-    resolution: {integrity: sha512-PnkweMY7arJeTWfh/9pptjxQUNRDSk/JVT9e9O43D286D4qJSiSmwRtY4tVY+85pAjySbjzSeF8o7eBznrQxtA==}
+  '@dcl/inspector@7.71.4':
+    resolution: {integrity: sha512-ghldoq38pBrX92GBd8VosxUHNle8lTgh/4OxW4EQeT9AbZIVTa7W1KmQKVGmNVFehfHQ+Wl8rmbuXyu6iD90Vg==}
+    peerDependencies:
+      react: 18.3.1
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   '@dcl/linker-dapp@0.16.0':
     resolution: {integrity: sha512-UdEWZGQc7Zg8YARBNrC6zXONoVRh3ivJULASdZHJj8+9aA28fNJjxZHSCPhgPP459i1ZD5w022ubL1Vgm/e+tA==}
@@ -3644,10 +3649,6 @@ packages:
     peerDependencies:
       typescript: '>=4.8.4'
 
-  ts-deepmerge@8.0.0:
-    resolution: {integrity: sha512-133O+10nJmVI8w5xeVZPEv5PIrv7iaUae07wv1aH8XJH95Ur6YIhWAPhPyP1YPlbPS9fCVcNIZTu7m8urRVF0A==}
-    engines: {node: '>=14.13.1'}
-
   ts-poet@6.12.0:
     resolution: {integrity: sha512-xo+iRNMWqyvXpFTaOAvLPA5QAWO6TZrSUs5s4Odaya3epqofBu/fMLHEWl8jPmjhA0s9sgj9sNvF1BmaQlmQkA==}
 
@@ -4162,10 +4163,9 @@ snapshots:
 
   '@bcoe/v8-coverage@0.2.3': {}
 
-  '@dcl/asset-packs@2.17.2(@dcl/ecs@packages+@dcl+ecs)':
+  '@dcl/asset-packs@2.30.2(@dcl/ecs@packages+@dcl+ecs)':
     dependencies:
       '@dcl/ecs': link:packages/@dcl/ecs
-      mitt: 3.0.1
 
   '@dcl/catalyst-contracts@4.4.2': {}
 
@@ -4203,11 +4203,18 @@ snapshots:
 
   '@dcl/gltf-validator-ts@1.0.14': {}
 
-  '@dcl/inspector@7.59.0(@dcl/ecs@packages+@dcl+ecs)':
+  '@dcl/inspector@7.71.4(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)':
     dependencies:
       '@babel/parser': 7.28.5
-      '@dcl/asset-packs': 2.17.2(@dcl/ecs@packages+@dcl+ecs)
-      ts-deepmerge: 8.0.0
+      '@dcl/asset-packs': 2.30.2(@dcl/ecs@packages+@dcl+ecs)
+      '@protobufjs/utf8': 1.1.2
+      '@well-known-components/pushable-channel': 1.0.3
+      ajv: 8.20.0
+      ignore: 7.0.6
+      long: 5.3.2
+      protobufjs: 7.6.6
+    optionalDependencies:
+      react: 18.3.1
     transitivePeerDependencies:
       - '@dcl/ecs'
 
@@ -7634,8 +7641,6 @@ snapshots:
   ts-api-utils@2.5.0(typescript@5.0.4):
     dependencies:
       typescript: 5.0.4
-
-  ts-deepmerge@8.0.0: {}
 
   ts-poet@6.12.0:
     dependencies:
