@@ -63,9 +63,9 @@ use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
-        behind_cap_applies, publish_download_priorities, scene_tick_rate, tick_rate_allows,
-        tick_rate_caps_lifted, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
-        GLOBAL_UPDATE_BACKLOG_DUE,
+        behind_cap_applies, publish_download_priorities, queue_age, scene_tick_rate,
+        tick_rate_allows, tick_rate_caps_lifted, update_scene_partitions, Partition,
+        BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -131,8 +131,8 @@ pub struct SceneUpdates {
     /// Scene-frames skipped because the scene's distance band allowed no tick yet
     /// (`scene_tick_rate`).
     pub(crate) skipped_rate_capped: u64,
-    /// Scene-frames a capped scene was due before its band allowed, because of the global
-    /// updates it had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
+    /// Ticks sent to a capped scene before its band allowed, because of the global updates it
+    /// had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
     pub(crate) released_by_global_updates: u64,
     /// Whether `/scene_tick_rate_caps false` turned the distance bands off.
     pub(crate) tick_rate_caps_off: bool,
@@ -750,6 +750,12 @@ fn update_scene_priority(
                 }
             }
             updates.eligible_jobs += 1;
+            let age = queue_age(
+                context.tick_rate_cap,
+                context.due_on_global_updates,
+                age,
+                time.delta_secs_f64(),
+            );
             Some((ent, scene_tick_key(partition, active, age)))
         })
         .collect();
@@ -809,8 +815,15 @@ fn global_updates_sent(
         .map_or(0, GlobalCrdtState::sent)
 }
 
-/// The queue key of a scene due this frame: its distance over the time since it was last
-/// sent, 0 for the player's scenes. A scene behind the camera counts as
+/// Record a dispatch: the scene reads every global update its host holds, `sent`. Returns whether
+/// the scene was sent before its band allowed, on unread global updates.
+fn record_global_updates_read(context: &mut RendererSceneContext, sent: u64) -> bool {
+    context.global_updates_read = sent;
+    std::mem::take(&mut context.due_on_global_updates)
+}
+
+/// The queue key of a scene due this frame: its distance over its queue age (`queue_age`), 0
+/// for the player's scenes. A scene behind the camera counts as
 /// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
 /// runs short.
 fn scene_tick_key(partition: PartitionData, active: bool, age: f64) -> FloatOrd {
@@ -1536,13 +1549,18 @@ mod player_scenes_tests {
             .count_replayed(1);
         world.run_system_once(update_scene_priority).unwrap();
         assert!(queued(&world).contains(&east));
-        // its dispatch counts the release
-        assert!(
-            world
-                .get::<RendererSceneContext>(east)
-                .unwrap()
-                .due_on_global_updates
-        );
+        // its dispatch counts the release and reads the backlog, so the next frame holds it again
+        let sent = world.get::<GlobalCrdtState>(crdt).unwrap().sent();
+        let now = world.resource::<Time>().elapsed_secs_f64();
+        let mut context = world.get_mut::<RendererSceneContext>(east).unwrap();
+        assert!(record_global_updates_read(&mut context, sent));
+        assert!(!record_global_updates_read(&mut context, sent));
+        context.last_sent = now;
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.1));
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(!queued(&world).contains(&east));
     }
 
     fn wakes(world: &World, scene: Entity) -> bool {
@@ -2172,9 +2190,8 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
-        context.global_updates_read =
-            global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
-        if std::mem::take(&mut context.due_on_global_updates) {
+        let sent = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
+        if record_global_updates_read(&mut context, sent) {
             updates.released_by_global_updates += 1;
         }
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));

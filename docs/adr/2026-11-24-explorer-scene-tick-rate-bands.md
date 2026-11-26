@@ -56,7 +56,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   scene's other channels, such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
-  is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so
+  is ordered by the existing key, with its age taken from when its interval passed, at least a
+  frame (`queue_age`): holding a scene back does not rank it as starved, so a scene behind the
+  camera still yields first. A scene released on unread global updates keeps its age since it
+  was last sent. Age grows a frame at a time, so
   the interval counts as passed within a quarter of a frame of it: jitter cannot miss an
   interval of whole frames, and one of a frame and a half always waits for the second frame. At
   60 fps the 40 and 30 bands therefore both tick every other frame; they differ only above 60 Hz.

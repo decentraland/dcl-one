@@ -172,7 +172,9 @@ frame's queue until `1 / rate` seconds have passed since it was last sent. The t
 last sent grows a frame at a time, so the interval counts as passed within a quarter of a frame
 of it (`tick_rate_allows`). The effective rate is a whole number of frames per tick: at 60 fps
 the 40 and 30 bands both tick every other frame, 30 times a second; at 30 fps or below they tick
-every frame.
+every frame. A capped scene that is due ranks by the time since its interval passed, at least a
+frame, instead of the time since it was last sent (`queue_age`), so holding it back does not
+rank it as starved.
 
 | Distance from the player to the scene's nearest parcel | Ticks a second, in front | Behind the camera |
 |---|---|---|
@@ -204,7 +206,8 @@ debug panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) counts the s
 schedules at each cap, whether the behind cap applies at the camera's pitch, the scene-frames
 the cap has skipped and the ticks sent before their band allowed on unread global updates, and
 names the reason while nothing is capped; `/scene_tick_rate_caps false` (its "Turn the caps
-off" action) lifts every cap, to compare with and without them on one build. See the
+off" button, bound to `capsOn`) lifts every cap, to compare with and without them on one build;
+the skipped and released totals stay readable while the caps are off. See the
 [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
 
 ## PostUpdate

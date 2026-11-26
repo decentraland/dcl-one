@@ -1,6 +1,7 @@
 use super::*;
 use crate::scene_partition::{
-    behind_cap_applies, tick_rate_caps_lifted, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE,
+    behind_cap_applies, queue_age, tick_rate_caps_lifted, BEHIND_SCENE_TICK_RATE,
+    FAR_SCENE_TICK_RATE,
 };
 use common::partition::PartitionData;
 
@@ -124,4 +125,37 @@ fn the_caps_apply_only_to_a_rendering_camera_framing_the_player() {
         tick_rate_caps_lifted(Some((&camera, true)), false),
         Some("Photo mode")
     );
+}
+
+#[test]
+fn a_capped_scene_ranks_by_the_time_since_its_interval_passed() {
+    const FRAME: f64 = 1.0 / 60.0;
+    // 1/s, sent 1.5 s ago: half a second overdue
+    assert!((queue_age(Some(1.0), false, 1.5, FRAME) - 0.5).abs() < 1e-9);
+    // just due: at least a frame, so the key stays finite
+    assert_eq!(queue_age(Some(1.0), false, 1.0, FRAME), FRAME);
+    // released on unread global updates, or at the full rate: the time since it was last sent
+    assert_eq!(queue_age(Some(1.0), true, 0.2, FRAME), 0.2);
+    assert_eq!(queue_age(None, false, 0.2, FRAME), 0.2);
+}
+
+#[test]
+fn a_just_due_capped_scene_behind_yields_to_a_recent_scene_in_front() {
+    const FRAME: f64 = 1.0 / 60.0;
+    let behind = PartitionData {
+        sqr_distance: 400.0,
+        parcel_distance: 1,
+        is_behind: true,
+    };
+    let front = PartitionData {
+        is_behind: false,
+        ..behind
+    };
+    let behind_key = scene_tick_key(behind, false, queue_age(Some(1.0), false, 1.0, FRAME));
+    let front_key = scene_tick_key(
+        front,
+        false,
+        queue_age(Some(30.0), false, 2.0 * FRAME, FRAME),
+    );
+    assert!(behind_key > front_key);
 }

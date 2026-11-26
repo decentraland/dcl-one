@@ -40,6 +40,13 @@ pub(super) struct SceneDebugPanelPlugin;
 
 impl Plugin for SceneDebugPanelPlugin {
     fn build(&self, app: &mut App) {
+        // the `capped` field's components, in order
+        let capped_label = format!(
+            "Scenes capped at ticks a second ({})",
+            SCENE_TICK_RATE_CAPS
+                .map(|rate| rate.to_string())
+                .join(" / ")
+        );
         app.init_resource::<ShowBounds>()
             .add_console_command::<BoundsCommand, _>(set_bounds)
             .add_systems(Update, draw_bounds.run_if(|show: Res<ShowBounds>| show.0))
@@ -182,7 +189,7 @@ impl Plugin for SceneDebugPanelPlugin {
                 query: "/scene_tick_rate_state",
                 fields: &[
                     ("Scenes at the full rate", "full"),
-                    (CAPPED_LABEL, "capped"),
+                    (capped_label.as_str(), "capped"),
                     ("Behind-camera cap", "behindCap"),
                     ("Scene-frames skipped by the cap", "skipped"),
                     (
@@ -190,11 +197,16 @@ impl Plugin for SceneDebugPanelPlugin {
                         "released",
                     ),
                 ],
-                actions: &[
-                    ("Turn the caps off", "/scene_tick_rate_caps false"),
-                    ("Turn the caps on", "/scene_tick_rate_caps true"),
-                ],
-                inputs: &[],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Tick rate caps",
+                    field: "capsOn",
+                    command: "/scene_tick_rate_caps {value}",
+                    kind: DebugInputKind::ActionButton {
+                        enable: ("Turn the caps on", "true"),
+                        disable: ("Turn the caps off", "false"),
+                    },
+                }],
             })
             .add_debug_section(DebugSection {
                 title: "Scene permissions in force",
@@ -633,13 +645,11 @@ fn permissions_in_force_state(
 #[command(name = "/scene_tick_rate_state")]
 struct TickRateState;
 
-/// The `capped` field's label: its components are `SCENE_TICK_RATE_CAPS`, in order.
-const CAPPED_LABEL: &str = "Scenes capped at ticks a second (40 / 30 / 15 / 10 / 5 / 1 / 0.5)";
-
-/// The scenes the scene loop schedules at the full rate and at each distance band's tick rate cap
-/// (`scene_tick_rate`), whether the behind-camera cap applies at the camera's pitch, and the
-/// scene-frames the cap has skipped and released since startup. While no scene is capped, the
-/// reason (`tick_rate_caps_lifted`).
+/// Whether the caps are switched on, the scene-frames the cap has skipped and the ticks it released
+/// since startup, and, while the caps apply, the scenes the scene loop schedules at the full rate
+/// and at each distance band's tick rate cap (`scene_tick_rate`) and whether the behind-camera cap
+/// applies at the camera's pitch. While no scene is capped, those readings name the reason
+/// (`tick_rate_caps_lifted`).
 fn tick_rate_state(
     mut input: ConsoleCommand<TickRateState>,
     scenes: Query<(&RendererSceneContext, Has<SuperUserScene>), Without<SceneLoading>>,
@@ -650,14 +660,19 @@ fn tick_rate_state(
         return;
     }
     let camera = rendering_camera.single().ok();
+    let totals = json!({
+        "capsOn": !updates.tick_rate_caps_off,
+        "skipped": updates.skipped_rate_capped,
+        "released": updates.released_by_global_updates,
+    });
     if let Some(reason) = tick_rate_caps_lifted(
         camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
         updates.tick_rate_caps_off,
     ) {
-        input.reply_ok(
-            json!({"unavailable": {"": format!("{reason}: every scene ticks at the full rate.")}})
-                .to_string(),
-        );
+        let reason = format!("{reason}: every scene ticks at the full rate.");
+        let mut reply = totals;
+        reply["unavailable"] = json!({"full": reason, "capped": reason, "behindCap": reason});
+        input.reply_ok(reply.to_string());
         return;
     }
     let mut full = 0usize;
@@ -677,16 +692,11 @@ fn tick_rate_state(
     }
     let behind_cap =
         camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
-    input.reply_ok(
-        json!({
-            "full": full,
-            "capped": capped,
-            "behindCap": behind_cap,
-            "skipped": updates.skipped_rate_capped,
-            "released": updates.released_by_global_updates,
-        })
-        .to_string(),
-    );
+    let mut reply = totals;
+    reply["full"] = json!(full);
+    reply["capped"] = json!(capped);
+    reply["behindCap"] = json!(behind_cap);
+    input.reply_ok(reply.to_string());
 }
 
 /// Turn the distance bands' tick rate caps on or off, to compare frame time with and without them
@@ -813,14 +823,6 @@ mod tests {
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn the_capped_label_names_every_capped_rate_in_order() {
-        let rates = SCENE_TICK_RATE_CAPS
-            .map(|rate| rate.to_string())
-            .join(" / ");
-        assert!(CAPPED_LABEL.ends_with(&format!("({rates})")));
-    }
 
     fn scene_state_app() -> App {
         let mut app = App::new();
