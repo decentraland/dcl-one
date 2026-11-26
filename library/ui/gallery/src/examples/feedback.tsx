@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import {
   Button,
   ConnectionStatus,
@@ -28,6 +28,7 @@ import {
   MaskIcon,
   ScrollThumb
 } from '@dcl/one-ui'
+import { EmbeddedCanvas } from '../embedded'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
 import layout from './layout.module.css'
@@ -55,9 +56,11 @@ type ModalDemoProps = Omit<ModalProps, 'onClose' | 'actions'> & {
   actions?: readonly string[]
 }
 
-// A dialog is rendered only while it is open; the trigger opens it again after it closes.
+// A dialog is rendered only while it is open; the trigger opens it again after it closes. Inside the Showcase it
+// starts closed: opening on load would take the reviewer's focus partway down the page.
 function ModalDemo({ open: initiallyOpen = false, trigger, actions, ...props }: ModalDemoProps) {
-  const [open, setOpen] = useState(initiallyOpen)
+  const embedded = useContext(EmbeddedCanvas)
+  const [open, setOpen] = useState(initiallyOpen && !embedded)
   const close = () => setOpen(false)
   return (
     <>

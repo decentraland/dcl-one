@@ -205,11 +205,21 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
-      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None)
+      picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
       bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
       closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
       to a tag is coloured as chat links it.
+- [ ] **Reactions**: an emoji picked from the chat's Reactions button rises from just over your
+      nametag: it pops in small, rises about a metre while it sways, swells once and is gone within
+      a second, drawn over the nametag and over whatever stands in front of it. Picks made one after
+      another each rise, the bar staying open. Another player's rise over their avatar, a burst of
+      them one every 0.2 s. None shows over an avatar a scene hides, over a blocked player, with
+      nametags off, over your own head in first person, or, for other players, farther than 25 m
+      from the camera; with the Chat bubbles and reactions setting at None none shows over anyone.
+      The debug panel's "Situational reactions" section counts them (those with nothing to show
+      over as "player not shown") and its buttons play one without the HUD.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
@@ -349,6 +359,25 @@ shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`).
 - **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
   arrived with (no burst at login).
 - Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
+
+## Reactions
+
+A situational reaction is an emoji the player picks from the chat's Reactions button. The engine
+shows it over their avatar and tells the players around them (`crates/avatar/src/reaction`); the
+HUD offers the pick (`bridge-scene/src/domains/reactions.ts`). Expectations:
+
+- **Button**: the heart in the chat's strip, named `Reactions`, pressed while its bar is open. It
+  shows while the chat is open and not showing the nearby list, in every conversation, a blocked
+  DM included. It types nothing into the message.
+- **Bar**: the bar a message's React button opens (the fixed emoji, up to three recent ones, `+`
+  for the full picker), named `Reactions`, over the button. A pick sends `sendReaction` and the
+  bar stays for the next. The bar's picks leave the recent emoji alone; the full picker's become
+  recent, and the picker stays open too. A press outside, the button again, another conversation,
+  the nearby list, or the chat closing or giving way to a panel closes it; Cancel closes the
+  picker, then the bar. It and a message's bar are never both open.
+- An emoji the wire has no index for (a flag) plays nowhere: the engine drops the pick.
+- Tests: `library/ui/apps/hud/test/hosted/chatReactions.test.tsx` and
+  `chatReactions.clicks.test.tsx`, `src/test/bridgeReactions.test.ts`.
 
 ## Analytics
 
