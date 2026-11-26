@@ -1,5 +1,5 @@
 use bevy::ecs::system::RunSystemOnce;
-use common::structs::{OutOfWorld, PrimaryUser};
+use common::structs::{Arrivals, OutOfWorld, PrimaryUser};
 use dcl_types::SceneId;
 use scene_material::SceneBounds;
 use web_time::Instant;
@@ -212,4 +212,90 @@ fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
 
     // nothing to time: the load happened before the player got here
     assert!(world.resource::<FirstRingTiming>().arrival.is_none());
+}
+
+#[test]
+fn the_first_ring_is_ready_for_the_arrival_that_reaches_the_world() {
+    let mut world = world();
+    world.init_resource::<Arrivals>();
+    let player = world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(player).insert(OutOfWorld::default());
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+    let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
+
+    // behind the loading screen nothing is ready, even once the ring is
+    world.run_system_once(report_scene_load_times).unwrap();
+    set_tick(&mut world, home, 6);
+    set_tick(&mut world, neighbour, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    // the player is let in: arrival 1, its first ring already loaded
+    world.entity_mut(player).remove::<OutOfWorld>();
+    world.resource_mut::<Arrivals>().0 = 1;
+    world.run_system_once(report_scene_load_times).unwrap();
+    let ready = world.resource::<FirstRingTiming>().ready.unwrap();
+    assert_eq!(ready.arrival, 1);
+
+    // a later frame of the same arrival keeps the first instant
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world.resource::<FirstRingTiming>().ready.unwrap().at,
+        ready.at
+    );
+}
+
+#[test]
+fn an_arrival_waits_for_a_loading_neighbour() {
+    let mut world = world();
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+    let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    set_tick(&mut world, neighbour, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(1)
+    );
+}
+
+#[test]
+fn an_arrival_at_an_empty_parcel_is_ready_at_once() {
+    let mut world = world();
+    world.insert_resource(Arrivals(3));
+
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(3)
+    );
+}
+
+#[test]
+fn first_ring_json_is_null_before_an_arrival_is_ready() {
+    let mut timing = FirstRingTiming::default();
+    let now = Instant::now();
+    assert!(first_ring_json(&timing, now).is_null());
+
+    timing.ready = Some(FirstRingReady {
+        arrival: 2,
+        at: now,
+    });
+    let reply = first_ring_json(&timing, now + std::time::Duration::from_millis(1500));
+    assert_eq!(reply["arrival"], 2);
+    assert_eq!(reply["sinceReadyMs"], 1500);
 }

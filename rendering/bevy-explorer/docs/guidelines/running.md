@@ -242,6 +242,12 @@ State, in every build:
   to start one), and `last`, the `name` the player's last such landing looked for with `found`,
   whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
   asks for such a landing.
+- `/scene_loading_state`: the Scene Loading debug section's readout as JSON, with `firstRing`:
+  the latest arrival (`/world_state`'s `arrivals`) whose first ring, the player's scene and every
+  scene within one parcel of the player, has been ready, and `sinceReadyMs`; `null` before one.
+  A driver timing a teleport from outside waits for `firstRing.arrival` to reach the teleport's
+  arrival and dates it as the reply's time less `sinceReadyMs`. A destination already loaded, or
+  an empty parcel, is ready on its first frame in world.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`

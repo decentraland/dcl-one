@@ -48,6 +48,14 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/** `/scene_loading_state`, the part the suite reads. */
+export interface SceneLoadingState {
+  /** The latest arrival (`WorldState.arrivals`) whose first ring, the player's scene and every
+   *  scene within one parcel of the player, has been ready, and the milliseconds since it was;
+   *  `null` before one. Absent on a client that predates it. */
+  firstRing?: { arrival: number; sinceReadyMs: number } | null
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -633,6 +641,10 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
+  }
+
+  sceneLoadingState(): Promise<SceneLoadingState> {
+    return this.json<SceneLoadingState>('/scene_loading_state')
   }
 
   // --- photo mode ---------------------------------------------------------------------------

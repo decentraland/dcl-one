@@ -1,10 +1,12 @@
 //! How long scenes take to become ready after they spawn, for load-time comparisons between
 //! builds. Logged under the `scene_timing` target: one line per scene when it reaches its
 //! fifth tick, and one per arrival when the player's scene and every scene in its first ring
-//! are ready. Filter the log with `scene_timing=info`.
+//! are ready. Filter the log with `scene_timing=info`. [`FirstRingTiming::ready`] also keys the
+//! first ring's readiness to the player's [`Arrivals`], for `/scene_loading_state`.
 
 use bevy::prelude::*;
-use common::structs::PrimaryUser;
+use common::structs::{Arrivals, OutOfWorld, PrimaryUser};
+use serde_json::{json, Value};
 use web_time::Instant;
 
 use crate::{
@@ -33,6 +35,16 @@ pub struct ReadyLogged;
 pub struct FirstRingTiming {
     pub arrival: Option<(Entity, Instant)>,
     pub reported: bool,
+    /// The latest arrival whose first ring around the player has been ready since.
+    pub(crate) ready: Option<FirstRingReady>,
+}
+
+/// The first ring was ready at `at`, in world after arrival number `arrival` ([`Arrivals`]): the
+/// first frame of that arrival when it was already loaded, else the frame it completed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FirstRingReady {
+    pub(crate) arrival: u64,
+    pub(crate) at: Instant,
 }
 
 /// Chebyshev distance in parcels from `parcel` to the nearest of `parcels`; `u16::MAX` with
@@ -53,7 +65,8 @@ pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
 
 pub fn report_scene_load_times(
     mut commands: Commands,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    player: Query<(Entity, &GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
+    arrivals: Option<Res<Arrivals>>,
     containing_scene: ContainingScene,
     scenes: Query<(
         Entity,
@@ -65,7 +78,7 @@ pub fn report_scene_load_times(
     )>,
     mut timing: ResMut<FirstRingTiming>,
 ) {
-    let Ok((player, player_transform)) = player.single() else {
+    let Ok((player, player_transform, out_of_world)) = player.single() else {
         return;
     };
     let player_parcel = vec3_to_parcel(player_transform.translation());
@@ -108,6 +121,18 @@ pub fn report_scene_load_times(
         }
     }
 
+    // without the counter (an app without `ArrivalsPlugin`) there is no arrival to key it to
+    let arrivals = arrivals.map_or(0, |arrivals| arrivals.0);
+    if first_ring_complete
+        && !out_of_world
+        && timing.ready.map_or(0, |ready| ready.arrival) < arrivals
+    {
+        timing.ready = Some(FirstRingReady {
+            arrival: arrivals,
+            at: now,
+        });
+    }
+
     if let Some((scene, arrival)) = timing.arrival {
         // a scene despawned before it was ready (a realm change during the landing) ends the
         // arrival unreported
@@ -122,6 +147,15 @@ pub fn report_scene_load_times(
             timing.reported = true;
         }
     }
+}
+
+/// `/scene_loading_state`'s `firstRing`: the latest arrival whose first ring has been ready, and
+/// the milliseconds since; `null` before one.
+pub(crate) fn first_ring_json(timing: &FirstRingTiming, now: Instant) -> Value {
+    json!(timing.ready.map(|ready| json!({
+        "arrival": ready.arrival,
+        "sinceReadyMs": now.duration_since(ready.at).as_millis() as u64,
+    })))
 }
 
 #[cfg(test)]

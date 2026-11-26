@@ -2142,6 +2142,14 @@ pub struct OutOfWorld {
     pub spawn_point: Option<String>,
 }
 
+/// How many times the player has come into the world (its `OutOfWorld` removed). Every realm
+/// change and parcel teleport takes it out of world first, so a driver reads this before one and
+/// waits for it to grow: `inWorld` alone is still true for a frame or two after the request. It
+/// also catches a period out of world that began and ended between two samples, which leaves no
+/// trace in a query. Counted in `PreUpdate` by the client's `ArrivalsPlugin`.
+#[derive(Resource, Default, Debug)]
+pub struct Arrivals(pub u64);
+
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.
 #[derive(Component)]

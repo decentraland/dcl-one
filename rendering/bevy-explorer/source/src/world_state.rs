@@ -4,7 +4,9 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold};
+use common::structs::{
+    Arrivals, CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold,
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use input_manager::InputPriorities;
 use ipfs::IpfsResource;
@@ -69,14 +71,6 @@ impl Plugin for ArrivalsPlugin {
             .add_systems(PreUpdate, count_arrivals);
     }
 }
-
-/// How many times the player has come into the world (its `OutOfWorld` removed). Every realm
-/// change and parcel teleport takes it out of world first, so a driver reads this before one and
-/// waits for it to grow: `inWorld` alone is still true for a frame or two after the request. It
-/// also catches a period out of world that began and ended between two samples, which leaves no
-/// trace in a query.
-#[derive(Resource, Default)]
-pub struct Arrivals(pub u64);
 
 fn count_arrivals(
     mut arrivals: ResMut<Arrivals>,
