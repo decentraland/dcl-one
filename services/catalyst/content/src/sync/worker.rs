@@ -156,14 +156,14 @@ impl SyncSettings {
         let interval = config.content.sync_item_replay_interval_secs;
         if interval != 0 && !(600..=1440).contains(&interval) {
             anyhow::bail!(
-                "SYNC_ITEM_REPLAY_INTERVAL_SECS must be 0 (off) or 600 to 1440: a pass starts at \
-                 most that long after the last one ends and its coverage lasts 30 minutes from its start"
+                "SYNC_ITEM_REPLAY_INTERVAL_SECS must be 0 (off) or 600 to 1440: a pass starts that \
+                 long after the last one started and its coverage lasts 30 minutes from its start"
             );
         }
         let pause = config.content.sync_item_replay_page_pause_ms;
         if !(50..=1000).contains(&pause) {
             anyhow::bail!(
-                "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS must be 50 to 1000, so a pass of the item history ends well inside 30 minutes"
+                "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS must be 50 to 1000, so one source's item history is read in about 1.5 to 4.5 minutes"
             );
         }
         *MEMORY_LIMITS.lock() = memory_limits_from_config(config)?;
