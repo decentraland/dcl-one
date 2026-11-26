@@ -68,6 +68,7 @@ pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
 mod cancelled_trades;
+pub(crate) mod casts;
 pub mod catalog;
 pub mod catalogue;
 pub mod chain_group;

@@ -130,7 +130,7 @@ pub async fn lock(conn: &mut PgConnection, net: ChainNet, exclusive: bool) -> sq
     };
     sqlx::query(sql)
         .bind(CATALOGUE_LOCK)
-        .bind(net.chain_id() as i32)
+        .bind(net.chain_id_i32())
         .execute(conn)
         .await?;
     Ok(())
@@ -200,7 +200,7 @@ pub async fn project_in(
     )
     .bind(net.db_name())
     .bind(upto)
-    .bind(out.waiting as i32)
+    .bind(crate::market::casts::len_i32(out.waiting)?)
     .execute(&mut *conn)
     .await?;
     Ok(out)
@@ -649,7 +649,7 @@ pub(super) async fn write(
     net: ChainNet,
     rows: &[(CollectionRow, Vec<ItemRow>)],
 ) -> anyhow::Result<()> {
-    let chain_id = net.chain_id() as i32;
+    let chain_id = net.chain_id_i32();
     let mirrored_at = now_utc();
     let collections: Vec<Value> = rows.iter().map(|(c, _)| collection_record(c)).collect();
     for chunk in collections.chunks(ROWS_PER_STATEMENT) {

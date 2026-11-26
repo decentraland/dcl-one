@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
 use super::MarketplaceState;
+use super::casts::{self, OutOfRange};
 use super::chain_walk::{ChainNet, INDEXER_NFT, ready_cursor};
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -80,12 +81,18 @@ impl Default for CoOwnershipOptions {
     }
 }
 
+/// A matrix id or offset as an index; a negative one indexes out of bounds
+/// (and panics), as the `as usize` it replaces did.
+fn ix(v: i32) -> usize {
+    usize::try_from(v).unwrap_or(usize::MAX)
+}
+
 /// The per-item weight vector's L2 norm over the damped weights.
 pub fn compute_norms(matrix: &AcquisitionMatrix) -> Vec<f64> {
     let mut norms = vec![0.0f64; matrix.item_count];
     for (i, item) in matrix.items.iter().enumerate() {
         let weight = matrix.weights[i] as f64;
-        norms[*item as usize] += weight * weight;
+        norms[ix(*item)] += weight * weight;
     }
     for norm in norms.iter_mut() {
         *norm = norm.sqrt();
@@ -94,8 +101,13 @@ pub fn compute_norms(matrix: &AcquisitionMatrix) -> Vec<f64> {
 }
 
 /// The hoarder damping: a wallet's own dot product is `1 / sqrt(size)`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the factor is in (0, 1], which f32 holds"
+)]
 pub fn damp(wallet_size: usize) -> f32 {
-    (wallet_size.max(1) as f64).powf(-0.25) as f32
+    let size = u32::try_from(wallet_size.max(1)).unwrap_or(u32::MAX);
+    f64::from(size).powf(-0.25) as f32
 }
 
 /// For every anchor item, the top-K candidate items most often held by the
@@ -113,7 +125,10 @@ pub fn build_co_ownership_neighbors(
     let mut column_of = vec![-1i32; item_count];
     for item in 0..item_count {
         if is_candidate.get(item).copied().unwrap_or(false) && norms[item] > 0.0 {
-            column_of[item] = columns.len() as i32;
+            let Ok(column) = i32::try_from(columns.len()) else {
+                break;
+            };
+            column_of[item] = column;
             columns.push(item);
         }
     }
@@ -133,16 +148,19 @@ pub fn build_co_ownership_neighbors(
         dot.fill(0.0);
         support.fill(0);
         for wallet in 0..matrix.wallet_count {
-            let from = matrix.offsets[wallet] as usize;
-            let to = matrix.offsets[wallet + 1] as usize;
+            let from = ix(matrix.offsets[wallet]);
+            let to = ix(matrix.offsets[wallet + 1]);
             let mut hits = 0usize;
             for i in from..to {
                 if hits >= in_block.len() {
                     break;
                 }
-                let column = column_of[matrix.items[i] as usize];
-                if column >= block_start as i32 && column < block_end as i32 {
-                    in_block[hits] = (column as usize) - block_start;
+                // Not a candidate (-1) or outside the block: skipped.
+                if let Ok(column) = usize::try_from(column_of[ix(matrix.items[i])])
+                    && column >= block_start
+                    && column < block_end
+                {
+                    in_block[hits] = column - block_start;
                     in_block_weight[hits] = matrix.weights[i] as f64;
                     hits += 1;
                 }
@@ -151,13 +169,15 @@ pub fn build_co_ownership_neighbors(
                 continue;
             }
             for i in from..to {
-                let anchor = matrix.items[i] as usize;
+                let anchor = ix(matrix.items[i]);
                 let anchor_weight = matrix.weights[i] as f64;
-                let anchor_column = column_of[anchor] - block_start as i32;
+                let anchor_column = usize::try_from(column_of[anchor])
+                    .ok()
+                    .and_then(|c| c.checked_sub(block_start));
                 let base = anchor * width;
                 for j in 0..hits {
                     let column = in_block[j];
-                    if column as i32 == anchor_column {
+                    if Some(column) == anchor_column {
                         continue;
                     }
                     dot[base + column] += anchor_weight * in_block_weight[j];
@@ -326,7 +346,7 @@ ORDER BY h.wallet";
 pub struct MatrixBuilder {
     offsets: Vec<i32>,
     items: Vec<i32>,
-    index: HashMap<String, usize>,
+    index: HashMap<String, i32>,
     keys: Vec<ItemKey>,
     wallet: Option<String>,
     scratch: String,
@@ -340,10 +360,19 @@ impl MatrixBuilder {
         }
     }
 
-    pub fn push(&mut self, wallet: &str, network: &str, contract: &str, item: &str) {
+    /// Fails once the matrix outgrows its `i32` ids and offsets.
+    pub fn push(
+        &mut self,
+        wallet: &str,
+        network: &str,
+        contract: &str,
+        item: &str,
+    ) -> Result<(), OutOfRange> {
+        // Every offset, the final one included, fits.
+        casts::len_i32(self.items.len() + 1)?;
         if self.wallet.as_deref() != Some(wallet) {
             if self.wallet.is_some() {
-                self.offsets.push(self.items.len() as i32);
+                self.offsets.push(casts::len_i32(self.items.len())?);
             }
             self.wallet = Some(wallet.to_string());
         }
@@ -357,14 +386,15 @@ impl MatrixBuilder {
         let id = match self.index.get(self.scratch.as_str()) {
             Some(id) => *id,
             None => {
-                let id = self.keys.len();
+                let id = casts::len_i32(self.keys.len())?;
                 self.index.insert(self.scratch.clone(), id);
                 self.keys
                     .push((network.to_string(), contract.to_string(), item.to_string()));
                 id
             }
         };
-        self.items.push(id as i32);
+        self.items.push(id);
+        Ok(())
     }
 
     pub fn pairs(&self) -> usize {
@@ -374,15 +404,14 @@ impl MatrixBuilder {
     /// The matrix (weights from each wallet's size) and the item keys by id.
     pub fn finish(mut self) -> (AcquisitionMatrix, Vec<ItemKey>) {
         if self.wallet.is_some() {
-            self.offsets.push(self.items.len() as i32);
+            // `push` keeps the length within `i32`.
+            self.offsets
+                .push(i32::try_from(self.items.len()).unwrap_or(i32::MAX));
         }
         let wallet_count = self.offsets.len() - 1;
         let mut weights = vec![0.0f32; self.items.len()];
         for wallet in 0..wallet_count {
-            let (from, to) = (
-                self.offsets[wallet] as usize,
-                self.offsets[wallet + 1] as usize,
-            );
+            let (from, to) = (ix(self.offsets[wallet]), ix(self.offsets[wallet + 1]));
             weights[from..to].fill(damp(to - from));
         }
         let item_count = self.keys.len();
@@ -400,12 +429,14 @@ impl MatrixBuilder {
 }
 
 /// The matrix of `rows` (wallet-ordered): [`MatrixBuilder`] over a slice.
-pub fn build_matrix(rows: &[(String, ItemKey)]) -> (AcquisitionMatrix, Vec<ItemKey>) {
+pub fn build_matrix(
+    rows: &[(String, ItemKey)],
+) -> Result<(AcquisitionMatrix, Vec<ItemKey>), OutOfRange> {
     let mut builder = MatrixBuilder::new();
     for (wallet, (network, contract, item)) in rows {
-        builder.push(wallet, network, contract, item);
+        builder.push(wallet, network, contract, item)?;
     }
-    builder.finish()
+    Ok(builder.finish())
 }
 
 /// The longest the holdings scan may stream before the rebuild gives up (the
@@ -491,8 +522,8 @@ async fn rebuild_locked(
         {
             let mut stream = sqlx::query(HOLDINGS_SQL)
                 .bind(networks)
-                .bind(MIN_WALLET_ITEMS as i64)
-                .bind(MAX_WALLET_ITEMS as i64)
+                .bind(casts::len_i64(MIN_WALLET_ITEMS))
+                .bind(casts::len_i64(MAX_WALLET_ITEMS))
                 .fetch(&mut *tx);
             while let Some(r) = stream.try_next().await? {
                 builder.push(
@@ -500,7 +531,7 @@ async fn rebuild_locked(
                     r.try_get::<&str, _>("network")?,
                     r.try_get::<&str, _>("contract_address")?,
                     r.try_get::<&str, _>("item_id")?,
-                );
+                )?;
                 if builder.pairs().is_multiple_of(65_536)
                     && started.elapsed() > HOLDINGS_SCAN_DEADLINE
                 {
@@ -554,8 +585,12 @@ async fn rebuild_locked(
         cols.3.push(b.0.clone());
         cols.4.push(b.1.clone());
         cols.5.push(b.2.clone());
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a similarity in (0, 1], stored as real"
+        )]
         cols.6.push((row.sim.min(1.0)) as f32);
-        cols.7.push(row.support as i32);
+        cols.7.push(casts::to_i32(row.support)?);
         cols.8.push(*r);
     }
     let mut tx = pool.begin().await?;
@@ -590,9 +625,9 @@ async fn rebuild_locked(
              rows_written = EXCLUDED.rows_written, source_folded_block_matic = EXCLUDED.source_folded_block_matic, source_folded_block_ethereum = EXCLUDED.source_folded_block_ethereum",
     )
     .bind(ALGORITHM)
-    .bind(wallets as i32)
-    .bind(keys.len() as i32)
-    .bind(neighbours.len() as i32)
+    .bind(casts::len_i32(wallets)?)
+    .bind(casts::len_i32(keys.len())?)
+    .bind(casts::len_i32(neighbours.len())?)
     .bind(matic_block)
     .bind(ethereum_block)
     .execute(&mut *tx)
@@ -776,6 +811,14 @@ pub async fn built<'e>(executor: impl sqlx::PgExecutor<'e>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
 
     /// Wallets as item-index lists, folded with the hoarder damping.
@@ -912,7 +955,7 @@ mod tests {
             ("a".to_string(), k("2")),
             ("b".to_string(), k("2")),
         ];
-        let (m, keys) = build_matrix(&rows);
+        let (m, keys) = build_matrix(&rows).expect("a small matrix");
         assert_eq!(keys, vec![k("1"), k("2")]);
         assert_eq!(
             (m.wallet_count, m.item_count, m.offsets.clone()),

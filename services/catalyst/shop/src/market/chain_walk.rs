@@ -30,6 +30,7 @@ use anyhow::Context;
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
 use sqlx::{PgConnection, PgPool};
 
+use super::casts;
 use crate::chain_index::rpc::{BlockHeader, RpcLog};
 
 pub(crate) fn topic_address(topic: &str) -> Option<String> {
@@ -91,12 +92,30 @@ impl ChainNet {
     }
 
     pub fn chain_id(self) -> i64 {
+        i64::from(self.chain_number())
+    }
+
+    /// [`Self::chain_id`] as an `integer` (advisory lock keys, `chain_id` columns).
+    pub fn chain_id_i32(self) -> i32 {
+        i32::from(self.chain_number())
+    }
+
+    /// [`Self::chain_id`] as JSON-RPC answers it.
+    pub fn chain_id_u64(self) -> u64 {
+        u64::from(self.chain_number())
+    }
+
+    fn chain_number(self) -> u16 {
         match self {
             ChainNet::Ethereum => 1,
             ChainNet::Matic => 137,
         }
     }
 
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "the Sepolia and Amoy chain ids are small constants"
+    )]
     pub fn testnet_chain_id(self) -> i64 {
         use crate::types::ChainId;
         match self {
@@ -444,6 +463,12 @@ const STARTED_AGE: ChronoDuration = READY_WINDOW
     .checked_add(&ChronoDuration::seconds(1))
     .expect("a small sum");
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "STARTED_AGE is a few minutes of seconds"
+)]
+const STARTED_SECONDS: i32 = STARTED_AGE.num_seconds() as i32;
+
 /// Marks the cursor of a walk `owner` just started, standing at `at`, as
 /// advanced [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads
 /// it as behind, not abandoned and not live, until its first window really
@@ -465,7 +490,7 @@ pub async fn touch_started(
     .bind(owner.net.db_name())
     .bind(at.0)
     .bind(at.1)
-    .bind(STARTED_AGE.num_seconds() as f64)
+    .bind(f64::from(STARTED_SECONDS))
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -663,7 +688,7 @@ pub async fn claim(
     )
     .bind(indexer)
     .bind(net.db_name())
-    .bind(start_block as i64)
+    .bind(casts::to_i64(start_block)?)
     .bind(full_history)
     .bind(chain_id)
     .fetch_one(&mut *tx)
@@ -777,7 +802,7 @@ pub async fn advance(
     .bind(net.db_name())
     .bind(expected.0)
     .bind(expected.1)
-    .bind(header.number as i64)
+    .bind(casts::to_i64(header.number)?)
     .bind(&header.hash)
     .bind(header.timestamp)
     .bind(verified_sales)
@@ -805,7 +830,7 @@ pub async fn advance(
     )
     .bind(indexer)
     .bind(net.db_name())
-    .bind(header.number as i64)
+    .bind(casts::to_i64(header.number)?)
     .bind(&header.hash)
     .bind(header.timestamp)
     .execute(&mut *conn)
@@ -1218,7 +1243,10 @@ pub fn block_at_or_before(net: ChainNet, anchor: (u64, i64), t: i64) -> u64 {
     if t >= time {
         return block;
     }
-    let blocks = ((time - t) as u128 * 1000).div_ceil(net.min_block_ms() as u128) as u64;
+    // `t < time`, so the gap is positive.
+    let gap = u128::try_from(time - t).unwrap_or(0);
+    let blocks =
+        u64::try_from((gap * 1000).div_ceil(u128::from(net.min_block_ms()))).unwrap_or(u64::MAX);
     block.saturating_sub(blocks)
 }
 
@@ -1226,7 +1254,9 @@ pub fn block_at_or_before(net: ChainNet, anchor: (u64, i64), t: i64) -> u64 {
 /// at or before it: `anchor.timestamp + (block - anchor.number) * max_block`.
 pub fn time_at_most(net: ChainNet, anchor: (u64, i64), block: u64) -> i64 {
     let (at, time) = anchor;
-    time + (block.saturating_sub(at) as i64).saturating_mul(net.max_block_ms() as i64) / 1000
+    let blocks = i64::try_from(block.saturating_sub(at)).unwrap_or(i64::MAX);
+    let max_block_ms = i64::try_from(net.max_block_ms()).unwrap_or(i64::MAX);
+    time + blocks.saturating_mul(max_block_ms) / 1000
 }
 
 /// A pass's outcome, for the job trace, the tests and the measurement.
@@ -1257,6 +1287,10 @@ impl PassOutcome {
     }
 
     /// `blocks/s` and `rows/s` of the pass, the catch-up measure.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a throughput figure for the trace; rounding past 2^53 is harmless"
+    )]
     pub fn rates(&self) -> (f64, f64) {
         let secs = (self.elapsed_ms.max(1) as f64) / 1000.0;
         (self.blocks() as f64 / secs, self.rows_written as f64 / secs)
@@ -1297,7 +1331,7 @@ impl PassOutcome {
 
 /// Whether a cursor at `last_block` is held at its stop block, with nothing left to walk.
 fn held_at_stop(last_block: i64, stop: Option<u64>) -> bool {
-    stop.is_some_and(|s| last_block >= s as i64)
+    stop.is_some_and(|s| i64::try_from(s).is_ok_and(|s| last_block >= s))
 }
 
 /// Clamp the chain's safe head to an optional operator stop block.
@@ -1477,7 +1511,7 @@ async fn bind(
         Ok(())
     } else if let Some(stored) = checkpoint {
         let header = source
-            .header(cur.last_block as u64)
+            .header(casts::to_u64(cur.last_block)?)
             .await
             .context("the cursor block's header, to prove its history")?;
         out.requests += header.requests;
@@ -1615,10 +1649,12 @@ async fn rebuild(
     cur: &Cursor,
     out: &mut PassOutcome,
 ) -> anyhow::Result<Option<String>> {
-    let start = settings
-        .start_override(owner.net)
-        .unwrap_or(ix.start_block()) as i64;
-    let full_history = start <= ix.start_block() as i64;
+    let start = casts::to_i64(
+        settings
+            .start_override(owner.net)
+            .unwrap_or(ix.start_block()),
+    )?;
+    let full_history = start <= casts::to_i64(ix.start_block())?;
     let mut refusal = match cur.chain_id {
         Some(chain) if chain != owner.chain_id => Some(format!(
             "its history is from chain {chain}, and this node indexes chain {}",
@@ -1642,7 +1678,7 @@ async fn rebuild(
             )),
             Some(stored) => {
                 let header = source
-                    .header(cur.last_block as u64)
+                    .header(casts::to_u64(cur.last_block)?)
                     .await
                     .context("the cursor block's header, to prove the history a rebuild clears")?;
                 out.requests += header.requests;
@@ -1957,7 +1993,7 @@ pub(crate) async fn open(
         .await?
         .context("the chain cursor row is missing (claiming the projection creates it)")?;
     let configured = settings.start_override(net).unwrap_or(ix.start_block());
-    if cur.start_block != configured as i64 {
+    if u64::try_from(cur.start_block).ok() != Some(configured) {
         tracing::info!(
             indexer = name,
             network = net.db_name(),
@@ -1980,27 +2016,28 @@ pub(crate) async fn open(
             }
             Some(why) => out.quarantined = Some(why),
         }
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(Opening::Ended(out));
     }
     if let Bound::Quarantined(why) = bind(pool, source, owner, &cur, &mut out).await? {
         out.quarantined = Some(why);
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(Opening::Ended(out));
     }
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
-        let header = match at_checkpoint.filter(|h| h.number as i64 == cur.last_block) {
-            Some(h) => h.clone(),
-            None => {
-                let header = source
-                    .header(cur.last_block as u64)
-                    .await
-                    .context("eth_getBlockByNumber at the cursor")?;
-                out.requests += header.requests;
-                header.value
-            }
-        };
+        let header =
+            match at_checkpoint.filter(|h| u64::try_from(cur.last_block).ok() == Some(h.number)) {
+                Some(h) => h.clone(),
+                None => {
+                    let header = source
+                        .header(casts::to_u64(cur.last_block)?)
+                        .await
+                        .context("eth_getBlockByNumber at the cursor")?;
+                    out.requests += header.requests;
+                    header.value
+                }
+            };
         if header.hash != stored {
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); its publication is withdrawn");
             withdraw(
@@ -2010,11 +2047,11 @@ pub(crate) async fn open(
             )
             .await?;
             if !recover_here {
-                out.elapsed_ms = started.elapsed().as_millis() as u64;
+                out.elapsed_ms = casts::millis(started.elapsed());
                 return Ok(Opening::Diverged(out));
             }
             recover(pool, source, ix, owner, &cur, &mut out).await?;
-            out.elapsed_ms = started.elapsed().as_millis() as u64;
+            out.elapsed_ms = casts::millis(started.elapsed());
             return Ok(Opening::Ended(out));
         }
         if cur.diverged_at.is_some() {
@@ -2069,7 +2106,7 @@ pub(crate) async fn recover(
     for (block, hash, time) in candidates {
         probed += 1;
         let header = source
-            .header(block as u64)
+            .header(casts::to_u64(block)?)
             .await
             .with_context(|| format!("the header at recovery point {block}"))?;
         out.requests += header.requests;
@@ -2255,10 +2292,10 @@ async fn walk(
     )
     .await?;
     let anchor = match cur.last_block_time {
-        Some(t) => (cur.last_block.max(0) as u64, t),
+        Some(t) => (casts::to_u64(cur.last_block).unwrap_or(0), t),
         None => {
             let h = source
-                .header(cur.last_block.max(0) as u64)
+                .header(casts::to_u64(cur.last_block).unwrap_or(0))
                 .await
                 .context("the time anchor")?;
             out.requests += h.requests;
@@ -2275,7 +2312,8 @@ async fn walk(
         .last_block_hash
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
-        .map(|h| (cur.last_block as u64, h));
+        .map(|h| casts::to_u64(cur.last_block).map(|b| (b, h)))
+        .transpose()?;
     let spent = match ix
         .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
         .await
@@ -2285,7 +2323,7 @@ async fn walk(
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
             // Lanes bracket only a cursor with a hash (`durable`).
             let (block, hash) = durable.expect("a lane divergence is about the cursor's hash");
-            let at = (block as i64, hash.to_string());
+            let at = (casts::to_i64(block)?, hash.to_string());
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         Err(e) => return Err(e),
@@ -2293,7 +2331,7 @@ async fn walk(
     // The budget pays what the lanes charged; the pass reports what they sent.
     let mut log_requests = spent.charge;
     out.requests += spent.requests;
-    let mut next = (cur.last_block + 1) as u64;
+    let mut next = casts::to_u64(cur.last_block + 1)?;
     let mut expected = (cur.last_block, cur.last_block_hash.clone());
     while next <= target {
         if cancel.is_some_and(|c| c.is_cancelled()) {
@@ -2336,7 +2374,7 @@ async fn walk(
         };
         let predecessor = match expected.1.as_deref() {
             Some(_) => {
-                let p = source.header(expected.0 as u64).await?;
+                let p = source.header(casts::to_u64(expected.0)?).await?;
                 out.requests += p.requests;
                 Some(p.value)
             }
@@ -2359,7 +2397,7 @@ async fn walk(
         let header = reached.unwrap_or(after.value);
         // Accepted, not yet committed (the commit may still fail).
         source.accepted(&crate::chain_index::portal::compare::AcceptedView {
-            chain_id: ix.chain_id() as u64,
+            chain_id: casts::to_u64(ix.chain_id())?,
             from: next,
             reached: window.reached,
             reached_hash: &header.hash,
@@ -2381,8 +2419,8 @@ async fn walk(
         ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;
-        out.indexed_to = window.reached as i64;
-        expected = (window.reached as i64, Some(header.hash.clone()));
+        out.indexed_to = casts::to_i64(window.reached)?;
+        expected = (out.indexed_to, Some(header.hash.clone()));
         next = window.reached + 1;
         progress(format!(
             "{} {}: indexed to {} of {} ({} requests this pass)",
@@ -2393,15 +2431,16 @@ async fn walk(
             out.requests
         ));
     }
-    if out.paused || (out.indexed_to as u64) < target {
-        out.elapsed_ms = started.elapsed().as_millis() as u64;
+    // A negative `indexed_to` compares as past `target`, as the old `as u64` did.
+    if out.paused || u64::try_from(out.indexed_to).is_ok_and(|b| b < target) {
+        out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(out);
     }
     let mut remaining = total.saturating_sub(log_requests);
     if owner.verify_sales
         && let Some(hash) = expected.1.as_deref()
     {
-        let at = expected.0 as u64;
+        let at = casts::to_u64(expected.0)?;
         // Repair the old prefix with spare budget. Always leave the primary
         // projection free to publish after an incomplete or unavailable replay.
         let reserved = if name == INDEXER_NFT && net == ChainNet::Ethereum {
@@ -2467,7 +2506,7 @@ async fn walk(
         &mut out,
     )
     .await?;
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    out.elapsed_ms = casts::millis(started.elapsed());
     Ok(out)
 }
 
@@ -2496,7 +2535,7 @@ async fn diverged(
     }
     ix.abandon();
     recover(pool, source, ix, owner, &cur, &mut out).await?;
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    out.elapsed_ms = casts::millis(started.elapsed());
     Ok(out)
 }
 
@@ -2545,9 +2584,8 @@ pub(crate) async fn close(
     let held_short = stop.is_some_and(|s| s < latest_safe);
     if may_publish
         && !held_short
-        && out.indexed_to >= 0
-        && out.indexed_to as u64 <= latest_safe
-        && within_publish_lag(net, latest, out.indexed_to as u64)
+        && u64::try_from(out.indexed_to)
+            .is_ok_and(|b| b <= latest_safe && within_publish_lag(net, latest, b))
     {
         out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
     } else {

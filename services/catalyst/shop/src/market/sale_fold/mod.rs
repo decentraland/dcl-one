@@ -12,6 +12,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{FromRow, PgConnection, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use super::casts;
 use super::chain_walk::{self, ChainNet};
 use super::{ethereum_sales, listings, nft_index, sale_history, sales_index, trade_events};
 use crate::chain_index::rpc::Rpc;
@@ -160,7 +161,9 @@ async fn inputs(
         .bind(net.chain_id())
         .bind(sale_history::VERSION)
         .bind(now.naive_utc())
-        .bind(nft_index::deployments::Deployments::mainnet(net).start as i64)
+        .bind(casts::to_i64(
+            nft_index::deployments::Deployments::mainnet(net).start,
+        )?)
         .bind(
             trade_events::marketplaces(net)
                 .iter()
@@ -221,7 +224,7 @@ async fn inputs(
                   AND chain_id=137 AND full_history AND start_block<=$1 AND folded_block>=$2
                   AND folded_at BETWEEN $3::timestamp - interval '30 minutes' AND $3 AND last_block_hash IS NOT NULL
                   AND quarantined_at IS NULL AND diverged_at IS NULL AND rebuild_requested_at IS NULL")
-                .bind(super::collections_index::START_BLOCK as i64).bind(last).bind(now.naive_utc()).bind(first)
+                .bind(casts::to_i64(super::collections_index::START_BLOCK)?).bind(last).bind(now.naive_utc()).bind(first)
                 .fetch_optional(&mut *c).await?;
             let Some(proof) = proof else {
                 return Ok(None);
@@ -493,7 +496,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let previous = marker(&mut c, net).await?;
     drop(c);
     let same_history = previous.as_ref().is_some_and(|m| start.covers(m));
-    let initial = nft_index::deployments::Deployments::mainnet(net).start as i64 - 1;
+    let initial = casts::to_i64(nft_index::deployments::Deployments::mainnet(net).start)? - 1;
     let from = previous
         .as_ref()
         .and_then(|m| start.reusable_prefix(m))
@@ -511,39 +514,41 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     ensure!(to >= from, "common sales prefix precedes its start");
     use crate::chain_index::logs::{LogSource, RpcSource};
     ensure!(
-        RpcSource::new(*rpc).chain_id().await?.value == net.chain_id() as u64,
+        RpcSource::new(*rpc).chain_id().await?.value == net.chain_id_u64(),
         "wrong sales accounting RPC chain"
     );
-    let headers: BTreeSet<_> = start
+    let to_block = casts::to_u64(to)?;
+    let headers: BTreeSet<u64> = start
         .rows
         .iter()
-        .map(|r| r.last_block as u64)
-        .chain(start.factory.iter().map(|f| f.last_block as u64))
-        .chain([to as u64])
-        .chain(preserved_marker.iter().map(|m| m.block_number as u64))
-        .collect();
+        .map(|r| r.last_block)
+        .chain(start.factory.iter().map(|f| f.last_block))
+        .chain([to])
+        .chain(preserved_marker.iter().map(|m| m.block_number))
+        .map(casts::to_u64)
+        .collect::<Result<_, _>>()?;
     let (blocks, _) = rpc
         .block_headers(&headers.into_iter().collect::<Vec<_>>())
         .await?;
     for row in &start.rows {
         ensure!(
-            blocks[&(row.last_block as u64)].hash == row.hash,
+            blocks[&casts::to_u64(row.last_block)?].hash == row.hash,
             "sales input is on a different branch"
         );
     }
     if let Some(f) = &start.factory {
         ensure!(
-            blocks[&(f.last_block as u64)].hash == f.hash,
+            blocks[&casts::to_u64(f.last_block)?].hash == f.hash,
             "store factory input is on a different branch"
         );
     }
     if let Some(m) = preserved_marker {
         ensure!(
-            blocks[&(m.block_number as u64)].hash == m.block_hash,
+            blocks[&casts::to_u64(m.block_number)?].hash == m.block_hash,
             "sales prefix changed branch"
         );
     }
-    let hash = &blocks[&(to as u64)].hash;
+    let hash = &blocks[&to_block].hash;
     let mana = listings::mana_token(net.chain_id()).context("missing MANA deployment")?;
     let mut tx = pool.begin().await?;
     let mut days: Vec<i64> = Vec::new();
@@ -668,7 +673,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         mana,
     )
     .await?;
-    let point = rpc.block_header(to as u64).await?;
+    let point = rpc.block_header(to_block).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
     let head = rpc.head_block().await?;
     let previously_published = previous
@@ -676,11 +681,11 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .filter(|_| same_history)
         .and_then(|m| m.published_at);
     let published_at = if (to == start.common || previously_published.is_some())
-        && head >= to as u64
-        && chain_walk::within_publish_lag(net, head, to as u64)
+        && head >= to_block
+        && chain_walk::within_publish_lag(net, head, to_block)
     {
         Some(Utc::now().naive_utc())
-    } else if to < start.common && head >= to as u64 {
+    } else if to < start.common && head >= to_block {
         // This prefix extends the same verified history. Retain its original
         // freshness deadline until a near-head measurement earns a new one.
         previously_published
