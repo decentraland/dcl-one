@@ -706,7 +706,7 @@ mod tests {
     }
 
     /// Boot a scene runtime and evaluate `scene_js` exactly the way a deployed scene bundle
-    /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
+    /// is evaluated (`op_require("~scene.js")` -> indirect `eval`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
         let (mut runtime, _) = create_runtime(false, false, "test-scene-realm", Default::default());

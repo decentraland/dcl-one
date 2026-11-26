@@ -1,6 +1,6 @@
 // this code is executed as the runtime is created, all scopes get these definitions
 
-import { internals } from "ext:core/mod.js";
+import { internals, primordials } from "ext:core/mod.js";
 
 // required for async ops (engine.sendMessage is declared as async)
 // Deno.core.initializeAsyncOps();
@@ -12,11 +12,9 @@ const denoRef = Deno;
 
 // Scene code can replace any built-in it can reach, so `require` uses only these copies,
 // taken before the scene runs, on the paths that touch `denoRef`.
-import { primordials } from "ext:core/mod.js";
-const { ReflectApply, StringPrototypeCharCodeAt, StringPrototypeSlice } = primordials;
+// `indirectEval` compiles in the global scope and returns the wrapper itself.
+const { indirectEval, ReflectApply, StringPrototypeCharCodeAt, StringPrototypeSlice } = primordials;
 const { op_require: opRequire } = denoRef.core.ops;
-// called indirectly, so it compiles in the global scope and returns the wrapper itself
-const globalEval = globalThis.eval;
 
 // The scene bundle is untrusted code that runs in THIS realm, so every global reachable
 // here is reachable from it -- including the raw ops table, which is the whole API surface
@@ -48,12 +46,6 @@ function sealRealm() {
     delete globalThis.__infra;
 }
 
-// load a cjs/node-style module
-// TODO: consider using deno.land/std/node's `createRequire` directly.
-// Deno's node polyfill doesn't work without the full deno runtime, and i
-// note that decentraland examples use ESM syntax which deno_core does support,
-// so i haven't gone very deep into making full support work.
-// this is a very simplified version of the deno_std/node `createRequire` implementation.
 // Drops a leading `#!` line, which is only valid at the very start of a script.
 function stripHashbang(source) {
     if (StringPrototypeCharCodeAt(source, 0) !== 0x23 || StringPrototypeCharCodeAt(source, 1) !== 0x21) {
@@ -71,6 +63,12 @@ function stripHashbang(source) {
     return source;
 }
 
+// load a cjs/node-style module
+// TODO: consider using deno.land/std/node's `createRequire` directly.
+// Deno's node polyfill doesn't work without the full deno runtime, and i
+// note that decentraland examples use ESM syntax which deno_core does support,
+// so i haven't gone very deep into making full support work.
+// this is a very simplified version of the deno_std/node `createRequire` implementation.
 function require(moduleName) {
     moduleName = `${moduleName}`;
     // dynamically load the module source
@@ -90,7 +88,7 @@ function require(moduleName) {
         sealRealm();
     }
 
-    const wrapped = globalEval(source);
+    const wrapped = indirectEval(source);
 
     // create minimal context for the execution
     var module = {
