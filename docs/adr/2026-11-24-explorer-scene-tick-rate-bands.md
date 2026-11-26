@@ -57,8 +57,9 @@ and main-thread time each frame there is spare time, whether or not the player c
   band).
 - **Only where a camera renders around the player.** Without a `PrimaryCamera` that has a
   `Camera`, as on the headless authoritative server, no scene is capped. Neither is one while the
-  photo camera frames a shot (`PhotoMode`): it can sit up to 50 m from the player, so bands
-  measured from the player would cap scenes in its foreground.
+  photo camera frames a shot (`PhotoMode`), which can sit up to 50 m from the player, or while a
+  scene's cinematic camera (`CameraOverride::Cinematic`) does, which has no distance limit:
+  bands measured from the player would cap the scenes they frame.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
   `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
   `released_by_global_updates` those due early on unread global updates; the runtime debug
@@ -71,6 +72,14 @@ and main-thread time each frame there is spare time, whether or not the player c
 - A scene behind the camera delivers up to a second of changes in one reply. Whether that
   hitches when the camera turns is open until main-thread and scene-thread time are measured at
   a dense spot with and without the cap.
+- On native, a spawn whose replay holds 250 or more updates makes every capped scene due in
+  the same frame. Walking through a busy area spawns scenes often, so the release can take back
+  part of the saving there; the measurement reports the panel's `released` count to show how
+  much, and whether replayed copies need a threshold of their own.
+- Scene message buses (binary and string, `MAX_NETWORK_MESSAGE_QUEUE`, 1,024 each) also drain
+  only at a tick and drop new messages when full, and nothing releases a capped scene for them.
+  A scene behind the camera or past 80 m that receives more than about 1,024 or 512 messages a
+  second from peers loses the excess.
 - Bands and rates are code constants, not settings.
 
 ## Rejected

@@ -104,9 +104,9 @@ pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
 }
 
 /// The global updates delivered to a capped scene's host since its last dispatch from which it
-/// is due: a quarter of what the host holds. A spawn replay (at most another quarter's worth
-/// before the scene is due) can at most double it, which still leaves half the host free for
-/// the updates that arrive before the scene ticks.
+/// is due: a quarter of what the host holds. A spawn replay can hold up to the whole host, since
+/// it starts at the spawning scene's snapshot, but one longer than the scene's unread updates
+/// holds all of them again, so an overflow that drops their originals loses none.
 pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
     common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
 

@@ -27,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PhotoMode,
-        PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CameraOverride, CurrentRealm, DebugInfo, EditorMode, NoRenderApp,
+        PhotoMode, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -126,10 +126,10 @@ pub struct SceneUpdates {
     pub skipped_already_sent: u64,
     /// Scene-frames skipped because the scene's distance band allowed no tick yet
     /// (`scene_tick_rate`).
-    pub skipped_rate_capped: u64,
+    pub(crate) skipped_rate_capped: u64,
     /// Scene-frames a capped scene was due before its band allowed, because of the global
     /// updates it had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
-    pub released_by_global_updates: u64,
+    pub(crate) released_by_global_updates: u64,
     /// Named scene entities that must be scheduled every frame (e.g. the
     /// movement controller). These scenes bypass the `scene_threads` limit
     /// but still occupy slots, preventing non-priority scenes from running.
@@ -612,10 +612,7 @@ fn update_scene_priority(
         Without<SceneLoading>,
     >,
     player: Query<Entity, With<PrimaryUser>>,
-    rendering_camera: Query<
-        (&GlobalTransform, Has<PhotoMode>),
-        (With<PrimaryCamera>, With<Camera>),
-    >,
+    rendering_camera: Query<(&GlobalTransform, &PrimaryCamera, Has<PhotoMode>), With<Camera>>,
     crdt_contexts: Query<&GlobalCrdtState>,
     imposter_scene: Res<CurrentImposterScene>,
     mut updates: ResMut<SceneUpdates>,
@@ -637,11 +634,13 @@ fn update_scene_priority(
     let elapsed = time.elapsed_secs_f64();
     let camera = rendering_camera.single().ok();
     // the distance bands cap tick rates only where a camera renders around the player: the
-    // headless server ticks every scene it runs, and the photo camera may frame scenes far from
-    // the player
-    let rate_capped = camera.is_some_and(|(_, photo_mode)| !photo_mode);
+    // headless server ticks every scene it runs, and the photo camera and a scene's cinematic
+    // camera may frame scenes far from the player
+    let rate_capped = camera.is_some_and(|(_, primary, photo_mode)| {
+        !photo_mode && !matches!(primary.scene_override, Some(CameraOverride::Cinematic(_)))
+    });
     let behind_capped =
-        camera.is_some_and(|(camera, _)| behind_cap_applies(camera.forward().as_vec3()));
+        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
     let global_updates_sent = global_updates_sent(&crdt_contexts);
     let imposter_hash = match &imposter_scene.0 {
         Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
@@ -1318,6 +1317,15 @@ mod player_scenes_tests {
         frame(&mut world, 0.1);
         assert_eq!(queued(&world), HashSet::from_iter([here, portable]));
         assert_eq!(world.resource::<SceneUpdates>().skipped_rate_capped, 1);
+        for scene in [here, portable] {
+            assert_eq!(
+                world
+                    .get::<RendererSceneContext>(scene)
+                    .unwrap()
+                    .tick_rate_cap,
+                None
+            );
+        }
         assert_eq!(
             world
                 .get::<RendererSceneContext>(east)
@@ -1339,6 +1347,89 @@ mod player_scenes_tests {
         assert!(!queued(&world).contains(&east));
         frame(&mut world, 1.0);
         assert!(queued(&world).contains(&east));
+    }
+
+    /// A far scene's cap with a rendering camera, after `setup` marks the scene or the camera.
+    fn far_scene_cap(setup: impl FnOnce(&mut World, Entity, Entity)) -> Option<f32> {
+        let mut world = World::new();
+        let Scenes { east, .. } = scenes(&mut world);
+        live_scene(&mut world, east, IVec2::new(3, 2));
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .tick_number = SCENE_LOADED_TICK;
+        world.entity_mut(east).insert(Partition(PartitionData {
+            sqr_distance: 100.0 * 100.0,
+            parcel_distance: 6,
+            is_behind: false,
+        }));
+        let camera = world
+            .spawn((
+                PrimaryCamera::default(),
+                Camera::default(),
+                GlobalTransform::default(),
+            ))
+            .id();
+        scene_loop_resources(&mut world);
+        setup(&mut world, east, camera);
+        world.run_system_once(update_scene_priority).unwrap();
+        world
+            .get::<RendererSceneContext>(east)
+            .unwrap()
+            .tick_rate_cap
+    }
+
+    #[test]
+    fn a_far_scene_is_capped_unless_exempt() {
+        assert_eq!(
+            far_scene_cap(|_, _, _| {}),
+            Some(scene_partition::FAR_SCENE_TICK_RATE)
+        );
+        assert_eq!(
+            far_scene_cap(|world, scene, _| {
+                world
+                    .get_mut::<RendererSceneContext>(scene)
+                    .unwrap()
+                    .inspected = true;
+            }),
+            None
+        );
+        assert_eq!(
+            far_scene_cap(|world, scene, _| {
+                world.entity_mut(scene).insert(SuperUserScene);
+            }),
+            None
+        );
+        assert_eq!(
+            far_scene_cap(|world, scene, _| {
+                world
+                    .get_mut::<RendererSceneContext>(scene)
+                    .unwrap()
+                    .tick_number = SCENE_LOADED_TICK - 1;
+            }),
+            None
+        );
+        // a scene's cinematic camera may frame scenes far from the player
+        assert_eq!(
+            far_scene_cap(|world, scene, camera| {
+                world
+                    .get_mut::<PrimaryCamera>(camera)
+                    .unwrap()
+                    .scene_override = Some(CameraOverride::Cinematic(
+                    common::structs::CinematicSettings {
+                        origin: scene,
+                        allow_manual_rotation: false,
+                        yaw_range: None,
+                        pitch_range: None,
+                        roll_range: None,
+                        look_at_entity: None,
+                        transition: None,
+                        fov: 1.0,
+                    },
+                ));
+            }),
+            None
+        );
     }
 
     /// While the photo camera frames the shot, no scene is capped: it may be far from the player.

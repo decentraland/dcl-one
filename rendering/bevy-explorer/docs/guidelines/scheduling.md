@@ -193,7 +193,8 @@ scene keeps the full rate while it is one of the player's scenes, at the player'
 they are out of world, a portable or global scene, a named priority scene, the system scene, a
 scene under the inspector or the scene being baked into an imposter, and until it reaches
 `SCENE_LOADED_TICK`, since loading waits on a scene's first ticks. Without a rendering camera
-(headless), or while the photo camera frames a shot (`PhotoMode`), nothing is capped. The runtime debug panel's "Scene Tick Rates" section
+(headless), or while the photo camera (`PhotoMode`) or a scene's cinematic camera frames the
+view, nothing is capped. The runtime debug panel's "Scene Tick Rates" section
 (`/scene_tick_rate_state`) counts the scenes at each cap, the scene-frames the cap has skipped
 and those due early on unread global updates. See the
 [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
