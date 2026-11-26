@@ -3409,14 +3409,17 @@ function upstreamProcessEnvironment(environment) {
 }
 
 /**
- * Leaves this process with only `upstreamProcessEnvironment(environment)` and loads `environment` into upstream's
- * `decentraland-commons` env, which otherwise reads `./.env` over it on first use.
+ * Leaves this process with only `upstreamProcessEnvironment(environment)`, moves it into a new empty directory, which it
+ * returns, and loads `environment` into upstream's `decentraland-commons` env.
  */
 function useUpstreamEnvironment(req, environment) {
   const kept = upstreamProcessEnvironment(environment)
   for (const name of Object.keys(process.env)) if (!Object.hasOwn(kept, name)) delete process.env[name]
   Object.assign(process.env, kept)
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-capture-cwd-'))
+  process.chdir(cwd)
   req('decentraland-commons').env.load({ values: environment })
+  return cwd
 }
 
 /** Runs upstream's migrations in a child process that loads the offline guard first, from an empty directory. */
@@ -3642,7 +3645,8 @@ async function closeServer(server) {
 async function runUpstream(capture, url, seed, signers, unfaked) {
   const { upstream, req, load } = capture
   const fakes = await startFakes(req, unfaked, chainRows(seed, signers, req), forumState(seed.collections))
-  let listener, db, unrouteSlack
+  const callerCwd = process.cwd()
+  let listener, db, unrouteSlack, upstreamCwd
   try {
     const environment = upstreamEnvironment(`http://127.0.0.1:${fakes.address().port}`, url, signers.admin.address)
     migrate(upstream, environment)
@@ -3650,7 +3654,7 @@ async function runUpstream(capture, url, seed, signers, unfaked) {
     const client = new Client({ connectionString: url })
     await client.connect()
     try { await seedDatabase(client, seed, signers) } finally { await client.end() }
-    useUpstreamEnvironment(req, environment)
+    upstreamCwd = useUpstreamEnvironment(req, environment)
     freezeClock()
     process.stdout.write = () => true
     process.stderr.write = () => true
@@ -3710,6 +3714,10 @@ async function runUpstream(capture, url, seed, signers, unfaked) {
     } finally {
       unrouteSlack?.()
       await closeServer(fakes)
+      if (upstreamCwd) {
+        process.chdir(callerCwd)
+        fs.rmSync(upstreamCwd, { recursive: true, force: true })
+      }
     }
   }
 }
