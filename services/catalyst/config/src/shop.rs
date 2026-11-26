@@ -219,7 +219,7 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
-    /// Walk the Polygon Committee contracts' MemberSet logs into `shop.committee_event`
+    /// Walk the Polygon Committee contracts' MemberSet logs (builder's curation committee)
     /// over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`.
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
