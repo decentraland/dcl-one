@@ -758,11 +758,11 @@ pub(super) async fn mirror_world(
     }
     // A local scene the upstream lists too (one it accepted from this node's forward, or a
     // row the import wrote) becomes the mirrored row below, in place.
-    let handed_over: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM worlds.world_scenes s \
-         JOIN worlds.forward_outbox o USING (world_name, entity_id) \
-         WHERE s.world_name = $1 AND s.mirror_source IS NULL \
-           AND s.entity_id = ANY($2::text[]) AND o.id = ANY($3::bigint[]) AND o.status = 'accepted'",
+    let (local_count, handed_over): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE s.entity_id = ANY($2::text[]) \
+           AND o.id = ANY($3::bigint[]) AND o.status = 'accepted') \
+         FROM worlds.world_scenes s LEFT JOIN worlds.forward_outbox o USING (world_name, entity_id) \
+         WHERE s.world_name = $1 AND s.mirror_source IS NULL",
     )
     .bind(&world_key)
     .bind(&cids)
@@ -773,7 +773,7 @@ pub(super) async fn mirror_world(
     let superseded = crate::core::store::retire_local_scenes(&mut tx, &world_key, &cids)
         .await
         .with_context(|| format!("retire the local scenes of {name}"))?;
-    if handed_over > 0 || !superseded.is_empty() {
+    if local_count > 0 {
         crate::explore::places::derive::mark_world_dirty(&mut tx, &world_key).await?;
     }
     // Read before the assignments below rebind them.

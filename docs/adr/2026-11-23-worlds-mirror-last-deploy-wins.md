@@ -63,13 +63,15 @@ deployment to a world name wins, with the whole world compared.
 - **Read-through fills** never replace a local publish.
 - **Place removal.** The explore catalogue then prunes the world's local row. That is
   not a place removal while the world is mirrored and one of its scene places is
-  active, so no removal is queued and the world's bans and scene admin grants stay.
+  active, so no removal is queued. World bans and scene-admin grants on a retained
+  place identity carry over to the mirrored scene.
 
 ## Forwarded publishes
 
-With `WORLDS_FORWARD_UPSTREAM_URL` set, the upstream is the one authority per world
-name: this node forwards every local publish and shows the upstream's whole view of
-the world.
+With `WORLDS_FORWARD_UPSTREAM_URL` set, this node forwards local publishes and
+mirrors the upstream's scene list after acceptance. Set the forwarding target
+and mirror source to the same base URL. The receipt compares the URLs after
+trimming whitespace and trailing slashes.
 
 - **Rule.** A local scene with an accepted outbox receipt for this mirror's
   source leaves the timestamp comparison once that receipt is in the pass's
@@ -81,9 +83,10 @@ the world.
   the complete current `/scenes` listing. A listed local scene keeps its place
   identity and storage when converted in place. For an accepted scene missing
   from the listing, the pass verifies absence with an entity-filtered request
-  before retirement. A world removed before its first catalogue entry gets
-  this check too. If the upstream has no scenes, the pass retires confirmed
-  local scenes and retains the local world settings and grants.
+  before retirement. The pass checks uncatalogued worlds with accepted local
+  scenes separately from the first-N catalogue limit, within any explicit
+  name filter. If the upstream has no scenes, it retires confirmed local
+  scenes and retains the local world settings and grants.
 - **Hosting.** Mirrored scenes are served as copies. Handover ends local
   authoritative SDK7 hosting and local collaborator and `logsPermissions`
   eligibility for those scenes. Mirrored scenes stop counting toward local

@@ -22,11 +22,10 @@
 --
 -- Authority. Mirrored rows are distinguishable from local publishes by
 -- `mirror_source` (the upstream URL) being NOT NULL; a local publish writes
--- NULL. The mirror replaces a world's local scenes only when the upstream
--- deployed last, retiring them as a newer publish would; otherwise it only
--- retires scenes it wrote itself. It never writes owner, access, permissions
--- or storage rows, so a mirrored world grants nobody deploy, stream or host
--- authority here. The zero-address `deployer` on mirrored scenes is kept for
+-- NULL. A scheduled pass replaces local scenes when the upstream deployed
+-- last or a forward is ready for handoff. The mirror copies access but does
+-- not copy ownership, deploy and stream grants, or storage rows. Mirrored
+-- scenes do not grant local host authority. The zero-address `deployer` on mirrored scenes is kept for
 -- the wire (the old /scenes shape and the old marker).
 --
 -- Conventions: world names are stored lowercase (CHECKed; every old local

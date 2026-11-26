@@ -860,26 +860,44 @@ mod tests {
         let mut settings = MirrorSettings::for_tests("https://up.example");
         settings.names = names.clone();
         settings.concurrency = 2;
-        let rows = due_batch(&pool, &settings, &names[3]).await.unwrap();
+        let rows = due_batch(&pool, &settings, &names[3], &[]).await.unwrap();
         assert_eq!(
             rows.iter().map(|r| &r.0).collect::<Vec<_>>(),
             vec![&names[4], &names[5]]
         );
         settings.limit = Some(3);
         assert!(
-            due_batch(&pool, &settings, &names[3])
+            due_batch(&pool, &settings, &names[3], &[])
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,
+            names[2]
+        );
+        let uncatalogued = [format!("{prefix}-15.eth")];
+        settings.names.push(uncatalogued[0].clone());
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1], &uncatalogued)
+                .await
+                .unwrap(),
+            vec![
+                (uncatalogued[0].clone(), Vec::new()),
+                (names[2].clone(), vec!["scene".into()]),
+            ]
+        );
+        assert_eq!(
+            due_batch(&pool, &settings, &uncatalogued[0], &uncatalogued)
+                .await
+                .unwrap()[0]
+                .0,
             names[2]
         );
         settings.limit = None;
         settings.names = vec![names[1].clone(), names[4].clone()];
         assert_eq!(
-            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,
             names[4]
         );
         sqlx::query("UPDATE worlds.remote_worlds SET unlisted_at=now() WHERE world_name=$1")
@@ -888,7 +906,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            due_batch(&pool, &settings, &names[1])
+            due_batch(&pool, &settings, &names[1], &[])
                 .await
                 .unwrap()
                 .is_empty()
