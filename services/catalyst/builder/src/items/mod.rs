@@ -1,12 +1,9 @@
 //! Items as builder-server answers them, and the draft store handle
-//! ([`ItemsComponent`]: the ONE pool plus the ONE blob store for uploaded
-//! item files): the body ([`body`]), the save's schema ([`schema`]), the
-//! save, delete and uploads ([`save`], [`upload`], [`video`]), the listings
-//! ([`listing`]), third-party item URNs ([`urn`]), the content hash a
-//! published item's body carries ([`hash`]) and a minted item's public facts
-//! by contract ([`minted`]). Also the collection projection
-//! the drafts listing reads ([`CollectionMetaOut`]) and the committee's
-//! curation status writes.
+//! ([`ItemsComponent`], over the ONE pool): the body ([`body`]), the save's
+//! schema ([`schema`]), the save and delete ([`save`]), the listings
+//! ([`listing`]), third-party item URNs ([`urn`]) and the content hash a
+//! published item's body carries ([`hash`]). Also the collection projection
+//! the drafts listing reads ([`CollectionMetaOut`]).
 //! Every timestamp column is `timestamp without time zone` in UTC (the
 //! schema convention), written as [`crate::http::iso`] writes it.
 
@@ -15,7 +12,6 @@ pub mod body;
 mod catalyst_state_tests;
 pub mod hash;
 pub mod listing;
-pub mod minted;
 pub mod save;
 pub mod schema;
 pub mod urn;
@@ -25,20 +21,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::access::{CollectionGrant, CollectionRead};
-use crate::chain_state::{self, ReadView};
-use crate::storage::Storage;
+use crate::chain_state::ReadView;
 
 use super::http::{ApiError, iso_timestamp};
 
-/// The draft store: `builder.*` over the ONE pool, uploaded bytes in the ONE
-/// blob store.
+/// The draft store: `builder.*` over the ONE pool.
 pub struct ItemsComponent {
     pub(crate) pool: PgPool,
-    pub(crate) blobs: Arc<Storage>,
     pub(crate) denylist: Arc<crate::content::Denylist>,
     /// What one wallet's drafts may hold.
     pub documents: crate::limits::Documents,
@@ -56,10 +48,9 @@ const DOCUMENTS_RELEASED: &str = "SELECT (SELECT count(*) FROM information_schem
        AND c.conrelid = 'builder.uploaded_contents'::regclass) = 2";
 
 impl ItemsComponent {
-    pub fn new(pool: PgPool, blobs: Arc<Storage>) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
-            blobs,
             denylist: Arc::default(),
             documents: crate::limits::Documents::default(),
             network: crate::network::Network::default(),
@@ -103,17 +94,6 @@ impl ItemsComponent {
     pub(crate) fn pool(&self) -> &PgPool {
         &self.pool
     }
-
-    /// The collection with its derived published and approved state; 503
-    /// while the chain copy can't tell.
-    pub async fn collection_by_id(
-        &self,
-        read: &CollectionRead,
-    ) -> Result<Option<CollectionMetaRow>, ApiError> {
-        let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_read(&mut conn).await?;
-        collection_meta(&mut conn, &view, read).await
-    }
 }
 
 /// The [`CollectionMetaRow`] columns over [`ReadView::collections`],
@@ -124,24 +104,6 @@ pub(crate) fn collection_meta_columns(view: &ReadView) -> String {
          {} AS is_published, {} AS is_approved, c.created_at, c.updated_at",
         view.published(),
         view.approved()
-    )
-}
-
-pub(crate) async fn collection_meta(
-    conn: &mut PgConnection,
-    view: &ReadView,
-    grant: &impl CollectionGrant,
-) -> Result<Option<CollectionMetaRow>, ApiError> {
-    let collection_id = grant.collection();
-    Ok(
-        sqlx::query_as::<_, CollectionMetaRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {} FROM {} WHERE c.id = $1",
-            collection_meta_columns(view),
-            view.collections()
-        )))
-        .bind(collection_id)
-        .fetch_optional(conn)
-        .await?,
     )
 }
 

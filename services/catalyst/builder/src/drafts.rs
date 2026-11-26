@@ -1,13 +1,10 @@
-//! The node's own draft listings ("my collections", "my item drafts") and
-//! the reads of uploaded files by hash (`builder.uploaded_contents`, the
-//! bytes in the ONE blob store).
+//! The node's own draft listings ("my collections", "my item drafts").
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::access::{FileRead, Wallet};
+use crate::access::Wallet;
 use crate::chain_state::{self, ReadView};
-use crate::storage::OpenedContent;
 
 use super::http::ApiError;
 use super::items::{CollectionMetaOut, CollectionMetaRow, ItemsComponent, collection_meta_columns};
@@ -114,15 +111,6 @@ impl ItemsComponent {
         .bind(DRAFTS_CAP)
         .fetch_all(&mut *conn)
         .await?)
-    }
-
-    /// The file [`crate::access::read_file`] granted, opened once for its whole
-    /// answer; `None` when the store holds no bytes for it.
-    pub async fn open_file(&self, read: &FileRead) -> Result<Option<OpenedContent>, ApiError> {
-        self.blobs
-            .open(read.hash())
-            .await
-            .map_err(|e| ApiError::internal(e.to_string()))
     }
 }
 

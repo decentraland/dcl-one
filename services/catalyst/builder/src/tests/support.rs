@@ -247,10 +247,7 @@ pub async fn off_chain(pool: &sqlx::PgPool, contract: &str) {
 
 /// `None` (skip) without `CATALYST_TEST_DATABASE_URL`.
 pub async fn scratch_component() -> Option<ItemsComponent> {
-    Some(ItemsComponent::new(
-        scratch_pool(6).await?,
-        temp_storage().await,
-    ))
+    Some(ItemsComponent::new(scratch_pool(6).await?))
 }
 
 /// Deletes the test's collections (items, contents and publications cascade)
