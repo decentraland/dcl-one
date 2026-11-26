@@ -5,6 +5,12 @@ describe('InputField public contracts', () => {
   describe('when the field is the Explorer names input', () => {
     it('should exclude void-input content from its props', () => {
       expectTypeOf<InputExplorerNamesProps>().not.toHaveProperty('children')
+      expectTypeOf<Extract<InputExplorerNamesProps, { appearance: 'hud' }>>().not.toHaveProperty('children')
+      expectTypeOf<Extract<InputExplorerNamesProps, { appearance: 'hud' }>>().not.toHaveProperty(
+        'dangerouslySetInnerHTML'
+      )
+      expectTypeOf<Exclude<InputExplorerNamesProps, { appearance: 'hud' }>>().not.toHaveProperty('children')
+      expectTypeOf<Exclude<InputExplorerNamesProps, { appearance: 'hud' }>>().not.toHaveProperty('labelHidden')
       expectTypeOf<InputExplorerNamesProps>().not.toHaveProperty('labelHidden')
       expectTypeOf<InputExplorerNamesProps>().not.toHaveProperty('dangerouslySetInnerHTML')
     })

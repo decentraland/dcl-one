@@ -1,6 +1,7 @@
 // The full-screen map: Genesis City with its marker layers, the category chips, the controls
 // and Layers panel, and the panel of search results, places and events on the right.
 
+import { MaskIcon } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
@@ -16,7 +17,6 @@ import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import timeIcon from '../../assets/events/time-icn.png'
 import { showToast } from '../../design'
-import { MaskIcon } from '../../design/MaskIcon'
 import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { travelToPhoto } from '../gallery/reelActions'
 import { openPassport } from '../profile/Passport'
