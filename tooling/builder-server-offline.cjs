@@ -60,7 +60,7 @@ const connect = net.Socket.prototype.connect
 net.Socket.prototype.connect = function (...args) {
   const first = Array.isArray(args[0]) ? args[0][0] : args[0]
   const options = first !== null && typeof first === 'object' ? first : { port: first, host: args[1] }
-  const local = options.path !== undefined || (typeof first === 'string' && !/^\d+$/.test(first))
+  const local = options.path !== undefined || (typeof first === 'string' && !(Number(first) >= 0))
   if (local || isLoopback(options.host)) return connect.apply(this, args)
   const error = refuse(`${options.host}:${options.port}`)
   process.nextTick(() => this.destroy(error))
