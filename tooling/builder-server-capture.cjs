@@ -14,7 +14,7 @@ const http = require('node:http')
 const https = require('node:https')
 const crypto = require('node:crypto')
 const { execFileSync } = require('node:child_process')
-const { BUILDER_REVISION: REVISION, assertPinnedSource, sourceCapture, requireDatabaseUrl } = require('./social-capture-common.cjs')
+const { BUILDER_REVISION: REVISION, assertPinnedSource, loadSource, requireDatabaseUrl } = require('./social-capture-common.cjs')
 
 const REPOSITORY = 'github.com/decentraland/builder-server'
 const CLOCK = '2026-01-01T00:00:00.000Z'
@@ -3693,15 +3693,15 @@ async function main() {
   const planErrors = [...caseOrderErrors(CASES), ...ledgerCaptureErrors(ledger, CASES)]
   if (planErrors.length) fail(planErrors.join('; '))
   const { refused, isLoopback } = require(GUARD)
-  const { upstream } = assertPinnedSource(root, 'builder')
+  const source = assertPinnedSource(root, 'builder')
   if (!output) fail('Usage: node tooling/builder-server-capture.cjs <upstream-checkout> <output-directory>')
   const adminUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
   adminUrlSeen = adminUrl
   try { databaseUrl(adminUrl, 'postgres') } catch { fail('CATALYST_TEST_DATABASE_URL is not a valid URL') }
   const host = databaseHost(adminUrl)
   if (!host.startsWith('/') && !isLoopback(host)) fail('CATALYST_TEST_DATABASE_URL must name a loopback host or a Unix socket: the capture is offline')
-  installLocked(upstream)
-  const capture = sourceCapture(upstream, { kind: 'builder' })
+  installLocked(source.upstream)
+  const capture = loadSource(source)
   const seed = readSeed()
   const signers = wallets(capture.req, seed)
   const { volatile_fields: volatileFields } = ledger
