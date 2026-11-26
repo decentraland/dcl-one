@@ -95,6 +95,8 @@ pub struct SyncSettings {
     pub item_replay_interval: Option<Duration>,
     /// `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS`: the pause between a pass's pages.
     pub item_replay_page_pause: Duration,
+    /// `SYNC_ITEM_REPLAY_CONCURRENCY`: the peers a pass reads at once.
+    pub item_replay_concurrency: usize,
     /// [`RetryFailedConfig::discard_overtaken`]: `CONTENT_HISTORY_PRUNE_ENABLED`.
     pub discard_overtaken: bool,
 }
@@ -166,6 +168,9 @@ impl SyncSettings {
                 "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS must be 50 to 1000, so one source's item history is read in about 1.5 to 4.5 minutes"
             );
         }
+        if !(1..=32).contains(&config.content.sync_item_replay_concurrency) {
+            anyhow::bail!("SYNC_ITEM_REPLAY_CONCURRENCY must be 1 to 32");
+        }
         *MEMORY_LIMITS.lock() = memory_limits_from_config(config)?;
         Ok(Some(Self {
             peers,
@@ -209,6 +214,7 @@ impl SyncSettings {
             item_replay_page_pause: Duration::from_millis(
                 config.content.sync_item_replay_page_pause_ms,
             ),
+            item_replay_concurrency: config.content.sync_item_replay_concurrency,
             discard_overtaken: config.content.content_history_prune_enabled,
         }))
     }
@@ -644,6 +650,7 @@ impl Leader {
                 page_pause: self.settings.item_replay_page_pause,
                 ..Pacing::default()
             },
+            concurrency: self.settings.item_replay_concurrency,
         };
         self.jobs
             .spawn_scoped(ctx, "item-history-replay", move |ctx| async move {
@@ -981,6 +988,7 @@ mod tests {
             Some(Duration::from_secs(1200))
         );
         assert_eq!(defaults.item_replay_page_pause, Duration::from_millis(200));
+        assert_eq!(defaults.item_replay_concurrency, 8);
         let off = with(&["--sync-item-replay-interval-secs", "0"])
             .unwrap()
             .unwrap();
@@ -990,6 +998,8 @@ mod tests {
             ("--sync-item-replay-interval-secs", "1440"),
             ("--sync-item-replay-page-pause-ms", "50"),
             ("--sync-item-replay-page-pause-ms", "1000"),
+            ("--sync-item-replay-concurrency", "1"),
+            ("--sync-item-replay-concurrency", "32"),
         ] {
             assert!(with(&[flag, value]).is_ok(), "{flag} {value}");
         }
@@ -1013,6 +1023,16 @@ mod tests {
                 "--sync-item-replay-page-pause-ms",
                 "1001",
                 "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS",
+            ),
+            (
+                "--sync-item-replay-concurrency",
+                "0",
+                "SYNC_ITEM_REPLAY_CONCURRENCY",
+            ),
+            (
+                "--sync-item-replay-concurrency",
+                "33",
+                "SYNC_ITEM_REPLAY_CONCURRENCY",
             ),
         ] {
             let err = with(&[flag, value]).unwrap_err().to_string();

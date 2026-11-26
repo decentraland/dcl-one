@@ -54,6 +54,12 @@ pub struct ContentConfig {
     #[arg(long, env = "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS", default_value_t = 200)]
     pub sync_item_replay_page_pause_ms: u64,
 
+    /// How many source catalysts an item history replay pass reads at once:
+    /// 1 to 32. A pass lasts about as long as the slowest source when every
+    /// source is read at once.
+    #[arg(long, env = "SYNC_ITEM_REPLAY_CONCURRENCY", default_value_t = 8)]
+    pub sync_item_replay_concurrency: usize,
+
     /// Non-profile types first, then profiles; /about reports the ready types.
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,

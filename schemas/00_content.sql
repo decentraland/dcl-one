@@ -150,15 +150,23 @@ CREATE TABLE content.item_history_replay (
     entity_types text[],
     history_floor_ms bigint,
     pass_started_at timestamp without time zone,
-    peer text,
-    from_ms bigint,
-    last_id text,
-    debt bigint NOT NULL DEFAULT 0,
-    observed_frontier_ms bigint NOT NULL DEFAULT 0,
     stopped boolean NOT NULL DEFAULT false,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT item_history_replay_pkey PRIMARY KEY (id),
     CONSTRAINT item_history_replay_id_check CHECK (id)
+);
+
+CREATE TABLE content.item_history_replay_peers (
+    peer text NOT NULL,
+    pass_started_at timestamp without time zone NOT NULL,
+    from_ms bigint NOT NULL,
+    last_id text,
+    done boolean NOT NULL DEFAULT false,
+    debt bigint NOT NULL DEFAULT 0,
+    observed_frontier_ms bigint NOT NULL DEFAULT 0,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT item_history_replay_peers_pkey PRIMARY KEY (peer),
+    CONSTRAINT item_history_replay_peers_debt_check CHECK (debt >= 0)
 );
 
 CREATE TABLE content.item_history_coverage (

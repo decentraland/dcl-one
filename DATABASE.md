@@ -6094,8 +6094,9 @@ Workload and invariants:
 - Each pass reads every peer's `/pointer-changes` filtered to
   `entityType=emote&entityType=wearable`, ascending by `local_timestamp`, from
   `SYNC_FROM_TIMESTAMP_MS`. It pages by the `from`/`lastId` keyset, one request
-  at a time, `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS` apart (default 200, 50 to
-  1000). Peers are read in sorted order.
+  at a time per peer, `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS` apart (default 200, 50
+  to 1000). Up to `SYNC_ITEM_REPLAY_CONCURRENCY` peers (default 8, 1 to 32)
+  are read at once, each from its own checkpoint.
 - For each page, one batched probe of `content.deployments`
   (`deployments_entity_id_key`) finds the entities the node doesn't hold. Only
   those go to the leader's deployer, which applies its download and flush
@@ -6104,8 +6105,9 @@ Workload and invariants:
   A recorded failure in `content.failed_deployments` is debt, not
   acceptance. A page that doesn't advance the keyset also adds debt and ends
   that peer's walk. So does a page that still fails once its retry wait
-  (5 seconds, doubling) passes 5 minutes, after about 5 minutes of retries:
-  the pass completes with debt, and a later pass reads that peer again.
+  (5 seconds, doubling) passes 5 minutes, after about 5 minutes of retries,
+  while the other peers go on: the pass completes with debt, and a later pass
+  reads that peer again.
 - The replay never reads or writes `content.server_sync_cursors`,
   `content.processed_snapshots` or the sync properties in
   `content.system_properties`. Existing deployment rows are never rewritten.
@@ -6118,14 +6120,17 @@ Workload and invariants:
   after a pass read past it is recovered by the next pass. Coverage stays
   continuous while the next pass completes within 30 minutes of the previous
   start: the larger of the interval and a pass, plus a pass, must fit in the
-  30-minute staleness window. A pass reads its sources one after another,
-  about 2 minutes each at the default pause and 4.5 minutes at the largest.
-  One source at the default interval leaves about 8 minutes for a slow pass,
-  and at the largest interval and pause about 1.5 minutes. At the default
-  pause, coverage stays continuous for up to five sources at the default
-  interval and up to seven at the smallest. When a completed pass is longer
-  than that allows, the replay logs a warning with its length and the
-  number of sources, and readers get `Stale` for part of every cycle.
+  30-minute staleness window. A source takes about 2 minutes at the default
+  pause and 4.5 minutes at the largest, and a pass that reads every source at
+  once lasts about as long as its slowest one. With more sources than
+  `SYNC_ITEM_REPLAY_CONCURRENCY`, a pass lasts about as many source walks as
+  each reader takes in turn. At the default pause and 1200 seconds a pass of
+  one source walk per reader leaves about 8 minutes for a slow pass, and
+  coverage stays continuous up to five walks per reader (40 sources at the
+  default concurrency); at the smallest interval, up to seven. When a
+  completed pass is longer than that allows, the replay logs a warning with
+  its length and the number of sources, and readers get `Stale` for part of
+  every cycle.
 - Passes stay full. A pass that read only past the previous pass's newest
   `localTimestamp` would be cheaper, but it would date its proof from a start
   it didn't reread: a deployment a peer commits late, with a timestamp below
@@ -6133,13 +6138,30 @@ Workload and invariants:
   Coverage measures freshness from the start of a pass that read the whole
   history, so the replay rereads it.
 
-`content.item_history_replay` holds one row: the pass in progress. It holds
-the pass scope (algorithm, sorted peer set, sorted item types, history floor),
-the pass start, the peer and keyset to resume at, the debt so far and the
-newest `localTimestamp` read. A restarted or new leader resumes a recorded pass
-of the same scope under its original start. Another scope starts a new pass
-and deletes the coverage row of any other scope. Each checkpoint is a
-compare-and-set on the previous checkpoint.
+`content.item_history_replay` holds one row: the pass in progress, with its
+scope (algorithm, sorted peer set, sorted item types, history floor), its
+start and the operator's stop switch.
+
+`content.item_history_replay_peers` holds one row per peer of that pass: the
+keyset to resume at, whether its walk is finished, its debt and the newest
+`localTimestamp` it read. Workload: as many rows as sources (tens at most),
+each updated once per page of its peer (at most about five times a second at
+the smallest page pause), all replaced when a pass starts and deleted when it
+completes. Invariants:
+
+- every row belongs to the pass in progress: its `pass_started_at` is the
+  pass row's, and the rows name exactly the pass's peers;
+- a row moves only forward: each checkpoint and each finish is a
+  compare-and-set on that peer's previous checkpoint, and a finished row
+  changes no more;
+- the pass completes only when every row is finished, in the transaction
+  that writes the coverage row (the rows' debt summed, their newest
+  `localTimestamp`) and clears both tables.
+
+A restarted or new leader resumes a recorded pass of the same scope whose
+rows name exactly its peers, under its original start, each peer from its own
+checkpoint. Otherwise it starts a new pass: it deletes the coverage row of any
+other scope and replaces the peer rows.
 
 `content.item_history_coverage` holds one row: the last completed pass, its
 scope, start, completion, debt, newest `localTimestamp`, and the lease session
@@ -6147,9 +6169,11 @@ that wrote it (`lease_namespace`, `lease_pid`, `lease_backend_start`). The
 writer replaces it in the transaction that closes the pass; the next pass
 records its own start when it begins reading.
 
-Every write to either table is one statement conditioned on `pg_locks`
-showing the advisory lock `(hashtext(namespace), hashtext('sync'))` granted to
-the writer's lease session. The coverage row records that session's pid and
+Every checkpoint is one statement conditioned on `pg_locks` showing the
+advisory lock `(hashtext(namespace), hashtext('sync'))` granted to the
+writer's lease session. A pass's start and its completion each write in one
+transaction whose first write is so conditioned, and roll back when it isn't.
+The coverage row records that session's pid and
 `pg_stat_activity.backend_start`.
 
 Reader: `content::sync::item_coverage::item_history_coverage(conn,
