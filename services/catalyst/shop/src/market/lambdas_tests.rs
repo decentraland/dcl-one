@@ -2508,10 +2508,22 @@ async fn each_ownership_route_follows_the_nft_index_state() {
         return;
     };
     let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
-    // The order route's other readiness: the trades mirror, and the order
-    // book folded at the nft cursor's block (100) on its recovery point.
+    // The order route's other readiness: the trades mirror, the land-authz
+    // index (a read of both networks could answer an open LAND order), and
+    // the order book folded at the nft cursor's block (100) on its recovery
+    // point, whose checkpoint needs the cursor row.
     super::trade_events::tests::publish_cursors(&db.pool).await;
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+         VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true) ON CONFLICT DO NOTHING",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+    .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     for network in ["ethereum", "matic"] {
+        set_nft_cursor(&db.pool, network, None).await;
         sqlx::query(
             "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
              VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
@@ -2529,6 +2541,21 @@ async fn each_ownership_route_follows_the_nft_index_state() {
         .await
         .unwrap();
     }
+    // The order book also reads the trades mirror, which needs a source:
+    // this node's own trades.
+    let orders_state = {
+        let mut settings = walking.settings.clone();
+        settings.data_writes_enabled = true;
+        let state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state
+            .test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        state
+    };
     let set_cursor = |network: &'static str, published: Option<i64>| {
         let pool = db.pool.clone();
         async move { set_nft_cursor(&pool, network, published).await }
@@ -2717,7 +2744,9 @@ async fn each_ownership_route_follows_the_nft_index_state() {
                 network,
                 ..Default::default()
             };
-            let answered = super::orders::list_orders_checked(state, &f).await.is_ok();
+            let answered = super::orders::list_orders_checked(&orders_state, &f)
+                .await
+                .is_ok();
             assert_eq!(
                 answered,
                 published == ok,
