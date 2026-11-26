@@ -2026,6 +2026,9 @@ impl SceneImposterBake {
 #[derive(Resource, Default)]
 pub struct CursorLocks(pub HashSet<&'static str>);
 
+/// The `CursorLocks` entry held while the pointer turns the camera.
+pub const CAMERA_CURSOR_LOCK: &str = "camera";
+
 /// Controls engine-level overrides to avatar movement, independent of scene-driven movement.
 #[derive(Resource, Default)]
 pub struct EngineMovementControl {

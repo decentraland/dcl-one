@@ -11,7 +11,7 @@ use common::{
     structs::{
         AppConfig, AvatarDynamicState, CameraOverride, CameraShoulder, CameraView, CameraZoomLevel,
         ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode, PrimaryCamera, PrimaryUser,
-        RequestClientWindowFocus, PLAYER_CAMERA_FOV,
+        RequestClientWindowFocus, CAMERA_CURSOR_LOCK, PLAYER_CAMERA_FOV,
     },
     util::ModifyComponentExt,
 };
@@ -34,8 +34,17 @@ use crate::{
 /// Radians a scene's cinematic camera may pitch when the scene sets no range of its own.
 const CINEMATIC_PITCH_LIMIT: f32 = std::f32::consts::PI / 2.1;
 
-/// The `CursorLocks` entry held while the pointer turns the camera.
-const CAMERA_CURSOR_LOCK: &str = "camera";
+/// The yaw and pitch, in degrees, that `HeadSync` carries for a camera looking along `rotation`.
+///
+/// DCL world is left-handed (Z+ forward) while bevy is right-handed (-Z forward). The Y-up
+/// rotation handedness flips going across, so a yaw of θ in bevy maps to -θ on the wire. With
+/// this, looking N is 0°, E is 90°, S is 180°, W is 270° — matching unity senders. Pitch is also
+/// handedness-flipped on the wire (looking up positive in DCL = negative bevy pitch). HeadSync
+/// holds the wire value, and the IK reader applies the same negation to render back in bevy.
+fn head_angles(rotation: Quat) -> (f32, f32) {
+    let (yaw, pitch, _) = rotation.to_euler(EulerRot::YXZ);
+    (-yaw.to_degrees(), -pitch.to_degrees())
+}
 
 /// Which way the player asked to zoom this frame. The wheel asks on every frame it turns, a key or
 /// button once per press; out wins over in.
@@ -251,21 +260,12 @@ pub(crate) fn update_camera_position(
     let first_person = options.view() == CameraView::FirstPerson;
     head_sync.yaw_enabled = head_active && !first_person;
     head_sync.pitch_enabled = head_active;
-    if head_active {
-        // DCL world is left-handed (Z+ forward) while bevy is right-handed
-        // (-Z forward). The Y-up rotation handedness flips going across, so
-        // a yaw of θ in bevy maps to -θ on the wire. With this, looking N is
-        // 0°, E is 90°, S is 180°, W is 270° — matching unity senders.
-        // Pitch is also handedness-flipped on the wire (looking up positive
-        // in DCL = negative bevy pitch). HeadSync holds the wire value, and
-        // the IK reader applies the same negation to render back in bevy.
-        head_sync.yaw_deg = -options.yaw.to_degrees();
-        head_sync.pitch_deg = -options.pitch.to_degrees();
-    }
 
     let mut target_transform = *camera_transform;
     let mut target_fov = PLAYER_CAMERA_FOV;
     let mut target_transition = TransitionMode::Time(TRANSITION_TIME);
+    // the camera-to-player fade aims at the focus; with none, nothing fades
+    let mut fade_target = Vec4::ZERO;
 
     if is_oow {
         target_transform = Transform::from_translation(
@@ -311,10 +311,6 @@ pub(crate) fn update_camera_position(
         {
             target_transition = transition.clone();
         }
-
-        commands
-            .entity(camera_ent)
-            .try_insert(ViewUserValue(Vec4::ZERO));
     } else {
         zoom.tick(
             time.delta_secs(),
@@ -387,11 +383,16 @@ pub(crate) fn update_camera_position(
                 collision_state.damp_time = 0.0;
             }
 
-            // the camera-to-player fade aims at the focus
-            commands
-                .entity(camera_ent)
-                .try_insert(ViewUserValue(focus.extend(1.0)));
+            fade_target = focus.extend(1.0);
         }
+    }
+
+    commands
+        .entity(camera_ent)
+        .try_insert(ViewUserValue(fade_target));
+
+    if head_active {
+        (head_sync.yaw_deg, head_sync.pitch_deg) = head_angles(target_transform.rotation);
     }
 
     if !real_camera {
@@ -502,4 +503,35 @@ pub fn update_cursor_lock(
     }
 
     *prev = lock;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::FRAC_PI_2;
+
+    use super::*;
+
+    fn head_angles_at(level: CameraZoomLevel, yaw: f32, pitch: f32) -> (f32, f32) {
+        let mut zoom = CameraZoom::default();
+        zoom.set_level(Some(level), yaw, pitch);
+        let pose = zoom.pose(Vec3::ZERO, yaw, pitch, 0.0).unwrap();
+        head_angles(pose.rotation)
+    }
+
+    #[test]
+    fn the_head_follows_the_first_person_aim() {
+        let (yaw, pitch) = head_angles_at(CameraZoomLevel::FirstPerson, 0.4, -0.3);
+        assert!((yaw - -0.4f32.to_degrees()).abs() < 0.01, "{yaw}");
+        assert!((pitch - 0.3f32.to_degrees()).abs() < 0.01, "{pitch}");
+    }
+
+    #[test]
+    fn the_head_follows_the_orbit_cameras_view_not_its_pitch_input() {
+        let (yaw, pitch) = head_angles_at(CameraZoomLevel::Drone, 0.4, FRAC_PI_2);
+        assert!((yaw - -0.4f32.to_degrees()).abs() < 0.01, "{yaw}");
+        assert!((pitch - -3.89).abs() < 0.05, "{pitch}");
+
+        let (_, pitch) = head_angles_at(CameraZoomLevel::ThirdPerson, 0.0, 0.0);
+        assert!((pitch - 9.22).abs() < 0.05, "{pitch}");
+    }
 }
