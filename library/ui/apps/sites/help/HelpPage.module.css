@@ -53,9 +53,10 @@
   line-height: 24px;
 }
 
+/* The tabs keep the 12px above them and the 20px below them that the tab list drew before the shared TabsBar. */
 .tabs {
   grid-area: tabs;
-  padding-top: var(--dcl-space-4);
+  padding: var(--dcl-space-16) 0 calc(var(--dcl-space-12) + var(--dcl-space-8));
 }
 
 .panel {
@@ -159,7 +160,7 @@
   }
 
   .tabs {
-    padding: 0 var(--dcl-space-16);
+    padding: var(--dcl-space-12) var(--dcl-space-16) calc(var(--dcl-space-12) + var(--dcl-space-8));
   }
 
   .status {

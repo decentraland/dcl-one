@@ -7200,11 +7200,19 @@
           "kind": "regular"
         },
         {
+          "name": "HelpStatus.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "HelpStatus.tsx",
           "kind": "regular"
         },
         {
           "name": "HelpTabs.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HelpTabs.test.tsx",
           "kind": "regular"
         },
         {
@@ -16210,7 +16218,7 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.module.css",
-      "sha256": "2d2722c0571f51d36481e7b1c33f3e7c7c56963c80d31bc38d294838371f816b"
+      "sha256": "15dfa216d0a305cdb64f1a25a3388fd4b76ebc5cf657b828af88e36513afb66c"
     },
     {
       "path": "library/ui/apps/sites/help/HelpPage.tsx",
@@ -16226,19 +16234,19 @@
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.module.css",
-      "sha256": "91aa2d6655d0d93ff2289d433b043346cb1823ee1208d2c5f4d0df864fd9551b"
+      "sha256": "2b1cd5d71859bace7f305ea6d9c7486a409ce2e83098feb98ae61785ee4315fe"
     },
     {
       "path": "library/ui/apps/sites/help/HelpStatus.tsx",
-      "sha256": "95562fe2cec88e5bc6b43d66ea37182addf2d48dab282dc540b7a357392daae0"
+      "sha256": "2a693276f03c813f19494f08cd3886b05f58924281e17152f59ce4862c58efa9"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "sha256": "bda408fd976b460a475f2cbb252f924abc23ac8b8d4f7696c59cd70607c8a443"
+      "sha256": "0ccb1220bb19672196fa413340aec2fcaa22a98caebac89f16fae7bec603be96"
     },
     {
       "path": "library/ui/apps/sites/help/HelpTabs.tsx",
-      "sha256": "0fb6e28bc620dbb8d7ce47d36d63086f3a20d056c149dc2a91a68da92301c4bc"
+      "sha256": "242373be0225d9481f3074165d3a96e69e71a67465282979e3b7d2c4725cb8bf"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
@@ -57026,6 +57034,21 @@
     },
     {
       "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpStatus.tsx",
       "to": "library/ui/foundations/icons/index.ts",
       "kind": "native:runtime"
     },
@@ -57040,21 +57063,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/help/HelpTabs.module.css",
-      "to": "library/ui/foundations/typography/text-styles.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
       "kind": "native:runtime"
@@ -57067,6 +57075,36 @@
     {
       "from": "library/ui/apps/sites/help/HelpTabs.tsx",
       "to": "library/ui/apps/sites/help/HelpTabs.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/Tabs/Tabs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/help/HelpTabs.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
       "kind": "test:runtime"
     },
     {
