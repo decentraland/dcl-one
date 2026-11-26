@@ -1,6 +1,7 @@
 /* Design tokens of the React HUD. A token whose value and role a foundation token has takes it from there
    (`var(--dcl-…)`); one that only shares a value with a foundation token of another role or opacity keeps a
-   literal, and says so. So every document that loads this file loads the foundations' colours and spacing too:
+   literal, and says so, unless design assigned it that palette colour, which its comment then states. So
+   every document that loads this file loads the foundations' colours and spacing too:
    react-web's entry, the Sites root (the `/play` shell and its app document) and the UI gallery's HUD canvas.
    New components use the canonical tokens below; the legacy --color-* aliases keep login, chat and loading
    components working. */
@@ -10,7 +11,7 @@
   --brand-hover: #ff4d70;
   --brand-active: rgba(229, 39, 75, 0.5);
   --panel: var(--dcl-neutrals-shadow); /* dark panel surface */
-  --accent: #ff743a; /* category / selected orange */
+  --accent: var(--dcl-primary-alt-primary-alt); /* category / selected orange */
   --accent-hover: #ff8a5a;
   --accent-ink: #1a1206; /* dark text/icon on an --accent (orange) fill */
   --text: var(--dcl-neutrals-snow);
@@ -84,7 +85,6 @@
 
   /* status */
   --online: #57df41;
-  --away: #ffa25a; /* a presence status; the value of --dcl-brand-melon, a brand colour */
   --offline: var(--dcl-neutrals-silver);
   --error: #ff2424;
   --error-text: #ffd0d8; /* soft error text on dark (readable, vs the solid --error) */
@@ -271,11 +271,11 @@
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
-  --switch-off-rail: #423f49; /* a switch in a rail popover, off */
+  --switch-off-rail: var(--dcl-neutrals-pale-black); /* a switch in a rail popover, off */
   --voice-divider: rgba(255, 255, 255, 0.14);
   --voice-fill: rgba(255, 255, 255, 0.19);
   --voice-fill-hover: #696473;
-  --voice-green: #34ce76;
+  --voice-green: var(--dcl-system-green);
   --voice-live: #30cd00;
   --voice-stream: #36d41d; /* the chat's "Live Voice Stream" banner */
   --voice-speaking-fill: rgba(26, 198, 45, 0.2);
@@ -341,7 +341,7 @@
   --lobby-cell: 114px;
   --lobby-gutter: 2px;
   --lobby-card-fill: rgba(20, 20, 26, 0.9);
-  --lobby-card-bone: rgb(20, 20, 26);
+  --lobby-card-bone: var(--dcl-neutrals-shadow); /* design's palette choice; the two translucent card fills keep their own hue */
   --lobby-landing-static: rgba(16, 16, 20, 0.45);
   --lobby-white-1: rgba(255, 255, 255, 0.01);
   --lobby-white-2: rgba(255, 255, 255, 0.02);
@@ -364,7 +364,7 @@
   --lobby-subtitle: var(--dcl-neutrals-gray);
   --lobby-grip: var(--dcl-neutrals-cloudy-sky);
   --lobby-accent: var(--dcl-primary-primary);
-  --lobby-accent-hover: rgb(255, 77, 111);
+  --lobby-accent-hover: var(--dcl-primary-primary-light-1);
   --lobby-accent-pressed: rgb(200, 35, 67);
   --lobby-accent-tint: rgb(255, 230, 235);
   --lobby-view-all-arrow: var(--dcl-system-red-dark-2);
@@ -372,7 +372,7 @@
   --lobby-live-red: rgb(255, 0, 0);
   --lobby-online-green: rgb(48, 205, 0);
   --lobby-status-online: var(--dcl-system-green);
-  --lobby-status-away: rgb(255, 162, 90);
+  --lobby-status-away: var(--dcl-brand-melon); /* design assigned the brand melon to the away status */
   --lobby-friend-hover: var(--dcl-neutrals-charcoal);
   --lobby-menu-border: rgb(34, 33, 36);
   --lobby-menu-separator: rgb(42, 41, 44);
@@ -441,7 +441,7 @@
   --chat-pressed: rgba(255, 255, 255, 0.18);
   --chat-divider: var(--dcl-transparencies-white-20);
   --chat-avatar-ring: rgba(255, 255, 255, 0.48);
-  --counter-half: #ffbc5b;
+  --counter-half: var(--dcl-system-orange-light-1);
   --emoji-tab: var(--dcl-neutrals-silver);
   --emoji-hover: var(--dcl-neutrals-pale-black);
   --emoji-search: #d6d6d6;
@@ -523,7 +523,7 @@
   --tint-glass: rgba(255, 255, 255, 0.095); /* the header's Today */
   --tint-faint: rgba(255, 255, 255, 0.128); /* a card's round-cornered icon buttons, the time pill */
   --tint-faint-hover: rgba(255, 255, 255, 0.176);
-  --events-day-bar-top: #ffa15a; /* the day bar, top to bottom */
+  --events-day-bar-top: var(--dcl-brand-melon); /* the day bar, top to bottom; design assigned the brand melon */
   --events-day-bar-bottom: #ff6257;
   --events-day-today-top: rgba(255, 234, 128, 0.99); /* the "Today" pill, top to bottom */
   --events-day-today-bottom: rgba(255, 228, 128, 0.7);
@@ -568,8 +568,9 @@
 /* ---- item rarity ----
    Set `data-rarity` on a tile and read --rm (main) / --rl (light sheen) anywhere inside it,
    pseudo-elements included. Unknown or missing values fall through to base.
-   --rarity / --rarity-light are the design system's (DCL-ONE UI Style Guide, Rarities/<rarity> and its
-   Light; base is Neutrals/Gray), which the Shop's cards draw with. */
+   Both pairs take the design system's rarity colours (DCL-ONE UI Style Guide, Rarities/<rarity> and its
+   Light), so a Backpack card and a Shop card of one rarity draw the same colour. They differ only at
+   base: --rm is Neutrals/Silver for the Backpack's tiles, --rarity is Neutrals/Gray for the Shop's cards. */
 /* Form controls take the HUD's face. A browser gives them its own control font (Arial 13.33px),
    which is a different face on every OS; their size stays the browser's unless a component sets it. */
 :where(button, input, select, textarea) {
@@ -583,50 +584,50 @@
   --rarity-light: var(--dcl-neutrals-gray);
 }
 [data-rarity='common'] {
-  --rm: #73d3d3;
-  --rl: #b5fff6;
+  --rm: var(--dcl-rarities-common);
+  --rl: var(--dcl-rarities-common-light);
   --rarity: var(--dcl-rarities-common);
   --rarity-light: var(--dcl-rarities-common-light);
 }
 [data-rarity='uncommon'] {
-  --rm: #ff8362;
-  --rl: #ffe0c8;
+  --rm: var(--dcl-rarities-uncommon);
+  --rl: var(--dcl-rarities-uncommon-light);
   --rarity: var(--dcl-rarities-uncommon);
   --rarity-light: var(--dcl-rarities-uncommon-light);
 }
 [data-rarity='rare'] {
-  --rm: #34ce76;
-  --rl: #9bf3c2;
+  --rm: var(--dcl-rarities-rare);
+  --rl: var(--dcl-rarities-rare-light);
   --rarity: var(--dcl-rarities-rare);
   --rarity-light: var(--dcl-rarities-rare-light);
 }
 [data-rarity='epic'] {
-  --rm: #438fff;
-  --rl: #a9d4ff;
+  --rm: var(--dcl-rarities-epic);
+  --rl: var(--dcl-rarities-epic-light);
   --rarity: var(--dcl-rarities-epic);
   --rarity-light: var(--dcl-rarities-epic-light);
 }
 [data-rarity='legendary'] {
-  --rm: #b058ff;
-  --rl: #e0c0ff;
+  --rm: var(--dcl-rarities-legendary);
+  --rl: var(--dcl-rarities-legendary-light);
   --rarity: var(--dcl-rarities-legendary);
   --rarity-light: var(--dcl-rarities-legendary-light);
 }
 [data-rarity='mythic'] {
-  --rm: #ff4bec;
-  --rl: #ffb0f3;
+  --rm: var(--dcl-rarities-mythic);
+  --rl: var(--dcl-rarities-mythic-light);
   --rarity: var(--dcl-rarities-mythic);
   --rarity-light: var(--dcl-rarities-mythic-light);
 }
 [data-rarity='unique'] {
-  --rm: #ffc747;
-  --rl: #ffe6a8;
+  --rm: var(--dcl-rarities-unique);
+  --rl: var(--dcl-rarities-unique-light);
   --rarity: var(--dcl-rarities-unique);
   --rarity-light: var(--dcl-rarities-unique-light);
 }
 [data-rarity='exotic'] {
-  --rm: #a5e242;
-  --rl: #d6f59a;
+  --rm: var(--dcl-rarities-exotic);
+  --rl: var(--dcl-rarities-exotic-light);
   --rarity: var(--dcl-rarities-exotic);
   --rarity-light: var(--dcl-rarities-exotic-light);
 }

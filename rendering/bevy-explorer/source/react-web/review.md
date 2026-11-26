@@ -259,6 +259,11 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
+- [ ] **Shop NAMEs framing** (`avatarPreview.tsx`, `previewView.ts`): on the Shop's NAMEs pages the
+      avatar is drawn smaller and lower than on the catalogue pages, with room over its head for the
+      nametag, as the design's NAMEs frames draw it. Switching between a catalogue page and NAMEs eases
+      the camera from one framing to the other; resizing the window midway neither snaps nor restarts
+      it. Closing the Shop gives the Backpack its own framing back. Mock has no engine, so nothing moves.
 - [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
       menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
       Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages
