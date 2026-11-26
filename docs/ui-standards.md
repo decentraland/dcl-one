@@ -19,6 +19,7 @@ guessing. The first standard defined here is styling.
   - [Accessibility](#accessibility)
   - [Migrating existing styles](#migrating-existing-styles)
   - [Verification](#verification)
+  - [Review checklist](#review-checklist)
 - [App-specific UI](#app-specific-ui)
 - [Shared UI: `library/ui`](#shared-ui-libraryui)
   - [Structure](#structure)
@@ -139,10 +140,12 @@ values to pass arbitrary colours or palette values from props.
 ### Composition
 
 - Build components from custom browser primitives (native elements, ARIA attributes and DOM events). Do not introduce Base UI or another component kit, headless or styled, as the base of a component.
-- Once `library/ui` is implemented and adopted by a surface, reuse its shared
-  components before creating a new one, and put components shared by multiple
-  apps or the Bevy HUD there. Until then, reuse the surface's existing
-  components.
+- Look in the shared library before building or importing a component: `@dcl/one-ui` exports the shared components, and [`docs/ui-components.md`](ui-components.md) lists them with their consumers. Use the shared component when one covers the need; when it needs another look, add or extend a variant on it.
+- When no shared component covers the need:
+  - if the component is in the Figma library, build it in `library/ui/components` from the template and export it from `library/ui/index.ts`;
+  - if it is not in the Figma library, request it in [the shared UI backlog](https://github.com/decentraland/dcl-one/issues/644) so design adds it there, then build it in `library/ui`. A change that cannot wait says in its PR which component is missing and links the request.
+- Do not add a component to `apps/ui3/src/atoms` or `apps/ui3/src/components`, and do not add an import of one in new code. Code that already imports one keeps it until its surface migrates ([migration status](ui-components.md)). A surface that cannot resolve `@dcl/one-ui` yet reuses its existing components and says so in the PR.
+- Put components shared by multiple apps or the Bevy HUD in `library/ui/components`.
 - Once `library/ui` is implemented, put components and styles used by one app
   only in `library/ui/apps/<app>/`; until then they stay in the app. See
   [App-specific UI](#app-specific-ui).
@@ -215,6 +218,17 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files differs from the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
+
+### Review checklist
+
+A review of a change to web UI, by a person or an agent, checks each point and reports a miss as a finding:
+
+- No new file under `apps/ui3/src/atoms` or `apps/ui3/src/components`, and no new import of them (`@ui/atoms/…`, `@ui/components/…`) in added code.
+- No new component that duplicates one `@dcl/one-ui` exports. Compare the added components with [`docs/ui-components.md`](ui-components.md).
+- A new shared component lives in `library/ui/components`, is exported from `library/ui/index.ts`, and has tests, a gallery page and a row in `docs/ui-components.md`.
+- Shared components are imported from `@dcl/one-ui`, not from a path inside it; stylesheets and the modules the `--shared-imports` check accepts are the exceptions.
+- A component missing from both the shared library and the Figma library has a linked request in the shared UI backlog.
+- Colours, spacing, radii and type sizes come from `--dcl-*` tokens where one has the value.
 
 ## App-specific UI
 
