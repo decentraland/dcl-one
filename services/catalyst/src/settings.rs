@@ -64,6 +64,37 @@ pub(crate) fn market_settings(
             self_hosts,
         )
         .context("MARKETPLACE_* / TRADE_RPC_URLS configuration")?
+        .with_historical_admin_token(Config::non_empty(
+            &config.marketplace.historical_admin_token,
+        ))
+        .with_wert(
+            shop::market::wert::WertSettings::parse(
+                config.marketplace.wert_private_key.as_deref(),
+                config
+                    .marketplace
+                    .wert_publication_fees_private_key
+                    .as_deref(),
+                config.marketplace.wert_api_url.as_deref(),
+                config.marketplace.wert_api_key.as_deref(),
+                self_hosts,
+            )
+            .context("WERT_* configuration")?,
+        )
+        .with_transak(
+            shop::market::transak::TransakSettings::parse(
+                config.marketplace.transak_api_url.as_deref(),
+                config.marketplace.transak_api_gateway_url.as_deref(),
+                config.marketplace.transak_api_key.as_deref(),
+                config.marketplace.transak_api_secret.as_deref(),
+                config
+                    .marketplace
+                    .transak_refresh_access_token_auth
+                    .as_deref(),
+                config.marketplace.transak_referrer_domain.as_deref(),
+                self_hosts,
+            )
+            .context("TRANSAK_* configuration")?,
+        )
         .with_indexes(checked_indexes(shop::market::chain_walk::IndexSettings {
             nft_enabled: config.marketplace.marketplace_nft_index_enabled,
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
@@ -128,22 +159,19 @@ fn checked_indexes(
 }
 
 /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks the collections index
-/// takes from the mirror. It walks Polygon alone.
+/// takes from the mirror, each once: Polygon, and Ethereum (its v1
+/// collections, walked on mainnet only).
 fn collections_owned(value: &str) -> anyhow::Result<Vec<shop::market::chain_walk::ChainNet>> {
     use shop::market::chain_walk::ChainNet;
     let mut out = Vec::new();
     for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {
-        match ChainNet::parse(name) {
-            Some(ChainNet::Matic) => out.push(ChainNet::Matic),
-            Some(ChainNet::Ethereum) => anyhow::bail!(
-                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names {name}, but the collections index walks Polygon alone"
-            ),
-            None => anyhow::bail!(
-                "MARKETPLACE_COLLECTIONS_INDEX_OWNS names an unknown network {name:?}"
-            ),
+        let Some(net) = ChainNet::parse(name) else {
+            anyhow::bail!("MARKETPLACE_COLLECTIONS_INDEX_OWNS names an unknown network {name:?}");
+        };
+        if !out.contains(&net) {
+            out.push(net);
         }
     }
-    out.dedup();
     Ok(out)
 }
 
@@ -179,15 +207,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_collections_index_owns_polygon_alone() {
+    fn the_collections_index_owns_each_named_network_once() {
         use shop::market::chain_walk::ChainNet;
         assert_eq!(collections_owned("").unwrap(), Vec::<ChainNet>::new());
         assert_eq!(
             collections_owned(" matic , polygon ").unwrap(),
             vec![ChainNet::Matic]
         );
-        let err = collections_owned("ethereum").unwrap_err().to_string();
-        assert!(err.contains("walks Polygon alone"), "{err}");
+        assert_eq!(
+            collections_owned("ethereum,matic,ethereum").unwrap(),
+            vec![ChainNet::Ethereum, ChainNet::Matic]
+        );
         let err = collections_owned("base").unwrap_err().to_string();
         assert!(err.contains("unknown network"), "{err}");
     }

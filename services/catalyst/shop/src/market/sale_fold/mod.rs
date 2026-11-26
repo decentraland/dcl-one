@@ -180,17 +180,18 @@ async fn inputs(
     let Some(common) = rows.iter().map(|r| r.folded_block).min() else {
         return Ok(None);
     };
-    let (late_collections, first_backfill, collection_changes, owed): (i64, Option<i64>, Vec<String>, bool) = sqlx::query_as(
-        "WITH current AS (SELECT contract_address,backfill_from_block,refold_owed OR
-                   coalesce(backfilled_to_block,backfill_from_block-1)<walked_from_block-1 AS owed
+    let (late_collections, first_backfill, collection_changes, owed): (i64, Option<i64>, Vec<String>, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "WITH current AS (SELECT contract_address,backfill_from_block,refold_owed OR ({backfill_pending}) AS owed
              FROM shop.nft_contract WHERE network=$1 AND backfill_from_block IS NOT NULL),
          saved AS (SELECT contract_address,backfill_from_block FROM shop.sale_covered_collection WHERE network=$1),
          compared AS (SELECT contract_address,c.backfill_from_block AS new,s.backfill_from_block AS old,c.owed
              FROM current c FULL JOIN saved s USING(contract_address))
          SELECT count(new),min(least(new,old)) FILTER (WHERE new IS DISTINCT FROM old),
              coalesce(array_agg(contract_address||'/'||coalesce(new::text,'-')||'/'||coalesce(old::text,'-') ORDER BY contract_address)
-                      FILTER (WHERE new IS DISTINCT FROM old),'{}'::text[]),coalesce(bool_or(owed),false)
-         FROM compared")
+                      FILTER (WHERE new IS DISTINCT FROM old),'{{}}'::text[]),coalesce(bool_or(owed),false)
+         FROM compared",
+        backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
+    )))
         .bind(net.db_name()).fetch_one(&mut *c).await?;
     let undiscovered:bool=sqlx::query_scalar(
         "SELECT EXISTS(SELECT FROM shop.collections c JOIN shop.chain_cursor n ON n.network=c.network AND n.indexer='nft'

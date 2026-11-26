@@ -593,37 +593,44 @@ class Driver {
     return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
   }
 
-  // The context that has the console and the binding: the app frame's, not the shell's.
-  async #findApp() {
+  // The context that has the console and the binding: the app frame's, not the shell's. With
+  // `startScreen`, the page's own commands stand in for the console, which the engine adds later.
+  async #findApp({ startScreen = false } = {}) {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
     this.#app = null;
+    const hasConsole = startScreen
+      ? `(typeof window.engine_console_command === 'function' || typeof window.__dclPageCommands === 'object')`
+      : `typeof window.engine_console_command === 'function'`;
     for (const context of [...this.#contexts.values()]) {
       if (!acceptsBinding(context, this.#origin)) continue;
       const answer = await this.#send(
         'Runtime.evaluate',
         {
-          expression: `typeof window.engine_console_command === 'function' && typeof window.${BINDING} === 'function'`,
+          expression: `${hasConsole} && typeof window.${BINDING} === 'function'`,
           contextId: context.id,
           returnByValue: true
         },
         context.session
       ).catch(() => null); // a context that went away while asking
-      if (answer?.result?.value === true) return (this.#app = context);
+      // a start-screen match is not kept: a later call without the opt-in waits for the console
+      if (answer?.result?.value === true) return startScreen ? context : (this.#app = context);
     }
     return null;
   }
 
   /** Resolves once a context of the page's origin has both `window.engine_console_command` and
    *  `window.__dclTrustedInput`, and the page has drawn that document (`#presented`): input
-   *  can then be aimed at it. */
-  async ready({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  can then be aimed at it. With `startScreen`, the page's own commands
+   *  (`window.__dclPageCommands`) do in place of the console, so `/hud_login` can run before the
+   *  engine starts. */
+  async ready({ timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const deadline = Date.now() + timeout;
     const exited = this.#exit.then((info) => {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
     for (;;) {
-      const app = await Promise.race([this.#findApp(), exited]);
+      const app = await Promise.race([this.#findApp({ startScreen }), exited]);
       if (app) {
         const left = Math.max(1, deadline - Date.now());
         await within(
@@ -638,7 +645,7 @@ class Driver {
           .filter((context) => context.isDefault)
           .map((context) => context.origin);
         throw new Error(
-          `${this.url} did not get window.engine_console_command and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
+          `${this.url} did not get ${startScreen ? 'window.engine_console_command or window.__dclPageCommands' : 'window.engine_console_command'} and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
         );
       }
       await Promise.race([sleep(POLL_MS), exited]);
@@ -646,17 +653,22 @@ class Driver {
   }
 
   /** `await window.engine_console_command(line)` in the app frame: what it resolves with, or a
-   *  rejection with the message the page failed with. */
-  async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  rejection with the message the page failed with. With `startScreen`, a page command runs
+   *  before the engine starts, as `ready({ startScreen })` allows. */
+  async console(line, { timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const started = Date.now();
     for (const secret of secretsOf(line)) this.#secrets.add(secret);
-    await this.ready({ timeout });
-    const context = await this.#findApp();
+    await this.ready({ timeout, startScreen });
+    const context = await this.#findApp({ startScreen });
     if (!context) throw new Error('the app frame went away');
     // a rejection arrives as a value, so the page's message is not wrapped in a protocol error
     const expression = `(async (line) => {
       try {
-        return { ok: true, value: await window.engine_console_command(line) };
+        if (typeof window.engine_console_command === 'function') return { ok: true, value: await window.engine_console_command(line) };
+        const name = line.trim().split(/\\s+/, 1)[0] || '';
+        const command = window.__dclPageCommands?.[name.startsWith('/') ? name : \`/\${name}\`];
+        if (!command) throw new Error(\`the engine has not started, and \${name} is not a page command\`);
+        return { ok: true, value: await command.run(line.trim().slice(name.length)) };
       } catch (e) {
         const error = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
         return { ok: false, error: error ?? String(e) };

@@ -6,8 +6,7 @@
 
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
-import { GeneralClose, GeneralFavorites, GeneralPolygonMana } from '@dcl/one-ui'
-import { MaskIcon } from '@hud/design'
+import { GeneralClose, GeneralFavorites, GeneralPolygonMana, MaskIcon } from '@dcl/one-ui'
 import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
 import cartIcon from '../assets/cart.svg'
 import externalIcon from '../assets/external.svg'

@@ -36,5 +36,5 @@ catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 
-[lints.clippy]
-unwrap_used = "deny"
+[lints]
+workspace = true

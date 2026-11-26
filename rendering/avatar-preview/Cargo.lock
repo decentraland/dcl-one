@@ -9988,23 +9988,3 @@ checksum = "0b7a1c0af6e5d8d1363f4994b7a091ccf963d8b694f7da5b0b9cceb82da2c0a6"
 dependencies = [
  "zune-core",
 ]
-
-[[patch.unused]]
-name = "copypwasmta"
-version = "0.1.0"
-source = "git+https://github.com/decentraland/dcl-one?rev=b56757323a5f73eb4a373fef69c4e840f76f98f2#b56757323a5f73eb4a373fef69c4e840f76f98f2"
-
-[[patch.unused]]
-name = "bevy_ecss"
-version = "0.7.0"
-source = "git+https://github.com/decentraland/dcl-one?rev=da37b8fbfd7d2561257254f4ae9370ca33a71acb#da37b8fbfd7d2561257254f4ae9370ca33a71acb"
-
-[[patch.unused]]
-name = "draco-oxide-core"
-version = "0.1.0-alpha.9"
-source = "git+https://github.com/decentraland/dcl-one?rev=ffbc6f625b3da35793a7ed3e3666f62e746ce2be#ffbc6f625b3da35793a7ed3e3666f62e746ce2be"
-
-[[patch.unused]]
-name = "draco-oxide-decoder"
-version = "0.1.0-alpha.9"
-source = "git+https://github.com/decentraland/dcl-one?rev=ffbc6f625b3da35793a7ed3e3666f62e746ce2be#ffbc6f625b3da35793a7ed3e3666f62e746ce2be"

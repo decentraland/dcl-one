@@ -101,11 +101,11 @@ debug = false
 wasm-opt = ["-Oz"]
 
 # The Explorer's engine forks. A patch table only applies from the workspace root, so the
-# Explorer's is repeated here; keep it in step with rendering/bevy-explorer/source/Cargo.toml.
+# Explorer's is repeated here for the crates this graph has; keep it in step with
+# rendering/bevy-explorer/source/Cargo.toml. A patch this graph never uses would be written to
+# Cargo.lock as unused, in an order that changes from run to run, which --locked refuses.
 [patch.crates-io]
 naga_oil = { git = "https://github.com/decentraland/dcl-one", rev = "b90aa836dcd1f0226779473c5550e9e04b37f224" }
-draco-oxide-decoder = { git = "https://github.com/decentraland/dcl-one", rev = "ffbc6f625b3da35793a7ed3e3666f62e746ce2be" }
-draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffbc6f625b3da35793a7ed3e3666f62e746ce2be" }
 bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
 bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
 bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
@@ -122,9 +122,3 @@ bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "62b94f3
 bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "343c72eb0e0e4b232aea96a4f5210209d06e113b" }
 [patch."https://github.com/robtfm/bevy"]
 bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
-
-[patch."https://github.com/robtfm/bevy_ecss"]
-bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
-
-[patch."https://github.com/robtfm/copypwasmta"]
-copypwasmta = { git = "https://github.com/decentraland/dcl-one", rev = "b56757323a5f73eb4a373fef69c4e840f76f98f2" }

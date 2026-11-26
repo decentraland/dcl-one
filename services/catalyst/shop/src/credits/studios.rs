@@ -22,7 +22,8 @@
 //! READ ONLY snapshot, so its figures and its history agree.
 //!
 //! Every refusal carries a stable `code` next to its message, as
-//! credits-server answers them.
+//! credits-server answers them. The grants a studio's operators give out of
+//! its budget are `studio_grants.rs`.
 
 use std::sync::LazyLock;
 
@@ -78,6 +79,19 @@ pub enum StudioError {
         limit_cents: i64,
     },
     DepositsNotConfigured,
+    /// A grant from a paused studio, named.
+    Paused(String),
+    /// A grant to a wallet that acts for the studio.
+    RecipientIsOperator(String),
+    /// A grant to a wallet flagged for multi-accounting; the reason is never
+    /// answered, so a studio cannot learn which wallets carry a flag.
+    RecipientNotEligible,
+    GrantLimitExceeded {
+        max_cents: i64,
+        requested_cents: i64,
+    },
+    /// No per-grant ceiling is configured (`CREDITS_STUDIO_GRANT_MAX_CENTS`).
+    GrantsNotConfigured,
     Internal(String),
 }
 
@@ -96,6 +110,32 @@ impl From<ApiError> for StudioError {
 /// `$12.34`, as credits-server describes an amount of cents.
 fn describe_usd_cents(cents: i64) -> String {
     format!("${}.{:02}", cents / 100, cents % 100)
+}
+
+/// `1,234` (`toLocaleString('en-US')` on a whole number).
+fn grouped(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
+/// `1,000 credits ($100.00)`, as credits-server describes a studio grant.
+fn describe_grant_cents(cents: i64) -> String {
+    let credits = match cents % USD_CENTS_PER_CREDIT {
+        0 => grouped(cents / USD_CENTS_PER_CREDIT),
+        tenths => format!("{}.{}", grouped(cents / USD_CENTS_PER_CREDIT), tenths.abs()),
+    };
+    format!(
+        "{credits} credits (${}.{:02})",
+        grouped(cents / 100),
+        (cents % 100).abs()
+    )
 }
 
 impl StudioError {
@@ -155,6 +195,38 @@ impl StudioError {
                 "DEPOSITS_NOT_CONFIGURED",
                 "Studio deposits are not available".into(),
             ),
+            Self::Paused(name) => (
+                StatusCode::CONFLICT,
+                "STUDIO_PAUSED",
+                format!("Studio \"{name}\" is paused and cannot grant credits"),
+            ),
+            Self::RecipientIsOperator(address) => (
+                StatusCode::FORBIDDEN,
+                "STUDIO_OPERATOR",
+                format!("{address} is an operator of this studio and cannot receive its credits"),
+            ),
+            Self::RecipientNotEligible => (
+                StatusCode::CONFLICT,
+                "RECIPIENT_NOT_ELIGIBLE",
+                "This account cannot receive Credits from a studio".into(),
+            ),
+            Self::GrantLimitExceeded {
+                max_cents,
+                requested_cents,
+            } => (
+                StatusCode::CONFLICT,
+                "GRANT_LIMIT_EXCEEDED",
+                format!(
+                    "A single studio grant may give at most {}; {} was requested",
+                    describe_grant_cents(*max_cents),
+                    describe_grant_cents(*requested_cents)
+                ),
+            ),
+            Self::GrantsNotConfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "GRANTS_NOT_CONFIGURED",
+                "Studio grants are not available".into(),
+            ),
             Self::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
@@ -173,6 +245,9 @@ impl IntoResponse for StudioError {
             Self::Internal(detail) => tracing::error!(error = %detail, "a studio route failed"),
             Self::DepositsNotConfigured => tracing::error!(
                 "refused new studio budget: CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS is unset or negative"
+            ),
+            Self::GrantsNotConfigured => tracing::error!(
+                "refused a studio grant: CREDITS_STUDIO_GRANT_MAX_CENTS is unset or negative"
             ),
             _ => {}
         }
@@ -212,7 +287,7 @@ fn is_format_char(c: char) -> bool {
 
 /// Text an operator types that is shown on one line: no control (`Cc`) or
 /// format (`Cf`) character, which could fake another field or two equal names.
-fn is_one_printable_line(text: &str) -> bool {
+pub(super) fn is_one_printable_line(text: &str) -> bool {
     !text.chars().any(|c| c.is_control() || is_format_char(c))
 }
 
@@ -408,7 +483,10 @@ macro_rules! summary_select {
     };
 }
 
-fn map_summary(row: &sqlx::postgres::PgRow) -> StudioSummary {
+/// [`summary_select!`] for the other studio modules.
+pub(super) const SUMMARY_SELECT: &str = summary_select!();
+
+pub(super) fn map_summary(row: &sqlx::postgres::PgRow) -> StudioSummary {
     StudioSummary {
         id: row.get("id"),
         name: row.get("name"),
@@ -437,7 +515,10 @@ fn budget_request_hash(kind: &str, usd_cents: i64, note: Option<&str>) -> String
 
 /// Takes the studio's row lock on `tx`; `NotFound` when there is none.
 /// Returns the studio's name.
-async fn lock_studio(tx: &mut PgConnection, studio_id: &str) -> Result<String, StudioError> {
+pub(super) async fn lock_studio(
+    tx: &mut PgConnection,
+    studio_id: &str,
+) -> Result<String, StudioError> {
     sqlx::query_scalar("SELECT name FROM credits.studios WHERE id = $1::uuid FOR UPDATE")
         .bind(studio_id)
         .fetch_optional(&mut *tx)
@@ -446,7 +527,10 @@ async fn lock_studio(tx: &mut PgConnection, studio_id: &str) -> Result<String, S
 }
 
 /// The studio's balance in cents, read on `tx` under its lock.
-async fn balance_cents(tx: &mut PgConnection, studio_id: &str) -> Result<i64, StudioError> {
+pub(super) async fn balance_cents(
+    tx: &mut PgConnection,
+    studio_id: &str,
+) -> Result<i64, StudioError> {
     Ok(sqlx::query_scalar(
         "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries WHERE studio_id = $1::uuid",
     )
@@ -863,6 +947,21 @@ mod tests {
         ] {
             assert_ne!(hash, other);
         }
+    }
+
+    #[test]
+    fn a_grant_over_the_ceiling_is_described_as_credits_server_does() {
+        let (_, code, message) = StudioError::GrantLimitExceeded {
+            max_cents: 10_000,
+            requested_cents: 1_234_505,
+        }
+        .status_code_message();
+        assert_eq!(code, "GRANT_LIMIT_EXCEEDED");
+        assert_eq!(
+            message,
+            "A single studio grant may give at most 1,000 credits ($100.00); \
+             123,450.5 credits ($12,345.05) was requested"
+        );
     }
 
     #[test]

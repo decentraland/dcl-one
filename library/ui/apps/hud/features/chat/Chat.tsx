@@ -7,7 +7,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
+import { Avatar, ControlButton, Translate, VerifiedBadge } from '../../design'
 import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
@@ -22,6 +22,7 @@ import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
 import { useTranslationPrefs, useTranslations } from './useTranslation'
 import { type ChatUser } from './ProfileCardPresentation'
@@ -41,6 +42,7 @@ import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 import { dmRefusal } from './dmStateCopy'
+import { DclLogo, MaskIcon, Tooltip, VoiceBars } from '@dcl/one-ui'
 
 const MAX_LEN = 500
 
@@ -51,6 +53,9 @@ function lineKey(line: ChatLine): string {
 
 /** The newest lines of a conversation translated when it auto-translates (older ones by hand). */
 const AUTO_TRANSLATE_RECENT = 20
+// How long after the reactions picker closes on its own cancel key a Cancel from the engine is
+// taken to be that same press.
+const PICKER_CANCEL_PRESS_MS = 300
 
 /** The icon by a message's time saying where its translation stands; its tooltip says what a click does. */
 function TranslationMark({ line, translation, onTranslate, onShowOriginal, onHover }: {
@@ -391,18 +396,23 @@ export const ChatBubble = memo(function ChatBubble({
   )
 })
 
-/** The reaction bar: Unity's fixed emoji, the most recent others from the picker, and "+" for the
- *  full picker. Picking toggles the local user's reaction. */
+/** The reaction bar: the fixed emoji, the most recent others from the picker, and "+" for the
+ *  full picker. Over a message (`line`), the emoji the local user reacted to it with are marked. */
 function ReactionBar({
   line,
   me,
+  label = 'React',
+  className = '',
   style,
   onPick,
   onMore
 }: {
-  line: ChatLine
+  line?: ChatLine
   me?: string
-  style: React.CSSProperties
+  /** The bar's accessible name. */
+  label?: string
+  className?: string
+  style?: React.CSSProperties
   onPick: (emoji: string) => void
   onMore: () => void
 }): React.JSX.Element {
@@ -416,7 +426,7 @@ function ReactionBar({
     []
   )
   const mine = me?.toLowerCase()
-  const isMine = (emoji: string): boolean => mine != null && (line.reactions?.find((r) => r.emoji === emoji)?.from.includes(mine) ?? false)
+  const isMine = (emoji: string): boolean => mine != null && (line?.reactions?.find((r) => r.emoji === emoji)?.from.includes(mine) ?? false)
   const item = (emoji: string): React.JSX.Element => (
     <button
       key={emoji}
@@ -430,7 +440,7 @@ function ReactionBar({
     </button>
   )
   return (
-    <div className={styles.reactionBar} style={style} role="dialog" aria-label="React">
+    <div className={`${styles.reactionBar} ${className}`.trim()} style={style} role="dialog" aria-label={label}>
       {QUICK_REACTIONS.map(item)}
       {recent.length > 0 && <span className={styles.barDivider} aria-hidden="true" />}
       {recent.map(item)}
@@ -606,7 +616,7 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
       </button>
       <div className={styles.navRight}>
         {session != null && gate != null && (
-          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+          <Tooltip appearance="hud" label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
             <ControlButton
               variant="faint"
               aria-label="Call"
@@ -670,11 +680,16 @@ export function Chat({
     rootRef.current = el
     return hudInsetRef(el)
   }, [])
-  // The line whose reaction bar is open (how far down the panel, in its own px), and whether the
-  // full picker is choosing its reaction instead.
-  const [reacting, setReacting] = useState<{ line: ChatLine; top: number } | null>(null)
+  // The reaction bar open: a line's (how far down the panel, in its own px) or the reactions
+  // button's, and whether the full picker is choosing the reaction instead.
+  const [reacting, setReacting] = useState<{ kind: 'line'; line: ChatLine; top: number } | { kind: 'situational' } | null>(null)
   const [reactPicker, setReactPicker] = useState(false)
+  const reactPickerRef = useRef(reactPicker)
+  reactPickerRef.current = reactPicker
+  // When the reactions button's picker last closed itself on its own cancel key.
+  const pickerCancelledAt = useRef(-Infinity)
   const reactRef = useRef<HTMLDivElement>(null)
+  const heartRef = useRef<HTMLSpanElement>(null)
   // The hovered reaction pill's tooltip (where its pill's top and centre are, in the panel's px).
   const [pillTip, setPillTip] = useState<{ label: string; top: number; center: number } | null>(null)
   const pillTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -942,14 +957,14 @@ export function Chat({
     setPicker(false)
     setReactPicker(false)
     setReacting((current) => {
-      if (current?.line.id === line.id) return null
+      if (current?.kind === 'line' && current.line.id === line.id) return null
       // the panel is scaled: client px back into its own
       const box = root.getBoundingClientRect()
       const scale = root.offsetWidth > 0 ? box.width / root.offsetWidth : 1
       const at = anchor.getBoundingClientRect()
       const above = (at.top - box.top) / scale - BAR_HEIGHT - BAR_GAP
       const top = above >= 0 ? above : (at.bottom - box.top) / scale + BAR_GAP
-      return { line, top }
+      return { kind: 'line', line, top }
     })
   }, [])
   // Unity's: a short hover delay, so scrolling past pills doesn't flicker tooltips.
@@ -978,17 +993,31 @@ export function Chat({
     setReactPicker(false)
   }
   // The bar follows its line's reactions as they change while it is open.
-  const reactingLine = reacting != null ? (chat.messages.find((l) => l.id === reacting.line.id) ?? reacting.line) : null
+  const reactingLine = reacting?.kind === 'line' ? (chat.messages.find((l) => l.id === reacting.line.id) ?? reacting.line) : null
+  const situational = reacting?.kind === 'situational'
   const pickReaction = (emoji: string): void => {
+    // the reactions button's bar, and its picker, stay for the next one
+    if (situational) {
+      chat.sendReaction(emoji)
+      return
+    }
     if (reactingLine != null) toggleReaction(reactingLine, emoji)
     closeReactions()
   }
-  // A press outside the bar (or its picker) closes it; so does switching channel.
+  // The reactions button: over a message's bar a press only closes that.
+  const toggleReactions = (): void => {
+    inputRef.current?.blur()
+    setPicker(false)
+    setReactPicker(false)
+    setReacting((current) => (current == null ? { kind: 'situational' } : null))
+  }
+  // A press outside the bar (or its picker) closes it; so does switching channel, or the chat
+  // closing, going away or showing its members instead.
   useEffect(() => {
     if (reacting == null) return
     const onDown = (e: PointerEvent): void => {
       const t = e.target as HTMLElement
-      if (reactRef.current?.contains(t) || pickerRef.current?.contains(t) || t.closest('[aria-label="React"]')) return
+      if (reactRef.current?.contains(t) || pickerRef.current?.contains(t) || heartRef.current?.contains(t) || t.closest('[aria-label="React"]')) return
       closeReactions()
     }
     document.addEventListener('pointerdown', onDown, true)
@@ -996,7 +1025,19 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reacting])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => closeReactions(), [chat.channel, open])
+  useEffect(() => closeReactions(), [chat.channel, open, hidden, showMembers])
+  // Cancel closes the reactions button's picker, then its bar. The layer is registered once for
+  // the bar, so it keeps its place among the layers and popups opened after it. With the focus
+  // inside the picker the key is the picker's, which closes itself (below); an engine that saw
+  // that press too sends its Cancel here, and it must not take the bar as well.
+  useEffect(() => {
+    if (!situational) return
+    return registerCancelLayer(() => {
+      if (reactPickerRef.current) setReactPicker(false)
+      else if (performance.now() - pickerCancelledAt.current > PICKER_CANCEL_PRESS_MS) closeReactions()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [situational])
   // "Mention" from the viewer drops @name into the draft, ready to send.
   const insertMention = (name: string): void => {
     setDraft((d) => `${d.replace(/\s*$/, '')} @${name} `.trimStart())
@@ -1209,7 +1250,7 @@ export function Chat({
                   onToggleReaction={toggleReaction}
                   onReactionHover={hoverReaction}
                   onTranslationHover={hoverReaction}
-                  reacting={reacting?.line.id === r.line.id}
+                  reacting={reactingLine?.id === r.line.id}
                   translation={getTranslation(lineKey(r.line), target)}
                   onTranslate={translateLine}
                   onShowOriginal={showLineOriginal}
@@ -1237,7 +1278,17 @@ export function Chat({
 
       {active && reactPicker && reacting != null && (
         <div ref={pickerRef} className={styles.pickerWrap}>
-          <EmojiPicker onPick={pickReaction} onClose={closeReactions} />
+          <EmojiPicker
+            onPick={pickReaction}
+            onClose={
+              situational
+                ? () => {
+                    pickerCancelledAt.current = performance.now()
+                    setReactPicker(false)
+                  }
+                : closeReactions
+            }
+          />
         </div>
       )}
 
@@ -1332,23 +1383,23 @@ export function Chat({
       )}
       </div>
       {hasRail && <ConversationRail chat={chat} onClose={chat.toggle} />}
-      {blockedState == null && (
-        <button
-          type="button"
-          className={styles.heart}
-          aria-label="Heart"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            openIfClosed()
-            insertAtCaret('\u2764\uFE0F')
-            inputRef.current?.focus()
-          }}
-        >
-          <HeartIcon />
-        </button>
-      )}
+      <span ref={heartRef} className={styles.heart}>
+        {open && (
+          <ControlButton
+            variant="faint"
+            shape="circle"
+            className={styles.heartBtn}
+            active={situational}
+            aria-label="Reactions"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleReactions}
+          >
+            <HeartIcon />
+          </ControlButton>
+        )}
+      </span>
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
-      {open && reactingLine != null && reacting != null && !reactPicker && (
+      {open && reactingLine != null && reacting?.kind === 'line' && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>
           <ReactionBar
             line={reactingLine}
@@ -1357,6 +1408,12 @@ export function Chat({
             onPick={pickReaction}
             onMore={() => setReactPicker(true)}
           />
+        </div>
+      )}
+      {open && situational && !reactPicker && (
+        // a press here takes no focus: a key meant for the world would press the emoji again
+        <div ref={reactRef} className={styles.reactionLayer} onMouseDown={(e) => e.preventDefault()}>
+          <ReactionBar label="Reactions" className={styles.reactionBarAnchored} onPick={pickReaction} onMore={() => setReactPicker(true)} />
         </div>
       )}
     </div>

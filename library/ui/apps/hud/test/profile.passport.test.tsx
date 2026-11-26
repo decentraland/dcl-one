@@ -50,7 +50,7 @@ describe('profile passport', () => {
   it("draws the user's picture with no online dot, as unity-explorer's passport does", () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
-    expect(picture.parentElement?.querySelector('[class*="dot"]')).toBeNull()
+    expect(picture.parentElement?.querySelector('[class*="hudDot"]')).toBeNull()
   })
 
   it.each([
@@ -236,7 +236,7 @@ describe('passport equipped items', () => {
     expect(shop.map((a) => a.getAttribute('href')).sort()).toEqual([SHOP_TIARA, SHOP_DISCO].sort())
     for (const a of shop) {
       expect(a).toHaveAttribute('target', '_blank')
-      expect(a).toHaveAttribute('rel', 'noopener')
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer')
     }
   })
 

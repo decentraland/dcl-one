@@ -1,0 +1,69 @@
+/* Not in Figma: the Explorer HUD's control hints, a 38px dark square that opens a 482px list above it, and the
+   key outline its rows show. These rules sit outside the cascade layer: the button is a native control a
+   host's reset would restyle, and the caller places the button with its own class. The button's 22 % black,
+   its 6 % white hover, the box sizes, the half-pixel offsets and the 19px line height have no token. */
+.root {
+  position: relative;
+  width: 38px;
+  height: 38px;
+}
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: rgba(0, 0, 0, 0.22); /* = HUD --scrim-40 */
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+.button:hover,
+.button[aria-expanded='true'] {
+  background: rgba(255, 255, 255, 0.06); /* = HUD --fill-faint */
+}
+.popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12.5px);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  width: 482px;
+  margin: 0;
+  padding: 24.5px var(--dcl-space-24) 24.5px 23.5px;
+  list-style: none;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-neutrals-shadow);
+  color: var(--dcl-neutrals-snow);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600; /* = HUD --fw-semibold */
+  line-height: 19px;
+}
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7.9px;
+}
+.icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 19px;
+}
+.keyCap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-xs);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1;
+}

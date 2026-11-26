@@ -428,7 +428,16 @@ pub async fn ready_on(
     conn: &mut sqlx::PgConnection,
     now: DateTime<Utc>,
 ) -> Result<Readiness, Response> {
-    ready_checked_on(state, conn, now)
+    ready_for_networks_on(state, conn, &super::chain_walk::ChainNet::ALL, now).await
+}
+
+pub(super) async fn ready_for_networks_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    nets: &[super::chain_walk::ChainNet],
+    now: DateTime<Utc>,
+) -> Result<Readiness, Response> {
+    ready_checked_for_networks_on(state, conn, nets, now)
         .await
         .map_err(|refused| match refused {
             Some((source, why)) => unavailable(source, &why),
@@ -444,6 +453,15 @@ pub async fn ready_checked_on(
     conn: &mut sqlx::PgConnection,
     now: DateTime<Utc>,
 ) -> Result<Readiness, Option<(Source, String)>> {
+    ready_checked_for_networks_on(state, conn, &super::chain_walk::ChainNet::ALL, now).await
+}
+
+async fn ready_checked_for_networks_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    nets: &[super::chain_walk::ChainNet],
+    now: DateTime<Utc>,
+) -> Result<Readiness, Option<(Source, String)>> {
     let readiness = readiness_on(state, conn, now)
         .await
         .map_err(|not_ready| match not_ready {
@@ -453,7 +471,7 @@ pub async fn ready_checked_on(
                 None
             }
         })?;
-    super::trade_events::current_on(conn, now)
+    super::trade_events::current_for_networks_on(conn, nets, now)
         .await
         .map_err(Some)?;
     Ok(readiness)

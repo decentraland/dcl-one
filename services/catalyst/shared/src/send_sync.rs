@@ -53,7 +53,11 @@ macro_rules! send_sync_once {
         }
 
         const _: () = {
-            #[allow(dead_code, unused_doc_comments)]
+            #[allow(
+                dead_code,
+                unused_doc_comments,
+                reason = "never called; it type-checks the fields and repeats their doc comments"
+            )]
             fn fields() {
                 fn send_sync<T: ?Sized + Send + Sync>() {}
                 $( $(#[$field_meta])* send_sync::<$ty>(); )*

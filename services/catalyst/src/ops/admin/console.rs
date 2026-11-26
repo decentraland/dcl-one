@@ -36,8 +36,6 @@
 //! in this tree (the old `catalyrst-ab-cdn`), so those calls go
 //! to it over loopback HTTP as before ([`super::create`]).
 
-#![allow(clippy::result_large_err)]
-
 use std::sync::Arc;
 
 use axum::Json;

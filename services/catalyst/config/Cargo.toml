@@ -22,5 +22,5 @@ test-support = []
 [dev-dependencies]
 serde_json.workspace = true
 
-[lints.clippy]
-unwrap_used = "deny"
+[lints]
+workspace = true
