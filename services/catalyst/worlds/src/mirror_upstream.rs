@@ -317,7 +317,7 @@ pub(super) struct WorldSettingsCopy {
     pub(super) present: bool,
     pub(super) title: Option<String>,
     pub(super) description: Option<String>,
-    /// A valid source spawn. Full sync may supply a fallback from about or the scenes.
+    /// The validated spawn from the source's settings answer.
     pub(super) spawn_coordinates: Option<String>,
     /// One of the ratings the column accepts, else none.
     pub(super) content_rating: Option<String>,
@@ -337,6 +337,7 @@ pub(super) struct WorldSettingsCopy {
     pub(super) settings_version: Option<i64>,
 }
 
+/// Canonical form of a spawn within the Worlds parcel range.
 pub(super) fn valid_spawn(value: &Value) -> Option<String> {
     let (x, y) = crate::core::settings::parse_coordinate(value.as_str()?)?;
     Some(format!("{x},{y}"))

@@ -556,9 +556,9 @@ pub(super) async fn mirror_world(
             })
             .unwrap_or_default();
         if scene_base_spawn.is_none() {
-            scene_base_spawn = entity["metadata"]["scene"]["base"]
-                .as_str()
-                .map(String::from);
+            let base = &entity["metadata"]["scene"]["base"];
+            // Keep the existing scene fallback for legacy metadata outside today's rules.
+            scene_base_spawn = valid_spawn(base).or_else(|| base.as_str().map(String::from));
         }
         // The deployment's own size, chain and signer as the source lists them; a pass keeps the
         // chain only when it signs this scene, a read-through the one it checked.

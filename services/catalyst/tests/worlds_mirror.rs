@@ -74,6 +74,7 @@ struct Upstream {
     about_calls: BTreeMap<String, usize>,
     /// Scene base URL override per world (the loop-guard check).
     base_override: HashMap<String, String>,
+    about_spawn: HashMap<String, Value>,
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
     hold_world: Option<String>,
     hold_token: Option<CancellationToken>,
@@ -216,7 +217,7 @@ async fn fake_about(
     Path(name): Path<String>,
     hold: axum::Extension<Arc<Notify>>,
 ) -> axum::response::Response {
-    let (urns, held) = {
+    let (urns, held, spawn) = {
         let mut st = s.lock();
         *st.about_calls.entry(name.clone()).or_default() += 1;
         let Some(scenes) = st.worlds.get(&name).filter(|s| !s.is_empty()) else {
@@ -238,13 +239,14 @@ async fn fake_about(
         if held && let Some(token) = st.hold_token.take() {
             token.cancel();
         }
-        (urns, held)
+        let spawn = st.about_spawn.get(&name).cloned().unwrap_or(json!("0,0"));
+        (urns, held, spawn)
     };
     if held {
         hold.0.notified().await;
     }
     Json(json!({
-        "healthy": true, "acceptingUsers": true, "spawnCoordinates": "0,0",
+        "healthy": true, "acceptingUsers": true, "spawnCoordinates": spawn,
         "configurations": {"scenesUrn": urns, "skybox": {"fixedHour": 43200}},
         "comms": {"adapter": "fixed-adapter:signed-login:https://x/comms"}
     }))
@@ -978,12 +980,17 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
         .execute(&node.pool)
         .await
         .unwrap();
-    let v2 = {
-        let mut st = fake.state.lock();
-        st.settings
-            .insert(world.into(), json!({"spawn_coordinates": "1,0"}));
-        set_scenes(&mut st, world, &[("D v2", "1,0", &[("d.js", b"d2()")])])
-    };
+    fake.state
+        .lock()
+        .settings
+        .insert(world.into(), json!({"spawn_coordinates": "1,0"}));
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+
+    let v2 = set_scenes(
+        &mut fake.state.lock(),
+        world,
+        &[("D v2", "1,0", &[("d.js", b"d2()")])],
+    );
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
 
     let rows = node.scene_rows(world).await;
@@ -2132,6 +2139,34 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     scratch.teardown().await;
 }
 
+/// Fresh rows can fall back to the signed scene metadata when settings and about have no spawn.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scene_base_fallback_uses_canonical_spawn_coordinates() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "scene-base-spawn").await;
+    let world = "padded-spawn.dcl.eth";
+    {
+        let mut st = fake.state.lock();
+        let mut entity = scene_entity(&mut st, world, "Padded", "2,-2", &[("p.txt", b"padded")]);
+        entity["metadata"]["scene"]["base"] = json!(" 02 , -002 ");
+        push_scene(&mut st, world, entity);
+        st.about_spawn.insert(world.into(), Value::Null);
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    let (_, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(about["spawnCoordinates"], "2,-2");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A valid settings spawn refreshes unchanged scenes without claiming owner authority or a version.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
     let Some(scratch) = db::scratch_database().await else {
@@ -2161,7 +2196,7 @@ async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
     assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
     assert_eq!(node.scene_rows(world).await, scene_rows);
-    assert_eq!(fake.state.lock().about_calls.get(world), Some(&1));
+    assert_eq!(about_calls(&fake, world), 1);
     assert_eq!(world_row(&node.pool, world).await.2, 7);
 
     for answer in [
