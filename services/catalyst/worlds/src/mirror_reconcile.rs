@@ -162,12 +162,24 @@ async fn apply_settings(
         .with_context(|| format!("thumbnail alias of {name}"))?;
     }
     if keep_local {
+        // Spawn follows the source even when the owner keeps other settings local.
+        if let Some(spawn) = &copy.spawn_coordinates {
+            sqlx::query(
+                "UPDATE worlds.worlds SET spawn_coordinates = $2, updated_at = timezone('UTC', now()) \
+                 WHERE name = $1 AND spawn_coordinates IS DISTINCT FROM $2",
+            )
+            .bind(name)
+            .bind(spawn)
+            .execute(&mut *conn)
+            .await
+            .with_context(|| format!("spawn of {name}"))?;
+        }
         return Ok(());
     }
     sqlx::query(
         r#"WITH cur AS (
              SELECT name, title, description, content_rating, categories, thumbnail_hash,
-                    skybox_time, single_player, show_in_places
+                    skybox_time, single_player, show_in_places, spawn_coordinates
              FROM worlds.worlds
              WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL
            ), n AS (
@@ -180,6 +192,7 @@ async fn apply_settings(
                     CASE WHEN $8 THEN $7::integer ELSE skybox_time END AS skybox_time,
                     COALESCE($9, single_player) AS single_player,
                     COALESCE($10, show_in_places) AS show_in_places,
+                    COALESCE($13::text, spawn_coordinates) AS spawn_coordinates,
                     COALESCE($11::bigint, 0) AS source_version
              FROM cur
            ), d AS (
@@ -195,12 +208,14 @@ async fn apply_settings(
            SET title = d.title, description = d.description, content_rating = d.content_rating,
                categories = d.categories, thumbnail_hash = d.thumbnail_hash,
                skybox_time = d.skybox_time, single_player = d.single_player,
-               show_in_places = d.show_in_places,
+               show_in_places = d.show_in_places, spawn_coordinates = d.spawn_coordinates,
                settings_version = GREATEST(d.source_version,
                                            w.settings_version + CASE WHEN d.changed THEN 1 ELSE 0 END),
                updated_at = timezone('UTC', now())
            FROM d
-           WHERE w.name = d.name AND (d.changed OR w.settings_version < d.source_version)"#,
+           WHERE w.name = d.name
+             AND (d.changed OR w.settings_version < d.source_version
+                  OR w.spawn_coordinates IS DISTINCT FROM d.spawn_coordinates)"#,
     )
     .bind(name)
     .bind(&copy.title)
@@ -214,6 +229,7 @@ async fn apply_settings(
     .bind(copy.show_in_places)
     .bind(copy.settings_version)
     .bind(copy.thumbnail_unread)
+    .bind(&copy.spawn_coordinates)
     .execute(&mut *conn)
     .await
     .with_context(|| format!("settings of {name}"))?;
@@ -421,10 +437,10 @@ pub(super) async fn mirror_world(
         .and_then(storable_skybox_time);
     let about_single_player =
         about["comms"]["adapter"].as_str() == Some("fixed-adapter:offline:offline");
-    let upstream_spawn = about["spawnCoordinates"]
-        .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .map(String::from);
+    let upstream_spawn = world_settings
+        .as_ref()
+        .and_then(|copy| copy.spawn_coordinates.clone())
+        .or_else(|| valid_spawn(&about["spawnCoordinates"]));
 
     let signatures = match verify {
         Some(verify) => Some(Signatures::new(verify, settings, name)?),
@@ -598,7 +614,8 @@ pub(super) async fn mirror_world(
            VALUES ($1, COALESCE($2, $3), $6, $7, $8, $9::text[], $10, $11, COALESCE($12, false),
                    COALESCE($13, true), COALESCE($14, 0), NULL, $4, timezone('UTC', now()))
            ON CONFLICT (name) DO UPDATE
-             SET spawn_coordinates = COALESCE($2, w.spawn_coordinates, $3),
+             SET spawn_coordinates = CASE WHEN w.blocked_since IS NULL
+                     THEN COALESCE($2, w.spawn_coordinates, $3) ELSE w.spawn_coordinates END,
                  mirror_source = EXCLUDED.mirror_source,
                  updated_at = timezone('UTC', now())
              WHERE NOT $5

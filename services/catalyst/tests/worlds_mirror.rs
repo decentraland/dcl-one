@@ -688,6 +688,10 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     // 4. A local publish is refused, never overwritten, and stays served; the
     //    mirrored scene written before it is retired, since the mirror never
     //    refreshes the world again.
+    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = '9,9' WHERE name = 'a.dcl.eth'")
+        .execute(&node.pool)
+        .await
+        .unwrap();
     sqlx::query(
         r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ('a.dcl.eth', 'bafkreilocal', '[]', '{"pointers":["9,9"],"metadata":{"scene":{"base":"9,9"}}}', '0xabc', '{9,9}', 1, NULL)"#,
@@ -702,6 +706,8 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
             "a.dcl.eth",
             &[("A v2", "0,0", &[("new.js", b"a2()")])],
         );
+        st.settings
+            .insert("a.dcl.eth".into(), json!({"spawn_coordinates": "0,0"}));
     }
     let summary = node.pass(&ctx).await;
     assert_eq!((summary.scenes.refused, summary.scenes.unchanged), (1, 2));
@@ -717,6 +723,16 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
             .await
             .unwrap();
     assert_eq!(mirror_source, None, "the world row says local");
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT spawn_coordinates FROM worlds.worlds WHERE name = 'a.dcl.eth'"
+        )
+        .fetch_one(&node.pool)
+        .await
+        .unwrap()
+        .as_deref(),
+        Some("9,9")
+    );
     let (status, about) = node.get("/world/a.dcl.eth/about").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
@@ -962,11 +978,12 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
         .execute(&node.pool)
         .await
         .unwrap();
-    let v2 = set_scenes(
-        &mut fake.state.lock(),
-        world,
-        &[("D v2", "0,0", &[("d.js", b"d2()")])],
-    );
+    let v2 = {
+        let mut st = fake.state.lock();
+        st.settings
+            .insert(world.into(), json!({"spawn_coordinates": "1,0"}));
+        set_scenes(&mut st, world, &[("D v2", "1,0", &[("d.js", b"d2()")])])
+    };
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
 
     let rows = node.scene_rows(world).await;
@@ -975,13 +992,15 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
         v2,
         "the pass refreshed the scenes"
     );
-    let blocked: Option<chrono::NaiveDateTime> =
-        sqlx::query_scalar("SELECT blocked_since FROM worlds.worlds WHERE name = $1")
-            .bind(world)
-            .fetch_one(&node.pool)
-            .await
-            .unwrap();
+    let (blocked, spawn): (Option<chrono::NaiveDateTime>, Option<String>) = sqlx::query_as(
+        "SELECT blocked_since, spawn_coordinates FROM worlds.worlds WHERE name = $1",
+    )
+    .bind(world)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
     assert!(blocked.is_some(), "the operator disable stands");
+    assert_eq!(spawn.as_deref(), Some("0,0"));
     let (status, _) = node.get(&format!("/world/{world}/about")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
@@ -1896,6 +1915,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     {
         let mut st = fake.state.lock();
         add_scene(&mut st, world, "K", "0,0", &[("k.txt", b"kept")]);
+        add_scene(&mut st, world, "N", "4,4", &[("n.txt", b"near")]);
         st.settings.insert(
             world.to_string(),
             json!({"title": "Source", "settings_version": 1}),
@@ -1937,7 +1957,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         let mut st = fake.state.lock();
         st.settings.insert(
             world.to_string(),
-            json!({"title": "Source", "thumbnail_hash": sha256, "settings_version": 1}),
+            json!({"title": "Source", "thumbnail_hash": sha256, "spawn_coordinates": "2,2", "settings_version": 1}),
         );
         st.blobs.insert(sha256.clone(), thumbnail);
     }
@@ -1956,6 +1976,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     );
     let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
     assert!(settings.get("thumbnail_hash").is_none(), "{settings}");
+    assert_eq!(settings["spawn_coordinates"], "2,2");
     let alias: Option<(String, bool)> = sqlx::query_as(
         "SELECT blob_cid, mirror_expires_at > now() FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
     )
@@ -2105,6 +2126,93 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     .await
     .expect("mirror pass");
     assert_eq!(access_type(&node, world).await, "allow-list");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn spawn_only_settings_changes_reach_an_unchanged_mirrored_world() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "spawn-settings").await;
+    let world = "spawn-settings.dcl.eth";
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "A", "0,0", &[("a.txt", b"a")]);
+        add_scene(&mut st, world, "B", "4,4", &[("b.txt", b"b")]);
+        st.settings
+            .insert(world.into(), json!({"settings_version": 7}));
+    }
+    let path = format!("/world/{world}/about");
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "0,0");
+    let scene_rows = node.scene_rows(world).await;
+
+    fake.state.lock().settings.insert(
+        world.into(),
+        json!({"spawn_coordinates": "2,2", "settings_version": 7}),
+    );
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
+    assert_eq!(node.scene_rows(world).await, scene_rows);
+    assert_eq!(fake.state.lock().about_calls.get(world), Some(&1));
+    assert_eq!(world_row(&node.pool, world).await.2, 7);
+
+    for answer in [
+        Some(json!({"settings_version": 7})),
+        Some(json!({"spawn_coordinates": null, "settings_version": 7})),
+        Some(json!({"spawn_coordinates": "bad", "settings_version": 7})),
+        Some(json!({"spawn_coordinates": 7, "settings_version": 7})),
+        None,
+    ] {
+        match answer {
+            Some(answer) => fake.state.lock().settings.insert(world.into(), answer),
+            None => fake.state.lock().settings.remove(world),
+        };
+        assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+        assert_eq!(node.get(&path).await.1["spawnCoordinates"], "2,2");
+        assert_eq!(world_row(&node.pool, world).await.2, 7);
+    }
+
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{WorldSettingsUpdate, update_world_settings};
+
+    let owner = Address::parse("0x00000000000000000000000000000000000000a1").unwrap();
+    update_world_settings(
+        &node.pool,
+        &WorldName::parse(world).unwrap(),
+        &owner,
+        Some(&owner),
+        &WorldSettingsUpdate {
+            spawn_coordinates: Some("1,1".into()),
+            ..WorldSettingsUpdate::default()
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "1,1");
+    assert_eq!(
+        set_here(&node.pool, world).await,
+        (false, None, false, None)
+    );
+    fake.state.lock().settings.insert(
+        world.into(),
+        json!({"spawn_coordinates": "3,3", "title": "Upstream", "settings_version": 8}),
+    );
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    assert_eq!(node.get(&path).await.1["spawnCoordinates"], "3,3");
+    assert_eq!(
+        world_row(&node.pool, world).await.0.as_deref(),
+        Some("Upstream")
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

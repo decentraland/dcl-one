@@ -1,5 +1,6 @@
 //! Worlds mirror upstream.
 use super::*;
+use crate::comms::world_identity::Parcel;
 
 /// `{source}/world/{name}/{tail}` with the name as one percent-encoded path segment, so no
 /// name can add a segment, a query or a fragment to the upstream request.
@@ -317,6 +318,8 @@ pub(super) struct WorldSettingsCopy {
     pub(super) present: bool,
     pub(super) title: Option<String>,
     pub(super) description: Option<String>,
+    /// An unusable answer preserves the stored spawn.
+    pub(super) spawn_coordinates: Option<String>,
     /// One of the ratings the column accepts, else none.
     pub(super) content_rating: Option<String>,
     /// The first [`MAX_CATEGORIES`] strings.
@@ -335,6 +338,12 @@ pub(super) struct WorldSettingsCopy {
     pub(super) settings_version: Option<i64>,
 }
 
+pub(super) fn valid_spawn(value: &Value) -> Option<String> {
+    let coordinates = value.as_str()?;
+    Parcel::parse(coordinates).ok()?;
+    Some(coordinates.to_owned())
+}
+
 impl WorldSettingsCopy {
     pub(super) fn parse(body: &Value) -> Option<Self> {
         let body = body.as_object()?;
@@ -348,6 +357,7 @@ impl WorldSettingsCopy {
             present: true,
             title: text("title"),
             description: text("description"),
+            spawn_coordinates: body.get("spawn_coordinates").and_then(valid_spawn),
             content_rating: text("content_rating").filter(|r| VALID_RATINGS.contains(&r.as_str())),
             categories: body.get("categories").and_then(Value::as_array).map(|c| {
                 c.iter()
