@@ -30,8 +30,10 @@
 //! post is retried with backoff, Slack's `Retry-After` on a 429 holding the
 //! rest of the pass too. Held rows keep their previous attempt count. A row
 //! still undelivered after [`MAX_AGE`] and one attempted post ends `failed`.
-//! When a 429 would hold a row at least [`MAX_HELD_AGE`] after enqueue, the
-//! job fails it so sustained rate limiting cannot leave it pending forever.
+//! After [`MAX_HOLD`] since the first unposted Slack hold, another hold ends
+//! the row `failed` with `last_error` set to "Slack hold age limit reached".
+//! That row can have zero attempts. Time in the queue before the first hold
+//! does not count, so a worker outage followed by one 429 preserves the backlog.
 //! With no webhook each row is logged at error and ends `skipped`. Delivery
 //! is at least once: a post Slack accepted whose row was not ended (a crash,
 //! a timeout after acceptance) is posted again after the lease.
@@ -99,8 +101,10 @@ const BATCH: i64 = 20;
 const LEASE: chrono::Duration = chrono::Duration::minutes(5);
 /// An alert still undelivered this long after it was written is given up.
 pub const MAX_AGE: chrono::Duration = chrono::Duration::hours(24);
-/// The age at which another Slack hold gives up even an unposted alert.
-const MAX_HELD_AGE: chrono::Duration = chrono::Duration::hours(48);
+/// The maximum elapsed time between the first and a subsequent Slack hold.
+const MAX_HOLD: chrono::Duration = chrono::Duration::hours(48);
+/// A held retry stores its start in the reason carried forward by the next claim.
+const HOLD_SINCE_PREFIX: &str = "held while Slack rate limits since ";
 const POST_TIMEOUT: Duration = Duration::from_secs(10);
 const INTERVAL: Duration = Duration::from_secs(15);
 /// The first retry's wait, doubled per attempt up to [`MAX_BACKOFF`].
@@ -372,6 +376,7 @@ struct Claimed {
     payload: Value,
     attempts: i32,
     created_at: chrono::NaiveDateTime,
+    held_since: Option<chrono::NaiveDateTime>,
 }
 
 /// What one pass did with the alerts it claimed.
@@ -407,7 +412,7 @@ impl Delivery {
             "UPDATE credits.alerts a SET attempts = a.attempts + 1, next_attempt_at = $2 \
              WHERE a.id IN (SELECT id FROM credits.alerts WHERE status = 'pending' AND next_attempt_at <= $1 \
                             ORDER BY next_attempt_at, id LIMIT $3 FOR UPDATE SKIP LOCKED) \
-             RETURNING a.id, a.kind, a.payload, a.attempts, a.created_at",
+             RETURNING a.id, a.kind, a.payload, a.attempts, a.created_at, a.last_error",
         )
         .bind(now)
         .bind(lease_until)
@@ -421,6 +426,11 @@ impl Delivery {
             payload: row.get::<sqlx::types::Json<Value>, _>("payload").0,
             attempts: row.get("attempts"),
             created_at: row.get("created_at"),
+            held_since: row
+                .get::<Option<&str>, _>("last_error")
+                .and_then(|reason| reason.strip_prefix(HOLD_SINCE_PREFIX))
+                .and_then(|since| chrono::DateTime::parse_from_rfc3339(since).ok())
+                .map(|since| since.naive_utc()),
         })
         .collect();
         claimed.sort_by_key(|alert| alert.id);
@@ -466,7 +476,8 @@ impl Delivery {
         for (alerts, text) in messages {
             if let Some((limited_at, until)) = hold {
                 for alert in &alerts {
-                    if alert.created_at <= limited_at - MAX_HELD_AGE {
+                    let held_since = alert.held_since.unwrap_or(limited_at);
+                    if limited_at - held_since >= MAX_HOLD {
                         if expire_held(credits, alert.id, lease_until, limited_at).await? {
                             let text = render(&alert.kind, &alert.payload, &self.shop);
                             tracing::error!(alert = %text, kind = alert.kind, "a credits alert reached the Slack hold age limit and is given up");
@@ -479,7 +490,7 @@ impl Delivery {
                         alert.id,
                         lease_until,
                         until,
-                        "held while Slack rate limits",
+                        &format!("{HOLD_SINCE_PREFIX}{}", held_since.and_utc().to_rfc3339()),
                         true,
                     )
                     .await?;

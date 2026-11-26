@@ -1904,10 +1904,15 @@ of the message that carried them. Other rows get one message each.
   the pending row and this pass's lease timestamp. The row Slack received
   keeps its attempt. Each unposted held row refunds the claim's increment
   in the update that schedules it or marks it failed.
-- when a 429 would hold a row at least 48 hours after enqueue, the same lease
-  check guards its transition to `failed`. The worker records `finished_at`
-  and a hold-specific `last_error` and logs the alert at error. This bounds
-  how long sustained rate limiting can keep an unposted row pending.
+- the first unposted Slack hold records its start in `last_error`. Another
+  hold carries that timestamp forward, and a real post replaces the hold
+  reason if it schedules a retry. A row with a legacy hold reason starts
+  timing on its next hold. At 48 hours from that first recorded hold, another
+  hold ends the row `failed` under the same lease check. The worker records
+  `finished_at` and logs the alert at error. This path can leave a failed row
+  with zero attempts and `last_error = 'Slack hold age limit reached'`.
+  Starting the clock at the first hold protects a backlog after worker
+  downtime and lets sustained rate limiting age out held rows.
 - a row still undelivered a day after it was written, with one post already
   attempted, ends `failed`, and with no webhook a row ends `skipped`. Both
   log the alert at error, so none is dropped silently.
