@@ -4,6 +4,14 @@
 //! it; the favorites, admin and signed-trade flows run over the local tables.
 //! Without `CATALYST_TEST_DATABASE_URL` the database tests skip.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
