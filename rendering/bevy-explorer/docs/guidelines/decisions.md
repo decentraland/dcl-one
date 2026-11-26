@@ -40,8 +40,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
-  clock hands control back to the scene. No HUD lock while a scene controls the sky.
+- **Day and night (#1467).** The time of the scene the player stands in holds the sky: over
+  the running clock, over a time set from the HUD and over `/time`, which still move the clock
+  and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and says
+  why. The "Allow overriding scene controls" setting (off by default) unlocks it: the scene's
+  time still takes the sky when it arrives, a time the player stops the clock at after that
+  wins, and the scene's time is back when it arrives again (on return, in another scene, or
+  when the scene changes it) or when the clock runs again, the menu's Auto included. No
+  override is kept for a scene. `~system/Runtime.getWorldTime` tells every scene, next to the
+  time, whether a scene holds it, the clock's speed and whether the clock sets the sky, so
+  that the menu and a scene that shows the time of day read one source. Two exceptions.
+  `/time --force` beats a
+  scene's time whatever the setting, until the next `/time` that sets a time or a speed: the
+  scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
+  only over a running clock and never locks the menu: a portable follows the player
+  everywhere, so the player's own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for

@@ -109,6 +109,7 @@ pub mod reconcile;
 pub mod reports;
 pub mod settlement;
 pub mod store;
+pub mod stream;
 pub mod stripe;
 pub mod trial;
 pub mod usage;
@@ -750,6 +751,8 @@ pub struct State {
     /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
     /// flag reads off.
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The balance streams' listener and subscribers (`stream.rs`).
+    pub(crate) balance_changes: stream::BalanceChanges,
     /// The purchase receipt's mailer, names and links (`receipts.rs`), set
     /// once by [`Self::start_receipts`]: `serve` builds the mailer after
     /// this state.
@@ -874,6 +877,7 @@ impl State {
             feed,
             goals_chain: chain,
             dapps_flags: None,
+            balance_changes: stream::BalanceChanges::default(),
             receipts: std::sync::OnceLock::new(),
         }
     }
@@ -930,6 +934,9 @@ impl State {
     }
 
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        // The balance streams end with the node, so its graceful shutdown
+        // never waits on them.
+        self.balance_changes.end_on(jobs.root_token().child_token());
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
@@ -1100,6 +1107,10 @@ pub fn router(state: SharedState) -> Router {
             "/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
@@ -1214,6 +1225,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
+        )
+        .route(
+            "/v1/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
         )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
         .route(
