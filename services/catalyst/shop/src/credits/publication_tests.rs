@@ -318,7 +318,7 @@ async fn a_creator_gets_one_credit_and_a_co_signature_for_the_fee_of_their_draft
     );
     assert_eq!(
         lane.quotes.asked.lock().unwrap().as_slice(),
-        [sent.data.clone()],
+        std::slice::from_ref(&sent.data),
         "the builder priced the call's own arguments"
     );
 

@@ -2059,6 +2059,7 @@ async fn reviewed(
     Ok((id, c, registry))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn admit(
     state: &SharedState,
     signer: &Signer,

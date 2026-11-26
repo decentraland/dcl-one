@@ -529,6 +529,7 @@ mod tests {
 /// A loopback Discourse for tests: the calls the node makes, answered as
 /// Discourse answers them, each recorded.
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod fake {
     use std::sync::{Arc, Mutex};
 
