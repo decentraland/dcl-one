@@ -105,6 +105,26 @@ test('a run that fails a check leaves the published fixtures untouched, and a ru
   assert.deepEqual(fs.readdirSync(path.dirname(output)), ['source'])
 })
 
+test('a run refuses an output folder holding anything but captures, and keeps the published ones when the new ones cannot take their place', t => {
+  const { finish } = require(script)
+  const output = path.join(scratch(t), 'source')
+  fs.mkdirSync(output)
+  fs.writeFileSync(path.join(output, '01-case.json'), 'committed\n')
+  fs.writeFileSync(path.join(output, 'notes.txt'), 'mine\n')
+  assert.throws(() => finish(output, [['01-case.json', 'recaptured\n']], []), /notes\.txt/)
+  assert.deepEqual(fs.readdirSync(output), ['01-case.json', 'notes.txt'])
+  fs.rmSync(path.join(output, 'notes.txt'))
+  const rename = fs.renameSync
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    const recaptured = to === output && fs.readFileSync(path.join(from, '01-case.json'), 'utf8') === 'recaptured\n'
+    if (recaptured) throw Object.assign(Error('rename failed'), { code: 'EIO' })
+    return rename(from, to)
+  })
+  assert.throws(() => finish(output, [['01-case.json', 'recaptured\n']], []), /rename failed/)
+  assert.equal(fs.readFileSync(path.join(output, '01-case.json'), 'utf8'), 'committed\n')
+  assert.deepEqual(fs.readdirSync(path.dirname(output)), ['source'])
+})
+
 test('the scratch database is dropped when closing upstream fails', async () => {
   const { withScratchDatabase } = require(script)
   const log = []

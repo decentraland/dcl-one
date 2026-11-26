@@ -2637,20 +2637,27 @@ async function withScratchDatabase(admin, adminUrl, body) {
   }
 }
 
-/**
- * Replaces `output` with exactly `fixtures` ([name, text] pairs) only when `problems` is empty, staging them beside it
- * first, so no capture of an earlier run stays behind.
- */
+/** Replaces `output`, a folder of captures only, with exactly `fixtures` ([name, text] pairs) when `problems` is empty. */
 function finish(output, fixtures, problems) {
   if (problems.length) fail(`upstream reached a service the capture does not fake: ${[...new Set(problems)].join(', ')}`)
   const target = path.resolve(output)
+  const existing = fs.existsSync(target)
+  const foreign = existing ? fs.readdirSync(target, { withFileTypes: true }).filter(entry => !entry.isFile() || !entry.name.endsWith('.json')) : []
+  if (foreign.length) fail(`${target} holds more than captures (${foreign.map(entry => entry.name).join(', ')}): name an output folder of captures only`)
   const staging = fs.mkdtempSync(path.join(path.dirname(target), '.builder-capture-'))
+  const previous = `${staging}-previous`
   try {
     for (const [name, text] of fixtures) fs.writeFileSync(path.join(staging, name), text)
-    fs.rmSync(target, { recursive: true, force: true })
-    fs.renameSync(staging, target)
+    if (existing) fs.renameSync(target, previous)
+    try {
+      fs.renameSync(staging, target)
+    } catch (error) {
+      if (existing) fs.renameSync(previous, target)
+      throw error
+    }
   } finally {
     fs.rmSync(staging, { recursive: true, force: true })
+    fs.rmSync(previous, { recursive: true, force: true })
   }
 }
 
