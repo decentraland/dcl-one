@@ -33,7 +33,20 @@ export function defineVideoPlayerComponent(
   function request(entity: Entity, value?: PBVideoPlayer): PBVideoPlayer | undefined {
     if (value === undefined) return undefined
     if (value.position === undefined) return { ...value }
-    const previous = component.getOrNull(entity)?.positionRevision ?? value.positionRevision ?? 0
+    const current = component.getOrNull(entity)
+    if (
+      current &&
+      value.positionRevision !== undefined &&
+      value.positionRevision === current.positionRevision &&
+      value.src === current.src &&
+      value.position === current.position &&
+      (Object.keys({ ...current, ...value }) as (keyof PBVideoPlayer)[]).some(
+        (key) => key !== 'positionRevision' && value[key] !== current[key]
+      )
+    ) {
+      return { ...value }
+    }
+    const previous = current?.positionRevision ?? value.positionRevision ?? 0
     return { ...value, positionRevision: (previous + 1) >>> 0 }
   }
   return {

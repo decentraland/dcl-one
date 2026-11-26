@@ -104,6 +104,53 @@ describe('VideoPlayer explicit seek intent', () => {
     expect(flush()[0].value.positionRevision).toBe(4)
   })
 
+  it('preserves seek intent for spread-based playback settings', () => {
+    const { player, entity, flush } = setup()
+    player.getMutable(entity).position = 0
+    flush()
+
+    for (const settings of [
+      { playing: false },
+      { volume: 0.5 },
+      { playing: true },
+      { loop: true },
+      { playbackRate: 0.5 },
+      { spatial: true },
+      { spatialMinDistance: 2 },
+      { spatialMaxDistance: 20 }
+    ]) {
+      player.createOrReplace(entity, { ...player.get(entity), ...settings })
+      const updates = flush()
+      expect(updates).toHaveLength(1)
+      expect(updates[0].value).toMatchObject({ ...settings, position: 0, positionRevision: 1 })
+    }
+
+    player.createOrReplace(entity, { ...player.get(entity) })
+    expect(flush()[0].value.positionRevision).toBe(2)
+  })
+
+  it('requests an explicit replacement seek after Pause without a carried revision', () => {
+    const { player, entity, flush } = setup()
+    player.createOrReplace(entity, { src: 'video.mp4', position: 0, playing: false, volume: 1 })
+    expect(flush()[0].value.positionRevision).toBe(1)
+
+    player.createOrReplace(entity, { src: 'video.mp4', position: 0, playing: true, volume: 1 })
+    expect(flush()[0].value).toMatchObject({ playing: true, position: 0, positionRevision: 2 })
+    player.createOrReplace(entity, { src: 'video.mp4', position: 0, playing: true, volume: 0.5 })
+    expect(flush()[0].value.positionRevision).toBe(3)
+  })
+
+  it.each([{ src: 'other.mp4' }, { position: 5 }, { playing: false, positionRevision: 0 }])(
+    'requests a seek when a replacement changes source, position or revision: %j',
+    (changes) => {
+      const { player, entity, flush } = setup()
+      player.getMutable(entity).position = 0
+      flush()
+      player.createOrReplace(entity, { ...player.get(entity), ...changes })
+      expect(flush()[0].value.positionRevision).toBe(2)
+    }
+  )
+
   it('starts a new request after clearing or deleting position', () => {
     const { player, entity, flush } = setup()
     player.getMutable(entity).position = 0
