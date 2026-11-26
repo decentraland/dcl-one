@@ -377,6 +377,19 @@ CREATE TABLE shop.picks (
 
 -- The per-list page (WHERE list_id ORDER BY created_at DESC).
 CREATE INDEX picks_list_id_idx ON shop.picks (list_id, created_at DESC);
+
+-- The Transak partner access token every replica shares (`market::transak`).
+-- Transak invalidates the previous token whenever it issues a new one, so a
+-- replica refreshes it only under the `transak-access-token` advisory lock,
+-- and only if the stored token is still the one it found expired or refused;
+-- the others read it. One row. `expires_at` is Transak's expiry (UTC); a
+-- reader refreshes 60 s before it. The token is a bearer, never logged.
+CREATE TABLE shop.transak_access_token (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    access_token text NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    refreshed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
 -- The catalog's pick counts: GROUP BY item_id WHERE item_id = ANY($1).
 CREATE INDEX picks_item_idx ON shop.picks (item_id);
 

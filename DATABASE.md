@@ -2934,6 +2934,26 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
+## Transak access token
+
+`shop.transak_access_token` (`schemas/30_shop.sql`) holds the one Transak
+partner access token every replica uses (`shop/src/market/transak.rs`). Transak
+invalidates its previous token whenever it issues a new one, so the token is
+shared rather than kept per process:
+- **Read:** each Transak call reads the row by its primary key while
+  `expires_at` is more than 60 s away.
+- **Refresh:** otherwise, under `pg_advisory_xact_lock(hashtextextended('transak-access-token', 0))`,
+  the replica re-reads the row and refreshes only if it is still stale, or still
+  the token Transak just refused with 401. It then upserts the row and commits.
+  The others wait on the lock and then read the new token. Refreshes happen
+  about once every 7 days (Transak's token life), plus one for each
+  `PUT /v1/transak/access-token` an operator sends.
+- **Size:** one row, a few hundred bytes. The transaction holds the lock across
+  the refresh call to Transak, bounded by its 10 s timeout.
+
+The token is a bearer, so it is never logged. The schema object pass creates
+the table, and no migration step is needed.
+
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,

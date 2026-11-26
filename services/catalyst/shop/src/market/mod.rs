@@ -128,6 +128,7 @@ pub mod third_party_registry;
 pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transak;
 pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
@@ -145,7 +146,7 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::routing::{any, delete, erase, get, post};
+use crate::shared::routing::{any, delete, erase, get, post, put};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
@@ -265,6 +266,8 @@ pub struct MarketSettings {
     pub trade_rpc_urls: listings::RpcEndpoints,
     pub admin_token: Option<String>,
     pub historical_admin_token: Option<String>,
+    /// The Transak card on-ramp's credentials (`TRANSAK_*`); `None` answers 503.
+    pub transak: Option<transak::TransakSettings>,
     pub catalog_cache_ttl: Duration,
     /// `MARKETPLACE_BASE_URL`: the site links the trade notification events point at.
     pub marketplace_base_url: String,
@@ -302,6 +305,7 @@ impl std::fmt::Debug for MarketSettings {
                 "historical_admin_token",
                 &self.historical_admin_token.is_some(),
             )
+            .field("transak", &self.transak.is_some())
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
@@ -320,6 +324,7 @@ impl Default for MarketSettings {
             trade_rpc_urls: listings::RpcEndpoints::default(),
             admin_token: None,
             historical_admin_token: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -367,6 +372,7 @@ impl MarketSettings {
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty()),
             historical_admin_token: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -378,6 +384,12 @@ impl MarketSettings {
 
     pub fn with_historical_admin_token(mut self, token: Option<String>) -> Self {
         self.historical_admin_token = token;
+        self
+    }
+
+    /// The Transak card on-ramp ([`transak::TransakSettings::parse`]).
+    pub fn with_transak(mut self, transak: Option<transak::TransakSettings>) -> Self {
+        self.transak = transak;
         self
     }
 
@@ -1265,12 +1277,25 @@ pub fn router(state: SharedState) -> Router {
     app.with_state(state)
 }
 
+/// The POST and PUT routes that write no market data, so they answer while
+/// data writes are off: the historical holdings reads, and the Transak widget
+/// and token refresh, which write only the shared access token.
+const OPEN_PATHS: &[&str] = &[
+    historical::READ_PATHS[0],
+    historical::READ_PATHS[1],
+    historical::READ_PATHS[2],
+    historical::READ_PATHS[3],
+    historical::READ_PATHS[4],
+    transak::WIDGET_PATH,
+    transak::TOKEN_PATH,
+];
+
 /// The marketplace-server surface (the old `catalyrst-market` crate's
 /// routes), for the `/shop-api` nest and its `/marketplace-api` alias: its
 /// `/v1/items`, `/v1/collections` and `/v1/contracts` collide with the
 /// builder's at the root, where `router` keeps the lambdas and the trades
 /// reads. Every mutating route sits behind `DATA_WRITES_ENABLED`
-/// ([`DataWrites::guard`]).
+/// ([`DataWrites::guard`]), except the [`OPEN_PATHS`].
 pub fn market_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let writes_enabled = state.settings.data_writes_enabled;
@@ -1428,6 +1453,12 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
+        .route(
+            transak::WIDGET_PATH,
+            post(transak::widget_url).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(transak::ORDER_PATH, get(transak::order))
+        .route(transak::TOKEN_PATH, put(transak::refresh_token))
         .merge(historical::routes(
             state.settings.market.historical_admin_token.is_some(),
         ))
@@ -1444,9 +1475,5 @@ pub fn market_router(state: SharedState) -> Router {
     } else {
         app
     };
-    DataWrites::guard_open(
-        app.with_state(state),
-        writes_enabled,
-        historical::READ_PATHS,
-    )
+    DataWrites::guard_open(app.with_state(state), writes_enabled, OPEN_PATHS)
 }

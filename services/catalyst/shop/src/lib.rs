@@ -156,9 +156,8 @@ fn pending(source: &'static str) -> MethodRouter {
 /// The canonical paths the Shop UI codes against whose handlers are still
 /// to be written, one source label per feature: pack order
 /// resume/cancel, batch authorization and submission reporting, the NAME
-/// credit route, IAP and the card
-/// on-ramps. Mounted after the served routes, so a path a handler owns is
-/// never shadowed.
+/// credit route, IAP and the Wert card on-ramp. Mounted after the served
+/// routes, so a path a handler owns is never shadowed.
 pub fn pending_router() -> Router {
     Router::new()
         .route(
@@ -172,8 +171,6 @@ pub fn pending_router() -> Router {
         .route("/v1/iap/quote", pending("shop-credits-iap"))
         .route("/v1/iap/register", pending("shop-credits-iap"))
         .route("/v1/iap/verify", pending("shop-credits-iap"))
-        .route("/v1/transak/widget-url", pending("shop-onramp"))
-        .route("/v1/transak/orders/{id}", pending("shop-onramp"))
         .route("/v1/wert/sign", pending("shop-onramp"))
 }
 

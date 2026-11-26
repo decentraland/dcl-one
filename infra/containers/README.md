@@ -231,6 +231,22 @@ database needs schema step 0094 and the registry review repair before the
 full Polygon history is available. Moving the marketplace API host to this
 gateway preserves the worker's request paths.
 
+The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
+`PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
+six settings:
+- `TRANSAK_API_URL` and `TRANSAK_API_GATEWAY_URL`, over https;
+- `TRANSAK_API_KEY` and `TRANSAK_API_SECRET`, plain or as `_FILE`;
+- `TRANSAK_REFRESH_ACCESS_TOKEN_AUTH`: the bearer of the forced refresh, at least
+  32 bytes;
+- `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
+
+Without them, the routes answer 503 naming them. A partial set fails startup.
+Replicas share one access token in `shop.transak_access_token`. Transak
+invalidates the previous token on each refresh, so another service holding
+the same partner account (marketplace-server during a cutover) invalidates
+the node's token whenever it refreshes. The node then refreshes once on the
+next 401.
+
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)

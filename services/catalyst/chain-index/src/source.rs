@@ -42,6 +42,8 @@ pub enum Source {
     ThirdPartyRegistryIndex,
     /// The CouponManager state reader (`coupons`).
     CouponManager,
+    /// Transak's partner API and gateway (`/v1/transak/*`).
+    Transak,
     /// A source v2 does not have yet; the label names the missing indexer.
     Deferred(&'static str),
 }
@@ -65,6 +67,7 @@ impl Source {
             Self::RentalsIndex => "rentals-index",
             Self::ThirdPartyRegistryIndex => "third-party-registry-index",
             Self::CouponManager => "coupon-manager",
+            Self::Transak => "transak",
             Self::Deferred(label) => label,
         }
     }
@@ -92,6 +95,9 @@ impl Source {
             Self::RentalsIndex => Some("SHOP_RENTALS_INDEX_ENABLED"),
             Self::ThirdPartyRegistryIndex => Some("MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
             Self::CouponManager => Some("TRADE_RPC_URLS"),
+            Self::Transak => Some(
+                "TRANSAK_API_URL, TRANSAK_API_GATEWAY_URL, TRANSAK_API_KEY, TRANSAK_API_SECRET, TRANSAK_REFRESH_ACCESS_TOKEN_AUTH, TRANSAK_REFERRER_DOMAIN",
+            ),
             Self::Deferred(_) => None,
         }
     }
