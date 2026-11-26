@@ -849,7 +849,7 @@ fn bans_response(headers: &HeaderMap, bans: &[super::store::UserBan]) -> axum::r
         .insert(axum::http::header::ETAG, etag.parse().expect("hex etag"));
     response.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
-        "private, no-cache".parse().unwrap(),
+        axum::http::HeaderValue::from_static("private, no-cache"),
     );
     response
 }

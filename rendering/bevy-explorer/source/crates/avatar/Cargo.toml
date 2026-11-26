@@ -32,6 +32,8 @@ explorer = [
   "dep:rapier3d-f64",
   "dep:bevy_dui",
   "dep:alloy-core",
+  "dep:wallet",
+  "dep:ban_block",
 ]
 
 [dependencies]
@@ -54,6 +56,8 @@ scene_material = { workspace = true }
 platform = { workspace = true }
 system_bridge = { workspace = true, optional = true }
 social = { workspace = true, optional = true }
+wallet = { workspace = true, optional = true }
+ban_block = { workspace = true, optional = true }
 
 bevy = { workspace = true }
 bevy_kira_audio = { workspace = true }

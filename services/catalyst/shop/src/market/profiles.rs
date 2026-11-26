@@ -1059,6 +1059,31 @@ pub async fn profiles_metadata(
     Json(compact).into_response()
 }
 
+/// The profile's name when the address holds it as a NAME (`hasClaimedName`,
+/// the same check `profiles` serves), as the purchase receipt greets its
+/// buyer. `None` for an unclaimed name, no profile, or a failed read: an
+/// unclaimed name is a non-unique default, and a greeting is never worth an
+/// error.
+pub async fn claimed_name(state: &MarketplaceState, address: &str) -> Option<String> {
+    let pointer = address.to_lowercase();
+    let found = processed_profiles(state, std::slice::from_ref(&pointer))
+        .await
+        .ok()?;
+    let (_, profile) = found
+        .into_iter()
+        .find(|(found, _)| found.eq_ignore_ascii_case(&pointer))?;
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    if avatar.get("hasClaimedName").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    avatar
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     match fetch_profile_for_id(&state, &id).await {
         Ok(Some(metadata)) => Json(metadata).into_response(),

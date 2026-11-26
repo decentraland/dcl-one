@@ -17,6 +17,7 @@ before planning, dispatching or merging work.
 - The main session reconciles specialist reports, checks their evidence at the target revision and records the user's decisions before claiming completion.
 - When what runs where changes, describe the changed deployment boundaries in the report and update the public ownership guidance. Keep accepted, public architectural decisions in root `docs/adr/`.
 - Put helpers other crates' tests use behind a `test-support` feature.
+- Catalyst code must pass clippy with no warnings: `cd services/catalyst && cargo clippy --workspace --all-targets -- -D warnings`.
 
 Agents (`.claude/agents/`, start the session here): `comms-architect`,
 `comms-ci-engineer` (`build`, `gate`, `audit`, `release`), `divergence-analyst`.

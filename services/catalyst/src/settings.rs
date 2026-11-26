@@ -64,6 +64,22 @@ pub(crate) fn market_settings(
             self_hosts,
         )
         .context("MARKETPLACE_* / TRADE_RPC_URLS configuration")?
+        .with_historical_admin_token(Config::non_empty(
+            &config.marketplace.historical_admin_token,
+        ))
+        .with_wert(
+            shop::market::wert::WertSettings::parse(
+                config.marketplace.wert_private_key.as_deref(),
+                config
+                    .marketplace
+                    .wert_publication_fees_private_key
+                    .as_deref(),
+                config.marketplace.wert_api_url.as_deref(),
+                config.marketplace.wert_api_key.as_deref(),
+                self_hosts,
+            )
+            .context("WERT_* configuration")?,
+        )
         .with_indexes(checked_indexes(shop::market::chain_walk::IndexSettings {
             nft_enabled: config.marketplace.marketplace_nft_index_enabled,
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
@@ -308,9 +324,7 @@ mod tests {
         let mut config =
             Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
         config.marketplace.marketplace_index_chain_id_ethereum = 999;
-        let error = market_settings(&config, &[])
-            .err()
-            .expect("unsupported chain");
+        let error = market_settings(&config, &[]).expect_err("unsupported chain");
         assert!(
             error
                 .to_string()

@@ -1286,20 +1286,16 @@ fn a_mirrored_copy_culls_front_faces_and_drops_the_emissive_strength() {
 /// exactly when the body is, plus the face-feature tag that lights them by the ambient alone
 #[test]
 fn mask_tag_matches_the_body() {
-    let dither = SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
     let face = SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG;
     let outlined = render_definition(true, false);
     assert_eq!(
         outlined.mask_tag(),
-        SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_OUTLINE_MESH_TAG | dither | face
+        SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_OUTLINE_MESH_TAG | face
     );
     assert_eq!(outlined.mask_tag(), outlined.body_tag() | face);
 
     let plain = render_definition(false, false);
-    assert_eq!(
-        plain.mask_tag(),
-        SCENE_MATERIAL_TOON_MESH_TAG | dither | face
-    );
+    assert_eq!(plain.mask_tag(), SCENE_MATERIAL_TOON_MESH_TAG | face);
     assert_eq!(plain.mask_tag(), plain.body_tag() | face);
 
     let undithered = render_definition(true, true);
@@ -1308,7 +1304,6 @@ fn mask_tag_matches_the_body() {
         SCENE_MATERIAL_TOON_MESH_TAG
             | SCENE_MATERIAL_OUTLINE_MESH_TAG
             | SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-            | dither
             | face
     );
     assert_eq!(undithered.mask_tag(), undithered.body_tag() | face);

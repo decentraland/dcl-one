@@ -1,5 +1,6 @@
 //! Upgrade regression for durable first-wear notification progress.
 //! The configured DSN is used only to create and destroy this test's database.
+#![allow(clippy::unwrap_used, reason = "test support")]
 use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
 use sqlx::{
     PgPool,
