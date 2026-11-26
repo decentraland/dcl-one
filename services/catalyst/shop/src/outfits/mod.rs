@@ -1,3 +1,10 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 // from: shop-server@dc1a8be96:src/logic/outfits.ts, src/adapters/db/outfits.ts, src/controllers/routes.ts (the outfits block, outfitCreatorsMiddleware), src/controllers/schemas/outfit.ts, src/controllers/handlers/{get-outfits,get-outfits-all,get-outfit,post-outfit,put-outfit,delete-outfit,post-outfit-thumbnail,get-outfit-thumbnail}.ts
 //! Outfits: the curated shoppable wearable sets of the Shop (SHOP.md,
 //! "Backend work" 6, the shop-server fold), the one public-facing surface
@@ -436,6 +443,10 @@ pub fn can_read(outfit: &Outfit, caller: Option<&str>, is_creator: impl Fn(&str)
 
 /// Upstream `Number(param ?? default) || default`: a value that is not a
 /// finite number, or zero, is the default.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates an out-of-range number"
+)]
 fn js_number_or(raw: Option<&String>, default: i64) -> i64 {
     match raw {
         None => default,
@@ -676,7 +687,8 @@ async fn upload_thumbnail(
     };
     let hash = hex::encode(Sha256::digest(&bytes));
     let cid = crate::auth::hash_bytes_v1(&bytes);
-    let size = bytes.len() as i32;
+    let size = i32::try_from(bytes.len())
+        .map_err(|_| ApiError::labelled(StatusCode::PAYLOAD_TOO_LARGE, "too_large"))?;
     state
         .store
         .put_thumbnail(
@@ -728,7 +740,9 @@ async fn thumbnail(
         HeaderValue::from_str(&row.content_type)
             .unwrap_or(HeaderValue::from_static("application/octet-stream")),
     );
-    h.insert(header::CONTENT_LENGTH, HeaderValue::from(row.size as u64));
+    if let Ok(size) = u64::try_from(row.size) {
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(size));
+    }
     h.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),

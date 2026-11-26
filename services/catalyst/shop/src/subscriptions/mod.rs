@@ -1,3 +1,10 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 // from: shop-server@dc1a8be96:src/controllers/routes.ts (the notify block), src/controllers/schemas/{notify-request,notify-on-sale}.ts, src/controllers/handlers/{create-notify-request,get-notify-request,delete-notify-request,notify-on-sale-handler}.ts, src/ports/notify/component.ts, src/logic/notify/{consumer,on-sale}.ts
 //! Availability subscriptions: shop-server's "notify me when available"
 //! waitlist (SHOP.md, "Backend work" 6). A signed-in buyer asks to be
@@ -319,6 +326,8 @@ async fn create(
         .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     validate_create(&req).map_err(ApiError::bad_request)?;
     let contract = req.contract_address.to_ascii_lowercase();
+    let chain_id = i32::try_from(req.chain_id)
+        .map_err(|_| ApiError::bad_request("chainId is out of range"))?;
     let stored = state
         .store
         .upsert_capped(
@@ -326,7 +335,7 @@ async fn create(
             &req.email,
             &contract,
             &req.item_id,
-            req.chain_id as i32,
+            chain_id,
             MAX_PENDING_PER_WALLET,
             MAX_PENDING_PER_EMAIL,
         )

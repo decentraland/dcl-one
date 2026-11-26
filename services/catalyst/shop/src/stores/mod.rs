@@ -1,3 +1,10 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 // from: shop@94584a5c:app/src/lib/store.ts (fetchStore, buildStoreMetadata, saveStore: the STORE entity and its owner-only deploy), app/src/lib/storeStats.ts (the store dashboard's per-collection and per-item figures), app/src/lib/sales.ts (fetchSalesSummary); marketplace@f3956826:webapp/src/modules/store/{sagas,utils}.ts (FETCH_STORE, UPDATE_STORE)
 //! Stores: a creator's storefront settings (`GET /v1/stores/{address}`) and
 //! the owner's store dashboard figures (`GET /v1/stores/{address}/stats`).
@@ -106,10 +113,15 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
     store.exists = true;
     store.entity_id = entity.get("id").and_then(Value::as_str).map(str::to_string);
     // A synced entity's timestamp can be fractional; it keeps whole milliseconds.
-    store.updated_at = entity
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` drops the fraction and saturates"
+    )]
+    let updated_at = entity
         .get("timestamp")
         .and_then(Value::as_f64)
         .map(|t| t as i64);
+    store.updated_at = updated_at;
     let cover_file = metadata
         .get("images")
         .and_then(Value::as_array)

@@ -1,3 +1,10 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 // from: shop@94584a5c:app/src/lib/import.ts (fetchImportable, importListing, ImportRestrictedError: the two-phase import and its primary-only restriction), marketplace-server@ae872a4a:src/controllers/routes.ts:133 (GET /v3/catalog/importable), shop/src/paths.rs CREDIT_PATHS (the import-check row)
 //! Listing import: a seller's classic MANA listings moving into the Shop as
 //! credit-buyable, USD-pegged listings. The read is the catalog's
@@ -46,7 +53,7 @@ use super::policy::{Authoritative, Facts, Reason, Refusal, eligibility, guard_cr
 use super::types::{
     AssetKind, ChainId, ContractRef, ContractRole, EvmAddress, ItemKind, ItemRecord, Lookup,
     ManaUsdRate, ManaWei, Offer, PaymentMethod, SaleKind, Session, SettlementOperation,
-    SignedTrade, TradeAsset, TradeAssetType, parse_decimal,
+    SignedTrade, TradeAsset, TradeAssetType, chain_id_column, parse_decimal,
 };
 
 pub const CHECK_PATH: &str = "/v1/import-checks";
@@ -210,11 +217,17 @@ pub async fn stored_listing(
     let venue_text: String = first.get("venue");
     let venue =
         EvmAddress::parse(&venue_text).unwrap_or(EvmAddress::new(alloy_primitives::Address::ZERO));
-    let chain_id = ChainId(first.get::<i32, _>("chain_id") as u64);
+    let chain_id = ChainId(
+        u64::try_from(first.get::<i32, _>("chain_id"))
+            .map_err(|_| ApiError::internal("stored chain id is negative"))?,
+    );
     let mut sent = Vec::new();
     let mut received = None;
     for r in &rows {
-        let asset_type = TradeAssetType::from_code(r.get::<i16, _>("asset_type") as u64);
+        let asset_type = TradeAssetType::from_code(
+            u64::try_from(r.get::<i16, _>("asset_type"))
+                .map_err(|_| ApiError::internal("stored asset type is negative"))?,
+        );
         let contract = EvmAddress::parse(&r.get::<String, _>("contract_address"))
             .map_err(|e| ApiError::internal(format!("stored asset contract: {e}")))?;
         let value = parse_decimal(&r.get::<Option<String>, _>("value").unwrap_or_default())
@@ -259,7 +272,7 @@ pub async fn mirror_facts(
     let contract_text = contract.to_string().to_lowercase();
     let collection = sqlx::query("SELECT creator, minters, managers FROM shop.collections WHERE contract_address = $1 ORDER BY (chain_id = $2) DESC LIMIT 1")
         .bind(&contract_text)
-        .bind(chain_id.0 as i32)
+        .bind(chain_id_column::<i32>(chain_id.0).map_err(|e| ApiError::internal(e.to_string()))?)
         .fetch_optional(&mut *conn)
         .await?;
     let mut sellers = Vec::new();
@@ -281,7 +294,10 @@ pub async fn mirror_facts(
             let row = sqlx::query("SELECT creator, item_type, chain_id FROM shop.items WHERE contract_address = $1 AND item_id = $2::numeric ORDER BY (chain_id = $3) DESC LIMIT 1")
                 .bind(&contract_text)
                 .bind(item_id.to_string())
-                .bind(chain_id.0 as i32)
+                .bind(
+                    chain_id_column::<i32>(chain_id.0)
+                        .map_err(|e| ApiError::internal(e.to_string()))?,
+                )
                 .fetch_optional(&mut *conn)
                 .await?;
             match row {
@@ -298,7 +314,10 @@ pub async fn mirror_facts(
                         ItemKind::Wearable
                     };
                     Lookup::Found(ItemRecord {
-                        chain_id: ChainId(r.get::<i32, _>("chain_id") as u64),
+                        chain_id: ChainId(
+                            u64::try_from(r.get::<i32, _>("chain_id"))
+                                .map_err(|_| ApiError::internal("mirrored chain id is negative"))?,
+                        ),
                         collection: contract,
                         item_id,
                         kind,
@@ -324,7 +343,7 @@ pub fn proposed_trade(
     signer: EvmAddress,
     sent: Vec<TradeAsset>,
 ) -> Option<SignedTrade> {
-    let market = offchain_marketplace_v3(chain_id.0 as i64)?;
+    let market = offchain_marketplace_v3(i64::try_from(chain_id.0).ok()?)?;
     let venue = ContractRef {
         chain_id,
         contract: EvmAddress::parse(market.address).ok()?,
