@@ -7,8 +7,7 @@
 use serde_json::json;
 use sqlx::PgPool;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 async fn deploy(
     pool: &PgPool,
