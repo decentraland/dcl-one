@@ -321,6 +321,7 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
+    revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
 }
 
 impl Default for StateCfg {
@@ -334,6 +335,7 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
+            revenue_events: None,
         }
     }
 }
@@ -359,14 +361,18 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         ..RawSettings::default()
     })
     .unwrap();
-    Arc::new(State::with_sources(
+    let state = Arc::new(State::with_sources(
         pool,
         Outbound::for_tests(),
         settings,
         Arc::new(market),
         Arc::new(broker),
         None,
-    ))
+    ));
+    if let Some(events) = cfg.revenue_events {
+        state.attach_revenue_events(events);
+    }
+    state
 }
 
 fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
@@ -701,7 +707,7 @@ async fn cleanup(pool: &PgPool, addr: &str) {
     }
 }
 
-fn unique(tag: &str) -> String {
+pub(super) fn unique(tag: &str) -> String {
     format!("{tag}-{}", uuid::Uuid::new_v4().simple())
 }
 
@@ -4006,7 +4012,7 @@ async fn mock_topup_is_gated_validated_capped_and_idempotent() {
     cleanup(&pool, &wallet.address).await;
 }
 
-const WEBHOOK_SECRET: &str = "whsec_query_counts";
+pub(super) const WEBHOOK_SECRET: &str = "whsec_query_counts";
 
 fn stripe_headers(body: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -4023,7 +4029,7 @@ fn stripe_headers(body: &str) -> HeaderMap {
     headers
 }
 
-async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
+pub(super) async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method("POST")
         .uri("/credits/stripe/webhook");
@@ -4329,7 +4335,7 @@ fn session_event(
 }
 
 /// One pack order of 50 credits for 500 USD cents, opened as a Checkout Session.
-async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
+pub(super) async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
     let pack = PackRow {
         sku: "settle-pack".into(),
         title: "Settle".into(),
@@ -10628,7 +10634,7 @@ async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
 
 /// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
 /// session on 200; a read answers `session`. Both are counted.
-async fn stub_stripe(
+pub(super) async fn stub_stripe(
     expire_status: StatusCode,
     session: Value,
 ) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
@@ -10813,6 +10819,201 @@ async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
     );
 }
 
+/// An authorization of `address` under `salt` with its charged total and state; `lines` line rows, each charged
+/// `cents_per_line` (none: a single-line credit keeps its line on the authorization row).
+async fn authorization_fixture(
+    pool: &PgPool,
+    salt: &str,
+    address: &str,
+    usd_cents: i64,
+    status: &str,
+    lines: i32,
+    cents_per_line: i64,
+) {
+    sqlx::query(
+        "INSERT INTO credits.authorizations (id, address, usd_cents, amount_wei, status, expires_at) \
+         VALUES ($1, $2, $3, 1, $4, $5)",
+    )
+    .bind(salt)
+    .bind(address)
+    .bind(usd_cents)
+    .bind(status)
+    .bind(super::store::now() + chrono::Duration::hours(1))
+    .execute(pool)
+    .await
+    .unwrap();
+    for position in 0..lines {
+        sqlx::query(
+            "INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, \
+                 sale_kind, asset_kind, asset_chain_id, asset_contract) \
+             VALUES ($1, $2, $3, $3, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000c0de1')",
+        )
+        .bind(salt)
+        .bind(position)
+        .bind(cents_per_line)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// `GET /credits/authorize/{salt}` answers what the signer's credit debits, as credits-server answers it: the
+/// charged total, how many lines settle under it (a single-line credit is one) and its state. Another wallet's
+/// salt is the same 404 as an unknown one; a salt that is not a bytes32 is a 400; the canonical
+/// `/shop-api/v1/credit-authorizations/{salt}` answers the same.
+#[tokio::test]
+async fn the_charge_lookup_answers_what_the_signers_credit_debits() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state.clone()));
+    let buyer = scratch_wallet();
+    let other = scratch_wallet();
+    let group = format!("0x{}", super::handlers::random_32_hex());
+    let single = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &group, &buyer.address, 2500, "authorized", 2, 1250).await;
+    authorization_fixture(&pool, &single, &buyer.address, 700, "consumed", 0, 0).await;
+
+    let upper = format!("0x{}", group[2..].to_ascii_uppercase());
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{upper}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": group, "usdCents": 2500, "lines": 2, "status": "pending" }),
+        "either case, answered lowercase"
+    );
+    let (status, v) = call(
+        &canonical,
+        &buyer,
+        "get",
+        &format!("/shop-api/v1/credit-authorizations/{single}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": single, "usdCents": 700, "lines": 1, "status": "settled" })
+    );
+    // A buyer's cancel keeps a signed credit spendable until it expires: it still debits.
+    let cancelled = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &cancelled, &buyer.address, 500, "retired", 0, 0).await;
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{cancelled}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": cancelled, "usdCents": 500, "lines": 1, "status": "pending" })
+    );
+
+    let (status, v) = call(
+        &app,
+        &other,
+        "get",
+        &format!("/credits/credits/authorize/{group}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another wallet's credit: {v}"
+    );
+    let unknown = format!("0x{}", super::handlers::random_32_hex());
+    let (status, _) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{unknown}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        "/credits/credits/authorize/0x1234",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+
+    let (status, headers, _) = send(
+        &app,
+        "GET",
+        &format!("/credits/credits/authorize/{group}"),
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsigned: the ADR-44 refusal"
+    );
+    assert!(headers.get(axum::http::header::RETRY_AFTER).is_none());
+}
+
+/// A wallet asks the charge of its credits at most `LOOKUPS_PER_MINUTE` times a minute, as credits-server's lookup
+/// limiter allows: past it, credits-server's 429 with `Retry-After` and the seconds in the body. Another wallet
+/// keeps its own budget.
+#[tokio::test]
+async fn the_charge_lookup_is_limited_per_wallet() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let buyer = scratch_wallet();
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let path = format!("/credits/credits/authorize/{salt}");
+    let limit = super::handlers::charge::LOOKUPS_PER_MINUTE;
+    let mut answered = 0;
+    let (headers, body) = loop {
+        let (status, headers, body) = send(
+            &app,
+            "GET",
+            &path,
+            signed_headers(&buyer, "get", &path).await,
+            None,
+        )
+        .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            break (headers, body);
+        }
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        answered += 1;
+        assert!(answered <= 2 * limit, "the wallet's budget trips");
+    };
+    assert!(answered >= limit, "{answered}");
+    assert_eq!(headers[axum::http::header::RETRY_AFTER], "1");
+    assert_eq!(
+        body,
+        json!({ "error": "Too many requests. Slow down and try again shortly.", "retryAfterSeconds": 1 })
+    );
+    let other = scratch_wallet();
+    let (status, _) = call(&app, &other, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "another wallet's own budget");
+}
+
 /// The cancel landing sends the buyer back to the surface that opened the
 /// checkout, with `order=<id>&canceled=1` (the query the apps read), as
 /// credits-server does: a builder order to the builder's cancel page, any
@@ -10894,4 +11095,534 @@ async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
         landing("ord_unknown".into()).await,
         "https://shop/credits?order=ord_unknown&canceled=1"
     );
+}
+
+/// A paid pack is reported once, after the webhook's commit, with what the
+/// buyer paid and got (`stripe_credit_granted`, credits-server's payload): a
+/// mismatched charge, a redelivery and the purchase's other settled event
+/// report nothing.
+#[tokio::test]
+async fn a_granted_pack_is_reported_once() {
+    let Some(pool) = pool().await else { return };
+    let mut captured = super::events::capture::events();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            revenue_events: Some(captured.events.clone()),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let pack = PackRow {
+        sku: "events-pack".into(),
+        title: "Events".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let (order_id, session, payment_intent) = (unique("ord"), unique("cs"), unique("pi"));
+    state
+        .credits
+        .insert_pending_order(
+            &order_id,
+            &wallet.address,
+            &pack.order(3).unwrap(),
+            &session,
+        )
+        .await
+        .unwrap();
+    let session_event = |id: &str, amount: i64| {
+        json!({ "id": id, "type": "checkout.session.completed", "data": { "object": {
+            "id": session, "payment_status": "paid", "amount_total": amount, "currency": "usd",
+            "payment_intent": payment_intent, "metadata": { "orderId": order_id } } } })
+        .to_string()
+    };
+    let quiet = std::time::Duration::from_millis(400);
+
+    deliver(&app, &session_event(&unique("evt"), 500)).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "a mismatched charge grants and reports nothing"
+    );
+
+    let paid = session_event(&unique("evt"), 1500);
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "processed");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the grant is reported");
+    assert_eq!(posted["event"], "stripe_credit_granted");
+    let mut body = posted["body"].clone();
+    body.as_object_mut().unwrap().remove("env");
+    assert_eq!(
+        body,
+        json!({ "orderId": order_id, "userAddress": wallet.address, "amount": 150, "chargedCents": 1500,
+                "packId": "events-pack", "quantity": 3, "usdTopUpId": null })
+    );
+
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "already processed");
+    let intent =
+        json!({ "id": unique("evt"), "type": "payment_intent.succeeded", "data": { "object": {
+        "id": payment_intent, "amount": 1500, "currency": "usd" } } })
+        .to_string();
+    deliver(&app, &intent).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "the purchase is reported once"
+    );
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// A credit's first settlement is reported once, after its commit
+/// (`usd_purchase_settled`, credits-server's payload): the charge, the MANA
+/// that moved, the transaction and whether the backstop recovered a
+/// released credit. A later use of the same credit reports nothing.
+#[tokio::test]
+async fn a_settled_purchase_is_reported_once() {
+    let Some(db) = OwnDatabase::create("settled_once").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet();
+    seed_paid_credits(&pool, &buyer.address, "100").await;
+    let contract = scratch_wallet().address;
+    let (live, released) = (
+        format!("0x{}", super::handlers::random_32_hex()),
+        format!("0x{}", super::handlers::random_32_hex()),
+    );
+    authorization_fixture(&pool, &live, &buyer.address, 700, "authorized", 0, 0).await;
+    authorization_fixture(&pool, &released, &buyer.address, 200, "released", 0, 0).await;
+    let tx_hash = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, salt, wei) in [
+        (1_i64, &live, "1000000000000000000"),
+        (2, &released, "2000000000000000000"),
+        (3, &live, "5"),
+    ] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) \
+             VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&contract)
+        .bind(tx_hash(block as u8))
+        .bind(&buyer.address)
+        .bind(salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let diffs = super::settlement::settle(&credits, 137, &contract, -1, 10)
+        .await
+        .unwrap();
+    assert_eq!(diffs.iter().filter(|d| d.consumed).count(), 3, "{diffs:?}");
+
+    let mut reported = Vec::new();
+    while let Some(posted) = captured.next(std::time::Duration::from_secs(5)).await {
+        assert_eq!(posted["event"], "usd_purchase_settled");
+        let mut body = posted["body"].clone();
+        body.as_object_mut().unwrap().remove("env");
+        reported.push(body);
+        if reported.len() == 2 {
+            break;
+        }
+    }
+    reported.sort_by_key(|b| b["usdCents"].as_i64());
+    assert_eq!(
+        reported,
+        [
+            json!({ "salt": released, "userAddress": buyer.address, "usdCents": 200,
+                    "manaSettledWei": "2000000000000000000", "tradeId": null, "txHash": tx_hash(2), "recovered": true }),
+            json!({ "salt": live, "userAddress": buyer.address, "usdCents": 700,
+                    "manaSettledWei": "1000000000000000000", "tradeId": null, "txHash": tx_hash(1), "recovered": false }),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "a remainder is not a new purchase"
+    );
+    db.drop().await;
+}
+
+/// A real grouped reservation (its first line's trade copied onto the
+/// credit) settles as one event per line, as credits-server reported one per
+/// intent: each line's cents, its own trade and its share of the MANA.
+#[tokio::test]
+async fn a_grouped_purchase_is_reported_per_line() {
+    let Some(db) = OwnDatabase::create("grouped_settled").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let line = |cents: i64, trade: &str, item: &str| super::authorize::GroupLine {
+        quoted_cents: cents,
+        charged_cents: cents,
+        sale_kind: "primary_mint",
+        asset_kind: "wearable",
+        asset_chain_id: 137,
+        asset_contract: "0x00000000000000000000000000000000000c0de1".into(),
+        asset_item_id: Some(item.into()),
+        asset_token_id: None,
+        trade_id: Some(trade.into()),
+        contract_address: None,
+        item_id: None,
+        registered_name: None,
+    };
+    let lines = [line(300, "trade-a", "1"), line(200, "trade-b", "2")];
+    let reserved = credits
+        .reserve_credit_group(
+            &super::authorize::NewGroup {
+                id: &salt,
+                address: &buyer,
+                chain_id: 137,
+                contract: &manager,
+                credit_hash: &salt,
+                quoted_cents: 500,
+                charged_cents: 500,
+                amount_wei: "1",
+                oracle_rate: "1",
+                oracle_decimals: 8,
+                source: None,
+                expires_at: future(),
+                lines: &lines,
+            },
+            &unique("authz-group"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(reserved.is_ok(), "{reserved:?}");
+    let parent: Option<String> =
+        sqlx::query_scalar("SELECT trade_id FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some("trade-a"),
+        "the reservation copies the first line's trade"
+    );
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 1001)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "ee".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::settlement::settle(&credits, 137, &manager, -1, 10)
+        .await
+        .unwrap();
+
+    let mut reported = Vec::new();
+    while reported.len() < 2 {
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("one event per line");
+        reported.push((
+            posted["body"]["usdCents"].as_i64().unwrap(),
+            posted["body"]["tradeId"].as_str().unwrap().to_string(),
+            posted["body"]["manaSettledWei"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            posted["body"]["salt"].as_str().unwrap().to_string(),
+        ));
+    }
+    reported.sort();
+    assert_eq!(
+        reported,
+        [
+            (200, "trade-b".to_string(), "400".to_string(), salt.clone()),
+            (300, "trade-a".to_string(), "601".to_string(), salt.clone()),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None
+    );
+    db.drop().await;
+}
+
+/// Waits until `waiting` sessions of the current database wait on a lock.
+async fn until_lock_waiters(pool: &PgPool, waiting: i64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let now: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if now >= waiting {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{waiting} sessions wait for the lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Two passes settling different logs of one credit at once (the operator's
+/// full fold and the index's), in both orders: each waits for the credit's
+/// lock in turn (Postgres grants a row lock in the order it was asked for),
+/// and reads what the one before it committed. Block 1 first: block 1 is the
+/// purchase and block 2, counting it, a remainder. Block 2 first: block 2 is
+/// deferred behind block 1, which is the purchase; a pass over both then
+/// settles block 2 as a remainder. One purchase debit and one event, with
+/// block 1's transaction, either way.
+#[tokio::test]
+async fn overlapping_folds_settle_one_purchase_per_credit() {
+    let Some(db) = OwnDatabase::create("settle_overlap").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let tx = |block: i64| format!("0x{}", format!("{block:02x}").repeat(32));
+    for (round, first) in [(0_i64, 1_i64), (1, 2)] {
+        let buyer = scratch_wallet().address;
+        seed_paid_credits(&pool, &buyer, "100").await;
+        let manager = scratch_wallet().address;
+        let salt = format!("0x{}", super::handlers::random_32_hex());
+        authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+        for block in [1_i64, 2] {
+            sqlx::query(
+                "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                     credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, 5)",
+            )
+            .bind(10 * round + block)
+            .bind(&manager)
+            .bind(tx(10 * round + block))
+            .bind(&buyer)
+            .bind(&salt)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // The window of one block of this round.
+        let pass = |block: i64| {
+            let credits = credits.clone();
+            let manager = manager.clone();
+            let at = 10 * round + block;
+            tokio::spawn(async move {
+                super::settlement::settle(&credits, 137, &manager, at - 1, at).await
+            })
+        };
+        let mut holder = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM credits.authorizations WHERE id = $1 FOR UPDATE")
+            .bind(&salt)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let earlier = pass(first);
+        until_lock_waiters(&pool, 1).await;
+        let later = pass(3 - first);
+        until_lock_waiters(&pool, 2).await;
+        holder.commit().await.unwrap();
+        earlier.await.unwrap().unwrap();
+        later.await.unwrap().unwrap();
+        super::settlement::settle(&credits, 137, &manager, 10 * round, 10 * round + 2)
+            .await
+            .unwrap();
+
+        let settled: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT block_number - $2, kind FROM credits.usage_settlements WHERE authorization_id = $1 ORDER BY block_number",
+        )
+        .bind(&salt)
+        .bind(10 * round)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            settled,
+            [(1, "purchase".to_string()), (2, "remainder".to_string())],
+            "block {first} first: the first use is the purchase"
+        );
+        assert_eq!(
+            available(&pool, &buyer).await,
+            "30",
+            "one purchase debit of 70 credits"
+        );
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("the purchase");
+        assert_eq!(posted["body"]["salt"], salt.as_str());
+        assert_eq!(
+            posted["body"]["txHash"],
+            tx(10 * round + 1),
+            "the first use's transaction"
+        );
+        assert_eq!(
+            captured.next(std::time::Duration::from_millis(300)).await,
+            None,
+            "reported once"
+        );
+    }
+    db.drop().await;
+}
+
+/// A credit's purchase is its first use, whichever pass reaches a later one
+/// first: a pass over the later log alone leaves it for later, and the pass
+/// over both settles the first as the purchase (its transaction and MANA in
+/// the event) and the second as a remainder priced at the credit's rate.
+#[tokio::test]
+async fn a_later_use_never_settles_as_the_purchase() {
+    let Some(db) = OwnDatabase::create("settle_order").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    // 0.30 USD per MANA.
+    sqlx::query("UPDATE credits.authorizations SET oracle_rate = 300000000000000000, oracle_decimals = 18 WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let tx = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, wei) in [(1_i64, "1000000000000000000"), (2, "3000000000000000000")] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&manager)
+        .bind(tx(block as u8))
+        .bind(&buyer)
+        .bind(&salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let later = super::settlement::settle(&credits, 137, &manager, 1, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        later
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed))
+            .collect::<Vec<_>>(),
+        [("deferred", false)],
+        "the later log waits for the first"
+    );
+    assert_eq!(available(&pool, &buyer).await, "100", "nothing debited yet");
+
+    super::settlement::settle(&credits, 137, &manager, -1, 2)
+        .await
+        .unwrap();
+    let settled: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT block_number, kind, debited_credits::text FROM credits.usage_settlements \
+         WHERE authorization_id = $1 ORDER BY block_number",
+    )
+    .bind(&salt)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        settled,
+        [
+            (1, "purchase".to_string(), "70".to_string()),
+            (2, "remainder".to_string(), "9".to_string())
+        ],
+        "the purchase's 700 cents, then 3 MANA at 0.30 USD"
+    );
+    assert_eq!(available(&pool, &buyer).await, "21");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the purchase");
+    assert_eq!(posted["body"]["txHash"], tx(1));
+    assert_eq!(posted["body"]["manaSettledWei"], "1000000000000000000");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "the remainder is not a purchase"
+    );
+    db.drop().await;
+}
+
+/// A purchase whose debit the ledger already holds (one recorded, and
+/// reported, before this node kept settlement rows) settles without debiting
+/// or reporting it again.
+#[tokio::test]
+async fn a_purchase_the_ledger_already_holds_is_not_reported_again() {
+    let Some(db) = OwnDatabase::create("settle_replayed").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    // Debited under the settlement's own key before the credit's settlement row.
+    let key = format!("credit-used:{salt}");
+    credits.spend(&buyer, "70", &key, Some(&key)).await.unwrap();
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 5)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "01".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let diffs = super::settlement::settle(&credits, 137, &manager, -1, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        diffs
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed, d.replayed))
+            .collect::<Vec<_>>(),
+        [("purchase", true, true)]
+    );
+    assert_eq!(available(&pool, &buyer).await, "30", "debited once");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "already reported with the purchase"
+    );
+    db.drop().await;
 }

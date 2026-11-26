@@ -32,6 +32,7 @@ pub const PREFIX: &str = "/shop-api";
 /// web `PackOut` shape), `GET /credits/wallet/{address}/balance` and
 /// `POST /v1/payments/verify`.
 pub const ALIASES: &[&str] = &[
+    "GET /shop-api/v1/rates/mana-usd /marketplace-api/v1/rates/mana-usd",
     "POST /shop-api/v1/users /credits/users",
     "DELETE /shop-api/v1/users/{address} /credits/users/{address}",
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
@@ -50,6 +51,7 @@ pub const ALIASES: &[&str] = &[
     "POST /shop-api/v1/credit-authorizations/batch /credits/credits/authorize/batch",
     "POST /shop-api/v1/credit-authorizations/cancel /credits/credits/authorize/cancel",
     "POST /shop-api/v1/credit-authorizations/submitted /credits/credits/authorize/submitted",
+    "GET /shop-api/v1/credit-authorizations/{salt} /credits/credits/authorize/{salt}",
     "GET /shop-api/v1/names/credit-route /credits/credits-name-route",
     "GET /shop-api/v1/credit-usage-index/status /credits/usage-index/status",
     "POST /shop-api/v1/credit-topups/mana /credits/topup/mana",
@@ -81,11 +83,16 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/admin/purchases /credits/admin/purchases",
     "GET /shop-api/admin/checkouts /credits/admin/checkouts",
     "GET /shop-api/admin/credits/ledger /credits/admin/ledger",
+    "GET /shop-api/admin/credits /credits/credits",
+    "GET /shop-api/admin/credit-reasons /credits/credit-reasons",
+    "GET /shop-api/admin/ledger-stats /credits/admin/ledger-stats",
+    "GET /shop-api/admin/purchase-audit /credits/admin/purchase-audit",
     "POST /shop-api/admin/checkouts/{id}/refund /credits/admin/checkouts/{id}/refund",
     "POST /shop-api/admin/checkouts/{id}/force-fulfill /credits/admin/checkouts/{id}/force-fulfill",
     "POST /shop-api/admin/grants/{escrow_ref}/reclaim /credits/admin/grants/{escrow_ref}/reclaim",
     "POST /shop-api/admin/grants/{escrow_ref}/release /credits/admin/grants/{escrow_ref}/release",
     "GET /shop-api/admin/credits/reconcile /credits/admin/reconcile",
+    "POST /shop-api/admin/credits/test-purchase-email /credits/admin/test-purchase-email",
     "POST /shop-api/admin/broker/approve-mana /v1/admin/collections/approve-mana /transactions-api/v1/admin/collections/approve-mana",
     "POST /shop-api/admin/names/approve-mana /v1/admin/names/approve-mana /transactions-api/v1/admin/names/approve-mana",
     "GET /shop-api/admin/moderation/flags /marketplace-api/v1/admin/moderation/flags",

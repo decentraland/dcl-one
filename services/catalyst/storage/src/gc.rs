@@ -1161,7 +1161,7 @@ mod tests {
         .unwrap();
         let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
         assert_eq!(
-            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+            referenced_rows_among_on(&mut pool.acquire().await.unwrap(), &keys)
                 .await
                 .unwrap(),
             ["imported", "current", "world-thumbnail"]
