@@ -382,14 +382,16 @@ pub enum SignatureRefusal {
 }
 
 /// The first of `payloads` that verifies settles it; only an invalid
-/// signature tries the next. A payload the chain's last link doesn't sign
-/// can't verify, so it is refused without walking the chain.
+/// signature tries the next. A malformed chain settles it first. A payload
+/// the chain's last link doesn't sign can't verify, so it is refused
+/// without walking the chain.
 async fn first_verifying(
     chain: &AuthChain,
     payloads: &[String],
     now_secs: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<(), SignatureRefusal> {
+    crate::verify::check_structure(chain, None).map_err(SignatureRefusal::Settled)?;
     let signed = chain
         .last()
         .filter(|link| {
@@ -855,6 +857,41 @@ mod tests {
             Err(SignatureRefusal::Invalid(_))
         ));
         assert_eq!(contract.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_chain_is_refused_as_malformed_whatever_its_last_link_signs() {
+        let chain = vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: wallet().address(),
+                signature: Some(String::new()),
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                payload: "mid-chain entity".to_string(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                payload: "post:/elsewhere:1000:{}".to_string(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+        ];
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        let refusal = verify_signature(&chain, &request, 1, LegacyPayload::Accepted, None).await;
+        assert!(
+            matches!(
+                refusal,
+                Err(SignatureRefusal::Settled(AuthError::MalformedChain(_)))
+            ),
+            "{refusal:?}"
+        );
     }
 
     #[tokio::test]
