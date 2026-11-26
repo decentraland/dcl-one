@@ -82,13 +82,14 @@ pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
 
 /// The most ticks a second of a scene at `partition`: its distance band's rate, or
 /// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
-/// camera.
+/// camera from the second band on. In the nearest band the player can back into the scene's
+/// colliders and hears its audio, so there it keeps its band's rate.
 pub(crate) fn scene_tick_rate(partition: &PartitionData) -> f32 {
-    let rate = SCENE_TICK_RATE_BANDS
+    let band = SCENE_TICK_RATE_BANDS
         .iter()
-        .find(|(distance, _)| partition.sqr_distance < distance * distance)
-        .map_or(FAR_SCENE_TICK_RATE, |(_, rate)| *rate);
-    if partition.is_behind {
+        .position(|(distance, _)| partition.sqr_distance < distance * distance);
+    let rate = band.map_or(FAR_SCENE_TICK_RATE, |band| SCENE_TICK_RATE_BANDS[band].1);
+    if partition.is_behind && band != Some(0) {
         rate.min(BEHIND_SCENE_TICK_RATE)
     } else {
         rate

@@ -20,8 +20,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   under 64 m, 10; under 80 m, 5 (`SCENE_TICK_RATE_BANDS`); from 80 m on, once every two seconds
   (`FAR_SCENE_TICK_RATE`). Distance is the partition's, from the player to the nearest point of
   the scene's nearest parcel.
-- **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`), while the camera is
-  near level (`behind_cap_applies`). The behind test compares parcels with the flat forward
+- **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`), from 16 m on and
+  while the camera is near level (`behind_cap_applies`). In the nearest band a scene keeps its
+  rate behind the camera: the player can back into its colliders, such as doors and moving
+  platforms, and hears its spatial audio, which would otherwise move in steps of up to a second. The behind test compares parcels with the flat forward
   direction, so looking steeply up or down it can call a scene behind while its content is on
   screen.
 - **The farthest band keeps a slow tick, and unread global updates make a scene due.** The
@@ -69,7 +71,7 @@ and main-thread time each frame there is spare time, whether or not the player c
 
 - Scenes from 80 m on change at most every two seconds; their SDK systems and tweens driven
   from script step in large intervals until the player comes nearer.
-- A scene behind the camera delivers up to a second of changes in one reply. Whether that
+- A scene 16 m or more behind the camera delivers up to a second of changes in one reply. Whether that
   hitches when the camera turns is open until main-thread and scene-thread time are measured at
   a dense spot with and without the cap.
 - On native, a spawn whose replay holds 250 or more updates makes every capped scene due in

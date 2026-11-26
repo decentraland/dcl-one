@@ -762,6 +762,7 @@ pub(crate) fn initialize_scene(
             } => (global_updates.take().unwrap(), scene_origin, crdt_context),
             _ => panic!("bad state"),
         };
+        context.crdt_context = Some(crdt_context);
 
         let crdt_component_interfaces = CrdtComponentInterfaces(HashMap::from_iter(
             crdt_component_interfaces

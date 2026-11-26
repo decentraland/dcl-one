@@ -173,7 +173,7 @@ every frame.
 
 | Distance from the player to the scene's nearest parcel | Ticks a second, in front | Behind the camera |
 |---|---|---|
-| under 16 m | 40 | 1 |
+| under 16 m | 40 | 40 |
 | 16 to 32 m | 30 | 1 |
 | 32 to 48 m | 15 | 1 |
 | 48 to 64 m | 10 | 1 |
@@ -187,7 +187,8 @@ most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene
 `GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
 (`GlobalCrdtState::sent`, which includes the updates a spawning scene's receiver replays to the
 whole context where the backend replays them, `REPLAYS_GLOBAL_UPDATES`, against the count it
-recorded then) is due whatever its band. The behind cap applies only while the camera is near
+recorded then) is due whatever its band. The behind cap applies from 16 m on, since nearer the
+player can back into a scene's colliders and hears its audio, and only while the camera is near
 level (`behind_cap_applies`), because the behind test ignores pitch. A
 scene keeps the full rate while it is one of the player's scenes, at the player's position while
 they are out of world, a portable or global scene, a named priority scene, the system scene, a

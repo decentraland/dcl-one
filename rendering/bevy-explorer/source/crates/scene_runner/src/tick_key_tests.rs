@@ -61,8 +61,14 @@ fn the_farthest_band_keeps_a_slow_tick() {
 
 #[test]
 fn a_behind_scene_ticks_at_most_once_a_second() {
-    assert_eq!(scene_tick_rate(&at(0.0, true)), BEHIND_SCENE_TICK_RATE);
+    assert_eq!(scene_tick_rate(&at(16.0, true)), BEHIND_SCENE_TICK_RATE);
     assert_eq!(scene_tick_rate(&at(70.0, true)), BEHIND_SCENE_TICK_RATE);
+}
+
+#[test]
+fn a_behind_scene_in_the_nearest_band_keeps_its_rate() {
+    assert_eq!(scene_tick_rate(&at(0.0, true)), 40.0);
+    assert_eq!(scene_tick_rate(&at(15.9, true)), 40.0);
 }
 
 #[test]

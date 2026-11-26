@@ -641,7 +641,6 @@ fn update_scene_priority(
     });
     let behind_capped =
         camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
-    let global_updates_sent = global_updates_sent(&crdt_contexts);
     let imposter_hash = match &imposter_scene.0 {
         Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
         _ => None,
@@ -736,7 +735,8 @@ fn update_scene_priority(
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
                     // its scene host drops the oldest global updates past its capacity, so a
                     // scene that has many unread is due whatever its band
-                    let unread = global_updates_sent.saturating_sub(context.global_updates_read);
+                    let unread = global_updates_sent(&crdt_contexts, context)
+                        .saturating_sub(context.global_updates_read);
                     if unread < GLOBAL_UPDATE_BACKLOG_DUE {
                         skipped_rate_capped += 1;
                         return None;
@@ -791,10 +791,17 @@ fn player_scenes(
     scenes
 }
 
-/// The global updates delivered to each scene host, replays included, summed over the crdt
-/// contexts (the client has one). The scene reads what its host holds at its next tick.
-fn global_updates_sent(crdt_contexts: &Query<&GlobalCrdtState>) -> u64 {
-    crdt_contexts.iter().map(GlobalCrdtState::sent).sum()
+/// The global updates delivered to the scene's host, replays included: the count of its crdt
+/// context, 0 before it spawns or once the context is gone. The scene reads what its host holds
+/// at its next tick.
+fn global_updates_sent(
+    crdt_contexts: &Query<&GlobalCrdtState>,
+    context: &RendererSceneContext,
+) -> u64 {
+    context
+        .crdt_context
+        .and_then(|crdt_context| crdt_contexts.get(crdt_context).ok())
+        .map_or(0, GlobalCrdtState::sent)
 }
 
 /// The queue key of a scene due this frame: its distance over the time since it was last
@@ -1497,6 +1504,17 @@ mod player_scenes_tests {
             crdt.update_time(TimeOfDay::default());
         }
         let crdt = world.spawn(crdt).id();
+        // another context's updates go to other hosts: they make no scene of this one due
+        let mut other = GlobalCrdtState::new(None);
+        let (_, _other_host) = other.subscribe(Vec3::ZERO);
+        for _ in 0..GLOBAL_UPDATE_BACKLOG_DUE {
+            other.update_time(TimeOfDay::default());
+        }
+        world.spawn(other);
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .crdt_context = Some(crdt);
         scene_loop_resources(&mut world);
         world
             .resource_mut::<Time>()
@@ -2144,7 +2162,7 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
-        context.global_updates_read = global_updates_sent(&crdt_contexts);
+        context.global_updates_read = global_updates_sent(&crdt_contexts, &context);
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }
