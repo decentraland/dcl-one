@@ -16,7 +16,7 @@ own textures, and the pictures are re-encoded (JPEG) or resized. They are otherw
 | `halloween_backdrop.jpg`, `game_world_backdrop.jpg`, `ground.jpg` | the lobby's backgrounds and ground (`DCL/Lobby/Textures`) |
 | `blob_shadow.png` | the radial glow (`Textures/Common/RadialGlow.png`), baked to one grey channel |
 | `sky/horizon_noise.png` | the stylized skybox's horizon noise (`DCL/StylizedSkybox/Textures/Noise4.png`), halved to 1024 a side, the size Unity imports it at, and stored as its one grey channel |
-| `sky/clouds_overhead.png`, `sky/clouds_low.png`, `sky/clouds_cumulus.png` | the stylized skybox's cloud strips (`DCL/StylizedSkybox/Textures/Clouds/SkyboxCloudsOverhead_V2.png`, `SkyboxCloudsLow_V2.png`, `SkyboxCloudsCumulus_V2.png`), reduced from 4096 by 512 to 1024 by 128 (bicubic, each channel on its own, wrapping around the seam) |
+| `sky/clouds_overhead_{left,right}.png`, `sky/clouds_low_{left,right}.png`, `sky/clouds_cumulus_{left,right}.png` | the stylized skybox's cloud strips (`DCL/StylizedSkybox/Textures/Clouds/SkyboxCloudsOverhead_V2.png`, `SkyboxCloudsLow_V2.png`, `SkyboxCloudsCumulus_V2.png`), halved from 4096 by 512 to 2048 by 256 (bicubic, each channel on its own, wrapping around the seam) and cut into a left and a right half of 1024 by 256 |
 
 These files in `src/assets/sounds/ui/` are unchanged copies of sounds in unity-explorer, under the
 same licence. Copyright Decentraland.
