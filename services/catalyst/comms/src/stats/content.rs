@@ -193,7 +193,8 @@ pub fn project_hot_scenes<'a>(
             base_coords: coords(base)?,
             users_total_count: raw_parcels
                 .iter()
-                .map(|p| counts.get(p.as_str().unwrap()).copied().unwrap_or(0))
+                .filter_map(OrderedJson::as_str)
+                .map(|p| counts.get(p).copied().unwrap_or(0))
                 .sum(),
             parcels: parsed,
             thumbnail: thumbnail(scene, url)?,

@@ -263,6 +263,7 @@ pub trait SocialDirectory: Send + Sync {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use crate::access::AccessGrant;

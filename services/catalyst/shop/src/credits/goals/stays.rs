@@ -206,7 +206,7 @@ async fn confirm(
         goal: GOAL,
     };
     let eligible = wallet_refusal(conn, &visit.address).await?.is_none()
-        && now < season.grant_expires_at()
+        && now < season.grant_expires_at()?
         && policy(state, conn, &visit.address).await?.is_none();
     let progress = assignment.progress(conn).await?;
     let Some(progress) = progress.filter(|p| eligible && p.completed_steps < p.total_steps) else {

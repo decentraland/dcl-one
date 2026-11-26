@@ -41,10 +41,11 @@ struct Season {
     grace_days: i32,
 }
 impl Season {
-    fn grant_expires_at(&self) -> NaiveDateTime {
-        (self.end_date + TimeDelta::days(i64::from(self.grace_days)))
-            .with_nanosecond(0)
-            .unwrap()
+    fn grant_expires_at(&self) -> Result<NaiveDateTime, ApiError> {
+        TimeDelta::try_days(i64::from(self.grace_days))
+            .and_then(|grace| self.end_date.checked_add_signed(grace))
+            .and_then(|end| end.with_nanosecond(0))
+            .ok_or_else(|| ApiError::Internal("invalid goal expiry".into()))
     }
 
     fn week(&self, now: NaiveDateTime) -> (i32, NaiveDateTime, NaiveDateTime) {
@@ -517,7 +518,7 @@ async fn grant(
         .ok_or_else(|| ApiError::service_unavailable("invalid Credits chain"))?;
     // Progress snapshots the assignment so edits to its week range or reward
     // cannot strand an in-flight goal or change its promised payout.
-    let expires = season.grant_expires_at();
+    let expires = season.grant_expires_at()?;
     let expires_seconds = u64::try_from(expires.and_utc().timestamp())
         .map_err(|_| ApiError::Internal("invalid goal expiry".into()))?;
     if expires <= now {

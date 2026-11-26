@@ -626,16 +626,18 @@ fn options(shared: &Shared, link: &Arc<Link>) -> async_nats::ConnectOptions {
 }
 
 async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
+    // connect() spawns this only for an enabled bus.
+    let Some(url) = shared.url.clone() else {
+        tracing::error!("NATS link supervisor started without a URL");
+        return;
+    };
     let mut delay = RECONNECT_DELAY;
     let mut retained = None;
     loop {
         let link = Arc::new(Link::default());
         *shared.link.lock() = Some(link.clone());
         let lifetime = LinkLifetime(shared.clone(), link.clone());
-        match options(&shared, &link)
-            .connect(shared.url.as_ref().unwrap())
-            .await
-        {
+        match options(&shared, &link).connect(&url).await {
             Ok(client) => {
                 let _ = link.client.set(client);
                 tracing::info!("NATS link socket connected; awaiting broker round trip");
@@ -777,7 +779,10 @@ async fn run(
     rx: &mut mpsc::Receiver<Outbound>,
     retained: &mut Option<Retained>,
 ) {
-    let client = link.client.get().unwrap();
+    let Some(client) = link.client.get() else {
+        tracing::error!("NATS link ran without a connected client");
+        return;
+    };
     let Ok(Ok(mut fence)) = timeout(BROKER_DEADLINE, Fence::new(client)).await else {
         return;
     };
@@ -792,8 +797,7 @@ async fn run(
         if link.broken.load(Ordering::SeqCst) {
             return;
         }
-        if retained.is_some() {
-            let pending = retained.as_ref().unwrap();
+        if let Some(pending) = retained.as_ref() {
             if !pending.pending() {
                 *retained = None;
                 continue;
@@ -809,11 +813,10 @@ async fn run(
             if link.broken.load(Ordering::SeqCst) {
                 return;
             }
-            if !retained.as_ref().unwrap().pending() {
+            let Some(publish) = retained.take_if(|publish| publish.pending()) else {
                 *retained = None;
                 continue;
-            }
-            let publish = retained.take().unwrap();
+            };
             let revision = link.revision.load(Ordering::SeqCst);
             submit_retained(
                 publish,
