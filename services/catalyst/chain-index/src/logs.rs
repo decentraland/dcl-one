@@ -389,6 +389,24 @@ pub(crate) async fn block_times(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn block_times_refuses_a_negative_log_block() {
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, "http://127.0.0.1:1");
+        let log = RpcLog {
+            address: String::new(),
+            topics: vec![],
+            data: String::new(),
+            block_number: "0x-5".into(),
+            log_index: "0x0".into(),
+            block_timestamp: None,
+            block_hash: None,
+            transaction_hash: None,
+        };
+        let err = block_times(&rpc, &[log]).await.unwrap_err();
+        assert!(err.to_string().contains("negative log block -5"), "{err}");
+    }
+
     #[test]
     fn a_window_needs_one_request_per_address_chunk_per_group() {
         let g = |n: usize| LogGroup {

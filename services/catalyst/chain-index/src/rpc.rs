@@ -290,28 +290,8 @@ impl<'a> Rpc<'a> {
                     let Some(block) = item.get("result").filter(|r| !r.is_null()) else {
                         continue;
                     };
-                    let number = block
-                        .get("number")
-                        .and_then(Value::as_str)
-                        .and_then(hex_to_i64)
-                        .and_then(|n| u64::try_from(n).ok());
-                    let hash = block
-                        .get("hash")
-                        .and_then(Value::as_str)
-                        .map(str::to_ascii_lowercase);
-                    let timestamp = block
-                        .get("timestamp")
-                        .and_then(Value::as_str)
-                        .and_then(hex_to_i64);
-                    if let (Some(number), Some(hash), Some(timestamp)) = (number, hash, timestamp) {
-                        out.insert(
-                            number,
-                            BlockHeader {
-                                number,
-                                hash,
-                                timestamp,
-                            },
-                        );
+                    if let Some(header) = batch_header(block) {
+                        out.insert(header.number, header);
                     }
                 }
             }
@@ -392,9 +372,38 @@ impl<'a> Rpc<'a> {
     }
 }
 
+/// One batched `eth_getBlockByNumber` result; `None` drops it (a negative
+/// number included), and the single-block fallback refetches it.
+fn batch_header(block: &Value) -> Option<BlockHeader> {
+    let field = |k: &str| block.get(k).and_then(Value::as_str);
+    Some(BlockHeader {
+        number: field("number")
+            .and_then(hex_to_i64)
+            .and_then(|n| u64::try_from(n).ok())?,
+        hash: field("hash")?.to_ascii_lowercase(),
+        timestamp: field("timestamp").and_then(hex_to_i64)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batched_header_with_a_negative_number_is_dropped() {
+        let header = |number: &str| {
+            batch_header(&json!({ "number": number, "hash": "0xAB", "timestamp": "0x10" }))
+        };
+        assert_eq!(header("0x-5"), None);
+        assert_eq!(
+            header("0x5"),
+            Some(BlockHeader {
+                number: 5,
+                hash: "0xab".into(),
+                timestamp: 16,
+            })
+        );
+    }
 
     #[test]
     fn reads_the_upper_bound_the_rpc_suggests() {
