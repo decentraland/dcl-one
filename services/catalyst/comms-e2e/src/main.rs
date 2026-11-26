@@ -125,6 +125,10 @@ enum Command {
     },
 }
 
+#[allow(
+    clippy::print_stderr,
+    reason = "the e2e binary reports on the terminal"
+)]
 fn main() -> ExitCode {
     match run(Arguments::parse()) {
         Ok(code) => code,
@@ -135,6 +139,11 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the e2e binary reports on the terminal"
+)]
 fn run(arguments: Arguments) -> Result<ExitCode> {
     match arguments.command {
         Command::List { tag } => {

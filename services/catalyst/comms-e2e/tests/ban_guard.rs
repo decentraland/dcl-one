@@ -1,5 +1,6 @@
 //! The ban of `ban-eviction` is lifted on every way out of the scenario, against a stand-in for
 //! the gatekeeper that records the requests it gets.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -92,7 +93,7 @@ async fn a_scenario_body_that_fails_early_still_lifts_the_ban() {
     let body = async {
         let _guard = BanGuard::place(&ctx, &gatekeeper, WALLET, "a test").await?;
         bail!("the first check failed");
-        #[allow(unreachable_code)]
+        #[allow(unreachable_code, reason = "names the block's result type")]
         anyhow::Ok(())
     };
     let error: anyhow::Error = body.await.unwrap_err();

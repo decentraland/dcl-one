@@ -7,6 +7,7 @@ use dcl_scene_build::{Options, build, install_sdk};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+#[allow(clippy::print_stdout, reason = "the binary writes to the terminal")]
 fn main() -> ExitCode {
     let mut root = None;
     let mut opts = Options {
@@ -40,6 +41,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::print_stderr, reason = "the binary writes to the terminal")]
 fn usage(why: &str) -> ExitCode {
     eprintln!("{why}\nusage: scene-build <root> [--production] [--ignore-composite]");
     ExitCode::from(2)

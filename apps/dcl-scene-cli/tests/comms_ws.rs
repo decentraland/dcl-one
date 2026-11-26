@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 mod common {
     pub mod wait;
     pub mod wallet;
