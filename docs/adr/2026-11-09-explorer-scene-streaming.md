@@ -209,8 +209,11 @@ the same kind.
   client logs each trip and recovery once, and `/scene_lod_state` shows the missing count, the
   failures in a row and the seconds to the next probe (`far.missing`, `far.failures`,
   `far.paused_s`). A far LOD whose download failed with an error or a timeout shows its
-  imposters until its scene leaves the band (the far ring or the tile edge) and comes back; it is
-  not retried in place.
+  imposters until its scene leaves the band (the far ring or the tile edge) and comes back, or
+  until far LODs resume after a pause. Then every far LOD whose mesh did not load, except a scene
+  the server has none for, waits to start again where it is (`FarLodStatus::recoveries`): the
+  far LODs that started before the breaker tripped all fail during an outage, which after a
+  teleport can be most of those in view, not five.
 - **Range in parcel rings.** It draws where the near LOD's keep band ends: its scene's nearest
   parcel past the near keep ring (4 by default, about 64 m) and within the far ring ("Far LOD
   Ring", default 20, about 320 m), the scene not wholly behind the camera. Nearer, it draws only

@@ -797,6 +797,14 @@ impl IpfsIo {
             .may_request(web_time::Instant::now())
     }
 
+    /// Whether the server answered this session that it has no far LOD for `scene`.
+    pub fn far_lod_missing(&self, scene: &str) -> bool {
+        self.bevy_variants
+            .far_lods
+            .lock_ignore_poison()
+            .is_missing(&scene.to_lowercase())
+    }
+
     /// Whether `remote` is a far LOD url this client named ([`IpfsIo::bevy_far_lod`]).
     pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
         self.bevy_variants
