@@ -56,8 +56,8 @@
 //! requires. It is the one native dependency of this module (a prebuilt
 //! `librusty_v8.a`). The Linux nix shell holds it as
 //! `CATALYST_RUSTY_V8_ARCHIVE`, and catalyst's entry points (Makefile,
-//! `tooling/dev-test.sh`, `tooling/dev.py`, `tooling/ci-local.py`) pass it as
-//! `RUSTY_V8_ARCHIVE`. rusty_v8 reruns its build script when that variable
+//! `tooling/dev-test.sh`, `tooling/dev.py`, `tooling/ci-local.py`,
+//! `tooling/dev-regressions.py`) pass it as `RUSTY_V8_ARCHIVE`. rusty_v8 reruns its build script when that variable
 //! changes, so a plain `cargo` or rust-analyzer build in `services/catalyst`
 //! relinks V8 (and downloads it) after an entry-point build, and back. Not set
 //! in `.cargo/config.toml`: the store path exists only in the Linux nix shell.
