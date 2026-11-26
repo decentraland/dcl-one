@@ -92,6 +92,8 @@ use catalyst_storage::Storage;
 mod catalogue;
 #[path = "mirror_config.rs"]
 mod config;
+#[path = "mirror_place_ids.rs"]
+pub(super) mod place_ids;
 #[path = "mirror_reconcile.rs"]
 mod reconcile;
 #[path = "mirror_upstream.rs"]
@@ -696,6 +698,27 @@ mod tests {
     fn parse(source: &str, own: &[&str]) -> Result<MirrorSettings> {
         let own: Vec<String> = own.iter().map(|s| s.to_string()).collect();
         MirrorSettings::parse(source, &own, Duration::from_secs(60), 4, 8, 0, "")
+    }
+
+    #[test]
+    fn places_are_paired_only_with_the_production_worlds_source() {
+        let production = parse("https://WORLDS-CONTENT-SERVER.decentraland.org:443/", &[]).unwrap();
+        assert_eq!(
+            production.source,
+            "https://worlds-content-server.decentraland.org"
+        );
+        assert_eq!(
+            production.places_source.as_deref(),
+            Some("https://places.decentraland.org")
+        );
+        for unrelated in [
+            "https://worlds-content-server.decentraland.zone",
+            "https://worlds-content-server.decentraland.org:8443",
+            "https://worlds-content-server.decentraland.org/other",
+            "https://another-mirror.example.org",
+        ] {
+            assert!(parse(unrelated, &[]).unwrap().places_source.is_none());
+        }
     }
 
     #[test]

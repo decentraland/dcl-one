@@ -176,7 +176,10 @@ const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world,
      LEFT JOIN worlds.worlds w ON w.name = p.world_name \
      LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text \
      LEFT JOIN explore.place_moderation wm ON wm.place_id = p.world_name \
-     WHERE p.identity = $1";
+     LEFT JOIN explore.world_scene_public_id canonical ON canonical.public_id = $1 AND canonical.identity = p.identity \
+         AND canonical.world_name = p.world_name AND canonical.entity_id = s.entity_id \
+         AND canonical.source = s.mirror_source AND canonical.source = w.mirror_source \
+     WHERE p.identity = $1 OR canonical.public_id = $1";
 
 /// The catalogue row `target` names, from either leg; `None` when none matches.
 /// A place target is any row by id, world-backed ones included
@@ -198,8 +201,9 @@ pub(super) async fn resolve(
                     return Ok(scene);
                 }
             }
+            let scene = super::scene_identity::is_scene_id_sql("id");
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 LIMIT 1"
+                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 AND NOT {scene} LIMIT 1"
             )))
             .bind(id)
             .fetch_optional(pool)

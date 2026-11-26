@@ -84,6 +84,7 @@ struct Upstream {
     /// the default (unrestricted, no grants), as upstream does for any name.
     permissions: HashMap<String, Value>,
     permissions_calls: usize,
+    places: Option<(Arc<Gate>, Value)>,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -246,6 +247,20 @@ async fn fake_other(State((s, _)): State<(Shared, String)>) -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
+async fn fake_places(State((s, _)): State<(Shared, String)>) -> axum::response::Response {
+    let answer = s.lock().places.clone();
+    let Some((gate, row)) = answer else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    gate.entered.notify_one();
+    gate.release.notified().await;
+    if row.is_null() {
+        Json(json!({"data": [], "total": 0})).into_response()
+    } else {
+        Json(json!({"data": [row], "total": 1})).into_response()
+    }
+}
+
 async fn start_fake() -> (Shared, String) {
     let state: Shared = Arc::new(Mutex::new(Upstream::default()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -257,6 +272,7 @@ async fn start_fake() -> (Shared, String) {
         .route("/world/{name}/settings", get(fake_settings))
         .route("/subgraph", post(fake_subgraph))
         .route("/contents/{hash}", get(fake_contents))
+        .route("/api/places", get(fake_places))
         .fallback(fake_other)
         .with_state((state.clone(), base.clone()));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -559,6 +575,126 @@ async fn a_world_not_held_is_mirrored_on_first_read_then_served_locally() {
     }
     assert_eq!(about_calls(&fake, "nope.dcl.eth"), 1);
 
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test]
+async fn cached_world_retries_a_lagging_places_match_without_waiting() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let world = "slowplaces.dcl.eth";
+    let (cid, _) = add_world(&fake, world).await;
+    let first = Arc::new(Gate::default());
+    fake.lock().places = Some((first.clone(), Value::Null));
+    let settings = MirrorSettings::for_tests(&base)
+        .read_through_only()
+        .with_places_source(&base);
+    let downloads = Downloads::new(
+        MAX_CONCURRENT_DOWNLOADS,
+        Arc::new(ByteBudget::new(1024 * 1024 * 1024)),
+    );
+    let node = Node::with_settings(
+        scratch.pool.clone(),
+        settings,
+        &base,
+        "slow-places",
+        Some(downloads),
+    )
+    .await;
+    let about_path = format!("/world/{world}/about");
+    let get = |path: String| {
+        let node = &node;
+        async move { tokio::time::timeout(Duration::from_secs(5), node.get(&path)).await }
+    };
+    let (status, about) = get(about_path.clone())
+        .await
+        .expect("the content response cannot wait for Places");
+    assert_eq!(status, StatusCode::OK, "{about}");
+    assert!(
+        about["configurations"]["scenesUrn"]
+            .to_string()
+            .contains(&cid)
+    );
+    tokio::time::timeout(Duration::from_secs(5), first.entered.notified())
+        .await
+        .expect("the admitted Places lookup starts in the background");
+    first.release.notify_one();
+    let fills = node.state.places_read_through_fills();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        fills.until(|counts| counts.finished == 1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        catalyst::explore::places::scene_identity::pending_public_ids(
+            &scratch.pool,
+            &base,
+            world,
+            &[cid.as_str()],
+        )
+        .await
+        .unwrap(),
+        [cid.clone()]
+    );
+
+    let second = Arc::new(Gate::default());
+    let id = uuid::Uuid::new_v4();
+    fake.lock().places = Some((
+        second.clone(),
+        json!({
+            "id": id,
+            "world": true,
+            "world_name": world,
+            "deployment_id": cid,
+            "disabled": false,
+        }),
+    ));
+    assert_eq!(get(about_path.clone()).await.unwrap().0, StatusCode::OK);
+    assert_eq!(
+        fills.counts().started,
+        1,
+        "reads during cooldown do not repeat the lookup"
+    );
+
+    tokio::time::pause();
+    tokio::time::advance(catalyst::content::read_through::NEGATIVE_TTL).await;
+    tokio::time::resume();
+    let scenes_path = format!("/world/{world}/scenes");
+    assert_eq!(get(scenes_path).await.unwrap().0, StatusCode::OK);
+    tokio::time::timeout(Duration::from_secs(5), second.entered.notified())
+        .await
+        .expect("the next cached read retries Places after cooldown");
+    assert_eq!(get(about_path.clone()).await.unwrap().0, StatusCode::OK);
+    assert_eq!(
+        fills.counts().started,
+        2,
+        "concurrent reads coalesce by world"
+    );
+    second.release.notify_one();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        fills.until(|counts| counts.finished == 2),
+    )
+    .await
+    .unwrap();
+    let proof: Option<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT public_id FROM explore.world_scene_public_id WHERE world_name = $1 AND entity_id = $2",
+    )
+    .bind(world)
+    .bind(&cid)
+    .fetch_optional(&scratch.pool)
+    .await
+    .unwrap();
+    assert_eq!(proof, Some(id));
+    assert_eq!(
+        about_calls(&fake, world),
+        1,
+        "WCS did not refetch the held world"
+    );
     drop(node);
     scratch.teardown().await;
 }

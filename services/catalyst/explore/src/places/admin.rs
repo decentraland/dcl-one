@@ -417,7 +417,7 @@ pub async fn put_place_rating(
     };
     moderation::apply_with(
         &state.pool,
-        Target::Place(&place.id),
+        Target::Place(place.storage_id()),
         &decision,
         &actor,
         ctx,
@@ -485,7 +485,7 @@ pub async fn put_place_highlight(
     let mut place = fetch_place(&state, &place_id, Some(&actor)).await?;
     decide(
         &state,
-        Target::Place(&place.id),
+        Target::Place(place.storage_id()),
         &Decision::Highlighted(highlighted),
         &actor,
         || ApiError::not_found(format!("Not found place \"{place_id}\"")),
@@ -554,7 +554,7 @@ pub async fn put_place_disable(
     };
     let applied = moderation::apply_with(
         &state.pool,
-        Target::Place(&place.id),
+        Target::Place(place.storage_id()),
         &decision,
         &actor,
         ctx,
@@ -630,7 +630,7 @@ async fn set_featured(
         }
     };
     let row_target = match target {
-        Target::Place(_) => Target::Place(&row.id),
+        Target::Place(_) => Target::Place(row.storage_id()),
         Target::World(_) => Target::World(&row.id),
     };
     let missing = row.id.clone();
@@ -716,13 +716,14 @@ async fn set_ranking(
     }
     if is_admin_token(headers, admin) {
         // A world-scene place has no catalogue row: the overlay is the write.
-        if ranking::set_ranking(&state.pool, &row.id, ranking, actor).await? == 0
+        if ranking::set_ranking(&state.pool, row.storage_id(), ranking, actor).await? == 0
             && !row.scene_place
         {
             return Err(ApiError::service_unavailable(RANKING_NOT_WRITABLE));
         }
     } else {
-        match ranking::set_ranking_from_score(&state.pool, &row.id, ranking, actor).await? {
+        match ranking::set_ranking_from_score(&state.pool, row.storage_id(), ranking, actor).await?
+        {
             ScoreRankingOutcome::RefusedCurated => return Err(ApiError::forbidden(editorial)),
             ScoreRankingOutcome::NotWritable => {
                 return Err(ApiError::service_unavailable(RANKING_NOT_WRITABLE));
@@ -801,7 +802,8 @@ async fn set_exclusion(
     // `rankingExclusion.ts:46-57` through `updatePlace`: silent on a disabled place.
     // The scene check stays last: the call is the write for a world-scene place.
     if !silently_skipped(row, places_route)
-        && ranking::set_exclusion(&state.pool, &row.id, exclude, ADMIN_TOKEN_ACTOR).await? == 0
+        && ranking::set_exclusion(&state.pool, row.storage_id(), exclude, ADMIN_TOKEN_ACTOR).await?
+            == 0
         && !row.scene_place
     {
         return Err(ApiError::service_unavailable(EXCLUSION_NOT_WRITABLE));

@@ -248,6 +248,7 @@ pub struct WorldsState {
     /// `READ_THROUGH_ENABLED` with the mirror on: a world held with no scene is mirrored on
     /// first read ([`WorldsState::fill_world`]).
     read_through: OnceLock<WorldReadThrough>,
+    places_read_through: crate::content::read_through::Fills,
     /// The permission core `/about` resolves a world's live holder through.
     policy: OnceLock<Arc<policy::Policy>>,
     /// The DAO name deny list and `BLOCKED_WORLD_NAMES` `/about` and `/index` apply; `serve`
@@ -287,6 +288,10 @@ impl WorldsState {
             http,
             preview_memo: preview_wearables::memo(),
             read_through: OnceLock::new(),
+            places_read_through: crate::content::read_through::Fills::new(
+                crate::content::read_through::MAX_CONCURRENT_FILLS,
+                std::time::Duration::ZERO,
+            ),
             policy: OnceLock::new(),
             names,
         }
@@ -344,6 +349,36 @@ impl WorldsState {
                 }
             })
             .await
+    }
+
+    /// Admit a coalesced Places retry for a world this reader found held.
+    /// The fill is spawned during the first poll. The reader never waits for it.
+    fn retry_held_places(&self, name: &str) {
+        use futures::FutureExt as _;
+
+        let Some(settings) = self.mirror.as_ref() else {
+            return;
+        };
+        if settings.scheduled || !settings.has_places_source() || self.read_through.get().is_none()
+        {
+            return;
+        }
+        let Ok(world) = crate::comms::world_identity::WorldName::parse(name) else {
+            return;
+        };
+        let key = world.key().to_owned();
+        let (http, pool, settings) = (self.http.clone(), self.pool.clone(), settings.clone());
+        let _ = self
+            .places_read_through
+            .fill(vec![key], move |_| async move {
+                mirror::place_ids::refresh_held(&http, &pool, &settings, &world).await;
+            })
+            .now_or_never();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn places_read_through_fills(&self) -> &crate::content::read_through::Fills {
+        &self.places_read_through
     }
 
     pub fn with_presence(mut self, presence: Arc<comms::presence::Presence>) -> Self {

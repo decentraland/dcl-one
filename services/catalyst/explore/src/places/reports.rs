@@ -211,18 +211,24 @@ pub async fn post_report(
         .and_then(Value::as_str)
         .or_else(|| payload.get("place_id").and_then(Value::as_str))
         .map(str::to_string);
-    if let Some(id) = entity_id.as_deref()
-        && state.places.find_by_id_for(id, None).await?.is_none()
-    {
-        return Err(ApiError::not_found(format!("Not found place \"{id}\"")));
-    }
+    let place = if let Some(id) = entity_id.as_deref() {
+        Some(
+            state
+                .places
+                .find_by_id_for(id, None)
+                .await?
+                .ok_or_else(|| ApiError::not_found(format!("Not found place \"{id}\"")))?,
+        )
+    } else {
+        None
+    };
     admit_report(&reporter, source.as_deref())?;
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
     let signed_url = upload_url(&state.settings.public_url, &headers, uri.path(), &filename);
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at, upload_token_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-        .bind(entity_id.as_deref())
+        .bind(place.as_ref().and_then(|place| place.local_scene_id.as_deref()).or(entity_id.as_deref()))
         .bind(&reporter)
         .bind(&signed_url)
         .bind(&filename)
@@ -248,16 +254,12 @@ async fn fed_report(
     let (signed, signer) =
         fed::preflight::<fed::PlaceReport>(state, headers, body, fed::Scope::Places).await?;
     let place_id = signed.message.place_id.clone();
-    if state
-        .places
-        .find_by_id_for(&place_id, None)
-        .await?
-        .is_none()
-    {
+    let Some(place) = state.places.find_by_id_for(&place_id, None).await? else {
         return Err(ApiError::not_found(format!(
             "Not found place \"{place_id}\""
         )));
-    }
+    };
+    let stored_place_id = place.local_scene_id.as_deref().unwrap_or(&place_id);
     admit_report(&signer, source)?;
     let hash = signed.signature_hash();
     let reason = serde_json::to_value(signed.message.reason).unwrap_or_else(|_| json!("other"));
@@ -270,7 +272,7 @@ async fn fed_report(
             scope: fed::Scope::Places,
             signature_hash: &hash,
             signer: &signer,
-            subject_id: Some(&place_id),
+            subject_id: Some(stored_place_id),
             action_type: "report",
             payload: &logged,
             signed_at: signed.signed_at,
@@ -278,7 +280,7 @@ async fn fed_report(
     )
     .await?;
     sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at) VALUES ($1, $2, '', $3, $4, $5) ON CONFLICT (filename) DO NOTHING")
-        .bind(&place_id)
+        .bind(stored_place_id)
         .bind(&signer)
         .bind(&hash)
         .bind(json!({ "entity_id": place_id, "reason": reason, "signed": true, "signature_hash": hash }))

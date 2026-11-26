@@ -308,7 +308,7 @@ fn surface_pairs(pairs: &[(String, String)], surface: Surface) -> Vec<(String, S
         .collect()
 }
 
-fn multi(pairs: &[(String, String)], key: &str) -> Result<Vec<String>, ApiError> {
+pub(crate) fn multi(pairs: &[(String, String)], key: &str) -> Result<Vec<String>, ApiError> {
     let values: Vec<String> = pairs
         .iter()
         .filter(|(k, _)| k == key)

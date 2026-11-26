@@ -1,7 +1,6 @@
-//! Discovery of the durable world-scene places used by storage. The current
-//! deployment is joined by its exact world/entity binding, never by a cached
-//! catalogue row or by a second overlap lookup. World aggregate listings and
-//! upstream place IDs remain separate from this scene-level read surface.
+//! Discovery of durable world-scene places. The deployment and any verified
+//! public Places UUID are joined by their exact binding. Interaction lookups
+//! continue to use the local scene identity.
 
 use axum::Json;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -16,12 +15,16 @@ use crate::shared::errors::{ApiDataTotal, ApiError};
 // The same columns consumed by the catalogue's guarded projection and
 // sanitizers. $3 is the configured public content URL, not scene input.
 // Parent visibility always wins over a scene-specific moderation override.
-const PARENT_VISIBILITY: &str = "NOT EXISTS (SELECT 1 FROM explore.place_indexed parent LEFT JOIN explore.place_moderation pm ON pm.place_id = parent.id WHERE parent.world AND lower(parent.world_name) = w.name AND (parent.disabled OR COALESCE(pm.disabled, false) OR NOT COALESCE(NULLIF(parent.raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true)))";
-const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.mirror_state WHERE mirror = 'worlds' AND last_complete_pass_at IS NOT NULL) OR EXISTS (SELECT 1 FROM explore.place_indexed parent WHERE parent.world AND lower(parent.world_name) = w.name))";
+const PARENT_VISIBILITY: &str = "NOT EXISTS (SELECT 1 FROM explore.place_indexed parent LEFT JOIN explore.place_moderation pm ON pm.place_id = parent.id WHERE parent.world AND parent.id = w.name AND lower(parent.world_name) = w.name AND (parent.disabled OR COALESCE(pm.disabled, false) OR NOT COALESCE(NULLIF(parent.raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true)))";
+const PARENT_PRESENT_OR_INCOMPLETE: &str = "(NOT EXISTS (SELECT 1 FROM explore.mirror_state WHERE mirror = 'worlds' AND last_complete_pass_at IS NOT NULL) OR EXISTS (SELECT 1 FROM explore.place_indexed parent WHERE parent.world AND parent.id = w.name AND lower(parent.world_name) = w.name))";
 
 pub(super) fn scene_row(row: sqlx::postgres::PgRow, places: &PlacesComponent) -> Option<PlaceRow> {
     let thumbnail_hash: Option<String> = row.get("world_thumbnail_hash");
+    let public_id: String = row.get("public_scene_id");
     let mut place = row_to_place(row, places.content_origin(), places.asset_base());
+    if place.id != public_id {
+        place.local_scene_id = Some(std::mem::replace(&mut place.id, public_id));
+    }
     if let Some(base) = places.asset_base()
         && let Some(hash) = thumbnail_hash.as_deref()
         && world_thumbnail_key(hash).is_some()
@@ -56,6 +59,18 @@ const VALID_PARCELS: &str = "EXISTS (SELECT 1 FROM unnest(s.parcels) AS parcel(v
     AND pg_input_is_valid(btrim(split_part(value, ',', 1)), 'integer') \
     AND pg_input_is_valid(btrim(split_part(value, ',', 2)), 'integer'))";
 
+/// Restrict the deployment join to claimed storage identities before checking
+/// the current public binding. An expired claim never resolves a replacement.
+pub(super) fn scene_id_predicate(parameter: &str) -> String {
+    let public = super::scene_identity::PUBLIC_WORLD_SCENE_ID;
+    format!(
+        "p.identity = ANY(ARRAY(
+            SELECT unnest({parameter}::uuid[])
+            UNION SELECT identity FROM explore.world_scene_public_id WHERE public_id = ANY({parameter})
+        )) AND (p.identity = ANY({parameter}) OR ({public}) = ANY({parameter}))"
+    )
+}
+
 /// A scene row with the typed columns of the catalogue legs
 /// (`query::typed_columns_sql`), so `place_columns()` reads it as it reads
 /// `explore.place_indexed`.
@@ -70,12 +85,13 @@ impl PlacesComponent {
     fn scene_rows_sql(&self, content_index: usize) -> String {
         let binding = super::scene_identity::BOUND_WORLD_SCENE_FROM;
         let local = super::scene_identity::LOCAL_WORLD_SCENE;
+        let public = super::scene_identity::PUBLIC_WORLD_SCENE_ID;
         let valid_parcels = VALID_PARCELS;
         let parent_visibility = PARENT_VISIBILITY;
         let content_parameter = format!("${content_index}");
         let mut sql = format!(
             r#"
-    SELECT p.identity::text AS id, p.identity AS place_identity,
+    SELECT p.identity::text AS id, ({public})::text AS public_scene_id,
            COALESCE(s.entity #>> '{{metadata,scene,base}}', '') AS base_position,
            COALESCE(NULLIF(btrim(s.entity #>> '{{metadata,display,title}}'), ''), w.title) AS title,
            COALESCE(s.entity #>> '{{metadata,display,description}}', w.description) AS description,
@@ -136,7 +152,7 @@ impl PlacesComponent {
                     .filter_map(|id| uuid::Uuid::parse_str(id).ok())
                     .collect(),
             ));
-            predicates.push(format!("p.identity = ANY(${}::uuid[])", binds.len()));
+            predicates.push(scene_id_predicate(&format!("${}", binds.len())));
         }
         if f.viewer_favorites_only {
             binds.push(Bind::Text(
@@ -154,7 +170,7 @@ impl PlacesComponent {
         let shadowed = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
         super::ListSource {
             prefix: format!(
-                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene FROM explore.place_indexed WHERE NOT {shadowed} UNION ALL SELECT {columns}, true AS canonical_scene FROM ({rows}) scene_rows WHERE true {local}) "
+                "WITH scene_catalogue AS (SELECT {columns}, false AS canonical_scene, NULL::text AS public_scene_id FROM explore.place_indexed WHERE NOT {shadowed} UNION ALL SELECT {columns}, true AS canonical_scene, public_scene_id FROM ({rows}) scene_rows WHERE true {local}) "
             ),
             relation: "scene_catalogue AS place_indexed",
             scene_projection: true,
@@ -168,8 +184,9 @@ impl PlacesComponent {
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
         sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 {} WHERE p.identity = ANY($1))",
-            super::scene_identity::BOUND_WORLD_SCENE_FROM
+            "SELECT EXISTS (SELECT 1 {} WHERE {})",
+            super::scene_identity::BOUND_WORLD_SCENE_FROM,
+            scene_id_predicate("$1")
         )))
         .bind(ids)
         .fetch_one(&self.pool)
@@ -191,7 +208,8 @@ impl PlacesComponent {
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
         let known: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)",
+            "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)
+             UNION SELECT public_id FROM explore.world_scene_public_id WHERE public_id = ANY($1)",
         )
         .bind(&parsed)
         .fetch_all(&self.pool)
@@ -213,6 +231,39 @@ impl PlacesComponent {
         Ok((catalogue, scenes.into_iter().collect()))
     }
 
+    /// Resolve status IDs in one snapshot, including tombstones for local IDs.
+    /// An expired public claim still owns its UUID but cannot name a new scene.
+    pub(super) async fn scene_status_identities(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<(String, String)>, ApiError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<_> = ids
+            .iter()
+            .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+            .collect();
+        let binding = super::scene_identity::BOUND_WORLD_SCENE_FROM;
+        let public = super::scene_identity::PUBLIC_WORLD_SCENE_ID;
+        let candidate = scene_id_predicate("$1");
+        let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "WITH bound AS (
+                 SELECT p.identity, ({public}) AS public_id {binding}
+                 WHERE {candidate}
+             )
+             SELECT identity::text, public_id::text FROM bound
+             UNION SELECT p.identity::text, p.identity::text
+             FROM explore.world_scene_place p WHERE p.identity = ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM bound WHERE bound.identity = p.identity)
+             ORDER BY 1"
+        )))
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub(super) async fn world_scene_places_by_ids_scoped(
         &self,
         ids: &[String],
@@ -223,9 +274,13 @@ impl PlacesComponent {
             .iter()
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
-        let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
+        let scene_rows = typed_scene_rows(&format!(
+            "{} AND {}",
+            self.scene_rows_sql(3),
+            scene_id_predicate("$1")
+        ));
         let sql = format!(
-            "SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = ANY($1){}",
+            "SELECT {}, public_scene_id, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE true{}",
             place_columns(),
             viewer_columns(2),
             if local_only { " AND local" } else { "" }
@@ -243,7 +298,7 @@ impl PlacesComponent {
 
     /// Outer `None` means this is not a canonical scene ID. `Some(None)`
     /// means the ID exists but has no currently discoverable deployment.
-    pub(super) async fn find_world_scene_place(
+    pub(crate) async fn find_world_scene_place(
         &self,
         id: &str,
         viewer: Option<&str>,
@@ -253,11 +308,16 @@ impl PlacesComponent {
         };
         // Both identity ownership and visibility are observed in one snapshot,
         // so a concurrent retirement cannot cause a fallback to upstream.
-        let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
+        let scene_rows = typed_scene_rows(&format!(
+            "{} AND {}",
+            self.scene_rows_sql(3),
+            scene_id_predicate("ARRAY[$1::uuid]")
+        ));
         let sql = format!(
-            "WITH scene AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE place_identity = $1) \
-             SELECT scene.*, p.identity::text AS canonical_id FROM explore.world_scene_place p \
-             LEFT JOIN scene ON scene.id = p.identity::text WHERE p.identity = $1",
+            "WITH scene AS (SELECT {}, public_scene_id, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed) \
+             SELECT scene.* FROM (SELECT identity FROM explore.world_scene_place WHERE identity = $1 \
+                 UNION SELECT identity FROM explore.world_scene_public_id WHERE public_id = $1) owned \
+             LEFT JOIN scene ON scene.id = owned.identity::text",
             place_columns(),
             viewer_columns(2)
         );
@@ -303,7 +363,7 @@ impl PlacesComponent {
         self.require_discoverable_world(&world).await?;
         let scene_rows = typed_scene_rows(&self.scene_rows_sql(3));
         let sql = format!(
-            "WITH visible AS (SELECT {}, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
+            "WITH visible AS (SELECT {}, public_scene_id, world_thumbnail_hash{} FROM ({scene_rows}) place_indexed WHERE world_name = $1{}), \
              page AS (SELECT * FROM visible ORDER BY deployed_at DESC NULLS LAST, id LIMIT $4 OFFSET $5) \
              SELECT page.*, totals.total FROM (SELECT count(*)::bigint AS total FROM visible) totals \
              LEFT JOIN page ON true ORDER BY deployed_at DESC NULLS LAST, id",
@@ -457,6 +517,169 @@ mod tests {
             .await
             .unwrap();
         (admin, pool, database)
+    }
+
+    #[tokio::test]
+    async fn mirrored_scene_uses_the_places_uuid_for_both_aliases() {
+        let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let (admin, pool, database) = fixture(&url).await;
+        let world = "canonical.dcl.eth";
+        let source = "https://worlds.example";
+        let owner = "0x0000000000000000000000000000000000000001";
+        let other_owner = "0x0000000000000000000000000000000000000002";
+        sqlx::query("INSERT INTO worlds.worlds (name, mirror_source, owner) VALUES ($1, $2, $3)")
+            .bind(world)
+            .bind(source)
+            .bind(owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let local = deploy(&pool, world, "mirrored", &["0,0"]).await;
+        let public = uuid::Uuid::new_v4().to_string();
+        sqlx::query("UPDATE worlds.world_scenes SET mirror_source = $1 WHERE world_name = $2")
+            .bind(source)
+            .bind(world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.world_scene_public_id (public_id, identity, world_name, entity_id, source) VALUES ($1::uuid, $2::uuid, $3, 'mirrored', $4)")
+            .bind(&public).bind(&local).bind(world).bind(source).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place (id, base_position, title, highlighted, raw) VALUES ($1, '0,0', 'duplicate', true, $2)")
+            .bind(&public).bind(json!({"world": true, "world_name": world})).execute(&pool).await.unwrap();
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings {
+                operator_writes_enabled: true,
+                user_writes_enabled: true,
+                places_admin_token: Some("admin".into()),
+                ..crate::Settings::for_tests()
+            },
+            None,
+        ));
+        let app = crate::router(state.clone());
+
+        for id in [&local, &public] {
+            let (status, detail) = get(&app, &format!("/api/places/{id}")).await;
+            assert_eq!(status, StatusCode::OK, "{detail}");
+            assert_eq!(detail["data"]["id"], public);
+            assert_eq!(detail["data"]["deployment_id"], "mirrored");
+            let (status, destination) = get(&app, &format!("/v1/destinations/{id}")).await;
+            assert_eq!(status, StatusCode::OK, "{destination}");
+            assert_eq!(destination["data"]["id"], public);
+        }
+        let (_, world_scenes) = get(&app, &format!("/api/worlds/{world}/scenes")).await;
+        assert_eq!(world_scenes["total"], 1);
+        assert_eq!(world_scenes["data"][0]["id"], public);
+        let ids = [local.clone(), public.clone()];
+        assert!(state.places.owns_places(&ids, owner).await.unwrap());
+        assert!(!state.places.owns_places(&ids, other_owner).await.unwrap());
+        let batch = state.places.find_by_ids_for(&ids, None).await.unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].id, public);
+        assert_eq!(state.places.count_by_ids(&ids).await.unwrap(), 1);
+        assert_eq!(
+            state.places.find_by_ids_status(&ids).await.unwrap()[0].id,
+            public
+        );
+        for path in [
+            "/api/places",
+            "/api/places/status",
+            "/api/destinations",
+            "/v1/destinations",
+        ] {
+            let (status, batch) = signed(&app, "POST", path, Some(json!(ids))).await;
+            assert!(status.is_success(), "{status} {batch}");
+            assert_eq!(batch["total"], 1);
+            assert_eq!(batch["data"][0]["id"], public);
+        }
+        let (_, selected) = get(&app, &format!("/api/destinations?ids={public},{local}")).await;
+        assert_eq!(selected["total"], 1);
+        assert_eq!(selected["data"][0]["id"], public);
+
+        let event = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO explore.event (id, name, start_at, finish_at, next_start_at, next_finish_at, duration_ms, approved, raw) VALUES ($1, 'Scene event', now(), now() + interval '1 hour', now(), now() + interval '1 hour', 3600000, true, jsonb_build_object('place_id', $2::text))")
+            .bind(&event).bind(&local).execute(&pool).await.unwrap();
+        for id in [&local, &public] {
+            let (status, events) = get(&app, &format!("/v1/destinations/{id}/events")).await;
+            assert_eq!(status, StatusCode::OK, "{events}");
+            assert_eq!(events["data"][0]["id"], event);
+        }
+
+        let (status, favorite) = signed(
+            &app,
+            "PATCH",
+            &format!("/api/places/{public}/favorites"),
+            Some(json!({"favorites": true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{favorite}");
+        assert_eq!(favorite["data"]["favorites"], 1);
+        let favorite_ids: Vec<String> =
+            sqlx::query_scalar("SELECT entity_id FROM explore.user_favorites")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(favorite_ids, vec![local.clone()]);
+        let (_, favorites) = signed(&app, "GET", "/api/places?only_favorites=true", None).await;
+        assert_eq!(favorites["data"][0]["id"], public);
+        let (_, ordinary_list) = get(&app, "/api/places?only_highlighted=true").await;
+        assert_eq!(ordinary_list["data"], json!([]));
+
+        for disabled in [true, false] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::patch(format!("/api/places/{public}/disable"))
+                        .header("authorization", "Bearer admin")
+                        .header("content-type", "application/json")
+                        .body(Body::from(json!({"disabled": disabled}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let overlay: Vec<(String, bool)> =
+                sqlx::query_as("SELECT place_id, disabled FROM explore.place_moderation")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(overlay, vec![(local.clone(), disabled)]);
+            let (_, status_batch) =
+                signed(&app, "POST", "/api/places/status", Some(json!(ids))).await;
+            assert_eq!(status_batch["total"], 1);
+            assert_eq!(status_batch["data"][0]["id"], public);
+            assert_eq!(status_batch["data"][0]["disabled"], disabled);
+        }
+
+        let replacement = deploy(&pool, world, "replacement", &["0,0"]).await;
+        assert_eq!(replacement, local);
+        assert_eq!(
+            get(&app, &format!("/api/places/{public}")).await.0,
+            StatusCode::NOT_FOUND
+        );
+        assert!(
+            state
+                .places
+                .find_by_ids_for(std::slice::from_ref(&public), None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!state.places.owns_places(&[public], owner).await.unwrap());
+        let (_, detail) = get(&app, &format!("/api/places/{local}")).await;
+        assert_eq!(detail["data"]["id"], local);
+        assert_eq!(detail["data"]["deployment_id"], "replacement");
+
+        drop(app);
+        drop(state);
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{database}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
     }
 
     #[tokio::test]
@@ -1130,7 +1353,13 @@ mod tests {
                 if let Some(viewer) = &filters.viewer {
                     query = query.bind(viewer);
                 }
-                let row = query.fetch_one(&pool).await.unwrap();
+                let (limit, offset) = super::super::page_bounds(&filters);
+                let row = query
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
                 let plan: Value = sqlx::Row::get(&row, 0);
                 fn deployment_work(node: &Value) -> f64 {
                     let own = if node["Relation Name"] == "world_scenes" {

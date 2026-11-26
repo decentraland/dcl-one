@@ -2857,6 +2857,121 @@ async fn world_galleries_include_public_photos_from_hidden_mirrored_and_local_sc
 }
 
 #[tokio::test]
+async fn galleries_find_both_live_scene_ids_and_keep_exact_retired_links() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    let world = format!("public-gallery-{}.dcl.eth", tag());
+    let local = local_world_gallery_place(&pool, &world, false).await;
+    let public = Uuid::new_v4().to_string();
+    for sql in [
+        "UPDATE worlds.worlds SET mirror_source = 'mirror' WHERE name = $1",
+        "UPDATE worlds.world_scenes SET mirror_source = 'mirror' WHERE world_name = $1",
+    ] {
+        sqlx::query(sql).bind(&world).execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO explore.world_scene_public_id (public_id,identity,source,world_name,entity_id) VALUES ($1::uuid,$2::uuid,'mirror',$3,'gallery-scene')")
+        .bind(&public)
+        .bind(&local)
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let local_photo = image(&owner, &tag(), &tag(), true, &local);
+    let public_photo = image(&owner, &tag(), &tag(), true, &public);
+    let previous_public = Uuid::new_v4().to_string();
+    let previous_photo = image(&owner, &tag(), &tag(), true, &previous_public);
+    sqlx::query("INSERT INTO explore.world_scene_public_id (public_id,identity,source,world_name) VALUES ($1::uuid,$2::uuid,'mirror',$3)")
+        .bind(&previous_public)
+        .bind(&local)
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for photo in [&local_photo, &public_photo, &previous_photo] {
+        s.db().insert_image(photo).await.unwrap();
+    }
+    for key in [&local, &public, &world] {
+        let (status, _, resp) = send(
+            s.app(),
+            "GET",
+            &format!("{PREFIX}/api/places/{key}/images"),
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json_of(&resp)["maxImages"], 2, "{key}");
+    }
+    let batch = json!({ "placesIds": [local, public, world] })
+        .to_string()
+        .into_bytes();
+    let (status, _, resp) = send(
+        s.app(),
+        "POST",
+        &format!("{PREFIX}/api/places/images"),
+        vec![],
+        Some((batch, "application/json")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let response = json_of(&resp);
+    assert_eq!(response["maxImages"], 2);
+    let mut metadata_keys: Vec<_> = response["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|photo| photo["placeId"].as_str().unwrap())
+        .collect();
+    metadata_keys.sort_unstable();
+    let mut expected = [local.as_str(), public.as_str()];
+    expected.sort_unstable();
+    assert_eq!(metadata_keys, expected);
+    let previous_page = s
+        .db()
+        .get_place_images_page(&previous_public, &crate::db::Page::Offset(0), 10)
+        .await
+        .unwrap();
+    assert_eq!(previous_page.total, 1);
+    assert_eq!(previous_page.images[0].id, previous_photo.id);
+
+    // A stale catalogue row cannot keep the reserved UUID visible to the
+    // world selector after retirement.
+    sqlx::query("INSERT INTO explore.place (id,base_position,raw) VALUES ($1,'0,0',$2)")
+        .bind(&public)
+        .bind(json!({"world":true,"world_name":world,"deployment_id":"gallery-scene"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE explore.world_scene_place SET active=false, entity_id=NULL WHERE world_name=$1",
+    )
+    .bind(&world)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let fresh = crate::db::Database::new(pool.clone(), API_URL, 0, 0);
+    assert!(fresh.world_place_ids(&world).await.unwrap().is_empty());
+    for (key, image) in [(&local, &local_photo), (&public, &public_photo)] {
+        let page = fresh
+            .get_place_images_page(key, &crate::db::Page::Offset(0), 10)
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.images[0].id, image.id);
+    }
+    sqlx::query("DELETE FROM explore.world_scene_public_id WHERE world_name=$1")
+        .bind(&world)
+        .execute(&pool)
+        .await
+        .unwrap();
+    delete_local_world_gallery(&pool, &world).await;
+    s.done().await;
+}
+
+#[tokio::test]
 async fn local_world_galleries_exclude_unavailable_scenes() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;

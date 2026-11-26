@@ -267,11 +267,23 @@ pub(super) fn build_where_from(
 ) -> (String, Vec<Bind>) {
     let mut clauses: Vec<String> = vec!["disabled IS FALSE".to_string()];
     clauses.extend(own_rows_sql().map(String::from));
+    if !scene_projection && !f.only_worlds {
+        // A verified Places id belongs to its exact scene even after the
+        // claim expires. The mirrored Places catalogue must not surface it
+        // as a second scene or bring a retired entry back into discovery.
+        clauses.push(
+            "NOT EXISTS (SELECT 1 FROM explore.world_scene_public_id claim WHERE claim.public_id::text = lower(id))".to_string(),
+        );
+    }
     let mut binds: Vec<Bind> = Vec::new();
     let mut idx = start;
 
     if !f.ids.is_empty() {
-        clauses.push(format!("id = ANY(${idx})"));
+        clauses.push(if scene_projection {
+            format!("(id = ANY(${idx}) OR canonical_scene)")
+        } else {
+            format!("id = ANY(${idx})")
+        });
         binds.push(Bind::TextArray(f.ids.clone()));
         idx += 1;
     }

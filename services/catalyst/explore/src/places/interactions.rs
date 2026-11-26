@@ -597,9 +597,11 @@ async fn reread(
     entity: &PlaceRow,
     viewer: &str,
 ) -> Result<PlaceRow, ApiError> {
-    Ok(lookup_entity_for(state, &entity.id, false, Some(viewer))
-        .await?
-        .unwrap_or_else(|| entity.clone()))
+    Ok(
+        lookup_entity_for(state, entity.storage_id(), false, Some(viewer))
+            .await?
+            .unwrap_or_else(|| entity.clone()),
+    )
 }
 
 fn current_like(row: &PlaceRow) -> Option<bool> {
@@ -684,7 +686,14 @@ async fn patch_favorites(
             user_favorite: entity.user_favorite,
         })));
     }
-    set_favorite(&state.pool, &entity.id, &user, wanted, user_activity).await?;
+    set_favorite(
+        &state.pool,
+        entity.storage_id(),
+        &user,
+        wanted,
+        user_activity,
+    )
+    .await?;
     Ok(Json(ApiData::ok(FavoritesResult {
         favorites: if wanted {
             entity.favorites + 1
@@ -736,14 +745,21 @@ async fn patch_likes(
         })));
     }
     match wanted {
-        LikeBody::Null => set_like(&state.pool, &entity.id, &user, None, 0.0).await?,
+        LikeBody::Null => set_like(&state.pool, entity.storage_id(), &user, None, 0.0).await?,
         LikeBody::Undefined | LikeBody::Value(_) => {
             let user_activity = state.voting_power.fetch_score(&user).await;
             let like = match wanted {
                 LikeBody::Value(v) => v,
                 _ => true,
             };
-            set_like(&state.pool, &entity.id, &user, Some(like), user_activity).await?;
+            set_like(
+                &state.pool,
+                entity.storage_id(),
+                &user,
+                Some(like),
+                user_activity,
+            )
+            .await?;
         }
     }
     let row = reread(&state, &entity, &user).await?;
@@ -794,14 +810,21 @@ async fn fed_favorites(
             scope: fed::Scope::Places,
             signature_hash: &hash,
             signer: &signer,
-            subject_id: Some(entity_id),
+            subject_id: Some(place.local_scene_id.as_deref().unwrap_or(entity_id)),
             action_type: if favorite { "favorite" } else { "unfavorite" },
             payload: &payload,
             signed_at: signed.signed_at,
         },
     )
     .await?;
-    set_favorite_in(&mut tx, &place.id, &signer, favorite, user_activity).await?;
+    set_favorite_in(
+        &mut tx,
+        place.storage_id(),
+        &signer,
+        favorite,
+        user_activity,
+    )
+    .await?;
     tx.commit().await?;
     let row = reread(state, &place, &signer).await?;
     Ok(Json(fed::SignedApiData::ok(
@@ -859,14 +882,14 @@ async fn fed_likes(
             scope: fed::Scope::Places,
             signature_hash: &hash,
             signer: &signer,
-            subject_id: Some(entity_id),
+            subject_id: Some(place.local_scene_id.as_deref().unwrap_or(entity_id)),
             action_type,
             payload: &payload,
             signed_at: signed.signed_at,
         },
     )
     .await?;
-    set_like_in(&mut tx, &place.id, &signer, like, user_activity).await?;
+    set_like_in(&mut tx, place.storage_id(), &signer, like, user_activity).await?;
     tx.commit().await?;
     let row = reread(state, &place, &signer).await?;
     Ok(Json(fed::SignedApiData::ok(
@@ -1009,7 +1032,14 @@ async fn destination_favorite(
         return Ok(InteractionSummary::from(&entity));
     }
     let user_activity = state.voting_power.fetch_score(user).await;
-    set_favorite(&state.pool, &entity.id, user, favorite, user_activity).await?;
+    set_favorite(
+        &state.pool,
+        entity.storage_id(),
+        user,
+        favorite,
+        user_activity,
+    )
+    .await?;
     Ok(InteractionSummary::from(
         &reread(state, &entity, user).await?,
     ))
@@ -1030,7 +1060,7 @@ async fn destination_like(
     } else {
         0.0
     };
-    set_like(&state.pool, &entity.id, user, like, user_activity).await?;
+    set_like(&state.pool, entity.storage_id(), user, like, user_activity).await?;
     Ok(InteractionSummary::from(
         &reread(state, &entity, user).await?,
     ))

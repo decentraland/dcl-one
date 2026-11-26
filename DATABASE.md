@@ -119,6 +119,31 @@ from a deployment's content hash. Each world scene has a stable identity
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
 
+`explore.world_scene_public_id` reserves each upstream Places UUID for a single
+internal scene identity. Discovery can expose it only when both mirror source markers,
+the world name, and the active deployment CID match the stored proof. Older
+local links still resolve through the internal UUID, which remains the key for
+storage, grants and interactions. Publication invalidates the proof when the
+identity's deployment changes, including retirement. The reservation remains,
+so a later scene cannot take over a retired UUID. A new deployment that keeps
+the internal identity can reuse its verified UUID or claim an unused one
+with fresh proof. A partial unique index limits each internal identity to one
+current claim.
+
+The read path probes the claim's unique internal UUID. The mirror looks up
+only the current pass's active CIDs and takes the world row lock before
+committing each proof. Claim writes serialize on the requested UUID, reject
+any other active or retired internal identity using that UUID, and check
+existing catalogue keys. Catalogue copies qualify only when both their
+normalized world name and deployment CID match. The catalogue check parses
+UUID spellings and scans the catalogue for collisions during binding only.
+The schema object pass installs the reservation table, index and triggers with no
+backfill. Existing mirrored deployments gain a public UUID after a subsequent
+mirror pass confirms the exact binding. Existing storage keys need no rewrite.
+
+See [public identifiers for mirrored world scenes](docs/adr/2026-11-26-mirrored-world-scene-place-ids.md)
+for how the mirror confirms a match and retries it.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and

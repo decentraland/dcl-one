@@ -175,15 +175,36 @@ impl PlacesComponent {
         .await?)
     }
 
-    /// Authorization for attaching a catalogue place to a community. Genesis ownership
-    /// comes from the fresh LAND authority (or its trusted fallback), never scene metadata.
+    /// Authorization for attaching a place to a community. Genesis ownership
+    /// comes from the fresh LAND authority. A bound scene uses its world's owner.
     pub async fn owns_places(&self, place_ids: &[String], owner: &str) -> Result<bool, ApiError> {
         let keys: Vec<String> = place_ids.iter().map(|id| id.to_lowercase()).collect();
+        let ids: Vec<_> = keys
+            .iter()
+            .map(|key| uuid::Uuid::parse_str(key).ok())
+            .collect();
+        let claimed = scene_identity::is_scene_id_sql("requested.key");
+        let binding = scene_identity::BOUND_WORLD_SCENE_FROM;
+        let public = scene_identity::PUBLIC_WORLD_SCENE_ID;
+        let candidate = world_scenes::scene_id_predicate("$2");
         let rows: Vec<(String, bool, String, Option<String>)> = sqlx::query_as(
-            "SELECT CASE WHEN id = ANY($1) THEN id ELSE lower(world_name) END, \
-             world, base_position, lower(COALESCE(raw->>'owner', creator_address)) FROM explore.place_indexed \
-             WHERE id = ANY($1) OR lower(world_name) = ANY($1)"
-        ).bind(&keys).fetch_all(&self.pool).await?;
+            sqlx::AssertSqlSafe(format!(
+                "WITH requested AS (SELECT key, identity FROM unnest($1::text[], $2::uuid[]) r(key, identity)),
+                 catalogue_keys AS (SELECT ARRAY(SELECT key FROM requested WHERE NOT {claimed}) AS keys),
+                 scenes AS (SELECT p.identity, ({public}) AS public_id, w.owner {binding} WHERE {candidate})
+                 SELECT CASE WHEN id = ANY(keys) THEN id ELSE lower(world_name) END,
+                        world, base_position, lower(COALESCE(raw->>'owner', creator_address))
+                 FROM explore.place_indexed CROSS JOIN catalogue_keys
+                 WHERE id = ANY(keys) OR lower(world_name) = ANY(keys)
+                 UNION ALL
+                 SELECT r.key, true, '', lower(scenes.owner)
+                 FROM requested r JOIN scenes ON r.identity IN (scenes.identity, scenes.public_id)"
+            )),
+        )
+        .bind(&keys)
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
         let mut owned = std::collections::HashSet::new();
         let mut parcels = Vec::new();
         let mut parcel_keys = Vec::new();
@@ -428,7 +449,8 @@ impl PlacesComponent {
         .bind(&catalogue_ids)
         .fetch_one(&self.pool)
         .await?;
-        Ok(catalogue + scene_ids.len() as i64)
+        let scenes = self.scene_status_identities(&scene_ids).await?;
+        Ok(catalogue + scenes.len() as i64)
     }
 
     /// `PlaceModel.findByIds` (`Place/model.ts:556-577`): the status columns,
@@ -467,16 +489,21 @@ impl PlacesComponent {
                 base_position: r.get::<String, _>("base_position"),
             })
             .collect();
+        let scene_identities = self.scene_status_identities(&scene_ids).await?;
+        let storage_ids = scene_identities
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
         let visible: HashMap<String, PlaceRow> = self
             .world_scene_places_by_ids_scoped(&scene_ids, None, false)
             .await?
             .into_iter()
-            .map(|row| (row.id.clone(), row))
+            .map(|row| (row.storage_id().to_string(), row))
             .collect();
         // A missing mirror copy is not a disabled scene. Only suppress live
         // mirrored rows; hidden/retired identities still return minimal status.
         let nonlocal: Vec<uuid::Uuid> = if crate::copies::origin::world_scenes_local_only() {
-            let ids: Vec<uuid::Uuid> = scene_ids
+            let ids: Vec<uuid::Uuid> = storage_ids
                 .iter()
                 .filter_map(|id| uuid::Uuid::parse_str(id).ok())
                 .collect();
@@ -491,15 +518,15 @@ impl PlacesComponent {
         } else {
             Vec::new()
         };
-        for id in scene_ids {
-            if visible.contains_key(&id)
-                && uuid::Uuid::parse_str(&id).is_ok_and(|id| nonlocal.contains(&id))
+        for (storage_id, public_id) in scene_identities {
+            if visible.contains_key(&storage_id)
+                && uuid::Uuid::parse_str(&storage_id).is_ok_and(|id| nonlocal.contains(&id))
             {
                 continue;
             }
-            match visible.get(&id) {
+            match visible.get(&storage_id) {
                 Some(row) => status.push(PlaceStatusRow {
-                    id,
+                    id: row.id.clone(),
                     disabled: false,
                     disabled_reason: None,
                     base_position: row.base_position.clone(),
@@ -507,7 +534,7 @@ impl PlacesComponent {
                     world_name: row.world_name.clone(),
                 }),
                 None => status.push(PlaceStatusRow {
-                    id,
+                    id: public_id,
                     disabled: true,
                     disabled_reason: None,
                     base_position: String::new(),
@@ -765,7 +792,7 @@ fn list_sql_from(
     binds.extend(where_binds);
     let relation = source.relation;
     let projection = if source.scene_projection {
-        "canonical_scene, "
+        "canonical_scene, public_scene_id, "
     } else {
         ""
     };

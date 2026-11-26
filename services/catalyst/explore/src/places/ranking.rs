@@ -357,16 +357,14 @@ pub async fn set_exclusion(
 }
 
 fn place_curation_sql() -> String {
+    let scene = super::scene_identity::is_scene_id_sql("place.id");
     format!(
-        "SELECT id, highlighted, world, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking FROM explore.place WHERE id = ANY($1)"
+        "SELECT id, highlighted, world, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking FROM explore.place WHERE id = ANY($1) AND NOT {scene}"
     )
 }
 
 const LOCALLY_SERVED_WORLD_IDS: &str =
     "SELECT id FROM explore.place_world_local WHERE world IS TRUE AND id = ANY($1)";
-
-const WORLD_SCENE_IDS: &str =
-    "SELECT identity FROM explore.world_scene_place WHERE identity = ANY($1)";
 
 /// The ranked, uncurated world-scene places the places leg clears (a scene
 /// wins over a catalogue row with its id). `$1` is spared; `$2`, when set,
@@ -421,6 +419,7 @@ pub async fn replace_ranking(
     let place_ids: Vec<String> = places.iter().map(|e| e.id.clone()).collect();
     let mut curation = Vec::new();
     let mut world_backed_ids = Vec::new();
+    let mut scene_storage_ids = Vec::new();
     if !place_ids.is_empty() {
         curation = sqlx::query(sqlx::AssertSqlSafe(place_curation_sql()))
             .bind(&place_ids)
@@ -443,17 +442,25 @@ pub async fn replace_ranking(
             .iter()
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
-        let scenes: HashSet<uuid::Uuid> = sqlx::query_scalar(WORLD_SCENE_IDS)
-            .bind(&parsed)
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .collect();
-        let is_scene =
-            |id: &str| uuid::Uuid::parse_str(id).is_ok_and(|identity| scenes.contains(&identity));
-        // A scene wins over a catalogue row with its id, as on read.
-        curation.retain(|row| !is_scene(&row.id));
-        world_backed_ids.extend(place_ids.iter().filter(|id| is_scene(id)).cloned());
+        let binding = super::scene_identity::BOUND_WORLD_SCENE_FROM;
+        let public = super::scene_identity::PUBLIC_WORLD_SCENE_ID;
+        let scenes: HashMap<uuid::Uuid, uuid::Uuid> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT identity, identity FROM explore.world_scene_place WHERE identity = ANY($1)
+             UNION SELECT ({public}), p.identity {binding} WHERE ({public}) = ANY($1)"
+        )))
+        .bind(&parsed)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .collect();
+        for id in &place_ids {
+            if let Ok(uuid) = uuid::Uuid::parse_str(id)
+                && let Some(storage_id) = scenes.get(&uuid)
+            {
+                world_backed_ids.push(id.clone());
+                scene_storage_ids.push(storage_id.to_string());
+            }
+        }
     }
     let place_buckets = classify_places(places, &curation, &world_backed_ids);
 
@@ -523,10 +530,7 @@ pub async fn replace_ranking(
         let spared: Vec<String> = keep
             .iter()
             .cloned()
-            .chain(place_buckets.world_backed.iter().map(|id| {
-                uuid::Uuid::parse_str(id)
-                    .map_or_else(|_| id.clone(), |identity| identity.to_string())
-            }))
+            .chain(scene_storage_ids.iter().cloned())
             .collect();
         let scene_ids: Vec<String> = if world {
             Vec::new()

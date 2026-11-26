@@ -121,3 +121,50 @@ END;
 $$;
 CREATE TRIGGER world_scene_clear_removal_admin_keys AFTER INSERT ON worlds.world_scenes
 FOR EACH ROW EXECUTE FUNCTION explore.clear_world_removal_admin_keys();
+
+-- An upstream UUID is reserved for a single internal identity for its entire
+-- lifetime. Only the exact source/world/deployment proof can expose it. This
+-- table is added by the object pass without guessing claims for existing rows.
+CREATE TABLE explore.world_scene_public_id (
+    public_id uuid PRIMARY KEY,
+    identity uuid NOT NULL REFERENCES explore.world_scene_place (identity),
+    source text NOT NULL CHECK (source <> ''),
+    world_name text NOT NULL CHECK (world_name = lower(world_name) AND world_name <> ''),
+    entity_id text CHECK (entity_id <> '')
+);
+
+CREATE UNIQUE INDEX world_scene_public_id_current_idx
+    ON explore.world_scene_public_id (identity) WHERE entity_id IS NOT NULL;
+
+-- Invalidate the proof if the identity moves, including a move back to a
+-- previously seen CID. Keep the UUID reserved even after retirement.
+CREATE FUNCTION explore.invalidate_world_scene_public_id() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE explore.world_scene_public_id SET entity_id = NULL
+    WHERE identity = OLD.identity AND entity_id IS NOT NULL;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER world_scene_public_id_invalidated AFTER UPDATE OF world_name, entity_id
+ON explore.world_scene_place FOR EACH ROW
+WHEN ((OLD.world_name, OLD.entity_id) IS DISTINCT FROM (NEW.world_name, NEW.entity_id))
+EXECUTE FUNCTION explore.invalidate_world_scene_public_id();
+
+-- Serialize local identity insertion with UUID claims. The matching lock in
+-- bind_public_id also covers old identities, which must always win a collision.
+CREATE FUNCTION explore.guard_world_scene_identity() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('explore.world_scene_uuid/' || NEW.identity::text, 0));
+    IF EXISTS (
+        SELECT 1 FROM explore.world_scene_public_id
+        WHERE public_id = NEW.identity AND identity <> NEW.identity
+    ) THEN
+        RAISE unique_violation USING MESSAGE = 'world scene identity is already reserved as a public UUID';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER world_scene_identity_guarded BEFORE INSERT ON explore.world_scene_place
+FOR EACH ROW EXECUTE FUNCTION explore.guard_world_scene_identity();

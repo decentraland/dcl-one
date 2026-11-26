@@ -1645,6 +1645,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_scene_claim_objects_upgrade_without_rewriting_existing_identities() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("scene_claim_upgrade_{}", uuid::Uuid::new_v4().simple());
+        let local_id = "11111111-1111-4111-8111-111111111111";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema};
+             CREATE TABLE {schema}.world_scene_place
+               (world_name text, identity uuid PRIMARY KEY, entity_id text);
+             INSERT INTO {schema}.world_scene_place VALUES ('test.eth','{local_id}','old');"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut installed = Vec::new();
+        for object in plan(crate::SCHEMA_SQL).unwrap() {
+            let Step::Create { object: kind, .. } = &object.step else {
+                continue;
+            };
+            let selected = match kind {
+                Object::Relation(path) => path == "explore.world_scene_public_id",
+                Object::Index(path) => path == "explore.world_scene_public_id_current_idx",
+                Object::Function { schema, name } => {
+                    schema == "explore"
+                        && matches!(
+                            name.as_str(),
+                            "invalidate_world_scene_public_id" | "guard_world_scene_identity"
+                        )
+                }
+                Object::Trigger { name, table } => {
+                    table == "explore.world_scene_place"
+                        && matches!(
+                            name.as_str(),
+                            "world_scene_public_id_invalidated" | "world_scene_identity_guarded"
+                        )
+                }
+                _ => false,
+            };
+            if selected {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(
+                    object.sql.replace("explore.", &format!("{schema}.")),
+                ))
+                .execute(&pool)
+                .await
+                .unwrap();
+                installed.push(kind.to_string());
+            }
+        }
+        assert_eq!(installed.len(), 6, "{installed:?}");
+        let unchanged: (String, String, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT identity::text, entity_id, (SELECT count(*) FROM {schema}.world_scene_public_id)
+             FROM {schema}.world_scene_place"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unchanged, (local_id.to_string(), "old".to_string(), 0));
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn streaming_binding_objects_preserve_existing_identity_and_transaction_history() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;

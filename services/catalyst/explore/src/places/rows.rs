@@ -80,6 +80,10 @@ pub struct PlaceRow {
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub(crate) scene_place: bool,
+    /// The durable interaction and moderation key when a scene serves a verified public UUID.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub(crate) local_scene_id: Option<String>,
     pub id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -167,6 +171,10 @@ pub struct PlaceRow {
 }
 
 impl PlaceRow {
+    pub(crate) fn storage_id(&self) -> &str {
+        self.local_scene_id.as_deref().unwrap_or(&self.id)
+    }
+
     /// `realms_detail`, when asked for (`Some(realm)`): the realms with users
     /// in the place. Upstream reads them off the hot scenes of every realm;
     /// this node knows one realm, its own, so the list is that realm with
@@ -523,6 +531,7 @@ pub(super) fn row_to_place(
         };
     PlaceRow {
         scene_place: false,
+        local_scene_id: None,
         id: r.get::<String, _>("id"),
         title: strip_all_markup_opt(r.try_get::<Option<String>, _>("title").unwrap_or(None)),
         description: sanitize_place_description(
@@ -612,6 +621,7 @@ pub(super) fn row_to_place(
 pub(crate) fn sample_row() -> PlaceRow {
     PlaceRow {
         scene_place: false,
+        local_scene_id: None,
         id: "uuid-1".to_string(),
         title: Some("t".to_string()),
         description: None,
