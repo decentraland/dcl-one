@@ -1791,6 +1791,37 @@ checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
+## Daily MANA/USD closes
+
+Shop stores one row per UTC day from July 8, 2021 in `shop.mana_usd_daily`.
+The writer uses each UTC day's last Polygon MANA/USD observation, with one
+finalized block hash per pass. Phase selection follows marketplace-server at
+`9c3683cb`, using the latest phase with a first round by that day's close. A phase can
+start producing rounds before the proxy switches to it. Each recorded observation keeps its
+phase-aware round ID and exact decimal rate. The day stores a null rate when
+its last observation is non-positive or the oracle made no observation
+during that UTC day. A round that repeats an older round's answer counts as
+unpriced.
+
+The mainnet sales index process runs one leased writer. Each pass reads at most
+fourteen consecutive days and commits each completed day. A failed read
+resumes at the first unrecorded day. Once caught up, the job adds one row a day.
+
+The rate endpoint scans the date key over at most fifteen years (approximately
+5,500 rows) and returns only priced days, matching the legacy response. Seller
+summaries join the days of their sales by the same key. They sum gross MANA at
+historical rates, round to six decimal places, and count sales with no rate.
+`royaltiesWei` totals settled royalty legs on resales by other sellers. It
+returns null when creator attribution or a required payment split lacks
+proof. Ethereum v1 attribution reads the item and collection fields saved by
+their respective last completed Ethereum mirror passes. The database refreshes
+each small attribution table with the pass marker in one transaction, keeping
+proven values available during a new catalogue sweep. The first completed pass
+after the schema object pass installs these tables seeds each copy. The
+resale count and volume describe sales attributed to the creator, including
+their own. The sales publication and all these inputs are read in the same
+transaction.
+
 ## Shop open-trades reads that name a contract
 
 Workload: the item page's listing read and the checkout's store-mint and
@@ -2050,12 +2081,13 @@ misses events. `user_address` is the photo's owner, lowercase. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
 
-## Seasonal photo rewards workload
+## Seasonal goal rewards workload
 
 `shop::credits::goals` reads Camera photo facts and Social subscription facts
 using the existing database pool. `credits.seasons` and `credits.season_goals`
-hold season windows, MANA limits and the `take-photo` assignment. These tables
-have no active monetary seed. `credits.program_opt_outs` records enrollment
+hold season windows, MANA limits and assignments for `take-photo`, `log-in`,
+`visit-location` and `visit-event-and-stay`. These tables have no active
+monetary seed. `credits.program_opt_outs` records enrollment
 withdrawal separately from the paid wallet's identity.
 
 The worker writes one durable `credits.photo_goal_receipts` row per processed
@@ -2105,6 +2137,41 @@ table records `generated_at` for the minimum solve-time check and keeps a
 two-hour challenge lifetime. Both challenge and failure updates take the
 same wallet lock. The additive `0043_credits_captcha_generated_at` step
 preserves existing challenges and establishes their solve-time baseline.
+
+### Room-driven goals
+
+On an Ops-writing node, the verified LiveKit join and leave facts for an
+enrolled wallet go to `credits.goal_room_events` before webhook
+acknowledgement. The event ID deduplicates redelivery. A leased worker reads
+up to 100 pending facts and up to 100 due timers per pass. An indexed
+30-day retention sweep removes old room facts in bounded batches. Goal
+progress, fact acknowledgement, signed grants and completion notices
+commit together under the same wallet lock used by opt-out and claims.
+
+`credits.goal_login_days` deduplicates login by UTC date, wallet, season and
+week. Enrollment commits the date as pending with the signed enrollment.
+Processing it separately lets flags or signing recover without rejecting
+enrollment. A new login step and its grant and notice clear the pending date
+in one transaction. The room worker retries up to 100 pending dates per
+pass through the partial pending index. Reads include the counted dates
+from the same read-only snapshot as progress and balance. A join in the
+scheduled world completes that week's location goal.
+Room joins pin the approved Explore event occurrence against the canonical
+world or the parcel set of the verified scene deployment. A mirrored event
+must have been observed in a complete scan from the configured source that
+started at or after the join. A missing deployment or an uncovered mirror
+keeps event resolution pending while other goals can advance. A matching
+leave or a fresh, complete LiveKit roster for the exact participant session
+supplies the time within the pinned occurrence and assignment window. The
+worker unions overlapping intervals for each event and completes one step
+per distinct event with five minutes of confirmed time. It awards room goals
+while the corresponding season and week are still claimable.
+`credits.goal_event_visits` holds those intervals and the pending timers
+across restarts. The due index contains only visits awaiting a timer check.
+
+Step `0079_credits_seasonal_visit_goals` widens the existing season-goal
+constraint. The object pass creates the room facts, login days and visit tables.
+`METRICS.md` records the synthetic queue and timer read measurements.
 
 ## Camera reel import workload
 

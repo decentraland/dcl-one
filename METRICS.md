@@ -18,6 +18,12 @@ graph query or a graph response without usable block metadata.
 after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
 responses and accompanies the error log for the configured RPC.
 
+For Ethereum v1 royalty attribution, a local PostgreSQL fixture saved 64
+collections and 1,000 items. The tables and indexes occupied 32 KiB and
+168 KiB. Publishing an unchanged full sweep took 0.56 ms for collections
+and 1.89 ms for items on the measured run. The publication leaves unchanged
+attribution rows in place and replaces the rows a completed sweep changes.
+
 ## Published sales reads
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
@@ -117,6 +123,20 @@ These are single local samples with synthetic distributions and uncontrolled
 cache state. They establish the selected access path and the cost of the
 diagnostic in that fixture, not production latency, throughput, index write
 cost or capacity.
+
+## Seasonal room goal processing
+
+A local PostgreSQL 17 temporary-table fixture held 200,100 room facts (101
+pending) and 20,000 visits (101 with timers). After `ANALYZE`, `EXPLAIN (ANALYZE,
+BUFFERS)` selected the partial pending index to take 100 facts (0.044 ms), the
+session index to find a matching leave (0.025 ms), and the partial due index
+to take 100 timers (0.032 ms). The pending and due indexes were 16 KiB each,
+and the session index was 26 MiB. In a second fixture with 30,000 event and
+30,000 deployment rows, the webhook venue query used the world index
+(0.076 ms) or the deployment and coordinate indexes (0.173 ms). The partial
+enrollment index returned 100 pending dates from 200,100 login rows in
+0.035 ms. These synthetic queries measured local read paths. Production event
+volume and write cost remain unmeasured.
 
 ## Social notification polling and oversized-event expiry
 

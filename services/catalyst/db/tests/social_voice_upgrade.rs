@@ -253,6 +253,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0071_shop_testnet_sale_and_trade_venues",
             "0072_shop_verified_item_rows",
             "0078_shop_nft_last_sale",
+            "0079_credits_seasonal_visit_goals",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
