@@ -989,11 +989,20 @@ test('every committed capture and the seed parse into the shape the replay reads
   assert.ok(Object.values(seed.wallets).every(address => /^0x[0-9a-f]{40}$/.test(address)))
 })
 
+test('a repeating case fails when the request after its warm-ups does not answer the status it records', async t => {
+  const { record } = require(script)
+  const server = require('node:http').createServer((request, response) => response.writeHead(404).end())
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  const item = { name: '900-limited', method: 'GET', path: '/limited', headers: {}, repeat: 2, repeat_status: 404, status: 429 }
+  await assert.rejects(record(null, `http://127.0.0.1:${server.address().port}`, {}, [], item, 'http://127.0.0.1:1'), /900-limited: request 3 answered 404, not 429/)
+})
+
 test('the edge cases send their origin and keep the headers they are about, and only the limiter case repeats', () => {
   const { EDGE_CASES } = require(script)
   for (const item of EDGE_CASES.filter(item => item.name.includes('-cors-'))) {
     assert.ok(item.send.origin, item.name)
     assert.ok(item.keep.includes('access-control-allow-origin'), item.name)
   }
-  assert.deepEqual(EDGE_CASES.filter(item => item.repeat).map(item => [item.name, item.repeat, item.repeat_status]), [['521-review-writes-per-minute', 30, 404]])
+  assert.deepEqual(EDGE_CASES.filter(item => item.repeat).map(item => [item.name, item.repeat, item.repeat_status, item.status]), [['521-review-writes-per-minute', 30, 404, 429]])
 })
