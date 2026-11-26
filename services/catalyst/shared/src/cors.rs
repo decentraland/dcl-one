@@ -114,7 +114,7 @@ async fn cors(
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
-            .unwrap();
+            .expect("a constant status always builds a response");
         let h = resp.headers_mut();
         // An unlisted origin is granted no method or header: the gateway adds
         // `*` to an answer without an allow-origin.

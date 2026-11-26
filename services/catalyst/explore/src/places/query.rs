@@ -95,7 +95,7 @@ pub(super) fn textsearch_column_sql() -> &'static str {
 /// empty string, which the SQL turns into a NULL query (no NOTICE, no match).
 pub(super) fn tsquery(search: &str) -> String {
     static WORD: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").expect("literal regex compiles"));
     WORD.find_iter(search)
         .map(|word| format!("{}:*", word.as_str()))
         .collect::<Vec<_>>()
