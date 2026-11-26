@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::Row;
 
 use super::catalog::{CatalogFilters, MAX_NUMERIC_NUMBER, build_catalog_query};
-use super::mirrors::require_priced;
+use super::catalogue::{self, CatalogueRead, Purpose};
+use super::mirrors::Mirror;
 use super::nfts::NftFilters;
-use super::readers::{Ttl, cached};
+use super::readers::{Ttl, cached, memoized_holding};
 use super::wire::{
     ApiError, Histogram, InvalidParameterError, Network, NftCategory, NumericKey, Params,
     consolidate,
@@ -172,32 +172,57 @@ pub async fn prices(
         .map_err(nft_prices_error)?;
         return Ok(histogram_from(&value));
     }
-    // The item prices read the trade legs too (`build_catalog_query`).
-    require_priced(state).await?;
-    super::trades::require_ready(state).await?;
-    let key = format!("prices:{f:?}");
-    let value = cached(state, Ttl::M5, key, || async {
-        let now = Utc::now().naive_utc();
-        let since = super::trades::mirrored_since(&state.settings, now);
-        let (sql, args) = build_prices_query(f, now, since);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-            .fetch_all(&state.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        let prices: Vec<String> = rows
-            .iter()
-            .filter_map(|r| r.try_get::<Option<String>, _>("price").ok().flatten())
-            .collect();
-        let tally = consolidate(prices);
-        Ok(Value::Array(
-            tally
-                .into_iter()
-                .map(|(k, v)| serde_json::json!([k.0, v]))
-                .collect(),
-        ))
-    })
-    .await
-    .map_err(|e| ApiError::internal(e).into_response())?;
+    // The item prices read the trade legs too (`build_catalog_query`). The
+    // memo holds the read only in the request that fetches it; one that
+    // waits drops it first, and starts again if that fetch failed.
+    let value = loop {
+        let mut read = catalogue::preflight(
+            state,
+            Purpose::Priced,
+            &[Mirror::Items],
+            f.network.map(super::wire::Network::graph),
+        )
+        .await?;
+        read.trades_ready(state).await?;
+        let (key, stamp) = (format!("prices:{f:?}:{}", read.key()), read.stamp());
+        // The read's clock: the trades check decided on the same instant.
+        let now = read.now.naive_utc();
+        let mut held = Some(read);
+        let fetched = memoized_holding(
+            state,
+            Ttl::M5,
+            key,
+            &mut held,
+            async move |read: &mut CatalogueRead| {
+                let since = super::trades::mirrored_since(&state.settings, now);
+                let (sql, args) = build_prices_query(f, now, since);
+                let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+                    .fetch_all(&mut *read.tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let prices: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.try_get::<Option<String>, _>("price").ok().flatten())
+                    .collect();
+                let tally = consolidate(prices);
+                Ok::<Value, String>(Value::Array(
+                    tally
+                        .into_iter()
+                        .map(|(k, v)| serde_json::json!([k.0, v]))
+                        .collect(),
+                ))
+            },
+        )
+        .await;
+        match fetched {
+            Ok(Some(value)) => {
+                stamp.note(state);
+                break value;
+            }
+            Ok(None) => continue,
+            Err(e) => return Err(ApiError::internal(e).into_response()),
+        }
+    };
     Ok(histogram_from(&value))
 }
 

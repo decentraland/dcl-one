@@ -12,6 +12,7 @@ pub mod admin;
 pub mod authorize;
 pub mod captcha;
 pub mod cart;
+pub mod charge;
 pub mod history;
 pub mod orders;
 pub mod packs;

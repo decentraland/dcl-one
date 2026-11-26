@@ -17,8 +17,12 @@
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
 //! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` and
 //! `/admin/studios[/{id}[/budget|/operators[/{address}]]]` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`, `studios.rs`; the studios
-//! also answer the read and write admin wallets' signed requests).
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`, `studios.rs`); the ops
+//! dashboard's reads `/credits`, `/credit-reasons`, `/admin/ledger-stats`,
+//! `/admin/purchase-audit` and the studio reads behind that bearer or a
+//! wallet signature from `CREDITS_READ_ADMIN_ADDRESSES` or
+//! `CREDITS_WRITE_ADMIN_ADDRESSES` (`handlers/reports.rs`), and the studio
+//! changes behind the bearer or one from `CREDITS_WRITE_ADMIN_ADDRESSES`.
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -78,6 +82,7 @@ pub mod admin_store;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
+pub mod charge;
 pub mod checkout;
 pub mod digest;
 pub mod dto;
@@ -88,10 +93,12 @@ pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod ledger_stats;
 pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod purchase_audit;
 pub mod purchase_intent;
 pub mod reconcile;
 pub mod reports;
@@ -1085,6 +1092,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
         .route("/credits", get(handlers::reports::list_credits))
         .route("/credit-reasons", get(handlers::reports::credit_reasons))
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(
@@ -1103,6 +1115,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/credits/authorize/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/credits/authorize/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/credits/orders/{order_id}/cancel",
@@ -1196,6 +1212,11 @@ pub fn shop_router(state: SharedState) -> Router {
             "/admin/credit-reasons",
             get(handlers::reports::credit_reasons_canonical),
         )
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route(
             "/v1/packs/{sku}/payment-intents",
             post(handlers::packs::create_intent),
@@ -1220,6 +1241,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/v1/credit-authorizations/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/v1/pack-orders/{order_id}/cancel",
