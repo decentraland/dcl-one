@@ -828,6 +828,19 @@ mod tests {
         .unwrap();
     }
 
+    /// Each module is evaluated under its own name, so a stack trace says where an error is.
+    #[test]
+    fn a_module_script_is_named_after_the_module() {
+        run_scene(
+            false,
+            r#"
+            const stack = new Error("x").stack;
+            if (!stack.includes("file://~scene.js")) { throw new Error(stack); }
+            "#,
+        )
+        .unwrap();
+    }
+
     /// ...while the modules the scene is *supposed* to use still get it, via the `Deno`
     /// parameter `require` injects. Required from scene code, i.e. after the seal.
     #[test]
