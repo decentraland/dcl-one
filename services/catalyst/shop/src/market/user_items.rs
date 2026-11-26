@@ -404,6 +404,9 @@ pub async fn user_names(
         } else {
             // The subgraph, as lamb2 read it: the whole walk, and on an
             // outage the last good list for its 120 s.
+            super::lambdas_metrics::record_owner_memo_read(
+                crate::chain_index::graph::all_owned_names_memoized(&state.index, &address),
+            );
             match crate::chain_index::graph::owned_names_or_stale(&state.index, &address).await {
                 Ok(names) => names,
                 Err(e) => {

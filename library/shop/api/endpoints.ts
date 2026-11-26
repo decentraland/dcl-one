@@ -115,6 +115,7 @@ export const ENDPOINTS = {
   authorizeCreditBatch: e("POST", "/v1/credit-authorizations/batch", "/credits/credits/authorize/batch", "signed"),
   cancelCreditAuthorizations: e("POST", "/v1/credit-authorizations/cancel", "/credits/credits/authorize/cancel", "signed"),
   reportCreditSubmission: e("POST", "/v1/credit-authorizations/submitted", "/credits/credits/authorize/submitted", "signed"),
+  creditAuthorizationCharge: e("GET", "/v1/credit-authorizations/{salt}", "/credits/credits/authorize/{salt}", "signed"),
   authorizePublication: e("POST", "/v1/credit-authorizations/publication", "/credits/credits/authorize-publication", "signed"),
 
   manaTopup: e("POST", "/v1/credit-topups/mana", "/credits/topup/mana", "signed"),

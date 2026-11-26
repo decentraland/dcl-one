@@ -1,13 +1,12 @@
 //! `GET /v1/activity?address=` (signed by that address, a marketplace or
 //! builder signer): one wallet's market history, newest first: the sales
 //! it bought and sold, the bids it placed and received, the orders it
-//! created and filled, and the trades it signed or is a beneficiary of.
-//! Each source is read to its newest 500 (the old internal cap; the
-//! subgraph readers in pages of 100, the trades from the local table), the
-//! events are merged by time, one per transaction and role (or per
-//! token/time/role without a transaction), and paged in memory (`limit` at
-//! most 500, `offset`). A source that cannot be read contributes nothing,
-//! as before.
+//! created and filled, the trades it signed or is a beneficiary of, and the
+//! NFTs it sent and received outside a sale ([`super::activity_transfers`]).
+//! Each leg contributes up to 500 events. Both sales roles read the same
+//! published snapshot. Activity merges the available legs by time, keeps
+//! one event per transaction and role (each transfer by its id: one
+//! transaction can move several NFTs), and pages the result in memory.
 
 use std::collections::HashSet;
 
@@ -19,10 +18,11 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::SharedState;
+use super::activity_transfers::{Transfer, transfers_of_address};
 use super::bids::{Bid, BidFilters, list_bids};
 use super::orders::{Order, OrderFilters, list_orders};
 use super::readers::READER_MAX_FIRST;
-use super::sales::{Sale, SaleFilters, list_sales};
+use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
 use super::trades::{Trade, TradeAsset, trades_of_address};
 use super::wire::{ApiError, get_number_parameter};
@@ -33,6 +33,8 @@ use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA};
 
 const INTERNAL_FETCH_CAP: i64 = 500;
 const MAX_PAGE_SIZE: i64 = 500;
+const TRANSFER_SENT: &str = "transfer_sent";
+const TRANSFER_RECEIVED: &str = "transfer_received";
 
 #[derive(Debug, Serialize)]
 pub struct ActivityEvent {
@@ -69,7 +71,7 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Every page of a subgraph-backed source up to the internal cap.
+/// Collect the paged bid and order legs up to the internal cap.
 async fn pages<T, F, Fut>(fetch: F) -> Vec<T>
 where
     F: Fn(i64) -> Fut,
@@ -107,26 +109,16 @@ pub async fn user_activity(
         .min(MAX_PAGE_SIZE);
     let offset = offset.filter(|v| *v > 0).unwrap_or(0);
     let lower = address.to_lowercase();
-    let first = Some(READER_MAX_FIRST);
-    let (sales_buyer, sales_seller, bids_bidder, bids_seller, orders_owner, orders_buyer, trades) = tokio::join!(
-        pages(|skip| {
-            let f = SaleFilters {
-                buyer: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
-        pages(|skip| {
-            let f = SaleFilters {
-                seller: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
+    let (
+        (sales_buyer, sales_seller),
+        bids_bidder,
+        bids_seller,
+        orders_owner,
+        orders_buyer,
+        trades,
+        transfers,
+    ) = tokio::join!(
+        super::sale_reads::activity_sales(state, &lower, INTERNAL_FETCH_CAP),
         pages(|skip| {
             let f = BidFilters {
                 bidder: Some(lower.clone()),
@@ -148,7 +140,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 owner: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -157,7 +149,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 buyer: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -169,7 +161,11 @@ pub async fn user_activity(
             INTERNAL_FETCH_CAP,
             super::trades::mirrored_since(&state.settings, chrono::Utc::now().naive_utc()),
         ),
+        transfers_of_address(state, &lower, INTERNAL_FETCH_CAP),
     );
+    if !transfers.unavailable.is_empty() {
+        tracing::debug!(sources = ?transfers.unavailable, "activity omitted the transfers of a network whose indexes are not published");
+    }
     let trades = trades.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "activity: the trades leg failed");
         Vec::new()
@@ -196,6 +192,18 @@ pub async fn user_activity(
             .map(|o| order_to_event(o, "order_filled")),
     );
     events.extend(trades.iter().map(trade_to_event));
+    events.extend(
+        transfers
+            .sent
+            .iter()
+            .map(|t| transfer_to_event(t, TRANSFER_SENT)),
+    );
+    events.extend(
+        transfers
+            .received
+            .iter()
+            .map(|t| transfer_to_event(t, TRANSFER_RECEIVED)),
+    );
     events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
     let mut seen = HashSet::new();
     events.retain(|e| seen.insert(dedup_key(e)));
@@ -223,7 +231,11 @@ pub async fn get_activity(
 
 /// The old route's own wording and codes, stage by stage: a missing chain or
 /// timestamp is a 400 before the signer allow-list, an expired or failing
-/// signature a 401, an EIP-1654 chain a 501, anything else malformed a 400.
+/// signature a 401 (a contract wallet's chain is checked with the node's
+/// EIP-1654 validator; one its contract refuses is a failing signature), an
+/// EIP-1654 chain on a node without a validator a 501, a contract-wallet
+/// check that cannot run (the RPC failed) a 503, never accepted, one the
+/// client source's budget refused a 429, anything else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -231,6 +243,14 @@ fn refusal(e: SignedFetchError) -> ApiError {
         SignedFetchError::EipNotImplemented => {
             ApiError::http(501, "EIP-1654 not supported on this route")
         }
+        SignedFetchError::CatalystUnavailable(_) => ApiError::http(
+            503,
+            "The contract-wallet signature cannot be checked right now",
+        ),
+        SignedFetchError::RateLimited => ApiError::http(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
 }
@@ -251,7 +271,7 @@ async fn activity(
         "get",
         "/v1/activity",
         PayloadPolicy::V6ThenLegacy,
-        None,
+        state.eip1654.as_deref(),
     )
     .await
     .map_err(refusal)?
@@ -271,6 +291,9 @@ async fn activity(
 }
 
 fn dedup_key(e: &ActivityEvent) -> String {
+    if matches!(e.event_type.as_str(), TRANSFER_SENT | TRANSFER_RECEIVED) {
+        return format!("id:{}", e.id);
+    }
     match &e.tx_hash {
         Some(tx) => format!("tx:{}:{}", tx.to_lowercase(), e.event_type),
         None => format!(
@@ -343,6 +366,28 @@ fn order_to_event(o: &Order, ty: &str) -> ActivityEvent {
             Some(o.owner.clone())
         },
         details: json!({ "order": o }),
+    }
+}
+
+/// A transfer as marketplace-server's event: the counterparty is the
+/// receiver of a sent one and the sender of a received one.
+fn transfer_to_event(t: &Transfer, ty: &str) -> ActivityEvent {
+    ActivityEvent {
+        id: format!("{ty}:{}", t.id),
+        timestamp: t.timestamp,
+        network: network_name(&t.network),
+        event_type: ty.to_string(),
+        tx_hash: t.tx_hash.clone(),
+        contract_address: Some(t.contract_address.clone()),
+        token_id: Some(t.token_id.clone()),
+        item_id: t.item_id.clone(),
+        price: None,
+        counterparty: Some(if ty == TRANSFER_SENT {
+            t.to.clone()
+        } else {
+            t.from.clone()
+        }),
+        details: json!({ "transfer": t }),
     }
 }
 
@@ -771,6 +816,69 @@ mod tests {
             .execute(&state.pool)
             .await
             .unwrap();
+    }
+
+    fn transfer(id: &str) -> Transfer {
+        Transfer {
+            id: id.into(),
+            from: "0xfrom".into(),
+            to: "0xto".into(),
+            contract_address: "0xnft".into(),
+            token_id: "42".into(),
+            item_id: None,
+            category: Some("wearable".into()),
+            tx_hash: Some("0xtx".into()),
+            timestamp: 1_700_000_000_000,
+            network: Network::Matic,
+            chain_id: ChainId::MaticMainnet,
+        }
+    }
+
+    /// marketplace-server's transfer events: the receiver is a sent
+    /// transfer's counterparty and the sender a received one's, no price,
+    /// the transfer in `details`, and each move of one transaction kept.
+    #[test]
+    fn transfer_events_name_the_other_side_and_keep_each_move_of_a_transaction() {
+        let sent = transfer_to_event(&transfer("matic-10-1"), TRANSFER_SENT);
+        let received = transfer_to_event(&transfer("matic-10-1"), TRANSFER_RECEIVED);
+        assert_eq!(
+            (
+                sent.id.as_str(),
+                sent.counterparty.as_deref(),
+                received.id.as_str(),
+                received.counterparty.as_deref(),
+                sent.price.as_deref(),
+                sent.network.as_str(),
+            ),
+            (
+                "transfer_sent:matic-10-1",
+                Some("0xto"),
+                "transfer_received:matic-10-1",
+                Some("0xfrom"),
+                None,
+                "MATIC",
+            )
+        );
+        let wire = serde_json::to_value(&sent).unwrap();
+        assert_eq!(
+            (
+                wire["type"].as_str(),
+                wire["txHash"].as_str(),
+                wire["tokenId"].as_str(),
+                wire["details"]["transfer"]["chainId"].as_u64(),
+                wire["details"]["transfer"]["category"].as_str(),
+            ),
+            (
+                Some("transfer_sent"),
+                Some("0xtx"),
+                Some("42"),
+                Some(137),
+                Some("wearable")
+            )
+        );
+        let other = transfer_to_event(&transfer("matic-10-2"), TRANSFER_SENT);
+        assert_ne!(dedup_key(&sent), dedup_key(&other));
+        assert_eq!(dedup_key(&sent), "id:transfer_sent:matic-10-1");
     }
 
     #[test]

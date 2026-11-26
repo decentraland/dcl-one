@@ -1,3 +1,6 @@
 # No package runs code at install time; new dependencies are saved with exact versions.
 ignoreScripts: true
 saveExact: true
+overrides:
+  # @metamask/utils calls only v4, which uuid 11 keeps for require().
+  '@metamask/utils>uuid': ^11.1.1

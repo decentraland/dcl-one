@@ -5,7 +5,7 @@
 // beside the column, one at a time; Map shows and hides the minimap.
 
 import { MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Switch } from '@dcl/one-ui'
-import { useCallback, useContext, useEffect, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { ControlButton, IconButton } from '../../design'
 import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
@@ -163,6 +163,18 @@ export function Sidebar({
   const closePanel = useCallback(() => setPanel(null), [])
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
+  // The rules are the current scene's and are dropped when the player crosses into another one:
+  // with the list open they are asked for again on every crossing, or its "In force now" rows
+  // would stay off. Keyed on the scene, so a second crossing before the first answer asks again.
+  const { scene: permissionsScene, loadRules: loadPermissionRules } = session.permissions
+  const permissionsOpen = useRef(false)
+  permissionsOpen.current = permissionsAnchor != null
+  const rulesScene = useRef(permissionsScene)
+  useEffect(() => {
+    if (rulesScene.current === permissionsScene) return
+    rulesScene.current = permissionsScene
+    if (permissionsOpen.current) loadPermissionRules()
+  }, [permissionsScene, loadPermissionRules])
   const closePortables = useCallback(() => setPortablesAnchor(null), [])
   const isOpen = (id: PanelId): boolean => panel?.id === id
   const [shopPanel] = useState(() => IN_WORLD_SHOP || mockHud())
@@ -473,6 +485,7 @@ export function Sidebar({
           anchor={permissionsAnchor}
           visit={session.permissions.visit}
           triggered={session.permissions.triggered}
+          inForce={session.permissions.inForce}
           rules={session.permissions.rules}
           sceneName={session.minimap.sceneTitle}
           setRule={session.permissions.setRule}

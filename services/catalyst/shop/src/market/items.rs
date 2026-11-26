@@ -228,9 +228,16 @@ pub fn parse_ether(value: &str) -> Option<String> {
     }
 }
 
-fn parse_price_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
+/// A `minPrice`/`maxPrice` filter in MANA, as wei ([`parse_ether`]): absent
+/// when missing or blank, a 400 naming the parameter where ethers would
+/// throw. The legacy marketplace API read every MANA price filter this way
+/// (`parsePrice`): items, catalog, nfts and stats; sales and prices take wei.
+pub(crate) fn parse_price_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
     match p.get_string(key, None) {
+        // Past 78 digits of wei the amount is beyond uint256: a 400 here, not
+        // a failed read further down (the subgraph's `searchOrderPrice_gte`).
         Some(raw) if !raw.trim().is_empty() => parse_ether(&raw)
+            .filter(|wei| wei.trim_start_matches('-').len() <= 78)
             .map(Some)
             .ok_or_else(|| ApiError::bad_request(format!("Invalid {key} value: {raw}"))),
         _ => Ok(None),
@@ -948,10 +955,22 @@ pub async fn get_items(
         Ok(f) => f,
         Err(e) => return e.into_response(),
     };
-    match list_items(&state, &filters).await {
-        Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
-        Err(e) => e.into_response(),
+    let (mut data, total) = match list_items(&state, &filters).await {
+        Ok(page) => page,
+        Err(e) => return e.into_response(),
+    };
+    let ids = data.iter().map(|item| item.id.clone()).collect::<Vec<_>>();
+    let counts = match super::lists::picks_stats(&state.pool, &ids, None).await {
+        Ok(stats) => stats
+            .into_iter()
+            .map(|s| (s.item_id, s.count))
+            .collect::<HashMap<_, _>>(),
+        Err(e) => return e.into_response(),
+    };
+    for item in &mut data {
+        item.picks.count = counts.get(&item.id).copied().unwrap_or_default();
     }
+    Json(DataTotal { data, total }).into_response()
 }
 
 /// `/v3/catalog/items` for these parameters: the page and its total, or the
@@ -1498,8 +1517,22 @@ mod tests {
                 && parse_ether("").is_none()
         );
         assert_eq!(parse_ether("-0").unwrap(), "0");
+        // As ethers v6: leading zeros and a bare trailing point parse; whitespace,
+        // a sign, an exponent and hex do not.
+        assert_eq!(parse_ether("01").unwrap(), "1000000000000000000");
+        assert_eq!(parse_ether("5.").unwrap(), "5000000000000000000");
+        assert_eq!(parse_ether("-1").unwrap(), "-1000000000000000000");
+        for bad in [" 1", "1 ", "+1", "1e18", "0x10", ".", "-", "1.2.3"] {
+            assert!(parse_ether(bad).is_none(), "{bad:?}");
+        }
         let err = parse_filters(&pairs(&[("minPrice", "abc")])).unwrap_err();
         assert_eq!(err.message(), "Invalid minPrice value: abc");
+        // Past 78 digits of wei (beyond uint256) a bound is a 400, not a failed read.
+        let at_cap = "9".repeat(60);
+        assert!(parse_filters(&pairs(&[("maxPrice", &at_cap)])).is_ok());
+        let past = "9".repeat(61);
+        let err = parse_filters(&pairs(&[("maxPrice", &past)])).unwrap_err();
+        assert_eq!(err.message(), format!("Invalid maxPrice value: {past}"));
         let f = parse_filters(&pairs(&[
             ("maxPrice", "2"),
             ("sortBy", "cheapest"),

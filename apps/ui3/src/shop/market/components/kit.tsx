@@ -6,9 +6,8 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button, Spinner } from "@dcl/one-ui";
 import ManaMark from "../../../atoms/ManaMark";
-import Spinner from "../../../atoms/Spinner";
 import EmptyState from "../../../components/EmptyState";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { chainLabel, isPolygon } from "@shop/model/chain";
@@ -157,7 +156,7 @@ export function LoadFailure({ error, what, onRetry }: { error: unknown; what: st
 export function Loading({ label }: { label: string }) {
   return (
     <div className="mk-loading" role="status" aria-busy="true">
-      <Spinner size={24} aria-hidden />
+      <Spinner variant="light" size={24} aria-hidden />
       <span>{label}</span>
     </div>
   );
@@ -195,7 +194,7 @@ export function WriteStatus({ state }: { state: WriteState }) {
   if (state.kind === "working")
     return (
       <p className="mk-write mk-write--working" role="status" aria-live="polite">
-        <Spinner size={16} aria-hidden /> {state.label}
+        <Spinner variant="light" size={16} aria-hidden /> {state.label}
       </p>
     );
   if (state.kind === "done")

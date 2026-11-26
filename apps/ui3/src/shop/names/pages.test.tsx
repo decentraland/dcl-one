@@ -369,7 +369,7 @@ describe("NAMEs being resold", () => {
       return { client, sent };
     };
 
-    it("asks for the range in wei and keeps MANA in the URL", async () => {
+    it("asks for the range in MANA, the unit /v1/nfts reads, and keeps it in the URL", async () => {
       const { sent } = browse("/shop/names?section=resale");
       await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
       expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([null, null]);
@@ -377,7 +377,7 @@ describe("NAMEs being resold", () => {
       fireEvent.change(screen.getByRole("textbox", { name: "Maximum price in MANA" }), { target: { value: " 20 " } });
       fireEvent.submit(screen.getByRole("form", { name: "Price in MANA" }));
       await waitFor(() => expect(sent()).toHaveLength(2));
-      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(15n * MANA / 10n).toString(), (20n * MANA).toString()]);
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual(["1.5", "20"]);
       const search = new URLSearchParams(screen.getByTestId("search").textContent!);
       expect([search.get("minPrice"), search.get("maxPrice"), search.get("section")]).toEqual(["1.5", "20", "resale"]);
     });
@@ -392,7 +392,7 @@ describe("NAMEs being resold", () => {
       expect(screen.getByTestId("search").textContent).not.toContain("minPrice");
       fireEvent.blur(max, { relatedTarget: null });
       await waitFor(() => expect(sent()).toHaveLength(2));
-      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(3n * MANA).toString(), null]);
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual(["3", null]);
     });
 
     it("restores a range from the URL and drops a bound that is not a MANA amount", async () => {
@@ -400,7 +400,7 @@ describe("NAMEs being resold", () => {
       await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
       expect(screen.getByRole("textbox", { name: "Minimum price in MANA" })).toHaveValue("2");
       expect(screen.getByRole("textbox", { name: "Maximum price in MANA" })).toHaveValue("");
-      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([(2n * MANA).toString(), null]);
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual(["2", null]);
     });
 
     it("holds back a bound that is not an amount, or a minimum above the maximum, and says why", async () => {
@@ -438,7 +438,7 @@ describe("NAMEs being resold", () => {
       fireEvent.change(max, { target: { value: " 8 " } });
       fireEvent.submit(form);
       await waitFor(() => expect(sent()).toHaveLength(2));
-      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice"), sent()[1]!.get("isOnSale")]).toEqual([null, (8n * MANA).toString(), "true"]);
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice"), sent()[1]!.get("isOnSale")]).toEqual([null, "8", "true"]);
       expect([min, max].map((b) => (b as HTMLInputElement).value)).toEqual(["", "8"]);
     });
 

@@ -1,7 +1,7 @@
-import { Entity, IEngine } from '../../engine'
-import { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
+import type { Entity, IEngine } from '../../engine'
+import type { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
 import { Animator } from '../generated/index.gen'
-import { PBAnimationState, PBAnimator } from '../generated/pb/decentraland/sdk/components/animator.gen'
+import type { PBAnimationState, PBAnimator } from '../generated/pb/decentraland/sdk/components/animator.gen'
 
 /**
  * @public

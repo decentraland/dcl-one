@@ -1,4 +1,5 @@
-import { Router, createServerComponent } from '@well-known-components/http-server'
+import type { Router } from '@well-known-components/http-server'
+import { createServerComponent } from '@well-known-components/http-server'
 import { Lifecycle } from '@well-known-components/interfaces'
 import { createRecordConfigComponent } from '@well-known-components/env-config-provider'
 import { createConsoleLogComponent } from '@well-known-components/logger'
@@ -6,7 +7,7 @@ import { resolve } from 'path'
 import open from './logic/open'
 
 import { getPort } from './logic/get-free-port'
-import { CliComponents } from './components'
+import type { CliComponents } from './components'
 
 export interface dAppOptions {
   openBrowser: boolean

@@ -1,15 +1,11 @@
 import { globSync } from 'fs'
 import path from 'path'
-import {
-  Composite,
-  Engine,
-  Entity,
-  EntityMappingMode,
-  LastWriteWinElementSetComponentDefinition
-} from '@dcl/ecs/dist-cjs'
-import { EditorComponentNames, EditorComponentsTypes, dumpEngineToCrdtCommands } from '@dcl/inspector'
+import type { Entity, LastWriteWinElementSetComponentDefinition } from '@dcl/ecs/dist-cjs'
+import { Composite, Engine, EntityMappingMode } from '@dcl/ecs/dist-cjs'
+import type { EditorComponentsTypes } from '@dcl/inspector'
+import { EditorComponentNames, dumpEngineToCrdtCommands } from '@dcl/inspector'
 
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { printError } from './beautiful-logs'
 
 type CompositeComponents = Pick<CliComponents, 'logger' | 'fs'>

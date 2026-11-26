@@ -1,4 +1,4 @@
-import { EntityPropTypes } from '../types'
+import type { EntityPropTypes } from '../types'
 
 /**
  * ScreenInsetArea component props

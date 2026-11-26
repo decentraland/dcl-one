@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { ChainId } from "@shop/model/chain";
 import { CENTS_PER_CREDIT, formatUsd, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
@@ -41,7 +41,7 @@ export function PrimaryListForm({ item, chainId = settlementChainId(), onClose, 
           <Link className="mk-link" to={shopPath("itemDetail", { contractAddress: item.contractAddress, itemId: item.blockchainItemId })}>
             View in the Shop
           </Link>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <Button variant="outline" size="sm" onClick={onClose}>
             Close
           </Button>
         </div>
@@ -86,10 +86,10 @@ export function PrimaryListForm({ item, chainId = settlementChainId(), onClose, 
       </label>
       <p className="mk-hint">The first listing from a collection asks you to let the Shop mint it (once, no gas); then you confirm the listing.</p>
       <div className="mk-actions">
-        <Button type="submit" disabled={!valid || write.busy}>
+        <Button size="md" type="submit" disabled={!valid || write.busy}>
           {write.busy ? "Publishing…" : "Put on sale"}
         </Button>
-        <Button variant="ghost" disabled={write.busy} onClick={onClose}>
+        <Button size="md" variant="outline" disabled={write.busy} onClick={onClose}>
           Cancel
         </Button>
       </div>
