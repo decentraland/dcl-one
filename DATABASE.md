@@ -1580,6 +1580,15 @@ wallet that wrote it. They run before the release, while
 holds that upload, else the first of the collection's provider, its chain
 creator and its managers that does, else the uploader the node holds (the
 upload an earlier binary published the file from), else the owner.
+Measured on a synthetic copy at the reference scale (116,000 items, 51,700
+collections, 422,000 content rows, 400,500 upload records, 52,000 copy rows,
+2,000 items with a video), PostgreSQL 17 with default durability settings
+and 128 MB of shared buffers, three runs: step 0085 takes 15.6 to 16.0 s,
+step 0086 0.6 s. `catalyst schema migrate` applies its steps in one
+transaction, so `builder.item_contents` stays under ACCESS EXCLUSIVE for
+about 16 seconds and `builder.items` for under one, until the migrate
+commits. Reads of item contents wait that long once; the rollout keeps
+creator writes closed through it.
 
 Rollout, in order:
 
