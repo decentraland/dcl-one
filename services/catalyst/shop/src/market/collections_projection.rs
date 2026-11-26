@@ -531,7 +531,7 @@ async fn load(
                 description, category, body_shapes, emote_loop, emote_has_sound, emote_has_geometry, \
                 emote_outcome_type, minters, minter_allowances::text[] AS minter_allowances, \
                 search_is_store_minter, search_is_collection_approved, search_text, created_at, updated_at, \
-                reviewed_at, sold_at, first_listed_at \
+                reviewed_at, sold_at, first_listed_at, content_hash \
          FROM shop.items WHERE network = $1 AND contract_address = ANY($2) ORDER BY contract_address, item_id",
     )
     .bind(net.db_name())
@@ -581,6 +581,7 @@ async fn load(
             reviewed_at: r.get("reviewed_at"),
             sold_at: r.get("sold_at"),
             first_listed_at: r.get("first_listed_at"),
+            content_hash: r.get("content_hash"),
         });
     }
     Ok(out)
@@ -610,6 +611,7 @@ fn item_record(contract: &str, i: &ItemRow) -> Value {
         "updated_at": i.updated_at, "reviewed_at": i.reviewed_at, "sold_at": i.sold_at,
         "first_listed_at": i.first_listed_at, "search_text": i.search_text, "minters": i.minters,
         "minter_allowances": i.minter_allowances.iter().map(U256::to_string).collect::<Vec<_>>(),
+        "content_hash": i.content_hash,
     })
 }
 
@@ -665,20 +667,20 @@ async fn write(
                   total_supply, max_supply, available, price, image, name, description, category, body_shapes, \
                   is_smart, emote_loop, emote_has_sound, emote_has_geometry, emote_outcome_type, \
                   search_is_store_minter, search_is_collection_approved, created_at, updated_at, reviewed_at, \
-                  sold_at, first_listed_at, mirrored_at, search_text, minters, minter_allowances) \
+                  sold_at, first_listed_at, mirrored_at, search_text, minters, minter_allowances, content_hash) \
              SELECT $1, r.contract_address, r.item_id::numeric, $2, r.item_type, r.urn, r.creator, r.beneficiary, \
                     r.rarity, r.total_supply::numeric, r.max_supply::numeric, r.available::numeric, r.price::numeric, \
                     r.image, r.name, r.description, r.category, r.body_shapes, r.is_smart, r.emote_loop, \
                     r.emote_has_sound, r.emote_has_geometry, r.emote_outcome_type, r.search_is_store_minter, \
                     r.search_is_collection_approved, r.created_at, r.updated_at, r.reviewed_at, r.sold_at, \
-                    r.first_listed_at, $3, r.search_text, r.minters, r.minter_allowances::numeric[] \
+                    r.first_listed_at, $3, r.search_text, r.minters, r.minter_allowances::numeric[], r.content_hash \
              FROM jsonb_to_recordset($4) AS r(contract_address text, item_id text, item_type text, urn text, \
                   creator text, beneficiary text, rarity text, total_supply text, max_supply text, available text, \
                   price text, image text, name text, description text, category text, body_shapes text[], \
                   is_smart boolean, emote_loop boolean, emote_has_sound boolean, emote_has_geometry boolean, \
                   emote_outcome_type text, search_is_store_minter boolean, search_is_collection_approved boolean, \
                   created_at bigint, updated_at bigint, reviewed_at bigint, sold_at bigint, first_listed_at bigint, \
-                  search_text text, minters text[], minter_allowances text[])",
+                  search_text text, minters text[], minter_allowances text[], content_hash text)",
         )
         .bind(net.db_name())
         .bind(chain_id)
@@ -792,7 +794,7 @@ mod tests {
                         max_supply, available, price, image, name, description, category, body_shapes, is_smart, \
                         emote_loop, emote_has_sound, emote_has_geometry, emote_outcome_type, search_is_store_minter, \
                         search_is_collection_approved, created_at, updated_at, reviewed_at, sold_at, \
-                        first_listed_at, search_text, minters, minter_allowances)::text \
+                        first_listed_at, search_text, minters, minter_allowances, content_hash)::text \
              FROM shop.items WHERE network = 'matic' ORDER BY contract_address, item_id",
         )
         .fetch_all(pool)
@@ -851,6 +853,42 @@ mod tests {
                 ("1".into(), "2".into(), "98".into())
             ]
         );
+    }
+
+    /// Once the index owns the network, a rebuild writes each item's
+    /// on-chain content hash, the one its newest `AddItem` or `RescueItem`
+    /// logged, so a minted item still reads as published unchanged.
+    #[tokio::test]
+    async fn a_rebuild_keeps_each_items_content_hash() {
+        let Some((pool, owner)) = setup(true).await else {
+            return;
+        };
+        project(&pool, &owner, NET, 97_895_000).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        invalidate(&mut conn, NET).await.unwrap();
+        drop(conn);
+        assert!(
+            project(&pool, &owner, NET, 97_895_000)
+                .await
+                .unwrap()
+                .rebuilt
+        );
+        let logged: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT DISTINCT ON (item_id) item_id::text, content_hash FROM shop.collection_event \
+             WHERE network = 'matic' AND kind IN ('add_item', 'rescue_item') \
+             ORDER BY item_id, block_number DESC, log_index DESC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(logged.iter().all(|(_, hash)| hash.is_some()));
+        let written: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT item_id::text, content_hash FROM shop.items WHERE network = 'matic' ORDER BY item_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(written, logged);
     }
 
     /// Once the index owns the network, a mirror page for it is not

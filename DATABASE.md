@@ -3600,6 +3600,11 @@ and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
 helper does. `sold_at` is the newest primary sale only; secondary sales come
 with the sales index.
 
+`shop.items.content_hash` is the subgraph's `contentHash`: the hash the
+item's newest `AddItem` or `RescueItem` logged, empty when the item carries
+none. The fold writes it from the log, so a rebuild keeps it. The items
+mirror copies it from the subgraph for a network the fold doesn't own.
+
 **Reading the catalogue.** These readers of `shop.collections` and
 `shop.items` open one `REPEATABLE READ` transaction first
 (`market::catalogue::begin`):
