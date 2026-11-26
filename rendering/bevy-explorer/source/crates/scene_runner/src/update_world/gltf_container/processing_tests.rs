@@ -754,49 +754,45 @@ fn spawn_triangle(app: &mut App, root: Entity, primitive: &str) -> Handle<Mesh> 
     mesh
 }
 
+/// The mesh the node `primitive` draws.
+fn drawn_mesh(app: &mut App, primitive: &str) -> AssetId<Mesh> {
+    let node = node(app, primitive);
+    app.world().get::<Mesh3d>(node).expect("a mesh").id()
+}
+
 #[test]
 fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
     let mut app = app();
+    // `getrandom` failing cannot be caused from a test
     app.world_mut().resource_mut::<SharedMeshes>().hash_salt = None;
-    let root = scene_root(&mut app);
-    let first = spawn_triangle(&mut app, root, "primitive_a");
-    give_context(&mut app, root);
+    let [a, b] = [scene_root(&mut app), scene_root(&mut app)];
+
+    // scene A converts the triangle once and reuses that mesh for its second container
+    spawn_triangle(&mut app, a, "a_first");
+    spawn_triangle(&mut app, a, "a_second");
+    give_context(&mut app, a);
     app.update();
-    let lookup = app.world().get::<SceneResourceLookup>(root).unwrap();
-    let (&hash, &own_id) = lookup
-        .mesh_ids_by_hash
-        .iter()
-        .next()
-        .expect("a hashed mesh");
-    assert_eq!(own_id, first.id());
+    let a_mesh = drawn_mesh(&mut app, "a_first");
+    assert_eq!(drawn_mesh(&mut app, "a_second"), a_mesh);
 
-    // another scene's mesh with the same hash replaces the cached one
-    let foreign = app.world().resource::<AssetServer>().add(triangle());
-    app.world_mut()
-        .resource_mut::<SharedMeshes>()
-        .by_hash
-        .get_mut(&(hash, true))
-        .expect("the cached mesh")
-        .mesh_id = foreign.id();
-
-    // a second container of the scene, which has a mesh with that hash
-    // without a context it waits until its mesh is in place
-    app.world_mut()
-        .entity_mut(root)
-        .remove::<RendererSceneContext>();
-    let second = spawn_triangle(&mut app, root, "primitive_b");
-    give_context(&mut app, root);
-    app.world_mut()
-        .get_mut::<SceneResourceLookup>(root)
-        .unwrap()
-        .mesh_ids_by_hash
-        .insert(hash, own_id);
+    // scene B uses no mesh with that hash, so it converts its own, which replaces A's in the cache
+    spawn_triangle(&mut app, b, "b_first");
+    give_context(&mut app, b);
     app.update();
+    let b_mesh = drawn_mesh(&mut app, "b_first");
+    assert_ne!(b_mesh, a_mesh);
 
-    let node = node(&mut app, "primitive_b");
-    let drawn = app.world().get::<Mesh3d>(node).expect("a mesh").id();
-    assert_ne!(drawn, foreign.id());
-    assert_eq!(drawn, second.id());
+    // a later container of A does not draw B's mesh. A's context is held back until the
+    // container's mesh is in place, so the container is processed with it
+    let context = app
+        .world_mut()
+        .entity_mut(a)
+        .take::<RendererSceneContext>()
+        .expect("a context");
+    spawn_triangle(&mut app, a, "a_later");
+    app.world_mut().entity_mut(a).insert(context);
+    app.update();
+    assert_ne!(drawn_mesh(&mut app, "a_later"), b_mesh);
 }
 
 const URL: &str = "https://content.example/contents/bafkreimodel";
