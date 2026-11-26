@@ -3517,13 +3517,16 @@ factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
 
 **Projection.** A network the operator hands the index
 (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`, `matic` or empty, independent of
-`MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass closes, the fold
-writes Polygon's catalogue rows from the log and the creation reads, in one
-transaction fenced by the walk's owner. Without that setting the walk keeps
-its log alone, whatever the mirror switch says. `shop.collection_projection`
+`MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass publishes its fold,
+the projection writes Polygon's catalogue rows from the log and the creation
+reads in the transaction that publishes it (`chain_walk::mark_folded`, through
+`ChainIndex::publish`), fenced by the walk's owner. A reader's snapshot
+therefore sees the rows, the block they stand at and the publication
+together, and a pass that does not publish projects nothing. Without that
+setting the walk keeps its log alone, whatever the mirror switch says. `shop.collection_projection`
 holds one row per network:
 - `owned_at` is set in the transaction of the first projection. From then
-  the fold is the only writer of the network's rows in both tables. A
+  the projection is the only writer of the network's rows in both tables. A
   hand-back clears it.
 - `projected_through` is the block the rows stand at.
 - `pending` counts the walked collections without a row at that block,
@@ -3535,7 +3538,7 @@ The mirror refuses to write a network the fold owns, and its job skips that
 network: no page is read. It keeps walking the others. Both take the
 network's advisory lock (`pg_advisory_xact_lock(0x636f6c6c, <chain id>)`)
 around the ownership check and the write: the mirror shared, for each page,
-and the fold exclusive. So a page that read the network as unowned commits
+and the projection exclusive. So a page that read the network as unowned commits
 before the projection that takes it, and none commits after.
 
 A projection folds the events past `projected_through` onto the stored
@@ -3543,9 +3546,9 @@ rows. It folds a collection again from its creation in three cases:
 - it has no row yet (created since, or waiting for its creation read);
 - an event names one of its items that has no row (metadata no item type
   takes);
-- the walk rewound. A rewind clears `projected_through`, and the next fold
-  rebuilds every row of the network in one transaction, replacing the rows
-  it does not produce, the mirror's included.
+- the walk rewound. A rewind clears `projected_through`, and the next
+  publication rebuilds every row of the network in its transaction,
+  replacing the rows it does not produce, the mirror's included.
 
 A rewind also undoes the gate's reads taken past its point, so a read of a
 branch the chain left is read again on the new one:
@@ -3736,10 +3739,6 @@ On top of that:
   event walked past the publication;
 - a descriptive read serves the last publication however old.
 
-Between a fold and its publication (the pass reads the chain's heads in
-between), `projected_through` is ahead of `folded_block`, and the network
-refuses reads until the publication.
-
 The mirrors' rule covers every network the index does not own that a read
 may return rows of. Every stored pass there must be bound to the chain this
 node serves, a network with no subgraph configured included, since its rows
@@ -3765,11 +3764,9 @@ network's publication and projection generation. The creator directory is a
 display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
 under which source serves each network: an ownership change files it anew.
 
-**Switching a network from the mirror.** Run this only once three things
+**Switching a network from the mirror.** Run this only once two things
 hold:
 - every reader above follows the index, the other readers included;
-- the projection is published atomically with the fold, so the refusal
-  between a fold and its publication is gone;
 - the NFT and sales walks take their contracts from the index.
 
 Deploys are manual, one process at a time:
@@ -3781,8 +3778,8 @@ Deploys are manual, one process at a time:
 2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
    start it again. Two processes must never write the catalogue under
    different settings. The mirror switch stays as it was: the mirror keeps
-   walking Ethereum. The next pass's fold rebuilds Polygon's rows from the log
-   and takes the network.
+   walking Ethereum. The next pass's publication rebuilds Polygon's rows from
+   the log and takes the network.
 3. Check `SELECT owned_at, projected_through, pending, generation FROM
    shop.collection_projection`.
 
