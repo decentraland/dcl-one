@@ -3,8 +3,9 @@
 //! posted by an operator), the pack
 //! catalogue, the purchase/checkout/ledger pages, the manual
 //! refund and force-fulfil of a checkout, the escrow reclaim/release of a
-//! lease (through the economy broker) and the reconciler. Every mutation
-//! audits into `ops.admin_audit` with the server-chosen actor.
+//! lease (through the economy broker), the reconciler and the test send of
+//! the purchase receipt. Every mutation and every test send audits into
+//! `ops.admin_audit` with the server-chosen actor.
 
 use crate::shared::routing::{delete, erase, get, post, put};
 use axum::Json;
@@ -23,7 +24,11 @@ use crate::credits::admin::{
 use crate::credits::admin_store::{GrantRequest, PackAdminRow, PackSpec};
 use crate::credits::errors::ApiError;
 use crate::credits::packs::validate_sku;
+use crate::credits::receipts;
 use crate::credits::reconcile::ReconcileReport;
+use crate::credits::store::{AuditEntry, Credits};
+use crate::shared::notifications::SendFailure;
+use crate::subscriptions::delivery::{Outcome, outcome_after};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -48,6 +53,7 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/grants/{escrow_ref}/reclaim", post(reclaim_grant))
         .route("/admin/grants/{escrow_ref}/release", post(release_grant))
         .route("/admin/reconcile", get(reconcile))
+        .route("/admin/test-purchase-email", post(test_purchase_email))
 }
 
 /// The canonical `/shop-api/admin/*` paths of the same handlers: the ledger
@@ -75,6 +81,10 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/grants/{escrow_ref}/reclaim", post(reclaim_grant))
         .route("/admin/grants/{escrow_ref}/release", post(release_grant))
         .route("/admin/credits/reconcile", get(reconcile))
+        .route(
+            "/admin/credits/test-purchase-email",
+            post(test_purchase_email),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -706,6 +716,96 @@ async fn reconcile(
     tracing::info!(action = "reconcile", "admin reconciliation run");
     let report = state.reconcile_report().await?;
     Ok(Json(report))
+}
+
+/// The credits a test receipt shows when the body names none.
+pub const TEST_RECEIPT_CREDITS: u64 = 500;
+
+#[derive(Debug, Deserialize)]
+pub struct TestPurchaseEmailBody {
+    address: String,
+    /// A positive integer; checked by hand so anything else is upstream's 400.
+    #[serde(default)]
+    credits: Option<JsonValue>,
+    /// The recipient; without it, the account's email.
+    #[serde(default)]
+    email: Option<String>,
+}
+
+/// `POST /admin/test-purchase-email`: renders and sends the purchase receipt
+/// on demand, so it can be checked on a deployed node without paying for a
+/// pack. It writes no purchase and no receipt row. The send is audited
+/// without its recipient, and answers what happened to it: `sent` with the
+/// provider's message id, `skipped` with the reason, or 502 when the
+/// provider refused it.
+async fn test_purchase_email(
+    admin: RequireAdmin,
+    State(state): State<SharedState>,
+    body: Option<Json<TestPurchaseEmailBody>>,
+) -> Result<Json<JsonValue>, ApiError> {
+    let Json(b) = body.ok_or_else(|| ApiError::bad_request("missing JSON body"))?;
+    let address = normalize_address(&b.address)?;
+    let credits = match &b.credits {
+        None => TEST_RECEIPT_CREDITS,
+        Some(value) => value
+            .as_u64()
+            .filter(|credits| *credits > 0)
+            .ok_or_else(|| ApiError::bad_request("credits must be a positive integer"))?,
+    };
+    let Some(sender) = state.receipts.get() else {
+        return Err(ApiError::service_unavailable(
+            "purchase receipts are not set up on this node",
+        ));
+    };
+    let given = b
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|email| !email.is_empty());
+    let detail = json!({ "credits": credits, "recipient": if given.is_some() { "given" } else { "account" } });
+    Credits::audit(
+        &state.credits.pool,
+        AuditEntry {
+            action: "test_purchase_email",
+            actor: &admin.audit_actor_description(),
+            target: Some(&address),
+            detail: &detail,
+        },
+    )
+    .await?;
+    let to = match given {
+        Some(email) => Some(email.to_string()),
+        None => receipts::account_email(&state.credits.pool, &address).await?,
+    };
+    let answer = |status: &str| json!({ "address": address, "credits": credits, "status": status });
+    let Some(to) = to else {
+        let mut out = answer("skipped");
+        out["reason"] = json!("no recipient");
+        return Ok(Json(out));
+    };
+    let result = if sender.mailer.is_configured() {
+        let custom_args = json!({ "credits_test_receipt": "true" });
+        sender
+            .send(&to, &address, &credits.to_string(), &custom_args)
+            .await
+    } else {
+        Err(SendFailure::NotConfigured)
+    };
+    match outcome_after(1, result) {
+        Outcome::Sent(message_id) => {
+            let mut out = answer("sent");
+            out["messageId"] = json!(message_id);
+            Ok(Json(out))
+        }
+        Outcome::Skipped(reason) => {
+            let mut out = answer("skipped");
+            out["reason"] = json!(reason);
+            Ok(Json(out))
+        }
+        Outcome::Failed(error) | Outcome::Retry { error, .. } => Err(ApiError::bad_gateway(
+            format!("the receipt was not sent: {error}"),
+        )),
+    }
 }
 
 #[derive(Debug, Serialize)]

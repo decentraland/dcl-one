@@ -1762,6 +1762,42 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Credits purchase receipts
+
+`credits.purchase_receipts` (`schemas/60_ops.sql`) is the outbox of the
+purchase receipt email (`shop/src/credits/receipts.rs`): one row per Stripe
+pack purchase, keyed by `credits.purchases.id`. The webhook's grant
+(`handlers/stripe.rs`, `credit_settled`) inserts it in the transaction that
+flips the purchase and moves the wallet, `ON CONFLICT DO NOTHING`, with the
+address the buyer typed into Checkout when the settling session event carried
+it. The leased `credits-purchase-receipts` job (with `OPS_WRITES_ENABLED`, every
+`SHOP_NOTIFY_DELIVERY_INTERVAL_SECS`) claims up to 50 due rows by the partial
+index on `(next_attempt_at, purchase_id) WHERE status = 'pending'`
+(`FOR UPDATE SKIP LOCKED`, counting the attempt and leasing the row for five
+minutes), joins each to its purchase by primary key, sends outside any
+transaction, and records the outcome guarded on `status = 'pending'` and the
+claimed attempt. Rows are one per paid pack and never deleted, except with
+their purchase.
+
+A receipt with no stored address and none on its Checkout Session at Stripe
+reads `social.subscriptions` (`address`, `email`) by primary key: a shared
+SQL edge into Social's table, read by SQL because Shop does not depend on the
+Social crate. It writes nothing there. The shared notification path
+(`shared::notifications`) does not carry the receipt: its delivery rows hang
+off an inbox entry, go only to that account email under its opt-outs, and
+render Social's one template. Changing those columns updates this section and
+`AGENTS.md`.
+
+Invariants: a purchase has at most one receipt (the primary key), and it
+exists only if the grant committed (same transaction; the foreign key's
+share lock on the purchase also waits for the grant's row lock). A row ends
+`sent`, `skipped` (no sender configured, no recipient, or the purchase no
+longer `paid`) or `failed` (a refusal, or five transient failures), and a
+terminal row holds no address (`purchase_receipts_email_check`). An outcome
+recorded for a lease another claim took over changes nothing. The bootstrap
+defines the table; an existing database gains it from the object pass, so no
+step exists.
+
 ## Credits checkout and broker claim edges
 
 A credits checkout line buys through the shop broker under the claim key

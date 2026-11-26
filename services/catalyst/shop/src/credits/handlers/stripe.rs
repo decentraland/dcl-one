@@ -1,6 +1,7 @@
 //! `POST /stripe/webhook`: the signature is verified over the raw body
 //! before any row is touched; then ONE transaction lands the event claim,
-//! the purchase flip and the wallet move, granting `purchases.credits`
+//! the purchase flip, the wallet move and the purchase's receipt row
+//! (`receipts.rs`, sent after the commit), granting `purchases.credits`
 //! (captured at intent/session creation), never the event's metadata, and
 //! only for a settled payment in the purchase's currency and amount. A
 //! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
@@ -39,8 +40,11 @@ use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
 use crate::credits::errors::ApiError;
 use crate::credits::packs::{Charge, MarkPaidOutcome, ReversalOutcome};
+use crate::credits::receipts;
 use crate::credits::store::Credits;
-use crate::credits::stripe::{SIGNATURE_TOLERANCE_SECS, verify_stripe_signature};
+use crate::credits::stripe::{
+    SIGNATURE_TOLERANCE_SECS, session_buyer_email, verify_stripe_signature,
+};
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
@@ -128,6 +132,7 @@ pub async fn webhook(
                 event_id: &event_id,
                 event_type: &event_type,
                 by: SettledBy::PaymentIntent(pi_id),
+                buyer_email: None,
             };
             credit_settled(&state, &mut tx, outcome, settled).await?;
         }
@@ -230,6 +235,7 @@ async fn settle_session(
         event_id,
         event_type,
         by: SettledBy::Session(session_id),
+        buyer_email: session_buyer_email(object),
     };
     credit_settled(state, tx, outcome, settled).await
 }
@@ -239,6 +245,9 @@ struct Settled<'a> {
     event_id: &'a str,
     event_type: &'a str,
     by: SettledBy<'a>,
+    /// The address the buyer typed into Checkout, which only a session
+    /// event carries: the receipt's first recipient.
+    buyer_email: Option<String>,
 }
 
 /// The key the event matched its purchase by.
@@ -264,7 +273,9 @@ impl<'a> SettledBy<'a> {
 /// the grant is the same whichever lands first. Its ledger row is described
 /// from the purchase row, and the reversals recorded before it are applied
 /// for the payment intent the purchase holds, which an unpaid completion
-/// may have recorded before an event that names none.
+/// may have recorded before an event that names none. The purchase's
+/// receipt is enqueued in the same transaction (`receipts.rs`), so it is
+/// sent only once the grant commits.
 async fn credit_settled(
     state: &SharedState,
     tx: &mut Tx<'_>,
@@ -275,6 +286,7 @@ async fn credit_settled(
         event_id,
         event_type,
         by,
+        buyer_email,
     } = settled;
     let (matched_by, matched) = by.parts();
     match outcome {
@@ -322,6 +334,7 @@ async fn credit_settled(
                     tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled purchase holds no payment_intent: a later refund or dispute cannot find it");
                 }
             }
+            receipts::enqueue_in_tx(tx, purchase.id, buyer_email.as_deref()).await?;
         }
         MarkPaidOutcome::AmountMismatch {
             expected_cents,

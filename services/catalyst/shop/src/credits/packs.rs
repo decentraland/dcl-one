@@ -29,6 +29,8 @@ pub(crate) fn validate_sku(raw: &str) -> Result<String, ApiError> {
 /// reversals go by, whichever Stripe event settled it.
 #[derive(Debug, Clone)]
 pub struct SettledPurchase {
+    /// `credits.purchases.id`, the key of its receipt.
+    pub id: i64,
     pub address: String,
     pub credits: String,
     pub sku: String,
@@ -516,6 +518,7 @@ impl Credits {
 
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
             return Ok(MarkPaidOutcome::Granted(SettledPurchase {
+                id: row.get("id"),
                 address: row.get("address"),
                 credits: row.get("credits"),
                 sku: row.get("sku"),
@@ -834,7 +837,7 @@ macro_rules! mark_paid_sql {
                      AND cur.amount_cents = $3 AND lower(cur.currency) = lower($5::text) \
                  RETURNING p.id \
              ) \
-             SELECT cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
+             SELECT cur.id, cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
                     cur.sku, cur.order_id, cur.stripe_checkout_session, \
                     COALESCE(cur.stripe_payment_intent, $4::text) AS payment_intent, \
                     EXISTS (SELECT 1 FROM upd) AS updated \

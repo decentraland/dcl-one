@@ -310,7 +310,20 @@ fn session_state(v: &serde_json::Value) -> super::orders::SessionState {
                 .map(str::to_string)
                 .or_else(|| p.get("id").and_then(|i| i.as_str()).map(str::to_string))
         }),
+        buyer_email: session_buyer_email(v),
     }
+}
+
+/// A Checkout Session's `customer_details.email`, trimmed: the address the
+/// buyer typed into the hosted page. Only a session carries it; a
+/// `payment_intent.succeeded` object has none.
+pub(crate) fn session_buyer_email(session: &serde_json::Value) -> Option<String> {
+    session
+        .pointer("/customer_details/email")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .map(str::to_string)
 }
 
 fn truncate(s: &str, max: usize) -> &str {
