@@ -482,9 +482,14 @@ async fn check_inner(
     body: ImportCheckBody,
 ) -> Result<Response, Response> {
     require_not_scene_signer(headers).map_err(IntoResponse::into_response)?;
-    let signer_text = require_signer(headers, "post", CHECK_PATH)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    let signer_text = require_signer(
+        super::market::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        CHECK_PATH,
+    )
+    .await
+    .map_err(IntoResponse::into_response)?;
     let signer =
         EvmAddress::parse(&signer_text).map_err(|_| bad("the signer is not an address"))?;
     require_ready(state, Mirror::Collections).await?;

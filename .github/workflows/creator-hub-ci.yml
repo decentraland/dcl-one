@@ -112,6 +112,73 @@ jobs:
             fi
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
+  # The test builds comment shows this run as in progress at once, and not built where the run
+  # ends without a build (.github/actions/creator-hub-test-builds/status.sh). Fork and Dependabot
+  # pull requests make no test builds, and their token cannot write the comment. Only a run's first
+  # attempt shows it as in progress: a re-run keeps the run's id, so it would set the results this
+  # run already published back to pending.
+  test_builds_pending:
+    name: test builds pending
+    needs: [ changes ]
+    if: >-
+      github.event_name == 'pull_request' && needs.changes.outputs.creator-hub == 'true'
+      && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      && github.run_attempt == 1
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/creator-hub-test-builds
+            .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Show this run as in progress
+        env:
+          STATE: pending
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DESKTOP: ${{ contains(github.event.pull_request.labels.*.name, 'ci:desktop') || contains(github.event.pull_request.labels.*.name, 'ci:linux') }}
+        run: bash .github/actions/creator-hub-test-builds/status.sh
+  test_builds_ended:
+    name: test builds ended
+    needs: [ test_builds_pending, asset-packs, inspector, creator-hub ]
+    # Also after a cancelled run or a failed pending job: no later run is sure to write the comment.
+    # The script writes only over the pending state of its own run.
+    if: ${{ always() && needs.test_builds_pending.result != 'skipped' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/creator-hub-test-builds
+            .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Show the builds that this run did not make
+        env:
+          STATE: ended
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          INSPECTOR_CHANGED: ${{ needs.inspector.outputs.changed }}
+          ASSET_PACKS_CHANGED: ${{ needs.asset-packs.outputs.changed }}
+        run: bash .github/actions/creator-hub-test-builds/status.sh
   build:
     needs: [ changes ]
     if: needs.changes.outputs.creator-hub == 'true'

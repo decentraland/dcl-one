@@ -75,6 +75,8 @@ export type CartLineRowProps = {
   onRemove(): void;
   onRetry(): void;
   guidance?: Omit<ManaGuidanceProps, "guidance" | "required" | "reasons" | "item">;
+  /** A line on the first screen: its picture loads at once, ahead of the other images. */
+  priority?: boolean;
 };
 
 const Minus = () => (
@@ -133,7 +135,7 @@ function FavoriteToggle({ favKey, name, disabled }: { favKey: string; name: stri
   );
 }
 
-export default function CartLineRow({ line, offer, view, changes, refusal, disabled = false, onMethod, onQuantity, onRemove, onRetry, guidance }: CartLineRowProps) {
+export default function CartLineRow({ line, offer, view, changes, refusal, disabled = false, onMethod, onQuantity, onRemove, onRetry, guidance, priority = false }: CartLineRowProps) {
   const [showGuidance, setShowGuidance] = useState(false);
   const quantity = lineUnits(line);
   const isMint = line.asset.token.kind === "item";
@@ -183,6 +185,9 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   // The flap names a wearable's or an emote's category; LAND, names and older saved lines have none to show.
   const flapItem = line.display.category ? { category: line.display.category, wearableCategory: line.display.wearableCategory, rarity: line.display.rarity ?? "" } : null;
   const href = line.display.href;
+  const picture = line.display.thumbnail ? (
+    <img src={line.display.thumbnail} alt={line.display.name} loading={priority ? "eager" : "lazy"} fetchPriority={priority ? "high" : undefined} />
+  ) : null;
 
   return (
     <article className="shop-cartline" data-unavailable={unavailable || undefined} aria-label={line.display.name}>
@@ -190,11 +195,11 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
         {flapItem && categoryIcon(flapItem) ? <CategoryFlap item={flapItem} size="sm" testId="cart-line-flap" /> : null}
         {href ? (
           <a className="shop-cartline__thumb-link" href={href} aria-label={line.display.name}>
-            {line.display.thumbnail ? <img src={line.display.thumbnail} alt={line.display.name} loading="lazy" /> : null}
+            {picture}
           </a>
-        ) : line.display.thumbnail ? (
-          <img src={line.display.thumbnail} alt={line.display.name} loading="lazy" />
-        ) : null}
+        ) : (
+          picture
+        )}
       </div>
       <div className="shop-cartline__main">
         <div className="shop-cartline__desc" data-desc>

@@ -206,6 +206,22 @@ fn metadata(socket: &SocketRef) -> (Option<Extension<ConnectInfo<SocketAddr>>>, 
     )
 }
 
+/// The client source of the socket's connecting request, for the node's
+/// budget of contract-wallet checks (`eip1654_budget`): socketioxide runs each
+/// event outside that request's scope, so an event's checks are charged to it
+/// here.
+fn client_source(
+    state: &AppState,
+    peer: Option<&Extension<ConnectInfo<SocketAddr>>>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    crate::shared::client_ip::distinct_client_ip(
+        headers,
+        peer.map(|Extension(ConnectInfo(peer))| *peer),
+        &state.settings.trusted_proxy_cidrs,
+    )
+}
+
 fn bad_message(ack: AckSender) {
     let _ = ack.send(&json!({ "error": "Invalid request body" }));
 }
@@ -223,8 +239,12 @@ fn register(socket: SocketRef, state: AppState) {
                     return bad_message(ack);
                 };
                 let (peer, headers) = metadata(&socket);
-                let response =
-                    create_request(State(state.clone()), peer, headers, RelayJson(body)).await;
+                let source = client_source(&state, peer.as_ref(), &headers);
+                let response = crate::shared::eip1654_budget::with_source(source, async {
+                    crate::shared::eip1654_budget::debug_assert_scoped("the auth socket's request");
+                    create_request(State(state.clone()), peer, headers, RelayJson(body)).await
+                })
+                .await;
                 if response.status() != StatusCode::CREATED {
                     return ack_response(ack, response).await;
                 }
@@ -294,8 +314,9 @@ fn register(socket: SocketRef, state: AppState) {
                     return bad_message(ack);
                 };
                 let (peer, headers) = metadata(&socket);
-                ack_response(
-                    ack,
+                let source = client_source(&state, peer.as_ref(), &headers);
+                let response = crate::shared::eip1654_budget::with_source(source, async {
+                    crate::shared::eip1654_budget::debug_assert_scoped("the auth socket's outcome");
                     submit_outcome(
                         State(state),
                         peer,
@@ -303,9 +324,10 @@ fn register(socket: SocketRef, state: AppState) {
                         Path(data.request_id.to_string()),
                         RelayJson(data.outcome),
                     )
-                    .await,
-                )
+                    .await
+                })
                 .await;
+                ack_response(ack, response).await;
             }
         },
     );

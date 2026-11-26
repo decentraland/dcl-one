@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../components/Modal";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import type { ShopClient } from "@shop/api/shop";
@@ -104,11 +104,11 @@ export default function RentalTxModal({ kind, asset, rental, account, provider, 
 
         <div className="shop-land-actions">
           {!sent && (!outcome || outcome.kind === "declined" || (outcome.kind === "failed" && outcome.retry)) ? (
-            <Button onClick={go} disabled={busy} tone={kind === "remove" ? "danger" : undefined}>
+            <Button size="md" onClick={go} disabled={busy} tone={kind === "remove" ? "danger" : undefined}>
               {busy ? "Working…" : outcome ? "Try again" : title}
             </Button>
           ) : null}
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
+          <Button size="md" variant="secondary" onClick={onClose} disabled={busy}>
             {sent && outcome ? "Close" : "Cancel"}
           </Button>
         </div>

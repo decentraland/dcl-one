@@ -30,3 +30,7 @@ impl ActiveTransmitter {
         watch_send_if_modified(&self.state, new_state)
     }
 }
+
+/// A shared output for screens selecting this track explicitly.
+#[derive(Component, Deref)]
+pub struct SelectedVideoTransmitter(pub ActiveTransmitter);
