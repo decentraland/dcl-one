@@ -40,6 +40,7 @@ import type {
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   SetAvatarData,
@@ -203,6 +204,9 @@ export type BevyApiInterface = {
   /** React with an emoji, shown over the local user's avatar; an emoji the wire does not carry
    *  does nothing. Optional: absent on runtimes whose SystemApi predates it. */
   sendReaction?: (emoji: string) => void
+  /** Situational reactions as they play, the local user's included; none while the "Chat
+   *  Reactions" setting is off. Optional: absent on runtimes whose SystemApi predates it. */
+  getReactionStream?: () => Promise<AsyncIterable<ReactionData>>
   getVoiceStream: () => Promise<AsyncIterable<VoiceMessage>>
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>
