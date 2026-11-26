@@ -3,9 +3,10 @@ use super::{
     invoke,
 };
 use futures::StreamExt;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -280,7 +281,7 @@ struct Shared {
 
 impl Shared {
     fn link(&self) -> Option<Arc<Link>> {
-        self.link.lock().unwrap().clone()
+        self.link.lock().clone()
     }
 
     fn invalidate(&self) {
@@ -293,7 +294,7 @@ impl Shared {
 
 impl SubscriptionRegistry for Shared {
     fn cancel(&self, id: u64) {
-        let registration = self.registrations.lock().unwrap().remove(&id);
+        let registration = self.registrations.lock().remove(&id);
         if let Some(registration) = registration {
             self.invalidate();
             if let Some(task) = registration.live {
@@ -370,7 +371,7 @@ impl Drop for BrokerBus {
         if let Some(link) = self.shared.link() {
             link.break_link();
         }
-        if let Some(task) = self.task.lock().unwrap().take() {
+        if let Some(task) = self.task.lock().take() {
             task.abort();
         }
     }
@@ -394,8 +395,8 @@ impl NatsBus for BrokerBus {
         if !self.is_enabled() {
             return;
         }
-        let mut task = self.task.lock().unwrap();
-        if let Some(rx) = self.shared.rx.lock().unwrap().take() {
+        let mut task = self.task.lock();
+        if let Some(rx) = self.shared.rx.lock().take() {
             *task = Some(crate::shared::task::spawn(supervise(
                 self.shared.clone(),
                 rx,
@@ -410,7 +411,7 @@ impl NatsBus for BrokerBus {
         handler: NatsHandler,
     ) -> NatsSubscription {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
-        self.shared.registrations.lock().unwrap().insert(
+        self.shared.registrations.lock().insert(
             id,
             Registration {
                 subject: subject.into(),
@@ -556,8 +557,8 @@ struct LinkLifetime(Arc<Shared>, Arc<Link>);
 impl Drop for LinkLifetime {
     fn drop(&mut self) {
         self.1.break_link();
-        self.0.link.lock().unwrap().take();
-        for registration in self.0.registrations.lock().unwrap().values_mut() {
+        self.0.link.lock().take();
+        for registration in self.0.registrations.lock().values_mut() {
             if let Some(task) = registration.live.take() {
                 task.abort();
             }
@@ -625,16 +626,18 @@ fn options(shared: &Shared, link: &Arc<Link>) -> async_nats::ConnectOptions {
 }
 
 async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
+    // connect() spawns this only for an enabled bus.
+    let Some(url) = shared.url.clone() else {
+        tracing::error!("NATS link supervisor started without a URL");
+        return;
+    };
     let mut delay = RECONNECT_DELAY;
     let mut retained = None;
     loop {
         let link = Arc::new(Link::default());
-        *shared.link.lock().unwrap() = Some(link.clone());
+        *shared.link.lock() = Some(link.clone());
         let lifetime = LinkLifetime(shared.clone(), link.clone());
-        match options(&shared, &link)
-            .connect(shared.url.as_ref().unwrap())
-            .await
-        {
+        match options(&shared, &link).connect(&url).await {
             Ok(client) => {
                 let _ = link.client.set(client);
                 tracing::info!("NATS link socket connected; awaiting broker round trip");
@@ -710,7 +713,6 @@ async fn activate(shared: &Shared, link: &Arc<Link>) -> Result<(), ()> {
     let registrations: Vec<_> = shared
         .registrations
         .lock()
-        .unwrap()
         .iter()
         .filter(|(_, registration)| registration.live.is_none())
         .map(|(id, registration)| {
@@ -738,7 +740,7 @@ async fn activate(shared: &Shared, link: &Arc<Link>) -> Result<(), ()> {
                 link.break_link();
             }
         });
-        match shared.registrations.lock().unwrap().get_mut(&id) {
+        match shared.registrations.lock().get_mut(&id) {
             Some(registration) => registration.live = Some(live),
             None => live.abort(),
         }
@@ -758,17 +760,12 @@ async fn restore(shared: &Shared, link: &Arc<Link>, fence: &mut Fence) -> Result
     })
     .await
     .map_err(|_| ())??;
-    let registrations_live = shared
-        .registrations
-        .lock()
-        .unwrap()
-        .values()
-        .all(|registration| {
-            registration
-                .live
-                .as_ref()
-                .is_some_and(|task| !task.is_finished())
-        });
+    let registrations_live = shared.registrations.lock().values().all(|registration| {
+        registration
+            .live
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+    });
     if registrations_live {
         link.ready_revision.store(revision, Ordering::SeqCst);
     }
@@ -782,7 +779,10 @@ async fn run(
     rx: &mut mpsc::Receiver<Outbound>,
     retained: &mut Option<Retained>,
 ) {
-    let client = link.client.get().unwrap();
+    let Some(client) = link.client.get() else {
+        tracing::error!("NATS link ran without a connected client");
+        return;
+    };
     let Ok(Ok(mut fence)) = timeout(BROKER_DEADLINE, Fence::new(client)).await else {
         return;
     };
@@ -797,8 +797,7 @@ async fn run(
         if link.broken.load(Ordering::SeqCst) {
             return;
         }
-        if retained.is_some() {
-            let pending = retained.as_ref().unwrap();
+        if let Some(pending) = retained.as_ref() {
             if !pending.pending() {
                 *retained = None;
                 continue;
@@ -814,11 +813,10 @@ async fn run(
             if link.broken.load(Ordering::SeqCst) {
                 return;
             }
-            if !retained.as_ref().unwrap().pending() {
+            let Some(publish) = retained.take_if(|publish| publish.pending()) else {
                 *retained = None;
                 continue;
-            }
-            let publish = retained.take().unwrap();
+            };
             let revision = link.revision.load(Ordering::SeqCst);
             submit_retained(
                 publish,
@@ -1001,13 +999,13 @@ mod tests {
                 PublishOutcome::Failed
             );
         }
-        assert!(bus.shared.rx.lock().unwrap().as_ref().unwrap().is_empty());
+        assert!(bus.shared.rx.lock().as_ref().unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn terminal_submission_waits_for_capacity_without_admission_readiness() {
         let bus = BrokerBus::new(Some("nats://127.0.0.1:1".into()), "terminal-capacity");
-        let mut rx = bus.shared.rx.lock().unwrap().take().unwrap();
+        let mut rx = bus.shared.rx.lock().take().unwrap();
         let mut receipts = Vec::new();
         for _ in 0..OUTBOUND_CAPACITY {
             let (result, receipt) = oneshot::channel();
@@ -1060,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_terminal_heads_cannot_publish_after_a_link_rebuild() {
         let bus = BrokerBus::new(Some("nats://127.0.0.1:1".into()), "terminal-cancel");
-        let mut rx = bus.shared.rx.lock().unwrap().take().unwrap();
+        let mut rx = bus.shared.rx.lock().take().unwrap();
         {
             let waiting = bus.publish_statistical_disconnect(
                 terminal_payload(1),
@@ -1293,7 +1291,7 @@ mod tests {
         for racer in racers {
             subscriptions.push(racer.await.unwrap());
         }
-        let registrations = bus.shared.registrations.lock().unwrap();
+        let registrations = bus.shared.registrations.lock();
         assert_eq!(registrations.len(), 8);
         assert!(
             registrations
@@ -1302,7 +1300,7 @@ mod tests {
         );
         drop(registrations);
         drop(subscriptions);
-        assert!(bus.shared.registrations.lock().unwrap().is_empty());
+        assert!(bus.shared.registrations.lock().is_empty());
     }
 }
 

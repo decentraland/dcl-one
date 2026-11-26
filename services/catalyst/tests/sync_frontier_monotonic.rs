@@ -18,10 +18,8 @@ use sqlx::PgPool;
 
 use catalyst::content::sync::{LiveDeploymentRepository, SyncStatus, resume_point};
 
-#[path = "support/auth.rs"]
-mod auth;
-#[path = "support/db.rs"]
-mod db;
+use crate::auth;
+use crate::db;
 #[path = "support/phased_bootstrap.rs"]
 mod phased_bootstrap;
 

@@ -54,6 +54,12 @@ pub const CPU_HICCUPS_METRIC: &str = "Hiccups per run";
 pub const PEAK_MEMORY_METRIC: &str = "Peak memory";
 /// A smaller peak-memory median difference never gets a verdict.
 pub const MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB: f32 = 32.0;
+/// The load times from a run's log (`load_times.rs`): launch to arriving in world, and the
+/// spawn scene's spawn to it and its first ring of neighbours being ready.
+pub const LOAD_TIME_METRICS: [&str; 2] = ["Time to world", "First ring ready"];
+/// A smaller load-time median difference never gets a verdict: loads go over the network, so
+/// their run-to-run spread is hundreds of milliseconds.
+pub const MIN_ABSOLUTE_LOAD_TIME_DELTA_MS: f32 = 500.0;
 
 /// One run's sample count and its metrics in the order of [`FRAME_TIME_METRICS`], from its CSV. The first
 /// line is the header; every other line is `frame,cpu,gpu`. A CSV with no rows, a row with fewer
@@ -244,6 +250,23 @@ pub const GPU_TIMING_BROKEN: &str = "GPU timing not working";
 /// for a whole run and differ between runs of one build, so separated runs can be chance.
 pub const GPU_TIMING_UNRELIABLE: &str = "GPU timing unreliable on Metal";
 
+/// The rule every median verdict shares: the builds' runs are fully separated and the medians
+/// differ by at least [`MIN_RELATIVE_MEDIAN_DELTA`] and `min_absolute_delta`. The relative
+/// improvement (negative when slower) when the rule holds.
+fn separated_shift(
+    change: &MedianAndRange,
+    base: &MedianAndRange,
+    min_absolute_delta: f32,
+) -> Option<f32> {
+    let delta = change.median - base.median;
+    let improvement = -delta / base.median;
+    let separated = change.min > base.max || change.max < base.min;
+    (separated
+        && delta.abs() >= min_absolute_delta
+        && improvement.abs() >= MIN_RELATIVE_MEDIAN_DELTA)
+        .then_some(improvement)
+}
+
 /// The verdict of metric `m`. A change counts only when the builds' runs are fully separated
 /// (every change run faster, or every one slower, than every baseline run: with three runs a
 /// build, the most extreme outcome of a permutation test, one-sided p = 0.05) and the median
@@ -269,17 +292,30 @@ pub fn frame_time_verdict(
         return FrameTimeVerdict::Withheld("implausibly small values");
     }
 
-    let delta = change.median - base.median;
-    let improvement = -delta / base.median;
-    let separated = change.min > base.max || change.max < base.min;
-    if !separated || delta.abs() < MIN_ABSOLUTE_FRAME_TIME_DELTA_MS {
-        FrameTimeVerdict::WithinNoise
-    } else if improvement >= MIN_RELATIVE_MEDIAN_DELTA {
-        FrameTimeVerdict::Faster(improvement)
-    } else if improvement <= -MIN_RELATIVE_MEDIAN_DELTA {
-        FrameTimeVerdict::Slower(-improvement)
-    } else {
-        FrameTimeVerdict::WithinNoise
+    match separated_shift(change, base, MIN_ABSOLUTE_FRAME_TIME_DELTA_MS) {
+        Some(improvement) if improvement > 0.0 => FrameTimeVerdict::Faster(improvement),
+        Some(improvement) => FrameTimeVerdict::Slower(-improvement),
+        None => FrameTimeVerdict::WithinNoise,
+    }
+}
+
+/// A load-time verdict: the frame-time metrics' separation and relative floor, with an absolute
+/// floor of [`MIN_ABSOLUTE_LOAD_TIME_DELTA_MS`].
+pub fn load_time_verdict(
+    change: &MedianAndRange,
+    base: &MedianAndRange,
+    incomparable: Option<SessionsNotComparable>,
+) -> FrameTimeVerdict {
+    if let Some(incomparable) = incomparable {
+        return FrameTimeVerdict::Withheld(incomparable.reason());
+    }
+    if min(change.median, base.median) <= 0.0 {
+        return FrameTimeVerdict::Withheld("a zero load time");
+    }
+    match separated_shift(change, base, MIN_ABSOLUTE_LOAD_TIME_DELTA_MS) {
+        Some(improvement) if improvement > 0.0 => FrameTimeVerdict::Faster(improvement),
+        Some(improvement) => FrameTimeVerdict::Slower(-improvement),
+        None => FrameTimeVerdict::WithinNoise,
     }
 }
 
@@ -311,17 +347,10 @@ pub fn peak_memory_verdict(
     if change.median <= 0.0 {
         return PeakMemoryVerdict::Withheld("no change memory");
     }
-    let delta = change.median - base.median;
-    let improvement = -delta / base.median;
-    let separated = change.min > base.max || change.max < base.min;
-    if !separated || delta.abs() < MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB {
-        PeakMemoryVerdict::WithinNoise
-    } else if improvement >= MIN_RELATIVE_MEDIAN_DELTA {
-        PeakMemoryVerdict::LessMemory(improvement)
-    } else if improvement <= -MIN_RELATIVE_MEDIAN_DELTA {
-        PeakMemoryVerdict::MoreMemory(-improvement)
-    } else {
-        PeakMemoryVerdict::WithinNoise
+    match separated_shift(change, base, MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB) {
+        Some(improvement) if improvement > 0.0 => PeakMemoryVerdict::LessMemory(improvement),
+        Some(improvement) => PeakMemoryVerdict::MoreMemory(-improvement),
+        None => PeakMemoryVerdict::WithinNoise,
     }
 }
 
@@ -622,6 +651,34 @@ mod tests {
             "under 1.5x"
         );
         assert_eq!(v(0.0, 2.0), IncidentsPerRunVerdict::Fewer);
+    }
+
+    #[test]
+    fn a_load_time_verdict_needs_separated_runs_and_half_a_second() {
+        let base = agg(10_000.0, 9_800.0, 10_200.0);
+        let v = |change| load_time_verdict(&change, &base, None);
+        assert_eq!(
+            v(agg(8_000.0, 7_900.0, 8_100.0)),
+            FrameTimeVerdict::Faster(0.2)
+        );
+        assert_eq!(
+            v(agg(12_000.0, 11_900.0, 12_100.0)),
+            FrameTimeVerdict::Slower(0.2)
+        );
+        assert_eq!(
+            v(agg(8_000.0, 7_900.0, 9_900.0)),
+            FrameTimeVerdict::WithinNoise,
+            "overlap"
+        );
+        assert_eq!(
+            v(agg(10_400.0, 10_300.0, 10_450.0)),
+            FrameTimeVerdict::WithinNoise,
+            "4% but under 500 ms"
+        );
+        assert_eq!(
+            load_time_verdict(&base, &base, Some(SessionsNotComparable::TooFewRuns)),
+            FrameTimeVerdict::Withheld("too few runs")
+        );
     }
 
     #[test]
