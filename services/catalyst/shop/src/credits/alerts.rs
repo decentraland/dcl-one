@@ -28,11 +28,15 @@
 //! nothing. The job claims due rows for a lease, posts each (no redirect
 //! followed), and ends it `sent` once Slack accepted it; a refused or failed
 //! post is retried with backoff, Slack's `Retry-After` on a 429 holding the
-//! rest of the pass too, and a row still undelivered after [`MAX_AGE`] and
-//! one attempted post ends `failed`. With no webhook each row is logged at
-//! error and ends `skipped`: an alert is never dropped silently. Delivery is
-//! at least once: a post Slack accepted whose row was not ended (a crash, a
-//! timeout after acceptance) is posted again after the lease.
+//! rest of the pass too. Held rows keep their previous attempt count. A row
+//! still undelivered after [`MAX_AGE`] and one attempted post ends `failed`.
+//! After [`MAX_HOLD`] since the first unposted Slack hold, another hold ends
+//! the row `failed` with `last_error` set to "Slack hold age limit reached".
+//! That row can have zero attempts. Time in the queue before the first hold
+//! does not count, so a worker outage followed by one 429 preserves the backlog.
+//! With no webhook each row is logged at error and ends `skipped`. Delivery
+//! is at least once: a post Slack accepted whose row was not ended (a crash,
+//! a timeout after acceptance) is posted again after the lease.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -97,6 +101,10 @@ const BATCH: i64 = 20;
 const LEASE: chrono::Duration = chrono::Duration::minutes(5);
 /// An alert still undelivered this long after it was written is given up.
 pub const MAX_AGE: chrono::Duration = chrono::Duration::hours(24);
+/// The maximum elapsed time between the first and a subsequent Slack hold.
+const MAX_HOLD: chrono::Duration = chrono::Duration::hours(48);
+/// A held retry stores its start in the reason carried forward by the next claim.
+const HOLD_SINCE_PREFIX: &str = "held while Slack rate limits since ";
 const POST_TIMEOUT: Duration = Duration::from_secs(10);
 const INTERVAL: Duration = Duration::from_secs(15);
 /// The first retry's wait, doubled per attempt up to [`MAX_BACKOFF`].
@@ -368,6 +376,7 @@ struct Claimed {
     payload: Value,
     attempts: i32,
     created_at: chrono::NaiveDateTime,
+    held_since: Option<chrono::NaiveDateTime>,
 }
 
 /// What one pass did with the alerts it claimed.
@@ -403,7 +412,7 @@ impl Delivery {
             "UPDATE credits.alerts a SET attempts = a.attempts + 1, next_attempt_at = $2 \
              WHERE a.id IN (SELECT id FROM credits.alerts WHERE status = 'pending' AND next_attempt_at <= $1 \
                             ORDER BY next_attempt_at, id LIMIT $3 FOR UPDATE SKIP LOCKED) \
-             RETURNING a.id, a.kind, a.payload, a.attempts, a.created_at",
+             RETURNING a.id, a.kind, a.payload, a.attempts, a.created_at, a.last_error",
         )
         .bind(now)
         .bind(lease_until)
@@ -417,6 +426,11 @@ impl Delivery {
             payload: row.get::<sqlx::types::Json<Value>, _>("payload").0,
             attempts: row.get("attempts"),
             created_at: row.get("created_at"),
+            held_since: row
+                .get::<Option<&str>, _>("last_error")
+                .and_then(|reason| reason.strip_prefix(HOLD_SINCE_PREFIX))
+                .and_then(|since| chrono::DateTime::parse_from_rfc3339(since).ok())
+                .map(|since| since.naive_utc()),
         })
         .collect();
         claimed.sort_by_key(|alert| alert.id);
@@ -458,16 +472,25 @@ impl Delivery {
         }
         messages.sort_by_key(|(alerts, _)| alerts[0].id);
         // Once Slack rate limits, the rest of the pass waits as it asked.
-        let mut held_until: Option<chrono::NaiveDateTime> = None;
+        let mut hold = None;
         for (alerts, text) in messages {
-            if let Some(until) = held_until {
+            if let Some((limited_at, until)) = hold {
                 for alert in &alerts {
+                    let held_since = alert.held_since.unwrap_or(limited_at);
+                    if limited_at - held_since >= MAX_HOLD {
+                        if expire_held(credits, alert.id, lease_until, limited_at).await? {
+                            let text = render(&alert.kind, &alert.payload, &self.shop);
+                            tracing::error!(alert = %text, kind = alert.kind, "a credits alert reached the Slack hold age limit and is given up");
+                            outcome.failed += 1;
+                        }
+                        continue;
+                    }
                     let rescheduled = retry(
                         credits,
                         alert.id,
                         lease_until,
                         until,
-                        "held while Slack rate limits",
+                        &format!("{HOLD_SINCE_PREFIX}{}", held_since.and_utc().to_rfc3339()),
                         true,
                     )
                     .await?;
@@ -484,7 +507,8 @@ impl Delivery {
                 }
                 Err(Refusal::RateLimited(wait)) => {
                     let attempts = alerts.iter().map(|alert| alert.attempts).max().unwrap_or(1);
-                    let until = clock(now) + wait.unwrap_or_else(|| backoff(attempts));
+                    let limited_at = clock(now);
+                    let until = limited_at + wait.unwrap_or_else(|| backoff(attempts));
                     tracing::warn!(attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
                     for alert in &alerts {
                         let rescheduled = retry(
@@ -498,7 +522,7 @@ impl Delivery {
                         .await?;
                         outcome.retried += rescheduled;
                     }
-                    held_until = Some(until);
+                    hold = Some((limited_at, until));
                 }
                 Err(Refusal::Failed(error)) => {
                     let failed_at = clock(now);
@@ -596,6 +620,26 @@ async fn retry(
     .execute(&credits.pool)
     .await?;
     Ok(result.rows_affected() as usize)
+}
+
+/// Ends this pass's expired hold and refunds the unposted claim.
+async fn expire_held(
+    credits: &Credits,
+    id: i64,
+    lease_until: chrono::NaiveDateTime,
+    at: chrono::NaiveDateTime,
+) -> Result<bool, ApiError> {
+    let result = sqlx::query(
+        "UPDATE credits.alerts SET status = 'failed', finished_at = $2, \
+         last_error = 'Slack hold age limit reached', attempts = attempts - 1 \
+         WHERE id = $1 AND status = 'pending' AND next_attempt_at = $3",
+    )
+    .bind(id)
+    .bind(at)
+    .bind(lease_until)
+    .execute(&credits.pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 async fn finish(
@@ -1175,7 +1219,7 @@ mod unit_tests {
     }
 
     #[tokio::test]
-    async fn a_stale_retry_leaves_the_new_claim_intact() {
+    async fn stale_retry_and_hold_expiry_leave_the_new_claim_intact() {
         let Some(db) = crate::test_db::OwnDatabase::create("alerts_stale_retry").await else {
             return;
         };
@@ -1196,10 +1240,15 @@ mod unit_tests {
             .await
             .unwrap();
         assert_eq!(rescheduled, 0);
+        assert!(
+            !expire_held(&credits, id, old_lease, new_lease)
+                .await
+                .unwrap()
+        );
 
         let still_claimed: bool = sqlx::query_scalar(
-            "SELECT attempts = 2 AND last_error IS NULL AND next_attempt_at = $2 \
-             FROM credits.alerts WHERE id = $1",
+            "SELECT status = 'pending' AND finished_at IS NULL AND attempts = 2 \
+             AND last_error IS NULL AND next_attempt_at = $2 FROM credits.alerts WHERE id = $1",
         )
         .bind(id)
         .bind(new_lease)

@@ -1890,17 +1890,29 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
-(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
-`next_attempt_at` out by a five-minute lease, then posts each to
-`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction, one message per row
-except the pass's settled purchases, which share messages of up to ten lines
-and the outcome of the message that carried them:
+(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), tentatively incrementing
+`attempts` and pushing `next_attempt_at` out by a five-minute lease. It then
+posts each to `CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction. The
+pass's settled purchases share messages of up to ten lines and the outcome
+of the message that carried them. Other rows get one message each.
 - a 2xx ends the row `sent`; no redirect is followed;
 - any other answer, or no answer within 10 seconds, schedules a retry after
   30 seconds, doubling up to 30 minutes, from the time it failed, and keeps
   the reason in `last_error` (never the webhook, whose path is the
-  credential); a 429 waits Slack's `Retry-After` when given, and the rest of
-  the pass waits with it;
+  credential). A 429 uses Slack's `Retry-After` when given, clamped to one
+  second through 30 minutes, and holds the rest of the pass. Retries match
+  the pending row and this pass's lease timestamp. The row Slack received
+  keeps its attempt. Each unposted held row refunds the claim's increment
+  in the update that schedules it or marks it failed.
+- the first unposted Slack hold records its start in `last_error`. Another
+  hold carries that timestamp forward, and a real post replaces the hold
+  reason if it schedules a retry. A row with a legacy hold reason starts
+  timing on its next hold. At 48 hours from that first recorded hold, another
+  hold ends the row `failed` under the same lease check. The worker records
+  `finished_at` and logs the alert at error. This path can leave a failed row
+  with zero attempts and `last_error = 'Slack hold age limit reached'`.
+  Starting the clock at the first hold protects a backlog after worker
+  downtime and lets sustained rate limiting age out held rows.
 - a row still undelivered a day after it was written, with one post already
   attempted, ends `failed`, and with no webhook a row ends `skipped`. Both
   log the alert at error, so none is dropped silently.
