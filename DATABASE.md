@@ -3787,19 +3787,28 @@ follows the collections subgraph's v1 handlers:
 An `AddWearable` whose wearable id has no representation is left out of
 `shop.items` and logged. The collection still counts it, and the next item
 is numbered after it. `catalyst_index_collections_v1_unrepresented_items`
-reports how many this process's last projection left out. That count
-depends only on the log up to the projected block and the vendored data:
-a publication rolled back after counting is retried and counts the same,
-and a walk's first publication (each process or lease) sets it again, so
-the gauge is absent only until then. It never holds the publication. On
-mainnet every one of the 438 items has a representation.
+reports how many the committed projection leaves out. It is recounted from
+the log up to the projected block after each committed publication
+(`ChainIndex::published`, which `chain_walk::close` calls after the commit),
+so a publication rolled back sets nothing, and a process's first
+publication, an event-free one included, restores it. It is absent only
+until then. It never holds the publication. On mainnet every one of the
+438 items has a representation.
 
 A publication projects Ethereum when an event was walked past the block its
 rows stand at, or none stand. It then rebuilds the network's rows, about 480,
-from the whole log; otherwise it writes nothing. A walk's first publication
-(each process or lease, and again after a failed pass) rebuilds them
-whatever was walked, so a change to the fold or a re-pinned vendored file
-reaches the rows, and the unrepresented gauge is set again.
+from the whole log; otherwise it writes nothing. Each process or lease
+rebuilds them at every publication, whatever was walked, until one that
+rebuilt them has committed (`ChainIndex::published`, which
+`chain_walk::close` calls after the commit). A change to the fold or a
+re-pinned vendored file therefore reaches the rows, and a publication rolled
+back (a failed close included) leaves the next one to rebuild. A rebuild
+also publishes the v1 royalty catalogue (`shop.v1_royalty_collection`,
+`shop.v1_royalty_item`) from the rows it wrote, through
+`shop.publish_v1_royalty_catalogue`, as a completed Ethereum mirror pass
+does. While the index owns Ethereum and its projection stands, the sales
+summary's v1 royalty attribution reads that copy in place of the mirror's
+pass markers.
 
 **Projection.** A network the operator hands the index
 (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`: `matic`, `ethereum` or empty,
@@ -4070,14 +4079,17 @@ hold:
 Deploys are manual, one process at a time:
 
 1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
-   process that runs the mirror, and wait until the `collections` cursor on
-   `matic` publishes. That is the catch-up, from block 15,202,000. The
-   mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
-   start it again. Two processes must never write the catalogue under
-   different settings. The mirror switch stays as it was: the mirror keeps
-   walking Ethereum. The next pass's publication rebuilds Polygon's rows from
-   the log and takes the network.
+   process that runs the mirror, and wait until the `collections` cursor of
+   each network to hand over publishes. That is the catch-up: on `matic`
+   (chain 137) from block 15,202,000; on `ethereum` (chain 1, the 42
+   collections-v1 contracts) from block 8,828,687, about 37 minutes
+   (`METRICS.md`). The mirror keeps serving meanwhile.
+2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks
+   (`matic`, `ethereum`, or both), and start it again. Two processes must
+   never write the catalogue under different settings. The mirror switch
+   stays as it was: the mirror keeps walking any network not listed. The
+   next pass's publication on each listed network rebuilds its rows from the
+   log and takes the network (on Ethereum, with the v1 royalty catalogue).
 3. Check `SELECT owned_at, projected_through, pending, generation FROM
    shop.collection_projection`.
 
@@ -4086,7 +4098,9 @@ Deploys are manual, one process at a time:
    `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
    the log alone from then.
 2. Run this transaction. It takes the exclusive catalogue lock, and removes
-   the network's rows, the mirror's pass markers and the ownership together:
+   the network's rows, the mirror's pass markers and the ownership together.
+   It is shown for `matic`; for `ethereum`, write `'ethereum'` for the
+   network and `1` for the lock's second key (the chain id):
 
    ```sql
    BEGIN;
@@ -4110,7 +4124,8 @@ Deploys are manual, one process at a time:
 Every read of the network then answers the unavailable envelope until the
 mirror's next complete collections and items passes, which rewrite it with
 the mirror's rows alone (`collections_projection::hand_back` runs the same
-statements).
+statements). On Ethereum, deleting the pass markers also empties the v1
+royalty catalogue (the markers' trigger), and those passes publish it again.
 
 ## Auth API relay state workload
 
