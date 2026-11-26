@@ -15,6 +15,8 @@ use crate::{
 
 #[path = "serve_adapters.rs"]
 mod adapters;
+#[path = "serve_health.rs"]
+mod health;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -152,6 +154,7 @@ mod metrics_tests {
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
             "worlds_allowance_read_failures_total 0",
+            "dcl_content_server_sync_state 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -161,6 +164,7 @@ mod metrics_tests {
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
     install_metrics(&config.node.serve_metrics_bind)?;
+    shop::market::lambdas_metrics::record_build_info(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
@@ -181,6 +185,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
@@ -273,7 +279,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
     // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
+    // social routes and the social socket share it. Each check that reaches
+    // the RPC spends the client source's budget (`shared::eip1654_budget`,
+    // whose layer `serve_routes::build_routes` adds).
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
@@ -286,7 +294,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             }
             .build()
             .context("building the EIP-1654 RPC client")?;
-            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+            anyhow::Ok(crate::shared::eip1654_budget::cached_budgeted_validator(
+                url, client,
+            ))
         })
         .transpose()?;
 
@@ -454,6 +464,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone())
             .with_outbound(http_client.clone())
+            .with_read_through(read_through.clone())
             .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
@@ -559,8 +570,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // archive, every one over the same pool, client and job lifecycle. The
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
-    let self_hosts = content::own_hosts(&config);
-    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
@@ -598,7 +607,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         http_client.clone(),
         land_settings,
-        Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
@@ -644,7 +652,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::create_entity::reclaim_stale_spool(&spool_root, stale_after).await;
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed
@@ -946,6 +954,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
+    // The permission core below always attaches the land-authz index, whose
+    // published fold is then the only LAND authority: neither variable is
+    // read any more, so a deployment still setting one is told so.
+    if comms_settings.land_operators_url.is_some() {
+        tracing::warn!(
+            "COMMS_LAND_OPERATORS_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
+    if std::env::var_os("LAND_SUBGRAPH_URL").is_some() {
+        tracing::warn!(
+            "LAND_SUBGRAPH_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()

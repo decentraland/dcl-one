@@ -162,6 +162,24 @@
   line-height: 1.3;
 }
 
+.menuConfirm {
+  padding-bottom: 8px;
+}
+
+/* Two uppercase buttons are wider than the 240 px menu; each takes its own full-width row
+   instead of spilling out of the menu. */
+.menuConfirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.menuConfirmActions > * {
+  flex: 1 1 auto;
+}
+
 .menuDivider {
   margin: 10px 0;
   border: none;

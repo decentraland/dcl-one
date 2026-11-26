@@ -1,6 +1,7 @@
 import { Engine, Entity } from '../../packages/@dcl/ecs/src/engine'
 import { Schemas } from '../../packages/@dcl/ecs/src/schemas'
-import { CrdtMessageType, PutComponentMessageBody, DeleteComponentMessageBody } from '../../packages/@dcl/ecs/src/serialization/crdt/types'
+import type { PutComponentMessageBody } from '../../packages/@dcl/ecs/src/serialization/crdt/types'
+import { CrdtMessageType, DeleteComponentMessageBody } from '../../packages/@dcl/ecs/src/serialization/crdt/types'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 
 const PositionSchema = {

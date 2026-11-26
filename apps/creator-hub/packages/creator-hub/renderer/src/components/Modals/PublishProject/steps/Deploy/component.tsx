@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { cx } from '/@/lib/cx';
 import Checkbox from '@ui/atoms/Checkbox';
 import Text from '@ui/atoms/Text';

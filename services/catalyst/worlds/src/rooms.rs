@@ -101,7 +101,7 @@ pub async fn ensure_scene_admin_place_release(pool: &PgPool) -> anyhow::Result<(
            EXISTS (SELECT 1 FROM explore.world_scene_place i WHERE i.active AND i.entity_id = a.place_id) \
            OR EXISTS (SELECT 1 FROM content.deployments d \
                       WHERE d.entity_id = a.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-                        AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
+                        AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
     .await?;
@@ -122,7 +122,7 @@ pub async fn ensure_genesis_scene_ban_release(pool: &PgPool) -> anyhow::Result<(
         "SELECT EXISTS (SELECT 1 FROM social.scene_bans b WHERE EXISTS (\
            SELECT 1 FROM content.deployments d \
             WHERE d.entity_id = b.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
+              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
     .await?;
@@ -160,6 +160,18 @@ pub async fn world_active_scene(
     .fetch_optional(pool)
     .await?;
     row.map(|r| world_row(world, &r)).transpose()
+}
+
+/// How many scenes the world has, up to two: the rows `world_active_scene`
+/// chooses from.
+pub async fn world_scene_count(pool: &PgPool, world: &WorldName) -> Result<usize, ResolveError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 LIMIT 2) s",
+    )
+    .bind(world.key())
+    .fetch_one(pool)
+    .await?;
+    Ok(count as usize)
 }
 
 /// A named scene of a world, when deployed there or retired within
@@ -271,7 +283,7 @@ pub async fn genesis_scene_at(
     parcel: Parcel,
 ) -> Result<Option<ActiveDeployment>, ResolveError> {
     let row = sqlx::query(
-        "SELECT d.entity_id, d.entity_pointers, d.entity_metadata #>> '{scene,base}' AS base, d.entity_metadata #>> '{display,title}' AS title \
+        "SELECT d.entity_id, d.entity_pointers, d.entity_metadata #>> '{v,scene,base}' AS base, d.entity_metadata #>> '{v,display,title}' AS title \
          FROM content.active_pointers ap \
          INNER JOIN content.deployments d ON d.entity_id = ap.entity_id \
          WHERE ap.pointer = $1 AND d.deleter_deployment IS NULL LIMIT 1",
@@ -290,7 +302,7 @@ pub async fn genesis_scene(
     scene: &SceneId,
 ) -> Result<Option<ActiveDeployment>, ResolveError> {
     let row = sqlx::query(
-        "SELECT d.entity_id, d.entity_pointers, d.entity_metadata #>> '{scene,base}' AS base, d.entity_metadata #>> '{display,title}' AS title \
+        "SELECT d.entity_id, d.entity_pointers, d.entity_metadata #>> '{v,scene,base}' AS base, d.entity_metadata #>> '{v,display,title}' AS title \
          FROM content.deployments d WHERE d.entity_id = $1 AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL",
     )
     .bind(scene)
@@ -591,6 +603,10 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_active_scene(&self.pool, world).await
     }
+
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError> {
+        world_scene_count(&self.pool, world).await
+    }
 }
 
 #[cfg(test)]
@@ -600,6 +616,22 @@ mod tests {
 
     fn scene(id: &str) -> SceneId {
         SceneId::parse(id).unwrap()
+    }
+
+    /// The count a Cast watcher reads: the world's scenes, up to two.
+    #[tokio::test]
+    async fn a_world_counts_its_scenes_up_to_two() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = unique_world();
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 0);
+        seed_world_scene(&pool, &world, "CountA", &["0,0"], None, false, 0).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 1);
+        seed_world_scene(&pool, &world, "CountB", &["5,5"], None, false, 1).await;
+        seed_world_scene(&pool, &world, "CountC", &["9,9"], None, false, 2).await;
+        assert_eq!(world_scene_count(&pool, &world).await.unwrap(), 2);
+        assert_eq!(world_scene_count(&pool, &unique_world()).await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -1059,7 +1091,7 @@ mod tests {
              WHERE old.entity_id IN (SELECT entity_id FROM content.active_pointers WHERE pointer = ANY($3))",
         )
         .bind(&id)
-        .bind(serde_json::json!({ "scene": { "base": base } }))
+        .bind(serde_json::json!({ "v": { "scene": { "base": base } } }))
         .bind(parcels.iter().map(|p| p.to_string()).collect::<Vec<_>>())
         .execute(pool)
         .await
@@ -1470,7 +1502,8 @@ mod tests {
              VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
         )
         .bind(&id)
-        .bind(serde_json::json!({ "scene": { "base": p2 }, "display": { "title": "Exact Genesis" } }))
+        // The content server stores entity metadata wrapped as `{"v": metadata}`.
+        .bind(serde_json::json!({ "v": { "scene": { "base": p2 }, "display": { "title": "Exact Genesis" } } }))
         .bind(vec![p1.clone(), p2.clone()])
         .fetch_one(&pool)
         .await
@@ -1530,6 +1563,93 @@ mod tests {
         assert_eq!(
             (preview.room.as_str(), preview.deployment.is_none()),
             ("scene:localpreview:b64", true)
+        );
+        sqlx::query("DELETE FROM content.active_pointers WHERE entity_id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content.deployments WHERE id = $1")
+            .bind(dep_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Content stores a deployment's metadata as `{"v": metadata}`
+    /// (`content::entity::deployment_metadata`): the resolver keys a Genesis
+    /// scene on its declared base and titles it from that stored metadata,
+    /// by parcel and by id, when the base is not the lowest parcel.
+    #[tokio::test]
+    async fn a_genesis_scene_keys_on_the_declared_base_of_its_stored_metadata() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let id = format!("bafyB{}", Uuid::new_v4().simple());
+        let x = 30_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+        let parcels = [format!("{x},7"), format!("{x},8"), format!("{},7", x + 1)];
+        let declared = parcels[2].clone();
+        let metadata = serde_json::json!({
+            "v": {
+                "main": "bin/game.js",
+                "scene": { "base": declared, "parcels": parcels },
+                "display": { "title": "Stored Genesis" }
+            }
+        });
+        let dep_id: i32 = sqlx::query_scalar(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
+        )
+        .bind(&id)
+        .bind(metadata)
+        .bind(parcels.to_vec())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for p in &parcels {
+            sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id) VALUES ($1, $2)")
+                .bind(p)
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let realm = RealmId::parse("main").unwrap();
+        let lowest = Parcel::parse(&parcels[0]).unwrap();
+        let by_parcel = genesis_scene_at(&pool, &realm, lowest)
+            .await
+            .unwrap()
+            .unwrap();
+        let by_id = genesis_scene(&pool, &realm, &scene(&id))
+            .await
+            .unwrap()
+            .unwrap();
+        for dep in [&by_parcel, &by_id] {
+            assert_eq!(
+                dep.base.canonical(),
+                declared,
+                "the declared base, not {lowest}"
+            );
+            assert_eq!(dep.title.as_deref(), Some("Stored Genesis"));
+            let ns = dep.namespace.as_ref().unwrap();
+            assert_eq!(
+                (ns.realm(), ns.scene_namespace()),
+                ("main", declared.clone())
+            );
+        }
+        let room = resolve(
+            &pool,
+            RoomRequest::Parcel {
+                realm: &realm,
+                parcel: lowest,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            room.room,
+            format!("scene:main:{id}"),
+            "the room name stays on the scene id"
         );
         sqlx::query("DELETE FROM content.active_pointers WHERE entity_id = $1")
             .bind(&id)

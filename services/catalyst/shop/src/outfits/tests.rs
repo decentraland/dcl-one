@@ -860,3 +860,20 @@ async fn a_thumbnail_waits_for_an_unlink_batch_and_stores_what_it_removed() {
     assert_eq!(named.as_deref(), Some(cid.as_str()));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A contract-wallet check the client source's budget refused is a 429 to
+/// retry later, not the static 401 that reads as a bad identity.
+#[tokio::test]
+async fn a_rate_limited_signature_check_is_a_429() {
+    use crate::shared::signed_fetch::SignedFetchError;
+    let resp = signed_fetch_error(SignedFetchError::RateLimited).into_response();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        v,
+        json!({ "ok": false, "error": "rate_limited", "message": "Too many contract-wallet signature checks; retry later" })
+    );
+    let resp = signed_fetch_error(SignedFetchError::InvalidSignature("x".into())).into_response();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}

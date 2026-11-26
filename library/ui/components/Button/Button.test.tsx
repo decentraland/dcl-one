@@ -165,6 +165,24 @@ describe('when using the native Button contract', () => {
     }
   )
 
+  describe.each(['primary', 'outline'] as const)(
+    'when a destructive %s button is disabled',
+    (variant) => {
+      it('should preserve the destructive tone and block activation', async () => {
+        const click = vi.fn()
+        render(
+          <Button variant={variant} tone="danger" disabled onClick={click}>
+            Remove
+          </Button>
+        )
+        const button = screen.getByRole('button', { name: 'Remove' })
+        expect(button).toHaveAttribute('data-tone', 'danger')
+        await userEvent.click(button)
+        expect(click).not.toHaveBeenCalled()
+      })
+    }
+  )
+
   describe('and the icon-only variant is named', () => {
     it('should render a named control without text content', () => {
       render(

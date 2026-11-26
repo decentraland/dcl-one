@@ -1,5 +1,5 @@
 import { GeneralAdd } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { Busy } from './Busy'
 import { MyEventCard } from './cards'
 import { useEventsCopy } from './locale'
@@ -25,7 +25,7 @@ function MyEvents({ cards, status, createHref, onRetry }: MyEventsProps) {
         <Notice tone="error">
           {text("Couldn't load your events.")}{' '}
           {onRetry ? (
-            <Button variant="tertiary" size="sm" onClick={onRetry}>
+            <Button variant="tertiary" size="md" onClick={onRetry}>
               {text('Retry')}
             </Button>
           ) : null}
@@ -42,8 +42,12 @@ function MyEvents({ cards, status, createHref, onRetry }: MyEventsProps) {
     return (
       <div role="status" className={styles.empty}>
         <p className={styles.emptyTitle}>{text("You don't have any event created")}</p>
-        <Button href={createHref} variant="tertiary" size="sm">
-          <GeneralAdd size={16} aria-hidden="true" />
+        <Button
+          href={createHref}
+          variant="tertiary"
+          size="md"
+          leadingIcon={<GeneralAdd size={16} aria-hidden="true" />}
+        >
           {text('Create event')}
         </Button>
       </div>

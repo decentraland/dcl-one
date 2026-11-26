@@ -1,4 +1,5 @@
-import { IEngine, Transport, RealmInfo, PlayerIdentityData } from '@dcl/ecs'
+import type { IEngine, Transport } from '@dcl/ecs'
+import { RealmInfo, PlayerIdentityData } from '@dcl/ecs'
 import { type SendBinaryRequest, type SendBinaryResponse } from '~system/CommunicationsController'
 
 import { syncFilter } from './filter'
@@ -6,7 +7,7 @@ import { engineToCrdt } from './state'
 import { BinaryMessageBus, CommsMessage, decodeString, encodeString } from './binary-message-bus'
 import { fetchProfile } from './utils'
 import { entityUtils } from './entities'
-import { GetUserDataRequest, GetUserDataResponse } from '~system/UserIdentity'
+import type { GetUserDataRequest, GetUserDataResponse } from '~system/UserIdentity'
 import { definePlayerHelper } from '../players'
 import { serializeCrdtMessages } from '../internal/transports/logger'
 

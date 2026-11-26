@@ -1,14 +1,5 @@
-import {
-  Entity,
-  engine,
-  Material,
-  Transform,
-  MeshRenderer,
-  Billboard,
-  BillboardMode,
-  TextShape,
-  Schemas
-} from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { engine, Material, Transform, MeshRenderer, Billboard, BillboardMode, TextShape, Schemas } from '@dcl/sdk/ecs'
 import { Vector3, Color3, Color4 } from '@dcl/sdk/math'
 export * from '@dcl/sdk'
 
