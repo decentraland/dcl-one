@@ -3299,10 +3299,9 @@ acquisition. A lost lease ends the projection's pass at once, even inside a
 fold; transactions it had already committed stay, and the generation fences
 any later one.
 
-Every transaction that writes the projection ends by locking the row
-(`SELECT … FOR UPDATE`) and comparing that generation, the chain binding and
-the quarantine. On a mismatch it rolls back, so a job that lost the
-projection commits nothing. This covers:
+A transaction that writes the projection locks the cursor row
+(`SELECT … FOR UPDATE`) and checks the generation, chain binding and
+quarantine. On a mismatch the transaction rolls back. This covers:
 - the window's rows with the cursor advance (which also requires the
   checkpoint it read, height and hash);
 - a reorg rewind, and the withdrawal of a diverged checkpoint's publication;
@@ -3310,11 +3309,20 @@ projection commits nothing. This covers:
 - each fold, including each trade-events digest batch;
 - the fold record, the publish and its withdrawal.
 
-The lock is taken last, so it lasts only as long as the commit. A writer
-that also moves the notification producers' cursors (a rewind, a rebuild,
-the nft lane) moves them before it locks this row. A fenced
-job drops its generation, and its next pass claims again, which only works
-while it still holds the lease.
+NFT and sales writers lock the chain cursor before their projection
+writes. A writer that also moves the notification producers' cursors
+(a rewind, a rebuild, the nft lane) takes those locks first. A fenced
+job drops its generation and claims again on its next pass while it
+still holds the lease.
+
+The NFT and legacy bid folds hold the chain cursor lock through commit or
+rollback. Their 3,600 s `statement_timeout` applies to individual fold SQL
+statements, so a rebuild spanning several statements can hold the lock
+longer. A lease takeover's claim times out after 1.5 s waiting on the row
+and can keep failing until the fold ends. Before publishing, the sales
+ledger locks `collections`, `nft`, `sales` and `trade_events` cursors in
+that order. It can block on a fold while holding earlier cursor locks,
+which delays those walkers as well.
 
 **Binding.** `chain_id` is the chain the history was read from, as the
 source proved it at the claim. The walk checks the source's chain every
@@ -3394,11 +3402,13 @@ member that diverged withdraws and recovers in a pass alone, which runs
 under no member deadline, and walks with others again once its checkpoint
 matches theirs.
 
-The rewind is one transaction: the notification producers' replay plan,
-the projection's own cleanup past the point, the producers' moves, the
-cursor's compare-and-set from the checkpoint it read, the pruning of the
-recovery points past the point, then the owner check. The next fold is a
-rebuild, as after any rewind.
+One transaction rewinds the projection and prunes recovery points past
+the retained block. It plans the notification replay before cleanup.
+For NFT and sales, it moves the notification cursors, then locks and
+checks the chain cursor before cleaning up projection rows. Other
+indexes run their cleanup before moving the notification cursors and
+checking the owner. The cursor moves from the checkpoint the recovery
+read. The next fold rebuilds the projection.
 
 A sales fold may have inferred a bid's seller from an nft transfer before
 the nft walk saw the fork. So the nft walk's rewind on every network (also a
@@ -3440,7 +3450,9 @@ pass claims the projection again and acts.
   at once. In one transaction, the owner's next pass:
   1. plans the notification producers' replay from the state before the
      cleanup;
-  2. runs the projection's own cleanup down to `start_block - 1`;
+  2. rewinds the notification cursors, then locks and checks the chain cursor.
+     The cleanup down to `start_block - 1` runs after that chain cursor
+     lock for NFT and sales, and before it for other indexes;
   3. restarts the cursor there, bound to the chain it proved and out of
      quarantine, and drops the projection's recovery points.
 
