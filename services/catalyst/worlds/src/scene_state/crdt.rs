@@ -951,6 +951,10 @@ mod tests {
             (msg_type::APPEND_VALUE, 12),
             (msg_type::DELETE_COMPONENT, 8),
             (msg_type::DELETE_ENTITY, 0),
+            (msg_type::PUT_COMPONENT, 15),
+            (msg_type::APPEND_VALUE, 15),
+            (msg_type::DELETE_COMPONENT, 11),
+            (msg_type::DELETE_ENTITY, 3),
         ] {
             let mut batch = Vec::new();
             write_u32(&mut batch, (HEADER_LEN + body_len) as u32);
