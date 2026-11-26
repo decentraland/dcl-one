@@ -185,20 +185,18 @@ impl Service {
         }
     }
 
-    /// The path segment under a gateway base url that serves this service (empty = the base
-    /// itself), or None when the service keeps its own destination. A `gateway.` virtual host
-    /// serves every HTTP API under its host label; a direct origin exposes the peer at the root,
-    /// preview on the main gatekeeper and community thumbnails through social.
+    /// The path segment under a gateway base url for this service (empty = the base itself), or
+    /// None when the service is not routed through a gateway. An HTTP API takes its host label,
+    /// except under a direct origin: the root for the peer, `comms-gatekeeper` for preview and
+    /// `social-api` for community thumbnails.
     pub fn gateway_segment(self, virtual_host: bool) -> Option<&'static str> {
         match self {
             Service::Catalyst if !virtual_host => Some(""),
             Service::PreviewGatekeeper if !virtual_host => Some("comms-gatekeeper"),
             Service::AssetsCdn if !virtual_host => Some("social-api"),
-            // Site links and storage delegations use their own public destinations.
+            // Site links and storage delegations: not routed.
             Service::AuthPage | Service::Reels | Service::Storage => None,
-            // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
-            // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
-            // route.
+            // abgen's CDN: not routed.
             Service::AbgenCdn => None,
             service if service.value() == ServiceValue::Http => Some(service.composition().1),
             _ => None,

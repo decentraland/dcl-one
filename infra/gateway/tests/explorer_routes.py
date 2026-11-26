@@ -67,8 +67,7 @@ def check_gateway_option(rows, root):
         page = f"https://play.decentraland.org/play?gateway={gateway}"
         hud = run_hud(root, page, False)
         assert hud["options"] == {"gateway": gateway, "baseDomain": "decentraland.org"}, hud["options"]
-        # react-web, the engine's own web page, resolves the same way (it hands the engine the
-        # gateway in engineLaunch)
+        # react-web's urls and signed paths are checked against the same rows
         react_web = run_hud(root, page, False, "react-web")
         for row in rows:
             if row["web"]:
@@ -77,8 +76,7 @@ def check_gateway_option(rows, root):
                     assert urls[row["name"]] == expected, (name, gateway, row["name"], urls[row["name"]], expected)
                 if key != "vhost" or row[key] is None:
                     continue
-                # Requests the HUD signs itself sign what the engine signs, which is what nginx
-                # forwards through the virtual host.
+                # each host's signed path equals the path the nginx route forwards
                 for probe in row["signing"]:
                     target = urlsplit(probe["target"])
                     request_uri = target.path + ("?" + target.query if target.query else "")
@@ -128,7 +126,7 @@ def check(rows, root):
             assert {key: web[name][key] for key in ("name", "value", "scheme", "sub", "path")} == {
                 key: row[key] for key in ("name", "value", "scheme", "sub", "path")
             }, row
-            # the generated gateway segments compose the engine's own gateway bases
+            # the generated gateway segments compose the rows' gateway bases
             for key, base, column in (
                 ("gatewayVirtualHost", "https://gateway.example.test", "vhost"),
                 ("gatewayDirect", "https://example.test", "direct"),

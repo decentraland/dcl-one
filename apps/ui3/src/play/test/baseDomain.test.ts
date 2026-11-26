@@ -188,7 +188,7 @@ describe('?gateway=', () => {
       gateway: 'https://gateway.example.test',
       baseDomain: 'decentraland.org'
     })
-    // the engine forwards the path after the service alias; the HUD signs the same one
+    // the path after the service alias
     expect(m.gatewaySignedPath('https://gateway.example.test/events/api/events?x=1')).toBe('/api/events')
     expect(m.gatewaySignedPath('https://places.example.test/api/places')).toBe(null)
   })
@@ -202,7 +202,7 @@ describe('?gateway=', () => {
       const { SERVICES } = await import('@explorer-core/engine/generated')
       const { gatewayServiceUrl } = await import('@explorer-core/lib/gateway')
       expect(m.BASE_DOMAIN).toBe(window.location.host)
-      // a dev host the engine refuses as a base domain: the engine keeps its default
+      // a dev host is not a base domain: the default applies
       expect(m.ENGINE_BASE_DOMAIN).toBe('decentraland.org')
       const options = m.engineServiceOptions()
       expect(options.gateway).toBe('https://gateway.example.test')

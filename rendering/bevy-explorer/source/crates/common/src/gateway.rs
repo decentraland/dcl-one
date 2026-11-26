@@ -1,6 +1,6 @@
-//! The gateway launch option (`--gateway`, `?gateway=`, a link's `gateway=`). The deployment's
-//! gateway virtual host preserves service identities. Its apex serves the same APIs at
-//! canonical paths.
+//! The gateway launch option (`--gateway`, `?gateway=`, a link's `gateway=`): under a `gateway.`
+//! virtual host each service keeps its host label as a path segment; under any other host the
+//! services take canonical paths.
 use system_api_types::services::Service;
 use url::Url;
 
@@ -34,11 +34,9 @@ impl Gateway {
         })
     }
 
-    /// A gateway a `decentraland://` link may select for a session on `base_domain`, when that is
-    /// one of Decentraland's own deployments: `https://gateway.<base_domain>`, with no port or
-    /// path. Its apex is the website, not a gateway, and a node proxies other hosts under a path
-    /// (`/_scene/<host>`). A link reaches the native client with no prompt, so any other gateway
-    /// takes `--gateway`.
+    /// A `decentraland://` link's gateway for a session on `base_domain`: only
+    /// `https://gateway.<base_domain>`, with no port or path, when `base_domain` is one of
+    /// Decentraland's own deployments. The apex and any path are refused.
     pub fn parse_link(raw: &str, base_domain: &str) -> Result<Self, String> {
         let gateway = Self::parse(raw).map_err(|e| format!("the link's gateway `{raw}`: {e}"))?;
         let url = Url::parse(&gateway.prefix).map_err(|e| e.to_string())?;

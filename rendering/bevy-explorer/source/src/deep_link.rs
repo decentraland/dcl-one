@@ -76,7 +76,7 @@ mod place {
     ) -> Result<Destination, String> {
         let place = platform::deeplink::parse_place_link(link).map_err(|e| e.to_string())?;
         if let Some(raw) = &place.gateway {
-            // the latched gateway passed the launch's own checks; the link only has to name it
+            // a link may name only the latched gateway
             let link_gateway = common::gateway::Gateway::parse(raw)
                 .map_err(|e| format!("the link's gateway `{raw}`: {e}"))?;
             if Some(link_gateway.prefix()) != gateway {

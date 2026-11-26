@@ -24,7 +24,7 @@ async function signPayload(identity: AuthIdentity, payload: string, sign: SignMe
 
 /** The signed-fetch (ADR-44) headers for one request. Without `metadata`, to the project storage
  *  service; with it, to another service, signed as a scene's signed fetch is, over `signedPath`
- *  when a gateway forwards a path other than the url's own. */
+ *  when given, else the url's path. */
 export async function signFetch(
   identity: AuthIdentity,
   method: string,

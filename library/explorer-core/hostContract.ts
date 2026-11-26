@@ -115,7 +115,7 @@ export interface HudHost {
   exitUrl(): string
   /** Where this host's deployment serves the service named in the service table. */
   serviceUrl(name: string): string
-  /** The path a signed request to `url` signs when the entry url's gateway forwards another one
+  /** The path to sign for a request to `url` through the entry url's gateway
    *  (`lib/gateway.ts` gatewaySignedPath); null signs the url's own path. */
   gatewaySignedPath(url: string): string | null
   /** The domain this HUD's deployment runs on. */

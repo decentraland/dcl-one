@@ -89,8 +89,8 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
 // - The feature-flags service: Unleash picks a player's A/B group and rollout from the id each
 //   request carries, so every player's engine asks it directly. The node's `/feature-flags` copy
 //   is one document for everyone. The service has to allow this page's origin (CORS); where it
-//   does not, every flag reads off. An explicit ?gateway= routes it like `--gateway` does, so
-//   that session reads the node's single document.
+//   does not, every flag reads off.
+// The set applies to the hosted gateway's composition only, not to an explicit ?gateway=.
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn', 'feature-flags'])
 // The imposter store (distant-scene tiles) is a launch option, not a service table row; the
 // node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).
@@ -124,7 +124,7 @@ export function checkoutSiteUrl(path: string): string {
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
-/** The base domain the engine runs on: BASE_DOMAIN when the engine accepts it (engineServiceOptions), else its default. */
+/** BASE_DOMAIN when normaliseBaseDomain accepts it, else decentraland.org. */
 export const ENGINE_BASE_DOMAIN = normaliseBaseDomain(BASE_DOMAIN) ?? 'decentraland.org'
 
 // Pulse is UDP, which an HTTP front cannot carry: behind the gateway the deployment names its host.
@@ -181,10 +181,7 @@ export function normaliseServiceUrl(s: ServiceDef, raw: string | null): string |
   }
 }
 
-/**
- * The entry url's ?gateway=, as the engine's --gateway routes it: every first-party HTTP API it
- * maps, ahead of the deployment's own composition; an explicit ?<service>= still wins.
- */
+/** The entry url's ?gateway=, parsed as the engine's --gateway (parseGateway); null when absent or refused. */
 export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
 
 /** The entry url's override; a `pulseServer` equal to this page's host is a stale engine write-back once Pulse is named. */
@@ -251,7 +248,7 @@ export function gatewaySignedPath(url: string): string | null {
 export function engineServiceOptions(): Record<string, string> {
   const options: Record<string, string> = {}
   if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
-    // the engine routes the services the gateway maps from the `gateway` option itself
+    // a service the gateway maps is left to the `gateway` option
     for (const s of SERVICES) if (GATEWAY == null || gatewayServiceUrl(GATEWAY, s) == null) options[s.name] = serviceUrl(s.name)
     // the node's own imposter store, not the engine's built-in one; an entry ?imposterSource= wins
     if (!new URLSearchParams(window.location.search).get('imposterSource')) {

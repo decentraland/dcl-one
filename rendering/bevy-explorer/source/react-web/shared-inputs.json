@@ -10185,7 +10185,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
-      "sha256": "7f71d3f6f05d838d3b1a22311b624c54096b76e2f89f49398d32352212c36d01"
+      "sha256": "4e764e486b37bcaab10d7031aff3c68b6c64476e310f3317a02152b2e446ae00"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/bootMode.ts",
@@ -10205,7 +10205,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "5c90357d4719536198c731ca58fe071fa94a0814bd5dc44d781a6f853aa82b23"
+      "sha256": "3f28f5204be4b2c03bd691ea568f650ee2279edf5815e10088d57f444e26989b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/loopbackHost.ts",
@@ -10253,7 +10253,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
-      "sha256": "5155315f7ce33416803e708f796754f415bd495bda4fc0561afb80c5b9d18b8f"
+      "sha256": "d365aec10f9284a5f5521e5b00c96d4ffd61545afdaa023441ce90f026386949"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
@@ -10837,7 +10837,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
-      "sha256": "a0bef9132631b6671cd53bdd4ca89c178539887b29a7d67beab8e923656a5cd1"
+      "sha256": "ab1e1a8cbe030ff3dfd7ac6c6f70e2ec288a56b4b54c36aeb788bf6e6583235a"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/signer.ts",
@@ -11025,7 +11025,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "5b07dc9444a771dde6acda56edde89aaf427939ce4c895bfd9fdb91752ffd7f9"
+      "sha256": "cf12cf0e75dbd123be9b93b740476ac5dd27844deac90d6b959bdf9849fd3c78"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -11061,7 +11061,7 @@
     },
     {
       "path": "library/explorer-core/lib/gateway.ts",
-      "sha256": "a3809b158e5d2294bb35f971ef7208a3e95fd47b61ba88d1496047cac56fc22c"
+      "sha256": "aac44319c9e0cef1c14adcbfeae57516bbee4bf236591d18c3fff5a722eda79b"
     },
     {
       "path": "library/explorer-core/lib/gpu.test.ts",
@@ -11313,7 +11313,7 @@
     },
     {
       "path": "library/explorer-core/test/placesSigning.test.ts",
-      "sha256": "aad9de3a7fe058af2b51a7a0ad5044a380bcc0303e536327fda616983bb93944"
+      "sha256": "bbb4b9ddd58b4763031e06e547155c2e6192d6d9ad9ed26cdf5d146d36757aa8"
     },
     {
       "path": "library/explorer-core/test/pointerKeys.test.ts",

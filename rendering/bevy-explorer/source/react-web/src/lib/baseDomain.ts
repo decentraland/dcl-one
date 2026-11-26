@@ -49,10 +49,7 @@ export const DEFAULT_BASE_DOMAIN = hostBaseDomain(window.location.hostname) ?? '
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
 
-/**
- * The entry url's ?gateway=, as the engine's --gateway routes it: every first-party HTTP API it
- * maps, ahead of the base domain's composition; an explicit ?<service>= still wins.
- */
+/** The entry url's ?gateway=, parsed as the engine's --gateway (parseGateway); null when absent or refused. */
 export const GATEWAY = parseGateway(new URLSearchParams(window.location.search).get('gateway'))
 
 /** Only the native CEF document receives this image base from its engine. Apply it at

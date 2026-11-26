@@ -1,7 +1,5 @@
-// The `?gateway=` launch option as both HUD hosts resolve it for their own fetches: the engine's
-// `common::gateway::Gateway` (crates/common/src/gateway.rs), the same parse and the service
-// mapping its generated service table carries, so the page and its engine reach the same endpoints. The engine takes the gateway as
-// its `gateway` launch option and signs the paths the gateway forwards.
+// The `?gateway=` launch option: the parse and service mapping of the engine's
+// `common::gateway::Gateway` (crates/common/src/gateway.rs), over its generated service table.
 
 import type { ServiceDef } from '../engine/generated/index'
 
@@ -13,13 +11,13 @@ export interface Gateway {
 }
 
 /**
- * The gateway the engine will accept (`Gateway::parse`): an http(s) base url with a host and no
- * credentials, query or fragment. Anything else is null, so the page and the engine never split.
+ * An http(s) base url with a host and no credentials, query or fragment (`Gateway::parse`);
+ * anything else is null.
  */
 export function parseGateway(raw: string | null): Gateway | null {
   if (raw == null) return null
   const trimmed = raw.trim()
-  // a bare trailing `?` or `#` is a query or fragment to the engine's parser
+  // a bare trailing `?` or `#` counts as a query or fragment
   if (/[?#]/.test(trimmed)) return null
   let url: URL
   try {
@@ -31,16 +29,14 @@ export function parseGateway(raw: string | null): Gateway | null {
   return { prefix: url.href.replace(/\/+$/, ''), virtualHost: url.hostname.startsWith('gateway.') }
 }
 
-/** Decentraland's own deployments: the only base domains a link may select a gateway for. */
+/** The base domains of Decentraland's own deployments. */
 export const DECENTRALAND_DOMAINS: readonly string[] = ['decentraland.org', 'decentraland.zone']
 
 /**
- * Whether a link may select this gateway with no prompt, for a session on `baseDomain`
- * (`Gateway::parse_link`): the page's own origin when it is outside Decentraland's domains (a node
- * serving /play), or `https://gateway.<baseDomain>` with no port
- * or path when that is one of Decentraland's own deployments. Their apex is the website, not a
- * gateway. A path is never trusted: a node proxies other hosts under one (`/_scene/<host>`) with
- * the request's signature headers.
+ * Whether `prefix` is trusted for a session on `baseDomain` (`Gateway::parse_link`): `ownOrigin`
+ * when its host is outside Decentraland's domains, or `https://gateway.<baseDomain>` with no port
+ * or path when `baseDomain` is one of Decentraland's own deployments. The apex and any path are
+ * never trusted.
  */
 export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOrigin: string | null = null): boolean {
   const url = new URL(prefix)
@@ -54,7 +50,7 @@ export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOr
   )
 }
 
-/** The untrusted-launch prompt's warning for `?gateway=`: what a parsed gateway does, or that a refused value is ignored. */
+/** The untrusted-launch warning for `?gateway=`: one text for a parsed gateway, another for a refused value. */
 export function gatewayLaunchWarning(gateway: Gateway | null): string {
   return gateway != null
     ? 'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.'
@@ -62,9 +58,8 @@ export function gatewayLaunchWarning(gateway: Gateway | null): string {
 }
 
 /**
- * The `?gateway=` value the untrusted-launch prompt weighs: the parsed prefix, or the raw value
- * `parseGateway` refused (the session then runs without a gateway, and the prompt says so rather
- * than ignoring it silently); null when absent or empty.
+ * The `?gateway=` launch value: the parsed prefix, or the trimmed raw value `parseGateway`
+ * refused; null when absent or empty.
  */
 export function gatewayLaunchValue(raw: string | null, gateway: Gateway | null): string | null {
   if (gateway != null) return gateway.prefix
@@ -72,7 +67,7 @@ export function gatewayLaunchValue(raw: string | null, gateway: Gateway | null):
   return trimmed === '' ? null : trimmed
 }
 
-/** Whether that value boots with no prompt: a parsed gateway `isTrustedGatewayPrefix` accepts. */
+/** Whether that value is a parsed gateway that `isTrustedGatewayPrefix` accepts. */
 export function isTrustedGatewayLaunchValue(
   value: string,
   gateway: Gateway | null,
@@ -83,8 +78,8 @@ export function isTrustedGatewayLaunchValue(
 }
 
 /**
- * The service's base url through the gateway (`Gateway::service`), or null when it keeps its own
- * destination. The segments come from the engine's service table (`Service::gateway_segment`).
+ * The service's base url through the gateway (`Gateway::service`), or null when the service
+ * table gives it no segment (`Service::gateway_segment`).
  */
 export function gatewayServiceUrl(gateway: Gateway, s: ServiceDef): string | null {
   const segment = gateway.virtualHost ? s.gatewayVirtualHost : s.gatewayDirect
@@ -94,8 +89,8 @@ export function gatewayServiceUrl(gateway: Gateway, s: ServiceDef): string | nul
 
 /**
  * A backend-supplied profile image under `base` (`Gateway::profile_image`): only an
- * `https://profile-images.<domain>` url with that literal authority and no dot segment after the
- * proxy decodes separators; anything else is null and loads as given.
+ * `https://profile-images.<domain>` url with that literal authority and no dot segment once its
+ * escaped separators are decoded; anything else is null.
  */
 export function profileImageUnder(base: string, raw: string, domain: string): string | null {
   const authority = /^https:\/\/([^/?#]*)/i.exec(raw)?.[1]
@@ -115,10 +110,10 @@ export function gatewayProfileImage(gateway: Gateway, raw: string, domain: strin
 }
 
 /**
- * The path a signed request to `raw` signs through a `gateway.` virtual host, which forwards the
- * path after the service alias (`Gateway::original_path`); null signs the url's own path (an apex
- * gateway, another host, or no service base under the gateway). `serviceBases` are the resolved
- * service urls. Throws on a path the proxy could read differently, never signing a normalised one.
+ * The path after the service alias of `raw` under a `gateway.` virtual host
+ * (`Gateway::original_path`); null for an apex gateway, another host, or a path under no
+ * `serviceBases` url. `serviceBases` are the resolved service urls. Throws on a url without `//`, a
+ * backslash, a path URL parsing changes, or a dot segment once escaped separators are decoded.
  */
 export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: Iterable<string>): string | null {
   if (!gateway.virtualHost) return null
@@ -131,7 +126,7 @@ export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: I
   if (!gateway.prefix.startsWith(target.origin)) return null
   const mount = gateway.prefix.slice(target.origin.length)
   if (mount !== '' && !mount.startsWith('/')) return null
-  // the browser resolves dot segments before sending, and the proxy decodes separators first
+  // compare the raw path with the parsed one: URL resolves dot segments
   const sep = raw.indexOf('://')
   if (sep < 0) throw new Error('ambiguous gateway signing path')
   const authorityAndPath = raw.slice(sep + 3)
@@ -150,7 +145,7 @@ export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: I
     return route !== '' && rest.startsWith(route) && (rest.length === route.length || rest[route.length] === '/')
   })
   if (!underService) return null
-  // the proxy strips only the first segment, and only when a slash follows it
+  // strip the first segment only, and only when a slash follows it
   const cut = rest.indexOf('/')
   return `/${cut < 0 ? rest : rest.slice(cut + 1)}`
 }
@@ -161,7 +156,7 @@ function isDecentralandHost(host: string): boolean {
   return DECENTRALAND_DOMAINS.some((d) => h === d || h.endsWith(`.${d}`))
 }
 
-// The proxy decodes escaped separators before normalizing its path.
+// A dot segment, after decoding escaped separators and dots.
 function hasProxyDotSegment(path: string): boolean {
   const decoded = path.toLowerCase().replace(/%2f|%5c/g, '/').replace(/%2e/g, '.')
   return decoded.split('/').some((part) => part === '.' || part === '..')

@@ -1,5 +1,4 @@
-// A signed Places request signs the path the host's gateway forwards (`gatewaySignedPath`), the
-// one the engine signs for the same url.
+// A signed Places request signs the host's `gatewaySignedPath` for its url.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const signFetch = vi.fn(async () => ({ 'x-identity-timestamp': '1' }))

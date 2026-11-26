@@ -57,7 +57,7 @@ describe('?gateway=', () => {
   })
 
   it("signs the path a gateway. host forwards, with the engine's service urls on native", async () => {
-    // the native shell hands the HUD the engine's resolved services and its gateway
+    // a native url carries the engine's resolved services and its gateway
     const places = 'https://gateway.decentraland.org/places'
     window.history.replaceState(null, '', `/?native=1&gateway=https://gateway.decentraland.org&places=${encodeURIComponent(places)}`)
     vi.resetModules()
@@ -77,7 +77,7 @@ describe('?gateway=', () => {
       ['https://gateway.decentraland.zone', ['gateway']],
       // the apex is the website, not a gateway
       ['https://decentraland.org', ['gateway']],
-      // a value the engine would refuse is put to the user, not dropped silently
+      // a value the parse refuses is still weighed
       ['ftp://gateway.decentraland.org', ['gateway']],
       ['https://gateway.decentraland.org/?', ['gateway']]
     ] as const) {

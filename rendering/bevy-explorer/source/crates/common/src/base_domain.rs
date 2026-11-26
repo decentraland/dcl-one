@@ -18,8 +18,8 @@ static BASE_DOMAIN: OnceLock<String> = OnceLock::new();
 static SERVICES: OnceLock<HashMap<Service, String>> = OnceLock::new();
 static GATEWAY: OnceLock<crate::gateway::Gateway> = OnceLock::new();
 
-/// Latch the gateway (`--gateway` / `?gateway=` / a link's `gateway=`), once, before anything
-/// composes a service url. Re-latching the same gateway is fine, like [`set`].
+/// Latch the gateway (`--gateway` / `?gateway=` / a link's `gateway=`). Re-latching the same
+/// gateway is fine, like [`set`]; a different one is an error.
 pub fn set_gateway(raw: &str) -> Result<(), String> {
     let gateway = crate::gateway::Gateway::parse(raw)?;
     match GATEWAY.get() {

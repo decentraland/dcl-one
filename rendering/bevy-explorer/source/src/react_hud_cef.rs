@@ -989,8 +989,7 @@ fn push_text_focus(
     }
 }
 
-/// The latched gateway as the HUD url's `gateway=`, so a request the HUD signs itself signs the
-/// path a `gateway.` host forwards.
+/// Append the latched gateway to the HUD url as `gateway=`, url-encoded.
 fn append_gateway(url: &mut String, gateway: Option<&str>) {
     if let Some(gateway) = gateway {
         url.push_str(if url.contains('?') { "&" } else { "?" });

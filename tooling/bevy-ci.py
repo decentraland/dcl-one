@@ -359,8 +359,8 @@ def select(base, head):
             # build takes a patched source by the revision that Cargo.lock names.
             affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
-            # The Linux Test Suite compares Explorer and HUD routing with the nginx map; the web
-            # producer also builds a resolver the web HUD compiles.
+            # Gateway inputs select the Test Suite; shared or Explorer source paths select the web
+            # lane too.
             affected = ('test', 'web') if path in shared_paths or path.startswith(SOURCE) else ('test',)
         elif path in HARNESS_WEB_READS:
             # The web lane builds and tests these files; the Test Suite runs the harness tests,

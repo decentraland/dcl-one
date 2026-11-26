@@ -12,8 +12,7 @@ import { IN_WORLD_SHOP } from '@dcl/one-ui/apps/shop/entry'
 import { donations } from './lib/donations'
 import { gifting } from './lib/gifting'
 
-/** Sites loads profile images as given, or through the entry url's ?gateway= as the engine does
- *  (for the engine's own base domain). */
+/** A profile image through the entry url's ?gateway= (for ENGINE_BASE_DOMAIN), else as given. */
 const nativeProfileImage = (raw: string | undefined): string | undefined =>
   GATEWAY == null || raw == null ? raw : (gatewayProfileImage(GATEWAY, raw, ENGINE_BASE_DOMAIN) ?? raw)
 /** dcl-one's Shop serves a collection item at /shop/item/<contract>/<item>; the Foundation's

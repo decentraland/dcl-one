@@ -41,10 +41,9 @@ const GATES: Record<string, Gate> = {
     read: (native) => (native ? null : BASE_DOMAIN),
     isTrusted: isTrustedBaseDomain
   },
-  // Routes every first-party API, signed requests included, through one server. Read normalised,
-  // like the base domain; native is exempt the same way (its link may name only a Decentraland
-  // gateway). Trusted: this page's origin (outside Decentraland's domains), or
-  // `https://gateway.<base>` of the session's Decentraland deployment (isTrustedGatewayPrefix). A value the parse refuses is shown too, never dropped silently.
+  // Not read on native. The value is the parsed prefix, or the raw value the parse refuses.
+  // Trusted: this page's origin outside Decentraland's domains, or `https://gateway.<base>` of
+  // the session's Decentraland deployment (isTrustedGatewayPrefix).
   gateway: {
     warning: gatewayLaunchWarning(GATEWAY),
     read: (native) => (native ? null : gatewayLaunchValue(new URLSearchParams(location.search).get('gateway'), GATEWAY)),
