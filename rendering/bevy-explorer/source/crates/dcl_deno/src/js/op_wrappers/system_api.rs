@@ -468,18 +468,19 @@ pub fn op_send_chat_reaction(
     dcl_js::system_api::op_send_chat_reaction(state, channel, message_id, emoji, remove)
 }
 
-#[op2(async)]
+#[op2]
 pub async fn op_get_reaction_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_reaction_stream(state).await
 }
 
-#[op2(async)]
-#[serde]
+#[op2]
 pub async fn op_read_reaction_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
-) -> Result<Option<ReactionData>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_reaction_stream(state, rid).await
+) -> Result<JsPlain<Option<ReactionData>>, OpError> {
+    Ok(JsPlain(
+        dcl_js::system_api::op_read_reaction_stream(state, rid).await?,
+    ))
 }
 
 #[op2(fast)]

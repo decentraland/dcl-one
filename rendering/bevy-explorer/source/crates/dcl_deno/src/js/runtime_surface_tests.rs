@@ -338,7 +338,7 @@ fn wasm_streaming_compilation_is_absent() {
 /// The HUD's system ops return ordinary objects, not serde_v8's null-prototype ones.
 #[test]
 fn system_op_results_are_ordinary_objects() {
-    use system_bridge::{MapPinInfo, PlatformBanNotice, SystemApi, WorldAccessVerdict};
+    use system_bridge::{MapPinInfo, PlatformBanNotice, ReactionData, SystemApi, WorldAccessVerdict};
     let (mut runtime, _) = create_runtime(false, true, "test-system-ops", Default::default());
     let (host, mut inbox) = tokio::sync::mpsc::unbounded_channel();
     {
@@ -367,6 +367,12 @@ fn system_op_results_are_ordinary_objects() {
                         expires_at: None,
                     });
                 }
+                SystemApi::GetReactionStream(stream) => {
+                    let _ = stream.send(ReactionData {
+                        from: "0x1".to_owned(),
+                        emoji: "wave".to_owned(),
+                    });
+                }
                 _ => {}
             }
         }
@@ -380,7 +386,10 @@ fn system_op_results_are_ordinary_objects() {
             const access = await ops.op_get_world_access("world.dcl.eth");
             const pins = await ops.op_read_map_pins_stream(await ops.op_get_map_pins_stream());
             const ban = await ops.op_read_platform_ban_stream(await ops.op_get_platform_ban_stream());
-            return JSON.stringify([access, plain(pins[0]), `${pins[0]}`, plain(ban), String(ban)]);
+            const reaction = await ops.op_read_reaction_stream(await ops.op_get_reaction_stream());
+            return JSON.stringify([
+                access, plain(pins[0]), `${pins[0]}`, plain(ban), String(ban), plain(reaction), String(reaction),
+            ]);
         })().then((x) => { globalThis.__outcome = x; }, (e) => { globalThis.__outcome = String(e); });
         "#
         .to_owned(),
@@ -390,7 +399,7 @@ fn system_op_results_are_ordinary_objects() {
     let outcome = eval(&mut runtime, "globalThis.__outcome".to_owned()).unwrap();
     assert_eq!(
         outcome,
-        r#"["allowed",true,"[object Object]",true,"[object Object]"]"#
+        r#"["allowed",true,"[object Object]",true,"[object Object]",true,"[object Object]"]"#
     );
 }
 
