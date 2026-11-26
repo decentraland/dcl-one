@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
+import { Button, ShopSkeletonCards } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
@@ -19,7 +19,6 @@ import Filters, { STATUSES, type FilterStatus } from "../components/Filters";
 import { CollectionHero } from "../components/Hero";
 import IndexNotice from "../components/IndexNotice";
 import LoadMore from "../components/LoadMore";
-import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useProfile, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "@shop/discovery/intl";
@@ -148,13 +147,13 @@ export default function Collection() {
           <>
             <div className="shop-grid" data-testid="grid">
               {grid.isLoading || grid.isPlaceholder ? (
-                <SkeletonCards count={15} />
+                <ShopSkeletonCards count={15} />
               ) : (
                 <>
                   {grid.items.map((item, i) => (
                     <AssetCard key={item.id} item={item} source="collection" position={i} creatorName={creatorName || null} />
                   ))}
-                  {grid.isFetchingNextPage ? <SkeletonCards count={6} /> : null}
+                  {grid.isFetchingNextPage ? <ShopSkeletonCards count={6} /> : null}
                 </>
               )}
             </div>

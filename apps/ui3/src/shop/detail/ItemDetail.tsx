@@ -8,7 +8,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { Button, Tooltip } from "@dcl/one-ui";
+import { Button, ShopBadgeSkeleton, Tooltip } from "@dcl/one-ui";
 import EmptyState from "../../components/EmptyState";
 import { useCart } from "../cart/store";
 import { itemAsset, tokenAsset, type AssetId } from "@shop/model/asset";
@@ -25,7 +25,7 @@ import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedI
 import { cardEligibility } from "@shop/discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
 import { useMarketplace } from "../market/access";
-import { BadgeSkeleton, DetailCollection, DetailCreator } from "./components/DetailBadges";
+import { DetailCollection, DetailCreator } from "./components/DetailBadges";
 import Icon from "../discovery/components/Icon";
 import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
@@ -781,7 +781,7 @@ export default function ItemDetail() {
                   {collectionQ.data?.name ? (
                     <DetailCollection contractAddress={contractAddress} name={collectionQ.data.name} thumbnails={collectionThumbs} label={(name) => <>{t("itemDetail.collection")} {name}</>} />
                   ) : collectionPending ? (
-                    <BadgeSkeleton testId="collection-loading" />
+                    <ShopBadgeSkeleton testId="collection-loading" />
                   ) : null}
                   {showOwner ? (
                     <div className="shop-pdp__col">

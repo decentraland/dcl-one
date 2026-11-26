@@ -10,7 +10,7 @@ import { listingKey } from "../lib/listingKey";
 import { railPageCount, railPageFromScroll } from "../lib/pagedRail";
 import AssetCard, { type CardSource } from "./AssetCard";
 import Icon from "./Icon";
-import SkeletonCards from "./SkeletonCards";
+import { ShopSkeletonCards } from "@dcl/one-ui";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
 import "./rail.css";
 
@@ -89,7 +89,7 @@ export default function Rail({ title, items, loading = false, source = "grid", v
         ) : null}
         <div className="shop-rail__track" ref={trackRef} aria-busy={loading || undefined}>
           {loading ? (
-            <SkeletonCards count={SKELETON_COUNT} />
+            <ShopSkeletonCards count={SKELETON_COUNT} />
           ) : (
             items.map((item, i) => (
               <div className="shop-rail__cell" key={listingKey(item)}>
