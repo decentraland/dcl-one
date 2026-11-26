@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy_primitives::hex;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, sol};
 use dcl_http::Outbound;
 use dcl_http::jsonrpc::Rpc;
 use serde_json::json;
@@ -25,7 +25,10 @@ use serde_json::json;
 use crate::State;
 use crate::kept::{FETCH_TIMEOUT, Kept};
 use crate::network::Network;
-use crate::publication_chain::itemsCountCall;
+
+sol! {
+    function itemsCount() external view returns (uint256);
+}
 
 /// How long an answer is kept.
 pub const DEPLOYMENT_TTL: Duration = Duration::from_secs(5);

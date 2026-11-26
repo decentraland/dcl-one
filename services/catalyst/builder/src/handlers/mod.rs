@@ -2,7 +2,6 @@
 
 pub mod collections;
 pub mod drafts;
-pub mod publication;
 
 pub async fn ping() -> &'static str {
     "pong"

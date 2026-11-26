@@ -67,9 +67,6 @@ pub mod kept;
 pub mod limits;
 pub mod network;
 pub mod onchain;
-pub mod publication;
-pub mod publication_chain;
-pub mod publication_store;
 pub mod third_parties;
 pub mod writes;
 
@@ -386,18 +383,6 @@ impl State {
 
 fn api_routes() -> Router<SharedState> {
     Router::new()
-        .route(
-            "/v1/collections/{id}/publication",
-            get(handlers::drafts::get_publication)
-                .post(handlers::publication::begin)
-                .put(handlers::publication::transaction)
-                .delete(handlers::publication::cancel)
-                .patch(handlers::publication::claim),
-        )
-        .route(
-            "/v1/collections/{id}/publication/status",
-            get(handlers::publication::status),
-        )
         .route(
             "/v1/drafts/collections",
             get(handlers::drafts::get_collection_drafts),

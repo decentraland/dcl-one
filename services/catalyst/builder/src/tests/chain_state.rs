@@ -510,10 +510,7 @@ async fn no_route_reads_or_writes_derived_state_while_the_copy_cannot_tell() {
         "/v1/drafts/collections".to_string(),
         "/v1/drafts/items".to_string(),
     ];
-    let decision_reads = [
-        format!("/v1/collections/{collection}"),
-        format!("/v1/collections/{collection}/publication"),
-    ];
+    let decision_reads = [format!("/v1/collections/{collection}")];
     let owner = format!("{:#x}", wallet(OWNER_KEY).address());
     let new_collection =
         super::support::collection_body(json!({ "id": created, "name": "Created" }), &owner);
