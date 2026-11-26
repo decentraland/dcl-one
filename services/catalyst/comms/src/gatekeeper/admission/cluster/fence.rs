@@ -495,12 +495,11 @@ impl AssignmentFence for PgAssignmentFence {
             if !desired.is_empty() {
                 targets.push((wallet.clone(), desired.clone()));
             }
-            if let Ok(state) = slot.state.try_lock() {
-                if let Some(owned) = &state.owned {
-                    if owned.session != desired {
-                        targets.push((wallet.clone(), owned.session.clone()));
-                    }
-                }
+            if let Ok(state) = slot.state.try_lock()
+                && let Some(owned) = &state.owned
+                && owned.session != desired
+            {
+                targets.push((wallet.clone(), owned.session.clone()));
             }
         }
         targets
@@ -1190,8 +1189,8 @@ impl PgAssignmentFence {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|_| FenceError::Unavailable)?;
-            let after = if unchanged {
-                let mut after = current.as_ref().unwrap().clone();
+            let after = if let Some(row) = current.as_ref().filter(|_| unchanged) {
+                let mut after = row.clone();
                 after.renewed = Some(renewed);
                 after.lapsed = false;
                 after.renewal_due = false;
@@ -1864,10 +1863,10 @@ impl PgRealmLease {
             return Err(FenceError::Conflict);
         }
         lease.commit().await.map_err(|_| FenceError::Unavailable)?;
-        if let Some(slot) = selected_guard.as_mut() {
-            if let Some(attempt) = slot.attempt.take() {
-                slot.owned = Some(attempt.after.compact());
-            }
+        if let Some(slot) = selected_guard.as_mut()
+            && let Some(attempt) = slot.attempt.take()
+        {
+            slot.owned = Some(attempt.after.compact());
         }
         Ok(())
     }

@@ -358,16 +358,29 @@ pub struct Cached<T> {
 
 pub type TtlCache<T> = std::sync::Mutex<std::collections::HashMap<String, Cached<T>>>;
 
+// The memo holds plain values, so a poisoned one is still consistent.
+fn lock_cache<T>(
+    cache: &TtlCache<T>,
+) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Cached<T>>> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub fn cache_get<T: Clone>(cache: &TtlCache<T>, key: &str) -> Option<T> {
-    let cache = cache.lock().unwrap();
+    let cache = lock_cache(cache);
     cache
         .get(key)
         .filter(|c| c.expires_at > std::time::Instant::now())
         .map(|c| c.value.clone())
 }
 
+pub fn cache_remove<T>(cache: &TtlCache<T>, key: &str) {
+    lock_cache(cache).remove(key);
+}
+
 pub fn cache_put<T>(cache: &TtlCache<T>, key: String, value: T, ttl: Duration) {
-    let mut cache = cache.lock().unwrap();
+    let mut cache = lock_cache(cache);
     let now = std::time::Instant::now();
     cache.retain(|_, c| c.expires_at > now);
     cache.insert(

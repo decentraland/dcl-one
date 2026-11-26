@@ -118,7 +118,9 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
             if let Some(value) = value.as_u64() {
                 return value.to_string().len();
             }
-            let value = value.as_f64().unwrap();
+            let Some(value) = value.as_f64() else {
+                return value.to_string().len();
+            };
             if value == 0.0 {
                 1
             } else if value.abs() >= 1e21 || value.abs() < 1e-6 {
@@ -318,6 +320,31 @@ mod tests {
             } else {
                 assert_eq!(ws_close_code_label(code), "other", "{code}");
             }
+        }
+    }
+
+    #[test]
+    fn json_bytes_matches_javascript_number_serialization() {
+        for (value, expected) in [
+            (serde_json::json!(0), 1),
+            (serde_json::json!(-3), 2),
+            (serde_json::json!(u64::MAX), 20),
+            (serde_json::json!(0.0), 1),
+            (serde_json::json!(1.5), 3),
+            (serde_json::json!(-0.25), 5),
+            // JSON.stringify: "1e+21" and "1e-7".
+            (serde_json::json!(1e21), 5),
+            (serde_json::json!(1e-7), 4),
+            (serde_json::json!([1, 2.5, null]), 12),
+            (serde_json::json!({"k": 1}), 7),
+        ] {
+            assert_eq!(json_bytes(&value), expected, "{value}");
+        }
+        match serde_json::from_str::<serde_json::Value>("1e400") {
+            // Only with serde_json's arbitrary_precision: as_f64 is None, so the raw text is used.
+            Ok(value) => assert_eq!(json_bytes(&value), 5),
+            // Default build: out of range, and the fallback is unreachable.
+            Err(error) => assert!(error.to_string().contains("out of range"), "{error}"),
         }
     }
 
