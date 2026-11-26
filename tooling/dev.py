@@ -725,8 +725,7 @@ def testnet_env(config, refuse_exposed_relayer=True):
     does not resolve mainnet scenes on this profile.
 
     The trade-events index walks Amoy and Sepolia's marketplaces (MARKETPLACE_INDEX_CHAIN_ID_*), so a
-    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain. The
-    committee index walks Amoy's Committee contract, the curation committee builder reads on Amoy."""
+    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain."""
     return {
         'ETH_NETWORK': 'sepolia',
         'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
@@ -756,7 +755,8 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # This non-walking dev profile uses the graph for rental assets.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
-        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
+        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.

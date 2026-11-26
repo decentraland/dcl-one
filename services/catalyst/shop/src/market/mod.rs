@@ -979,23 +979,6 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
-    /// The endpoint the committee walk reads (Polygon only): the
-    /// `TRADE_RPC_URLS` entry of the chain it indexes
-    /// (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`), else for 137 on mainnet
-    /// `RPC_ENDPOINT_POLYGON` (off mainnet it serves another chain); the walk
-    /// checks the endpoint serves that chain before each pass.
-    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
-        if net != chain_walk::ChainNet::Matic {
-            return None;
-        }
-        let chain_id = self.settings.market.indexes.chain_id(net);
-        self.rpc_url_for(net, chain_id).or_else(|| {
-            (chain_id == net.chain_id() && self.settings.eth_network.trim() == "mainnet")
-                .then(|| self.settings.polygon_rpc_url.clone())
-                .flatten()
-        })
-    }
-
     /// The `TRADE_RPC_URLS` 137 entry, with `RPC_ENDPOINT_POLYGON` as a
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {

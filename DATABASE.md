@@ -4187,9 +4187,8 @@ accepts a completed legacy copy with neither a chain binding nor a pending
 testnet pin. The testnet walk selects addresses from rows the verified pass
 actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
-fixed contracts. The Sepolia/Amoy pair omits the mainnet-only collections, third-party registry and MANA transfer walks, even
-when the mirror posture enables them and mainnet RPCs are available. Its
-committee walk reads Amoy's Committee contract (see "Curation committee"). The
+fixed contracts. The Sepolia/Amoy pair omits the mainnet-only committee, collections, third-party registry and MANA transfer walks, even
+when the mirror posture enables them and mainnet RPCs are available. The
 separately keyed Ethereum Rentals histories keep their own endpoints.
 
 A Sepolia catalogue whose mirrors are bound to the mainnet default URLs
@@ -4645,14 +4644,15 @@ committee again inside its transaction, after its row locks: a curator the
 committee admitted and the assignee it names must still be members (401
 otherwise).
 
-Shop's `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) still walks
-the `MemberSet` logs of the Committee contracts of the chain
-`MARKETPLACE_INDEX_CHAIN_ID_MATIC` names into `shop.committee_event`, with its
-cursor in `shop.chain_cursor` (tens of rows, appended with the cursor
-advance, deleted past a reorg rewind). When Polygon is in scope, Shop accounts
-require a fresh committee fold covering the published sales block and include
-every indexed member through that block, including former members. No other
-area reads those rows; the builder doesn't need the index.
+Shop's mainnet `committee` index (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks
+the two Committee contracts' `MemberSet` logs from the first one's deployment
+into `shop.committee_event` over the `TRADE_RPC_URLS` 137 entry, else on
+mainnet `RPC_ENDPOINT_POLYGON`, once the endpoint answers chain id 137 (tens of
+rows, appended with the cursor advance in `shop.chain_cursor`, deleted past a
+reorg rewind). The testnet pair schedules no committee walk. When Polygon is in
+scope, Shop accounts require a fresh committee fold covering the published
+sales block and include every indexed member through that block, including
+former members. The builder reads neither table for the committee.
 
 ## Third-party registry
 

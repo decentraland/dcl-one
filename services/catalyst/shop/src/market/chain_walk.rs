@@ -1237,7 +1237,7 @@ pub trait ChainIndex: Send + Sync {
     fn indexer(&self) -> &'static str;
     fn net(&self) -> ChainNet;
     /// The chain the index reads on `net`: mainnet for every index but
-    /// `trade_events` and `committee`, which may read a testnet.
+    /// `trade_events`, which may read a testnet.
     fn chain_id(&self) -> i64 {
         self.net().chain_id()
     }

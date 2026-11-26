@@ -152,7 +152,8 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
-    /// Walk the Polygon Committee contracts' MemberSet logs into `shop.committee_event`.
+    /// Walk the Polygon Committee contracts' MemberSet logs into `shop.committee_event`
+    /// over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`.
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
@@ -219,9 +220,8 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_STOP_BLOCK_MATIC")]
     pub marketplace_index_stop_block_matic: Option<u64>,
 
-    /// The chains the NFT and trade-events walks read, and on Polygon the committee walk. A
-    /// catalogue node serves Ethereum and Polygon mainnet (1/137) or Sepolia and Amoy
-    /// (11155111/80002).
+    /// The chains the NFT and trade-events walks read. A catalogue node serves
+    /// Ethereum and Polygon mainnet (1/137) or Sepolia and Amoy (11155111/80002).
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
     pub marketplace_index_chain_id_ethereum: i64,
 

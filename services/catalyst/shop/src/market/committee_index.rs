@@ -1,10 +1,8 @@
-//! The curation committee index: the Committee contracts'
-//! `MemberSet(address indexed member, bool value)` logs on the Polygon chain
-//! the walk reads (`MARKETPLACE_INDEX_CHAIN_ID_MATIC`: 137, or Amoy's 80002),
-//! kept in
+//! The curation committee index: the Polygon Committee contracts'
+//! `MemberSet(address indexed member, bool value)` logs, kept in
 //! `shop.committee_event` with the cursor advance. A wallet is a member
-//! when its latest event across the chain's contracts (chain order) set it,
-//! as the collections subgraph's `Account.isCommitteeMember` folds them.
+//! when its latest event across both contracts (chain order) set it, as the
+//! collections subgraph's `Account.isCommitteeMember` folds them.
 
 use std::collections::HashMap;
 
@@ -29,24 +27,6 @@ pub const CONTRACTS: [&str; 2] = [
 ];
 pub const START_BLOCK: u64 = 15_202_000;
 
-/// The Amoy Committee contract (`Committee` under `amoy` in
-/// `evm/addresses.json`, which lists no Amoy `OldCommittee`) and the
-/// collections subgraph's start block for it
-/// (`decentraland/collections-graph` `config/amoy.json`
-/// `startBlock_committee` at 5ffbfbe).
-pub const AMOY_CONTRACTS: [&str; 1] = ["0x53c9c388000b6fc91b91fb466742d0e869785c3b"];
-pub const AMOY_START_BLOCK: u64 = 5_706_678;
-
-/// The Committee contracts of `chain_id` and the block its walk starts
-/// from; none for any other chain.
-pub fn deployments(chain_id: i64) -> (&'static [&'static str], u64) {
-    match chain_id {
-        137 => (&CONTRACTS, START_BLOCK),
-        80_002 => (&AMOY_CONTRACTS, AMOY_START_BLOCK),
-        _ => (&[], 0),
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct MemberSet {
     block: i64,
@@ -56,10 +36,10 @@ struct MemberSet {
     is_member: bool,
 }
 
-fn decode(contracts: &[&str], log: &RpcLog) -> anyhow::Result<MemberSet> {
+fn decode(log: &RpcLog) -> anyhow::Result<MemberSet> {
     let contract = log.address.to_ascii_lowercase();
     ensure!(
-        contracts.contains(&contract.as_str()),
+        CONTRACTS.contains(&contract.as_str()),
         "MemberSet from an unknown emitter"
     );
     ensure!(
@@ -88,19 +68,8 @@ fn decode(contracts: &[&str], log: &RpcLog) -> anyhow::Result<MemberSet> {
     })
 }
 
-/// Polygon only: the curation committee, on the chain its RPC serves.
-pub struct CommitteeIndex {
-    pub chain_id: i64,
-}
-
-impl CommitteeIndex {
-    /// The walk of Polygon mainnet.
-    pub fn mainnet() -> Self {
-        Self {
-            chain_id: ChainNet::Matic.chain_id(),
-        }
-    }
-}
+/// Polygon only: the committee builder authorizes against.
+pub struct CommitteeIndex;
 
 #[async_trait::async_trait]
 impl ChainIndex for CommitteeIndex {
@@ -110,11 +79,8 @@ impl ChainIndex for CommitteeIndex {
     fn net(&self) -> ChainNet {
         ChainNet::Matic
     }
-    fn chain_id(&self) -> i64 {
-        self.chain_id
-    }
     fn start_block(&self) -> u64 {
-        deployments(self.chain_id).1
+        START_BLOCK
     }
     async fn groups(
         &self,
@@ -124,11 +90,7 @@ impl ChainIndex for CommitteeIndex {
         _: (u64, i64),
     ) -> anyhow::Result<Vec<LogGroup>> {
         Ok(vec![LogGroup {
-            addresses: deployments(self.chain_id)
-                .0
-                .iter()
-                .map(|a| a.to_string())
-                .collect(),
+            addresses: CONTRACTS.iter().map(|a| a.to_string()).collect(),
             topics: json!([MEMBER_SET]),
         }])
     }
@@ -138,10 +100,9 @@ impl ChainIndex for CommitteeIndex {
         logs: &[RpcLog],
         times: &HashMap<i64, i64>,
     ) -> anyhow::Result<usize> {
-        let contracts = deployments(self.chain_id).0;
         let rows = logs
             .iter()
-            .map(|log| decode(contracts, log))
+            .map(decode)
             .collect::<anyhow::Result<Vec<_>>>()?;
         let time = |block: i64| {
             times
@@ -197,33 +158,8 @@ mod tests {
     fn contracts_match_the_pinned_address_book() {
         let pinned: serde_json::Value =
             serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
-        let book = |key: &str, name: &str| pinned[key][name].as_str().unwrap().to_lowercase();
-        assert_eq!(
-            CONTRACTS,
-            [book("matic", "OldCommittee"), book("matic", "Committee")]
-        );
-        assert_eq!(AMOY_CONTRACTS, [book("amoy", "Committee")]);
-    }
-
-    #[test]
-    fn a_walk_reads_its_chains_committee_and_no_other() {
-        assert_eq!(CommitteeIndex::mainnet().chain_id(), 137);
-        assert_eq!(CommitteeIndex::mainnet().start_block(), START_BLOCK);
-        let amoy = CommitteeIndex { chain_id: 80_002 };
-        assert_eq!(
-            (amoy.chain_id(), amoy.start_block()),
-            (80_002, AMOY_START_BLOCK)
-        );
-        let member = "0x00000000000000000000000000000000000000aa";
-        assert!(decode(deployments(80_002).0, &log(AMOY_CONTRACTS[0], member, 1)).is_ok());
-        for contract in CONTRACTS {
-            assert!(
-                decode(deployments(80_002).0, &log(contract, member, 1)).is_err(),
-                "{contract}"
-            );
-        }
-        assert!(decode(deployments(137).0, &log(AMOY_CONTRACTS[0], member, 1)).is_err());
-        assert_eq!(deployments(1).0.len(), 0);
+        let book = |name: &str| pinned["matic"][name].as_str().unwrap().to_lowercase();
+        assert_eq!(CONTRACTS, [book("OldCommittee"), book("Committee")]);
     }
 
     fn log(contract: &str, member: &str, value: u8) -> RpcLog {
@@ -254,14 +190,11 @@ mod tests {
     fn decodes_both_contracts_and_rejects_other_emitters() {
         let member = "0x00000000000000000000000000000000000000aa";
         for contract in CONTRACTS {
-            let set = decode(
-                &CONTRACTS,
-                &log(
-                    &contract.to_ascii_uppercase().replace("0X", "0x"),
-                    member,
-                    1,
-                ),
-            )
+            let set = decode(&log(
+                &contract.to_ascii_uppercase().replace("0X", "0x"),
+                member,
+                1,
+            ))
             .unwrap();
             assert_eq!(
                 set,
@@ -273,18 +206,15 @@ mod tests {
                     is_member: true,
                 }
             );
-            assert!(
-                !decode(&CONTRACTS, &log(contract, member, 0))
-                    .unwrap()
-                    .is_member
-            );
-            assert!(decode(&CONTRACTS, &log(contract, member, 2)).is_err());
+            assert!(!decode(&log(contract, member, 0)).unwrap().is_member);
+            assert!(decode(&log(contract, member, 2)).is_err());
         }
         assert!(
-            decode(
-                &CONTRACTS,
-                &log("0x00000000000000000000000000000000000000bb", member, 1)
-            )
+            decode(&log(
+                "0x00000000000000000000000000000000000000bb",
+                member,
+                1
+            ))
             .is_err()
         );
     }

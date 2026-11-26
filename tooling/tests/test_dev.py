@@ -1034,7 +1034,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
         self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
         self.assertEqual((env['MARKETPLACE_COMMITTEE_INDEX_ENABLED'], mirror['MARKETPLACE_COMMITTEE_INDEX_ENABLED']),
-                         ('true', 'true'))
+                         ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))

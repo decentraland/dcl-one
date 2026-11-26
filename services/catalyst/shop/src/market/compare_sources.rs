@@ -253,7 +253,7 @@ pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIn
             chain_id: net.chain_id(),
         }),
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
-            Box::new(super::committee_index::CommitteeIndex::mainnet())
+            Box::new(super::committee_index::CommitteeIndex)
         }
         (chain_walk::INDEXER_COLLECTIONS, ChainNet::Matic) => {
             Box::new(super::collections_index::CollectionsIndex::new())
