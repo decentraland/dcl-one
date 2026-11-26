@@ -13,7 +13,6 @@ use crate::drafts::CollectionListingOut;
 use crate::http::{ApiData, ApiError};
 use crate::items::body::FullItemOut;
 use crate::items::{save as item_save, schema};
-use crate::publication::PublicationPreparation;
 
 /// `GET /v1/drafts/collections`: the signer's draft collections, charged by
 /// the row.
@@ -130,15 +129,4 @@ pub async fn get_item(
 ) -> Result<Json<ApiData<FullItemOut>>, ApiError> {
     let read = access::read_item(&state, &signer, &id).await?;
     Ok(Json(ApiData::ok(state.items.item(&read).await?)))
-}
-
-pub async fn get_publication(
-    State(state): State<SharedState>,
-    Signed(signer): Signed,
-    Path(id): Path<Uuid>,
-) -> Result<Json<ApiData<PublicationPreparation>>, ApiError> {
-    let publisher = access::publisher(&state, &signer, id).await?;
-    Ok(Json(ApiData::ok(
-        state.items.prepare_publication(&publisher).await?,
-    )))
 }

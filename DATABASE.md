@@ -1547,14 +1547,6 @@ Invariants:
   collector keeps a blob while `builder.uploaded_contents.hash` names it; a
   name in `builder.item_contents.hash` keeps nothing, so once the last record
   goes the collector may take the bytes.
-- A publication takes only uploaded files. The publication snapshot
-  (`SNAPSHOT_QUERY` in `services/catalyst/builder/src/publication.rs`) marks
-  an item `missing_content` when it names a hash with no upload record by the
-  wallet that wrote that name (`item_contents.named_by`), and both the
-  standard publication and the third-party publish refuse such an item
-  before they write (tests
-  `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
-  `every_refusal_answers_before_anything_is_written`).
 
 Upgrade: step `0084_builder_item_contents_order` adds `item_contents.position`
 and drops the key from `item_contents.hash` to `uploaded_contents`. A step
