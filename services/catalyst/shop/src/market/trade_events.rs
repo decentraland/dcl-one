@@ -989,7 +989,15 @@ pub async fn current_on(
     conn: &mut PgConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), (Source, String)> {
-    match stale_networks_on(conn, &ChainNet::ALL, now).await {
+    current_for_networks_on(conn, &ChainNet::ALL, now).await
+}
+
+pub(super) async fn current_for_networks_on(
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    now: chrono::DateTime<Utc>,
+) -> Result<(), (Source, String)> {
+    match stale_networks_on(conn, nets, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
         Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
         Err(e) => Err(unreadable_reason(e)),

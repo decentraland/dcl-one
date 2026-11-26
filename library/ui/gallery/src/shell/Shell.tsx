@@ -6,6 +6,7 @@ import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
 import { HUD_OVERVIEW, hudPages, hudSections } from '../hudPages'
 import { OPEN_MESSAGE, WIDTH_MESSAGE } from '../messages'
+import { sortByLabel } from '../order'
 import {
   MAX_WIDTH,
   MIN_WIDTH,
@@ -56,7 +57,9 @@ function groupOf(route: Route): string | null {
   return group === undefined ? null : componentGroupId(group)
 }
 
-const figmaNames = new Set(__GENERATED_COMPONENTS__.map((component) => component.name))
+// The generated Review's catalog lists its components in capture order; the sidebar lists them by name.
+const figmaComponents = sortByLabel(__GENERATED_COMPONENTS__, (component) => component.name)
+const figmaNames = new Set(figmaComponents.map((component) => component.name))
 // The hosted pull request preview leaves the Figma reference out; the Review artifact carries it.
 const FIGMA_REFERENCE_ELSEWHERE =
   'Not in this hosted preview: the full build linked from the pull request includes it.'
@@ -188,7 +191,7 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
     route.source === 'runtime' && route.view === view && route.name === name
   const generatedName =
     route.source === 'generated' ? new URLSearchParams(route.query).get('component') : null
-  const figma = __GENERATED_COMPONENTS__.filter((component) => matches(component.name))
+  const figma = figmaComponents.filter((component) => matches(component.name))
   return (
     <nav className={styles.nav} aria-label="Gallery">
       <input

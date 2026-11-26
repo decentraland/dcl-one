@@ -11,16 +11,15 @@
 //! transaction can move several NFTs), and pages the result in memory. A
 //! leg that cannot be read contributes nothing and the answer stays a 200
 //! with the legs that answered; the `x-activity-unavailable-sources` header
-//! ([`UNAVAILABLE_SOURCES_HEADER`]) names the source of each unavailable
-//! envelope that left a bid, order or transfer leg out (the order legs'
-//! `nft-index` and `land-authz-index`, a reader's subgraph), so a client can
-//! tell a partial history from a complete one.
+//! ([`UNAVAILABLE_SOURCES_HEADER`]) names sources reported by incomplete
+//! transfer, bid, order and trade reads. Bid and order failures without a
+//! source use the leg's name, as does a failed direct trade read.
 
 use std::collections::{BTreeSet, HashSet};
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -87,7 +86,7 @@ fn network_name<T: Serialize>(network: &T) -> String {
 /// Collect the paged bid and order legs up to the internal cap, one page
 /// after another, and the source an unavailable envelope named when a page
 /// failed with one.
-async fn pages<T, F, Fut>(fetch: F) -> (Vec<T>, Option<String>)
+async fn pages<T, F, Fut>(fallback: &'static str, fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
     Fut: std::future::Future<Output = Result<(Vec<T>, i64), Response>>,
@@ -104,17 +103,20 @@ where
                     break;
                 }
             }
-            Err(response) => return (out, unavailable_source(response).await),
+            Err(response) => {
+                let source = unavailable_source(response)
+                    .await
+                    .unwrap_or_else(|| fallback.to_string());
+                return (out, Some(source));
+            }
         }
     }
     (out, None)
 }
 
-/// The `source` an unavailable envelope names; `None` for another failure.
+/// Source names carried by failed reads. The caller supplies the leg label
+/// for a timeout, an upstream failure or any other response without one.
 async fn unavailable_source(response: Response) -> Option<String> {
-    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
-        return None;
-    }
     let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
         .ok()?;
@@ -122,6 +124,7 @@ async fn unavailable_source(response: Response) -> Option<String> {
         .ok()?
         .get("source")?
         .as_str()
+        .filter(|source| !source.is_empty() && HeaderValue::from_str(source).is_ok())
         .map(str::to_string)
 }
 
@@ -155,7 +158,7 @@ pub async fn user_activity(
         transfers,
     ) = tokio::join!(
         super::sale_reads::activity_sales(state, &lower, INTERNAL_FETCH_CAP),
-        pages(|skip| {
+        pages("bids", |skip| {
             let f = BidFilters {
                 bidder: Some(lower.clone()),
                 limit: READER_MAX_FIRST,
@@ -164,7 +167,7 @@ pub async fn user_activity(
             };
             async move { list_bids(state, &f).await }
         }),
-        pages(|skip| {
+        pages("bids", |skip| {
             let f = BidFilters {
                 seller: Some(lower.clone()),
                 limit: READER_MAX_FIRST,
@@ -173,7 +176,7 @@ pub async fn user_activity(
             };
             async move { list_bids(state, &f).await }
         }),
-        pages(|skip| {
+        pages("orders", |skip| {
             let f = OrderFilters {
                 owner: Some(lower.clone()),
                 first: Some(READER_MAX_FIRST),
@@ -182,7 +185,7 @@ pub async fn user_activity(
             };
             async move { list_orders(state, &f).await }
         }),
-        pages(|skip| {
+        pages("orders", |skip| {
             let f = OrderFilters {
                 buyer: Some(lower.clone()),
                 first: Some(READER_MAX_FIRST),
@@ -213,6 +216,7 @@ pub async fn user_activity(
     let orders_buyer = leg_rows(orders_buyer, &mut unavailable);
     let trades = trades.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "activity: the trades leg failed");
+        unavailable.insert("trades".into());
         Vec::new()
     });
     let mut events: Vec<ActivityEvent> = Vec::new();
@@ -475,7 +479,75 @@ fn trade_to_event(t: &Trade) -> ActivityEvent {
 mod tests {
     use super::*;
     use crate::market::wire::{ChainId, Network};
+    use axum::http::StatusCode;
     use chrono::TimeZone;
+
+    #[tokio::test]
+    async fn incomplete_activities_keep_pages_and_name_each_failed_leg() {
+        for (response, expected) in [
+            (super::super::nft_reads::timed_out(), "orders"),
+            (
+                super::super::readers::upstream_failed("/v1/orders", "fixture"),
+                "orders",
+            ),
+            (StatusCode::INTERNAL_SERVER_ERROR.into_response(), "orders"),
+            (
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"source":"nft-index"})),
+                )
+                    .into_response(),
+                "nft-index",
+            ),
+        ] {
+            let response = std::sync::Mutex::new(Some(response));
+            let (rows, source) = pages("orders", |skip| {
+                std::future::ready(if skip == 0 {
+                    Ok((vec![7; READER_MAX_FIRST as usize], READER_MAX_FIRST))
+                } else {
+                    Err(response.lock().unwrap().take().unwrap())
+                })
+            })
+            .await;
+            assert_eq!(rows, vec![7; READER_MAX_FIRST as usize]);
+            assert_eq!(source.as_deref(), Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn activity_names_a_failed_trades_query_in_its_header() {
+        use crate::shared::signed_fetch::test_support::signed_headers;
+        let Some(db) = crate::market::tests::support::OwnDb::create("activity_trade_failure").await
+        else {
+            return;
+        };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        ));
+        sqlx::query("ALTER TABLE shop.trades RENAME TO broken_trades")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let headers = signed_headers(
+            "get",
+            "/v1/activity",
+            r#"{"signer":"dcl:marketplace"}"#,
+            true,
+        )
+        .await;
+        let response = get_activity(State(state), headers, Query(vec![])).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let names = response.headers()[UNAVAILABLE_SOURCES_HEADER]
+            .to_str()
+            .unwrap();
+        assert!(
+            names.split(", ").any(|source| source == "trades"),
+            "{names}"
+        );
+        db.drop().await;
+    }
 
     fn asset(asset_type: i32, token_id: Option<&str>, amount: Option<&str>) -> TradeAsset {
         TradeAsset {

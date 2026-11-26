@@ -7,6 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use axum::http::StatusCode;
+use chrono::Timelike;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
@@ -666,7 +667,7 @@ async fn a_refused_connection_is_retried_without_naming_the_webhook() {
 }
 
 /// Slack's 429 holds the alert for its `Retry-After`, and the rest of the
-/// pass with it, unposted.
+/// pass with it. A held alert still gets its first post after the age limit.
 #[tokio::test]
 async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
     let Some(db) = OwnDatabase::create("alerts_rate_limited").await else {
@@ -690,7 +691,7 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
     .await
     .unwrap();
     drop(conn);
-    let t0 = now() + chrono::Duration::seconds(1);
+    let t0 = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
     let out = delivery.run_pass(&credits, t0).await.unwrap();
     assert_eq!(
         out,
@@ -704,19 +705,69 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
         1,
         "the second is held, not posted"
     );
-    let rows: Vec<(String, chrono::NaiveDateTime)> =
-        sqlx::query_as("SELECT last_error, next_attempt_at FROM credits.alerts ORDER BY id")
-            .fetch_all(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!(rows[0].0, "Slack answered 429 Too Many Requests");
-    assert_eq!(rows[1].0, "held while Slack rate limits");
-    for (_, next) in &rows {
-        let wait = *next - t0;
-        assert!(
-            wait > chrono::Duration::seconds(118) && wait <= chrono::Duration::seconds(121),
-            "{wait}"
-        );
+    let rows: Vec<(String, i32, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT last_error, attempts, next_attempt_at FROM credits.alerts ORDER BY id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    let next = t0 + chrono::Duration::seconds(120);
+    assert_eq!(
+        rows,
+        vec![
+            ("Slack answered 429 Too Many Requests".into(), 1, next),
+            ("held while Slack rate limits".into(), 0, next),
+        ]
+    );
+
+    *hook.status.lock().unwrap() = StatusCode::BAD_GATEWAY;
+    let late = t0 + alerts::MAX_AGE;
+    let out = delivery.run_pass(&credits, late).await.unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 1,
+            failed: 1,
+            ..PassOutcome::default()
+        }
+    );
+    {
+        let bodies = hook.bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[1]["text"].as_str().unwrap().contains("0xdef"));
+    }
+    let out = delivery
+        .run_pass(&credits, late + chrono::Duration::seconds(30))
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            failed: 1,
+            ..PassOutcome::default()
+        }
+    );
+    assert_eq!(hook.bodies.lock().unwrap().len(), 2);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn slack_retry_after_is_capped_at_thirty_minutes() {
+    let Some(db) = OwnDatabase::create("alerts_retry_after_cap").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::TOO_MANY_REQUESTS).await;
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
+    queue_one(&db.pool).await;
+
+    let mut due = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
+    for retry_after in [86_400, i64::MAX] {
+        *hook.headers.lock().unwrap() = vec![("retry-after", retry_after.to_string())];
+        let out = delivery.run_pass(&credits, due).await.unwrap();
+        assert_eq!(out.retried, 1);
+        due += chrono::Duration::minutes(30);
+        assert_eq!(alert_row(&db.pool).await.3, due);
     }
     db.drop().await;
 }

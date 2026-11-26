@@ -34,11 +34,11 @@ Design source of truth: the checked-in tokens and design primitives, together wi
 - **Primitives.** Reusable interactive elements and surfaces use the shared
   components from `@dcl/one-ui` (`Button`, `Tooltip`, `Switch`, `Checkbox`,
   `TabsBar`, `Spinner` and `Skeleton` with `appearance="hud"` or their HUD
-  variants; `Panel`, `MenuPanel`, `MaskIcon`, `Slider` and `EmptyState` as they
-  are) and the components still in `@hud/design` — `IconButton`,
+  variants; `Panel`, `MenuPanel`, `MaskIcon`, `Slider`, `DateField`, `KeyCap`
+  and `EmptyState` as they are) and the components still in `@hud/design` —
   `ControlButton`, `Icon`, and the adapters that pass the HUD's icons and the
   engine's cancel layers to a shared component (`Chip`, `Pager`, `Dropdown`,
-  `ContextMenu`, `OptionMenu`), not a bespoke `<button>` + CSS for something
+  `ContextMenu`, `OptionMenu`, `IconButton`, `HintsButton`, `ColorPicker`), not a bespoke `<button>` + CSS for something
   a primitive already covers (close/back/menu/toggle buttons, nav controls,
   cards, popovers).
 

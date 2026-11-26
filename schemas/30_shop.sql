@@ -17472,6 +17472,7 @@ CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address
 -- transfer before it, filled on a later fold when the nft walk had not
 -- reached it yet) or the acceptance's seller. Bounded by the distinct
 -- (token, bidder) pairs ever bid; rewritten for the keys a fold touches.
+-- Read by the bid book of /v1/bids (services/catalyst/shop/src/market/bids.rs).
 CREATE TABLE shop.nft_bid (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17497,7 +17498,8 @@ CREATE TABLE shop.nft_bid (
     CONSTRAINT nft_bid_lowercase CHECK (contract_address = lower(contract_address) AND bidder = lower(bidder))
 );
 
--- The fold's "bids whose seller the nft walk had not reached yet".
+-- The fold's "bids whose seller the nft walk had not reached yet", and the
+-- bid book's check that every bid it serves has a seller.
 CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller IS NULL;
 
 -- The fold's "open bids a later acceptance invalidated".
