@@ -13,6 +13,7 @@ fn lifecycle_world() -> World {
 fn setup_lifecycle(world: &mut World) {
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
+    world.init_resource::<RequiredScenes>();
     world.init_resource::<Events<LoadSceneEvent>>();
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();

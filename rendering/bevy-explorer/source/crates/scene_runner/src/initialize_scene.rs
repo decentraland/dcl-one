@@ -98,6 +98,7 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<CurrentImposterScene>();
         app.init_resource::<CurrentSceneLoading>();
         app.init_resource::<LiveScenes>();
+        app.init_resource::<RequiredScenes>();
         app.init_resource::<ScenePointers>();
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
@@ -844,6 +845,12 @@ pub struct LiveScenes {
     pub scenes: HashMap<String, Entity>,
     pub block_new_scenes: bool,
 }
+
+/// The scene hashes the lifecycle loads around the player, as of its last pass: the load distance
+/// and the live ring, banned scenes left out, before it defers the rest to a loading current
+/// scene. A scene a pointer names but this leaves out is never spawned there.
+#[derive(Resource, Default, Debug)]
+pub struct RequiredScenes(pub HashSet<String>);
 
 pub struct PortableSource {
     pub pid: String,
@@ -1822,6 +1829,7 @@ pub fn process_scene_lifecycle(
     bans: SceneBanGate,
     time: Res<Time>,
     config: Res<AppConfig>,
+    mut required_scenes: ResMut<RequiredScenes>,
 ) {
     let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
@@ -1929,6 +1937,10 @@ pub fn process_scene_lifecycle(
     };
     required_scene_ids.retain(|scene, _| allowed(scene));
     keep_scene_ids.retain(allowed);
+    required_scenes.0.clear();
+    required_scenes
+        .0
+        .extend(required_scene_ids.keys().map(|(hash, _)| hash.clone()));
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

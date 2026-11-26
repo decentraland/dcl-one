@@ -144,8 +144,14 @@ export async function measureTeleport(explorer: Explorer, from: Location, to: Lo
   if (deadline - now() <= 0) return { ...base, teleportMs: null, error: "skipped: the run's deadline passed" }
   try {
     const [x, y] = parsePosition(to.position)
+    // read before the clock starts: every teleport is an arrival above it
+    const before = await readArrivals(explorer)
     const sentAt = now()
-    const { arrivals } = await explorer.teleport(x, y, { timeoutMs: firstRingTimeout(deadline, now) })
+    await explorer.run(`/teleport ${x} ${y}`)
+    const { arrivals } = await until(() => explorer.worldState(), (state) => state.arrivals > before && state.inWorld, {
+      timeoutMs: firstRingTimeout(deadline, now),
+      what: `the arrival at ${to.name} (${to.position})`
+    })
     const readyAt = await waitFirstRingReady(explorer, { arrival: arrivals, what: `the first ring after the teleport to ${to.name} (${to.position})`, timeoutMs: firstRingTimeout(deadline, now) })
     return { ...base, teleportMs: readyAt - sentAt }
   } catch (error) {

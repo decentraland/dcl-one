@@ -7,7 +7,8 @@ use web_time::Instant;
 use super::*;
 use crate::{
     initialize_scene::{
-        LiveScenes, PointerResult, PortableScenes, SceneHash, SceneLoading, ScenePointers,
+        LiveScenes, PointerResult, PortableScenes, RequiredScenes, SceneHash, SceneLoading,
+        ScenePointers,
     },
     renderer_context::RendererSceneContext,
 };
@@ -29,6 +30,7 @@ fn world() -> World {
     world.init_resource::<LiveScenes>();
     world.init_resource::<FirstRingTiming>();
     world.init_resource::<Arrivals>();
+    world.init_resource::<RequiredScenes>();
     let mut pointers = ScenePointers::default();
     pointers.insert(
         IVec2::ZERO,
@@ -74,6 +76,10 @@ fn scene(world: &mut World, hash: &str, parcels: &[IVec2], tick: u32) -> Entity 
         .resource_mut::<LiveScenes>()
         .scenes
         .insert(hash.to_owned(), root);
+    world
+        .resource_mut::<RequiredScenes>()
+        .0
+        .insert(hash.to_owned());
     root
 }
 
@@ -251,6 +257,13 @@ fn the_first_ring_is_ready_for_the_arrival_that_reaches_the_world() {
 #[test]
 fn an_arrival_waits_for_a_loading_neighbour() {
     let mut world = world();
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::X,
+        PointerResult::Exists {
+            hash: "east".to_owned(),
+            urn: None,
+        },
+    );
     world.insert_resource(Arrivals(1));
     scene(&mut world, "home", &[IVec2::ZERO], 7);
     let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
@@ -321,6 +334,10 @@ fn an_arrival_waits_for_a_neighbour_not_spawned_yet() {
         },
     );
     world.insert_resource(Arrivals(1));
+    world
+        .resource_mut::<RequiredScenes>()
+        .0
+        .insert("east".to_owned());
     scene(&mut world, "home", &[IVec2::ZERO], 7);
 
     // the neighbour's pointer is resolved, but the lifecycle has not spawned it yet
@@ -352,4 +369,29 @@ fn an_arrival_waits_for_an_unresolved_neighbour() {
     world.run_system_once(report_scene_load_times).unwrap();
 
     assert!(world.resource::<FirstRingTiming>().ready.is_none());
+}
+
+#[test]
+fn a_neighbour_the_lifecycle_does_not_load_holds_nothing() {
+    let mut world = world();
+    // a banned neighbour, or one outside the load distance and the live ring: never spawned
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::X,
+        PointerResult::Exists {
+            hash: "banned".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(1)
+    );
 }

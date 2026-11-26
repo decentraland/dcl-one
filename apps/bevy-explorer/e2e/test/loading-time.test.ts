@@ -81,11 +81,11 @@ describe('loading time', () => {
   test('time to world runs from before the launch to the first ring ready for the boot\'s arrival', async () => {
     const explorer = new Explorer(new FakeConsole({ world_state: world(2), scene_loading_state: loading({ arrival: 2, sinceReadyMs: 2_000 }) }))
     const before = Date.now()
-    const { measurement } = await measureTimeToWorld(GENESIS, async () => explorer)
+    // the clock started 5 s before the launch; the reply says ready 2 s before it came
+    const { measurement } = await measureTimeToWorld(GENESIS, async () => explorer, { now: () => before - 5_000 })
     const after = Date.now()
     assert.equal(measurement.error, undefined)
-    // ready 2 s before the reply, which came within the measurement
-    assert.ok(measurement.timeToWorldMs! <= after - before - 2_000 && measurement.timeToWorldMs! >= -2_000)
+    assert.ok(measurement.timeToWorldMs! >= 3_000 && measurement.timeToWorldMs! <= after - before + 3_000)
   })
 
   test('a measurement past the deadline is skipped without a boot', async () => {

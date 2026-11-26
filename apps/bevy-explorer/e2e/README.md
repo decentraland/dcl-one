@@ -235,10 +235,12 @@ are ceilings for a regression, not targets.
 
 `.github/workflows/bevy-explorer-loading-time.yml` runs it three times a day on the GPU runner of
 [CI](#ci) and keeps each run's `report/` as an artifact for 90 days. A run with a `slow` reading
-opens one issue, *the live web client is over its threshold*, or comments on the open one. A run
-with no slow reading does the same on *the measurement could not run* when it has an `unmeasured`
-reading, no readable `results.json`, or a measuring job that did not succeed (a run cut short
-leaves only the readings it finished).
+taken on the NVIDIA adapter opens one issue, *the live web client is over its threshold*, or
+comments on the open one; its unmeasured readings go in the same issue. Any other run does the same
+on *the measurement could not run* when it has an `unmeasured` reading, a `slow` one on the
+fallback adapter (the GPU probe found no NVIDIA adapter), no readable `results.json`, or a
+measuring job that did not succeed (a run cut short leaves only the readings it finished; a
+scheduled run cancelled or past the job's timeout counts).
 
 Each location's guest is a new account: its first sign-in deploys a profile to the target's
 catalyst, and its session reaches the target's analytics like a player's. Against the live client

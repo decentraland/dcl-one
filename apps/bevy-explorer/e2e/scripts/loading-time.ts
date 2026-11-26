@@ -14,6 +14,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import type { Explorer } from '../driver/explorer.ts'
+import { closeOnSignal } from './drive.ts'
 import { FIRST_RING_UNSUPPORTED, type LoadingTimeResults, measureTeleport, measureTimeToWorld, parseConfig, slowLines, summaryMarkdown, teleportLegs, unmeasuredLines } from '../driver/loading-time.ts'
 import { PACKAGE_ROOT, REPORT_DIR } from '../driver/paths.ts'
 import { closeSession, closeSessions, openSession } from '../driver/session.ts'
@@ -72,6 +73,9 @@ async function persist(): Promise<string> {
 }
 
 const { locations } = config
+// a step timeout or a cancel signals the process, which skips the `finally` below: the browsers
+// and their profiles are closed here instead
+const ending = closeOnSignal(closeSessions)
 let tourClient: Explorer | undefined
 // a client without firstRing fails every reading the same way: one is enough to know
 let unsupported = false
@@ -92,15 +96,19 @@ try {
     else await closeSession(options, target)
     await persist()
   }
+  // after a failed leg the player is not where the next leg starts from
+  let lost: string | undefined
   for (const [from, to] of teleportLegs(locations)) {
     log(`teleport ${from.name} → ${to.name}`)
-    const missing = unsupported ? FIRST_RING_UNSUPPORTED : `no client: the boot at ${locations.at(-1)!.name} failed`
-    const leg = tourClient ? await measureTeleport(tourClient, from, to, { deadline }) : { from: from.name, to: to.name, teleportMs: null, error: missing }
+    const missing = unsupported ? FIRST_RING_UNSUPPORTED : (lost ?? `no client: the boot at ${locations.at(-1)!.name} failed`)
+    const leg = tourClient && !lost ? await measureTeleport(tourClient, from, to, { deadline }) : { from: from.name, to: to.name, teleportMs: null, error: missing }
+    if (leg.teleportMs === null && !lost) lost = `skipped: the teleport to ${to.name} failed`
     results.teleports.push(leg)
     log(JSON.stringify(leg))
     await persist()
   }
 } finally {
+  ending.release()
   await closeSessions()
 }
 

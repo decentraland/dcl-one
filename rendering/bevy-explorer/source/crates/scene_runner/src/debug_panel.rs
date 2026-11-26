@@ -697,7 +697,7 @@ fn loading_state(
     input.reply_ok(json!({"current":current.0, "stage": stage, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
         "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures,
         "firstRing": first_ring_json(&timing, Instant::now()),
-        "unavailable": {"firstRing": "No arrival has had its first ring ready yet."}}).to_string());
+        "unavailable": {"firstRing": "No arrival has had its first ring ready yet, or this app counts no arrivals (no /world_state)."}}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]
