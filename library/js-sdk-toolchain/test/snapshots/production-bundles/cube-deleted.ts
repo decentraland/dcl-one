@@ -1,4 +1,5 @@
-import { engine, Transform, MeshCollider, Entity } from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { engine, Transform, MeshCollider } from '@dcl/sdk/ecs'
 export * from '@dcl/sdk'
 
 const cube = engine.addEntity()

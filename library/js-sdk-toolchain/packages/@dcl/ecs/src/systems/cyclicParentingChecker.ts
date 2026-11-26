@@ -1,6 +1,6 @@
 import * as components from '../components'
-import { Entity } from '../engine/entity'
-import { IEngine } from '../engine/types'
+import type { Entity } from '../engine/entity'
+import type { IEngine } from '../engine/types'
 
 /**
  * Transform parenting: cyclic dependency checker

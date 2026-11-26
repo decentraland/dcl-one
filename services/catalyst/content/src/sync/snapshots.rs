@@ -16,6 +16,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::metrics;
 use super::pointer_changes::is_usable_timestamp;
 use super::{SnapshotMetadata, SyncDeployment, SyncError, TimeRange, Timestamp};
 use crate::auth::{HashV1Writer, is_canonical_cid};
@@ -611,7 +612,10 @@ async fn schedule_records(
 ) -> ScheduleOutcome {
     let mut records = records;
     let offered = records.len() as u64;
-    let probed = match deployer.retain_undeployed(&mut records).await {
+    for record in &records {
+        report.record_streamed(&record.entity_type);
+    }
+    let probed = match deployer.retain_undeployed(&mut records, Some(report)).await {
         Ok(()) => true,
         Err(e) => {
             warn!(snapshot_hash, error = %e, "Batched already-deployed probe failed; probing per record");
@@ -819,6 +823,10 @@ pub async fn deploy_entities_from_snapshot(
     } = stats;
     let num_scheduled = outcome.scheduled;
     let num_schedule_errors = outcome.errors;
+    metrics::snapshots_processed("stream_end", 1);
+    if num_parse_errors > 0 {
+        metrics::snapshots_processed("incomplete", 1);
+    }
 
     info!(
         snapshot_hash,
@@ -921,6 +929,7 @@ async fn download_snapshot_file(
         return Err(SyncError::NoServers);
     }
 
+    metrics::download_job_started(advertisers.len());
     let mut next = 0;
     let mut retry = 0;
     let mut last_error = None;
@@ -939,7 +948,10 @@ async fn download_snapshot_file(
             result = download_snapshot_attempt(client, storage, snapshot_hash, server) => result,
         };
         match result {
-            Ok(file) => return Ok(file),
+            Ok(file) => {
+                metrics::download_job_succeeded(retry + 1);
+                return Ok(file);
+            }
             Err(error) => {
                 warn!(snapshot_hash, server, retry, %error, "Snapshot download failed");
                 last_error = Some(error);
@@ -973,6 +985,39 @@ async fn download_snapshot_attempt(
     snapshot_hash: &str,
     server: &str,
 ) -> Result<StagingGuard, SyncError> {
+    let remote_server = metrics::remote_server(server);
+    let started = std::time::Instant::now();
+    let spooled = spool_snapshot_attempt(client, storage, snapshot_hash, server).await;
+    metrics::download_finished(
+        &remote_server,
+        started.elapsed(),
+        spooled
+            .as_ref()
+            .ok()
+            .map(|spooled| spooled.stats.decoded_len),
+    );
+    let spooled = spooled?;
+    if spooled.digest != snapshot_hash {
+        metrics::download_hash_error(&remote_server);
+        return Err(SyncError::Other(format!(
+            "snapshot hash mismatch for {snapshot_hash} from {server}"
+        )));
+    }
+    info!(
+        snapshot_hash,
+        bytes = spooled.stats.decoded_len,
+        "Snapshot downloaded"
+    );
+    Ok(spooled.guard)
+}
+
+/// The snapshot body from `server`, whole and decoded, not yet verified.
+async fn spool_snapshot_attempt(
+    client: &crate::http::CheckedRedirectClient,
+    storage: &Storage,
+    snapshot_hash: &str,
+    server: &str,
+) -> Result<SpooledSnapshot, SyncError> {
     let response = crate::http::get_following_checked_redirects(
         client,
         &format!("{server}/contents/{snapshot_hash}"),
@@ -999,17 +1044,7 @@ async fn download_snapshot_attempt(
             spooled.stats.wire_len
         )));
     }
-    if spooled.digest != snapshot_hash {
-        return Err(SyncError::Other(format!(
-            "snapshot hash mismatch for {snapshot_hash} from {server}"
-        )));
-    }
-    info!(
-        snapshot_hash,
-        bytes = spooled.stats.decoded_len,
-        "Snapshot downloaded"
-    );
-    Ok(spooled.guard)
+    Ok(spooled)
 }
 
 #[cfg(test)]
@@ -1185,6 +1220,7 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-gzip").await;
         let cancel = CancellationToken::new();
+        let (_metrics, recorded) = metrics::local_recorder();
 
         let spool = download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
@@ -1204,6 +1240,19 @@ mod tests {
             PAYLOAD,
             "the temporary bytes must be the decoded representation"
         );
+        let rendered = recorded.render();
+        let origin = metrics::remote_server(&base);
+        for (series, value) in [
+            (
+                format!("dcl_content_download_bytes_total{{remote_server=\"{origin}\"}}"),
+                PAYLOAD.len() as f64,
+            ),
+            ("dcl_available_servers_histogram_sum".into(), 1.0),
+            ("dcl_content_download_job_succeed_retries_sum".into(), 1.0),
+        ] {
+            let got = metrics::sample(&rendered, &series);
+            assert_eq!(got, Some(value), "{series}:\n{rendered}");
+        }
         assert!(!storage.exist(&cid).await.unwrap());
         drop(spool);
         assert!(!path.exists());
@@ -1221,6 +1270,7 @@ mod tests {
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-corrupt").await;
         let cancel = CancellationToken::new();
+        let (_metrics, recorded) = metrics::local_recorder();
 
         let err = download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
@@ -1234,6 +1284,11 @@ mod tests {
         .err()
         .expect("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
+        let hash_errors = format!(
+            "dcl_content_download_hash_errors_total{{remote_server=\"{}\"}}",
+            metrics::remote_server(&base)
+        );
+        assert_eq!(metrics::sample(&recorded.render(), &hash_errors), Some(1.0));
         assert!(!storage.exist(&cid).await.unwrap());
         assert!(staged_files(&storage, &cid).is_empty());
 
@@ -1302,6 +1357,107 @@ mod tests {
         for server in [retired_server, current_server] {
             server.abort();
         }
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    /// A snapshot pass counts its streamed and processed entities under `source="snapshots"`,
+    /// the skips by reason, and the stream's end and incompleteness.
+    #[tokio::test]
+    async fn a_snapshot_pass_reports_streamed_processed_and_its_end() {
+        use crate::batch_deployer::BatchDeployerConfig;
+        let Some(pool) = crate::sync_test_support::test_pool(2).await else {
+            return;
+        };
+        let line = async |id: String, kind: &str, timestamp: i64| {
+            let chain = crate::sync_test_support::signed_chain(&id).await;
+            serde_json::json!({
+                "entityId": id, "entityType": kind, "pointers": ["0,0"],
+                "authChain": chain, "entityTimestamp": timestamp,
+            })
+            .to_string()
+        };
+        let snapshot = format!(
+            "### Decentraland json snapshot\n{}\n{}\n{{not json}}\n",
+            line(hash_bytes_v1(b"an old profile"), "profile", 1_000).await,
+            line(hash_bytes_v1(b"an outfit"), "outfits", NOW_MS).await,
+        );
+        let cid = hash_bytes_v1(snapshot.as_bytes());
+        let (base, server) = spawn_content_server(snapshot.into_bytes(), None).await;
+        let (storage, tmp) = temp_storage("snap-metrics").await;
+        let deployer = BatchDeployer::new(
+            BatchDeployerConfig {
+                ignored_types: ["outfits".to_string()].into_iter().collect(),
+                ..Default::default()
+            },
+            crate::sync::test_sync_client(Client::new()),
+            storage.clone(),
+            pool.clone(),
+            Arc::new(crate::sync_deployer::LiveSyncDeployer::new(
+                pool.clone(),
+                storage.clone(),
+                1,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
+            Arc::new(crate::failed_deployments_store::LiveFailedDeploymentsStore::new(pool)),
+            crate::bloom_filter::BloomFilter::with_capacity(10),
+        );
+        let report = Arc::new(DeploymentReport::new(metrics::SyncSource::snapshots()));
+        let cancel = CancellationToken::new();
+        let (_metrics, recorded) = metrics::local_recorder();
+
+        let outcome = deploy_entities_from_snapshot(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &deployer,
+            SnapshotSource {
+                snapshot_hash: &cid,
+                advertisers: &[(base.as_str(), &cancel)],
+                max_retries: 1,
+                retry_wait_ms: 0,
+            },
+            SnapshotFilter {
+                genesis_timestamp: 0,
+                entity_type_filter: None,
+            },
+            SnapshotScheduling::default(),
+            &report,
+        )
+        .await;
+        assert!(outcome.is_err(), "an unreadable line fails the snapshot");
+
+        let rendered = recorded.render();
+        let source = "remote_server=\"\",source=\"snapshots\"";
+        for (series, value) in [
+            (
+                format!("dcl_entities_deployments_streamed_total{{{source}}}"),
+                2.0,
+            ),
+            (
+                format!("dcl_entities_deployments_processed_total{{{source}}}"),
+                2.0,
+            ),
+            ("dcl_ignored_sync_deployments".into(), 2.0),
+            ("entity_skipped_old{entityType=\"profile\"}".into(), 1.0),
+            (
+                "schedule_entity_deployment_attempt{entityType=\"outfits\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_processed_snapshots_total{state=\"stream_end\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_processed_snapshots_total{state=\"incomplete\"}".into(),
+                1.0,
+            ),
+        ] {
+            assert_eq!(
+                metrics::sample(&rendered, &series),
+                Some(value),
+                "{series}:\n{rendered}"
+            );
+        }
+        server.abort();
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
