@@ -696,6 +696,7 @@ pub(super) enum Check<'a> {
 
 /// The publish checks in the old service's order. `anchor_ms` dates the timestamp window:
 /// now, or a partial upload's first batch.
+#[allow(clippy::too_many_arguments, reason = "shared publish path")]
 pub(super) async fn validate(
     state: &SharedState,
     mut conn: Option<&mut sqlx::PgConnection>,
@@ -942,7 +943,7 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let cap = match conn.as_deref_mut() {
+    let cap = match conn {
         Some(conn) => {
             state
                 .scene_cap_on(

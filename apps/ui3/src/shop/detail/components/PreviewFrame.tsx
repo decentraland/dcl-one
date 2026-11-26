@@ -25,6 +25,8 @@ export type PreviewFrameOptions = {
   disableBackground?: boolean;
   disableDefaultEmotes?: boolean;
   disableFadeEffect?: boolean;
+  /** The camera's distance, as a percentage of the framed view (Babylon). */
+  zoom?: number;
   wheelZoom?: number;
   wheelStart?: number;
   unity?: boolean;
@@ -151,9 +153,14 @@ type Props = {
    * late, or Unity booting again. Nothing is drawn in it yet, whatever the options.
    */
   onReplaced?: () => void;
+  /**
+   * Ambient playback, as decentraland.org's home page promo tiles run it (shop@32377959 LivePromo's PreviewTuning): once a
+   * scene has drawn its sound is off, and its emote plays again each time it ends, through the preview's controller.
+   */
+  ambient?: boolean;
 };
 
-export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError, onReplaced }: Props) {
+export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError, onReplaced, ambient = false }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const serialized = JSON.stringify(options);
   // The iframe keeps the URL it mounted with: a new `src` reloads the whole preview, not only its scene. It mounts again
@@ -167,12 +174,14 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   latest.current = serialized;
   const latestOptions = useRef(options);
   latestOptions.current = options;
-  const callbacks = useRef({ onLoad, onError, onReplaced });
-  callbacks.current = { onLoad, onError, onReplaced };
+  const callbacks = useRef({ onLoad, onError, onReplaced, ambient });
+  callbacks.current = { onLoad, onError, onReplaced, ambient };
   const retry = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(retry.current), []);
 
   const post = (type: string, payload: unknown) => frame.current?.contentWindow?.postMessage({ type, payload }, origin);
+  const requests = useRef(0);
+  const control = (method: string) => post("controller_request", { id: `shop-preview-${method}-${++requests.current}`, namespace: "emote", method, params: [] });
   const push = useRef(() => undefined as void);
   push.current = () => {
     const now = live.current;
@@ -213,8 +222,10 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       // Another preview on the page speaks the same protocol: only this iframe's messages count.
       const now = live.current;
       if (now.n !== mount.n || event.source !== frame.current?.contentWindow || event.origin !== origin) return;
-      const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string } };
-      if (type === "ready" && now.ready && mount.options.unity === true) {
+      const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string; type?: string } };
+      if (type === "emote_event") {
+        if (callbacks.current.ambient && payload?.type === "animation_end") control("play");
+      } else if (type === "ready" && now.ready && mount.options.unity === true) {
         // Unity booting again has lost its scene, and its answer to the first one belongs to the boot before: a fresh
         // iframe with the current options starts over, with a deadline of its own.
         live.current = liveFor(mount.n + 1, latest.current, latestOptions.current);
@@ -239,6 +250,7 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
         const failedToStart = type === "error" && first;
         if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current || failedToStart) {
           if (type === "load") {
+            if (callbacks.current.ambient) control("disableSound");
             const renderer = payload?.renderer;
             callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
           } else callbacks.current.onError(payload?.message ?? "");
@@ -299,7 +311,7 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   useEffect(() => {
     if (replay === played.current) return;
     played.current = replay;
-    if (live.current.n === mount.n && live.current.ready) post("controller_request", { id: `shop-item-preview-${replay}`, namespace: "emote", method: "play", params: [] });
+    if (live.current.n === mount.n && live.current.ready) control("play");
   }, [replay]);
 
   return <iframe key={mount.n} ref={frame} className={styles.frame} src={mount.src} allow="autoplay" title="3D preview" />;

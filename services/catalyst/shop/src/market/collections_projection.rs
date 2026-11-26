@@ -4,20 +4,26 @@
 //!
 //! The first projection takes the network's tables from the collections
 //! mirror (`shop.collection_projection.owned_at`, set in its transaction):
-//! from then the fold is their only writer, and the mirror refuses to write
-//! the network. Both take the network's advisory lock around the ownership
-//! check and the write ([`CATALOGUE_LOCK`]), the mirror shared and the fold
-//! exclusive, so a mirror page that read the network as unowned commits
-//! before the projection that takes it, and none commits after.
+//! from then the projection is their only writer, and the mirror refuses to
+//! write the network. Both take the network's advisory lock around the
+//! ownership check and the write ([`CATALOGUE_LOCK`]), the mirror shared and
+//! the projection exclusive, so a mirror page that read the network as
+//! unowned commits before the projection that takes it, and none commits
+//! after.
+//!
+//! The walk projects in the transaction that publishes its fold
+//! ([`project_in`], from `CollectionsIndex`'s `ChainIndex::publish`), so
+//! the rows, `projected_through` and `folded_block` commit together: a
+//! reader never sees the projection stand at a fold that is not published.
 //!
 //! A projection stands at a block (`projected_through`). The next one folds
 //! the events past it onto the rows ([`collections_fold::resume`]); a
 //! collection with no row yet (created since, or waiting for its creation
 //! read) or an event that names an item without a row (its metadata took no
 //! type) is folded again from its creation instead. A rewind clears
-//! `projected_through`, and the next fold rebuilds every row of the network
-//! from the whole log, in one transaction, so a reader sees the old rows or
-//! the new ones.
+//! `projected_through`, and the next publication rebuilds every row of the
+//! network from the whole log, in one transaction, so a reader sees the old
+//! rows or the new ones.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -138,7 +144,8 @@ pub async fn owned(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool>
 
 /// Folds `net`'s log to `upto` into its catalogue rows, taking them from the
 /// mirror if it is the first projection, in one transaction fenced by
-/// `owner`.
+/// `owner`. The walk projects through [`project_in`], inside the transaction
+/// that publishes the fold.
 pub async fn project(
     pool: &PgPool,
     owner: &Owner,
@@ -146,22 +153,37 @@ pub async fn project(
     upto: i64,
 ) -> anyhow::Result<Projected> {
     let mut tx = pool.begin().await?;
-    lock(&mut tx, net, true).await?;
+    let out = project_in(&mut tx, net, upto).await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
+/// [`project`] in the caller's transaction, which fences and commits it: the
+/// walk's publication (`chain_walk::mark_folded`), so the rows, the block they
+/// stand at (`projected_through`) and the published fold commit together and
+/// a reader's snapshot never sees one without the other.
+pub async fn project_in(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    upto: i64,
+) -> anyhow::Result<Projected> {
+    lock(&mut *conn, net, true).await?;
     sqlx::query(
         "INSERT INTO shop.collection_projection (network) VALUES ($1) ON CONFLICT DO NOTHING",
     )
     .bind(net.db_name())
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     let through: Option<i64> = sqlx::query_scalar(
         "SELECT projected_through FROM shop.collection_projection WHERE network = $1 FOR UPDATE",
     )
     .bind(net.db_name())
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     let out = match through {
-        Some(through) if through <= upto => advance(&mut tx, net, through, upto).await?,
-        _ => rebuild(&mut tx, net, upto).await?,
+        Some(through) if through <= upto => advance(&mut *conn, net, through, upto).await?,
+        _ => rebuild(&mut *conn, net, upto).await?,
     };
     sqlx::query(
         "UPDATE shop.collection_projection SET owned_at = COALESCE(owned_at, timezone('UTC', now())), \
@@ -171,10 +193,8 @@ pub async fn project(
     .bind(net.db_name())
     .bind(upto)
     .bind(out.waiting as i32)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    owner.check(&mut tx).await?;
-    tx.commit().await?;
     Ok(out)
 }
 

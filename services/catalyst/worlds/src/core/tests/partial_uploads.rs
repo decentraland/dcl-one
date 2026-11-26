@@ -1833,18 +1833,18 @@ async fn a_reservation_disappearance_without_a_receipt_is_refused() {
 
 #[tokio::test]
 async fn a_reservation_disappearance_with_an_expired_receipt_is_refused() {
-    reservation_disappearance(DisappearedUpload::ExpiredReceipt).await;
+    reservation_disappearance(DisappearedUpload::Expired).await;
 }
 
 #[tokio::test]
 async fn a_reservation_disappearance_with_another_signers_receipt_is_refused() {
-    reservation_disappearance(DisappearedUpload::OtherSignersReceipt).await;
+    reservation_disappearance(DisappearedUpload::OtherSigners).await;
 }
 
 enum DisappearedUpload {
     NoReceipt,
-    ExpiredReceipt,
-    OtherSignersReceipt,
+    Expired,
+    OtherSigners,
 }
 
 /// Remove the pending row at the reservation boundary, with no live publication to replay.
@@ -1867,13 +1867,13 @@ async fn reservation_disappearance(outcome: DisappearedUpload) {
                 reached_stage(&reached).await;
                 if !matches!(outcome, DisappearedUpload::NoReceipt) {
                     let other = Wallet::random();
-                    let signer = if matches!(outcome, DisappearedUpload::OtherSignersReceipt) {
+                    let signer = if matches!(outcome, DisappearedUpload::OtherSigners) {
                         &other
                     } else {
                         &owner
                     };
                     completed_elsewhere(&f.pool, &u, signer, &world).await;
-                    if matches!(outcome, DisappearedUpload::ExpiredReceipt) {
+                    if matches!(outcome, DisappearedUpload::Expired) {
                         sqlx::query("UPDATE worlds.completed_scene_uploads SET completed_at = completed_at - interval '2 days' WHERE entity_id = $1")
                         .bind(&u.entity_id).execute(&f.pool).await.unwrap();
                     }

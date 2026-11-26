@@ -39,7 +39,7 @@ impl NatsBus for TimedBus {
         let started = Instant::now();
         let outcome = self.inner.publish(subject, payload).await;
         {
-            let mut values = self.handoffs.lock().unwrap();
+            let mut values = self.handoffs.lock();
             if values.len() < self.capacity {
                 values.push(0);
                 let last = values.len() - 1;
@@ -218,10 +218,10 @@ async fn production_feed_position_load() {
             let now = origin.elapsed().as_micros() as u64;
             let latency = now.saturating_sub(created[index].load(Ordering::Acquire));
             let scheduled_latency = now.saturating_sub(scheduled[index].load(Ordering::Acquire));
-            let mut values = latencies.lock().unwrap();
+            let mut values = latencies.lock();
             if values.len() < rate * seconds {
                 values.push(latency);
-                scheduled_latencies.lock().unwrap().push(scheduled_latency);
+                scheduled_latencies.lock().push(scheduled_latency);
             }
             drop(values);
             received_counter.fetch_add(1, Ordering::Release);
@@ -274,7 +274,7 @@ async fn production_feed_position_load() {
         .map(|value| value.load(Ordering::Acquire))
         .collect();
     let warmup_receipts = warmup_received.load(Ordering::Acquire);
-    let warmup_handoffs = timed.handoffs.lock().unwrap().len();
+    let warmup_handoffs = timed.handoffs.lock().len();
     assert!(
         warmup_accepted > 0 && warmup_receipts > 0,
         "warmup requires real admitted and delivered traffic"
@@ -287,7 +287,7 @@ async fn production_feed_position_load() {
     assert_eq!(warmup_receipts, warmup_outcomes[0]);
     assert_eq!(warmup_handoffs, warmup_accepted);
     let warmup_evidence = serde_json::json!({"offered":rate*5,"admitted":warmup_accepted,"submitted":warmup_outcomes[0],"no_connection":warmup_outcomes[1],"failed":warmup_outcomes[2],"unconfirmed":warmup_outcomes[3],"received":warmup_receipts,"handoff_samples":warmup_handoffs,"receipt_sample_count":warmup_receipts,"handoff_residual":0,"receipt_residual":0});
-    timed.handoffs.lock().unwrap().clear();
+    timed.handoffs.lock().clear();
     for outcome in &timed.outcomes {
         outcome.store(0, Ordering::Relaxed);
     }
@@ -318,7 +318,7 @@ async fn production_feed_position_load() {
         for tick in 0..seconds * 1000 {
             tokio::time::sleep_until(run_started + Duration::from_millis(tick as u64)).await;
             let planned = run_started + Duration::from_millis(tick as u64);
-            lookup_lags.lock().unwrap().push(
+            lookup_lags.lock().push(
                 Instant::now()
                     .saturating_duration_since(planned)
                     .as_micros() as u64,
@@ -327,7 +327,7 @@ async fn production_feed_position_load() {
             for _ in 0..lookup_rate / 1000 {
                 let bin = run_started.elapsed().as_secs() as usize;
                 if bin < seconds {
-                    lookup_bins.lock().unwrap()[bin] += 1;
+                    lookup_bins.lock()[bin] += 1;
                 } else {
                     lookup_overflow.fetch_add(1, Ordering::Relaxed);
                 }
@@ -349,11 +349,8 @@ async fn production_feed_position_load() {
                     if result.as_deref() != Ok(b"ok") {
                         errors.fetch_add(1, Ordering::Relaxed);
                     }
-                    values
-                        .lock()
-                        .unwrap()
-                        .push(started.elapsed().as_micros() as u64);
-                    scheduled_values.lock().unwrap().push(
+                    values.lock().push(started.elapsed().as_micros() as u64);
+                    scheduled_values.lock().push(
                         Instant::now()
                             .saturating_duration_since(planned)
                             .as_micros() as u64,
@@ -430,12 +427,12 @@ async fn production_feed_position_load() {
     .is_ok();
     let drain_elapsed_seconds = drain_started.elapsed().as_secs_f64();
     {
-        let mut positions = position_latencies.lock().unwrap();
-        let mut lookups = lookup_latencies.lock().unwrap();
-        let mut handoffs = timed.handoffs.lock().unwrap();
-        let mut scheduled_positions = position_scheduled_latencies.lock().unwrap();
-        let mut scheduled_lookups = lookup_scheduled_latencies.lock().unwrap();
-        let lookup_lags = lookup_driver_lags.lock().unwrap();
+        let mut positions = position_latencies.lock();
+        let mut lookups = lookup_latencies.lock();
+        let mut handoffs = timed.handoffs.lock();
+        let mut scheduled_positions = position_scheduled_latencies.lock();
+        let mut scheduled_lookups = lookup_scheduled_latencies.lock();
+        let lookup_lags = lookup_driver_lags.lock();
         let driver_late_ticks = driver_lags.iter().filter(|value| **value > 1000).count();
         let max_lateness_us = driver_lags.iter().copied().max().unwrap_or(0);
         let mut profile = serde_json::json!({
@@ -467,7 +464,7 @@ async fn production_feed_position_load() {
                 "lookup_errors": lookup_errors.load(Ordering::Relaxed), "lookup_timeouts": lookup_timeouts.load(Ordering::Relaxed), "lookup_driver_overload": lookup_overload.load(Ordering::Relaxed),
                 "lookup_us": [percentile(&mut lookups, 50), percentile(&mut lookups, 95), percentile(&mut lookups, 99)]
                 ,"lookup_scheduled_to_completion_us":[percentile(&mut scheduled_lookups,50),percentile(&mut scheduled_lookups,95),percentile(&mut scheduled_lookups,99)],
-                "lookup_offered_per_second":*lookup_offered_bins.lock().unwrap(),
+                "lookup_offered_per_second":*lookup_offered_bins.lock(),
                 "lookup_offered_after_full_seconds":lookup_overflow_offers.load(Ordering::Relaxed),
                 "lookup_driver_late_ticks":lookup_lags.iter().filter(|value|**value>1000).count(),
                 "lookup_max_lateness_us":lookup_lags.iter().copied().max().unwrap_or(0)
@@ -514,13 +511,12 @@ async fn paced_core_nats_40000() {
                 warmup_counter.fetch_add(1, Ordering::Release);
                 continue;
             }
-            let mut samples = values.lock().unwrap();
+            let mut samples = values.lock();
             if samples.len() < seconds * 40000 {
                 samples.push((origin.elapsed().as_micros() as u64).saturating_sub(sent));
                 let planned = u64::from_le_bytes(message.payload[8..16].try_into().unwrap());
                 scheduled_values
                     .lock()
-                    .unwrap()
                     .push((origin.elapsed().as_micros() as u64).saturating_sub(planned));
             }
             drop(samples);
@@ -591,8 +587,8 @@ async fn paced_core_nats_40000() {
     .await
     .is_ok();
     let drain_elapsed_seconds = drain_started.elapsed().as_secs_f64();
-    let mut samples = measurements.lock().unwrap();
-    let mut scheduled_samples = scheduled_measurements.lock().unwrap();
+    let mut samples = measurements.lock();
+    let mut scheduled_samples = scheduled_measurements.lock();
     let late_ticks = driver_lags.iter().filter(|value| **value > 1000).count();
     let max_lateness_us = driver_lags.iter().copied().max().unwrap_or(0);
     println!(
@@ -625,7 +621,7 @@ async fn pending_submission_deadline_cancels_the_bounded_queue() {
     let link = Arc::new(Link::default());
     link.client.set(client).ok().unwrap();
     link.ready_revision.store(1, Ordering::SeqCst);
-    *bus.shared.link.lock().unwrap() = Some(link);
+    *bus.shared.link.lock() = Some(link);
     let mut pending = tokio::task::JoinSet::new();
     for _ in 0..OUTBOUND_CAPACITY {
         let bus = bus.clone();
@@ -647,7 +643,7 @@ async fn pending_submission_deadline_cancels_the_bounded_queue() {
     while let Some(result) = pending.join_next().await {
         assert_eq!(result.unwrap(), PublishOutcome::Failed);
     }
-    let mut receiver = bus.shared.rx.lock().unwrap().take().unwrap();
+    let mut receiver = bus.shared.rx.lock().take().unwrap();
     let mut cancelled = 0;
     while let Ok(outbound) = receiver.try_recv() {
         let Outbound::Publish(publish) = outbound else {

@@ -117,7 +117,7 @@ pub(crate) fn request_body(model: &str, content: Content<'_>) -> Value {
     } else {
         json!(text)
     };
-    json!({"model":model,"instructions":SYSTEM_PROMPT,"input":input,"text":{"format":{"type":"json_schema","name":"ComplianceValidationResult","schema":serde_json::from_str::<Value>(SCHEMA).unwrap()}}})
+    json!({"model":model,"instructions":SYSTEM_PROMPT,"input":input,"text":{"format":{"type":"json_schema","name":"ComplianceValidationResult","schema":serde_json::from_str::<Value>(SCHEMA).expect("SCHEMA is a JSON literal")}}})
 }
 
 // Operational bound on the whole provider effect, as `referral_slack`'s
@@ -508,7 +508,7 @@ impl super::State {
                 .record(started.elapsed().as_secs_f64());
             dcl_metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant" } else { "non-compliant" }).increment(1);
             sqlx::query("INSERT INTO social.community_compliance_cache(model,input_hash,result,expires_at) VALUES($1,$2,$3,timezone('UTC',now())+interval '2 hours') ON CONFLICT(model,input_hash) DO UPDATE SET result=EXCLUDED.result,expires_at=EXCLUDED.expires_at")
-                .bind(model).bind(hash.as_slice()).bind(serde_json::to_value(&result).unwrap()).execute(&self.pool).await.map_err(|error| {
+                .bind(model).bind(hash.as_slice()).bind(serde_json::to_value(&result).expect("a compliance result is plain data")).execute(&self.pool).await.map_err(|error| {
                     dcl_metrics::counter!("ai_compliance_validation_total", "result" => "failed").increment(1);
                     unavailable(format!("Unexpected error during compliance validation: {error}"))
                 })?;
