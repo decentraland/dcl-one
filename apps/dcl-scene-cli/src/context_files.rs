@@ -21,6 +21,7 @@ struct RemoteFile {
     download_url: String,
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn get_context_files(dir: &Path, api_base: &str, offline: bool) -> Result<()> {
     let root = dunce::canonicalize(dir).map_err(|e| {
         UserError::new(

@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
 import AssetCard from "../components/AssetCard";
 import BrowseLayout from "../components/BrowseLayout";

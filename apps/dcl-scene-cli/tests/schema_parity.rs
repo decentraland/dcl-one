@@ -16,6 +16,7 @@
 //!
 //! Skipped when node is unavailable; @dcl/ecs comes from the crate's own
 //! vendored node_modules, so the test does not need a scene installed.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use dcl_scene_authoring::schema_crdt::{compile, encode_component_value};
 use std::io::Write;

@@ -1,7 +1,7 @@
 pub mod schema_migrate;
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use thiserror::Error;
@@ -92,17 +92,12 @@ fn pool_key(opts: &PgConnectOptions) -> String {
 }
 
 fn verified_stamp(key: &str) -> Option<SchemaStamp> {
-    VERIFIED
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|m| m.get(key).cloned())
+    VERIFIED.lock().as_ref().and_then(|m| m.get(key).cloned())
 }
 
 fn remember_stamp(key: String, stamp: SchemaStamp) {
     VERIFIED
         .lock()
-        .unwrap()
         .get_or_insert_with(HashMap::new)
         .insert(key, stamp);
 }
@@ -345,6 +340,10 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
 /// next test process drops every `catalyst_test_lib_<pid>_*` whose pid is
 /// gone.
 #[cfg(any(test, feature = "scratch"))]
+#[allow(
+    clippy::print_stderr,
+    reason = "test support names its databases on stderr"
+)]
 pub mod scratch {
     use super::*;
     use tokio::sync::OnceCell;
@@ -781,46 +780,6 @@ pub mod scratch {
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[tokio::test]
-        async fn stale_template_sweep_leaves_a_locked_template_alone() {
-            use sqlx::Connection;
-            let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
-                return;
-            };
-            let opts = base
-                .parse::<PgConnectOptions>()
-                .unwrap()
-                .database("postgres");
-            let mut owner = sqlx::PgConnection::connect_with(&opts).await.unwrap();
-            let mut sweeper = sqlx::PgConnection::connect_with(&opts).await.unwrap();
-            let id = uuid::Uuid::new_v4().simple().to_string();
-            let name = format!("{TEMPLATE_PREFIX}{}", &id[..16]);
-            let key = template_lock_key(&name).unwrap();
-            sqlx::query("SELECT pg_advisory_lock($1)")
-                .bind(key)
-                .execute(&mut owner)
-                .await
-                .unwrap();
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "CREATE DATABASE \"{name}\" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"
-            )))
-            .execute(&mut owner)
-            .await
-            .unwrap();
-
-            let current = template_name();
-            sweep_stale_templates(&mut sweeper, &current).await;
-            let retained = template_ready(&mut owner, &name).await;
-            drop_database(&mut owner, &name).await.unwrap();
-            owner.close().await.unwrap();
-            assert!(retained, "the sweep must preserve a locked template");
-        }
-    }
-
     /// Drops a database even if it is marked a template. An invalid database
     /// (an interrupted drop) is never one, and altering it is fatal.
     async fn drop_database(conn: &mut sqlx::PgConnection, name: &str) -> sqlx::Result<()> {
@@ -847,6 +806,7 @@ pub mod scratch {
 
     /// `/proc` is absent on macOS. Signal zero probes existence without sending
     /// a signal; permission denied also proves that a process still exists.
+    #[allow(unsafe_code, reason = "libc signal-zero probe for a process")]
     pub(super) fn process_alive(pid: u32) -> bool {
         if pid == std::process::id() {
             return true;
@@ -903,6 +863,46 @@ pub mod scratch {
                 Ok(_) => eprintln!("lib tests: dropped the stale scratch database {name}"),
                 Err(e) => eprintln!("lib tests: could not drop {name}: {e}"),
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn stale_template_sweep_leaves_a_locked_template_alone() {
+            use sqlx::Connection;
+            let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+                return;
+            };
+            let opts = base
+                .parse::<PgConnectOptions>()
+                .unwrap()
+                .database("postgres");
+            let mut owner = sqlx::PgConnection::connect_with(&opts).await.unwrap();
+            let mut sweeper = sqlx::PgConnection::connect_with(&opts).await.unwrap();
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            let name = format!("{TEMPLATE_PREFIX}{}", &id[..16]);
+            let key = template_lock_key(&name).unwrap();
+            sqlx::query("SELECT pg_advisory_lock($1)")
+                .bind(key)
+                .execute(&mut owner)
+                .await
+                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "CREATE DATABASE \"{name}\" WITH IS_TEMPLATE true ALLOW_CONNECTIONS false"
+            )))
+            .execute(&mut owner)
+            .await
+            .unwrap();
+
+            let current = template_name();
+            sweep_stale_templates(&mut sweeper, &current).await;
+            let retained = template_ready(&mut owner, &name).await;
+            drop_database(&mut owner, &name).await.unwrap();
+            owner.close().await.unwrap();
+            assert!(retained, "the sweep must preserve a locked template");
         }
     }
 }

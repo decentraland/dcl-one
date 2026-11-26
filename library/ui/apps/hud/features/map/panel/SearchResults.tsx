@@ -3,9 +3,9 @@
 import { isWorldPlace, type MapSort } from '@explorer-core/features/map/mapApi'
 import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { pagination, type NavmapSnapshot } from '@explorer-core/features/map/navmap'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const SORTS: { key: MapSort; label: string; className: string }[] = [
   { key: 'most_active', label: 'Most active', className: styles.sortMostActive },

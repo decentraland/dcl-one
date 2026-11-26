@@ -11,7 +11,8 @@ pub mod bubble;
 mod diagnostics;
 pub mod layout;
 mod material;
-mod text;
+mod plate;
+pub(crate) mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -22,8 +23,7 @@ use common::{
     feature_flags::{FeatureFlags, FlagsSource},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, AttachPoints, CameraView, MicState, PlayerModifiers, PrimaryCamera,
-        PrimaryPlayerRes, PrimaryUser,
+        AppConfig, AttachPoints, CameraView, MicState, PrimaryCamera, PrimaryPlayerRes, PrimaryUser,
     },
     util::AsH160,
 };
@@ -32,24 +32,28 @@ use comms::{
     nearby_mutes::NearbyMutes,
     profile::{name_color::name_color, CurrentUserProfile, UserProfile},
     speaking::Speaking,
-    BlockedOrBanned,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
-use dcl_component::proto_components::sdk::components::PbAvatarShape;
+use dcl_component::{
+    proto_components::sdk::components::{PbAvatarNametag, PbAvatarShape},
+    SceneComponentId,
+};
+use dcl_types::interface::ComponentPosition;
 use scene_material::highlight::Highlight;
 use scene_runner::{
     initialize_scene::SuperUserScene,
     update_world::{
         avatar_modifier_area::HiddenNametag,
         text_shape::{GlyphAtlasMaintenance, GlyphAtlases, Page, Pending},
+        AddCrdtInterfaceExt,
     },
     SceneEntity,
 };
 use system_bridge::SystemApi;
 
 use crate::{
-    dynamic_nametag::{avatar_units, smallest_scale, NametagHeadOffset, NametagsVisible},
-    AvatarSelection, AvatarShape, BeyondMaxAvatars,
+    dynamic_nametag::{smallest_scale, NametagHeadOffset, NametagsVisible, Overhead},
+    AvatarSelection, AvatarShape,
 };
 
 use self::{
@@ -59,11 +63,13 @@ use self::{
         ChatBubbleRetext, MAX_COMMUNITY_NAME_CHARS, MAX_MESSAGE_CHARS, MAX_NAME_CHARS,
     },
     layout::{
-        layout, message_container, BubbleProgress, Header, TagLayout, Voice, BORDER,
+        layout, message_container, BubbleProgress, Header, PlateLayout, TagLayout, Voice, BORDER,
         COMMUNITY_FONT_SIZE, CORNER_RADIUS, DM_TAG_FONT_SIZE, LINE_HEIGHT, MENTION_RING,
-        MESSAGE_FONT_SIZE, NAME_FONT_SIZE,
+        MESSAGE_FONT_SIZE, NAME_FONT_SIZE, PLATE_BORDER, PLATE_FONT_SIZE, PLATE_MAX_LABEL_WIDTH,
+        PLATE_RADIUS,
     },
     material::{quad_mesh, Icon, NametagMaterial, Quad},
+    plate::{resolve_plates, AvatarNametag, NametagPlate},
     text::{glyph_use, GlyphBudget, Shaped, Span, TextShaper},
 };
 
@@ -126,6 +132,7 @@ impl Plugin for NametagPlugin {
             (
                 resolve_content,
                 resolve_scene_avatar_content,
+                resolve_plates,
                 resolve_voice,
                 show_tags,
                 retext_from_bridge,
@@ -147,7 +154,12 @@ impl Plugin for NametagPlugin {
         )
         .add_observer(forget_content)
         .add_observer(spawn_tag)
-        .add_observer(despawn_tag);
+        .add_observer(despawn_unnamed_tag)
+        .add_observer(despawn_unplated_tag);
+        app.add_crdt_lww_component::<PbAvatarNametag, AvatarNametag>(
+            SceneComponentId::AVATAR_NAMETAG,
+            ComponentPosition::Any,
+        );
         app.add_console_command::<diagnostics::NametagStateCommand, _>(diagnostics::nametag_state)
             .add_console_command::<diagnostics::NametagBubbleCommand, _>(
                 diagnostics::nametag_bubble,
@@ -197,7 +209,7 @@ pub struct NametagAssets {
     material: Handle<NametagMaterial>,
     font: Handle<Font>,
     /// The glyph atlas pages the material binds, and their sizes.
-    bound: [Option<(AssetId<Image>, u32)>; 2],
+    bound: text::BoundPages,
 }
 
 fn load_assets(
@@ -210,7 +222,7 @@ fn load_assets(
 ) {
     let font = Font::try_from_bytes(include_bytes!("fonts/Inter_18pt-SemiBold.ttf").to_vec())
         .expect("the embedded nametag font is a font");
-    let atlas = atlases.get_or_create(text::ATLAS, &mut images);
+    let atlas = atlases.get_or_create(text::ATLAS.key, &mut images);
     let page = |page| atlas.page_image(page).map(|(image, _)| image.clone());
     commands.insert_resource(NametagAssets {
         material: materials.add(NametagMaterial {
@@ -314,11 +326,17 @@ pub struct NametagVoice(pub Voice);
 /// A player's tag, a child of the player, and what its mesh was last built from.
 #[derive(Component, Default)]
 struct Nametag {
-    /// The name should show; a tag that should not is hidden and left as it is.
+    /// The tag should show; one that should not is hidden and left as it is.
     shown: bool,
+    /// The name should show, on a tag that does: without it the tag is its plate alone.
+    name_shown: bool,
     name: Option<Shaped>,
     /// What `name` was shaped from.
     named: Option<NametagContent>,
+    /// The plate's label; `None` for a plate with nothing written on it.
+    plate: Option<Shaped>,
+    /// What `plate` was shaped from.
+    plated: Option<NametagPlate>,
     built: Option<Built>,
     /// The mesh waits for glyphs to be rastered.
     awaiting: bool,
@@ -328,7 +346,9 @@ struct Nametag {
 
 /// What a tag's mesh was built from: the tag is rebuilt when any of it differs.
 struct Built {
-    content: NametagContent,
+    /// The name drawn; `None` for a plate alone.
+    content: Option<NametagContent>,
+    plate: Option<NametagPlate>,
     voice: Voice,
     /// The glyph atlas' generation the mesh samples.
     generation: u32,
@@ -624,38 +644,80 @@ fn forget_content(trigger: Trigger<OnRemove, UserProfile>, mut commands: Command
         .try_remove::<NametagContent>();
 }
 
-/// A player with something to show gets their tag, as their child: it goes when they do.
+/// An avatar with a name or a plate to show gets its tag, as its child: it goes when they do.
+/// One tag, whichever comes first.
 fn spawn_tag(
-    trigger: Trigger<OnAdd, NametagContent>,
+    trigger: Trigger<OnAdd, (NametagContent, NametagPlate)>,
     mut commands: Commands,
     assets: Res<NametagAssets>,
 ) {
-    commands.entity(trigger.target()).with_child((
-        Nametag::default(),
-        Transform::default(),
-        Visibility::Hidden,
-        Mesh3d::default(),
-        MeshMaterial3d(assets.material.clone()),
-        Aabb::default(),
-        NotShadowCaster,
-        // the hover glow is the avatar's
-        PropagateStop::<Highlight>::default(),
-    ));
+    let owner = trigger.target();
+    let material = assets.material.clone();
+    commands.queue(move |world: &mut World| {
+        let tagged = world.get::<Children>(owner).is_some_and(|children| {
+            children
+                .iter()
+                .any(|child| world.get::<Nametag>(child).is_some())
+        });
+        let Ok(mut owner) = world.get_entity_mut(owner) else {
+            return;
+        };
+        if tagged {
+            return;
+        }
+        owner.with_child((
+            Nametag::default(),
+            Transform::default(),
+            Visibility::Hidden,
+            Mesh3d::default(),
+            MeshMaterial3d(material),
+            Aabb::default(),
+            NotShadowCaster,
+            // the hover glow is the avatar's
+            PropagateStop::<Highlight>::default(),
+        ));
+    });
 }
 
-fn despawn_tag(
+/// The tag is its owner's own child.
+fn despawn_tags_of(
+    owner: Entity,
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    tags: &Query<(), With<Nametag>>,
+) {
+    for child in children.get(owner).into_iter().flatten() {
+        if tags.contains(*child) {
+            commands.entity(*child).try_despawn();
+        }
+    }
+}
+
+fn despawn_unnamed_tag(
     trigger: Trigger<OnRemove, NametagContent>,
     mut commands: Commands,
     children: Query<&Children>,
+    plated: Query<(), With<NametagPlate>>,
     tags: Query<(), With<Nametag>>,
 ) {
-    let player = trigger.target();
-    for child in children.iter_descendants(player) {
-        if tags.contains(child) {
-            commands.entity(child).try_despawn();
-        }
+    let owner = trigger.target();
+    if !plated.contains(owner) {
+        despawn_tags_of(owner, &mut commands, &children, &tags);
     }
-    commands.entity(player).try_remove::<ChatBubble>();
+    commands.entity(owner).try_remove::<ChatBubble>();
+}
+
+fn despawn_unplated_tag(
+    trigger: Trigger<OnRemove, NametagPlate>,
+    mut commands: Commands,
+    children: Query<&Children>,
+    named: Query<(), With<NametagContent>>,
+    tags: Query<(), With<Nametag>>,
+) {
+    let owner = trigger.target();
+    if !named.contains(owner) {
+        despawn_tags_of(owner, &mut commands, &children, &tags);
+    }
 }
 
 /// The voice badge of a player: bars while they speak, a hushed mark instead when the local
@@ -697,20 +759,11 @@ fn resolve_voice(
     }
 }
 
-/// Where names are seen from.
-struct TagView {
-    position: Vec3,
-    first_person: bool,
-}
-
-impl TagView {
-    /// Whether the name of a player standing at `player` shows: in range, and not the local
-    /// player's own seen through their eyes. A name out of view is left to frustum culling.
-    fn shows(&self, player: Vec3, is_local: bool) -> bool {
-        let distance = player.distance_squared(self.position);
-        (MIN_DISTANCE * MIN_DISTANCE..=MAX_DISTANCE * MAX_DISTANCE).contains(&distance)
-            && !(is_local && self.first_person)
-    }
+/// Whether the name of a player standing at `player` is in range of a camera at `camera`. A
+/// name out of view is left to frustum culling.
+fn in_range(player: Vec3, camera: Vec3) -> bool {
+    (MIN_DISTANCE * MIN_DISTANCE..=MAX_DISTANCE * MAX_DISTANCE)
+        .contains(&player.distance_squared(camera))
 }
 
 fn tag_opacity(distance: f32) -> f32 {
@@ -722,19 +775,19 @@ fn tag_scale(distance: f32, fov: f32) -> f32 {
     (fov * 0.5).tan() * SCREEN_SCALE * distance * UNIT
 }
 
-/// Decide which names show. One that doesn't is only hidden: its tag, and its message, stay.
+/// Decide which tags show, and which of those with their name. A name a scene's area hides
+/// leaves the plate standing. One that doesn't show is only hidden: its tag, and its message,
+/// stay.
 fn show_tags(
     visible: Res<NametagsVisible>,
     camera: Query<(&Transform, &PrimaryCamera)>,
     players: Query<
         (
             &GlobalTransform,
-            Has<PrimaryUser>,
+            Overhead,
             Has<HiddenNametag>,
-            Has<BeyondMaxAvatars>,
-            Has<BlockedOrBanned>,
-            Option<&PlayerModifiers>,
-            Option<&InheritedVisibility>,
+            Has<NametagContent>,
+            Has<NametagPlate>,
         ),
         With<AttachPoints>,
     >,
@@ -743,28 +796,25 @@ fn show_tags(
     let Ok((camera_transform, camera)) = camera.single() else {
         return;
     };
-    let view = TagView {
-        position: camera_transform.translation,
-        first_person: camera.view() == CameraView::FirstPerson,
-    };
+    let first_person = camera.view() == CameraView::FirstPerson;
 
     for (owner, mut nametag) in &mut tags {
-        let shown = visible.0
-            && players.get(owner.parent()).is_ok_and(
-                |(transform, is_local, hidden, beyond_max, blocked, modifiers, drawn)| {
-                    !hidden
-                        && !beyond_max
-                        && !blocked
-                        && !modifiers.is_some_and(|modifiers| modifiers.hide)
-                        // a scene hides its avatars by their visibility, their parents' or a
-                        // scale of nothing
-                        && drawn.is_none_or(|drawn| drawn.get())
-                        && avatar_units(transform).is_some()
-                        && view.shows(transform.translation(), is_local)
-                },
-            );
+        let (shown, name_shown) = players
+            .get(owner.parent())
+            .ok()
+            .filter(|(transform, overhead, ..)| {
+                overhead.shows(&visible, transform, first_person)
+                    && in_range(transform.translation(), camera_transform.translation)
+            })
+            .map_or((false, false), |(_, _, hidden, named, plated)| {
+                let name_shown = named && !hidden;
+                (name_shown || plated, name_shown)
+            });
         if nametag.shown != shown {
             nametag.shown = shown;
+        }
+        if nametag.name_shown != name_shown {
+            nametag.name_shown = name_shown;
         }
     }
 }
@@ -900,14 +950,12 @@ fn follow_glyph_atlas(
     mut assets: ResMut<NametagAssets>,
     mut materials: ResMut<Assets<NametagMaterial>>,
 ) {
-    let atlas = atlases.get_or_create(text::ATLAS, &mut images);
-    let pages = [Page::Sdf, Page::Color].map(|page| atlas.page_image(page));
-    let current = pages.map(|page| page.map(|(image, size)| (image.id(), size)));
-    if assets.bound == current {
+    let atlas = atlases.get_or_create(text::ATLAS.key, &mut images);
+    // most frames nothing has moved, and the assets are not marked changed
+    let assets = assets.bypass_change_detection();
+    let Some([sdf, bitmap]) = text::rebind(atlas, &mut assets.bound) else {
         return;
-    }
-    let [sdf, bitmap] = pages.map(|page| page.map(|(image, _)| image.clone()));
-    assets.bound = current;
+    };
     if let Some(material) = materials.get_mut(&assets.material) {
         material.sdf = sdf.unwrap_or_default();
         material.bitmap = bitmap;
@@ -948,12 +996,19 @@ impl TagBuilder<'_, '_> {
         tag: Entity,
         player: Entity,
         nametag: &mut Nametag,
-        content: &NametagContent,
+        content: Option<&NametagContent>,
+        plate: Option<&NametagPlate>,
         voice: Voice,
         mut bubble: Option<Mut<ChatBubble>>,
         mesh: &mut Mut<Mesh3d>,
     ) -> bool {
-        if !nametag.shown {
+        // a name that went, where one that is only hidden may come back: its glyphs are let go
+        if content.is_none() && nametag.named.take().is_some() {
+            nametag.name = None;
+            self.keep_glyphs(tag, nametag, None);
+        }
+        let content = content.filter(|_| nametag.shown && nametag.name_shown);
+        let Some(content) = content else {
             // a message whose time ran out unseen is not shown later
             if bubble
                 .as_deref()
@@ -962,8 +1017,11 @@ impl TagBuilder<'_, '_> {
                 self.commands.entity(player).remove::<ChatBubble>();
                 self.keep_glyphs(tag, nametag, None);
             }
-            return false;
-        }
+            if !nametag.shown {
+                return false;
+            }
+            return self.finish(frame, tag, nametag, None, plate, voice, None, mesh);
+        };
 
         // shaped once for what it says, however long its glyphs take to be rastered
         let content_changed = nametag.named.as_ref() != Some(content);
@@ -1007,36 +1065,107 @@ impl TagBuilder<'_, '_> {
         if content_changed || step.texts_changed {
             self.keep_glyphs(tag, nametag, texts);
         }
+        self.finish(
+            frame,
+            tag,
+            nametag,
+            Some((content, header)),
+            plate,
+            voice,
+            Some((&step, texts)),
+            mesh,
+        )
+    }
 
+    /// Rebuild the mesh of a tag that shows when what it was built from differs: its name, if
+    /// that shows, with its bubble, and its plate. Returns whether the tag draws.
+    fn finish(
+        &mut self,
+        frame: &mut Frame,
+        tag: Entity,
+        nametag: &mut Nametag,
+        named: Option<(&NametagContent, Header)>,
+        plate: Option<&NametagPlate>,
+        voice: Voice,
+        bubble: Option<(&BubbleStep, Option<&BubbleTexts>)>,
+        mesh: &mut Mut<Mesh3d>,
+    ) -> bool {
+        let (step, texts) = bubble.unzip();
+        let texts = texts.flatten();
+        let progress = step.map(|step| step.progress).unwrap_or_default();
+        let texts_changed = step.is_some_and(|step| step.texts_changed);
+
+        if nametag.plated.as_ref() != plate {
+            nametag.plate = plate.and_then(|plate| {
+                self.shaper.shape_ellipsized(
+                    tag,
+                    &plate.label,
+                    plate.label_color,
+                    PLATE_FONT_SIZE,
+                    PLATE_MAX_LABEL_WIDTH,
+                )
+            });
+            nametag.plated = plate.cloned();
+            self.keep_glyphs(tag, nametag, texts);
+        }
+
+        let content = named.as_ref().map(|(content, _)| *content);
         let dirty = nametag.awaiting
-            || step.texts_changed
+            || texts_changed
             || nametag.built.as_ref().is_none_or(|built| {
-                built.content != *content
+                built.content.as_ref() != content
+                    || built.plate.as_ref() != plate
                     || built.voice != voice
                     || built.generation != frame.generation
-                    || built.progress != step.progress
+                    || built.progress != progress
             });
         if dirty {
             let mut quads = Vec::new();
-            let drawn = tag_quads(
-                &layout(&header, &step.progress),
-                step.progress.mention,
-                voice,
-                nametag.name.as_ref(),
-                texts,
-                &mut self.shaper,
-                &mut frame.budget,
-                &mut quads,
-            );
+            let name = named.as_ref().map(|(_, header)| layout(header, &progress));
+            let mut drawn = match &name {
+                Some(name) => tag_quads(
+                    name,
+                    progress.mention,
+                    voice,
+                    nametag.name.as_ref(),
+                    texts,
+                    &mut self.shaper,
+                    &mut frame.budget,
+                    &mut quads,
+                ),
+                None => Ok(()),
+            };
+            if let (Ok(()), Some(plate)) = (&drawn, plate) {
+                let label = nametag.plate.as_ref();
+                drawn = plate_quads(
+                    &layout::plate(
+                        label.map_or(Vec2::ZERO, |label| label.size),
+                        // clear of the mention ring, which is drawn whole as it fades in
+                        name.as_ref().map(|name| {
+                            name.root.inflate(if progress.mention > 0.0 {
+                                MENTION_RING
+                            } else {
+                                0.0
+                            })
+                        }),
+                    ),
+                    plate,
+                    label,
+                    &mut self.shaper,
+                    &mut frame.budget,
+                    &mut quads,
+                );
+            }
             match drawn {
                 Ok(()) => {
                     nametag.reach = self.write_mesh(mesh, &quads);
                     nametag.awaiting = false;
                     nametag.built = Some(Built {
-                        content: content.clone(),
+                        content: content.cloned(),
+                        plate: plate.cloned(),
                         voice,
                         generation: frame.generation,
-                        progress: step.progress,
+                        progress,
                     });
                 }
                 Err(Pending { .. }) => nametag.awaiting = true,
@@ -1055,9 +1184,11 @@ impl TagBuilder<'_, '_> {
     /// The tag's glyphs, the bubble's included while it is up, are its to keep in the atlas.
     fn keep_glyphs(&mut self, tag: Entity, nametag: &Nametag, bubble: Option<&BubbleTexts>) {
         self.commands.entity(tag).insert(glyph_use(
+            &text::ATLAS,
             nametag
                 .name
                 .iter()
+                .chain(&nametag.plate)
                 .chain(bubble.into_iter().flat_map(BubbleTexts::iter)),
         ));
     }
@@ -1081,21 +1212,32 @@ impl TagBuilder<'_, '_> {
 fn build_tags(
     time: Res<Time<Real>>,
     mut tags: Query<(Entity, &ChildOf, &mut Nametag, &mut Mesh3d, &mut Visibility)>,
-    mut owners: Query<(&NametagContent, &NametagVoice, Option<&mut ChatBubble>)>,
+    mut owners: Query<(
+        Option<&NametagContent>,
+        Option<&NametagPlate>,
+        &NametagVoice,
+        Option<&mut ChatBubble>,
+    )>,
     mut builder: TagBuilder,
 ) {
     let mut frame = builder.frame(time.elapsed_secs_f64());
     for (tag, owner, mut nametag, mut mesh, mut visibility) in &mut tags {
         let player = owner.parent();
-        let Ok((content, voice, bubble)) = owners.get_mut(player) else {
+        let Ok((content, plate, voice, bubble)) = owners.get_mut(player) else {
             continue;
         };
+        if content.is_none() && plate.is_none() {
+            // its name and its plate went in one go
+            builder.commands.entity(tag).try_despawn();
+            continue;
+        }
         let draws = builder.build(
             &mut frame,
             tag,
             player,
             &mut nametag,
             content,
+            plate,
             voice.0,
             bubble,
             &mut mesh,
@@ -1236,6 +1378,28 @@ fn tag_quads(
         (tag.message, bubble.and_then(|texts| texts.message.as_ref()))
     {
         shaper.quads(shaped, message.origin, Some(message.clip), budget, quads)?;
+    }
+    Ok(())
+}
+
+/// A scene's plate: its border, its fill, and its label kept inside them.
+fn plate_quads(
+    layout: &PlateLayout,
+    plate: &NametagPlate,
+    label: Option<&Shaped>,
+    shaper: &mut TextShaper,
+    budget: &mut GlyphBudget,
+    quads: &mut Vec<Quad>,
+) -> Result<(), Pending> {
+    let inside = layout.rect.inflate(-PLATE_BORDER);
+    quads.push(Quad::rect(layout.rect, PLATE_RADIUS, plate.border));
+    quads.push(Quad::rect(
+        inside,
+        PLATE_RADIUS - PLATE_BORDER,
+        plate.background,
+    ));
+    if let Some(label) = label {
+        shaper.quads(label, layout.label, Some(inside), budget, quads)?;
     }
     Ok(())
 }

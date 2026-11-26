@@ -1,8 +1,6 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/http_shapes.rs
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
+use crate::archipelago;
+use crate::db;
 use catalyst::comms::archipelago::AppState;
 use serde_json::Value;
 

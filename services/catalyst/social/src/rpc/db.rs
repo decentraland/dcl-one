@@ -1320,7 +1320,10 @@ where
 /// `now()`. A concurrent insert on the same unordered pair resolves through
 /// `friendships_unordered_pair_uidx`. Answers the friendship id and the
 /// action's time.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded action column"
+)]
 pub(crate) async fn record_friendship_action<'e, E>(
     executor: E,
     action_id: Uuid,

@@ -2,6 +2,7 @@
 //! retry worker deleted the record as soon as the entity was buffered, so a crash before the
 //! flush, or a flush that failed and could not record it again, lost the entity for good. A retry cycle walks every due record in its database, so this runs
 //! in a binary of its own over a scratch database of its own.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod common;
 

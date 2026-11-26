@@ -1,6 +1,6 @@
 //! `/satellite/{z}/{x}/{y}`: the 256 px satellite pyramid (zoom 0 to 9 over
 //! the 512x512-parcel world), painted from the 17x17-parcel top-down region
-//! renders over the parcel grid of the mirrored tile grid.
+//! renders over the parcel grid of the built tile grid.
 //!
 //! The renders come out of the rendering rig behind the dev gateway, not from
 //! this node. The old `catalyrst-satellite-mirror` timer copied them into a
@@ -420,7 +420,7 @@ impl SatelliteState {
             return Ok(Some(r));
         }
         let lock = self.decoding.claim(&cid.to_string());
-        let result = async {
+        async {
             let _guard = lock.lock().await;
             if let Some(r) = self.sources.lock().get(&cid.to_string()) {
                 return Ok(Some(r));
@@ -441,8 +441,7 @@ impl SatelliteState {
                 .insert(cid.to_string(), region.clone(), region.bytes());
             Ok(Some(region))
         }
-        .await;
-        result
+        .await
     }
 
     #[cfg(test)]
@@ -1102,7 +1101,6 @@ mod tests {
         Arc::new(Grid::from_tiles(
             tiles,
             stamp,
-            None,
             chrono::Utc::now().naive_utc(),
         ))
     }

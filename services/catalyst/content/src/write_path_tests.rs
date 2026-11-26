@@ -713,6 +713,8 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
                 account: transfer.then(|| address.to_string()),
                 operator: (!transfer).then(|| address.to_string()),
                 approved: None,
+                from_address: None,
+                tx_hash: None,
             }
         })
         .collect();
@@ -769,7 +771,6 @@ async fn signed_scene_roundtrip(positional: bool) {
         db.pool.clone(),
         Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let chain = fake_chain::serve(fake_chain::land_owners(vec![
         (address(&owner), x.into(), y.into()),
@@ -1113,7 +1114,6 @@ async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
         db.pool.clone(),
         Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     // Deploys ask the chain; the unpublish route reads the LAND index.
     let fake = fake_chain::serve(fake_chain::land_owners(vec![
@@ -1207,80 +1207,101 @@ enum Race {
     Unpublished { local: String, pointer: String },
 }
 
-/// The marketplace subgraph on the loopback: `owner` owns every parcel asked
-/// for, and each request first runs the armed [`Race`] against `pool`.
-async fn serve_racing_land_subgraph(
-    pool: PgPool,
-    owner: String,
-    race: Arc<parking_lot::Mutex<Option<Race>>>,
-) -> String {
-    use axum::extract::State;
-    type Shared = (PgPool, String, Arc<parking_lot::Mutex<Option<Race>>>);
-    async fn graphql(
-        State(shared): State<Arc<Shared>>,
-        axum::Json(body): axum::Json<Value>,
-    ) -> axum::Json<Value> {
-        let (pool, owner, race) = &*shared;
-        let armed = race.lock().take();
-        match armed {
-            Some(Race::PeerReplaces {
-                local,
-                peer,
-                pointer,
-            }) => {
-                let id: i32 = sqlx::query_scalar(
-                    "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
-                         entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
-                     VALUES ('0xpeer', 'v3', 'scene', $1, NULL, timezone('UTC', now()), ARRAY[$2],
-                             timezone('UTC', now()), '[]'::json)
-                     RETURNING id",
-                )
-                .bind(&peer)
+/// Runs `race` against `pool`.
+async fn run_race(pool: &PgPool, race: Race) {
+    match race {
+        Race::PeerReplaces {
+            local,
+            peer,
+            pointer,
+        } => {
+            let id: i32 = sqlx::query_scalar(
+                "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+                     entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+                 VALUES ('0xpeer', 'v3', 'scene', $1, NULL, timezone('UTC', now()), ARRAY[$2],
+                         timezone('UTC', now()), '[]'::json)
+                 RETURNING id",
+            )
+            .bind(&peer)
+            .bind(&pointer)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "UPDATE content.deployments SET deleter_deployment = $2 WHERE entity_id = $1",
+            )
+            .bind(&local)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query("UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = $1")
                 .bind(&pointer)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-                sqlx::query(
-                    "UPDATE content.deployments SET deleter_deployment = $2 WHERE entity_id = $1",
-                )
-                .bind(&local)
-                .bind(id)
+                .bind(&peer)
                 .execute(pool)
                 .await
                 .unwrap();
-                sqlx::query("UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = $1")
-                    .bind(&pointer)
-                    .bind(&peer)
-                    .execute(pool)
-                    .await
-                    .unwrap();
-            }
-            Some(Race::Unpublished { local, pointer }) => {
-                super::land_publish::unpublish_local_scene(pool, &pointer, &local)
-                    .await
-                    .unwrap();
-            }
-            None => {}
         }
-        let xs: Vec<String> = serde_json::from_value(body["variables"]["xs"].clone()).unwrap();
-        let ys: Vec<String> = serde_json::from_value(body["variables"]["ys"].clone()).unwrap();
-        let nfts: Vec<Value> = xs
-            .iter()
-            .flat_map(|x| ys.iter().map(move |y| (x, y)))
-            .map(|(x, y)| {
-                json!({"id": format!("0xland-{x}-{y}"), "searchParcelX": x, "searchParcelY": y,
-                       "owner": {"id": owner}, "parcel": {"estate": null}})
-            })
-            .collect();
-        axum::Json(json!({"data": {"nfts": nfts}}))
+        Race::Unpublished { local, pointer } => {
+            super::land_publish::unpublish_local_scene(pool, &pointer, &local)
+                .await
+                .unwrap();
+        }
     }
-    let app = Router::new()
-        .route("/", axum::routing::post(graphql))
-        .with_state(Arc::new((pool, owner, race)));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}/")
+}
+
+/// Sends `req` while a transaction holds `land_authz.token_right`, so the
+/// route's LAND rights read waits after its lookup; once that read is seen
+/// waiting behind this test's lock holder, runs `race`, then releases the
+/// table and answers the route's response.
+async fn send_racing_the_rights_read(
+    router: &Router,
+    pool: &PgPool,
+    req: Request<Body>,
+    race: Race,
+) -> (StatusCode, HeaderMap, Bytes) {
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE land_authz.token_right IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    let route = tokio::spawn({
+        let router = router.clone();
+        async move { call(&router, req).await }
+    });
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        // A backend of this database waiting on this table behind the lock
+        // holder: scratch clones share relation OIDs, so neither the name nor
+        // the OID alone tells this test's route from another clone's.
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks l \
+             JOIN pg_stat_activity a ON a.pid = l.pid \
+             WHERE NOT l.granted AND l.mode = 'AccessShareLock' \
+               AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND l.relation = 'land_authz.token_right'::regclass \
+               AND $1 = ANY(pg_blocking_pids(l.pid))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting > 0 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the route never reached its LAND rights read"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    run_race(pool, race).await;
+    lock.rollback().await.unwrap();
+    route.await.unwrap()
 }
 
 /// A local scene on `pointer`, as the deploy function leaves it.
@@ -1316,16 +1337,6 @@ async fn seed_local_scene(pool: &PgPool, entity_id: &str, pointer: &str) {
 async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
     require_test_db!(Some(db) = OwnDb::create().await);
     let owner = key(ENTITY_KEY);
-    let race = Arc::new(parking_lot::Mutex::new(None));
-    let subgraph = serve_racing_land_subgraph(db.pool.clone(), address(&owner), race.clone()).await;
-    let market = Arc::new(crate::chain_index::ChainIndex::new(
-        Outbound::for_tests(),
-        crate::chain_index::IndexSettings {
-            marketplace_subgraph_url: Some(subgraph),
-            ..crate::chain_index::IndexSettings::for_tests()
-        },
-    ));
-    market.allow_loopback_for_tests();
 
     let tmp = std::env::temp_dir().join(format!(
         "catalyst-write-path-{}-{}",
@@ -1343,27 +1354,28 @@ async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
         db.pool.clone(),
         Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        Some(market),
     ));
     attach(&state, true, Some(land), None);
     let router = build_router(state.clone());
 
     let (replaced, gone) = ("23,-7", "29,-7");
+    index_land(&db.pool, &address(&owner), &[(23, -7), (29, -7)]).await;
     seed_local_scene(&db.pool, "bafylocalreplaced", replaced).await;
     seed_local_scene(&db.pool, "bafylocalgone", gone).await;
 
-    *race.lock() = Some(Race::PeerReplaces {
-        local: "bafylocalreplaced".into(),
-        peer: "bafypeerreplacing".into(),
-        pointer: replaced.into(),
-    });
     let path = format!("/content/scenes/{replaced}");
-    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    let (status, _, body) = send_racing_the_rights_read(
+        &router,
+        &db.pool,
+        signed_delete(&owner, &path).await,
+        Race::PeerReplaces {
+            local: "bafylocalreplaced".into(),
+            peer: "bafypeerreplacing".into(),
+            pointer: replaced.into(),
+        },
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT, "{}", json_of(&body));
-    assert!(
-        race.lock().is_none(),
-        "the race ran during the rights check"
-    );
     let tombstoned: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
         "SELECT tombstoned_at FROM content.local_entities WHERE entity_id = 'bafylocalreplaced'",
     )
@@ -1382,12 +1394,17 @@ async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
             .unwrap();
     assert_eq!(holder, "bafypeerreplacing");
 
-    *race.lock() = Some(Race::Unpublished {
-        local: "bafylocalgone".into(),
-        pointer: gone.into(),
-    });
     let path = format!("/content/scenes/{gone}");
-    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    let (status, _, body) = send_racing_the_rights_read(
+        &router,
+        &db.pool,
+        signed_delete(&owner, &path).await,
+        Race::Unpublished {
+            local: "bafylocalgone".into(),
+            pointer: gone.into(),
+        },
+    )
+    .await;
     assert_eq!(
         (status, json_of(&body)),
         (
@@ -1530,6 +1547,8 @@ async fn a_profile_with_nul_metadata_preserves_the_write_error_and_active_profil
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(4).await);
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let (alice, bob) = (PrivateKeySigner::random(), PrivateKeySigner::random());
     let contract =
         format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]).to_string() + "00000000";
@@ -1645,6 +1664,38 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
         6,
         "the 400s and 200s all count"
+    );
+    let rendered = recorder.handle().render();
+    let sample = |name: &str, labels: &[(&str, &str)]| {
+        crate::series::test_support::sample(&rendered, name, labels)
+    };
+    use crate::series::{DEPLOYMENTS_ENDPOINT, TOTAL_DEPLOYMENTS};
+    assert_eq!(
+        sample(DEPLOYMENTS_ENDPOINT.descriptor.name, &[("kind", "success")]),
+        Some(3.0)
+    );
+    assert_eq!(
+        sample(
+            DEPLOYMENTS_ENDPOINT.descriptor.name,
+            &[("kind", "validation_error")]
+        ),
+        Some(3.0)
+    );
+    assert_eq!(
+        sample(
+            TOTAL_DEPLOYMENTS.descriptor.name,
+            &[("entity_type", "profile"), ("deployment_context", "LOCAL")]
+        ),
+        Some(3.0),
+        "each stored profile counts once"
+    );
+    assert_eq!(
+        sample(
+            crate::series::RATE_LIMITER_KEYS.descriptor.name,
+            &[("entity_type", "profile"), ("cache_type", "deployment")]
+        ),
+        Some(1.0),
+        "the last deploy's pointer, after the window was cleared"
     );
 
     let mut scope: HashMap<String, String> = HashMap::new();
@@ -2097,6 +2148,8 @@ async fn the_upload_limits_follow_their_configuration() {
 /// `Retry-After`, the client told to retry.
 #[tokio::test]
 async fn an_unwritable_spool_answers_503() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let blocker =
         std::env::temp_dir().join(format!("catalyst-spool-blocker-{}", uuid::Uuid::new_v4()));
     std::fs::write(&blocker, b"a file, not a folder").unwrap();
@@ -2116,6 +2169,24 @@ async fn an_unwritable_spool_answers_503() {
     );
     assert_eq!(headers[header::RETRY_AFTER], "30");
     assert_eq!(node.state.spool_budget.reserved(), 0);
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::metrics::SPOOL_FAILURES.descriptor.name,
+            &[("route", "content-entities")]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::UPLOAD_BUDGET_ACTIVE.descriptor.name,
+            &[("budget", "disk")]
+        ),
+        Some(0.0),
+        "the refused request let its share go"
+    );
     let _ = std::fs::remove_file(&blocker);
 }
 
@@ -2239,6 +2310,8 @@ async fn a_spent_quota_is_answered_before_the_upload_budget() {
 /// before its body is read; another client is admitted.
 #[tokio::test]
 async fn a_source_past_its_uploads_in_flight_is_turned_away() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
@@ -2268,6 +2341,14 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
         StatusCode::BAD_REQUEST,
         "admitted once its upload ends"
     );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::UPLOAD_BUDGET_REJECTIONS.descriptor.name,
+            &[("budget", "source"), ("reason", "source_concurrency")]
+        ),
+        Some(1.0)
+    );
 }
 
 /// A body still arriving at the upload timeout answers upstream's 408 with
@@ -2275,6 +2356,8 @@ async fn a_source_past_its_uploads_in_flight_is_turned_away() {
 #[tokio::test]
 async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
     use futures::StreamExt;
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let settings = Settings {
         multipart_upload_timeout: std::time::Duration::from_millis(50),
         ..Settings::for_tests()
@@ -2310,6 +2393,67 @@ async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
         0,
         "an unread form is not counted"
     );
+    let rendered = recorder.handle().render();
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::MULTIPART_TIMEOUTS.descriptor.name,
+            &[]
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &rendered,
+            crate::series::MULTIPART_ABORTS.descriptor.name,
+            &[("reason", "client_closed")]
+        ),
+        None,
+        "a timed-out body is not a client abort"
+    );
+}
+
+/// A client that closes its connection while its body is received counts
+/// one `dcl_multipart_upload_aborts_total{reason="client_closed"}`.
+#[tokio::test]
+async fn a_client_closing_mid_body_counts_one_abort() {
+    use tokio::io::AsyncWriteExt;
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let node = deploying_node("client-abort", Settings::for_tests()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, node.router()).into_future());
+
+    let part = "--b\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n\
+                --b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\
+                Content-Type: application/octet-stream\r\n\r\npartial bytes";
+    let head = format!(
+        "POST /content/entities HTTP/1.1\r\nHost: localhost\r\n\
+         Content-Type: multipart/form-data; boundary=b\r\nContent-Length: 100000\r\n\
+         X-Real-IP: 203.0.113.60\r\n\r\n{part}"
+    );
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    client.write_all(head.as_bytes()).await.unwrap();
+    client.flush().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drop(client);
+
+    let aborts = || {
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::MULTIPART_ABORTS.descriptor.name,
+            &[("reason", "client_closed")],
+        )
+    };
+    for _ in 0..100 {
+        if aborts().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(aborts(), Some(1.0));
+    server.abort();
 }
 
 /// An unsynced copy taking only scenes: a form with no typed entity file is
@@ -2508,8 +2652,8 @@ async fn an_entity_named_by_its_cid_v0_is_found_through_the_spool() {
 /// the bytes it had sent recorded (a declared body refused unread is not).
 #[tokio::test]
 async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let refused_after = || {
         recorder.handle().render().lines().find_map(|line| {
             line.strip_prefix(
@@ -2933,6 +3077,39 @@ async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_de
     server.abort();
 }
 
+/// A partial batch not decided within `DEPLOYMENT_PROCESSING_TIMEOUT_MS`
+/// answers the same 503, counted as a staging `error`.
+#[tokio::test]
+async fn a_partial_batch_past_its_processing_deadline_is_a_staging_error() {
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let settings = Settings {
+        deployment_processing_timeout: std::time::Duration::from_millis(300),
+        ..Settings::for_tests()
+    };
+    // A form without files skips the byte-rate probe; staging stalls.
+    let (node, server) = stalled_deploying_node("partial-deadline", 0, settings).await;
+    let mut form = entity_form();
+    form.push(("partial".to_string(), "true".to_string()));
+    let (status, _, body) = call(&node.router(), form_request("203.0.113.42", &form)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 300ms deadline."]})
+        )
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::PARTIAL_STAGING.descriptor.name,
+            &[("kind", "error")]
+        ),
+        Some(1.0)
+    );
+    server.abort();
+}
+
 /// A deploy stalled before validation (the newer-entity lookup on a database
 /// that never answers) holds its upload budget and its source's share until
 /// its processing deadline, then lets both go; it never holds its pointer.
@@ -3038,7 +3215,6 @@ async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
         db.pool.clone(),
         Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let chain_rpc = fake_chain::serve(fake_chain::land_owners(vec![(
         address(&owner),
@@ -3340,7 +3516,6 @@ async fn many_small_parts_outweighing_the_memory_budget_deploy_through_the_spool
         db.pool.clone(),
         Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let chain_rpc = fake_chain::serve(fake_chain::land_owners(
         parcels

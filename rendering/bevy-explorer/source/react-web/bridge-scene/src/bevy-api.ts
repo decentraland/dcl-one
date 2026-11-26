@@ -40,6 +40,7 @@ import type {
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   SetAvatarData,
@@ -54,9 +55,9 @@ import type {
 export type { FriendData, FriendStatusData, FriendRequestData }
 export type BlockingStatus = BlockingStatusData
 
-// Per-player modifiers from AvatarModifierArea (privacy zones etc), only for players carrying one —
-// e.g. hideProfile means the local player is standing in a DISABLE_PASSPORTS area, so `userId`'s
-// passport should not be opened. Only present in the array when at least one flag is set.
+// Per-player AvatarModifierArea flags and Pulse absence. For example, hideProfile disables
+// opening the player's passport. A room-only peer appears with pulseAbsent even when both hide
+// flags are false. An entry is present when at least one flag is set.
 export type { AvatarModifierState }
 
 export type SocialApi = {
@@ -148,6 +149,9 @@ export type PermissionUsedRaw = {
   additional: string | null
   scene: string
   wasAllowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player; an engine that does not report it never sends it. */
+  inForce?: boolean | null
 }
 
 export type BevyApiInterface = {
@@ -197,6 +201,12 @@ export type BevyApiInterface = {
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void
   /** Every reaction to a chat message, the local user's included. */
   getChatReactionStream: () => Promise<AsyncIterable<ChatReactionData>>
+  /** React with an emoji, shown over the local user's avatar; an emoji the wire does not carry
+   *  does nothing. Optional: absent on runtimes whose SystemApi predates it. */
+  sendReaction?: (emoji: string) => void
+  /** Situational reactions as they play, the local user's included; none while the "Chat
+   *  Reactions" setting is off. Optional: absent on runtimes whose SystemApi predates it. */
+  getReactionStream?: () => Promise<AsyncIterable<ReactionData>>
   getVoiceStream: () => Promise<AsyncIterable<VoiceMessage>>
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>

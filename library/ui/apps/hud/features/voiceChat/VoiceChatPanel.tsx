@@ -6,7 +6,7 @@
 // the People view in its place. Actions go to the engine, whose next snapshot
 // moves the panel.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, ControlButton, KebabMenu, MaskIcon, SearchField, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, ControlButton, KebabMenu, SearchField, VerifiedBadge, type ContextMenuItem } from '../../design'
 import type { VoiceChatParticipant, VoiceChatState } from '@explorer-core/engine/protocol'
 import { nameColor, splitName } from '@explorer-core/lib/identity'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -30,6 +30,7 @@ import rejectRequestIcon from '../../assets/voice/reject-request.png'
 import speakingFeedbackIcon from '../../assets/voice/speaking-feedback.png'
 import { Mark } from '../../design/Glyphs'
 import styles from './VoiceChatPanel.module.css'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 /** The speakers shown in the grid. */
 const MAX_VISIBLE_SPEAKERS = 8
@@ -116,7 +117,7 @@ function usePeerName(address: string | null, fallback: string): { name: string; 
 function MicButton({ enabled, onToggle, disabled = false }: { enabled: boolean; onToggle: () => void; disabled?: boolean }): React.JSX.Element {
   const label = enabled ? 'Mute microphone' : 'Unmute microphone'
   return (
-    <Tooltip label={label} side="top">
+    <Tooltip appearance="hud" label={label} side="top">
       <ControlButton shape="circle" variant="solid" size="sm" className={enabled ? styles.micOn : styles.micOff} aria-pressed={enabled} aria-label={label} disabled={disabled} onClick={onToggle}>
         <MaskIcon src={enabled ? micOnIcon : micOffIcon} size={16} />
       </ControlButton>
@@ -127,7 +128,7 @@ function MicButton({ enabled, onToggle, disabled = false }: { enabled: boolean; 
 /** The round red 28px button that ends, refuses or leaves. */
 function HangUpButton({ label, onClick, disabled = false }: { label: string; onClick: () => void; disabled?: boolean }): React.JSX.Element {
   return (
-    <Tooltip label={label} side="top">
+    <Tooltip appearance="hud" label={label} side="top">
       <ControlButton shape="circle" variant="solid" size="sm" className={styles.hangUp} aria-label={label} disabled={disabled} onClick={onClick}>
         <MaskIcon src={endCallIcon} size={16} />
       </ControlButton>
@@ -197,12 +198,12 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
       <div className={styles.barRight}>
         {state.status === 'receivedCall' ? (
           <>
-            <Tooltip label="Refuse" side="top">
+            <Tooltip appearance="hud" label="Refuse" side="top">
               <ControlButton shape="circle" variant="solid" size="sm" className={styles.hangUp} aria-label="Refuse" onClick={() => act({ op: 'rejectCall' })}>
                 <MaskIcon src={rejectCallIcon} size={14} />
               </ControlButton>
             </Tooltip>
-            <Tooltip label="Accept" side="top">
+            <Tooltip appearance="hud" label="Accept" side="top">
               <ControlButton shape="circle" variant="solid" size="sm" className={styles.accept} aria-label="Accept" onClick={() => act({ op: 'acceptCall' })}>
                 <MaskIcon src={callIcon} size={16} />
               </ControlButton>
@@ -331,14 +332,14 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
       {state.localSpeaker ? (
         <MicButton enabled={state.micEnabled} disabled={!connected} onToggle={() => act({ op: 'setMic', enabled: !state.micEnabled })} />
       ) : (
-        <Tooltip label={state.localRequestingToSpeak ? 'Lower hand' : 'Raise hand'} side="top">
+        <Tooltip appearance="hud" label={state.localRequestingToSpeak ? 'Lower hand' : 'Raise hand'} side="top">
           <ControlButton shape="circle" variant="solid" size="sm" className={state.localRequestingToSpeak ? styles.handUp : ''} disabled={!connected} aria-pressed={state.localRequestingToSpeak} aria-label={state.localRequestingToSpeak ? 'Lower hand' : 'Raise hand'} onClick={() => act({ op: 'requestToSpeak', raise: !state.localRequestingToSpeak })}>
             <MaskIcon src={raiseHandIcon} size={16} />
           </ControlButton>
         </Tooltip>
       )}
       {state.localSpeaker && !moderator && (
-        <Tooltip label="Leave stage" side="top">
+        <Tooltip appearance="hud" label="Leave stage" side="top">
           <ControlButton shape="circle" variant="solid" size="sm" disabled={!connected} aria-label="Leave stage" onClick={() => act({ op: 'demoteSpeaker', address: me })}>
             <MaskIcon src={leaveStageIcon} size={16} />
           </ControlButton>
@@ -363,7 +364,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
         <div className={styles.headActions}>
           {collapsed && controls}
           {moderator && !collapsed && (
-            <Tooltip label="End stream for everyone" side="bottom" align="end">
+            <Tooltip appearance="hud" label="End stream for everyone" side="bottom" align="end">
               <ControlButton variant="faint" size="sm" aria-label="End stream" onClick={() => act({ op: 'endCommunityCall' })}>
                 <MaskIcon src={endStreamIcon} size={16} />
               </ControlButton>
@@ -399,12 +400,12 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
                     <span className={styles.rowName}>{splitName(p.name || p.address).base}</span>
                     <div className={styles.rowActions}>
                       {/* The 20px Approve / Deny icons */}
-                      <Tooltip label="Deny" side="top">
+                      <Tooltip appearance="hud" label="Deny" side="top">
                         <ControlButton variant="ghost" shape="circle" size="sm" aria-label={`Deny ${splitName(p.name || p.address).base}`} onClick={() => act({ op: 'rejectSpeakRequest', address: p.address })}>
                           <img src={rejectRequestIcon} alt="" width={20} height={20} />
                         </ControlButton>
                       </Tooltip>
-                      <Tooltip label="Approve" side="top">
+                      <Tooltip appearance="hud" label="Approve" side="top">
                         <ControlButton variant="ghost" shape="circle" size="sm" aria-label={`Approve ${splitName(p.name || p.address).base}`} onClick={() => act({ op: 'promoteSpeaker', address: p.address })}>
                           <img src={acceptRequestIcon} alt="" width={20} height={20} />
                         </ControlButton>
@@ -482,7 +483,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
       )}
       {!collapsed && (
         <div className={styles.foot}>
-          <Tooltip label={moderator && hands.length > 0 ? `${hands.length} raised ${hands.length === 1 ? 'hand' : 'hands'}` : 'People'} side="right">
+          <Tooltip appearance="hud" label={moderator && hands.length > 0 ? `${hands.length} raised ${hands.length === 1 ? 'hand' : 'hands'}` : 'People'} side="right">
             <ControlButton shape="circle" variant="solid" size="sm" className={styles.people} active={people} aria-label="People" onClick={() => setPeople(!people)}>
               <MaskIcon src={peopleIcon} size={16} />
               {moderator && hands.length > 0 && (

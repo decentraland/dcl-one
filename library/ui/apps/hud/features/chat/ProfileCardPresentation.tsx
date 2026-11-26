@@ -7,7 +7,7 @@
 // then Block · Report, then Invite to Community.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, BlockUserIcon, ContextMenu, ReportFlag, Submenu, VerifiedBadge, type ContextMenuItem } from '../../design'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import giftIcon from '../../assets/gifting/gift.png'
@@ -19,6 +19,7 @@ import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
 import type { Relationship } from '@explorer-core/lib/relationship'
 import styles from './ProfileCard.module.css'
+import { MaskIcon, Tooltip } from '@dcl/one-ui'
 
 export type { Relationship } from '@explorer-core/lib/relationship'
 
@@ -339,7 +340,7 @@ export function ProfileCardPresentation({
               {communityActions.map((a, i) =>
                 a.disabledReason != null ? (
                   // aria-disabled, not disabled: it stays focusable, so the reason is reachable without a mouse
-                  <Tooltip key={a.label} label={a.disabledReason} side="bottom" multiline className={styles.rowTip}>
+                  <Tooltip appearance="hud" key={a.label} label={a.disabledReason} side="bottom" multiline className={styles.rowTip}>
                     <button type="button" className={styles.row} aria-disabled="true" aria-describedby={`${reasonId}-${i}`}>
                       {a.icon}
                       <span>{a.label}</span>

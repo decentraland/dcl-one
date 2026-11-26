@@ -678,10 +678,6 @@ fn cluster_id_prefix_from(raw: Result<String, VarError>) -> anyhow::Result<Strin
 /// The cluster tracker, or `None` when clustering is off entirely -- which leaves every cluster
 /// path out of the server loop rather than running a tracker that publishes nothing. Publishing
 /// nothing is the separate, and far more common, stats-only mode: clustering on with no broker URL.
-#[cfg(test)]
-fn clusters_from_env(control_audience: Option<&str>) -> anyhow::Result<Option<ClusterTracker>> {
-    clusters_from_env_with_generation(control_audience, None)
-}
 fn clusters_from_env_with_generation(
     control_audience: Option<&str>,
     generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
@@ -741,12 +737,6 @@ fn nats_url_from_env() -> anyhow::Result<Option<String>> {
     Ok(None)
 }
 
-#[cfg(test)]
-fn cluster_feed_from_env(
-    control_audience: Option<&str>,
-) -> anyhow::Result<Arc<dyn ClusterFeedPublisher>> {
-    cluster_feed_from_env_with_generation(control_audience, None)
-}
 fn cluster_feed_from_env_with_generation(
     control_audience: Option<&str>,
     generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,

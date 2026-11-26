@@ -1,5 +1,15 @@
 //! Node integration tests that need no socket budget, one binary for several files so a
 //! build links few test executables. Each file stays a module named after it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "test support"
+)]
+
+// Support shared by several modules, loaded once; the modules `use crate::<name>`.
+#[path = "support/db.rs"]
+mod db;
 
 #[path = "comms_v4_assignment_fence.rs"]
 mod comms_v4_assignment_fence;

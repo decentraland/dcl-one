@@ -10,7 +10,7 @@ import {
 import { cx } from '/@/lib/cx';
 import Button from '@ui/atoms/Button';
 import Popover from '@ui/atoms/Popover';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { ChevronDownIcon } from '../Icons';
 

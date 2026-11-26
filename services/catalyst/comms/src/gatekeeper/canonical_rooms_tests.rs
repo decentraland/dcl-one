@@ -176,6 +176,12 @@ impl SceneIdentity for Catalogue {
         )
         .await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 fn canonical_state() -> CommsState {
@@ -254,6 +260,12 @@ impl SceneIdentity for BoundaryCatalogue {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         self.world_scene(world, &self.scene).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -402,13 +414,13 @@ async fn canonical_escape_rooms_reach_twirp_metadata_kicks_and_ingress_verbatim(
         .unwrap()
         .to_owned();
     assert_eq!(room, "w1:1:w/ A");
-    let observed = Arc::new(std::sync::Mutex::new(
+    let observed = Arc::new(parking_lot::Mutex::new(
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = observed.clone();
     let fixture = axum::Router::new().route("/twirp/{service}/{method}",axum::routing::post(move |Path((service,method)):Path<(String,String)>,Json(body):Json<serde_json::Value>| {
         let capture=capture.clone(); async move {
-            capture.lock().unwrap().push((format!("{service}/{method}"),body.clone()));
+            capture.lock().push((format!("{service}/{method}"),body.clone()));
             match method.as_str() {
                 "ListRooms" => Json(serde_json::json!({"rooms":[{"name":body["names"][0],"metadata":"{\"presenters\":[\"kept\"]}"}]})),
                 "ListParticipants" => Json(serde_json::json!({"participants":[]})),
@@ -443,7 +455,7 @@ async fn canonical_escape_rooms_reach_twirp_metadata_kicks_and_ingress_verbatim(
         .create_ingress(&room, "streamer")
         .await
         .unwrap();
-    let requests = observed.lock().unwrap();
+    let requests = observed.lock();
     assert_eq!(requests.len(), 5);
     for (method, body) in requests.iter() {
         let sent = body
@@ -530,11 +542,11 @@ async fn canonical_world_client_and_authoritative_tokens_are_byte_identical() {
 }
 
 #[derive(Default)]
-struct ProjectedSink(std::sync::Mutex<Vec<crate::protocol::bus::room_events::RoomEvent>>);
+struct ProjectedSink(parking_lot::Mutex<Vec<crate::protocol::bus::room_events::RoomEvent>>);
 
 impl super::super::events::RoomEventSink for ProjectedSink {
     fn observe_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent) {
-        self.0.lock().unwrap().push(event.clone());
+        self.0.lock().push(event.clone());
     }
 }
 
@@ -596,7 +608,7 @@ async fn canonical_webhook_projects_world_scene_lobby_and_shared_identity_once()
         let jwt = super::super::webhook::test_support::webhook_jwt(&raw, &key, &secret);
         assert_eq!(post_webhook(&app, Some(&jwt), &raw).await, StatusCode::OK);
         assert_eq!(post_webhook(&app, Some(&jwt), &raw).await, StatusCode::OK);
-        let events = sink.0.lock().unwrap();
+        let events = sink.0.lock();
         assert_eq!(events.len(), n + 1, "deduplication holds");
         let projected = &events[n];
         assert_eq!(
@@ -672,6 +684,12 @@ impl SceneIdentity for RetryCatalogue {
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
@@ -691,10 +709,10 @@ async fn canonical_webhook_catalogue_fault_retries_before_marking_applied() {
         post_webhook(&app, Some(&jwt), &raw).await,
         StatusCode::SERVICE_UNAVAILABLE
     );
-    assert!(sink.0.lock().unwrap().is_empty());
+    assert!(sink.0.lock().is_empty());
     assert_eq!(post_webhook(&app, Some(&jwt), &raw).await, StatusCode::OK);
     assert_eq!(post_webhook(&app, Some(&jwt), &raw).await, StatusCode::OK);
-    assert_eq!(sink.0.lock().unwrap().len(), 1);
+    assert_eq!(sink.0.lock().len(), 1);
 }
 
 #[tokio::test]
@@ -723,7 +741,7 @@ async fn canonical_webhook_removed_deployment_leave_invalidates_without_inventin
         "a delayed leave cannot overwrite complete membership; recovery owns replacement"
     );
     assert!(
-        sink.0.lock().unwrap().is_empty(),
+        sink.0.lock().is_empty(),
         "unknown deployment cannot invent a hosting event"
     );
 }
@@ -924,12 +942,12 @@ async fn canonical_adapter_rejects_malformed_signed_keys_and_cross_world_deploym
 
 #[tokio::test]
 async fn canonical_participant_lookup_targets_the_deployment_and_distinct_lobby() {
-    let observed = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
     let capture = observed.clone();
     let fixture = axum::Router::new().route("/twirp/livekit.RoomService/ListParticipants", axum::routing::post(move |Json(body): Json<serde_json::Value>| {
         let capture = capture.clone();
         async move {
-            capture.lock().unwrap().push(body["room"].as_str().unwrap().to_string());
+            capture.lock().push(body["room"].as_str().unwrap().to_string());
             Json(serde_json::json!({"participants":[{"identity":"authoritative-server"},{"identity":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}))
         }
     }));
@@ -955,7 +973,7 @@ async fn canonical_participant_lookup_targets_the_deployment_and_distinct_lobby(
         );
     }
     assert_eq!(
-        *observed.lock().unwrap(),
+        *observed.lock(),
         [
             "w1:d:mixed.dcl.ethSceneA",
             "w1:d:mixed.dcl.ethSceneB",
@@ -989,13 +1007,13 @@ async fn canonical_world_scene_name_resolves_original_case_before_relay_authoriz
 
 #[tokio::test]
 async fn canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobby() {
-    let observed = Arc::new(std::sync::Mutex::new(
+    let observed = Arc::new(parking_lot::Mutex::new(
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = observed.clone();
     let api=axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |Path(method):Path<String>,Json(body):Json<serde_json::Value>|{
         let capture=capture.clone(); async move {
-            capture.lock().unwrap().push((method.clone(),body.clone()));
+            capture.lock().push((method.clone(),body.clone()));
             if method=="ListRooms" { Json(serde_json::json!({"rooms":[{"name":body["names"][0],"metadata":"{\"presenters\":[\"retained\"]}"}]})) }
             else if method=="ListParticipants" {
                 // The banned wallet's Cast watcher and another viewer's.
@@ -1034,7 +1052,7 @@ async fn canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobb
     let actor = Address::parse(&address_of(KEY)).unwrap();
     scene::add_ban(&state, &rooms, &actor).await;
     scene::kick(&state, &rooms, &actor).await;
-    let requests = observed.lock().unwrap();
+    let requests = observed.lock();
     for room in ["world-mixed.dcl.eth", "w1:d:mixed.dcl.ethSceneB"] {
         let metadata = &requests
             .iter()
@@ -1078,10 +1096,10 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
     let Some(pool) = scratch().await else { return };
     let place_id = format!("canonical-stream-{}", tag());
     seed_place(&pool,&place_id,serde_json::json!({"world":true,"world_name":"mixed.dcl.eth","positions":["1,1"],"owner":address_of(KEY)}),"1,1").await;
-    let observed = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+    let observed = Arc::new(parking_lot::Mutex::new(Vec::<serde_json::Value>::new()));
     let capture = observed.clone();
     let fixture=axum::Router::new().route("/twirp/livekit.Ingress/CreateIngress",axum::routing::post(move|Json(body):Json<serde_json::Value>|{
-        let capture=capture.clone();async move{capture.lock().unwrap().push(body);Json(serde_json::json!({"ingressId":"IN_canonical","url":"rtmp://ingress.example/live","streamKey":"fixture-key"}))}
+        let capture=capture.clone();async move{capture.lock().push(body);Json(serde_json::json!({"ingressId":"IN_canonical","url":"rtmp://ingress.example/live","streamKey":"fixture-key"}))}
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut state = comms_state(pool.clone(), with_authoritative(AUTHORITATIVE_KEY))
@@ -1113,19 +1131,22 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
         .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{metadata}");
         assert_eq!(
-            observed.lock().unwrap().last().unwrap()["roomName"],
+            observed.lock().last().unwrap()["roomName"],
             "w1:d:mixed.dcl.ethSceneB"
         );
+        // The key is the scene's, stored under its place.
+        let world = WorldName::parse("mixed.dcl.eth").unwrap();
+        let scene_place = deployment(&world, "SceneB").place_key();
         let stored: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
         )
-        .bind(&place_id)
+        .bind(&scene_place)
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
         sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
-            .bind(&place_id)
+            .bind(&scene_place)
             .execute(&pool)
             .await
             .unwrap();
@@ -1141,7 +1162,7 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
     .await
     .unwrap_err();
     assert_eq!(error.code, 400);
-    assert_eq!(observed.lock().unwrap().len(), 2);
+    assert_eq!(observed.lock().len(), 2);
     sqlx::query("DELETE FROM explore.place WHERE id = $1")
         .bind(&place_id)
         .execute(&pool)
@@ -1195,7 +1216,7 @@ async fn refused_complete_rooms_never_project_webhook_identity_or_host_events() 
         let jwt = super::super::webhook::test_support::webhook_jwt(&raw, &key, &secret);
         assert_eq!(post_webhook(&app, Some(&jwt), &raw).await, StatusCode::OK);
     }
-    assert!(sink.0.lock().unwrap().is_empty());
+    assert!(sink.0.lock().is_empty());
     assert_eq!(presence.get_peer_world("0xAaAa").unwrap(), None);
 }
 
@@ -1235,7 +1256,7 @@ async fn relay_classifier_store_fault_is_unavailable() {
 
 #[tokio::test]
 async fn world_inventory_is_target_scoped_and_independent_of_catalogue_authority() {
-    let responses = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
+    let responses = Arc::new(parking_lot::Mutex::new(std::collections::VecDeque::from([
         (StatusCode::OK, serde_json::json!({"rooms":[]})),
         (
             StatusCode::OK,
@@ -1255,7 +1276,7 @@ async fn world_inventory_is_target_scoped_and_independent_of_catalogue_authority
         axum::routing::post(move || {
             let responses = responses.clone();
             async move {
-                let (status, value) = responses.lock().unwrap().pop_front().unwrap();
+                let (status, value) = responses.lock().pop_front().unwrap();
                 (status, Json(value))
             }
         }),
@@ -1332,13 +1353,19 @@ impl SceneIdentity for RedeployCatalogue {
         }
         Catalogue.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
 async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment() {
     use super::super::RoomRevocation;
     for access_changed in [false, true] {
-        let requests = Arc::new(std::sync::Mutex::new(
+        let requests = Arc::new(parking_lot::Mutex::new(
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
@@ -1347,7 +1374,7 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         let (removal, mut removals) = tokio::sync::mpsc::unbounded_channel::<String>();
         let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |Path(method):Path<String>,Json(body):Json<serde_json::Value>| {
             let (capture,removal)=(capture.clone(),removal.clone()); async move {
-                capture.lock().unwrap().push((method.clone(),body.clone()));
+                capture.lock().push((method.clone(),body.clone()));
                 if method == "RemoveParticipant" {
                     let _ = removal.send(body["room"].as_str().unwrap_or_default().to_owned());
                 }
@@ -1439,7 +1466,6 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         assert!(
             !requests
                 .lock()
-                .unwrap()
                 .iter()
                 .any(|(method, body)| method == "RemoveParticipant"
                     && body["room"] == "w1:j:mixed.dcl.eth-otherSceneA"),
@@ -1456,7 +1482,7 @@ struct PerWalletPolicy {
     inner: StubPolicy,
     denied: Vec<Address>,
     undetermined: Address,
-    undetermined_failures: std::sync::Mutex<usize>,
+    undetermined_failures: parking_lot::Mutex<usize>,
 }
 
 #[async_trait::async_trait]
@@ -1512,7 +1538,7 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
             ));
         }
         let undetermined = *actor == self.undetermined && {
-            let mut left = self.undetermined_failures.lock().unwrap();
+            let mut left = self.undetermined_failures.lock();
             let fails = *left > 0;
             if fails && *left != usize::MAX {
                 *left -= 1;
@@ -1586,7 +1612,7 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
         (AccessType::SharedSecret, vec![denied.clone()]),
         (AccessType::AllowList, vec![denied.clone()]),
     ] {
-        let requests = Arc::new(std::sync::Mutex::new(
+        let requests = Arc::new(parking_lot::Mutex::new(
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
@@ -1607,7 +1633,7 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
                 move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
                     let (capture, everyone) = (capture.clone(), everyone.clone());
                     async move {
-                        capture.lock().unwrap().push((method.clone(), body));
+                        capture.lock().push((method.clone(), body));
                         match method.as_str() {
                             "ListRooms" => Json(
                                 serde_json::json!({"rooms": [{"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"}]}),
@@ -1652,7 +1678,6 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
         );
         let removed: Vec<Address> = requests
             .lock()
-            .unwrap()
             .iter()
             .filter(|(method, _)| method == "RemoveParticipant")
             .map(|(_, body)| Address::parse(body["identity"].as_str().unwrap()).unwrap())
@@ -1692,6 +1717,12 @@ impl SceneIdentity for FlakySceneB {
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
@@ -1699,7 +1730,7 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
     use crate::access::{AccessType, WorldAdmission};
     let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
     let (owner, denied) = (wallet(1), wallet(3));
-    let requests = Arc::new(std::sync::Mutex::new(
+    let requests = Arc::new(parking_lot::Mutex::new(
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = requests.clone();
@@ -1721,7 +1752,7 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
             move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
                 let (capture, everyone) = (capture.clone(), everyone.clone());
                 async move {
-                    capture.lock().unwrap().push((method.clone(), body));
+                    capture.lock().push((method.clone(), body));
                     match method.as_str() {
                         "ListRooms" => Json(serde_json::json!({"rooms": [
                             {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
@@ -1762,7 +1793,6 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
     );
     let removed: Vec<(String, String)> = requests
         .lock()
-        .unwrap()
         .iter()
         .filter(|(method, _)| method == "RemoveParticipant")
         .map(|(_, body)| {
@@ -1793,7 +1823,7 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
     use crate::access::{AccessType, WorldAdmission};
     let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
     let (owner, flaky) = (wallet(1), wallet(4));
-    let requests = Arc::new(std::sync::Mutex::new(
+    let requests = Arc::new(parking_lot::Mutex::new(
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = requests.clone();
@@ -1807,7 +1837,7 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
             move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
                 let (capture, everyone) = (capture.clone(), everyone.clone());
                 async move {
-                    capture.lock().unwrap().push((method.clone(), body));
+                    capture.lock().push((method.clone(), body));
                     match method.as_str() {
                         "ListRooms" => Json(serde_json::json!({"rooms": [
                             {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"}
@@ -1838,7 +1868,6 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
     let removed = || -> Vec<String> {
         requests
             .lock()
-            .unwrap()
             .iter()
             .filter(|(method, _)| method == "RemoveParticipant")
             .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
@@ -1887,7 +1916,7 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
             )
         })
         .to_string();
-        let requests = Arc::new(std::sync::Mutex::new(
+        let requests = Arc::new(parking_lot::Mutex::new(
             Vec::<(String, serde_json::Value)>::new(),
         ));
         let capture = requests.clone();
@@ -1923,7 +1952,7 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
                 move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
                     let (capture, roster) = (capture.clone(), roster.clone());
                     async move {
-                        capture.lock().unwrap().push((method.clone(), body.clone()));
+                        capture.lock().push((method.clone(), body.clone()));
                         match method.as_str() {
                         "ListRooms" => Json(serde_json::json!({"rooms": [
                             {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
@@ -1963,7 +1992,6 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
         assert!(!complete, "a failed roster leaves the pass incomplete");
         let removed: Vec<String> = requests
             .lock()
-            .unwrap()
             .iter()
             .filter(|(method, _)| method == "RemoveParticipant")
             .map(|(_, body)| body["identity"].as_str().unwrap().to_string())

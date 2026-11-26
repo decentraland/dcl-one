@@ -24,7 +24,9 @@ fn strings(ids: &[&str]) -> Vec<String> {
 }
 
 #[cfg(unix)]
+#[allow(unsafe_code, reason = "reads the effective uid through libc")]
 fn running_as_root() -> bool {
+    // SAFETY: geteuid(2) takes no arguments and cannot fail.
     unsafe { libc::geteuid() == 0 }
 }
 
@@ -482,6 +484,7 @@ async fn instances_over_one_root_agree_only_when_shared() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[allow(unsafe_code, reason = "makes a FIFO through libc")]
 async fn a_fifo_at_a_content_path_is_rejected_not_awaited() {
     let (tmp, storage) = fresh("fifo").await;
     let path = resolve_file_path(storage.root(), HASH).unwrap();
@@ -491,6 +494,7 @@ async fn a_fifo_at_a_content_path_is_rejected_not_awaited() {
 
     let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
     assert_eq!(
+        // SAFETY: `c_path` is a valid NUL-terminated string that outlives the call.
         unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) },
         0,
         "failed to create the test FIFO"

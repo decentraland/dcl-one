@@ -17,6 +17,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import textwrap
@@ -120,7 +121,7 @@ def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
     # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
                      *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
@@ -130,11 +131,18 @@ def livekit_credentials():
     return {'LIVEKIT_API_KEY': 'API' + secrets.token_hex(6), 'LIVEKIT_API_SECRET': secrets.token_hex(32)}
 
 
-def ingress_ports_free(base):
+# The message router's metrics port, in the ingress block after the ingress's four.
+MESSAGE_ROUTER_METRICS_OFFSET = 4
+
+
+def ingress_ports_free(base, router=True):
     # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
-    # livekit-ingress always listens (it has no bind address setting).
-    return bindable([(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
-                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')])
+    # livekit-ingress always listens (it has no bind address setting). New blocks reserve the router's port too.
+    ports = [(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
+             (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')]
+    if router:
+        ports.append((socket.SOCK_STREAM, base + MESSAGE_ROUTER_METRICS_OFFSET, '127.0.0.1'))
+    return bindable(ports)
 
 
 def ingress_block(base):
@@ -147,10 +155,16 @@ def ingress_block(base):
     raise RuntimeError('No free ports for LiveKit Ingress; set ingress_port in .cache/dev/settings.json.')
 
 
+def message_router_key():
+    # 32 bytes, base64url without padding: the format both the API and the router parse.
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode()
+
+
 def missing_settings(config):
     """The generated settings `config` lacks: the LiveKit pair, the moderator token the API checks and Pulse
     polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), the
-    LiveKit Ingress port block and the password LiveKit and the ingress use for Valkey."""
+    LiveKit Ingress port block, the password LiveKit and the ingress use for Valkey and the key the
+    message router signs its token requests with."""
     added = {}
     if 'LIVEKIT_API_SECRET' not in config:
         added.update(livekit_credentials())
@@ -160,6 +174,8 @@ def missing_settings(config):
         added['ingress_port'] = ingress_block(config['port'])
     if 'VALKEY_PASSWORD' not in config:
         added['VALKEY_PASSWORD'] = secrets.token_hex(32)
+    if 'MESSAGE_ROUTER_KEY' not in config:
+        added['MESSAGE_ROUTER_KEY'] = message_router_key()
     return added
 
 
@@ -258,6 +274,62 @@ def cast_settings(config):
     if 'CAST_BOT_BIN' in env and not os.access(env['CAST_BOT_BIN'], os.X_OK):
         print(f"settings.json: cast_bot_bin {env.pop('CAST_BOT_BIN')} is not executable; Cast presentations answer 503",
               file=sys.stderr)
+    return env
+
+
+# Community chat on this stack, from settings.json. `"message_router_bin"`: the built `catalyst-message-router`
+# (`cargo build -p catalyst-message-router --features livekit` in services/catalyst), run as the `message-router`
+# task; unset, or a path that is not executable (a warning, never a stop), community chat is not routed.
+def message_router_bin(config):
+    path = config.get('message_router_bin')
+    if not path:
+        return None
+    if not os.access(path, os.X_OK):
+        print(f'settings.json: message_router_bin {path} is not executable; community chat is not routed',
+              file=sys.stderr)
+        return None
+    return str(path)
+
+
+def message_router_identity_prefix(config):
+    # The Explorer trusts `message-router-prd-0` when its base domain is decentraland.org, else `-dev-0`
+    # (bevy-explorer crates/comms/src/community_chat.rs). /play passes the engine a base domain only when the
+    # page host is a bare dotted name (apps/ui3/src/play/lib/baseDomain.ts); a loopback page names a port, so
+    # the engine keeps decentraland.org.
+    origin = public(config)
+    if origin is None:
+        return 'message-router-prd'
+    scheme, host, _, port = origin
+    if port not in (None, {'http': 80, 'https': 443}[scheme]):
+        return 'message-router-prd'
+    # The browser and the engine see an IDN host in its punycode form.
+    try:
+        host = host.encode('idna').decode().lower()
+    except UnicodeError:
+        return 'message-router-prd'
+    for apex in ('decentraland.org', 'decentraland.zone'):
+        if host == apex or host.endswith('.' + apex):
+            host = apex
+    bare = re.fullmatch(r'[a-z0-9-]+(\.[a-z0-9-]+)+', host)
+    return 'message-router-dev' if bare and host != 'decentraland.org' else 'message-router-prd'
+
+
+def message_router_metrics_port(config):
+    return config['ingress_port'] + MESSAGE_ROUTER_METRICS_OFFSET
+
+
+def message_router_env(config):
+    # The router holds no LiveKit secret: the API mints its token at the internal route.
+    env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE')
+           if key in os.environ}
+    env.update({
+        'DATABASE_URL': database_url(config),
+        'MESSAGE_ROUTER_TOKEN_URL': f"http://127.0.0.1:{config['port']}/internal/message-router/token/v1",
+        # Loopback signaling, not the public front the token names behind a public origin.
+        'MESSAGE_ROUTER_LIVEKIT_URL': f'ws://127.0.0.1:{livekit_ports(config)[0]}',
+        'MESSAGE_ROUTER_KEY': config['MESSAGE_ROUTER_KEY'], 'MESSAGE_ROUTER_REPLICA': '0',
+        'MESSAGE_ROUTER_METRICS_BIND': f'127.0.0.1:{message_router_metrics_port(config)}',
+    })
     return env
 
 
@@ -499,6 +571,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
         # worktree) would otherwise fail to start its API.
+        'INDEX_METRICS_BIND': f'127.0.0.1:{base + 6}',
         'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.
@@ -564,6 +637,9 @@ def runtime_env(config, refuse_exposed_relayer=True):
     # The stream links of /cast/generate-stream-link name this stack's Cast pages, not decentraland.org's.
     env['CAST2_URL'] = env['PUBLIC_URL'] + '/cast'
     env.update(cast_settings(config))
+    if message_router_bin(config):
+        env.update(MESSAGE_ROUTER_KEY=config['MESSAGE_ROUTER_KEY'],
+                   MESSAGE_ROUTER_IDENTITY_PREFIX=message_router_identity_prefix(config))
     # Explicit development settings, without a production posture/restore gate.
     # Authentication and mirrored-row ownership checks still apply.
     if config['profile'] == 'offline':
@@ -588,6 +664,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'EXPLORER_LISTS_SOURCE_URL': 'https://dcl-lists.decentraland.org',
             'EXPLORER_DENYLIST_SOURCE_URL': 'https://config.decentraland.org/denylist.json',
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
+            'EVENTS_FEATURE_FLAGS_URL': 'https://feature-flags.decentraland.org',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
             # Temporary: imposter tiles read through from the community CDN until the node bakes
@@ -601,6 +678,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'PROFILE_IMAGES_ORIGIN_URL': 'https://profile-images.decentraland.org',
             # The Shop's catalogue: the marketplace mirrors and the NFT and LAND
             # indexes `catalyst posture show mirror` names, run by the index process.
+            # The map's tile grid (Places, the HUD's map, estate images) is built from
+            # the same LAND and NFT indexes and the trades mirror once they are published.
             'MARKETPLACE_MIRRORS_ENABLED': 'true',
             'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.org/v1/trades',
             # The Shop's feeds wait for one complete trades pass; take it in one go rather than
@@ -611,9 +690,14 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-mainnet',
             'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-mainnet',
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
-            'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # The Shop's listings wait for the trade-events index to be current on both networks (its
+            # verdicts close sold and cancelled trades), over the same tagged endpoints as the other indexes.
+            # A fresh stack walks Polygon's off-chain marketplaces from 2024 first: about half an hour.
+            'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+            'TRADE_RPC_URLS': '1=https://rpc.decentraland.org/mainnet?project=dcl-one-dev,'
+                              '137=https://rpc.decentraland.org/polygon?project=dcl-one-dev',
             # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
             'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             # The mirror posture's pause between index passes: a pass makes its eth_getLogs calls whether or not a
@@ -625,11 +709,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
             # route redirects to; the builder pulls from it when the item bucket misses.
             'BUILDER_ASSET_PACKS_BUCKET_URL': 'https://builder-api.decentraland.org/v1/storage',
-            # Credit prices need a MANA spot; the map (Places, the HUD's map, estate images) its grid.
+            # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
                                       'kraken=https://api.kraken.com',
-            'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon?project=dcl-one-dev',
         })
     if config['profile'] == 'testnet':
@@ -655,7 +738,6 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-sepolia',
         'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-amoy',
         'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace-sepolia',
-        'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager-sepolia',
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
@@ -673,10 +755,10 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
-        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
+        # The local dev profile serves the catalogue immediately through its configured
+        # graph readers. A testnet mirror with the NFT walk enabled waits for the local folds.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
-        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        # This non-walking dev profile uses the graph for rental assets.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
         # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
         'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
@@ -884,8 +966,8 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
-    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    # Pulse needs a listening API before it can publish its heartbeat. Use process
+    # startup here and check aggregate readiness in wait_ready after Pulse starts.
     api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
@@ -917,6 +999,13 @@ def project(config, postgres_only=False):
         'web-install': process('web-install'), 'sites': sites, 'valkey': valkey, 'livekit': livekit,
         'ingress': ingress, 'pulse': pulse, 'nats': nats,
     }
+    if message_router_bin(config):
+        # The router exits when it cannot stay in the room (LiveKit or the API restarting); restart it as Pulse.
+        router = process('message-router', {'livekit': 'process_healthy', 'api': 'process_healthy'})
+        router['availability'] = dict(pulse['availability'])
+        router['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': message_router_metrics_port(config),
+                                                  'path': '/health/ready'}, 'period_seconds': 2, 'failure_threshold': 300}
+        processes['message-router'] = router
     if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
         # runs in `serve`: its fold debits the credits ledger.
@@ -1068,7 +1157,7 @@ def import_asset_catalog(config, binary):
 # Long-running tasks and the signal that stops each one cleanly.
 SERVICES = {'postgres': signal.SIGINT, 'api': signal.SIGTERM, 'sites': signal.SIGTERM, 'index': signal.SIGTERM,
             'valkey': signal.SIGTERM, 'livekit': signal.SIGTERM, 'ingress': signal.SIGTERM,
-            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
+            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM, 'message-router': signal.SIGTERM}
 
 
 def started(pid):
@@ -1164,6 +1253,10 @@ def task(name):
         certificate, key = pulse_certificate(config)
         binary = BACKEND / 'target/debug/catalyst'
         os.execve(binary, [str(binary), 'pulse'], pulse_env(config, certificate, key))
+    elif name == 'message-router':
+        if not (binary := message_router_bin(config)):
+            raise SystemExit('settings.json: message_router_bin is unset or not executable')
+        os.execve(binary, [binary], message_router_env(config))
     elif name == 'index':
         binary = BACKEND / 'target/debug/catalyst'
         os.execve(binary, [str(binary), 'index'], runtime_env(config))
@@ -1214,6 +1307,25 @@ def stale_graph(config):
     return set(project(config)['processes']) - running
 
 
+# LiveKit Ingress binds `<TMPDIR>/<resource id>/service_ipc.sock`; macOS caps a socket path at 103 bytes.
+INGRESS_SOCKET_SUFFIX = len('/RT_000000000000/service_ipc.sock')
+SOCKET_PATH_MAX = 103
+
+
+def supervisor_temporary():
+    """The stack's TMPDIR: `.cache/dev/tmp`, or a private folder under /tmp when a deep checkout would make
+    the ingress's socket path too long."""
+    temporary = STATE / 'tmp'
+    if len(os.fsencode(temporary)) + INGRESS_SOCKET_SUFFIX > SOCKET_PATH_MAX:
+        digest = hashlib.sha256(os.fsencode(STATE.resolve())).hexdigest()[:12]
+        temporary = Path('/tmp') / f'foundation-dev-{digest}'
+    temporary.mkdir(exist_ok=True, mode=0o700)
+    found = temporary.lstat()
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid() or found.st_mode & 0o077:
+        raise RuntimeError(f'{temporary} must be a folder only you can use; remove it and run foundation-dev up again.')
+    return temporary
+
+
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
@@ -1230,10 +1342,9 @@ def prepare_supervisor(postgres_only=False):
         return None
     # Behind a public origin Pulse's UDP ports sit outside the block; they must be free too.
     if not ports_free(config['port'], pulse_ports(config)[:2] if public(config) else ()) \
-            or not ingress_ports_free(config['ingress_port']):
+            or not ingress_ports_free(config['ingress_port'], router=bool(message_router_bin(config))):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
-    temporary = STATE / 'tmp'
-    temporary.mkdir(exist_ok=True, mode=0o700)
+    temporary = supervisor_temporary()
     save_json(STATE / 'process-compose.json', project(config, postgres_only))
     return (['up', '--config', str(STATE / 'process-compose.json'), '--disable-dotenv', '--ordered-shutdown', '--tui=false'],
             {**os.environ, 'TMPDIR': str(temporary), 'TMP': str(temporary), 'TEMP': str(temporary)})
@@ -1439,7 +1550,12 @@ def progress(processes, elapsed, log_positions=None):
 
 def wait_ready(timeout, postgres_only=False):
     config = settings()
-    urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
+    if not postgres_only:
+        # A fresh local mirror can serve traffic while its historical map indexes
+        # catch up. Its launch gate checks realm availability during that warmup.
+        api_probe = '/about' if config['profile'] == 'mirror' else '/health'
+        api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
+        sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
@@ -1473,13 +1589,18 @@ def wait_ready(timeout, postgres_only=False):
             restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
             if restarting:
                 raise RuntimeError('A process is restarting')
-            for url in urls:
+            for url in (api_url, sites_url):
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
                         raise RuntimeError('Service not ready')
+                    if url == api_url and api_probe == '/health':
+                        # A usable local stack needs the database and Pulse as well as an API replica.
+                        checks = json.load(response)['details']
+                        if any(checks[name]['status'] != 'pass' for name in ('postgres', 'comms')):
+                            raise RuntimeError('Waiting for the database and Pulse')
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
-        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError):
             delay = next(delays, None)
             if delay is None:
                 break
@@ -1591,8 +1712,8 @@ def main():
         commands.add_parser(command)
     commands.add_parser('up').add_argument('--postgres-only', action='store_true',
                                           help='Start only PostgreSQL for backend tests')
-    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'service'))
-    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats'))
+    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'message-router', 'service'))
+    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'message-router'))
     commands.add_parser('service', help='Run the stack as a per-user systemd unit or LaunchAgent').add_argument(
         'action', choices=('install', 'uninstall'))
     wait_parser = commands.add_parser('wait')
@@ -1606,7 +1727,7 @@ def main():
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
         'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'valkey', 'valkey-ready',
-        'livekit', 'ingress', 'pulse', 'nats'))
+        'livekit', 'ingress', 'pulse', 'nats', 'message-router'))
     args = parser.parse_args()
     if args.command == '_task':
         task(args.task)

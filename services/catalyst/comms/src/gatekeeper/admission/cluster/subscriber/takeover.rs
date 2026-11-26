@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 use tokio::sync::Notify;
 
@@ -27,15 +28,9 @@ impl Attempt {
     }
 
     fn supersede(&self, target: TakeoverTarget) {
-        *self.superseded_by.lock().unwrap() = Some(target.clone());
+        *self.superseded_by.lock() = Some(target.clone());
         self.changed.notify_waiters();
-        if let Some(predecessor) = self
-            .predecessor
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(Weak::upgrade)
-        {
+        if let Some(predecessor) = self.predecessor.lock().as_ref().and_then(Weak::upgrade) {
             predecessor.supersede(target);
         }
     }
@@ -93,7 +88,7 @@ impl TakeoverRegistration {
     /// item never calls this, so it cannot cancel work that still has a chance to complete.
     pub(super) fn commit(self) {
         let previous = {
-            let mut owners = self.owners.0.lock().unwrap();
+            let mut owners = self.owners.0.lock();
             if self.attempt.finished.load(Ordering::SeqCst) {
                 return;
             }
@@ -104,7 +99,7 @@ impl TakeoverRegistration {
                 .and_then(|attempt| attempt.upgrade())
         };
         if let Some(previous) = previous {
-            *self.attempt.predecessor.lock().unwrap() = Some(Arc::downgrade(&previous));
+            *self.attempt.predecessor.lock() = Some(Arc::downgrade(&previous));
             if previous.target() != self.attempt.target() {
                 previous.supersede(self.attempt.target());
             }
@@ -127,7 +122,7 @@ impl TakeoverTicket {
             let changed = self.attempt.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            if let Some(target) = self.attempt.superseded_by.lock().unwrap().take() {
+            if let Some(target) = self.attempt.superseded_by.lock().take() {
                 return target;
             }
             changed.await;
@@ -138,7 +133,7 @@ impl TakeoverTicket {
 impl Drop for TakeoverTicket {
     fn drop(&mut self) {
         self.attempt.finished.store(true, Ordering::SeqCst);
-        let mut owners = self.owners.0.lock().unwrap();
+        let mut owners = self.owners.0.lock();
         let Some(clusters) = owners.get_mut(&self.wallet) else {
             return;
         };
@@ -167,19 +162,19 @@ mod tests {
             owners.prepare("wallet", "room", "rejected", "realm");
         drop(rejected_registration);
         drop(rejected);
-        assert!(first.attempt.superseded_by.lock().unwrap().is_none());
+        assert!(first.attempt.superseded_by.lock().is_none());
 
         let (second_registration, second) = owners.prepare("wallet", "room", "second", "realm");
         second_registration.commit();
         assert_eq!(
-            first.attempt.superseded_by.lock().unwrap().as_ref(),
+            first.attempt.superseded_by.lock().as_ref(),
             Some(&TakeoverTarget {
                 cluster: "room".into(),
                 session: "second".into(),
                 realm: "realm".into(),
             })
         );
-        assert!(second.attempt.superseded_by.lock().unwrap().is_none());
+        assert!(second.attempt.superseded_by.lock().is_none());
     }
 
     #[test]
@@ -191,7 +186,7 @@ mod tests {
             let (registration, _ticket) = owners.prepare(wallet, room, "next", "realm");
             registration.commit();
         }
-        assert!(first.attempt.superseded_by.lock().unwrap().is_none());
+        assert!(first.attempt.superseded_by.lock().is_none());
     }
 
     #[test]
@@ -200,16 +195,16 @@ mod tests {
         let (late_registration, late) = owners.prepare("wallet", "room", "late", "realm");
         drop(late);
         late_registration.commit();
-        assert!(owners.0.lock().unwrap().is_empty());
+        assert!(owners.0.lock().is_empty());
 
         let (first_registration, first) = owners.prepare("wallet", "room", "first", "realm");
         first_registration.commit();
         let (second_registration, second) = owners.prepare("wallet", "room", "second", "realm");
         second_registration.commit();
         drop(first);
-        assert!(owners.0.lock().unwrap()["wallet"].contains_key("room"));
+        assert!(owners.0.lock()["wallet"].contains_key("room"));
         drop(second);
-        assert!(owners.0.lock().unwrap().is_empty());
+        assert!(owners.0.lock().is_empty());
     }
 
     #[test]
@@ -222,7 +217,7 @@ mod tests {
         let (third_registration, _third) = owners.prepare("wallet", "room", "third", "realm");
         third_registration.commit();
         assert_eq!(
-            first.attempt.superseded_by.lock().unwrap().as_ref(),
+            first.attempt.superseded_by.lock().as_ref(),
             Some(&TakeoverTarget {
                 cluster: "room".into(),
                 session: "third".into(),

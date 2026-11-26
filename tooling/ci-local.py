@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run the GitHub workflows' checks locally, on exactly the content being committed or pushed.
 
-  python3 tooling/ci-local.py install      enable the hooks in .githooks (core.hooksPath)
   python3 tooling/ci-local.py pre-commit   fast checks on the staged tree
   python3 tooling/ci-local.py pre-push     every triggered workflow job on each pushed commit
   python3 tooling/ci-local.py run [REV]    the pre-push checks on REV (default HEAD), without pushing
@@ -12,7 +11,8 @@ between runs. The Nix shell environment is cached per flake.lock/toolchain, and 
 that passed on a tree is not repeated for that tree. Workflow path filters are read from
 .github/workflows, so a workflow GitHub would skip is skipped here too. Without Nix
 (e.g. Windows) the steps whose tools are on PATH run and the rest are reported skipped.
-`git commit --no-verify` / `git push --no-verify` bypass the hooks.
+pre-commit and pre-push are the entry points for the git hooks of the same name;
+`--no-verify` skips them.
 """
 import contextlib
 import errno
@@ -122,11 +122,30 @@ def web_steps(changed_ui3=True):
 
 STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', tools=('python3',)),
              Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('bash', 'rg'))]
+# The development workflow's unused-dependency check, from the flake's nixpkgs.
+MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+           '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli')
+# sdk.yml's check for the scene CLI alone.
+SCENE_CLI_MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+                     '.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
+# The Changes job runs these on every pull request.
+WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                      'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest',
+                      tools=('python3',))
+
+
+# What ui3 builds from. Its `@dcl/one-ui` root import reaches every shared component and foundation, and
+# its Sites chrome imports reach the rest of library/ui/apps/sites; tooling/tests/test_ci_local.py checks that
+# every library/ui module ui3 imports falls under one of these.
+UI3_SOURCES = ('apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/explorer-core/*',
+               'library/ui/index.ts', 'library/ui/components/*', 'library/ui/foundations/*',
+               'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/ui/apps/sites/*',
+               'library/ui/figma/review/scripts/*')
 
 
 def pre_commit_steps(changed):
-    steps = list(STRUCTURE)
+    steps = [*STRUCTURE, WORKFLOW_TESTS]
     if touches(changed, 'tooling/*', 'flake.*', 'infra/dev/*'):
         steps.append(TOOLING_TESTS)
     if touches(changed, 'infra/gateway/*', '.github/workflows/gateway-images.yml'):
@@ -138,8 +157,7 @@ def pre_commit_steps(changed):
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',
                           tools=('cargo',)))
-    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/ui/apps/hud/*', 'library/ui/apps/shop/*',
-               'library/ui/components/AppChrome/*', 'library/ui/apps/sites/chrome/*', 'library/explorer-core/*'):
+    if touches(changed, *UI3_SOURCES):
         steps += web_steps()
     elif touches(changed, 'apps/sites/*', 'library/ui/*'):
         steps += web_steps(changed_ui3=False)
@@ -163,7 +181,7 @@ def image_system():
 
 
 def pre_push_steps(changed):
-    steps = list(STRUCTURE)
+    steps = [*STRUCTURE, WORKFLOW_TESTS]
     # Pull requests run it unfiltered (its CI gate always reports); what it tests is its push.paths.
     development = triggered('development.yml', changed, event='push')
     images = triggered('apis-sites-images.yml', changed)
@@ -190,7 +208,17 @@ def pre_push_steps(changed):
     if development:
         steps.append(Step('dev stack smoke', 'bash tooling/dev-smoke.sh', tools=('nix',)))
         steps += web_steps()
+        steps.append(Step('catalyst clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('catalyst clippy (ts)', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets --features catalyst/ts -- -D warnings', tools=('cargo',)))
+        steps.append(Step('unused dependencies', MACHETE, tools=('nix',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
+    elif triggered('sdk.yml', changed):
+        # the workspace clippy above covers it otherwise
+        steps.append(Step('scene cli clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '-p dcl-scene-cli --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('scene cli unused dependencies', SCENE_CLI_MACHETE, tools=('nix',)))
     if images:
         system = image_system()
         if system is None:
@@ -368,17 +396,9 @@ def pre_push(args):
     return True
 
 
-def install():
-    git('config', 'core.hooksPath', '.githooks')
-    print('Hooks enabled from .githooks (pre-commit, pre-push and the Git LFS hooks).')
-    return True
-
-
 def main():
     command = sys.argv[1] if len(sys.argv) > 1 else ''
-    if command == 'install':
-        ok = install()
-    elif command == 'pre-commit':
+    if command == 'pre-commit':
         ok = pre_commit()
     elif command == 'pre-push':
         ok = pre_push(sys.argv[2:])

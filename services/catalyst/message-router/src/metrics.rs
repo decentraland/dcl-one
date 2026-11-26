@@ -17,7 +17,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use dcl_metrics::{
+    CounterFamily, Descriptor, GaugeFamily, HistogramFamily, PrometheusBuilder, PrometheusHandle,
+    Registry, Unit,
+};
 
 use crate::routing::Outcome;
 
@@ -30,17 +33,50 @@ const LATENCY_BUCKETS_MS: [f64; 12] = [
     1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0,
 ];
 
+const DELIVERIES: CounterFamily<1> = CounterFamily::new(
+    DELIVERY_TOTAL,
+    "Routed packets by delivery outcome.",
+    Some(Unit::Count),
+    &["outcome"],
+);
+const FAILURES: CounterFamily<1> = CounterFamily::new(
+    BATCH_FAILURES,
+    "Failed batch publications by reason.",
+    Some(Unit::Count),
+    &["reason"],
+);
+const LATENCY: HistogramFamily<0> = HistogramFamily::new(
+    DELIVERY_LATENCY,
+    "Packet delivery time in milliseconds.",
+    Some(Unit::Milliseconds),
+    &[],
+    &LATENCY_BUCKETS_MS,
+);
+const CONNECTION: GaugeFamily<0> = GaugeFamily::new(
+    CONNECTION_STATUS,
+    "Connection to the messages room.",
+    None,
+    &[],
+);
+
+const FAMILIES: &[Descriptor] = &[
+    DELIVERIES.descriptor,
+    FAILURES.descriptor,
+    LATENCY.descriptor,
+    CONNECTION.descriptor,
+];
+
 pub fn outcome(outcome: Outcome) {
-    metrics::counter!(DELIVERY_TOTAL, "outcome" => outcome.label()).increment(1);
+    DELIVERIES.handle([outcome.label()]).increment(1);
 }
 
 /// One batch's publish failed: `reason` is `error` or `timeout`.
 pub fn batch_failed(reason: &'static str) {
-    metrics::counter!(BATCH_FAILURES, "reason" => reason).increment(1);
+    FAILURES.handle([reason]).increment(1);
 }
 
 pub fn latency(elapsed: Duration) {
-    metrics::histogram!(DELIVERY_LATENCY).record(elapsed.as_secs_f64() * 1000.0);
+    LATENCY.handle([]).record(elapsed.as_secs_f64() * 1000.0);
 }
 
 /// Whether the router is in the room: the gauge and the readiness answer.
@@ -50,7 +86,7 @@ pub struct Connection(Arc<AtomicBool>);
 impl Connection {
     pub fn set(&self, connected: bool) {
         self.0.store(connected, Ordering::Release);
-        metrics::gauge!(CONNECTION_STATUS).set(if connected { 1.0 } else { 0.0 });
+        CONNECTION.handle([]).set(if connected { 1.0 } else { 0.0 });
     }
 
     pub fn get(&self) -> bool {
@@ -59,25 +95,23 @@ impl Connection {
 }
 
 pub fn prometheus_builder() -> PrometheusBuilder {
-    PrometheusBuilder::new()
-        .set_buckets_for_metric(Matcher::Full(DELIVERY_LATENCY.into()), &LATENCY_BUCKETS_MS)
-        .expect("the latency buckets are not empty")
+    Registry::new(&[FAMILIES])
+        .expect("valid router descriptors")
+        .builder(PrometheusBuilder::new())
+        .expect("valid router buckets")
 }
 
-/// Installs the process recorder; once, at startup.
+/// Installs the process recorder once at startup.
 pub fn install() -> anyhow::Result<PrometheusHandle> {
-    let recorder = prometheus_builder().build_recorder();
-    let handle = recorder.handle();
-    metrics::set_global_recorder(recorder)
-        .map_err(|e| anyhow::anyhow!("installing the prometheus recorder: {e}"))?;
+    let handle = Registry::new(&[FAMILIES])?.install(PrometheusBuilder::new())?;
     // every outcome and the gauge are present from the first scrape
     for each in Outcome::ALL {
-        metrics::counter!(DELIVERY_TOTAL, "outcome" => each.label()).absolute(0);
+        DELIVERIES.handle([each.label()]).absolute(0);
     }
     for reason in ["error", "timeout"] {
-        metrics::counter!(BATCH_FAILURES, "reason" => reason).absolute(0);
+        FAILURES.handle([reason]).absolute(0);
     }
-    metrics::gauge!(CONNECTION_STATUS).set(0.0);
+    CONNECTION.handle([]).set(0.0);
     Ok(handle)
 }
 
@@ -88,7 +122,7 @@ pub fn router(handle: PrometheusHandle, connection: Connection) -> axum::Router 
             "/metrics",
             get(move || {
                 let handle = handle.clone();
-                async move { handle.render() }
+                dcl_metrics::render(handle)
             }),
         )
         .route("/health/live", get(|| async { "alive" }))
@@ -118,14 +152,7 @@ pub async fn serve(
         .map_err(|e| anyhow::anyhow!("binding MESSAGE_ROUTER_METRICS_BIND {bind}: {e}"))?;
     tracing::info!(%bind, "message router /metrics and /health listening");
     // a recorder built without the exporter's listener drains its histograms only here
-    let upkeep = handle.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(5));
-        loop {
-            tick.tick().await;
-            upkeep.run_upkeep();
-        }
-    });
+    tokio::spawn(dcl_metrics::upkeep(handle.clone()));
     axum::serve(listener, router(handle, connection)).await?;
     Ok(())
 }
@@ -140,7 +167,7 @@ mod tests {
         let recorder = prometheus_builder().build_recorder();
         let handle = recorder.handle();
         let connection = Connection::default();
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             outcome(Outcome::Delivered);
             outcome(Outcome::RateLimited);
             outcome(Outcome::RateLimited);

@@ -11,10 +11,18 @@
 //! status. The budget a wallet may pledge is `available` at the peg minus
 //! `SUM(usd_cents)` of its `authorized` and `retired` rows.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use chrono::NaiveDateTime;
 use sqlx::Row;
 
 use super::errors::ApiError;
+use super::metrics::{self, Pledge};
 use super::store::{Credits, now};
 use crate::types::{ManaUsdRate, ManaWei, UsdCents};
 
@@ -394,7 +402,7 @@ impl Credits {
                 }
             }));
         }
-        for (position, line) in g.lines.iter().enumerate() {
+        for (position, line) in (0i32..).zip(g.lines.iter()) {
             sqlx::query(
                 "INSERT INTO credits.authorization_lines \
                      (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, \
@@ -402,7 +410,7 @@ impl Credits {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10::numeric, $11, $12, $13, $14)",
             )
             .bind(g.id)
-            .bind(position as i32)
+            .bind(position)
             .bind(line.quoted_cents)
             .bind(line.charged_cents)
             .bind(line.sale_kind)
@@ -419,6 +427,7 @@ impl Credits {
             .await?;
         }
         tx.commit().await?;
+        metrics::pledges(Pledge::Authorized, 1);
         Ok(Ok(ReserveOutcome {
             id: g.id.to_string(),
             amount_wei: g.amount_wei.to_string(),
@@ -430,6 +439,14 @@ impl Credits {
 
     /// The balance at the peg, the live pledges and their count, in one read.
     pub async fn spendable(&self, address: &str) -> Result<Spendable, ApiError> {
+        Self::spendable_on(&self.pool, address).await
+    }
+
+    /// [`Self::spendable`] on `executor`, for a read within one snapshot.
+    pub(crate) async fn spendable_on<'e, E: sqlx::PgExecutor<'e>>(
+        executor: E,
+        address: &str,
+    ) -> Result<Spendable, ApiError> {
         let row = sqlx::query(
             "SELECT COALESCE((SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1), 0) AS balance, \
                     COALESCE((SELECT SUM(usd_cents) FROM credits.authorizations WHERE address = $1 AND status IN ('authorized', 'retired')), 0)::bigint AS held, \
@@ -437,7 +454,7 @@ impl Credits {
         )
         .bind(address)
         .bind(UsdCents::CENTS_PER_CREDIT)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await?;
         Ok(Spendable {
             balance_cents: row.get("balance"),
@@ -449,19 +466,22 @@ impl Credits {
     /// Flip past-expiry pledges: `authorized` to `expired`, `retired` to
     /// `released`, bounded by the CreditUsed index when one is configured
     /// (`usage::expiry_bound_sql`: never before the chain has been read past
-    /// the expiry). The outbox worker tick inlines this same UPDATE.
+    /// the expiry), queueing the alerts the expiry shows. The outbox worker
+    /// tick runs these same CTEs (`alerts::expiry_ctes`).
     pub async fn expire_stale_authorizations(&self) -> Result<u64, ApiError> {
         let sql = format!(
-            "UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
-             WHERE status IN ('authorized', 'retired') AND expires_at <= {}",
-            super::usage::expiry_bound_sql("$1", "$2")
+            "WITH {} SELECT status FROM expired",
+            super::alerts::expiry_ctes("$1", "$2")
         );
-        let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let statuses: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(now())
             .bind(self.usage_chain)
-            .execute(&self.pool)
+            .fetch_all(&self.pool)
             .await?;
-        Ok(res.rows_affected())
+        let released = statuses.iter().filter(|s| *s == "released").count() as u64;
+        metrics::pledges(Pledge::Released, released);
+        metrics::pledges(Pledge::Expired, statuses.len() as u64 - released);
+        Ok(statuses.len() as u64)
     }
 
     pub async fn insert_authorization(&self, a: &NewAuthorization<'_>) -> Result<(), ApiError> {
@@ -481,6 +501,7 @@ impl Credits {
         .bind(a.expires_at)
         .execute(&self.pool)
         .await?;
+        metrics::pledges(Pledge::Authorized, 1);
         Ok(())
     }
 
@@ -502,12 +523,13 @@ impl Credits {
         .bind(now())
         .fetch_all(&self.pool)
         .await?;
+        metrics::pledges(Pledge::Retired, rows.len() as u64);
         let latest = rows
             .iter()
             .map(|r| r.get::<NaiveDateTime, _>("expires_at"))
             .max();
         Ok(Retired {
-            retired: rows.len() as i64,
+            retired: i64::try_from(rows.len()).unwrap_or(i64::MAX),
             ids: rows.iter().map(|r| r.get("id")).collect(),
             latest_expiry: latest,
         })
@@ -515,7 +537,8 @@ impl Credits {
 
     /// The closure pass's name for [`Self::retire_intents`]: the count.
     pub async fn release_intents(&self, salts: &[String], address: &str) -> Result<u64, ApiError> {
-        Ok(self.retire_intents(salts, address).await?.retired as u64)
+        let retired = self.retire_intents(salts, address).await?.retired;
+        Ok(u64::try_from(retired).unwrap_or(0))
     }
 
     /// Stamps the transaction the caller reported submitting `salts` in, on
@@ -536,7 +559,7 @@ impl Credits {
         .bind(now())
         .execute(&self.pool)
         .await?;
-        Ok(res.rows_affected() as i64)
+        Ok(i64::try_from(res.rows_affected()).unwrap_or(i64::MAX))
     }
 
     /// The authorization `address` already reserved under `idempotency_key`,

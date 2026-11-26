@@ -113,6 +113,15 @@
   }
 }
 
+/* The reference keeps its fill on hover and press: the ring above is its only pointer feedback. */
+.sourceActions .sourceAction:is(:hover, :active):not(:disabled) {
+  background: var(--dcl-action-primary);
+}
+
+.sourceActions .sourceEpic:is(:hover, :active):not(:disabled) {
+  background: var(--dcl-neutrals-white);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sourceAction:not(:focus-visible) {
     transition: none;

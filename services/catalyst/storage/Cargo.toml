@@ -22,7 +22,7 @@ parking_lot.workspace = true
 libc.workspace = true
 sha1.workspace = true
 url.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 
 [features]
 ts = []
@@ -32,3 +32,6 @@ test-support = []
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

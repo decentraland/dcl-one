@@ -250,10 +250,10 @@ pub enum ReservationDisposition {
 
 /// Whether a failed send leaves the buyer's quota slot consumed. Only an error that proves
 /// nothing went out releases it, and only those are answered with `"not_sent": true`, the
-/// evidence a client takes to sign again: `RelayReverted` (gas estimation reverted, or a relayer
-/// that created no transaction), `RelayerFailed` (a lookup before signing), `HighCongestion`,
-/// `RelayerUnavailable`, and validation. Anything that can follow a send attempt is
-/// `RelayerTimeout`, answered without it.
+/// evidence a client takes to sign again: `RelayReverted` (gas estimation reverted),
+/// `RelayerRefused` (the relayer signed nothing), `RelayerFailed`, `HighCongestion`,
+/// `RelayerUnavailable`, and validation. Indeterminate sends and terminal failures with a
+/// hash keep the slot and omit `not_sent`.
 ///
 /// The evidence is about this request, not about the signed meta-transaction. If the same signed
 /// body reached the relay twice and the first copy landed, the second fails before any send (the
@@ -265,18 +265,11 @@ pub enum ReservationDisposition {
 /// never resends a POST whose answer it lost (it reads that as in flight), so this takes something
 /// between the buyer and the relay resending it. That risk is accepted here, not handled.
 pub fn reservation_disposition(err: &ApiError) -> ReservationDisposition {
-    if is_post_broadcast(err) {
-        return ReservationDisposition::Keep;
-    }
     if is_pre_broadcast(err) {
         ReservationDisposition::Release
     } else {
         ReservationDisposition::Keep
     }
-}
-
-fn is_post_broadcast(err: &ApiError) -> bool {
-    matches!(err, ApiError::RelayerTimeout(_))
 }
 
 fn is_pre_broadcast(err: &ApiError) -> bool {
@@ -287,6 +280,7 @@ fn is_pre_broadcast(err: &ApiError) -> bool {
             | ApiError::InvalidContractAddress(_)
             | ApiError::InvalidTransaction(_)
             | ApiError::RelayReverted(_)
+            | ApiError::RelayerRefused(_)
             | ApiError::HighCongestion(_)
             | ApiError::RelayerFailed(_)
             | ApiError::RelayerUnavailable(_)
@@ -440,7 +434,10 @@ impl TransactionComponent {
     /// [`Self::reserve_quota`] for a call that is no sale or credits spend: it
     /// also counts toward the relayer's daily budget across every address
     /// (`free_budget`, 0 is no limit), checked and taken under one global lock.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per budget and call field"
+    )]
     pub async fn reserve_free_call(
         &self,
         max_transactions_per_day: i64,
@@ -463,7 +460,10 @@ impl TransactionComponent {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per budget and call field"
+    )]
     async fn reserve(
         &self,
         max_transactions_per_day: i64,
@@ -526,7 +526,7 @@ impl TransactionComponent {
         )
         .bind(user_address)
         .bind(session_id)
-        .bind(chain_id as i32)
+        .bind(crate::types::chain_id_column::<i32>(chain_id)?)
         .bind(&contract)
         .bind(window_start)
         .bind(now)
@@ -855,7 +855,8 @@ impl TransactionComponent {
             BroadcastRoute::None => Err(ApiError::RelayerUnavailable(
                 "No relayer is provisioned for the selected signer preference. Validation passed; broadcast is \
                  unavailable. Set OZ_RELAYER_URL/OZ_RELAYER_ID/OZ_RELAYER_API_KEY, META_TX_BROADCAST_ENABLED=true with \
-                 RELAYER_PRIVATE_KEY_FILE (+ RPC_ENDPOINT_POLYGON), or TRANSACTIONS_UPSTREAM_URL, to enable broadcasting."
+                 RELAYER_PRIVATE_KEY_FILE (+ RPC_ENDPOINT_POLYGON), or on a testnet relay TRANSACTIONS_UPSTREAM_URL, \
+                 to enable broadcasting."
                     .into(),
             )),
         }

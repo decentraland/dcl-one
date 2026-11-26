@@ -929,10 +929,12 @@ pub async fn create_referral(
         &state.referral.settings.trusted_proxy_cidrs,
     )
     .ok_or_else(|| CommError::bad_request("Unable to determine client IP address"))?;
-    let raw_referrer = body["referrer"].as_str().unwrap();
-    if !crate::auth::is_eth_address(raw_referrer) {
+    let Some(raw_referrer) = body["referrer"]
+        .as_str()
+        .filter(|referrer| crate::auth::is_eth_address(referrer))
+    else {
         return Err(CommError::bad_request("Invalid referrer address"));
-    }
+    };
     let referrer = Address::parse(raw_referrer)
         .map_err(|_| CommError::bad_request("Invalid referrer address"))?;
     state.referral.create(&referrer, &invited, &ip).await?;
@@ -1030,7 +1032,7 @@ fn is_email(email: &str) -> bool {
     !local.is_empty()
         && local.bytes().all(|c| word(c) || c == b'-' || c == b'.')
         && labels.len() >= 2
-        && labels.last().unwrap().len() >= 2
+        && labels.last().is_some_and(|tld| tld.len() >= 2)
         && labels
             .into_iter()
             .all(|part| !part.is_empty() && part.bytes().all(|c| word(c) || c == b'-'))
