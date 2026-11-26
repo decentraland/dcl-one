@@ -1762,6 +1762,28 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Credits balance notifications
+
+`credits.notify_balance()` (`schemas/60_ops.sql`) announces a wallet's
+address on the `credits_balance` channel after a row of `credits.wallets` is
+inserted or updated, after a row of `credits.authorizations` is inserted or
+changes `status`, and after a row of `credits.wallet_flags` is inserted or
+deleted: everything `GET /credits/users/{address}/credits` answers from.
+The reader is the balance stream (`GET /credits/users/{address}/credits/stream`,
+`shop/src/credits/stream.rs`): one `LISTEN` connection per process, opened
+with its first stream, re-reads the balance of each stream whose wallet was
+announced and sends it when it changed.
+
+The cost is one `pg_notify` per affected row, inside the writing
+transaction; Postgres delivers a transaction's notifications at commit, once
+per distinct payload, and drops them for a rolled-back one. The payload is a
+40-hex address, far below the 8000-byte limit, so it never fails a write. A
+notification sent while no process listens is lost: a listener that connects
+or reconnects makes every stream re-read its balance, so a stream misses no
+change for longer than the reconnect. The bootstrap defines the function and
+the triggers; an existing database gains them from the object pass, so no
+step exists.
+
 ## Credits checkout and broker claim edges
 
 A credits checkout line buys through the shop broker under the claim key

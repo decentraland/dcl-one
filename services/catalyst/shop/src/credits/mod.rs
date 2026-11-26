@@ -96,6 +96,7 @@ pub mod reconcile;
 pub mod reports;
 pub mod settlement;
 pub mod store;
+pub mod stream;
 pub mod stripe;
 pub mod trial;
 pub mod usage;
@@ -733,6 +734,8 @@ pub struct State {
     /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
     /// flag reads off.
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The balance streams' listener and subscribers (`stream.rs`).
+    pub(crate) balance_changes: stream::BalanceChanges,
 }
 
 pub type SharedState = Arc<State>;
@@ -853,6 +856,7 @@ impl State {
             feed,
             goals_chain: chain,
             dapps_flags: None,
+            balance_changes: stream::BalanceChanges::default(),
         }
     }
 
@@ -1041,6 +1045,10 @@ pub fn router(state: SharedState) -> Router {
             "/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
         )
+        .route(
+            "/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
+        )
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
@@ -1150,6 +1158,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
+        )
+        .route(
+            "/v1/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
         )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
         .route(

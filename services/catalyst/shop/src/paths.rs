@@ -37,6 +37,7 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
     "GET /shop-api/v1/users/{address}/progress /credits/users/{address}/progress",
     "GET /shop-api/v1/users/{address}/credits /credits/users/{address}/credits",
+    "GET /shop-api/v1/users/{address}/credits/stream /credits/users/{address}/credits/stream",
     "GET /shop-api/v1/users/{address}/purchases /credits/users/{address}/purchases",
     "GET /shop-api/v1/users/{address}/credit-orders /credits/users/{address}/credit-orders",
     "GET /shop-api/v1/packs /credits/credits/packs",

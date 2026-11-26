@@ -11090,3 +11090,267 @@ async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
         "https://shop/credits?order=ord_unknown&canceled=1"
     );
 }
+
+/// The next `data:` event of a server-sent event body, skipping comments
+/// (the heartbeat); `None` after `wait`.
+async fn next_sse_event(
+    body: &mut (impl futures::Stream<Item = Result<axum::body::Bytes, axum::Error>> + Unpin),
+    buffer: &mut String,
+    wait: std::time::Duration,
+) -> Option<Value> {
+    use futures::StreamExt;
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if let Some(end) = buffer.find("\n\n") {
+            let block: String = buffer.drain(..end + 2).collect();
+            let data: String = block
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(str::trim_start)
+                .collect();
+            if data.is_empty() {
+                continue;
+            }
+            return Some(serde_json::from_str(&data).unwrap());
+        }
+        let chunk = tokio::time::timeout_at(deadline, body.next())
+            .await
+            .ok()??;
+        buffer.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+    }
+}
+
+/// The balance stream answers its signer alone, with credits-server's
+/// refusals; it sends what `GET /users/{address}/credits` answers at once,
+/// then again when the wallet's row changes in the database, whoever wrote
+/// it; another wallet's change sends nothing; a flag reaches the open stream
+/// and refuses a new one.
+#[tokio::test]
+async fn the_balance_stream_follows_the_signers_balance() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let other = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    seed_paid_credits(&pool, &other.address, "10").await;
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&other, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(
+        v,
+        json!({ "error": "Address does not match the signed fetch authentication" })
+    );
+    let malformed = "/credits/users/0x12/credits/stream";
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        malformed,
+        signed_headers(&wallet, "get", malformed).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "Invalid address" })
+        )
+    );
+    let (status, _, _) = send(&app, "GET", &path, HeaderMap::new(), None).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsigned: the ADR-44 refusal"
+    );
+
+    let mut request = Request::builder().uri(&path);
+    for (k, v) in signed_headers(&wallet, "get", &path).await.iter() {
+        request = request.header(k, v);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    assert_eq!(response.headers()["x-accel-buffering"], "no");
+    let mut body = response.into_body().into_data_stream();
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(10);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the balance at once");
+    let (_, read) = call(
+        &app,
+        &wallet,
+        "get",
+        &format!("/credits/users/{}/credits", wallet.address),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(first, read, "what GET /users/{{address}}/credits answers");
+
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let changed = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the changed balance");
+    assert_eq!(
+        changed["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        50,
+        "{changed}"
+    );
+
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&other.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        next_sse_event(
+            &mut body,
+            &mut buffer,
+            std::time::Duration::from_millis(800)
+        )
+        .await,
+        None,
+        "another wallet's change sends nothing"
+    );
+
+    sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let flagged = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the flag reaches the open stream");
+    assert_eq!(flagged["isBlockedForClaiming"], true, "{flagged}");
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&wallet, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    assert_eq!(
+        (v["ok"].clone(), v["isBlockedForClaiming"].clone()),
+        (json!(false), json!(true))
+    );
+
+    sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &wallet.address).await;
+    cleanup(&pool, &other.address).await;
+}
+
+/// The database announces a wallet's address on `credits_balance` when its
+/// wallet row, the status of one of its credits or its flag changes; another
+/// change to a credit announces nothing.
+#[tokio::test]
+async fn a_balance_change_is_announced_on_its_channel() {
+    let Some(pool) = pool().await else { return };
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
+        .await
+        .unwrap();
+    listener.listen(super::stream::CHANNEL).await.unwrap();
+    let wallet = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let mut heard = async |what: &str| -> Option<String> {
+        loop {
+            let n = tokio::time::timeout(std::time::Duration::from_millis(800), listener.recv())
+                .await
+                .ok()?
+                .unwrap();
+            // Other tests write wallets too: only this wallet's counts.
+            if n.payload() == wallet {
+                return Some(what.to_string());
+            }
+        }
+    };
+
+    seed_paid_credits(&pool, &wallet, "10").await;
+    assert_eq!(
+        heard("insert").await.as_deref(),
+        Some("insert"),
+        "a new wallet row"
+    );
+    sqlx::query("UPDATE credits.wallets SET available = available + 1 WHERE address = $1")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("update").await.as_deref(),
+        Some("update"),
+        "a balance change"
+    );
+    authorization_fixture(&pool, &salt, &wallet, 500, "authorized", 0, 0).await;
+    assert_eq!(
+        heard("pledge").await.as_deref(),
+        Some("pledge"),
+        "a new pledge"
+    );
+    sqlx::query("UPDATE credits.authorizations SET status = 'retired' WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("status").await.as_deref(),
+        Some("status"),
+        "a pledge's status"
+    );
+    sqlx::query("UPDATE credits.authorizations SET submitted_tx_hash = $2 WHERE id = $1")
+        .bind(&salt)
+        .bind(format!("0x{}", "ab".repeat(32)))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(heard("other").await, None, "another column of a credit");
+    sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(heard("flag").await.as_deref(), Some("flag"), "a flag");
+    sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("unflag").await.as_deref(),
+        Some("unflag"),
+        "an unflag"
+    );
+    sqlx::query("DELETE FROM credits.authorizations WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &wallet).await;
+}

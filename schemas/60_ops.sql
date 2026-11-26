@@ -408,6 +408,33 @@ CREATE INDEX authorizations_expiry_idx ON credits.authorizations (expires_at) WH
 -- The purchases history: the buyer's groups newest first, keyset on (created_at, id).
 CREATE INDEX authorizations_address_created_idx ON credits.authorizations (address, created_at DESC, id);
 
+-- A change to what a wallet's balance answers (its wallet row, the status of
+-- its credits' pledges, its multi-accounting flag) announces the wallet's
+-- address on the `credits_balance` channel, for the balance streams
+-- (`GET /credits/users/{address}/credits/stream`, shop/src/credits/stream.rs).
+-- The payload is an address, far below pg_notify's 8000 bytes, so it never
+-- fails the write, and a transaction's repeats arrive once.
+CREATE FUNCTION credits.notify_balance() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('credits_balance', OLD.address);
+    ELSE
+        PERFORM pg_notify('credits_balance', NEW.address);
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER wallets_balance_notify
+    AFTER INSERT OR UPDATE ON credits.wallets
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER authorizations_balance_notify
+    AFTER INSERT OR UPDATE OF status ON credits.authorizations
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER wallet_flags_balance_notify
+    AFTER INSERT OR DELETE ON credits.wallet_flags
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+
 -- The lines of one credit, in request order: what each line bought (the
 -- payment rule's derivation: `sale_kind`/`asset_kind` are what
 -- shop::policy derived from the mirrors and the decoded order, never a
