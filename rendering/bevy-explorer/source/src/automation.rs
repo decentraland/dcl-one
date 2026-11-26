@@ -249,7 +249,7 @@ pub(crate) mod input {
     // --- /press_key ---
 
     /// Press a key as the keyboard would: the world and the HUD both get it. The key is named as
-    /// DOM `KeyboardEvent.code` names it (`KeyB`, `Digit1`, `Space`, `Enter`, `Escape`,
+    /// DOM `KeyboardEvent.code` names it (`KeyB`, `Digit1`, `Numpad1`, `Space`, `Enter`, `Escape`,
     /// `ArrowUp`, `F1`, ...)
     #[derive(clap::Parser, ConsoleCommand)]
     #[command(name = "/press_key")]
@@ -430,6 +430,20 @@ pub(crate) mod input {
         KeyCode::Digit9,
     ];
 
+    /// The numpad's digits, which the quick emotes are bound to (`QuickEmote0` to `QuickEmote9`).
+    const NUMPAD: [KeyCode; 10] = [
+        KeyCode::Numpad0,
+        KeyCode::Numpad1,
+        KeyCode::Numpad2,
+        KeyCode::Numpad3,
+        KeyCode::Numpad4,
+        KeyCode::Numpad5,
+        KeyCode::Numpad6,
+        KeyCode::Numpad7,
+        KeyCode::Numpad8,
+        KeyCode::Numpad9,
+    ];
+
     const FUNCTION_KEYS: [(KeyCode, Key); 12] = [
         (KeyCode::F1, Key::F1),
         (KeyCode::F2, Key::F2),
@@ -470,6 +484,16 @@ pub(crate) mod input {
                 let text = c.to_string();
                 return Some((
                     DIGITS[(c as u8 - b'0') as usize],
+                    Key::Character(text.as_str().into()),
+                    Some(text),
+                ));
+            }
+        }
+        if let Some(c) = code.strip_prefix("Numpad").and_then(single) {
+            if c.is_ascii_digit() {
+                let text = c.to_string();
+                return Some((
+                    NUMPAD[(c as u8 - b'0') as usize],
                     Key::Character(text.as_str().into()),
                     Some(text),
                 ));
@@ -706,13 +730,19 @@ mod tests {
         assert_eq!(key, Key::Character("b".into()));
         assert_eq!(text.as_deref(), Some("b"));
         assert_eq!(input::key_from_code("Digit7").unwrap().0, KeyCode::Digit7);
+        let (code, key, text) = input::key_from_code("Numpad5").unwrap();
+        assert_eq!(code, KeyCode::Numpad5);
+        assert_eq!(key, Key::Character("5".into()));
+        assert_eq!(text.as_deref(), Some("5"));
         assert_eq!(input::key_from_code("F12").unwrap().1, Key::F12);
         assert_eq!(
             input::key_from_code("Enter").unwrap().2.as_deref(),
             Some("\r")
         );
         assert_eq!(input::key_from_code("Escape").unwrap().2, None);
-        for unknown in ["Keyb", "KeyAB", "Digit10", "F0", "F13", "Hyper", ""] {
+        for unknown in [
+            "Keyb", "KeyAB", "Digit10", "Numpad10", "NumpadA", "F0", "F13", "Hyper", "",
+        ] {
             assert!(input::key_from_code(unknown).is_none(), "{unknown}");
         }
     }

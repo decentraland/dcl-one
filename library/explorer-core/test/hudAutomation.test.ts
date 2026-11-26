@@ -807,6 +807,7 @@ describe('trusted input from a test runner', () => {
       }
       for (let digit = 0; digit <= 9; digit++) {
         expect(keyDefinition(`Digit${digit}`)).toStrictEqual(key(String(digit), 48 + digit, String(digit)))
+        expect(keyDefinition(`Numpad${digit}`)).toStrictEqual(key(String(digit), 96 + digit, String(digit), 3))
       }
       for (let n = 1; n <= 12; n++) expect(keyDefinition(`F${n}`)).toStrictEqual(key(`F${n}`, 111 + n))
       const named: [string, ReturnType<typeof key>][] = [
@@ -843,7 +844,7 @@ describe('trusted input from a test runner', () => {
         ['Backslash', key('\\', 220, '\\')]
       ]
       for (const [code, definition] of named) expect(keyDefinition(code)).toStrictEqual(definition)
-      for (const unknown of ['Keyb', 'F13', 'F0', 'Digit10', 'Hyper', 'constructor']) expect(keyDefinition(unknown)).toBeNull()
+      for (const unknown of ['Keyb', 'F13', 'F0', 'Digit10', 'Numpad10', 'NumpadA', 'Hyper', 'constructor']) expect(keyDefinition(unknown)).toBeNull()
     })
   })
 

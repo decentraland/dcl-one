@@ -71,12 +71,14 @@ second one on its own realm.
 | `CHROME_PATH`, `CHROME_EXTRA_ARGS` | The browser, and more flags | the installed Chrome |
 | `DCL_E2E_HEADLESS` | `1` runs Chrome headless (the engine then has no GPU: for the driver's tests only) | headed |
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
+| `DCL_E2E_WORLD`, `DCL_E2E_WORLD_PARCEL` | The world the Teleport scenarios visit with `/world`, and a parcel of its scene away from the spawn for the in-world `/goto`; the world's access must let the test accounts in | `33.dcl.eth`, `2,3` |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 | `DCL_PROFILE_DIR` | Absolute directory for a spawned native client's config, logs and content cache; use a directory in the test workspace | OS profile when unset |
 | `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
+| `DCL_E2E_GENESIS_REALM` | The catalyst `sdk-scenes` and `scene-media` boot their own client into: the checklist's Genesis City scenes exist on mainnet only (zone has Genesis Plaza alone) | `https://peer.decentraland.org` |
 
 A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
 
@@ -334,6 +336,90 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+### The QA Automation Suite
+
+QA's Automation Suite (the release checklist's automation tab: 47 cases in Chat, Backpack
+wearables, outfits and emotes, Profile, Communities, Map and Teleport) is covered by the specs
+above and by eight more, written for it: `teleport`, `chat-composer`, `backpack-catalog`,
+`backpack-randomize`, `backpack-outfit-slots`, `emote-slots`, `passport-links` and `map-panels`.
+Each new file's header classes its cases as above. The chat helpers the chat specs share are in
+`specs/chat.ts`. Where a case lands, by section:
+
+| Section | Case | Spec | Class |
+| --- | --- | --- | --- |
+| Chat | Open/Close chat (rail, Enter; T is the microphone since #1327) | `chat` | Port |
+| Chat | Chat Functionalities | `chat` (link), `teleport` (coordinates), `chat-composer` (emoji) | Partial |
+| Chat | Chat Functionalities: mentions, bold and italic | `chat-composer` | Gap |
+| Chat | In-chat navbar | `chat` (Nearby); a DM tab in `chat-composer` | Partial, Gap |
+| Chat | Direct Message | `chat-composer` | Gap |
+| Chat | Chat Reactions on Input | `chat-composer` | Gap |
+| Chat | Chat reactions on message | `chat` | Partial |
+| Wearables | Customize Avatar | `backpack-wearables` | Partial |
+| Wearables | Smart Wearables | `backpack-catalog` | Gap |
+| Wearables | Avatar Updates for Other Users | `backpack-catalog` | Gap |
+| Wearables | Filters | `backpack-catalog` | Partial |
+| Wearables | Category Selection | `backpack-catalog` | Port |
+| Wearables | Search | `backpack-wearables` (a match), `backpack-catalog` (none, Marketplace link) | Port |
+| Wearables | Pagination | `backpack-wearables` | Port |
+| Wearables | Wearable Details Panel | `backpack-catalog` | Gap |
+| Outfits | Outfits Panel, Equip outfit, Save outfit | `backpack-outfits` | Port, Partial |
+| Outfits | Delete outfit | `backpack-outfits` (delete); the prompt's cancel in `backpack-outfit-slots` | Partial, Gap |
+| Outfits | Check outfits | `backpack-outfit-slots` | Partial |
+| Outfits | Outfits shop | `backpack-outfit-slots` | Partial |
+| Outfits | Randomize outfit, Randomize undo / redo | `backpack-randomize` | Partial |
+| Emotes | Equip, Replace equipped, Pagination | `backpack-emotes` | Partial |
+| Emotes | Animations | none: the Bevy Backpack does not play an emote on the preview, by design | Drop |
+| Emotes | Wheel | `emote-wheel`, `emote-slots` | Port |
+| Emotes | Play | `emote-wheel` (a click), `emote-slots` (B, then the slot's numpad key: quick emotes are bound to the numpad, and play only while the wheel is open) | Port |
+| Profile | Passport, Overview, Edit name, Equipped items | `passport` | Port, Partial |
+| Profile | Edit name color | `passport-links` | Gap |
+| Profile | Edit about me | `passport` (bio), `passport-links` (links) | Partial |
+| Communities | NavBar, Content, View a Community, Search | `explore-panel`, `communities` | Port, Partial |
+| Map | View | `shortcuts` (M), `minimap`, `map-panels` (Tab) | Port |
+| Map | Layers | `map-panels` | Gap |
+| Map | Filters | `navmap`, `map-panels` | Partial |
+| Map | Search | `teleport` (the card, JUMP IN), `map-panels` (no match; the card's other controls a Gap) | Partial |
+| Teleport | Coordinates on chat, Coordinates via command, Coordinates in world | `teleport` | Port |
+| Teleport | Worlds, Via Map | `teleport` | Partial |
+
+The world the Teleport cases visit is `DCL_E2E_WORLD`, `33.dcl.eth` by default: the checklist's
+`olavra` is not a world on decentraland.zone. The Gaps that need a second user in the world (DMs,
+mentions, another user seeing a new look) wait for a second client in a run.
+
+### The checklist's other tabs
+
+The cases of the checklist's other tabs that the HUD and the console can already drive have specs
+of their own; the checklist's Automation Suite tab lists them too. Each file's header classes its
+cases as above.
+
+| Tab | Case | Spec | Class |
+| --- | --- | --- | --- |
+| High End: Lobby | Open Lobby in world, Notifications from Lobby, Lobby on startup | `lobby` | Port |
+| High End: Lobby | Travel from in-world Lobby, Jump in to Home, Customize avatar, Profile menu, Recommended Places, Live Now | `lobby` | Partial |
+| High End: Lobby | Jump Back In (the places service's `/destinations` refuses the loopback origin by CORS), Failed travel (no Lobby control takes an unreachable destination) | `lobby` | Gap |
+| Auth | Sign Out (the startup Lobby's chip) | `auth` | Partial |
+| Auth | Login (auto login), Guest login persists (the web driver neither reloads a page nor keeps a browser profile) | `auth` | Gap |
+| General: Settings | Sound, Translate Option | `settings` | Port |
+| General: Settings | Graphics, Controls, Chat | `settings` | Partial |
+| Bevy Only | Untrusted link parameters, Permissions popover, Open Create, Avatar outline, Avatar ghosts, Imposters, Parcel grass, Crash modal (an unreachable world) | `bevy-only` | Partial |
+| Bevy Only | FPS meter (`aria-hidden`), Cel shading (replaced by Jiggle Bones, #1079) | `bevy-only` | Gap |
+| High End: Communities | Join a community | `communities-membership` | Port |
+| High End: Communities | Create a Community (the form, never submitted), Private community, Join a Private Community, Community interaction | `communities-membership` | Partial |
+| High End: Friends | Open Friends Panel | `friends` | Port |
+| High End: Friends | Friends Panel Content | `friends` | Partial |
+| High End: Chat | Connected users around, Nearby | `nearby-users` | Partial |
+| High End: Camera | Publish Photos | `gallery-photos` | Port |
+| High End: Camera | Camera Shortcuts, Photo Properties | `gallery-photos` | Partial |
+| SDK7/6/Minigames | the 30 scenes: each loads, runs and logs no system error (gameplay is not covered) | `sdk-scenes` | Partial |
+| Video Streaming | Looping NFTs, Static NFTs | `scene-media` | Partial |
+| General: Genesis Plaza | Theatre (the video is requested and scheduled) | `scene-media` | Partial |
+
+`sdk-scenes` and `scene-media` boot a client of their own on `DCL_E2E_GENESIS_REALM`, with the
+run's account, and the last scene closes it. A catalyst that rate-limits the machine (HTTP 429,
+which the browser reports as `error sending request`) leaves a scene `Failed` with no retry: run
+them apart from other clients on the same address. `lobby` and `auth` boot an unsigned guest for
+the startup Lobby; `bevy-only` opens a second client on a link with an unrecognised parameter.
+
 `specs/navbar.test.ts` also covers the Me panel's `Sign Out` row, which only an account on the web
 has: a session whose sign-in was an account, the suite's own sign-in included. The standalone and a
 guest have none (a guest's stored identity stays), so both scenarios are skipped on the standalone
@@ -365,10 +451,11 @@ under `male/` and `female/`, as the creator preview serves a wearable. The third
 serves the same project as the parcel scene at `0,0`, its `scene.json` rewritten (`buildScene`'s
 `rewrite`) to disable portable experiences.
 
-What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
+What the HUD would need for more Ports, found while porting: roles on the Lobby's cards (title, creator, counters) and on its sections; a label per slider arrow in Settings; the FPS meter not `aria-hidden`; roles on the Create page; the photo options button reachable without hovering; roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
-header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
-`/hud_read`; implicit roles for `section` and `header` in `hudAutomation.ts`.
+header and bio, the skybox slider and switch, the Backpack's detail panel; `aria-selected` and
+`aria-pressed` readable through `/hud_read`; implicit roles for `section` and `header` in
+`hudAutomation.ts`.
 
 ## Visual suite
 
