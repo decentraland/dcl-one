@@ -301,17 +301,26 @@ describe('when queuing records on disk', () => {
     expect(outbox.peek(ADDRESS, 10)).toHaveLength(1);
   });
 
-  it('should drop records older than the age limit', () => {
+  it('should drop records older than the age limit, and say so', () => {
+    const onDrop = vi.fn();
+    outbox = new Outbox(path.join(dir, 'outbox'), onDrop);
     outbox.enqueue(record());
+    outbox.enqueue(record());
+    expect(onDrop).not.toHaveBeenCalled();
     outbox.prune(Date.now() + OUTBOX_LIMITS.maxAgeMs + 1_000);
 
     expect(outbox.count()).toBe(0);
+    expect(onDrop).toHaveBeenCalledWith({ expired: 2, overLimit: 0 });
   });
 
-  it('should drop the oldest records past the count limit', () => {
+  it('should drop the oldest records past the count limit, and say so', () => {
+    const onDrop = vi.fn();
+    outbox = new Outbox(path.join(dir, 'outbox'), onDrop);
     for (let i = 0; i < OUTBOX_LIMITS.maxRecords + 3; i++) outbox.enqueue(record());
 
     expect(outbox.count()).toBe(OUTBOX_LIMITS.maxRecords);
+    expect(onDrop).toHaveBeenCalledTimes(3);
+    expect(onDrop).toHaveBeenLastCalledWith({ expired: 0, overLimit: 1 });
   });
 
   it('should discard an unreadable file instead of blocking the queue', () => {

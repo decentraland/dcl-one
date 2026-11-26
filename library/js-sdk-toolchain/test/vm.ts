@@ -1,4 +1,5 @@
-import { QuickJSHandle, QuickJSContext, getQuickJS } from '@dcl/quickjs-emscripten'
+import type { QuickJSHandle, QuickJSContext } from '@dcl/quickjs-emscripten'
+import { getQuickJS } from '@dcl/quickjs-emscripten'
 
 export type ProvideOptions = {
   log(...args: any[]): void

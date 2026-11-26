@@ -193,6 +193,11 @@ pub(super) struct Prepared {
 }
 
 impl Prepared {
+    /// The credential's `streaming_state_version` this intent is conditional on.
+    pub(super) fn version(&self) -> i64 {
+        self.version
+    }
+
     /// Deactivates the credential and records its cleanup; false when it
     /// changed since `prepare` (or is gone).
     pub(super) async fn record<'e, E: sqlx::PgExecutor<'e>>(
@@ -250,9 +255,7 @@ pub(super) async fn prepare(
             };
             let capture = async {
                 // Keep the original context even if binding recovery fails or times out.
-                context = RemovedPlaces::new(state.pool.clone())
-                    .place(&place_id)
-                    .await?;
+                context = key_context(state, &place_id, room.as_deref()).await?;
                 if binding_pending {
                     admin_place_key = notification_admin_key(&state.pool, id, room.as_deref()).await?;
                     binding_unresolvable = admin_place_key.is_none();
@@ -330,6 +333,76 @@ pub(super) async fn prepare(
         recipients,
         recipients_resolved,
     }))
+}
+
+/// The notice context of a key under `place_id` streaming into `room`. A
+/// world scene room's key is stored under its scene's place, which is no
+/// catalogue row: its world tells the owner and the location.
+async fn key_context(
+    state: &CommsState,
+    place_id: &str,
+    room: Option<&str>,
+) -> Result<Option<PlaceContext>, ApiError> {
+    let feed = RemovedPlaces::new(state.pool.clone());
+    match room.and_then(crate::rooms::decode_world_scene_room) {
+        Some((world, _)) => {
+            let room = room.unwrap_or_default();
+            Ok(Some(
+                world_key_context(state, &feed, place_id, &world, room).await?,
+            ))
+        }
+        None => Ok(feed.place(place_id).await?),
+    }
+}
+
+/// The notice context of a key streaming into a scene room of `world`: the
+/// world's catalogue place, else the world alone, under the key's place.
+async fn world_key_context(
+    state: &CommsState,
+    feed: &RemovedPlaces,
+    place_id: &str,
+    world: &crate::world_identity::WorldName,
+    room: &str,
+) -> Result<PlaceContext, ApiError> {
+    let catalogued = feed.world(world.key()).await?;
+    let mut context = PlaceContext {
+        place_id: place_id.to_owned(),
+        ..catalogued.unwrap_or_else(|| PlaceContext {
+            place_id: String::new(),
+            owner_address: None,
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            base_position: String::new(),
+            positions: serde_json::json!([]),
+        })
+    };
+    // The scene's own footprint, so the holders of its parcels are told; the
+    // room names the scene, not its parcels, so the resolver reads them. A
+    // resolver that cannot be read fails the preparation, and the job tries
+    // the key again later (fail closed: never a notice with fewer holders).
+    // A room whose scene is gone keeps the catalogue row's footprint, or none
+    // (`positions = []`) without a catalogue row: parcel grantees are then
+    // not told.
+    let request = crate::rooms::RoomRequest::NamedWorldScene { room };
+    match state.scenes.resolve(request).await {
+        Ok(resolved) => {
+            if let Some(deployment) = resolved.deployment {
+                context.base_position = deployment.base.canonical();
+                context.positions = serde_json::json!(
+                    deployment
+                        .parcels
+                        .iter()
+                        .map(crate::world_identity::Parcel::canonical)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        Err(crate::rooms::ResolveError::Db(error)) => {
+            return Err(super::scene_identity_unavailable(&error));
+        }
+        Err(_) => {}
+    }
+    Ok(context)
 }
 
 /// Everyone a key notice reaches (`notifications::recipients`), sorted. The
@@ -588,7 +661,7 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
 
 /// The Cast publishers the cleaned-up credential admitted leave its room
 /// (`cast::evict_revoked_publishers`); a credential that replaced it in the
-/// same place and room keeps its own publishers.
+/// same room keeps its own publishers.
 async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
     let room: Option<String> =
         sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
@@ -599,16 +672,18 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     let Some(room) = room.filter(|r| !r.is_empty()) else {
         return Ok(());
     };
-    let successor: Option<Uuid> = sqlx::query_scalar(
+    // The room's own successor, under whatever place: a world scene's key
+    // can replace one stored under the world's catalogue place.
+    let successor: Option<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM social.scene_stream_access \
-         WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(&row.place_id)
+         WHERE active AND id <> $1 AND room_id = $2 ORDER BY {} LIMIT 1",
+        super::ROOM_KEY_ORDER
+    )))
     .bind(row.access_id)
     .bind(&room)
     .fetch_optional(&state.pool)
     .await?;
-    super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
+    super::cast::evict_revoked_publishers(state, &room, successor).await
 }
 
 /// How long a reset intent waits for its replacement credential before it
@@ -647,6 +722,29 @@ async fn delete_ingress(state: &CommsState, row: &Cleanup, token: Uuid) -> Resul
     Ok(())
 }
 
+/// Whether credential `access_id`, stored under `place_id`, has an active
+/// replacement: in a world scene room, the key streaming into that room
+/// (also a world scene's key replacing one stored under the world's
+/// catalogue place); else one under the same place. Another scene's key
+/// under a colliding place id is no replacement.
+pub(super) async fn replaced(
+    pool: &PgPool,
+    place_id: &str,
+    access_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "WITH o AS (SELECT room_id FROM social.scene_stream_access WHERE id = $2 AND starts_with(room_id, $3)) \
+         SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND n.id <> $2 AND CASE \
+             WHEN EXISTS (SELECT 1 FROM o) THEN n.room_id = (SELECT room_id FROM o) \
+             ELSE n.place_id = $1 END)",
+    )
+    .bind(place_id)
+    .bind(access_id)
+    .bind(crate::rooms::SCENE_ROOM_PREFIX)
+    .fetch_one(pool)
+    .await
+}
+
 async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
@@ -654,12 +752,7 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
     let kind = notification_kind(kind_str)?;
     if kind == StreamingNotificationKind::KeyExpired || kind == StreamingNotificationKind::KeyReset
     {
-        let replacement: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id=$1 AND active)",
-        )
-        .bind(&row.place_id)
-        .fetch_one(&state.pool)
-        .await?;
+        let replacement = replaced(&state.pool, &row.place_id, row.access_id).await?;
         if kind == StreamingNotificationKind::KeyExpired && replacement && !row.notification_started
         {
             return Ok(());
@@ -701,8 +794,23 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             serde_json::from_value::<PlaceContext>(context.clone())
                 .map_err(|_| ApiError::internal("stream context snapshot invalid"))?
         } else {
-            RemovedPlaces::new(state.pool.clone())
-                .place(&row.place_id)
+            let saved_room = row
+                .source_context
+                .as_ref()
+                .and_then(|value| value.get("binding_room"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let room = match saved_room {
+                Some(room) => Some(room),
+                None => {
+                    sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id=$1")
+                        .bind(row.access_id)
+                        .fetch_optional(&state.pool)
+                        .await?
+                        .flatten()
+                }
+            };
+            key_context(state, &row.place_id, room.as_deref())
                 .await?
                 .ok_or_else(|| ApiError::http(503, "stream notification context unavailable"))?
         };
@@ -981,6 +1089,69 @@ async fn clear_stale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world scene key's notice names the world under the key's place,
+    /// with the footprint of the scene of the key's room; a resolver that
+    /// cannot be read fails it (503), never a notice with fewer holders.
+    #[tokio::test]
+    async fn a_world_key_notice_has_its_scene_footprint_and_fails_closed() {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom};
+        use crate::world_identity::{Parcel, RealmId, SceneId, WorldName};
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("ctx{}.dcl.eth", &tag[..10])).unwrap();
+        let scene = SceneId::parse("SceneA").unwrap();
+        let room = crate::rooms::worlds_service_scene_room(&world, &scene);
+        let base = Parcel::parse("3,4").unwrap();
+        let resolved = ResolvedRoom {
+            room: room.clone(),
+            scene_id: Some(scene.clone()),
+            deployment: Some(ActiveDeployment {
+                scene_id: scene,
+                title: None,
+                parcels: [base, Parcel::parse("3,5").unwrap()].into_iter().collect(),
+                base,
+                namespace: None,
+                local: true,
+            }),
+            realm: RealmId::World(world.clone()),
+        };
+        let state = |room: Result<ResolvedRoom, ResolveError>| {
+            CommsState::new(
+                pool.clone(),
+                crate::http::Outbound::for_tests(),
+                crate::gatekeeper::Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy::default()),
+                Arc::new(StubScenes {
+                    room,
+                    scene: Ok(None),
+                }),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(StubDirectory::default()),
+            )
+        };
+        let feed = RemovedPlaces::new(pool.clone());
+        let context = world_key_context(&state(Ok(resolved)), &feed, "scene-place", &world, &room)
+            .await
+            .unwrap();
+        assert_eq!(context.place_id, "scene-place");
+        assert!(context.world);
+        assert_eq!(context.world_name.as_deref(), Some(world.key()));
+        assert_eq!(context.base_position, "3,4");
+        let mut positions: Vec<String> = serde_json::from_value(context.positions).unwrap();
+        positions.sort();
+        assert_eq!(positions, ["3,4", "3,5"]);
+        let unreadable = Err(ResolveError::Db(sqlx::Error::PoolTimedOut));
+        let error = world_key_context(&state(unreadable), &feed, "scene-place", &world, &room)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, 503);
+    }
 
     #[tokio::test]
     async fn a_scalar_era_notice_reaches_the_stored_owner_and_every_admin_and_operator_once() {
@@ -1843,8 +2014,11 @@ mod tests {
             &crate::world_identity::SceneId::parse("fanout-scene").unwrap(),
         );
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,room_id,streaming_url,streaming_key,generated_by,admin_place_key) VALUES ($1,$2,$3,'rtmp://example.invalid/live','test','test',CASE WHEN $4 THEN (SELECT identity::text FROM explore.world_scene_place WHERE world_name=$5 AND entity_id='fanout-scene') END)")
-            .bind(id).bind(&place).bind(&room).bind(saved_key).bind(&name).execute(&state.pool).await.unwrap();
+        // A legacy key under the catalogue place: stored, then given its scene.
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,room_id,streaming_url,streaming_key,generated_by) VALUES ($1,$2,$3,'rtmp://example.invalid/live','test','test')")
+            .bind(id).bind(&place).bind(&room).execute(&state.pool).await.unwrap();
+        sqlx::query("UPDATE social.scene_stream_access SET admin_place_key=CASE WHEN $2 THEN (SELECT identity::text FROM explore.world_scene_place WHERE world_name=$3 AND entity_id='fanout-scene') END WHERE id=$1")
+            .bind(id).bind(saved_key).bind(&name).execute(&state.pool).await.unwrap();
         let mut locked = state.pool.begin().await.unwrap();
         sqlx::query("LOCK explore.place IN ACCESS EXCLUSIVE MODE")
             .execute(&mut *locked)

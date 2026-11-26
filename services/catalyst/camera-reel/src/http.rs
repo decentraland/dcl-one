@@ -57,6 +57,9 @@ pub enum ApiError {
     Forbidden(String),
     #[error("max limit reached")]
     MaxLimitReached(String),
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    #[error("{0}")]
+    TooManyRequests(String),
     #[error("{0}")]
     NotFound(String),
     #[error("bad gateway: {0}")]
@@ -77,6 +80,12 @@ impl IntoResponse for ApiError {
             ApiError::MaxLimitReached(m) => {
                 (StatusCode::FORBIDDEN, Json(ForbiddenError::new(m))).into_response()
             }
+            ApiError::TooManyRequests(m) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                Json(ResponseError::new(m)),
+            )
+                .into_response(),
             ApiError::BadRequest(m) => {
                 (StatusCode::BAD_REQUEST, Json(ResponseError::new(m))).into_response()
             }
@@ -126,6 +135,15 @@ mod tests {
             v,
             json!({ "reason": "maxLimitReached", "message": "gallery is full" })
         );
+    }
+
+    /// A contract-wallet check the client source's budget refused is a 429
+    /// with `Retry-After`, never the signed-fetch 401.
+    #[tokio::test]
+    async fn a_rate_limited_signature_check_is_a_429_with_retry_after() {
+        let resp = ApiError::TooManyRequests("slow down".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers()[axum::http::header::RETRY_AFTER], "1");
     }
 }
 

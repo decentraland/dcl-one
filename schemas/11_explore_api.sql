@@ -74,14 +74,17 @@ CREATE TABLE explore_api.feature_flags_local (
 -- workload") and gzip-compressed as one row so a restart renders map.png
 -- before the first pass; the row is the grid's revision: last_updated_at
 -- is the /v2/tiles/info stamp, moved only when the body changes; etag is the
--- hex SHA-256 of the stored body; fetched_at is the build time.
+-- hex SHA-256 of the stored body; fetched_at is the build time; checked_at
+-- is when a build last found this revision current (/v2/tiles/info
+-- checkedAt, the map's age label).
 CREATE TABLE explore_api.map_grid (
     id smallint PRIMARY KEY CHECK (id = 1),
     last_updated_at bigint NOT NULL,
     etag text,
     tile_count integer NOT NULL,
     body_gzip bytea NOT NULL,
-    fetched_at timestamp without time zone NOT NULL
+    fetched_at timestamp without time zone NOT NULL,
+    checked_at timestamp without time zone
 );
 
 -- /auth-api, the sign-in relay (DATABASE.md "Auth API relay state workload"):

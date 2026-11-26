@@ -71,7 +71,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -216,10 +216,11 @@ pub async fn admit_before_files(
         if let Ok(false) = own_live {
             return Some(
                 Refusal::throttled(
+                    None,
                     "The daily deployment quota for this client is exhausted. Only uploads in progress can continue.",
                     retry_after,
                 )
-                .into_response(),
+                .answer(),
             );
         }
     }
@@ -241,13 +242,14 @@ pub async fn admit_before_files(
     let retry_after = (ends_in_ms / 1000.0).ceil().max(1.0) as u64;
     Some(
         Refusal::throttled(
+            Some("bytes_per_minute"),
             format!(
                 "Partial upload byte rate exceeded for this account: {window_bytes} bytes in the current one-minute window, max {}. Retry in {retry_after} s.",
                 limits.bytes_per_minute
             ),
             retry_after,
         )
-        .into_response(),
+        .answer(),
     )
 }
 
@@ -279,9 +281,11 @@ pub struct Admission {
 #[derive(Debug)]
 enum Refusal {
     LockBusy(String),
+    /// `throttle` names the quota or limit of a 429.
     Invalid {
         errors: Vec<String>,
         retry_after: Option<u64>,
+        throttle: Option<&'static str>,
     },
     Unavailable {
         errors: Vec<String>,
@@ -295,14 +299,40 @@ impl Refusal {
         Refusal::Invalid {
             errors: vec![message.into()],
             retry_after: None,
+            throttle: None,
         }
     }
 
-    fn throttled(message: impl Into<String>, retry_after: u64) -> Self {
+    /// A 429; `throttle` is the quota or limit, `None` for the daily deploy quota.
+    fn throttled(
+        throttle: Option<&'static str>,
+        message: impl Into<String>,
+        retry_after: u64,
+    ) -> Self {
         Refusal::Invalid {
             errors: vec![message.into()],
             retry_after: Some(retry_after.max(1)),
+            throttle,
         }
+    }
+
+    /// Counts the refusal by its `dcl_partial_deployments_staging_total` kind.
+    fn record(&self) {
+        let (kind, throttle) = match self {
+            Refusal::LockBusy(_) => ("busy", None),
+            Refusal::Invalid {
+                retry_after: None, ..
+            } => ("validation_error", None),
+            Refusal::Invalid { throttle, .. } => ("throttled", *throttle),
+            Refusal::Unavailable { .. } | Refusal::Internal(_) => ("error", None),
+        };
+        crate::series::partial_answered(kind, throttle);
+    }
+
+    /// The answer, counted.
+    fn answer(self) -> Response {
+        self.record();
+        self.into_response()
     }
 
     fn expired() -> Self {
@@ -320,6 +350,7 @@ impl Refusal {
             DeployFailure::Rejected(_, errors) => Refusal::Invalid {
                 errors,
                 retry_after: None,
+                throttle: None,
             },
             DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
                 Refusal::Unavailable {
@@ -350,10 +381,12 @@ impl Refusal {
             Refusal::Invalid {
                 errors,
                 retry_after: None,
+                ..
             } => (StatusCode::BAD_REQUEST, errors, None),
             Refusal::Invalid {
                 errors,
                 retry_after: Some(secs),
+                ..
             } => (StatusCode::TOO_MANY_REQUESTS, errors, Some(secs)),
             Refusal::Unavailable {
                 errors,
@@ -379,10 +412,11 @@ impl From<sqlx::Error> for Refusal {
     }
 }
 
-/// A batch's success: published (or already published) at a timestamp, or
+/// A batch's success: published by this batch, already published, or
 /// stored with content still missing.
 enum Outcome {
     Published(i64),
+    Replayed(i64),
     Missing(Vec<String>),
 }
 
@@ -438,7 +472,7 @@ fn check_pointer_quotas(
     max_per_pointer: i64,
     now: i64,
     ttl_ms: i64,
-) -> Option<(String, u64)> {
+) -> Option<(&'static str, String, u64)> {
     let max_per_deployer = (max_per_pointer - 1).max(1);
     let retry_after = |oldest: &[i64]| {
         let latest = oldest.iter().copied().max().unwrap_or(now);
@@ -463,6 +497,7 @@ fn check_pointer_quotas(
     if !full.is_empty() {
         let oldest: Vec<i64> = full.iter().map(|u| u.oldest).collect();
         return Some((
+            "uploads_per_pointer",
             format!(
                 "Too many partial uploads in progress for parcels {} (max {max_per_pointer} per parcel). Complete an upload or wait for one to expire.",
                 describe(&full)
@@ -480,6 +515,7 @@ fn check_pointer_quotas(
             .map(|u| u.deployer_oldest.unwrap_or(now - ttl_ms))
             .collect();
         return Some((
+            "uploads_per_pointer_account",
             format!(
                 "Too many partial uploads in progress for this account on parcels {} (max {max_per_deployer} per parcel). Complete an upload or wait for one to expire.",
                 describe(&own_full)
@@ -610,8 +646,14 @@ pub async fn handle(
     admission: &mut Admission,
 ) -> Response {
     let entity_id = batch.entity_id.clone();
-    match stage(deployer, limits, batch, quota_exhausted, admission).await {
-        Ok(Outcome::Published(creation_timestamp)) => {
+    let staged = stage(deployer, limits, batch, quota_exhausted, admission).await;
+    match &staged {
+        Ok(Outcome::Published(_)) => crate::series::partial_answered("finalized", None),
+        Ok(Outcome::Replayed(_)) => crate::series::partial_answered("replayed", None),
+        _ => {}
+    }
+    match staged {
+        Ok(Outcome::Published(creation_timestamp) | Outcome::Replayed(creation_timestamp)) => {
             tracing::info!(entity_id = %entity_id, "POST /entities - Partial deployment published");
             (
                 StatusCode::OK,
@@ -620,12 +662,13 @@ pub async fn handle(
                 .into_response()
         }
         Ok(Outcome::Missing(missing)) => {
+            crate::series::partial_answered("accepted", None);
             tracing::info!(entity_id = %entity_id, missing = missing.len(), "POST /entities - Partial deployment staged");
             (StatusCode::ACCEPTED, Json(json!({ "missing": missing }))).into_response()
         }
         Err(refusal) => {
             tracing::warn!(entity_id = %entity_id, ?refusal, "POST /entities - Partial deployment refused");
-            refusal.into_response()
+            refusal.answer()
         }
     }
 }
@@ -665,6 +708,7 @@ async fn stage(
             && contract_wallet
         {
             return Err(Refusal::throttled(
+                None,
                 "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota.",
                 retry_after,
             ));
@@ -674,7 +718,7 @@ async fn stage(
             .await
             .map_err(Refusal::from_deploy)?;
         admission.counted_replay = contract_wallet;
-        return Ok(Outcome::Published(stored.local_ms));
+        return Ok(Outcome::Replayed(stored.local_ms));
     }
     let deployer_address = auth_chain
         .first()
@@ -687,6 +731,7 @@ async fn stage(
         });
         if !own_live {
             return Err(Refusal::throttled(
+                None,
                 "The daily deployment quota for this client is exhausted. Only uploads in progress can continue.",
                 retry_after,
             ));
@@ -735,11 +780,14 @@ async fn stage(
         uploaded_entity,
     )
     .await?;
-    let Some(lock) = EntityLock::acquire(pool, entity_id).await? else {
+    let lock_started = Instant::now();
+    let lock = EntityLock::acquire(pool, entity_id).await;
+    crate::series::partial_stage("lock_wait", lock_started);
+    let Some(lock) = lock? else {
         // A concurrent batch may have held it while publishing the entity.
         // This batch's chain was checked against the id above.
         if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-            return Ok(Outcome::Published(ts));
+            return Ok(Outcome::Replayed(ts));
         }
         return Err(Refusal::LockBusy(entity_id.to_string()));
     };
@@ -781,6 +829,7 @@ async fn prepare(
     // The field names are load-bearing here: every file must hash to its key.
     // A spooled part was hashed as it was written; only bytes are hashed here.
     let named: Vec<(String, Upload)> = batch.files.clone();
+    let hash_started = Instant::now();
     let hashed = bounded_upload_hash(Arc::clone(&UPLOAD_HASH_JOBS), move || {
         named
             .into_iter()
@@ -797,8 +846,9 @@ async fn prepare(
             })
             .collect::<Vec<_>>()
     })
-    .await
-    .map_err(|e| Refusal::Unavailable {
+    .await;
+    crate::series::partial_stage("hash", hash_started);
+    let hashed = hashed.map_err(|e| Refusal::Unavailable {
         errors: vec![e],
         retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
     })?;
@@ -860,15 +910,17 @@ async fn prepare(
     // The staging checks read which files came and the entity file.
     let mut staging_files = files.clone();
     staging_files.insert(entity_id.to_string(), entity_bytes.clone().into());
-    deployer
+    let validate_started = Instant::now();
+    let validated = deployer
         .validate_staging(&entity, &staging_files, auth_chain, !resume_by_creator)
-        .await
-        .map_err(|failure| match failure {
-            DeployFailure::Rejected(_, errors) if errors.is_empty() => {
-                Refusal::invalid("The staging validation was not successful.")
-            }
-            other => Refusal::from_deploy(other),
-        })?;
+        .await;
+    crate::series::partial_stage("validate", validate_started);
+    validated.map_err(|failure| match failure {
+        DeployFailure::Rejected(_, errors) if errors.is_empty() => {
+            Refusal::invalid("The staging validation was not successful.")
+        }
+        other => Refusal::from_deploy(other),
+    })?;
 
     let mut seen_hashes = HashSet::new();
     let content_hashes: Vec<String> = entity
@@ -890,6 +942,9 @@ async fn prepare(
     if let Some(retry_after) =
         deployer.rate_limit_retry_after(entity.entity_type.as_str(), &entity.pointers)
     {
+        if let Some(reason) = deployer.rate_limit(entity.entity_type.as_str(), &entity.pointers) {
+            crate::series::rate_limited(entity.entity_type.as_str(), reason);
+        }
         // The deployment holding the limit may have overtaken this upload, which never clears.
         if seen.is_some() && deployer.has_newer_deployment(&entity).await? {
             return Ok(Prepared {
@@ -904,6 +959,7 @@ async fn prepare(
             });
         }
         return Err(Refusal::throttled(
+            Some("entity_rate_limit"),
             format!(
                 "Entity rate limited (entityId={} pointers={}).",
                 entity.id,
@@ -1051,7 +1107,7 @@ async fn commit(
     // Another batch may have published the entity meanwhile. `stage`
     // checked this batch's chain against the id before preparing it.
     if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-        return Ok(Outcome::Published(ts));
+        return Ok(Outcome::Replayed(ts));
     }
     if overtaken {
         release_upload(pool, entity_id).await;
@@ -1070,15 +1126,18 @@ async fn commit(
     // batches rely on the receipts.
     if !current.as_ref().is_some_and(|p| p.initialized) {
         let mut sizes: Vec<(String, i64)> = Vec::new();
+        crate::series::partial_metadata_checks(content_hashes.len());
+        let inventory_started = Instant::now();
         for hash in &content_hashes {
-            let info = storage
-                .file_info(hash)
-                .await
-                .map_err(|e| store_unreadable(entity_id, &e))?;
+            let info = storage.file_info(hash).await.map_err(|e| {
+                crate::series::partial_stage("inventory", inventory_started);
+                store_unreadable(entity_id, &e)
+            })?;
             if let Some(info) = info {
                 sizes.push((hash.clone(), info.size as i64));
             }
         }
+        crate::series::partial_stage("inventory", inventory_started);
         // Only published content is free; content just pending uploads hold
         // is charged as if received.
         let keys: Vec<String> = sizes.iter().map(|(h, _)| h.clone()).collect();
@@ -1135,6 +1194,7 @@ async fn commit(
         ));
     }
 
+    let accounting_started = Instant::now();
     let created_at = create_upload(
         pool,
         limits,
@@ -1144,7 +1204,8 @@ async fn commit(
         seen.is_some() || current.is_some(),
         batch.requested_at_ms,
     )
-    .await?;
+    .await
+    .inspect_err(|_| crate::series::partial_stage("accounting", accounting_started))?;
     // A resume joins its admitted upload even when over budget; a new upload
     // is admitted once reserved.
     if current.is_some() {
@@ -1164,6 +1225,7 @@ async fn commit(
     )
     .await
     {
+        crate::series::partial_stage("accounting", accounting_started);
         // A first batch that is not admitted must not keep its upload holding a slot.
         if current.is_none() {
             let _ = sqlx::query(
@@ -1176,30 +1238,36 @@ async fn commit(
         }
         return Err(refusal);
     }
+    crate::series::partial_stage("accounting", accounting_started);
     if current.is_none() {
         admission.admitted = true;
         admission.created = true;
+        crate::series::partial_started();
     }
 
     if now_ms() > expires_at {
         return Err(Refusal::expired());
     }
-    store_files(storage, to_store.clone()).await?;
+    let store_started = Instant::now();
+    let stored = store_files(storage, to_store.clone()).await;
+    crate::series::partial_stage("store", store_started);
+    stored?;
     // A write that outlived the upload stays unrecorded; cleanup reclaims it.
+    // Timed however it ends, as upstream's `finally`.
+    let progress_timer = crate::series::StageTimer::start("progress");
     let mut tx = pool.begin().await?;
-    let live = sqlx::query(
+    let batches: Option<i32> = sqlx::query_scalar(
         "UPDATE content.pending_deployments SET initialized = true, batches = batches + 1
-         WHERE entity_id = $1 AND created_at >= to_timestamp($2 / 1000.0)",
+         WHERE entity_id = $1 AND created_at >= to_timestamp($2 / 1000.0)
+         RETURNING batches",
     )
     .bind(entity_id)
     .bind((now_ms() - limits.ttl_ms) as f64)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected()
-        > 0;
-    if !live {
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(batches) = batches else {
         return Err(Refusal::expired());
-    }
+    };
     let stored_keys: Vec<String> = to_store.iter().map(|(h, _)| h.clone()).collect();
     sqlx::query(
         "UPDATE content.pending_deployment_files SET stored = true
@@ -1212,20 +1280,23 @@ async fn commit(
     tx.commit().await?;
 
     let progress = stored_files(pool, entity_id).await?;
+    drop(progress_timer);
     let missing: Vec<String> = content_hashes
         .iter()
         .filter(|h| !progress.contains_key(*h))
         .cloned()
         .collect();
+    crate::series::partial_batch(missing.is_empty());
     if !missing.is_empty() {
         return incomplete_until(missing, expires_at);
     }
 
     // One full check at completion, then publication.
-    let present = storage
-        .exist_multiple(&content_hashes)
-        .await
-        .map_err(|e| store_unreadable(entity_id, &e))?;
+    crate::series::partial_metadata_checks(content_hashes.len());
+    let verify_started = Instant::now();
+    let present = storage.exist_multiple(&content_hashes).await;
+    crate::series::partial_stage("finalize_verify", verify_started);
+    let present = present.map_err(|e| store_unreadable(entity_id, &e))?;
     let now_missing: Vec<String> = content_hashes
         .iter()
         .filter(|h| !present.get(*h).copied().unwrap_or(false))
@@ -1235,16 +1306,19 @@ async fn commit(
         mark_missing(pool, entity_id, &now_missing).await?;
         return incomplete_until(now_missing, expires_at);
     }
-    finalize(
+    let deploy_started = Instant::now();
+    let published = finalize(
         deployer,
         &entity,
         entity_bytes,
         batch.auth_chain.clone(),
         &content_hashes,
-        created_at,
-        expires_at,
+        (created_at, expires_at),
+        batches,
     )
-    .await
+    .await;
+    crate::series::partial_stage("finalize_deploy", deploy_started);
+    published
 }
 
 /// A resumable answer tells the client to keep uploading, so only while the
@@ -1336,6 +1410,7 @@ async fn create_upload(
         return Err(quota_exceeded(
             &mut tx,
             limits,
+            "uploads_per_account",
             format!(
                 "Too many partial uploads in progress for this account (max {}). Complete an upload or wait for expired uploads to be cleaned up.",
                 limits.max_per_deployer
@@ -1370,10 +1445,10 @@ async fn create_upload(
     .bind((now_ms() - limits.ttl_ms) as f64)
     .fetch_all(&mut *tx)
     .await?;
-    if let Some((message, retry_after)) =
+    if let Some((reason, message, retry_after)) =
         check_pointer_quotas(&usage, limits.max_per_pointer, now_ms(), limits.ttl_ms)
     {
-        return Err(Refusal::throttled(message, retry_after));
+        return Err(Refusal::throttled(Some(reason), message, retry_after));
     }
     // A delayed first batch may arrive past its deadline.
     if now_ms() > requested_at + limits.ttl_ms {
@@ -1401,6 +1476,7 @@ async fn create_upload(
 async fn quota_exceeded(
     tx: &mut sqlx::PgConnection,
     limits: &Limits,
+    reason: &'static str,
     message: String,
     deployer_address: Option<&str>,
 ) -> sqlx::Result<Refusal> {
@@ -1413,6 +1489,7 @@ async fn quota_exceeded(
     .await?;
     let last = last_cleanup_at(&mut *tx).await?;
     Ok(Refusal::throttled(
+        Some(reason),
         message,
         seconds_until_cleanup_frees_quota(
             now_ms(),
@@ -1480,6 +1557,7 @@ async fn reserve(
     if window_bytes > limits.bytes_per_minute {
         let retry_after = (ends_in_ms / 1000.0).ceil().max(1.0) as u64;
         return Err(Refusal::throttled(
+            Some("bytes_per_minute"),
             format!(
                 "Partial upload byte rate exceeded for this account: {window_bytes} bytes in the current one-minute window, max {}. Retry in {retry_after} s.",
                 limits.bytes_per_minute
@@ -1562,6 +1640,7 @@ async fn reserve(
         return Err(quota_exceeded(
             &mut tx,
             limits,
+            "bytes_per_account",
             format!(
                 "Partial upload storage budget exceeded for this account: {} bytes staged with this batch, max {}. Complete uploads or wait for cleanup.",
                 totals.account, limits.account_bytes
@@ -1574,12 +1653,14 @@ async fn reserve(
         return Err(quota_exceeded(
             &mut tx,
             limits,
+            "bytes_per_server",
             "Partial upload storage on this server is full. Retry later.".to_string(),
             None,
         )
         .await?);
     }
     tx.commit().await?;
+    crate::series::partial_reserved(totals.total);
     Ok(())
 }
 
@@ -1593,8 +1674,8 @@ async fn finalize(
     entity_bytes: Bytes,
     auth_chain: Value,
     content_hashes: &[String],
-    created_at: i64,
-    expires_at: i64,
+    (created_at, expires_at): (i64, i64),
+    batches: i32,
 ) -> Result<Outcome, Refusal> {
     if now_ms() > expires_at {
         return Err(Refusal::expired());
@@ -1622,7 +1703,7 @@ async fn finalize(
                 tokio::time::sleep(FINALIZE_POINTER_CONFLICT_DELAY).await;
                 if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
                     delete_pending(pool, entity_id).await;
-                    return Ok(Outcome::Published(ts));
+                    return Ok(Outcome::Replayed(ts));
                 }
             }
             _ => break result,
@@ -1630,6 +1711,7 @@ async fn finalize(
     };
     let failure = match result {
         Ok(_) => {
+            crate::series::partial_completed(created_at, batches.into());
             delete_pending(pool, entity_id).await;
             let ts = deployer
                 .deployed_timestamp(entity_id)
@@ -1641,7 +1723,7 @@ async fn finalize(
     };
     if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
         delete_pending(pool, entity_id).await;
-        return Ok(Outcome::Published(ts));
+        return Ok(Outcome::Replayed(ts));
     }
     // Content went missing while the pipeline ran: the client re-uploads it.
     if let Ok(present) = deployer.storage().exist_multiple(content_hashes).await {
@@ -1668,12 +1750,14 @@ async fn finalize(
             Err(Refusal::Invalid {
                 errors,
                 retry_after: Some(retry_after),
+                throttle: Some("entity_rate_limit"),
             })
         }
         DeployFailure::Rejected(RejectionKind::PointerContention, errors) => {
             Err(Refusal::Invalid {
                 errors,
                 retry_after: Some(POINTER_CONFLICT_RETRY_AFTER_SECS),
+                throttle: Some("pointer_conflict"),
             })
         }
         // Only an overtaken upload is released: other refusals may clear.
@@ -1682,6 +1766,7 @@ async fn finalize(
             Err(Refusal::Invalid {
                 errors,
                 retry_after: None,
+                throttle: None,
             })
         }
         other => Err(Refusal::from_deploy(other)),
@@ -1872,7 +1957,32 @@ pub async fn cleanup_expired(
     storage: &Storage,
     limits: &Limits,
 ) -> anyhow::Result<usize> {
-    let result = reclaim_expired(pool, storage, limits).await;
+    let mut run = Reclaim::default();
+    let reclaimed = reclaim_expired(pool, storage, limits, &mut run).await;
+    let recorded = record_run(pool).await;
+    record_totals(pool, limits).await;
+    let outcome = match (&reclaimed, &recorded) {
+        (Ok(()), Ok(())) if run.failed == 0 && run.deferred => "deferred",
+        (Ok(()), Ok(())) if run.failed == 0 => "success",
+        _ => "error",
+    };
+    crate::series::partial_cleanup(outcome, run.removed);
+    recorded?;
+    reclaimed?;
+    run_result(run.removed, run.failed)
+}
+
+/// What one cleanup run did so far.
+#[derive(Default)]
+struct Reclaim {
+    removed: usize,
+    failed: usize,
+    /// The store lock stayed busy: the rest waits for the next run.
+    deferred: bool,
+}
+
+/// The run's end, for every replica, and the elapsed rate windows dropped.
+async fn record_run(pool: &PgPool) -> anyhow::Result<()> {
     sqlx::query(
         "INSERT INTO content.system_properties (key, value) VALUES ($1, $2)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -1887,17 +1997,36 @@ pub async fn cleanup_expired(
     )
     .execute(pool)
     .await?;
-    result
+    Ok(())
+}
+
+/// The staging totals at the end of a run, as gauges; a failed read leaves them as they were.
+async fn record_totals(pool: &PgPool, limits: &Limits) {
+    let totals: sqlx::Result<(i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT COALESCE(sum(reserved_bytes), 0)::bigint,
+           COALESCE(sum(reserved_bytes) FILTER (WHERE created_at < to_timestamp($1 / 1000.0)), 0)::bigint,
+           count(*) FILTER (WHERE created_at >= to_timestamp($1 / 1000.0)),
+           count(*) FILTER (WHERE created_at < to_timestamp($1 / 1000.0))
+         FROM content.pending_deployments",
+    )
+    .bind((now_ms() - limits.ttl_ms) as f64)
+    .fetch_one(pool)
+    .await;
+    match totals {
+        Ok((reserved, expired_bytes, live, expired)) => {
+            crate::series::partial_totals(reserved, expired_bytes, live, expired);
+        }
+        Err(e) => tracing::warn!(error = %e, "partial upload staging totals could not be read"),
+    }
 }
 
 async fn reclaim_expired(
     pool: &PgPool,
     storage: &Storage,
     limits: &Limits,
-) -> anyhow::Result<usize> {
+    run: &mut Reclaim,
+) -> anyhow::Result<()> {
     let cutoff = now_ms() - limits.ttl_ms;
-    let mut removed = 0;
-    let mut failed = 0;
     let mut after: Option<(f64, String)> = None;
     loop {
         let page: Vec<(f64, String)> = sqlx::query_as(
@@ -1933,8 +2062,11 @@ async fn reclaim_expired(
             lock.release().await;
             match reclaimed {
                 Ok(done) => {
-                    removed += done.removed;
-                    failed += done.failed;
+                    run.removed += done.removed;
+                    run.failed += done.failed;
+                    if done.failed > 0 {
+                        crate::series::partial_cleanup_failures("storage", done.failed);
+                    }
                 }
                 // Deploys kept the store lock busy: waiting again would queue them behind
                 // another exclusive request, so the run stops and the next one retries.
@@ -1943,13 +2075,15 @@ async fn reclaim_expired(
                         uploads = held,
                         "expired partial upload cleanup deferred: the store lock is busy"
                     );
-                    return run_result(removed, failed);
+                    run.deferred = true;
+                    return Ok(());
                 }
                 // A failed reference read (an unreadable content list included) fails
                 // every batch alike: the run stops with it and the next one retries. Until
                 // it clears no expired upload is reclaimed and their quotas stay taken, so
                 // it is logged as an error.
                 Err(e) => {
+                    crate::series::partial_cleanup_failures("database", held);
                     tracing::error!(entity_ids = ?ids, error = %e, "expired partial uploads cannot be reclaimed until this clears");
                     return Err(e.into());
                 }
@@ -1960,7 +2094,7 @@ async fn reclaim_expired(
         }
         after = page.last().cloned();
     }
-    run_result(removed, failed)
+    Ok(())
 }
 
 /// A run's answer: the uploads removed, or an error naming those an unlink kept.

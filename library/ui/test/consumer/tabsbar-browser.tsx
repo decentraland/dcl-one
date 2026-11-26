@@ -26,6 +26,21 @@ function App() {
     new URLSearchParams(location.search).get('active') ?? '0'
   )
   const common = { items: [...items], activeId, onSelect: setActiveId, label: 'Fixture sections' }
+  if (pageQuery === 'shop-links') {
+    return (
+      <TabsBar
+        mode="navigation"
+        page="shop"
+        layout="links"
+        label="Shop sections"
+        activeId="campaign"
+        items={[
+          { id: 'campaign', label: 'Campaign', href: '#campaign', accent: 'campaign' },
+          { id: 'activity', label: 'Activity', href: '#activity', mobileOnly: true }
+        ]}
+      />
+    )
+  }
   return (
     <main
       className={styles.canvas}

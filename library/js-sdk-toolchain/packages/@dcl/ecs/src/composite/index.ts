@@ -1,12 +1,8 @@
-import { IEngine } from '../engine'
-import { CompositeRootType, getCompositeRootComponent } from './components'
-import {
-  CompositeProvider,
-  CompositeResource,
-  EntityMappingMode,
-  InstanceCompositeOptions,
-  instanceComposite
-} from './instance'
+import type { IEngine } from '../engine'
+import type { CompositeRootType } from './components'
+import { getCompositeRootComponent } from './components'
+import type { CompositeProvider, CompositeResource, InstanceCompositeOptions } from './instance'
+import { EntityMappingMode, instanceComposite } from './instance'
 import { resolveComposite } from './path'
 import type { ComponentData, CompositeComponent, CompositeComponent_DataEntry } from './proto/gen/composite.gen'
 import { CompositeDefinition } from './proto/gen/composite.gen'

@@ -625,7 +625,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 96
+    "tokens": 102
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,
@@ -697,7 +697,7 @@
   },
   "library/ui/components/NavCreditsBalance/NavCreditsBalance.module.css": {
     "primitives": 0,
-    "tokens": 4
+    "tokens": 8
   },
   "library/ui/components/NavMenuItem/NavMenuItem.module.css": {
     "primitives": 0,
@@ -745,7 +745,7 @@
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,
-    "tokens": 12
+    "tokens": 14
   },
   "library/ui/components/Switch/Switch.module.css": {
     "primitives": 0,
@@ -757,7 +757,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 49
+    "tokens": 50
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,

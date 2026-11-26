@@ -9,6 +9,11 @@ pub const HEADER_BATCH: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    #[error("{source}")]
+    Counted {
+        requests: usize,
+        source: Box<RpcError>,
+    },
     #[error("RPC request budget exhausted at range ending {upper}")]
     Budget { upper: u64, requests: usize },
     #[error("rpc transport: {0}")]
@@ -18,6 +23,8 @@ pub enum RpcError {
     /// An answer whose result is not the shape the method returns.
     #[error("rpc returned a malformed answer: {0}")]
     Malformed(String),
+    #[error(transparent)]
+    Provider(#[from] crate::http::jsonrpc::RpcError),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -91,6 +98,7 @@ pub struct Rpc<'a> {
     sent: Option<&'a std::sync::atomic::AtomicUsize>,
     /// One read's own count, kept the same way beside `sent`.
     also: Option<&'a std::sync::atomic::AtomicUsize>,
+    strict_status: bool,
 }
 
 impl<'a> Rpc<'a> {
@@ -102,7 +110,14 @@ impl<'a> Rpc<'a> {
             url,
             sent: None,
             also: None,
+            strict_status: false,
         }
+    }
+
+    /// Preserve HTTP errors for callers that do not need range hints from their bodies.
+    pub fn with_strict_status(mut self) -> Self {
+        self.strict_status = true;
+        self
     }
 
     /// The same client, adding one to `sent` for every HTTP request it sends
@@ -146,8 +161,11 @@ impl<'a> Rpc<'a> {
     /// The whole envelope: the log readers act on the `error` message (a
     /// range hint), so the shared client hands it over unread.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        self.jsonrpc()
-            .envelope(method, params)
+        let rpc = self.jsonrpc();
+        if self.strict_status {
+            return Ok(rpc.envelope_strict_status(method, params).await?);
+        }
+        rpc.envelope(method, params)
             .await
             .map_err(|e| RpcError::Transport(format!("{method}: {e}")))
     }

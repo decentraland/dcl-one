@@ -90,7 +90,7 @@ export type WatcherRequest = {
   location: string;
   /** The display name the stream shows for this viewer. */
   displayName: string;
-  /** A world parcel; the gatekeeper accepts it, a world has one stream. */
+  /** The parcel of a world scene: a world with several scenes needs it. */
   parcel?: string;
 };
 

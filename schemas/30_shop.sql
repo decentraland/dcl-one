@@ -43,7 +43,15 @@ CREATE TABLE shop.trades (
     created_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now())::timestamp(3),
     mirrored_from text,
     mirrored_at timestamp without time zone,
-    CONSTRAINT trades_signer_lowercase CHECK (signer = lower(signer))
+    -- The EIP-712 digest a V3 trade was signed over, the key of its V3
+    -- cancellation: stored when POST /v1/trades verifies the signature, or
+    -- copied from the trade's source (the marketplace-server import, the
+    -- mirror). NULL for a V1/V2 trade and for a V3 one whose source had none;
+    -- the trade-events fold accepts it only when the signature recovers the
+    -- signer over it (trade_chain_state.digest).
+    trade_digest text,
+    CONSTRAINT trades_signer_lowercase CHECK (signer = lower(signer)),
+    CONSTRAINT trades_trade_digest_hex CHECK (trade_digest ~ '^0x[0-9a-f]{64}$')
 );
 
 -- /v1/activity (trades_of_address): WHERE signer = $1 ORDER BY created_at DESC LIMIT.
@@ -144,6 +152,7 @@ CREATE TABLE shop.collections (
     reviewed_at bigint NOT NULL,
     first_listed_at bigint,
     mirrored_at timestamp without time zone NOT NULL,
+    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address),
     CONSTRAINT collections_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collections_contract_lowercase CHECK (contract_address = lower(contract_address)),
@@ -194,6 +203,12 @@ CREATE TABLE shop.items (
     mirrored_at timestamp without time zone NOT NULL,
     -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
     search_text text,
+    -- The item minters holding an allowance, in the order first granted, and
+    -- what each holds (the collections index's fold; empty in the mirror's
+    -- copy, which has no item minters).
+    minters text[] NOT NULL DEFAULT '{}',
+    minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
+    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -232,6 +247,13 @@ CREATE TABLE shop.mirror_state (
     last_complete_pass_rows bigint,
     last_error text,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    chain_id bigint,
+    pass_block_hash text,
+    marks_item_rows boolean NOT NULL DEFAULT false,
+    CONSTRAINT mirror_state_verified_item_rows CHECK (
+        mirror <> 'items' OR marks_item_rows OR
+        (pass_block_hash IS NULL AND COALESCE(chain_id,0) NOT IN (11155111,80002))
+    ),
     PRIMARY KEY (mirror, network),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('collections', 'items')),
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))
@@ -377,6 +399,13 @@ CREATE TABLE shop.chain_cursor (
     fold_through bigint,
     folded_block bigint,
     folded_at timestamp without time zone,
+    sale_input_epoch uuid NOT NULL DEFAULT gen_random_uuid(),
+    sale_covered_rewinds integer,
+    sale_input_version integer,
+    sale_verified_through bigint,
+    sale_dirty_from bigint,
+    sale_repair_upper bigint,
+    sale_history_revision bigint NOT NULL DEFAULT 0,
     full_history boolean NOT NULL,
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
@@ -398,8 +427,16 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
+    -- An old binary omits this column when claiming its lease. It cannot
+    -- take the Sepolia trades cursor and publish a history missing V1.
+    sepolia_trade_v1 boolean NOT NULL DEFAULT false,
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
+    CONSTRAINT chain_cursor_sepolia_trade_v1 CHECK (
+        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1 OR quarantined_at IS NOT NULL),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -469,8 +506,10 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- registry's data string; `tx_hash` the transaction of an `order_successful`
--- (NULL on other kinds and on rows indexed before it was recorded).
+-- registry's data string; `tx_hash` the log's transaction, NULL on a row
+-- indexed before the walk recorded it (an `order_successful` before 0040,
+-- another kind before transfers' transactions were recorded) until a replay
+-- of the same log fills it.
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -497,6 +536,15 @@ CREATE TABLE shop.nft_event (
 -- The fold's per-token legs (DISTINCT ON (contract_address, token_id) ORDER
 -- BY block_number, log_index) and a refold's "events of these tokens".
 CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, token_id, block_number, log_index);
+
+-- Successful marketplace fills by network and block range.
+CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
+
+-- The transfer leg of /v1/activity (`activity_transfers`): a wallet's
+-- newest transfers out and in on one network, each side walked by time
+-- (then position; a legacy row can carry time 0) to its cap.
+CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -16170,6 +16218,11 @@ CREATE INDEX trade_event_index_idx ON shop.trade_event (network, marketplace_add
 -- signature index moved away from the one it was signed with, else `open`.
 -- Expiry and local cancellations stay read-time rules. Derived: a rebuild
 -- refolds every trade; a trade row deleted takes its verdict with it.
+-- `digest` is the V3 cancellation key the fold verified (the signature
+-- recovers the signer over it): the trade's stored digest, else the one
+-- rebuilt from the row. `digest_failed_at` is set while a V3 trade has no
+-- such digest (the time of the last attempt, retried after a backoff): its
+-- cancellation would go unseen, so the open-listing reads leave it out.
 CREATE TABLE shop.trade_chain_state (
     trade_id uuid PRIMARY KEY REFERENCES shop.trades(id) ON DELETE CASCADE,
     network text NOT NULL,
@@ -16178,8 +16231,10 @@ CREATE TABLE shop.trade_chain_state (
     status text NOT NULL,
     executed_at bigint,
     folded_block bigint NOT NULL,
+    digest_failed_at timestamp without time zone,
     CONSTRAINT trade_chain_state_status_known CHECK (status IN ('open', 'sold', 'cancelled')),
-    CONSTRAINT trade_chain_state_executions_nonneg CHECK (executions >= 0)
+    CONSTRAINT trade_chain_state_executions_nonneg CHECK (executions >= 0),
+    CONSTRAINT trade_chain_state_digest_or_failure CHECK (digest IS NULL OR digest_failed_at IS NULL)
 );
 
 -- A v3 cancellation names the digest: WHERE digest = ANY($1) (the fold's touched set).
@@ -16886,6 +16941,212 @@ CREATE TABLE shop.tip_claim (
 CREATE INDEX tip_claim_sender ON shop.tip_claim (sender);
 CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 
+-- A canonical execution ends at the venue log, independently of the number
+-- of NFTs or payments. NAME registration fees participate in earnings only.
+CREATE TABLE shop.sale_execution (
+    network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    tx_hash text NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    venue text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('store', 'order', 'bid', 'trade', 'name_fee')),
+    receipt_read boolean NOT NULL DEFAULT false,
+    receipt_attempted_at timestamp without time zone,
+    creator_attempted_at timestamp without time zone,
+    creator_checked boolean NOT NULL DEFAULT false,
+    block_time bigint NOT NULL,
+    PRIMARY KEY (network, block_number, log_index)
+);
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
+CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
+CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
+CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
+CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
+CREATE INDEX sale_execution_pending_receipt ON shop.sale_execution (network, receipt_attempted_at NULLS FIRST, block_number) WHERE NOT receipt_read;
+
+-- Issued items and transferred NFTs in venue order. A multi-asset trade
+-- may have one gross consideration without any individual asset prices.
+CREATE TABLE shop.sale_asset (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    ordinal integer NOT NULL,
+    public_id text NOT NULL UNIQUE,
+    beneficiary text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('mint', 'bid', 'order')),
+    contract_address text NOT NULL,
+    token_id numeric(78,0),
+    item_id numeric(78,0),
+    seller text,
+    buyer text NOT NULL,
+    price numeric,
+    currency text,
+    CHECK ((price IS NULL) = (currency IS NULL)),
+    PRIMARY KEY (network, block_number, log_index, ordinal),
+    FOREIGN KEY (network, block_number, log_index)
+       REFERENCES shop.sale_execution ON DELETE CASCADE
+);
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
+CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
+CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
+CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
+
+CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
+
+-- One row per consideration leg, including the explicit price of each
+-- store line. Source-proven gross can be available before payee attribution.
+CREATE TABLE shop.sale_payment (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    ordinal integer NOT NULL,
+    currency text NOT NULL,
+    gross numeric(78,0) NOT NULL CHECK (gross >= 0),
+    payer text,
+    beneficiary text,
+    bid_fee numeric(78,0),
+    consideration boolean NOT NULL DEFAULT true,
+    settled boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (network, block_number, log_index, ordinal),
+    FOREIGN KEY (network, block_number, log_index)
+       REFERENCES shop.sale_execution ON DELETE CASCADE
+);
+CREATE INDEX sale_payment_read_beneficiary ON shop.sale_payment (network,beneficiary,block_number) WHERE consideration;
+CREATE TABLE shop.sale_payout (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    payment_ordinal integer NOT NULL,
+    ordinal integer NOT NULL,
+    role text NOT NULL CHECK (role IN ('seller','royalty','venue_fee','store_fee','name_fee','burn','retained')),
+    recipient text NOT NULL,
+    amount numeric(78,0) NOT NULL CHECK (amount >= 0),
+    PRIMARY KEY (network, block_number, log_index, payment_ordinal, ordinal),
+    FOREIGN KEY (network, block_number, log_index, payment_ordinal)
+       REFERENCES shop.sale_payment ON DELETE CASCADE
+);
+
+-- Rollups use UTC day starts (Unix seconds) and the consideration currency.
+-- Keep incomplete payment splits visible to callers that require proceeds.
+CREATE TABLE shop.sale_analytics_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL,
+    sales bigint NOT NULL, volume numeric NOT NULL, name_fees numeric NOT NULL,
+    creator_earnings numeric NOT NULL, venue_fees numeric NOT NULL,
+    store_fees numeric NOT NULL, burn_fees numeric NOT NULL,
+    unknown_splits bigint NOT NULL, unallocated_executions bigint NOT NULL,
+    PRIMARY KEY(network, day, currency)
+);
+CREATE TABLE shop.sale_item_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL,
+    contract_address text NOT NULL, item_id numeric(78,0) NOT NULL,
+    sales bigint NOT NULL, volume numeric NOT NULL,
+    PRIMARY KEY(network, day, currency, contract_address, item_id)
+);
+CREATE TABLE shop.sale_account_day (
+    network text NOT NULL, day bigint NOT NULL, currency text NOT NULL, address text NOT NULL,
+    sales bigint NOT NULL, purchases bigint NOT NULL, spent numeric NOT NULL,
+    gross_sold numeric NOT NULL, net_sold numeric NOT NULL, unknown_proceeds bigint NOT NULL,
+    received numeric NOT NULL, royalties numeric NOT NULL, fees_received numeric NOT NULL,
+    PRIMARY KEY(network, address, currency, day)
+);
+CREATE INDEX sale_account_day_by_day ON shop.sale_account_day(network,day);
+CREATE TABLE shop.sale_account_total (
+    network text NOT NULL, currency text NOT NULL, address text NOT NULL,
+    sales bigint NOT NULL, purchases bigint NOT NULL, spent numeric NOT NULL,
+    gross_sold numeric NOT NULL, net_sold numeric NOT NULL, unknown_proceeds bigint NOT NULL,
+    received numeric NOT NULL, royalties numeric NOT NULL, fees_received numeric NOT NULL,
+    PRIMARY KEY(network, address, currency)
+);
+
+-- The earliest UTC day for an observed buyer/seller/item relationship.
+-- A period-end distinct count uses first_day <= the period's last day.
+-- Rarity and collection membership can be joined in the reader snapshot.
+CREATE TABLE shop.sale_first_purchase (
+    network text NOT NULL, currency text NOT NULL, buyer text NOT NULL, seller text,
+    contract_address text NOT NULL, item_id numeric(78,0), first_day bigint NOT NULL,
+    UNIQUE NULLS NOT DISTINCT (network,currency,buyer,seller,contract_address,item_id)
+);
+CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
+
+-- One common source prefix per network. Capture each dependency's revision
+-- independently so that withdrawals invalidate reads at the same height.
+CREATE TABLE shop.sale_publication (
+    network text PRIMARY KEY CHECK (network IN ('ethereum', 'matic')),
+    block_number bigint NOT NULL,
+    block_hash text NOT NULL CHECK (block_hash ~ '^0x[0-9a-f]{64}$'),
+    input_version integer NOT NULL,
+    generation uuid NOT NULL DEFAULT gen_random_uuid(),
+    input_epochs uuid[] NOT NULL,
+    input_revisions bigint[] NOT NULL,
+    late_collections bigint NOT NULL,
+    published_at timestamp without time zone
+);
+
+-- Sparse fee configuration changes. Look up the last event before a
+-- particular execution, including a change earlier in the same block.
+CREATE TABLE shop.sale_fee_change (
+    network text NOT NULL,
+    venue varchar(42) NOT NULL,
+    field text NOT NULL CHECK (field IN ('collector', 'fee_ppm', 'royalty_ppm')),
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    value text NOT NULL,
+    PRIMARY KEY (network, venue, field, block_number, log_index)
+);
+
+-- Polygon CollectionStore.Bought lines. A missing Issue can be recovered
+-- once the named issuer is in the Polygon collection catalogue.
+CREATE TABLE shop.store_sale_line (
+    block_number bigint NOT NULL,
+    bought_log integer NOT NULL,
+    block_time bigint NOT NULL,
+    issue_checked boolean NOT NULL DEFAULT false,
+    ordinal integer NOT NULL CHECK (ordinal >= 0),
+    tx_hash varchar(66) NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    contract_address varchar(42) NOT NULL,
+    item_id numeric(78,0) NOT NULL,
+    beneficiary varchar(42) NOT NULL,
+    price numeric(78,0) NOT NULL CHECK (price >= 0),
+    issue_log integer CHECK (issue_log >= 0 AND issue_log < bought_log),
+    PRIMARY KEY (block_number, bought_log, ordinal),
+    UNIQUE (block_number, issue_log)
+);
+CREATE INDEX store_sale_unmatched ON shop.store_sale_line (block_number) WHERE issue_log IS NULL AND NOT issue_checked;
+
+-- Only factory collections in the Polygon catalogue are issuers for accounting.
+-- Keeping the raw store line allows a late collection to be replayed on discovery.
+CREATE VIEW shop.verified_store_sale_line AS
+    SELECT l.* FROM shop.store_sale_line l JOIN shop.collections c
+      ON c.network='matic' AND c.chain_id=137 AND c.contract_address=l.contract_address
+      AND c.created_at<=l.block_time;
+
+-- The late collections represented by the current network sale publication.
+CREATE TABLE shop.sale_covered_collection (
+    network text NOT NULL, contract_address varchar(42) NOT NULL, backfill_from_block bigint NOT NULL,
+    PRIMARY KEY(network,contract_address)
+);
+
+-- Fees paid at Ethereum's names controller, keyed by the log so one
+-- transaction may buy several names. The sales walk removes the suffix
+-- on rewind; analytics attributes the fee to the block's UTC day.
+CREATE TABLE shop.name_purchase (
+    venue varchar(42) NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    caller varchar(42) NOT NULL CHECK (caller ~ '^0x[0-9a-f]{40}$'),
+    beneficiary varchar(42) NOT NULL CHECK (beneficiary ~ '^0x[0-9a-f]{40}$'),
+    price numeric(78,0) NOT NULL CHECK (price >= 0),
+    name text NOT NULL,
+    tx_hash varchar(66) NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
+    PRIMARY KEY (block_number, log_index)
+);
+
 -- The sales log on Polygon (the `sales` chain index,
 -- src/shop/market/sales_index.rs): a primary mint through the
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
@@ -16916,6 +17177,7 @@ CREATE TABLE shop.sale_event (
     price numeric(78,0),
     expires_at bigint,
     tx_hash varchar(66) NOT NULL,
+    bid_fee numeric(78,0) CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
@@ -16926,6 +17188,7 @@ CREATE TABLE shop.sale_event (
     CONSTRAINT sale_event_bid_accepted_fields CHECK (kind <> 'bid_accepted' OR (price IS NOT NULL AND seller IS NOT NULL)),
     CONSTRAINT sale_event_tx_hash_shape CHECK (tx_hash ~ '^0x[0-9a-f]{64}$')
 );
+CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WHERE kind='bid_accepted';
 
 -- The fold's legs: a bidder's events over a token (DISTINCT ON
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).
@@ -16987,8 +17250,8 @@ CREATE TABLE shop.bid_seller_recheck (
 
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
--- compared: a difference is a warning, never a rewrite). Four rows on
--- Polygon: the legacy marketplace and the store charge no royalties.
+-- compared: a difference is a warning, never a rewrite). Polygon and Amoy
+-- use separate venue addresses. The legacy marketplace and stores charge no royalties.
 CREATE TABLE shop.sale_venue (
     network text NOT NULL,
     address varchar(42) NOT NULL,
@@ -17005,7 +17268,10 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x02080031b45a3c67d338dd4a2cc309d28756a160', 'marketplace_v1', 0),
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
-    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0),
+    ('matic', '0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0', 'marketplace_v2', 25000),
+    ('matic', '0x4b66eab79cc03a96fb6275cfcdf23c0db431606d', 'bid_v2', 25000),
+    ('matic', '0xe36abc9ec616c83caaa386541380829106149d68', 'store', 0);
 
 -- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
 -- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero
@@ -17038,3 +17304,167 @@ CREATE TABLE shop.third_party_registry_event (
 
 CREATE INDEX third_party_registry_provider_version_idx ON shop.third_party_registry_event
     (provider_id, block_number DESC, log_index DESC);
+
+-- The collections index on Polygon (`shop.chain_cursor` indexer
+-- `collections`): the collection factories' ProxyCreated logs and the events
+-- of the collections they created, appended with the cursor advance and
+-- deleted past a rewind. About 5.3 million rows on Polygon, nearly all
+-- `issue` (one per mint), and some hundred thousand of the other kinds.
+-- `contract_address` is the collection (for `proxy_created`, the one
+-- created); the other columns hold what each kind carries:
+-- - `account`: the factory of a `proxy_created`; the minter or manager of a
+--   `set_*_minter`/`set_*_manager`; the new creator or owner of a transfer;
+--   the caller of an `issue`;
+-- - `previous_account`: the previous creator or owner of a transfer;
+-- - `flag`: the value of `set_global_minter`, `set_global_manager` and
+--   `set_item_manager`, the new value of `set_approved` and `set_editable`;
+-- - `amount`: the price of `add_item` and `update_item_data`, the allowance
+--   of `set_item_minter`, the issued id of an `issue`;
+-- - `max_supply`, `rarity`: `add_item`'s; `beneficiary`: `add_item`'s and
+--   `update_item_data`'s; `metadata`: `add_item`'s, `rescue_item`'s and
+--   `update_item_data`'s; `content_hash`: `add_item`'s and `rescue_item`'s.
+CREATE TABLE shop.collection_event (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    kind text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    item_id numeric(78,0),
+    account varchar(42),
+    previous_account varchar(42),
+    flag boolean,
+    amount numeric(78,0),
+    max_supply numeric(78,0),
+    rarity text,
+    beneficiary varchar(42),
+    metadata text,
+    content_hash text,
+    PRIMARY KEY (network, block_number, log_index),
+    CONSTRAINT collection_event_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_event_kind_known CHECK (kind IN (
+        'proxy_created', 'add_item', 'rescue_item', 'update_item_data', 'issue', 'set_global_minter',
+        'set_global_manager', 'set_item_minter', 'set_item_manager', 'set_approved', 'set_editable', 'complete',
+        'creatorship_transferred', 'ownership_transferred')),
+    CONSTRAINT collection_event_lowercase CHECK (
+        contract_address = lower(contract_address) AND account = lower(account)
+        AND previous_account = lower(previous_account) AND beneficiary = lower(beneficiary))
+);
+
+-- The walked collections: the walk's address filter and the creation reads
+-- take them first.
+CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
+    WHERE kind = 'proxy_created';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
+
+-- A collection's history in chain order, mints aside (a few hundred thousand
+-- rows): the fold of the collections it replays from their creation.
+CREATE INDEX collection_event_replay_idx ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind <> 'issue';
+
+-- The collections each factory lists (`collections(i)` at index `idx`), read
+-- by the collections index's gate before each attempt: the walk's address
+-- filter, a superset of the collections a window can create (a hint is not
+-- a collection until its ProxyCreated is walked). Each index is read once at
+-- the finalized block (`finalized`); the indexes past it are read at the
+-- latest block at every refresh until then. Rows are never deleted: a
+-- provisional address a reorg replaced stays a hint the filter takes in
+-- vain. About six thousand rows on Polygon, read whole once per pass.
+CREATE TABLE shop.collection_hint (
+    network text NOT NULL,
+    factory varchar(42) NOT NULL,
+    idx integer NOT NULL,
+    address varchar(42) NOT NULL,
+    finalized boolean NOT NULL,
+    -- The finalized block a final row was read at (by its hash), and that
+    -- hash (both NULL for a provisional row, and for a final row written
+    -- before they were recorded). Until the row is `verified`: at or below
+    -- the cursor of a walk with its full history, the walk's log decides
+    -- (the factory's idx-th walked ProxyCreated naming this address by that
+    -- height proves it; anything else undoes it); otherwise the gate asks
+    -- the hash at that height, and another one undoes it. A row with no
+    -- hash is proven by the walk's log where the walk holds its slot (its
+    -- height becomes the creation's block), else undone. A rewind below the
+    -- height undoes a row too. Undone, the row is provisional again, to be
+    -- read on the branch the chain took.
+    read_block bigint,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
+    PRIMARY KEY (network, address),
+    CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
+    CONSTRAINT collection_hint_idx_nonneg CHECK (idx >= 0)
+);
+
+-- One finalized address per list index: the refresh counts them and finds
+-- the indexes still to read.
+CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, factory, idx) WHERE finalized;
+
+-- What a collection's initialize set without an event (name, symbol,
+-- creator, approval, editability), read once by the collections index's
+-- gate for a walked collection at the walk's own cursor block, by the hash
+-- the walk stored for it (`read_block`, `read_hash`), under the walk's owner
+-- and epoch fence: so it is of the walked branch, and written `verified`.
+-- A rewind below `read_block` deletes it. A projection takes a value from it
+-- only when it is verified, no walked event sets the value and `read_block`
+-- is at or below the block it folds to. A row written before reads were
+-- proven (no hash, not verified) is never taken; the first proven read
+-- replaces it. One row per collection.
+CREATE TABLE shop.collection_seed (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    name text NOT NULL,
+    symbol text NOT NULL,
+    creator varchar(42) NOT NULL,
+    is_approved boolean NOT NULL,
+    is_editable boolean NOT NULL,
+    read_block bigint NOT NULL,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
+    read_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    PRIMARY KEY (network, contract_address),
+    CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
+    CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);
+
+-- One row per network the collections walk has rewound or rebuilt: `epoch`
+-- grows in the transaction of each rewind (an operator's rebuild included).
+-- The gate's reads of the chain (factory lists, creation reads) are written
+-- only when the epoch, with the walk's owner generation, has not moved
+-- since they began, so no read of a branch the walk left is written after
+-- it left it. `checked_through` is the last height the gate checked the
+-- reads at; the next check goes on past it (NULL: from the lowest).
+CREATE TABLE shop.collection_walk (
+    network text PRIMARY KEY,
+    epoch bigint NOT NULL DEFAULT 0,
+    checked_through bigint,
+    CONSTRAINT collection_walk_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- One row per network the collections index folds into shop.collections and
+-- shop.items (MARKETPLACE_COLLECTIONS_INDEX_OWNS). `owned_at` is set in the
+-- transaction of the fold's first projection: from then the fold is the
+-- network's only writer of both tables, and the collections mirror refuses
+-- to write it (both take the network's advisory lock, the mirror shared and
+-- the fold exclusive, around the check and the write); a hand-back clears
+-- it. `projected_through` is the block the projected rows stand at; NULL
+-- (after a rewind, or before the first projection) makes the next fold
+-- rebuild the network's rows from the whole log. `pending` counts the walked
+-- collections without a row at that block (waiting for their creation read):
+-- the catalogue is complete only at 0. `generation` grows with every
+-- projection and hand-back, so two reads under the same generation read the
+-- same rows.
+CREATE TABLE shop.collection_projection (
+    network text PRIMARY KEY,
+    owned_at timestamp without time zone,
+    projected_through bigint,
+    pending integer NOT NULL DEFAULT 0,
+    generation bigint NOT NULL DEFAULT 0,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_projection_pending_nonneg CHECK (pending >= 0)
+);
