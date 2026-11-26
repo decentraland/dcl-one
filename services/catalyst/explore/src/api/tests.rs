@@ -1716,9 +1716,9 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     db.teardown().await;
 }
 
-/// The pass also stores the `builder` document beside the explorer one,
-/// which the builder reads its automated review's flag from; a flags
-/// service without it fails nothing and leaves the stored one as it was.
+/// The pass also stores the `builder` document beside the explorer one; a
+/// flags service without it fails nothing and leaves the stored one as it
+/// was.
 #[tokio::test]
 async fn feature_flags_mirror_stores_the_builder_document_and_survives_its_absence() {
     let Some(db) = scratch_database().await else {
