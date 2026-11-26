@@ -330,6 +330,8 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "shop.collection_event.content_hash",
         "the content hash a collection's item records on chain; the item's deployment references its blobs",
     ),
+    ("shop.collection_hint.read_hash", "a block hash"),
+    ("shop.collection_seed.read_hash", "a block hash"),
     ("shop.mana_transfer.transaction_hash", "a transaction hash"),
     ("shop.tip_claim.transaction_hash", "a transaction hash"),
     ("shop.coupons.hashed_signature", "an order digest"),
@@ -1158,7 +1160,7 @@ mod tests {
         .unwrap();
         let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
         assert_eq!(
-            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+            referenced_rows_among_on(&mut pool.acquire().await.unwrap(), &keys)
                 .await
                 .unwrap(),
             ["imported", "current", "world-thumbnail"]

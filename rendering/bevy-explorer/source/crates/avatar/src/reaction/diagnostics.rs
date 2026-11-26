@@ -12,21 +12,26 @@ use comms::{
 };
 use console::DebugSection;
 use dcl_component::proto_components::kernel::comms::rfc4;
+use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
 use serde_json::json;
 use system_bridge::SystemApi;
 use wallet::Wallet;
 
 use super::{
     traffic::{ReactionGuard, ReactionOutbox, ReactionQueue},
-    ReactionAssets, ReactionParticle, ReactionStats,
+    ReactionAssets, ReactionParticle, ReactionStats, ATLAS,
 };
 
 pub const SECTION: DebugSection = DebugSection {
     title: "Situational reactions",
     query: "/reaction_state",
     fields: &[
-        ("Shown over avatars (chat bubbles setting)", "world"),
+        (
+            "Shown over avatars (Chat bubbles and reactions setting)",
+            "world",
+        ),
         ("Shown on screen (Chat Reactions setting)", "screenLane"),
+        ("Picks played", "picked"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
         ("Messages sent", "sent"),
@@ -46,6 +51,14 @@ pub const SECTION: DebugSection = DebugSection {
             "Played with no particle: too many alive",
             "dropped.particleCap",
         ),
+        (
+            "Played with no particle: player not shown",
+            "dropped.notShown",
+        ),
+        (
+            "Played with no particle: no colour glyph",
+            "dropped.noGlyphs",
+        ),
     ],
     actions: &[
         ("React with a heart", "/reaction_send \u{2665}\u{fe0f}"),
@@ -57,24 +70,30 @@ pub const SECTION: DebugSection = DebugSection {
             "Play 10 from the nearest player",
             "/reaction_simulate nearest \u{1f525} 10",
         ),
+        ("Rebuild the glyph atlas", "/reaction_atlas_rebuild"),
     ],
     inputs: &[],
 };
 
-/// Report the reactions as JSON: `world` (the chat bubbles setting lets them show over
-/// avatars), `screenLane` (the "Chat Reactions" setting passes them to the HUD), `outbox` (the
+/// Report the reactions as JSON: `world` (the Chat bubbles and reactions setting lets them
+/// show over avatars), `screenLane` (the "Chat Reactions" setting passes them to the HUD),
+/// `picked` (the local user's picks that played, which no peer's reaction moves), `outbox` (the
 /// local user's picks not yet sent), `refusedPicks` (their picks that were no emoji the wire
 /// carries, or had no wallet to send them), `sent` (messages put on a room's transport, one per
 /// emoji per send: none with no room to carry it), `received` (peers' messages), `queued` (the
 /// reactions waiting to play, and the senders with any waiting or inside the gap after their
 /// last), `played`, `particles` (those alive, those of them drawn as of the last frame, and
-/// those waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas page
-/// the emoji are drawn from, 0 before the first), `streamed` (the reactions passed to the HUD)
-/// to `subscribers` streams, and `dropped`, by cause: `blocked` (messages and waiting reactions
-/// of a sender blocked or banned), `duplicate` (a message's copy by another room),
-/// `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that gave way to newer
-/// ones) and `particleCap` (reactions that played with no particle, as many as may be being
-/// alive). The counts are of this session.
+/// those waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+/// `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from, 0 before the
+/// first), `streamed` (the reactions passed to the HUD) to `subscribers` streams, and
+/// `dropped`, by cause: `blocked` (messages and waiting reactions of a sender blocked or
+/// banned), `duplicate` (a message's copy by another room), `unknownEmoji`, `rateLimited`
+/// (messages), `queueFull` (reactions that gave way to newer ones), `particleCap` (reactions
+/// that played with no particle, as many as may be alive), `notShown` (reactions that played
+/// with no particle, their player having no avatar or a hidden one, being far from the camera,
+/// or being the local user in first person) and `noGlyphs` (reactions that played with no
+/// particle, their emoji not laid out, the emoji font not made yet, or the emoji having no
+/// glyph in colour). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -87,6 +106,7 @@ pub fn reaction_state(
     queues: Query<&ReactionQueue>,
     assets: Res<ReactionAssets>,
     particles: Query<(&ReactionParticle, &Visibility)>,
+    atlases: Res<GlyphAtlases>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
@@ -101,6 +121,7 @@ pub fn reaction_state(
         json!({
             "world": config.chat_bubble_visibility != ChatBubbleVisibility::None,
             "screenLane": config.chat_reactions,
+            "picked": stats.picked,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
             "sent": stats.sent,
@@ -115,7 +136,12 @@ pub fn reaction_state(
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
                 count(|particle, _, generation| particle.built != Some(generation)),
             ],
-            "atlas": assets.bound.map_or(0, |(_, size)| size),
+            // read from the atlas, which is made when the first emoji is drawn from it: the
+            // assets follow it only while a particle is alive
+            "atlas": atlases
+                .get(&ATLAS.key)
+                .and_then(|atlas| atlas.page_image(Page::Color))
+                .map_or(0, |(_, size)| size),
             "streamed": stats.streamed,
             "subscribers": stats.subscribers,
             "dropped": {
@@ -125,6 +151,8 @@ pub fn reaction_state(
                 "rateLimited": stats.dropped.rate_limited,
                 "queueFull": stats.dropped.queue_full,
                 "particleCap": stats.dropped.particle_cap,
+                "notShown": stats.dropped.not_shown,
+                "noGlyphs": stats.dropped.no_glyphs,
             },
         })
         .to_string(),
@@ -228,4 +256,28 @@ pub fn reaction_simulate(
         })
         .to_string(),
     );
+}
+
+/// Have the reactions' glyph atlas rebuilt at its next upkeep, as a glyph that finds no room
+/// in it does: its textures are replaced, the glyphs no particle shows are freed and every
+/// particle alive gets a mesh for the new page. An atlas with no glyph to free is left as it
+/// is, and so is one no emoji has been drawn from yet. Replies with nothing; `atlas` and
+/// `particles` in `/reaction_state` show what followed.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/reaction_atlas_rebuild")]
+pub struct ReactionAtlasRebuildCommand;
+
+pub fn reaction_atlas_rebuild(
+    mut cmd: ConsoleCommand<ReactionAtlasRebuildCommand>,
+    mut commands: Commands,
+) {
+    if let Some(Ok(_)) = cmd.take() {
+        // the atlases are written only when the command is given, not asked for every frame
+        commands.queue(|world: &mut World| {
+            if let Some(atlas) = world.resource_mut::<GlyphAtlases>().get_mut(&ATLAS.key) {
+                atlas.request_rebuild();
+            }
+        });
+        cmd.reply_ok("");
+    }
 }

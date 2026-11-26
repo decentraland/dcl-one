@@ -1,9 +1,10 @@
 import { Quaternion, Vector3 } from '../../packages/@dcl/sdk/math'
 import { Engine } from '../../packages/@dcl/ecs/src/engine'
-import { Entity } from '../../packages/@dcl/ecs/src/engine/entity'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine/entity'
 import { componentNumberFromName } from '../../packages/@dcl/ecs/src/components/component-number'
-import { Transport, CrdtMessageHeader } from '../../packages/@dcl/ecs/src'
-import { CrdtMessageProtocol, CrdtMessageType } from './../../packages/@dcl/ecs/src/serialization/crdt'
+import type { Transport, CrdtMessageHeader } from '../../packages/@dcl/ecs/src'
+import type { CrdtMessageType } from './../../packages/@dcl/ecs/src/serialization/crdt'
+import { CrdtMessageProtocol } from './../../packages/@dcl/ecs/src/serialization/crdt'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { components, Schemas } from '../../packages/@dcl/ecs/src'
 

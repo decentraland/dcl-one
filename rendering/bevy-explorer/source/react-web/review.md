@@ -205,7 +205,8 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
-      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None) picks which show.
+      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None)
+      picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
       bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
       closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
@@ -215,9 +216,10 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       a second, drawn over the nametag and over whatever stands in front of it. Picks made one after
       another each rise, the bar staying open. Another player's rise over their avatar, a burst of
       them one every 0.2 s. None shows over an avatar a scene hides, over a blocked player, with
-      nametags off, or, for other players, farther than 25 m from the camera; with the Chat bubbles
-      and reactions setting at None none shows over anyone. The debug panel's "Situational reactions"
-      section counts them and its buttons play one without the HUD.
+      nametags off, over your own head in first person, or, for other players, farther than 25 m
+      from the camera; with the Chat bubbles and reactions setting at None none shows over anyone.
+      The debug panel's "Situational reactions" section counts them (those with nothing to show
+      over as "player not shown") and its buttons play one without the HUD.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
@@ -586,7 +588,18 @@ Expectations:
   favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
   events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
   that echoes `request` (a reminder's names its event), and every request is answered, a failed one
-  with `failed`. The points-of-interest list and the connected players are plain fetches.
+  with `failed`. The points-of-interest list, the connected players and the parcel grid's age
+  (`/v2/tiles/info` on `mapApi`) are plain fetches; `?mock=1` answers all three from fixed data
+  (`fixMapPublicReads`) and reads none of them.
+- **Age label:** the Parcels view shows "Updated N min ago" beside the zoom controls when the map
+  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `serverNow`,
+  else its `Date`, which a cross-origin read may not expose); only the map API's own 503 envelope
+  clears it, while any other failed read keeps the last answer;
+  nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
+  shown and every minute (`features/map/useMapGridAge.ts`; the Shop's LAND map reads the same
+  explorer-core `gridAge` through TanStack Query), and drawn in HUD styles matching the Shop LAND
+  map's label, since the HUD keeps its own styles until its move to the shared library (its build
+  admits only the foundations).
 - **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
@@ -604,7 +617,8 @@ Expectations:
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
   pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
   not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
-- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+- Tests: `library/explorer-core/test/{navmap,mapCore,gridAge}.test.ts`, `library/ui/apps/hud/test/mapGridAge.test.tsx`,
+  `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 

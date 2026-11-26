@@ -149,6 +149,9 @@ export type PermissionUsedRaw = {
   additional: string | null
   scene: string
   wasAllowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player; an engine that does not report it never sends it. */
+  inForce?: boolean | null
 }
 
 export type BevyApiInterface = {

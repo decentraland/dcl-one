@@ -19,7 +19,9 @@ enum TextWrap {
 message PBUiText {
   string value = 1;                              // the text content, tag <b> and <i> are supported
   optional decentraland.common.Color4 color = 2; // RGBA color (default: opaque white)
-  optional common.TextAlignMode text_align = 3;  // alignment within the bounds (default: center)
+  // alignment of the text within its box (default: middle-center). The box is the entity's,
+  // unless an axis of the entity's size is auto: then it is the text's own, placed by the entity's layout
+  optional common.TextAlignMode text_align = 3;
   optional common.Font font = 4;                 // font for the text (default: sans-serif)
   optional int32 font_size = 5;                  // size of the text (default: 10)
   optional TextWrap text_wrap = 6;               // wrap text when the border is reached (default: TW_WRAP)

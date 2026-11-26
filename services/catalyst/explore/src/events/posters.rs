@@ -1,7 +1,7 @@
 //! `POST /api/poster` and `/api/poster-vertical` (multipart, field
 //! `poster`, a signed fetch, behind `DATA_WRITES_ENABLED`): an event poster
 //! the events form uploads before it creates the event. The signer needs a
-//! profile this node holds (the old `withAuthProfile()`, 404 `Not found
+//! profile this node holds or reads through (the old `withAuthProfile()`, 404 `Not found
 //! profile for "<user>"`; `Poster/routes.ts:67-80`). The bytes must be one
 //! of the accepted image types (sniffed, and equal to the part's declared
 //! type), at most 500 KiB; they land in the ONE blob store and in
@@ -235,7 +235,7 @@ async fn upload(
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), path).await?;
-    super::profiles::require_profile(&state.pool, &signer).await?;
+    super::profiles::require_profile(&state, &signer).await?;
     if !POSTER_UPLOADS.try_acquire(&[(
         signer.to_ascii_lowercase().as_str(),
         POSTER_UPLOADS_PER_HOUR,

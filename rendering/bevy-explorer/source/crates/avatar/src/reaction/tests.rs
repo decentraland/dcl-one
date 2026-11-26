@@ -1,10 +1,21 @@
 use std::{
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
-use bevy::{text::cosmic_text::fontdb::Source, time::TimeUpdateStrategy};
-use common::{rpc::RpcStreamReceiver, structs::PrimaryPlayerRes};
+use bevy::{
+    text::{cosmic_text::fontdb::Source, CosmicFontSystem, TextPipeline},
+    time::TimeUpdateStrategy,
+};
+use bevy_console::ConsoleCommandEntered;
+use common::{
+    rpc::RpcStreamReceiver,
+    structs::{PlayerModifiers, PrimaryPlayerRes},
+    sync::MutexExt,
+};
+use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
+
+use crate::BeyondMaxAvatars;
 use comms::{chat_reaction::emoji_to_atlas_index, NetworkMessage, TransportType};
 use tokio::sync::mpsc;
 
@@ -201,6 +212,7 @@ fn a_pick_with_no_room_to_carry_it_plays_and_is_not_counted_as_sent() {
     let mut island = harness.transport(TransportType::Archipelago);
     harness.pick("👍");
     harness.run(0.5);
+    assert_eq!(harness.stats().picked, 1);
     assert_eq!(harness.stats().played, 1);
     assert_eq!(harness.stats().sent, 0);
     assert!(sent(&mut island).is_empty());
@@ -233,6 +245,7 @@ fn an_emoji_the_wire_does_not_carry_does_nothing_anywhere() {
     assert!(sent(&mut wire).is_empty());
     assert!(harness.reported().is_empty());
     assert_eq!(harness.stats().refused_picks, 4);
+    assert_eq!(harness.stats().picked, 0);
     assert_eq!(harness.stats().played, 0);
 }
 
@@ -286,6 +299,8 @@ fn a_peers_reactions_play_one_at_a_time() {
         ["🔥"; 3]
     );
     assert_eq!(harness.stats().played, 3);
+    // a peer's reactions are no pick of the local user's
+    assert_eq!(harness.stats().picked, 0);
     // nothing is kept on a peer once the gap after their last has run out
     harness.run(0.3);
     assert!(harness.app.world().get::<ReactionQueue>(peer).is_none());
@@ -435,7 +450,7 @@ fn the_hud_hears_nothing_while_the_setting_is_off() {
 const NAMETAG_HEIGHT: f32 = 2.2;
 
 /// The colour font every text falls back to for emoji, as the Explorer loads it.
-static EMOJI_FONT: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
+static EMOJI_BYTES: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
     let path = concat!(
         env!("DCL_ONE_ROOT"),
         "/rendering/bevy-explorer/source/crates/ui_core/src/NotoColorEmoji.ttf"
@@ -444,20 +459,18 @@ static EMOJI_FONT: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
 });
 
 impl Harness {
-    /// Text shaping with a font of the test's own and the camera at the origin. The local
-    /// player gets an avatar where they stand.
+    /// The emoji laid out in the colour emoji font, as the Explorer does, and the camera at
+    /// the origin. The local player gets an avatar where they stand.
     fn with_avatars() -> Self {
         let mut harness = harness();
         let app = &mut harness.app;
-        let font = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/nametag/fonts/Inter_18pt-SemiBold.ttf"
-        ))
-        .expect("the nametag font is in the tree");
-        let font = app
-            .world_mut()
-            .resource_mut::<Assets<Font>>()
-            .add(Font::try_from_bytes(font).expect("the nametag font is a font"));
+        app.world_mut()
+            .resource_mut::<CosmicFontSystem>()
+            .db_mut()
+            .load_font_source(Source::Binary(EMOJI_BYTES.clone()));
+        let font = app.world_mut().resource_mut::<Assets<Font>>().add(Font {
+            data: EMOJI_BYTES.clone(),
+        });
         app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
 
         app.world_mut()
@@ -467,13 +480,19 @@ impl Harness {
         harness
     }
 
-    /// Real emoji glyphs, for the tests that draw one.
-    fn load_emoji_font(&mut self) {
-        self.app
+    /// Lay the emoji out in a text font, the nametags', with the emoji font to fall back to.
+    fn lay_out_in_a_text_font(&mut self) {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/nametag/fonts/Inter_18pt-SemiBold.ttf"
+        ))
+        .expect("the nametag font is in the tree");
+        let font = self
+            .app
             .world_mut()
-            .resource_mut::<CosmicFontSystem>()
-            .db_mut()
-            .load_font_source(Source::Binary(EMOJI_FONT.clone()));
+            .resource_mut::<Assets<Font>>()
+            .add(Font::try_from_bytes(font).expect("the nametag font is a font"));
+        self.app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
     }
 
     fn give_avatar(&mut self, player: Entity, at: Vec3) {
@@ -532,8 +551,96 @@ impl Harness {
         }
     }
 
+    /// A particle that is gone is not drawn.
     fn drawn(&self, particle: Entity) -> bool {
-        self.app.world().get::<Visibility>(particle) != Some(&Visibility::Hidden)
+        self.app
+            .world()
+            .get::<Visibility>(particle)
+            .is_some_and(|visibility| *visibility != Visibility::Hidden)
+    }
+
+    /// Run frames with time standing still until `particle` is drawn: its emoji's glyph is
+    /// rastered on the task pool, which takes as long as the machine is busy.
+    fn wait_until_drawn(&mut self, particle: Entity) {
+        self.app
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !self.drawn(particle) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the glyph was never rastered"
+            );
+            std::thread::yield_now();
+            self.app.update();
+        }
+    }
+
+    /// Give a console command, and take its reply.
+    fn console(&mut self, command: &str) -> String {
+        let reply = Arc::new(Mutex::new(None));
+        let output = reply.clone();
+        self.app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: command.into(),
+            args: vec![],
+            responder: Some(Arc::new(move |result| {
+                *output.lock_ignore_poison() = Some(result)
+            })),
+        });
+        self.app.update();
+        let reply = reply.lock_ignore_poison().take();
+        reply.expect("the command replies").expect("and succeeds")
+    }
+
+    /// The colour page size `/reaction_state` reports.
+    fn reported_atlas(&mut self) -> u64 {
+        let state: serde_json::Value =
+            serde_json::from_str(&self.console("/reaction_state")).unwrap();
+        state["atlas"].as_u64().expect("a size in pixels")
+    }
+
+    /// The generation of the reactions' glyph atlas, if it has been made.
+    fn atlas_made(&self) -> Option<u32> {
+        let atlases = self.app.world().resource::<GlyphAtlases>();
+        atlases.get(&ATLAS.key).map(|atlas| atlas.generation())
+    }
+
+    /// An emoji with a glyph the atlas had no room for.
+    fn emoji_with_no_room(&self) -> Option<&'static str> {
+        let world = self.app.world();
+        let atlas = world.resource::<GlyphAtlases>().get(&ATLAS.key)?;
+        world
+            .resource::<ReactionGlyphs>()
+            .emoji
+            .iter()
+            .find(|(_, glyphs)| atlas.has_dropped(glyphs.text.laid_out()))
+            .map(|(emoji, _)| *emoji)
+    }
+
+    fn particle_of(&mut self, emoji: &str) -> Option<Entity> {
+        self.app
+            .world_mut()
+            .query::<(Entity, &ReactionParticle)>()
+            .iter(self.app.world())
+            .find(|(_, particle)| particle.emoji == emoji)
+            .map(|(entity, _)| entity)
+    }
+
+    /// The reactions' glyph atlas: its generation, and its colour page.
+    fn atlas(&mut self) -> (u32, Option<AssetId<Image>>) {
+        let world = self.app.world_mut();
+        world.resource_scope(|world, mut atlases: Mut<GlyphAtlases>| {
+            let atlas =
+                atlases.get_or_create(ATLAS.key, &mut world.resource_mut::<Assets<Image>>());
+            (
+                atlas.generation(),
+                atlas.page_image(Page::Color).map(|(image, _)| image.id()),
+            )
+        })
+    }
+
+    fn set_camera_distance(&mut self, distance: f32) {
+        let mut cameras = self.app.world_mut().query::<&mut PrimaryCamera>();
+        cameras.single_mut(self.app.world_mut()).unwrap().distance = distance;
     }
 
     /// A particle over the local player, its glyphs landed and a frame on.
@@ -590,25 +697,13 @@ fn a_reaction_rises_from_over_its_players_nametag_and_is_gone_within_a_second() 
 #[test]
 fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
     let mut harness = Harness::with_avatars();
-    harness.load_emoji_font();
-    // time stands still while the glyph is rastered
-    harness
-        .app
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
     harness.pick("🔥");
     harness.app.update();
     let particle = harness.particle();
-    for _ in 0..2000 {
-        if harness.drawn(particle) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-        harness.app.update();
-    }
-    assert!(harness.drawn(particle), "the glyph was never rastered");
+    harness.wait_until_drawn(particle);
 
     let assets = harness.app.world().resource::<ReactionAssets>();
-    let (page, size) = assets.bound.expect("the atlas has a colour page");
+    let (page, size) = assets.page().expect("the atlas has a colour page");
     assert!(size > 0);
     let material = harness
         .app
@@ -642,19 +737,228 @@ fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
 }
 
 #[test]
-fn a_mesh_built_for_an_atlas_since_rebuilt_is_not_drawn() {
+fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
     let mut harness = Harness::with_avatars();
-    let particle = harness.local_particle();
-    assert!(harness.drawn(particle));
-    let stale = harness.app.world().resource::<ReactionAssets>().generation + 1;
+    harness.pick("🔥");
+    harness.app.update();
+    let kept = harness.particle();
+    harness.wait_until_drawn(kept);
+    // a glyph no particle uses any more, for the rebuild to free: with none there is none
+    harness.pick("👍");
+    harness.app.update();
+    let gone = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != kept)
+        .unwrap();
+    harness.wait_until_drawn(gone);
+    harness.app.world_mut().despawn(gone);
+
+    let (generation, page) = harness.atlas();
+    let mesh = harness.app.world().get::<Mesh3d>(kept).unwrap().0.clone();
+    let is_mesh = |harness: &Harness, mesh: &Handle<Mesh>| {
+        harness
+            .app
+            .world()
+            .resource::<Assets<Mesh>>()
+            .get(mesh)
+            .is_some()
+    };
+    assert!(is_mesh(&harness, &mesh));
+
     harness
         .app
         .world_mut()
-        .get_mut::<ReactionParticle>(particle)
-        .unwrap()
-        .built = Some(stale);
+        .resource_scope(|world, mut atlases: Mut<GlyphAtlases>| {
+            atlases
+                .get_or_create(ATLAS.key, &mut world.resource_mut::<Assets<Image>>())
+                .request_rebuild();
+        });
     harness.app.update();
-    assert!(!harness.drawn(particle));
+
+    // the atlas was rebuilt: a generation on, in a new texture
+    let (rebuilt, new_page) = harness.atlas();
+    assert_eq!(rebuilt, generation + 1);
+    assert!(new_page.is_some() && new_page != page);
+    // the particle's mesh was made again for it in the frame of the rebuild, so it is never
+    // drawn from where its glyph was
+    let particle = harness.app.world().get::<ReactionParticle>(kept).unwrap();
+    assert_eq!(particle.built, Some(rebuilt));
+    let remade = harness.app.world().get::<Mesh3d>(kept).unwrap().0.clone();
+    assert_ne!(remade, mesh);
+    assert!(is_mesh(&harness, &remade));
+    assert!(harness.drawn(kept));
+    // and the material draws from the new texture
+    let assets = harness.app.world().resource::<ReactionAssets>();
+    assert_eq!(assets.generation, rebuilt);
+    assert_eq!(assets.page().map(|(page, _)| page), new_page);
+    let material = harness
+        .app
+        .world()
+        .resource::<Assets<ReactionMaterial>>()
+        .get(&assets.material)
+        .unwrap();
+    assert_eq!(material.bitmap.as_ref().map(Handle::id), new_page);
+
+    // the freed emoji is placed again when it is next picked
+    harness.pick("👍");
+    harness.app.update();
+    let again = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != kept)
+        .unwrap();
+    harness.wait_until_drawn(again);
+    assert!(harness.drawn(kept));
+}
+
+#[test]
+fn an_emoji_a_text_font_has_the_base_character_of_is_drawn_in_colour() {
+    let mut harness = Harness::with_avatars();
+    // each is a character a text font has, followed by the selector that asks for the emoji
+    for emoji in ["©️", "®️", "™️", "‼️", "⁉️", "ℹ️"] {
+        harness.pick(emoji);
+        harness.app.update();
+        let particle = *harness.particles().last().unwrap();
+        harness.wait_until_drawn(particle);
+    }
+    assert_eq!(harness.particles().len(), 6);
+    assert_eq!(harness.stats().dropped.no_glyphs, 0);
+    assert!(harness
+        .app
+        .world()
+        .resource::<ReactionAssets>()
+        .page()
+        .is_some());
+}
+
+#[test]
+fn an_emoji_with_no_glyph_in_colour_loses_its_particle_and_gets_no_other() {
+    let mut harness = Harness::with_avatars();
+    // in a text font the copyright sign is that font's, in one colour
+    harness.lay_out_in_a_text_font();
+    harness
+        .app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    harness.pick("©️");
+    harness.app.update();
+    // its glyph is rastered, and is none of the colour page's
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !harness.particles().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the particle was never given up"
+        );
+        std::thread::yield_now();
+        harness.app.update();
+    }
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+
+    // the next takes no slot and asks nothing of the atlas
+    harness.pick("©️");
+    harness.app.update();
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.no_glyphs, 2);
+    assert_eq!(harness.streamed().len(), 2);
+}
+
+#[test]
+fn an_emoji_the_full_atlas_has_no_room_for_waits_and_is_drawn_once_there_is() {
+    let mut harness = Harness::with_avatars();
+    harness
+        .app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    // more emoji alive at once than the atlas' colour page holds at its largest, each player
+    // with as many as one may have
+    let mut tiles = 0..;
+    for index in 0..MAX_PARTICLES / MAX_PARTICLES_PER_PLAYER {
+        let peer = harness.peer_at(Vec3::new(index as f32 * 0.1, 0.0, -3.0));
+        for emoji in tiles
+            .by_ref()
+            .take(MAX_PARTICLES_PER_PLAYER)
+            .filter_map(atlas_index_to_emoji)
+        {
+            harness.app.world_mut().send_event(ReactionPlayed {
+                player: peer,
+                emoji,
+            });
+        }
+    }
+    harness.app.update();
+
+    // each is rastered and placed until one finds no room, with every glyph placed in use
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    let emoji = loop {
+        if let Some(emoji) = harness.emoji_with_no_room() {
+            break emoji;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the atlas never filled"
+        );
+        std::thread::yield_now();
+        harness.app.update();
+    };
+    harness.app.update();
+    // its particle waits undrawn, and the emoji is not taken for one with no colour glyph
+    let waiting = harness.particle_of(emoji).expect("its particle is kept");
+    assert!(!harness.drawn(waiting));
+    let glyphs = harness.app.world().resource::<ReactionGlyphs>();
+    assert!(!glyphs.emoji[emoji].colourless);
+
+    // the others go, and the rebuild frees their glyphs and places its own
+    for particle in harness.particles() {
+        if particle != waiting {
+            harness.app.world_mut().despawn(particle);
+        }
+    }
+    let (generation, _) = harness.atlas();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<GlyphAtlases>()
+        .get_mut(&ATLAS.key)
+        .unwrap()
+        .request_rebuild();
+    harness.app.update();
+    assert_eq!(harness.atlas().0, generation + 1);
+    harness.wait_until_drawn(waiting);
+    assert_eq!(harness.emoji_with_no_room(), None);
+}
+
+#[test]
+fn the_console_reads_the_atlas_without_making_it_and_has_it_rebuilt() {
+    let mut harness = Harness::with_avatars();
+    // before any reaction there is no atlas, and neither command makes one
+    assert_eq!(harness.reported_atlas(), 0);
+    harness.console("/reaction_atlas_rebuild");
+    harness.app.update();
+    assert_eq!(harness.atlas_made(), None);
+
+    harness.pick("🔥");
+    harness.app.update();
+    let kept = harness.particle();
+    harness.wait_until_drawn(kept);
+    // a glyph no particle uses any more, for the rebuild to free
+    harness.pick("👍");
+    harness.app.update();
+    let gone = harness.particle_of("👍").unwrap();
+    harness.wait_until_drawn(gone);
+    harness.app.world_mut().despawn(gone);
+    let (_, size) = harness
+        .app
+        .world()
+        .resource::<ReactionAssets>()
+        .page()
+        .unwrap();
+    assert_eq!(harness.reported_atlas(), u64::from(size));
+
+    let generation = harness.atlas_made().unwrap();
+    harness.console("/reaction_atlas_rebuild");
+    // asked for in the frame of the command, served by the next upkeep
+    harness.app.update();
+    assert_eq!(harness.atlas_made(), Some(generation + 1));
+    harness.wait_until_drawn(kept);
 }
 
 #[test]
@@ -677,6 +981,55 @@ fn only_so_many_particles_live_over_one_player() {
 }
 
 #[test]
+fn only_so_many_particles_live_in_all() {
+    let mut harness = Harness::with_avatars();
+    // more players than the cap has room for, each with as many as one may have
+    let players = MAX_PARTICLES / MAX_PARTICLES_PER_PLAYER + 2;
+    for index in 0..players {
+        let peer = harness.peer_at(Vec3::new(index as f32 * 0.1, 0.0, -3.0));
+        for _ in 0..MAX_PARTICLES_PER_PLAYER {
+            harness.app.world_mut().send_event(ReactionPlayed {
+                player: peer,
+                emoji: "🔥",
+            });
+        }
+    }
+    harness.app.update();
+    assert_eq!(harness.particles().len(), MAX_PARTICLES);
+    assert_eq!(
+        harness.stats().dropped.particle_cap as usize,
+        players * MAX_PARTICLES_PER_PLAYER - MAX_PARTICLES
+    );
+}
+
+#[test]
+fn an_emoji_that_cannot_be_laid_out_yet_is_counted_and_tried_again() {
+    let mut harness = Harness::with_avatars();
+    // before the built-in fonts are made there is none to lay an emoji out in
+    let font = harness
+        .app
+        .world_mut()
+        .resource_mut::<ReactionGlyphs>()
+        .font
+        .take();
+    harness.pick("👍");
+    harness.app.update();
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+    assert_eq!(harness.streamed().len(), 1);
+
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<ReactionGlyphs>()
+        .font = font;
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.particles().len(), 1);
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+}
+
+#[test]
 fn with_chat_bubbles_off_reactions_play_with_no_particle() {
     let mut harness = Harness::with_avatars();
     let mut wire = harness.transport(TransportType::Livekit);
@@ -693,7 +1046,7 @@ fn with_chat_bubbles_off_reactions_play_with_no_particle() {
     assert_eq!(harness.streamed().len(), 2);
     assert_eq!(sent(&mut wire).len(), 1);
 
-    // one already alive when the setting goes off lives out its life
+    // one already alive when the setting goes off is hidden at once
     harness
         .app
         .world_mut()
@@ -706,7 +1059,7 @@ fn with_chat_bubbles_off_reactions_play_with_no_particle() {
         .resource_mut::<AppConfig>()
         .chat_bubble_visibility = ChatBubbleVisibility::None;
     harness.app.update();
-    assert!(harness.drawn(particle));
+    assert!(!harness.drawn(particle));
 }
 
 #[test]
@@ -807,20 +1160,20 @@ fn a_particle_shows_where_its_players_nametag_would() {
 #[test]
 fn far_from_the_camera_only_the_local_users_show() {
     let mut harness = Harness::with_avatars();
-    let peer = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE + 5.0)));
+    let peer = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE - 5.0)));
     harness.hear(peer, "🔥", 1.0, 1);
     harness.app.update();
     harness.glyphs_land();
     harness.app.update();
     let theirs = harness.particle();
-    assert!(!harness.drawn(theirs));
-    // nearer, it shows
+    assert!(harness.drawn(theirs));
+    // farther, it is hidden
     harness.move_avatar(
         peer,
-        GlobalTransform::from_xyz(0.0, 0.0, -(DRAW_DISTANCE - 5.0)),
+        GlobalTransform::from_xyz(0.0, 0.0, -(DRAW_DISTANCE + 5.0)),
     );
     harness.app.update();
-    assert!(harness.drawn(theirs));
+    assert!(!harness.drawn(theirs));
 
     // the local user's show however far the camera has gone from them
     let local = harness.local;
@@ -837,6 +1190,77 @@ fn far_from_the_camera_only_the_local_users_show() {
         .into_iter()
         .find(|particle| *particle != theirs)
         .unwrap();
+    assert!(harness.drawn(mine));
+}
+
+#[test]
+fn a_reaction_of_a_player_not_shown_plays_with_no_particle_and_no_glyphs() {
+    let mut harness = Harness::with_avatars();
+    let far = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE + 5.0)));
+    let hidden = harness.peer_at(Vec3::new(3.0, 0.0, 0.0));
+    harness
+        .app
+        .world_mut()
+        .entity_mut(hidden)
+        .insert(PlayerModifiers {
+            hide: true,
+            ..Default::default()
+        });
+    harness.hear(far, "🔥", 1.0, 1);
+    harness.hear(hidden, "👍", 1.0, 1);
+    harness.run(0.5);
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.not_shown, 2);
+    // nothing was laid out for them, so nothing of theirs is asked of the atlas
+    assert!(harness
+        .app
+        .world()
+        .resource::<ReactionGlyphs>()
+        .emoji
+        .is_empty());
+    // they played all the same
+    assert_eq!(harness.streamed().len(), 2);
+
+    // one who comes near gets a particle for the next
+    harness.move_avatar(far, GlobalTransform::from_xyz(0.0, 0.0, -5.0));
+    harness.hear(far, "🔥", 2.0, 1);
+    harness.run(0.1);
+    assert_eq!(harness.particles().len(), 1);
+}
+
+#[test]
+fn in_first_person_the_local_users_own_are_not_drawn() {
+    let mut harness = Harness::with_avatars();
+    let peer = harness.peer_at(Vec3::new(3.0, 0.0, 0.0));
+    let mine = harness.local_particle();
+    assert!(harness.drawn(mine));
+
+    // one alive as the camera goes into the player's head is hidden
+    harness.set_camera_distance(0.0);
+    harness.app.update();
+    assert!(!harness.drawn(mine));
+    // and the next gets no particle, while it is passed to the HUD as any is
+    harness.streamed();
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.particles().len(), 1);
+    assert_eq!(harness.stats().dropped.not_shown, 1);
+    assert_eq!(harness.streamed().len(), 1);
+
+    // other players' are drawn as ever
+    harness.hear(peer, "🔥", 1.0, 1);
+    harness.app.update();
+    harness.glyphs_land();
+    harness.app.update();
+    let theirs = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != mine)
+        .unwrap();
+    assert!(harness.drawn(theirs));
+
+    harness.set_camera_distance(1.0);
+    harness.app.update();
     assert!(harness.drawn(mine));
 }
 

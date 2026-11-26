@@ -8,6 +8,87 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Marketplace catalogue mirror proof
+
+`catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
+attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
+a conflicting chain or block hash. `graph_unavailable` records a failed
+graph query or a graph response without usable block metadata.
+`proof_skipped_rpc_unavailable` records an unpinned graph pass started
+after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
+responses and accompanies the error log for the configured RPC.
+
+For Ethereum v1 royalty attribution, a local PostgreSQL fixture saved 64
+collections and 1,000 items. The tables and indexes occupied 32 KiB and
+168 KiB. Publishing an unchanged full sweep took 0.56 ms for collections
+and 1.89 ms for items on the measured run. The publication leaves unchanged
+attribution rows in place and replaces the rows a completed sweep changes.
+
+## Published sales reads
+
+A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
+
+| Read | Execution time |
+| --- | ---: |
+| First sales page in timestamp order, with total | 12.0 ms |
+| Seller summary, 100 matching sales | 615 ms |
+| Buyer page, 34 matching sales | 2.8 ms |
+
+A larger fixture included 5.3 million collection mint events, 6,200 factory creations and creator transfers, and 5.3 million NFT transfer events alongside one million sales. The accounts page took 8.00 s with 16 MiB of work memory, the lifetime creator ranking took 6.25 s, and an indexed token lookup took 0.282 ms. Creator lookups used the collection replay index in both directions. The separate partial creator wallet indexes occupied 64 KiB each on the fixture.
+
+The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
+
+## Wallet activity transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum transfers in `shop.nft_event` among 400,000 wallets. 30% of them settled a sale, giving 1.83M single-asset executions in the sales ledger. The older half of each network's transfers had no transaction hash. Timings are for the leg's statement on one network: both sides capped at 500, with the public-sale checks against the ledger. The leg runs the two networks concurrently.
+
+| Index | Size | Concurrent build | Build in the migration transaction |
+| --- | ---: | ---: | ---: |
+| `nft_event_transfer_from_idx` | 601 MB | 35.6 s (first build, cold cache) | 15.7 s |
+| `nft_event_transfer_to_idx` | 601 MB | 14.7 s | not measured |
+
+| Wallet | Network | Rows returned | Cached | Cold |
+| --- | --- | ---: | ---: | ---: |
+| 400 transfers | Polygon | 232 | 8.4 ms | 128 ms |
+| 400 transfers | Ethereum | 42 | 9.0 ms | 37 ms |
+| 50,000 transfers, 90% of them sales | Polygon | 1,000 | 78 ms | 1.15 s |
+| 50,000 transfers, 90% of them sales | Ethereum | 668 | 38 ms | 1.53 s |
+| Three random wallets | Polygon | 19 to 25 | 1.1 to 2.2 ms | 18 to 24 ms |
+
+Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
+
+## Latest sale per token
+
+The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
+
+The backfill was measured on a ledger of 3M Polygon and 600,000 Ethereum single-asset sales spread over each network's history, 5% of them unpriced. Each 5,000,000-block window is one `INSERT ... SELECT DISTINCT ON` into `shop.nft_last_sale`, the statement a fold pass runs:
+
+| Network | Windows | Rows per window | Time per window | Total |
+| --- | ---: | ---: | ---: | ---: |
+| Polygon (blocks 15.2M to 78.2M) | 13 | 226,000 (the last 136,000) | 3.3 to 10.3 s | 78 s |
+| Ethereum (blocks 4.9M to 20.9M) | 4 | 50,000 (the last 32,000) | 0.7 to 1.8 s | 4.6 s |
+
+The 525,000 resulting rows took 518 MB, with the primary key and the two secondary indexes the table had then. The index on `(network, sold_at DESC)` has since been dropped.
+
+`/v1/nfts?sortBy=recently_sold` was measured on a seed shaped like the one in DATABASE.md's /v1/nfts measurements: 3M Polygon tokens over 100,000 items of 5,000 collections, 200,000 Ethereum v1 tokens, 300,000 names and 90,000 parcels. 0.2% of the tokens had a legacy sold time, and the latest sales covered 20% of Polygon tokens, 10% of v1 tokens, 5% of names and 2% of parcels. Each page is `first=24`, built by `build_nfts_query_for`, three runs:
+
+| Page | Legacy orders only | With the latest sales | Capped total |
+| --- | ---: | ---: | ---: |
+| `category=wearable` | 3.6 to 5.4 s | 4.5 to 7.1 s | 173 to 319 ms |
+| no category (collections, names and LAND) | 4.1 to 4.8 s | 6.0 to 7.0 s | 442 to 604 ms |
+
+Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
+
+## Credits metrics snapshot
+
+The `credits-settlement` pass sets the settlement gauges (`credits_pledges_live`, `credits_pledged_usd_cents`, `credits_usages_unpaid`, `credits_revocations_pending`) from one statement, `shop::credits::metrics::SNAPSHOT_SQL`, every `CHECKOUT_WORKER_INTERVAL_SECS` (30 s by default). It was measured on a synthetic seed on a laptop with PostgreSQL 17.6, three runs of `EXPLAIN (ANALYZE, BUFFERS)`:
+
+| Rows | Live pledges | Unpaid uses | Pending revocations | Time |
+| --- | ---: | ---: | ---: | ---: |
+| 100,000 authorizations, 90,000 indexed uses (all but 25 settled), 90,000 revocations | 2,000 | 25 | 9,000 | 42 to 45 ms |
+
+The live pledges and their cents are read through the partial `authorizations_expiry_idx` (2,000 rows), and the pending revocations through `revocations_due_idx`. Each is bounded by what is live, not by the table. The unpaid count costs most of the time: a parallel hash anti-join of every indexed use at or below the fold against `usage_settlements`, then a primary key probe of the authorization for each unsettled use. It grows linearly with the uses the index has stored, about 0.5 ms per 1,000.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
@@ -52,6 +133,20 @@ These are single local samples with synthetic distributions and uncontrolled
 cache state. They establish the selected access path and the cost of the
 diagnostic in that fixture, not production latency, throughput, index write
 cost or capacity.
+
+## Seasonal room goal processing
+
+A local PostgreSQL 17 temporary-table fixture held 200,100 room facts (101
+pending) and 20,000 visits (101 with timers). After `ANALYZE`, `EXPLAIN (ANALYZE,
+BUFFERS)` selected the partial pending index to take 100 facts (0.044 ms), the
+session index to find a matching leave (0.025 ms), and the partial due index
+to take 100 timers (0.032 ms). The pending and due indexes were 16 KiB each,
+and the session index was 26 MiB. In a second fixture with 30,000 event and
+30,000 deployment rows, the webhook venue query used the world index
+(0.076 ms) or the deployment and coordinate indexes (0.173 ms). The partial
+enrollment index returned 100 pending dates from 200,100 login rows in
+0.035 ms. These synthetic queries measured local read paths. Production event
+volume and write cost remain unmeasured.
 
 ## Social notification polling and oversized-event expiry
 

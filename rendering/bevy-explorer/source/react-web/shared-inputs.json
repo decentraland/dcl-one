@@ -481,6 +481,10 @@
           "kind": "regular"
         },
         {
+          "name": "gridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "home.ts",
           "kind": "regular"
         },
@@ -845,6 +849,10 @@
         },
         {
           "name": "googleTagSignInReturn.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "gridAge.test.ts",
           "kind": "regular"
         },
         {
@@ -4437,6 +4445,10 @@
           "kind": "regular"
         },
         {
+          "name": "useMapGridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useMapLayerData.ts",
           "kind": "regular"
         }
@@ -5251,6 +5263,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapGridAge.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "mapPins.test.tsx",
           "kind": "regular"
         },
@@ -6055,7 +6071,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "13ab026e422d2ef43ce24fc525a21ddce356fd0ef95761929758dabb291a38b9"
+      "sha256": "be34df8fd437d99cd57a64c7dfad7573619f474377268b97b8f77460e119989b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6127,7 +6143,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/graphicsPresets.ts",
-      "sha256": "59eb638dafeb0f711b8b5f63ce825e8dbee332f12650849b3af9fe0d73f53e2e"
+      "sha256": "5b968d8035bdbcda826db18e1773105b0bf25d3912b4fc9f9832957951c74034"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
@@ -6158,6 +6174,10 @@
       "sha256": "4940b5f381241e8a35be703bbba78d802623ddda3f2ca74391f508d20fd4095c"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
+      "sha256": "e4c0cf2808521329cc12dbe1a43532b6d4e160ec0e7b488d014fe5d03a38e0e1"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
       "sha256": "d280e0bf5fd6fec2d5f9440d84600aad455c7d63ca40557ea85062c66213096f"
     },
@@ -6176,6 +6196,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
+      "sha256": "2858c028e60a766abcb43bcefc9abafb4b68136bc1e86e3b5d56e19af2916dce"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6414,6 +6438,10 @@
       "sha256": "b0648f5f93f52685a6d9cc61630644c70850cb5e52ad532fb0cf80d59748f48b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
+      "sha256": "248649e2f3fec4824353befaa8b4b2b4dae15fd7cfde78075f1a0a85b7959177"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
     },
@@ -6451,7 +6479,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "1b9dd9725cf6e07f62be872b8a046a36613fabe0c48adc7fa31a103ae96900dc"
+      "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
+      "sha256": "1ceb411fa61c5e8b7d56c2ad561d8692561a5c7b85c92f666bfc3ebe41819719"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
@@ -6591,7 +6623,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "3f24d5d2a25ee713589c0d6edcc476a3085518336bf6e396e96d2f9bdf12a3ce"
+      "sha256": "b2fc553f095dce7367a658a884a68fd155a8a6e99ca25af2000f78ae7967b756"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6650,6 +6682,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -6660,6 +6693,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
@@ -6746,7 +6780,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "cae6a8c8dbe714a33001f9610c4197dfbdbba2d777e2fe1e9df97b09b12f93b1"
+      "sha256": "314b1c55fd847cdefc9e746b1085fab02e3028b272f576887a9f2b933aafd46f"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6758,7 +6792,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "5f7f93b656ecc35a863595567c3f98205ab321dd7c3f0c99d3cdd7d1389a5a4e"
+      "sha256": "96bb86db27731b6b2518c405d04c41ae822e829ab4b2f61b65eacc858a5cf7fb"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -6786,7 +6820,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "382ca77336fd1eaef2250f0a7d537afc274610e8bb8b9df777f749f7c304306c"
+      "sha256": "9f09db162e54da9fda91d0df78b330e1542cf2f97c6a6748a87744fb28fdcd53"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6890,7 +6924,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "16d88f89ad87c847f7f16c3f74efac6ee6378149ae9515282c1aee836ad8a22e"
+      "sha256": "21316003c0a94979682a6f3842c68784fb015052da0e8bd313406a5185261b6d"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
@@ -6973,12 +7007,16 @@
       "sha256": "e270e2b27fc08f135b5659ab77c1731a202ff095d0ac4af93f27cb409ea86731"
     },
     {
+      "path": "library/explorer-core/features/map/gridAge.ts",
+      "sha256": "229af6ae45484bf6b1065f8bca0ea7ae50d10b1f8fb5f3d7d28f9223054d6d97"
+    },
+    {
       "path": "library/explorer-core/features/map/home.ts",
       "sha256": "cfbd18f3d2d74cb6388ecb070ddef4eb25976d0b318f72ddbbf1a9b8e05f0dfd"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "ba429af5dec910d65365c6db6454be6f5d157231c44a5680c9cae741a85f90ff"
+      "sha256": "23237352bc3e1931ac4f06b81b99a3039de2a0616336780d7f65a8d994f39c70"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -7287,6 +7325,10 @@
     {
       "path": "library/explorer-core/test/googleTagSignInReturn.test.ts",
       "sha256": "8009219f000ad7d58b8238a18bbe3798d2c741a40ab8c88c0f53f7bf7afb04c1"
+    },
+    {
+      "path": "library/explorer-core/test/gridAge.test.ts",
+      "sha256": "ffb692670f4aefe82e7436d0bb06561478a60572cae4a3e8cb7a91d573d96118"
     },
     {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
@@ -9414,7 +9456,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "f4ea4eba63fbd8c60e2a5e91f0c71569bc03335a0030d1f43e8cd79c1bbcbb67"
+      "sha256": "6fa2b7223ee0105507779620b371a656b7ce05dd1a02576bc5a39f209be5b86b"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -10070,7 +10112,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
-      "sha256": "051cea8524a2c8216e3363d0c3f130cd78fb53ef1426b72f91d390e4c4b656e5"
+      "sha256": "58664120326c37d050f54c27d5ab51a0d3c65f430510e68fac7ce332e4b9d8b8"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
@@ -10078,7 +10120,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "15aa558665dcacebc58dbdea56f36c8aee9bb41310af4c7aa3d094e419a4adce"
+      "sha256": "46c357e73dc5433235f1a1d20b07248c5a1d6458c3da4d5b5bc742cd3a034d92"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -10135,6 +10177,10 @@
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "sha256": "87fc66a010db1fe616084100454d329b22647adf7ddbd01848a60f8469d1d202"
+    },
+    {
+      "path": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "sha256": "582d9bea1e355bdfc094fd7fa40483c3c7748e7ce8f6a3e89f36163ae53371fe"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
@@ -10226,15 +10272,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "sha256": "51d8e8f185d81cc1c9b1ed74d8a1f4d314a7fb76172d3e4fdf8d181c081ee1f7"
+      "sha256": "967ba623f07e630d4c3fba90c4be3323aa39fecee7b539f2c164ea188ef3bcc6"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
-      "sha256": "e896ba986bbb922b234dc29b1e725a60de38aac0456f16105dac8f1669df6ee0"
+      "sha256": "f3c83e05a6a47d9d335a2880a90c7e5cd9b5ac508623cce952370f7eb022cc66"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "sha256": "6f86265c2ac0a7a1b96f09713dae14f1a9e9d36f8b4b131cd2845993a1197e93"
+      "sha256": "183cd954e53d0468f5e09676b3959d7a38628d80e292463b8c8c0e45393a9123"
     },
     {
       "path": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.module.css",
@@ -10402,7 +10448,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "4fc114ee98c6da83d6142b77b403147c7c17bb5efc7dc5fe80c8724868b42c80"
+      "sha256": "11e925992792495716eb257d3c748a3a3fb349badbb2e67e570b6263dd624713"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10446,7 +10492,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "607772ceee3294cb0de927b30ed5e9b1a32983cb600670ae44155f7ff53ba2cb"
+      "sha256": "b7105dbdc511dae63b07a5e2f37f8fe533e82a6dc5805b5b1faf797f5a0e2733"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -10498,11 +10544,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
-      "sha256": "dca6cbcfc2cacbd8747a86eea95202d53f117bb6b55bc9246760d18dec54332b"
+      "sha256": "7bcf0cd03ab4cd2fd3a23ac7a90ff045b579df0de3e791fe71b11fd6aa9fe854"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "ebf3a64b2ec6b28cb2035aa5b960a655e4044868fdbcf0a1f22b37785c1660a1"
+      "sha256": "b4ec6e0e6da967b6cffd766634837946f65e9139bafae04c724534771ee16269"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -10678,7 +10724,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "ceb13c42f419679c685fb01974c29e80db3a9478bf0a138258a0b62f4d55154c"
+      "sha256": "a408a8a0b0623850fe186ce938b6712bf8ecc37359b22e6239216040adccf1bb"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10750,7 +10796,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "98cd8f9e1ac2e4412ab3b1b8c6bac640949842b94b39193f6f8b291be56b67fa"
+      "sha256": "e8d987bd5cbbacfc2cba2abc3c9a8f2163d9ae9bf50ee44ffdf288cdec839102"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10854,7 +10900,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.clicks.test.tsx",
-      "sha256": "6d1f10f58e73e3ce4b3bbc03d5fc20fa42e73823fafcaeb0aa74440c5527609d"
+      "sha256": "e2c8daef0845422f370f844d60c9a64393d7b6479944849de289ab6586508f4e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatReactions.test.tsx",
@@ -11046,7 +11092,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "436e78801c2e40d4cb8bf7afd79d8379bd2f5f9ead35ff29ad37c5714770fa56"
+      "sha256": "25101f816971b7c159bb5e5b4b0301cc3879cf628fee1ecf580b358b19443402"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -11110,7 +11156,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "03c157c1028c234d9e9a6b6ba807627f6d071cae38e2d8cbb415357e9d0d20b8"
+      "sha256": "799e6cd71901d75b0561dbc7637527a056386440878ffddb4be8485b17b6a805"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",
@@ -11186,7 +11232,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "38db3d4beec64802b3263c1a9fa03709cbd52efe4e337cff463a111f2d55292d"
+      "sha256": "f94952f4edcae9b03179db9d739b48ee33194f586c515d37b373b22d1e84a4d9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
@@ -11243,6 +11289,10 @@
     {
       "path": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
       "sha256": "5a0540c05192d6514efc813bdad21337f6dc4859e6ef88eb3addba603eca9b5d"
+    },
+    {
+      "path": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "sha256": "bbda1a67c5b91b2322cb72010d2fb688c1157d6f3abdb0036f5f9b047f486503"
     },
     {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
@@ -12401,6 +12451,21 @@
     },
     {
       "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
     },
@@ -13465,6 +13530,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/guestIdentity.test.ts",
       "to": "library/explorer-core/features/auth/guest.ts",
       "kind": "native:runtime"
@@ -28121,6 +28216,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -28387,6 +28512,21 @@
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -30217,6 +30357,21 @@
     {
       "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "to": "library/explorer-core/features/map/mapZoom.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -45217,6 +45372,21 @@
     {
       "from": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
       "to": "library/ui/apps/hud/features/map/panel/EventInfo.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -47481,6 +47651,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/home.ts",
       "kind": "type"
     },
@@ -47872,6 +48047,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/googleTagSignInReturn.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/gridAge.test.ts",
       "kind": "type"
     },
     {
@@ -48907,6 +49087,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "type"
     },
     {
@@ -50057,6 +50242,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/mapEventInfo.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/mapGridAge.test.tsx",
       "kind": "type"
     },
     {

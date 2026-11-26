@@ -130,10 +130,14 @@ impl WorldSessions {
 
     /// Ends sessions past their TTL and forgets old leaves.
     fn collect(&mut self, now: Instant, out: &mut Vec<Transition>) {
-        while let Some(Reverse((deadline, incarnation, _))) = self.expiry.peek()
-            && *deadline <= now
-        {
-            let (incarnation, sid) = (*incarnation, self.expiry.pop().unwrap().0.2);
+        loop {
+            let Some(top) = self.expiry.peek_mut() else {
+                break;
+            };
+            if top.0.0 > now {
+                break;
+            }
+            let Reverse((_, incarnation, sid)) = std::collections::binary_heap::PeekMut::pop(top);
             let Some(session) = self.live.get(&sid).filter(|s| s.incarnation == incarnation) else {
                 continue;
             };
@@ -144,10 +148,12 @@ impl WorldSessions {
                 self.end(&sid, out);
             }
         }
-        while let Some((at, _)) = self.left_order.front()
-            && now.saturating_duration_since(*at) >= WORLD_LEFT_TTL
+        while self
+            .left_order
+            .front()
+            .is_some_and(|(at, _)| now.saturating_duration_since(*at) >= WORLD_LEFT_TTL)
+            && let Some((_, sid)) = self.left_order.pop_front()
         {
-            let (_, sid) = self.left_order.pop_front().unwrap();
             self.left.remove(&sid);
         }
     }

@@ -214,6 +214,10 @@ fn signed_fetch_error(e: SignedFetchError) -> ApiError {
         SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request(format!("Invalid signer: {detail}"))
         }
+        // The client source spent its contract-wallet checks: retry later.
+        SignedFetchError::RateLimited => {
+            ApiError::Status(StatusCode::TOO_MANY_REQUESTS, e.to_string())
+        }
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for /notify-requests");
             ApiError::Unauthorized

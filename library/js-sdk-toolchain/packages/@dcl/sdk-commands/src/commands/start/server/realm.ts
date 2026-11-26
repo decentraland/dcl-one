@@ -1,7 +1,7 @@
 import { handleSocketLinearProtocol } from '@dcl/mini-comms/dist/logic/handle-linear-protocol'
-import { PreviewComponents } from '../types'
-import type { AboutResponse } from '@dcl/protocol/out-ts/decentraland/realm/about.gen'
-import { Router } from '@well-known-components/http-server'
+import type { PreviewComponents } from '../types'
+import type { AboutResponse } from '../../../generated/decentraland/realm/about.gen'
+import type { Router } from '@well-known-components/http-server'
 import { upgradeWebSocketResponse } from '@well-known-components/http-server/dist/ws'
 
 /**

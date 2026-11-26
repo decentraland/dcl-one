@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { dispatchCancelLayer, registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { CHAT_REACTIONS_SETTING } from '@explorer-core/features/chat/reactions'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
 import type { Setting } from '@explorer-core/engine/protocol'
@@ -122,6 +122,44 @@ describe('the reactions bar', () => {
     expect(dispatchCancelLayer()).toBe(true)
     await vi.waitFor(() => expect(bar()).not.toBeInTheDocument())
     expect(dispatchCancelLayer()).toBe(false)
+  }, 20_000)
+
+  it('the cancel key closes the full picker with a picked emoji focused, and that press leaves the bar', async () => {
+    renderChat()
+    const emoji = EMOJI_GROUPS[1].emojis[0]
+    await userEvent.click(reactions())
+    await userEvent.click(within(bar()!).getByRole('button', { name: 'More emoji' }))
+    const picked = within(screen.getByRole('dialog', { name: 'Emoji picker' })).getAllByTitle(emoji.expression)[0]
+    await userEvent.click(picked)
+    expect(picked).toHaveFocus()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Emoji picker' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'Reactions' })).toBeInTheDocument()
+    // an engine that saw the press too sends its Cancel: the picker took it already
+    expect(dispatchCancelLayer()).toBe(true)
+    expect(bar()).toBeInTheDocument()
+
+    // the next press is the bar's
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(dispatchCancelLayer()).toBe(true)
+    await vi.waitFor(() => expect(bar()).not.toBeInTheDocument())
+  }, 20_000)
+
+  it('keeps its place under a layer opened after it while its picker opens and closes', async () => {
+    renderChat()
+    await userEvent.click(reactions())
+    const later = vi.fn()
+    const unregister = registerCancelLayer(later)
+    try {
+      await userEvent.click(within(bar()!).getByRole('button', { name: 'More emoji' }))
+      expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
+      expect(dispatchCancelLayer()).toBe(true)
+      expect(later).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('dialog', { name: 'Emoji picker' })).toBeInTheDocument()
+    } finally {
+      unregister()
+    }
   }, 20_000)
 
   it('closes on a press outside it', async () => {

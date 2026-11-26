@@ -32,9 +32,10 @@ use catalyst_shared::json_number::{integral_i64, integral_u64};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::str::FromStr;
 
+use super::catalogue::{self, Purpose};
 use super::signed::{
     CREATE_TRADE_INTENT, MARKETPLACE_AUTH_SIGNERS, require_auth_metadata, require_signer,
 };
@@ -730,6 +731,9 @@ pub enum TradeCreationError {
     },
     /// The item is not in the mirrored catalogue (yet).
     ItemUnknown,
+    /// The collections index owns the item's network and cannot authorize
+    /// a read of it: why.
+    CatalogueUnavailable(String),
     NotTheCreator,
     /// The price is not the chain's MANA (nor USD-pegged MANA).
     InvalidPriceAsset,
@@ -779,6 +783,7 @@ impl std::fmt::Display for TradeCreationError {
                 )
             }
             Self::ItemUnknown => write!(f, "the item is not in the catalogue yet; retry later"),
+            Self::CatalogueUnavailable(why) => write!(f, "{why}; retry later"),
             Self::NotTheCreator => {
                 write!(f, "only the item's creator may sell it as a primary sale")
             }
@@ -810,7 +815,19 @@ pub fn served_chain(indexes: &super::chain_walk::IndexSettings, network: &str) -
     }
 }
 
-/// A public item order is a primary sale: only the item's creator may sign it.
+/// The item's creator and its network's catalogue state, in one statement.
+static ITEM_CREATOR_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, i.creator FROM (SELECT lower($1) AS network) AS n {joins} \
+         LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = lower($2) AND i.item_id = $3::numeric",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
+
+/// A public item order is a primary sale: only the item's creator may sign
+/// it. On a network the collections index owns, the creator is read under
+/// its authorizing publication, in the statement that reads the verdict.
 async fn verify_item_creator(
     pool: &PgPool,
     network: &str,
@@ -818,15 +835,17 @@ async fn verify_item_creator(
 ) -> Result<(), TradeCreationError> {
     let sent = &trade.sent[0];
     let item_id = sent.item_id.as_deref().unwrap_or_default();
-    let creator: Option<String> = sqlx::query_scalar(
-        "SELECT creator FROM shop.items \
-         WHERE network = lower($1) AND contract_address = lower($2) AND item_id = $3::numeric",
-    )
-    .bind(network)
-    .bind(&sent.contract_address)
-    .bind(item_id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(ITEM_CREATOR_SQL.as_str()))
+        .bind(network)
+        .bind(&sent.contract_address)
+        .bind(item_id)
+        .fetch_one(pool)
+        .await?;
+    let state = catalogue::NetworkState::from_row(&row)?;
+    if let Some(Err(why)) = state.owned_verdict(trade.chain_id, Purpose::Authorize, Utc::now()) {
+        return Err(TradeCreationError::CatalogueUnavailable(why));
+    }
+    let creator: Option<String> = row.try_get("creator")?;
     match creator {
         None => Err(TradeCreationError::ItemUnknown),
         Some(c) if c.eq_ignore_ascii_case(&trade.signer) => Ok(()),
@@ -1320,7 +1339,8 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
         }
         TradeCreationError::OwnershipUnverifiable(_)
         | TradeCreationError::OwnershipLookupFailed(_)
-        | TradeCreationError::ItemUnknown => ApiError::http(503, message),
+        | TradeCreationError::ItemUnknown
+        | TradeCreationError::CatalogueUnavailable(_) => ApiError::http(503, message),
         TradeCreationError::Duplicate | TradeCreationError::DuplicateOpen(_) => {
             ApiError::http(409, message)
         }
