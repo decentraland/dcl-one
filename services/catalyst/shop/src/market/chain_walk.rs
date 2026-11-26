@@ -2321,8 +2321,8 @@ async fn walk(
                     out.requests += spent.requests;
                 }
                 Ok(_) => break,
-                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
-                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                Err(e) if let Some(requests) = e.downcast_ref::<Diverged>().map(|d| d.requests) => {
+                    out.requests += requests;
                     return diverged(
                         pool,
                         source,

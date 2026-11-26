@@ -36,6 +36,9 @@ pub struct Credits {
     pub(crate) shop_base_url: Arc<str>,
     /// The grant notification's icon base (`NOTIFICATIONS_CDN_URL`).
     pub(crate) notifications_cdn_url: Arc<str>,
+    /// Where the revenue events go (`events.rs`), attached by the node once
+    /// it is built and shared by every clone; none leaves them unsent.
+    pub(crate) revenue_events: Arc<std::sync::OnceLock<Arc<dyn super::events::RevenueEvents>>>,
 }
 
 /// A wallet's balances in integer US cents at the peg (`floor(credits * 10)`;
@@ -80,7 +83,19 @@ impl Credits {
             usage_chain: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.into(),
             notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.into(),
+            revenue_events: Arc::default(),
         }
+    }
+
+    /// Reports the revenue events (`events.rs`) to `events`, for this
+    /// `Credits` and every clone of it, made before or after; the first
+    /// attachment wins.
+    pub fn attach_revenue_events(&self, events: Arc<dyn super::events::RevenueEvents>) -> bool {
+        self.revenue_events.set(events).is_ok()
+    }
+
+    pub(crate) fn revenue_events(&self) -> Option<&dyn super::events::RevenueEvents> {
+        self.revenue_events.get().map(|events| events.as_ref())
     }
 
     pub fn with_shop_base_url(mut self, url: &str) -> Self {

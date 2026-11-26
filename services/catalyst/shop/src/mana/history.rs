@@ -6,7 +6,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, I256, U256, aliases::U80};
 use alloy_sol_types::{SolCall, sol};
 use anyhow::{Context, anyhow, ensure};
-use chrono::{NaiveDate, Utc};
+use chrono::{NaiveDate, NaiveTime, Utc};
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -238,9 +238,8 @@ async fn fill(pool: &PgPool, rpc: &Rpc, today: NaiveDate) -> anyhow::Result<usiz
         .peekable();
     let end = |day: NaiveDate| {
         day.succ_opt()
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
+            .expect("days before today have a successor")
+            .and_time(NaiveTime::MIN)
             .and_utc()
             .timestamp()
     };

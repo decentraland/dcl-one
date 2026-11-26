@@ -19,7 +19,7 @@ use super::catalog::{CatalogFilters, MAX_NUMERIC_NUMBER, build_catalog_query};
 use super::catalogue::{self, CatalogueRead, Purpose};
 use super::mirrors::Mirror;
 use super::nfts::NftFilters;
-use super::readers::{Ttl, cached, memoized_holding};
+use super::readers::{Ttl, memoized_holding};
 use super::wire::{
     ApiError, Histogram, InvalidParameterError, Network, NftCategory, NumericKey, Params,
     consolidate,
@@ -159,17 +159,37 @@ pub async fn prices(
         let nf = to_nft_filters(f);
         // Checked ahead of the memo, so a held answer never outlives its sources' budgets.
         super::nft_reads::require_prices_sources(state, &nf).await?;
-        let key = format!("prices-nft:{f:?}");
-        let value = cached(state, Ttl::M5, key, || async {
-            let h = super::nft_reads::nft_prices(state, &nf).await?;
-            Ok(Value::Array(
-                h.into_iter()
-                    .map(|(k, v)| serde_json::json!([k.0, v]))
-                    .collect(),
-            ))
-        })
-        .await
-        .map_err(nft_prices_error)?;
+        // Filed under what the fill's own snapshot sees (the nft index's
+        // publications and the catalogue's copies), so a republication of
+        // either misses it. The read is held only by the request that fills;
+        // one that waits drops it first, and starts again if that fill failed.
+        let value = loop {
+            let read = super::nft_reads::prices_read(state, &nf)
+                .await
+                .map_err(nft_prices_error)?;
+            let key = format!("prices-nft:{f:?}:{}", read.key());
+            let mut held = Some(read);
+            let fetched = memoized_holding(
+                state,
+                Ttl::M5,
+                key,
+                &mut held,
+                async |read: &mut super::nft_reads::PricesRead| {
+                    let h = super::nft_reads::nft_prices_on(read, state, &nf).await?;
+                    Ok::<Value, String>(Value::Array(
+                        h.into_iter()
+                            .map(|(k, v)| serde_json::json!([k.0, v]))
+                            .collect(),
+                    ))
+                },
+            )
+            .await;
+            match fetched {
+                Ok(Some(value)) => break value,
+                Ok(None) => continue,
+                Err(e) => return Err(nft_prices_error(e)),
+            }
+        };
         return Ok(histogram_from(&value));
     }
     // The item prices read the trade legs too (`build_catalog_query`). The
