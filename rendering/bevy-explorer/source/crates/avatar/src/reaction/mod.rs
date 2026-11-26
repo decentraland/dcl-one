@@ -1,0 +1,314 @@
+//! Situational reactions: an emoji a player picks to show how they feel about what is going
+//! on, played once for each time it was picked.
+//!
+//! The local user's pick plays at once and is sent to the players around them, gathered with
+//! their other picks into one message per emoji. A peer's message is held to what its sender
+//! may send, then its reactions play one at a time. Each one played is passed to the HUD on a
+//! stream.
+
+mod diagnostics;
+mod traffic;
+
+#[cfg(test)]
+mod tests;
+
+use alloy_core::primitives::Address;
+use ban_block::{BanBlock, PlatformBanStatus};
+use bevy::{platform::collections::HashMap, prelude::*};
+use common::{
+    rpc::RpcStreamSender,
+    sets::SceneSets,
+    structs::{PlayerReacted, PrimaryUser},
+};
+use comms::{
+    broadcast_to,
+    chat_reaction::{atlas_index_to_emoji, picked_emoji_tile},
+    global_crdt::{process_transport_updates, ForeignPlayer, ReactionEvent},
+    BlockedOrBanned, BroadcastTarget, Transport,
+};
+use console::{AddDebugSection, DoAddConsoleCommand};
+use dcl_component::proto_components::kernel::comms::rfc4;
+use system_bridge::{ReactionData, SystemApi};
+use wallet::Wallet;
+
+use self::traffic::{ReactionGuard, ReactionOutbox, ReactionQueue, Refused};
+
+pub struct ReactionPlugin;
+
+impl Plugin for ReactionPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_event::<ReactionPlayed>()
+            // read by analytics, which registers it too
+            .add_event::<PlayerReacted>()
+            .init_resource::<ReactionStats>()
+            .register_required_components::<ForeignPlayer, ReactionGuard>()
+            .register_required_components::<PrimaryUser, ReactionOutbox>()
+            .add_systems(
+                Update,
+                (
+                    accept_local_reactions,
+                    // a peer's reactions are taken only where the block and ban lists are
+                    // kept: an app without them (the offline avatar renderer) hears no one
+                    receive_reactions.run_if(
+                        on_event::<ReactionEvent>.and(resource_exists::<PlatformBanStatus>),
+                    ),
+                    // asks who is blocked, which only an app that keeps the lists can answer: it runs
+                    // while a sender has a queue
+                    play_queued_reactions.run_if(any_with_component::<ReactionQueue>),
+                    flush_reactions,
+                    pipe_reactions_to_scene,
+                )
+                    .chain()
+                    .in_set(SceneSets::PostLoop)
+                    // a sender first heard from this frame has its entity by now
+                    .after(process_transport_updates),
+            )
+            .add_console_command::<diagnostics::ReactionStateCommand, _>(
+                diagnostics::reaction_state,
+            )
+            .add_console_command::<diagnostics::ReactionSendCommand, _>(diagnostics::reaction_send)
+            .add_console_command::<diagnostics::ReactionSimulateCommand, _>(
+                diagnostics::reaction_simulate,
+            )
+            .add_debug_section(diagnostics::SECTION);
+    }
+}
+
+/// One reaction as it plays: `emoji` for `player`, the local user or a peer.
+#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+struct ReactionPlayed {
+    player: Entity,
+    emoji: &'static str,
+}
+
+/// The address a player reacts under. A peer is who comms heard them as; the one other player
+/// who reacts is the local user.
+fn address_of(peer: Option<&ForeignPlayer>, wallet: &Wallet) -> Address {
+    peer.map(|peer| peer.address)
+        .or_else(|| wallet.address())
+        .unwrap_or_default()
+}
+
+/// What has happened to reactions this session, for the debug panel.
+#[derive(Resource, Default)]
+struct ReactionStats {
+    /// The local user's picks that were no emoji the wire can carry, or had no one to send them.
+    refused_picks: u32,
+    /// Messages put on a room's transport, one per emoji per send.
+    sent: u32,
+    /// Peers' messages, before any is dropped.
+    received: u32,
+    played: u32,
+    /// Reactions passed to the HUD, and how many streams they go to.
+    streamed: u32,
+    subscribers: usize,
+    dropped: Dropped,
+}
+
+/// Why peers' reactions did not play.
+#[derive(Default)]
+struct Dropped {
+    /// Messages from a sender the local user must not see, and reactions such a sender had
+    /// waiting.
+    blocked: u32,
+    duplicate: u32,
+    unknown_emoji: u32,
+    rate_limited: u32,
+    /// Reactions that gave way to newer ones in a full queue.
+    queue_full: u32,
+}
+
+/// The local user's picks: each plays at once and waits in the outbox to be sent.
+fn accept_local_reactions(
+    mut requests: EventReader<SystemApi>,
+    wallet: Res<Wallet>,
+    mut local: Query<(Entity, &mut ReactionOutbox), With<PrimaryUser>>,
+    mut played: EventWriter<ReactionPlayed>,
+    mut reacted: EventWriter<PlayerReacted>,
+    mut stats: ResMut<ReactionStats>,
+) {
+    for request in requests.read() {
+        let SystemApi::SendReaction(picked) = request else {
+            continue;
+        };
+        // what plays is the emoji the wire carries for the pick, so the local user sees what
+        // the others will
+        let reaction =
+            picked_emoji_tile(picked).and_then(|tile| Some((tile, atlas_index_to_emoji(tile)?)));
+        // no one signed in reacts as no one
+        let (Some((tile, emoji)), Some(_), Ok((player, mut outbox))) =
+            (reaction, wallet.address(), local.single_mut())
+        else {
+            debug!("no reaction for {picked:?}");
+            stats.refused_picks += 1;
+            continue;
+        };
+        outbox.push(tile);
+        played.write(ReactionPlayed { player, emoji });
+        stats.played += 1;
+        reacted.write(PlayerReacted { emoji_index: tile });
+    }
+}
+
+/// Peers' messages: what their sender may send is queued on the sender, to play one at a time.
+/// Nothing is taken from a sender the local user must not see.
+fn receive_reactions(
+    mut commands: Commands,
+    mut events: EventReader<ReactionEvent>,
+    ban_block: BanBlock,
+    wallet: Res<Wallet>,
+    mut senders: Query<(
+        &mut ReactionGuard,
+        Option<&mut ReactionQueue>,
+        Option<&ForeignPlayer>,
+        Has<BlockedOrBanned>,
+    )>,
+    time: Res<Time<Real>>,
+    mut stats: ResMut<ReactionStats>,
+) {
+    let now = time.elapsed_secs_f64();
+    // the queues of senders who had none: a queue inserted here is not there for the sender's
+    // next message of the frame
+    let mut started = HashMap::<Entity, ReactionQueue>::default();
+    for event in events.read() {
+        stats.received += 1;
+        // a sender who has already gone has no avatar to react
+        let Ok((mut guard, queue, peer, blocked)) = senders.get_mut(event.sender) else {
+            continue;
+        };
+        let from = address_of(peer, &wallet);
+        // the marker follows a block or ban by a frame or two, and a player who has just
+        // appeared has none yet: their first message is asked about by address
+        if blocked
+            || ban_block.is_blocked_either_way(from)
+            || ban_block.is_addr_banned_in_scene(from)
+        {
+            stats.dropped.blocked += 1;
+            continue;
+        }
+        let (emoji, count) = match guard.admit(&event.reaction, now) {
+            Ok(admitted) => admitted,
+            Err(refused) => {
+                debug!("reaction from {from:#x} refused: {refused:?}");
+                match refused {
+                    Refused::Duplicate => stats.dropped.duplicate += 1,
+                    Refused::UnknownEmoji => stats.dropped.unknown_emoji += 1,
+                    Refused::RateLimited => stats.dropped.rate_limited += 1,
+                }
+                continue;
+            }
+        };
+        stats.dropped.queue_full += match queue {
+            Some(mut queue) => queue.push(emoji, count),
+            None => started.entry(event.sender).or_default().push(emoji, count),
+        };
+    }
+    for (sender, queue) in started {
+        commands.entity(sender).try_insert(queue);
+    }
+}
+
+/// Each sender's queue plays what is due. It goes once nothing waits and the gap after the last
+/// has run out: gone sooner, the sender's next message would play at once.
+fn play_queued_reactions(
+    mut commands: Commands,
+    time: Res<Time>,
+    wallet: Res<Wallet>,
+    ban_block: BanBlock,
+    mut queues: Query<(
+        Entity,
+        &mut ReactionQueue,
+        Option<&ForeignPlayer>,
+        Has<BlockedOrBanned>,
+    )>,
+    mut played: EventWriter<ReactionPlayed>,
+    mut stats: ResMut<ReactionStats>,
+) {
+    for (player, mut queue, peer, blocked) in &mut queues {
+        let from = address_of(peer, &wallet);
+        // blocked or banned since they were queued: asked by address as at intake, as the
+        // marker follows by a frame or two
+        if blocked
+            || ban_block.is_blocked_either_way(from)
+            || ban_block.is_addr_banned_in_scene(from)
+        {
+            stats.dropped.blocked += queue.len() as u32;
+            commands.entity(player).try_remove::<ReactionQueue>();
+            continue;
+        }
+        for emoji in queue.tick(time.delta_secs()) {
+            played.write(ReactionPlayed { player, emoji });
+            stats.played += 1;
+        }
+        if queue.done() {
+            commands.entity(player).try_remove::<ReactionQueue>();
+        }
+    }
+}
+
+/// The local user's picks go where nearby chat goes, once they have waited.
+fn flush_reactions(
+    time: Res<Time>,
+    uptime: Res<Time<Real>>,
+    mut outboxes: Query<&mut ReactionOutbox, With<PrimaryUser>>,
+    transports: Query<&Transport>,
+    mut stats: ResMut<ReactionStats>,
+) {
+    for mut outbox in &mut outboxes {
+        if outbox.waiting() == 0 {
+            continue;
+        }
+        for outgoing in outbox.tick(time.delta_secs(), uptime.elapsed_secs()) {
+            // a message no room took went nowhere, and is not counted as sent
+            let carried = broadcast_to(
+                transports.iter(),
+                BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT,
+                false,
+                &rfc4::Packet {
+                    message: Some(rfc4::packet::Message::Reaction(outgoing.into())),
+                    protocol_version: 100,
+                },
+            );
+            stats.sent += u32::from(carried > 0);
+        }
+    }
+}
+
+/// Every reaction played, the local user's included, goes to the HUD on each stream it opened.
+fn pipe_reactions_to_scene(
+    mut played: EventReader<ReactionPlayed>,
+    mut requests: EventReader<SystemApi>,
+    mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
+    players: Query<Option<&ForeignPlayer>>,
+    wallet: Res<Wallet>,
+    mut stats: ResMut<ReactionStats>,
+) {
+    senders.extend(requests.read().filter_map(|ev| {
+        if let SystemApi::GetReactionStream(sender) = ev {
+            Some(sender.clone())
+        } else {
+            None
+        }
+    }));
+    senders.retain(|s| !s.is_closed());
+    stats.subscribers = senders.len();
+
+    if senders.is_empty() {
+        played.clear();
+        return;
+    }
+    for reaction in played.read() {
+        // a player who went this frame is not streamed
+        let Ok(peer) = players.get(reaction.player) else {
+            continue;
+        };
+        let data = ReactionData {
+            from: format!("{:#x}", address_of(peer, &wallet)),
+            emoji: reaction.emoji.to_owned(),
+        };
+        for sender in senders.iter() {
+            let _ = sender.send(data.clone());
+        }
+        stats.streamed += 1;
+    }
+}

@@ -305,6 +305,13 @@ pub struct PlayerEmoteTriggered {
     pub source: &'static str,
 }
 
+/// The local player reacted with an emoji over their avatar: `emoji_index` is the emoji's index
+/// on the wire, the `react_situation` reaction id.
+#[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerReacted {
+    pub emoji_index: i32,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from

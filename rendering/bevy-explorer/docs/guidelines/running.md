@@ -302,6 +302,19 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
+- `/reaction_state`: the situational reactions, as JSON: `outbox` (the local user's picks not yet
+  sent), `refusedPicks`, `sent` (messages put on a room's transport, one per emoji per send: none
+  with no room to carry it), `received` (peers' messages), `queued` (the reactions waiting to
+  play, and the senders with any waiting or inside the gap after their last), `played`,
+  `streamed` (the reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause:
+  `blocked`, `duplicate`, `unknownEmoji`, `rateLimited` and `queueFull`. The counts are of the
+  session.
+  `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
+  the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
+  the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
