@@ -289,12 +289,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
 ] }
 kira = "0.9.6"
-zip = { version = "2", default-features = false }
-# the browser leg reads deflated zips; zip 2 would pull zopfli for that and the lock holds
-# none, while this release is in the lock with flate2
-zip06 = { package = "zip", version = "0.6", default-features = false, features = [
-  "deflate",
-] }
+zip = { version = "9", default-features = false }
 image = "0.25"
 multipart = { version = "0.18.0", default-features = false, features = [
   "client",
@@ -341,7 +336,8 @@ rand = "0.8.5"
 futures-util = "0.3.28"
 futures-channel = "0.3"
 async-native-tls = { version = "0.5", features = ["runtime-async-std"] }
-boimp = { path = "../vendor/boimp" }
+# Not on crates.io. The rev is the commit that ../patches/boimp/source.toml names.
+boimp = { git = "https://github.com/decentraland/dcl-one", rev = "fb8df51cf64664a8e3987b0ae585f68d80f4b3ff" }
 crc = "3"
 num-traits = "0.2"
 async-compat = "0.2"
@@ -568,12 +564,12 @@ draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffb
 # patch series there (rendering/bevy-explorer/docs/guidelines/bevy-fork.md). The workspace and the
 # ecosystem crates name these six crates by crates.io version; the other subcrates follow from
 # the same checkout as Bevy's path dependencies.
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
 
 ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
 parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
@@ -620,7 +616,7 @@ opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093
 # by git. These entries point them at the same commits. With Cargo.lock present Cargo does not
 # read those repositories; a resolve without Cargo.lock reads each branch once.
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }

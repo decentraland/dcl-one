@@ -2,7 +2,7 @@
 // GET /assets/{id}, all public and anonymous. Every failure (unset base, network, timeout, non-2xx,
 // a body that is not the expected JSON) is a BlogUnavailableError, which the routes answer with a
 // generic 503; nothing about the upstream reaches the response.
-import type { BlogImage } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import type { BlogImage } from "@dcl/one-ui";
 
 import { blogCmsUrl, type BaseEnv } from "../catalyst/bases";
 import { ttlMemo } from "../ttl-memo";

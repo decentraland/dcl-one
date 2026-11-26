@@ -25,6 +25,7 @@ use crate::gatekeeper::auth::{
     verify_signed_fetch,
 };
 use crate::gatekeeper::errors::{ApiError, conflict, not_found_labeled, unauthorized};
+use crate::gatekeeper::streaming::cast::{Keys, recheck_keys};
 use crate::gatekeeper::{CommsState, SharedState};
 use crate::shared::signed_fetch::SignedPath;
 
@@ -102,8 +103,10 @@ async fn ensure_admin_target_not_privileged(
     Ok(())
 }
 
-/// GET /scene-admin (scene or server signed): the explicit admins plus the
-/// addresses the place's other permission surfaces grant, with ENS names.
+/// GET /scene-admin (scene or server signed): the explicit admins of the
+/// signed scene's place plus the addresses the place's other permission
+/// surfaces grant, with ENS names. A `place_id` names the signed scene: its
+/// entity id, which older servers send, or its place.
 pub async fn list_admins(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
@@ -118,69 +121,36 @@ pub async fn list_admins(
         state.eip1654(),
     )
     .await?;
-    let context = if sf.metadata.get("signer").and_then(Value::as_str) == Some(SCENE_SIGNER) {
-        Some(Context::resolve(&state, &sf.metadata).await?)
-    } else {
-        None
-    };
-    let place_id = match &context {
-        Some(context) => {
-            if q.place_id
-                .as_deref()
-                .is_some_and(|id| id != context.place.place_id())
-            {
-                return Err(ApiError::bad_request(
-                    "place_id does not match the signed scene",
-                ));
-            }
-            context.place.place_id().to_owned()
-        }
-        None => q
-            .place_id
-            .or_else(|| scene::place_from_metadata(&sf.metadata))
-            .ok_or_else(|| ApiError::bad_request("missing place_id query"))?,
-    };
+    let context = Context::resolve(&state, &sf.metadata).await?;
+    let place_id = context.place.admin_key();
+    if q.place_id
+        .as_deref()
+        .is_some_and(|id| id != context.place.place_id() && id != place_id)
+    {
+        return Err(ApiError::bad_request(
+            "place_id does not match the signed scene",
+        ));
+    }
     let admin_filter = match q.admin.as_deref() {
         Some(raw) => Some(parse_address(raw, "admin query")?),
         None => None,
     };
-    let (admins, place) = tokio::try_join!(
-        state
-            .moderation
-            .list_active_admins(&place_id, admin_filter.as_ref()),
-        async {
-            Ok::<_, ApiError>(match &context {
-                Some(context) => {
-                    context
-                        .place
-                        .get()
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|info| scene::PlaceInfo {
-                            world: info.world,
-                            world_name: info.world_name.clone(),
-                            positions: info.positions.clone(),
-                            base_position: info.base_position.clone(),
-                        })
-                }
-                None => scene::try_load_place_info(&state.pool, &place_id)
-                    .await
-                    .ok()
-                    .flatten(),
-            })
-        }
-    )?;
+    let admins = state
+        .moderation
+        .list_active_admins(place_id, admin_filter.as_ref())
+        .await?;
+    let place = context.place.get().await.ok().flatten();
     let (extra_addresses, lease_holders) = match place {
-        Some(place) => tokio::join!(scene::get_extra_addresses(&state, &place), async {
+        Some(place) => tokio::join!(scene::get_extra_addresses(&state, place), async {
             if place.world {
                 BTreeSet::new()
             } else {
                 scene::get_lease_holders_for_parcels(&state, &place.positions).await
             }
         }),
-        None => (BTreeSet::new(), BTreeSet::new()),
+        None => (Ok(BTreeSet::new()), BTreeSet::new()),
     };
+    let extra_addresses = extra_addresses?;
     let mut all_addresses: BTreeSet<String> =
         admins.iter().map(|a| a.admin.to_lowercase()).collect();
     all_addresses.extend(extra_addresses.iter().cloned());
@@ -252,7 +222,7 @@ pub async fn add_admin(
     }
     state
         .moderation
-        .add_admin(place.place_id(), &admin, &sf.signer)
+        .add_admin(place.admin_key(), &admin, &sf.signer)
         .await?;
     scene::add_admin(&state, &context.rooms, &admin).await;
     Ok(StatusCode::NO_CONTENT)
@@ -286,7 +256,7 @@ pub async fn remove_admin(
     ensure_admin_target_not_privileged(&state, place, &admin).await?;
     state
         .moderation
-        .admin_decision(place.place_id(), &admin)
+        .admin_decision(place.admin_key(), &admin)
         .await
         .into_result()
         .map_err(|error| match error {
@@ -297,8 +267,12 @@ pub async fn remove_admin(
         })?;
     state
         .moderation
-        .remove_admin(place.place_id(), &admin)
+        .remove_admin(place.admin_key(), &admin)
         .await?;
+    // The key the removed admin generated, or reached through this grant.
+    for room in &context.rooms {
+        recheck_keys(&state, Keys::Room(room)).await;
+    }
     scene::remove_admin(&state, &context.rooms, &admin).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -668,7 +642,7 @@ impl SchemaValidate for WarnPlayerBody {
 pub(in crate::gatekeeper) fn moderator_creds(state: &CommsState) -> ModeratorCredentials<'_> {
     ModeratorCredentials {
         token: state.settings.moderator_token.as_deref(),
-        addresses: &state.settings.moderator_addresses,
+        addresses: state.platform_moderators(),
     }
 }
 
@@ -727,6 +701,7 @@ pub async fn post_user_ban(
             }
             BanWriteError::Db(e) => e,
         })?;
+    recheck_keys(&state, Keys::Minter(address.as_str())).await;
     let data = serde_json::to_value(ban).unwrap_or(Value::Null);
     Ok((
         StatusCode::CREATED,
@@ -874,7 +849,7 @@ fn bans_response(headers: &HeaderMap, bans: &[super::store::UserBan]) -> axum::r
         .insert(axum::http::header::ETAG, etag.parse().expect("hex etag"));
     response.headers_mut().insert(
         axum::http::header::CACHE_CONTROL,
-        "private, no-cache".parse().unwrap(),
+        axum::http::HeaderValue::from_static("private, no-cache"),
     );
     response
 }
@@ -924,7 +899,7 @@ mod tests {
         async fn endpoint(headers: HeaderMap) -> axum::response::Response {
             let creds = ModeratorCredentials {
                 token: Some("fixture"),
-                addresses: &[],
+                addresses: std::borrow::Cow::Borrowed(&[]),
             };
             match authorize_moderator(
                 &creds,

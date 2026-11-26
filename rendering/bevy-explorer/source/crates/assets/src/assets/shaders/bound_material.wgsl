@@ -1,8 +1,8 @@
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_bindings::{material, emissive_texture, emissive_sampler},
+    pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing, calculate_tbn_mikktspace, apply_normal_mapping},
+    pbr_bindings::{material, emissive_texture, emissive_sampler, normal_map_texture, normal_map_sampler},
     pbr_types::{STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT},
     mesh_functions,
     mesh_view_bindings::{globals, view, lights},
@@ -10,13 +10,12 @@
     shadows,
     view_transformations,
 }
-#import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
 #import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard, toon_outline}
-#import "embedded://shaders/toon.wgsl"::{facial_feature_lighting, toon_lighting}
+#import "embedded://shaders/toon.wgsl"::{facial_feature_lighting, toon_emission, toon_lighting}
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE, SCENE_PLAIN_EMISSIVE, SCENE_ALPHA_TEXTURE}
 
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
@@ -29,7 +28,7 @@ override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4
 
 #ifdef ENVIRONMENT_MAP
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light, sky_envmap_reflectivity, sky_envmap_metallic_reflectivity}
 
 // the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
 // levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
@@ -48,6 +47,9 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
     return vec3(0.0);
 }
 #endif
+@group(2) @binding(102) var scene_alpha_texture: texture_2d<f32>;
+@group(2) @binding(103) var scene_alpha_sampler: sampler;
+
 @fragment
 fn fragment(
     in: VertexOutput,
@@ -78,8 +80,42 @@ fn fragment(
     var pbr_input = pbr_input_from_standard_material(in, is_front_m);
     var out: FragmentOutput;
 
+    // the prepass holds the geometric normal (the avatar outline finds its edges in it), so a
+    // normal read from it has no normal map applied
+#ifdef LOAD_PREPASS_NORMALS
+#ifdef VERTEX_UVS
+#ifdef VERTEX_TANGENTS
+#ifdef STANDARD_MATERIAL_NORMAL_MAP
+    {
+#ifdef STANDARD_MATERIAL_NORMAL_MAP_UV_B
+        let normal_uv = (material.uv_transform * vec3(in.uv_b, 1.0)).xy;
+#else
+        let normal_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+#endif
+        let Nt = textureSampleBias(normal_map_texture, normal_map_sampler, normal_uv, view.mip_bias).rgb;
+        let TBN = calculate_tbn_mikktspace(pbr_input.world_normal, in.world_tangent);
+        let double_sided = (material.flags & STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT) != 0u;
+        pbr_input.N = apply_normal_mapping(material.flags, TBN, double_sided, is_front_m, Nt);
+    }
+#endif
+#endif
+#endif
+#endif
+
 #ifndef MULTISAMPLED
     let sample_index = 0u;
+#endif
+
+    // avatars: the toon meshes and the face features
+    let avatar = (mesh_tag & (#{TOON_MESH_TAG} | #{FACIAL_FEATURE_MESH_TAG})) != 0u;
+
+#ifdef VERTEX_UVS
+    // the alpha texture's brightness scales the alpha, not its own alpha channel
+    if (scene_bounds.flags & SCENE_ALPHA_TEXTURE) != 0u {
+        let alpha_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+        let alpha_texel = textureSampleBias(scene_alpha_texture, scene_alpha_sampler, alpha_uv, view.mip_bias);
+        pbr_input.material.base_color.a *= saturate(length(alpha_texel.rgb));
+    }
 #endif
 
     // apply emmissive multiplier
@@ -91,10 +127,14 @@ fn fragment(
     // x                no                  x * base color
     // 0                t                   2 * t
     // x != 0           t                   x * t
+    // Avatars take neither substitute: their emission is the emissive colour times the emissive
+    // texture, or the colour alone without one
+    // an SDK material (SCENE_PLAIN_EMISSIVE) differs in two rows: x with no texture stays x,
+    // and it binds no emissive texture when x is 0, so 0 with a texture is 0
     var emissive: vec3<f32> = material.emissive.rgb;
 #ifdef VERTEX_UVS
     if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
-        if dot(emissive, emissive) == 0.0 {
+        if !avatar && dot(emissive, emissive) == 0.0 {
             emissive = vec3(2.0);
         }
         var bias: SampleBias;
@@ -115,13 +155,14 @@ fn fragment(
         ).rgb);
     } else {
         // emissive is set, no emissive texture, use base color texture as emissive texture (only if present)
-        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u) {
+        if !avatar && (material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u && (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) == 0u {
             emissive = emissive * pbr_input.material.base_color.rgb;
         }
     }
 #endif
-    // scale up for lumens, use 0 for auto-exposure weight (alpha channel)
-    pbr_input.material.emissive = vec4(emissive * 10.0, 0.0);
+    // a glTF emissive factor of 1 is five times as bright as a white surface under a light of
+    // intensity 1; use 0 for auto-exposure weight (alpha channel)
+    pbr_input.material.emissive = vec4(emissive * 5.0, 0.0);
 
     let world_position = pbr_input.world_position.xyz;
     // check bounds
@@ -147,36 +188,52 @@ fn fragment(
     // alpha discard
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
+    if (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) != 0u {
+        // the lighting scales the emissive light by the alpha, on top of the blend
+        let alpha = max(pbr_input.material.base_color.a, 0.0001);
+        pbr_input.material.emissive = vec4(pbr_input.material.emissive.rgb / alpha, 0.0);
+        // premultiplied: the alpha thins the surface's colour, not its highlights
+        if (material.flags & pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED {
+            pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * pbr_input.material.base_color.a, pbr_input.material.base_color.a);
+        }
+    }
+
+#ifdef ENVIRONMENT_MAP
+    sky_envmap_reflectivity = sky_envmap_metallic_reflectivity(pbr_input.material.metallic);
+#endif
+
     // apply lighting
+    // the toon light models leave out the emission, added after the avatar outline
+    var toon_emitted = vec3<f32>(0.0);
     if (pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         if (mesh_tag & #{FACIAL_FEATURE_MESH_TAG}) != 0u {
             // the eyes, eyebrows and mouth without a mask texture: the face features' own
             // light model, by the ambient light (toon.wgsl)
             out.color = facial_feature_lighting(pbr_input);
+            toon_emitted = toon_emission(pbr_input);
         } else if (mesh_tag & #{TOON_MESH_TAG}) != 0u {
             // avatars: cel shading, a light model of its own (toon.wgsl) lit by the sun and
             // the ambient light; the sun's cast shadow pushes surfaces towards the shades
             out.color = toon_lighting(pbr_input);
+            toon_emitted = toon_emission(pbr_input);
         } else {
             out.color = apply_pbr_lighting(pbr_input);
         }
     } else {
-        // invert tonemapping for unlit materials
-        out.color = approximate_inverse_tone_mapping(pbr_input.material.base_color, view.color_grading); 
-    }
-
-    if should_discard {
-        out.color.a = out.color.a * 0.5;
-        out.color.r = 4.0;
-    } else {
-        if noise < outside_amt / 2.0 {
-            out.color = mix(out.color, vec4(10.0, 1.0, 0.0, 1.0), (outside_amt / 2.0 - noise) / 0.125);
-        }
+        out.color = pbr_input.material.base_color;
     }
 
     let view_z = -view_transformations::depth_ndc_to_view_z(in.position.z);
 
-    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u {
+    // the outline finds its edges in the depth and normal prepass, which only opaque and
+    // alpha-tested meshes write: under a blended fragment the prepass holds what lies behind it,
+    // so a blended mesh would trace the edges of the scene behind it
+    let alpha_mode = pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
+    let in_prepass = alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_OPAQUE
+        || alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK
+        || alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ALPHA_TO_COVERAGE;
+
+    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u && in_prepass {
         // the avatar outline
         out.color = toon_outline(
             in.position,
@@ -187,6 +244,20 @@ fn fragment(
             sample_index,
             dither_opacity,
         );
+    }
+
+    // the emission goes on after the line, which only darkens the lit surface: a glowing mesh
+    // glows to its edge, and a mesh a pixel or two across (a particle), all of whose pixels are
+    // edge pixels, keeps its glow instead of turning into line
+    out.color = vec4<f32>(out.color.rgb + toon_emitted, out.color.a);
+
+    if should_discard {
+        out.color.a = out.color.a * 0.5;
+        out.color.r = 4.0;
+    } else {
+        if noise < outside_amt / 2.0 {
+            out.color = mix(out.color, vec4(10.0, 1.0, 0.0, 1.0), (outside_amt / 2.0 - noise) / 0.125);
+        }
     }
 
     // apply in-shader post processing (fog, alpha-premultiply, and also tonemapping, debanding if the camera is non-hdr)

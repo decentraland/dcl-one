@@ -1,0 +1,130 @@
+/* The create form and the NAME gate sit in the shared Modal: its surface, title, close button and
+ * actions. The form reads top to bottom, so it is aligned to the start, unlike the Modal's centered
+ * message text. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  width: 100%;
+  text-align: start;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.label {
+  font-size: var(--dcl-font-size-body-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dcl-text-secondary);
+}
+
+.required {
+  color: var(--dcl-action-primary);
+}
+
+.hint {
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.4;
+  color: var(--dcl-text-secondary);
+}
+
+.picture {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-top: var(--dcl-space-4);
+}
+
+.pictureImage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border: 1px solid var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-transparencies-white-40);
+}
+
+.pictureEdit {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid var(--dcl-transparencies-white-40);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-surface-brand);
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.pictureEdit:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.pictureEdit:focus-visible,
+.input:focus-visible,
+.link:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border: 1px solid transparent;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-black);
+  font: inherit;
+  font-size: var(--dcl-font-size-body-md);
+}
+
+.input:focus {
+  border-color: var(--dcl-action-primary);
+}
+
+.input::placeholder {
+  color: var(--dcl-neutrals-gray);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  color: var(--dcl-feedback-error);
+}
+
+.policy {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.4;
+  text-align: center;
+  color: var(--dcl-text-secondary);
+}
+
+.link {
+  font-weight: 700;
+  color: var(--dcl-action-primary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.gateArt {
+  display: block;
+  color: var(--dcl-action-primary);
+}

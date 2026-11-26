@@ -17,8 +17,9 @@ vi.hoisted(() => {
 });
 
 const track = vi.hoisted(() => vi.fn());
-vi.mock("@/core/lib/telemetry/track", () => ({ track }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
+const page = vi.hoisted(() => vi.fn());
+vi.mock("@/core/lib/telemetry/track", () => ({ track, page, adoptSitesSegmentConfig: vi.fn() }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
 import { BlogIndexView } from "@/pages/blog/BlogIndexView";
 import { BlogPostView } from "@/pages/blog/BlogPostView";
@@ -39,7 +40,8 @@ async function payload<T>(load: Promise<BlogOutcome<T>>) {
   return { sid: "s", ...outcome.payload };
 }
 
-const Stub = createRoutesStub([
+// Under a root route with a session, as in the app, so the views' Segment page calls go out.
+const Stub = createRoutesStub([{ id: "root", path: "/", loader: () => ({ sid: "s" }), HydrateFallback: () => null, children: [
   { path: "/blog", Component: withLoaderData(BlogIndexView), loader: ({ request }) => payload(loadBlogHome(request)), HydrateFallback: () => null },
   { path: "/blog/search", Component: withLoaderData(BlogIndexView), loader: ({ request }) => payload(loadBlogSearch(request)), HydrateFallback: () => null },
   {
@@ -60,9 +62,10 @@ const Stub = createRoutesStub([
     loader: ({ request, params }) => payload(loadBlogPost(request, params.category ?? "", params.post ?? "")),
     HydrateFallback: () => null,
   },
-]);
+] }]);
 
 const calls = (event: string) => track.mock.calls.filter(([name]) => name === event).map(([, props]) => props);
+const pageNames = () => page.mock.calls.map(([name]) => name);
 
 function renderAt(url: string) {
   return render(
@@ -101,6 +104,11 @@ describe("blog telemetry", () => {
       );
     });
 
+    it("should send one 'Blog' page view", async () => {
+      await waitFor(() => expect(page).toHaveBeenCalledOnce());
+      expect(page).toHaveBeenCalledWith("Blog", { title: "Blog", path: "/blog" }, { sid: "s" });
+    });
+
     describe("and the reader loads more and then searches", () => {
       beforeEach(async () => {
         await waitFor(() => expect(calls("lp_blog_viewed")).toHaveLength(1));
@@ -115,6 +123,8 @@ describe("blog telemetry", () => {
         await user.type(box, "news{Enter}");
         await screen.findByText("9 articles for “news”");
         expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]);
+        // Load more keeps the home's view; the search results are a page view of their own.
+        await waitFor(() => expect(pageNames()).toEqual(["Blog", "Blog Search Results"]));
       });
     });
 
@@ -172,6 +182,12 @@ describe("blog telemetry", () => {
         expect(calls("lp_blog_viewed")).toEqual([{ post_count: 1 }]),
       );
     });
+
+    it("should send one page view naming the author and the author's slug", async () => {
+      await waitFor(() => expect(page).toHaveBeenCalledOnce());
+      expect(page.mock.calls[0]?.[0]).toBe("Posts by Jane Doe");
+      expect(page.mock.calls[0]?.[1]).toEqual({ title: "Posts by Jane Doe", author: "Jane Doe", authorSlug: "jane-doe" });
+    });
   });
 
   describe("when an unknown category is viewed", () => {
@@ -190,6 +206,7 @@ describe("blog telemetry", () => {
 
       it("should fire nothing for either", () => {
         expect(track).not.toHaveBeenCalled();
+        expect(page).not.toHaveBeenCalled();
       });
     });
   });
@@ -206,6 +223,12 @@ describe("blog telemetry", () => {
       await waitFor(() =>
         expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }]),
       );
+    });
+
+    it("should send one page view named after the post", async () => {
+      await waitFor(() => expect(page).toHaveBeenCalledOnce());
+      expect(page.mock.calls[0]?.[0]).toBe("First Post");
+      expect(page.mock.calls[0]?.[1]).toMatchObject({ slug: "first-post", authorSlug: "jane-doe" });
     });
 
     it("should open a link in the body in a new tab", () => {
@@ -235,6 +258,7 @@ describe("blog telemetry", () => {
             { slug: "first-post" },
             { slug: "second-post" },
           ]);
+          expect(pageNames()).toEqual(["First Post", "Second Post"]);
         });
       });
     });
@@ -270,6 +294,7 @@ describe("blog telemetry", () => {
 
     it("should send no view", () => {
       expect(track).not.toHaveBeenCalled();
+      expect(page).not.toHaveBeenCalled();
     });
   });
 });

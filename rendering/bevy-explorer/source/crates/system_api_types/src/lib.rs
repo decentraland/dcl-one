@@ -71,8 +71,8 @@ impl ClearableColor3 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct SetAvatarData {
-    /// Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
-    /// so a name-only edit needn't restate the avatar.
+    /// An empty body shape or name and absent colors keep their current values.
+    /// Only a nonempty name can change the claimed-name flag.
     #[ts(optional)]
     pub base: Option<PbAvatarBase>,
     #[ts(optional)]
@@ -138,8 +138,6 @@ pub struct MapPinInfo {
     pub y: i32,
     /// At most 100 characters.
     pub title: String,
-    /// A file of the scene's content; `None` draws the default pin.
-    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
@@ -179,6 +177,12 @@ pub enum SmartWearableSource {
 pub struct HomeScene {
     pub realm: String,
     pub parcel: Vector2,
+    /// False when the account has no home: `realm` and `parcel` are then where it starts, the
+    /// default realm on 0,0.
+    pub pinned: bool,
+    /// False when no account is signed in or the session is a guest with no account: setting and
+    /// clearing a home then change nothing.
+    pub pinnable: bool,
 }
 
 /// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that
@@ -248,6 +252,15 @@ pub struct ChatReactionData {
     pub emoji: String,
     pub from: String,
     pub remove: bool,
+}
+
+/// A situational reaction as it plays: an emoji shown for `from`, the local user or a peer.
+#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReactionData {
+    pub from: String,
+    pub emoji: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -651,6 +664,7 @@ pub struct AvatarModifierState {
     pub user_id: String,
     pub hide_avatar: bool,
     pub hide_profile: bool,
+    pub pulse_absent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1033,6 +1047,8 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+    /// True while another setting's value overrides this one.
+    pub disabled: bool,
 }
 
 /// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
@@ -1085,4 +1101,20 @@ pub struct OutfitSlotData {
 pub struct OutfitsData {
     pub outfits: Vec<OutfitSlotData>,
     pub names_for_extra_slots: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetAvatarData;
+
+    #[test]
+    fn an_equip_without_the_wearables_list_deserializes() {
+        let patch: SetAvatarData = serde_json::from_value(serde_json::json!({
+            "equip": { "wearableUrns": ["urn:hat"], "emoteUrns": [], "forceRender": ["hair"] }
+        }))
+        .unwrap();
+        let equip = patch.equip.unwrap();
+        assert_eq!(equip.force_render, vec!["hair"]);
+        assert!(equip.wearables.is_empty());
+    }
 }

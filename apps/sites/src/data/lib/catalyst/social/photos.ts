@@ -9,7 +9,7 @@ import { warnInvalid } from "../warn";
 /** The node mounts the camera reel here (`services/catalyst/src/serve.rs`). */
 const CAMERA_REEL_PREFIX = "/camera-reel-service";
 
-type PhotoPerson = { name: string; address: string; isGuest: boolean };
+type PhotoPerson = { name: string; address: string; isGuest: boolean; wearables?: string[] };
 
 /** A snapshot as the profile's Photos tab and its viewer show it. */
 export type ProfilePhoto = {
@@ -34,9 +34,13 @@ type PhotoPage = CollectiblePage<ProfilePhoto>;
  * Only the fields the grid and the viewer show are required, so a field the tab does not read
  * (`placeId`, `isEmoting`, a person's wearables) does not drop a photo.
  */
+const PhotoPersonSchema = UserSchema.pick({ userName: true, userAddress: true, isGuest: true }).extend({
+  wearables: UserSchema.shape.wearables.optional().catch(undefined),
+});
+
 const PhotoRowSchema = ImageSchema.pick({ id: true, url: true, thumbnailUrl: true, isPublic: true }).extend({
   metadata: MetadataSchema.pick({ userName: true, userAddress: true, dateTime: true, realm: true, scene: true }).extend({
-    visiblePeople: z.array(UserSchema.pick({ userName: true, userAddress: true, isGuest: true })),
+    visiblePeople: z.array(PhotoPersonSchema),
   }),
 });
 
@@ -47,7 +51,7 @@ function httpUrl(value: string): string | undefined {
   return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
-function toPhoto(raw: unknown): ProfilePhoto | null {
+function toPhoto(raw: unknown, includeDetails = false): ProfilePhoto | null {
   const row = PhotoRowSchema.safeParse(raw);
   const url = row.success ? httpUrl(row.data.url) : undefined;
   if (!row.success || !url) {
@@ -68,6 +72,7 @@ function toPhoto(raw: unknown): ProfilePhoto | null {
       name: person.userName.trim(),
       address: person.userAddress.toLowerCase(),
       isGuest: person.isGuest,
+      ...(includeDetails && person.wearables?.length ? { wearables: person.wearables } : {}),
     })),
   };
 }
@@ -109,7 +114,7 @@ export async function fetchPhoto(id: string, opts: Pick<GetOptions, "signal" | "
   if (!isPhotoId(id)) return null;
   const path = `${CAMERA_REEL_PREFIX}/api/images/${id.toLowerCase()}/metadata`;
   try {
-    return toPhoto(await getJSON<unknown>(path, opts));
+    return toPhoto(await getJSON<unknown>(path, opts), true);
   } catch (error) {
     if (error instanceof CatalystError && error.status === 404) return null;
     throw error;
@@ -120,10 +125,13 @@ export async function fetchPhoto(id: string, opts: Pick<GetOptions, "signal" | "
  * The date the viewer prints, as the profile site does ("November 08, 2026"); empty when unreadable.
  * In UTC, so the server's render and the browser's agree.
  */
-export function formatPhotoDate(dateTime: string): string {
+export function parsePhotoDate(dateTime: string): Date | undefined {
   const value = dateTime.trim();
   const numeric = Number(value);
   const date = value !== "" && Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric", timeZone: "UTC" });
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+export function formatPhotoDate(dateTime: string): string {
+  return parsePhotoDate(dateTime)?.toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric", timeZone: "UTC" }) ?? "";
 }

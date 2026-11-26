@@ -31,8 +31,7 @@ use catalyst::content::sync_deployer::{DEFAULT_FLUSH_CONCURRENCY, LiveSyncDeploy
 use catalyst::storage::Storage;
 use serde_json::json;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const POLL_MS: u64 = 100;
 
@@ -92,6 +91,7 @@ async fn a_pause_stops_a_running_pointer_changes_stream_at_its_next_poll() {
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),

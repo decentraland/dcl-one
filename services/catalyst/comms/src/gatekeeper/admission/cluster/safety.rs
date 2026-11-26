@@ -1,5 +1,7 @@
 //! Shared island safety facts. Stable wallet locks serialize first admission
 //! with first cleanup; remote calls never run while these transactions live.
+use crate::metrics::declarations;
+
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
@@ -24,7 +26,7 @@ pub struct SafetyStore {
     pub(crate) pool: PgPool,
     generation_required: bool,
     quarantines:
-        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, tokio::time::Instant>>>,
+        std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<Uuid, tokio::time::Instant>>>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SafetySnapshot {
@@ -327,7 +329,9 @@ impl SafetyStore {
         let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM social.island_takeover_receipts WHERE NOT acknowledged AND retired_by_source IS NULL)+(SELECT count(*) FROM (SELECT wallet,intent_root_key,intent_target_key,intent_generation FROM social.island_cleanup_dispatches WHERE purpose='island_enforcement' AND state IN ('dispatched','quarantine','settled_late') GROUP BY wallet,intent_root_key,intent_target_key,intent_generation) obligations)")
             .fetch_one(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         if count >= CAPACITY {
-            metrics::counter!("comms_island_safety_capacity_refused_total").increment(1);
+            declarations::ISLAND_SAFETY_CAPACITY_REFUSED
+                .handle([])
+                .increment(1);
             return Err(GatewayError::Unknown);
         }
         Ok(())
@@ -515,7 +519,6 @@ impl SafetyStore {
         if matches!(outcome, Settlement::Quarantine(_)) {
             self.quarantines
                 .lock()
-                .unwrap()
                 .insert(id, tokio::time::Instant::now());
         }
         Ok(true)
@@ -648,7 +651,6 @@ impl SafetyStore {
         let first_seen = *self
             .quarantines
             .lock()
-            .unwrap()
             .entry(id)
             .or_insert_with(tokio::time::Instant::now);
         let durable_due:bool=sqlx::query_scalar("SELECT quarantine_until<=timezone('UTC',clock_timestamp()) FROM social.island_cleanup_dispatches WHERE dispatch_id=$1")
@@ -697,7 +699,7 @@ impl SafetyStore {
             .bind(id).bind(next).bind(&wallet).execute(&mut *lease.tx).await.map_err(|_|GatewayError::Unknown)?;
         Self::advance(&mut lease.tx, &wallet, None).await?;
         lease.commit().await?;
-        self.quarantines.lock().unwrap().remove(&id);
+        self.quarantines.lock().remove(&id);
         Ok(Some(Dispatch {
             dispatch_id: next,
             cutoff,
@@ -757,7 +759,7 @@ impl SafetyStore {
 
     #[cfg(test)]
     pub(crate) fn elapse_quarantine_for_test(&self, id: Uuid, seconds: u64) {
-        self.quarantines.lock().unwrap().insert(
+        self.quarantines.lock().insert(
             id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(seconds),
         );
@@ -943,7 +945,9 @@ impl SafetyStore {
             lease.commit().await
             }.await;
             if result.is_err() {
-                metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+                declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                    .handle([])
+                    .increment(1);
                 tracing::warn!(%wallet,"island compaction wallet unavailable; retaining all evidence");
             }
         }
@@ -1337,7 +1341,7 @@ mod durable_tests {
         );
         // A configured island TTL shorter than fixed60s refresh lifetime must
         // still not permit a final removal after only61 seconds of observation.
-        store.quarantines.lock().unwrap().insert(
+        store.quarantines.lock().insert(
             initial.dispatch_id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(61),
         );
@@ -1348,7 +1352,7 @@ mod durable_tests {
                 .unwrap()
                 .is_none()
         );
-        store.quarantines.lock().unwrap().insert(
+        store.quarantines.lock().insert(
             initial.dispatch_id,
             tokio::time::Instant::now() - std::time::Duration::from_secs(123),
         );

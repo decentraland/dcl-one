@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-import { Button, Skeleton } from "@dcl/one-ui";
+import { LeaveCreditsDialog, Button, Skeleton } from "@dcl/one-ui";
 
 import { optOutFailureMessage } from "@/data/lib/account/credits";
 import type { AuthIdentity } from "@/data/lib/auth/types";
@@ -8,7 +8,6 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CREDITS_COPY } from "./copy";
 import styles from "./CreditsSettings.module.css";
 import { useCreditsStatus, useOptOutOfCredits } from "./hooks";
-import { LeaveCreditsDialog } from "@dcl/one-ui/apps/sites/account/LeaveCreditsDialog";
 
 const COPY = CREDITS_COPY;
 

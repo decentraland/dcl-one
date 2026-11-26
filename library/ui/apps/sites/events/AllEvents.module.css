@@ -21,38 +21,24 @@
   }
 }
 
+.root {
+  /* Arriving at My Events scrolls the section under the fixed header, as source. */
+  scroll-margin-top: 96px;
+}
+
+/* Source's pill tabs: 16px apart, 28px above the panel; centred on phones. */
 .tabs {
-  display: flex;
-  gap: var(--dcl-space-24);
-  margin-bottom: var(--dcl-space-24);
-}
-
-.tab {
-  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
-  padding: 0 0 var(--dcl-space-4);
-  border-bottom: 2px solid transparent;
-  color: var(--dcl-text-secondary);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.tab[aria-current='page'] {
-  border-bottom-color: var(--dcl-brand-ruby);
-  color: var(--dcl-text-primary);
-}
-
-.tab:focus-visible {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
+  margin-bottom: 28px;
 }
 
 @media (max-width: 767px) {
-  .tabs {
-    justify-content: center;
+  .root {
+    scroll-margin-top: 72px;
   }
 
-  .tab {
-    font-size: var(--dcl-font-size-heading-2);
+  .tabs {
+    justify-content: center;
+    margin-bottom: var(--dcl-space-16);
   }
 }
 
@@ -172,10 +158,6 @@
   margin: 0;
   padding: var(--dcl-space-32) var(--dcl-space-16);
   text-align: center;
-}
-
-.message p {
-  margin: 0;
 }
 
 .visuallyHidden {

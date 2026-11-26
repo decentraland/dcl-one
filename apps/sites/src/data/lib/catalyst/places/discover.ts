@@ -1,5 +1,6 @@
 import { infiniteQueryOptions, queryOptions, type DehydratedState } from "@tanstack/react-query";
 import { z } from "zod";
+import { REMOTE_FLAG, type RemoteFlag } from "@shop/discovery/lib/rolloutFlags";
 
 import type { AuthIdentity } from "../../auth/types";
 import { profileFaceUrl } from "../../auth/profile-face-url";
@@ -118,8 +119,24 @@ export const myPlacesQuery = (identity: AuthIdentity) =>
       fetchDestinations({ owner: identity.signer.toLowerCase(), limit: MEMBER_LIMIT, order_by: undefined }, { identity, signal }),
   });
 
+/**
+ * Live Now's head count from the `dapps-places-live-min-user` variant, as production reads it (sites discover.flags.ts
+ * useLiveMinUsers): the payload trimmed, and only a plain non-negative integer counts. Anything else is 0, so the rail
+ * always shows the most active scenes (Genesis Plaza first on a quiet node) instead of an empty section.
+ */
+export function liveMinUsers(variant: string | null | undefined): number {
+  const raw = variant?.trim();
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : 0;
+}
+
+/** Live Now's head count from a flags reading: the variant counts only while its flag is on. */
+export function liveMinUsersFrom(on: (flag: RemoteFlag) => boolean, variant: (flag: RemoteFlag) => string | null): number {
+  const flag = REMOTE_FLAG.placesLiveMinUsers;
+  return on(flag) ? liveMinUsers(variant(flag)) : 0;
+}
+
 /** The four busiest scenes with at least `minUsers` people, from the live feed. */
-export function selectLiveRail(rows: readonly Destination[], minUsers = 1): Destination[] {
+export function selectLiveRail(rows: readonly Destination[], minUsers = 0): Destination[] {
   return rows
     .filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) >= minUsers)
     .sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0))

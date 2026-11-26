@@ -130,6 +130,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((program, argv), ('ingress', ['ingress']))
         self.assertEqual(env['INGRESS_CONFIG_BODY'], ingress, 'the secret travels in the environment, not argv')
         self.assertIn('PATH', env, 'the ingress starts its per-stream handlers from PATH')
+        self.assertEqual(env['GST_PLUGIN_FEATURE_RANK'], 'avdec_h264:MAX', 'a hardware decoder ends the stream')
 
     def test_behind_a_public_origin_streamers_get_the_origins_host(self):
         for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
@@ -403,6 +404,102 @@ class DevTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             dev.runtime_env({**self.config, 'scene_proxy_hosts': 'rooms.example.test'})
 
+    def test_a_stale_cast_bot_path_warns_and_stops_no_command(self):
+        bot = self.state / 'cast-bot'
+        with patch('sys.stderr', new_callable=io.StringIO) as warning:
+            env = dev.runtime_env({**self.config, 'cast_bot_bin': str(bot), 'personal_worlds': 2})
+        self.assertNotIn('CAST_BOT_BIN', env)
+        self.assertEqual(env['WORLDS_PERSONAL_WORLDS_MAX'], '2')
+        self.assertIn(f'cast_bot_bin {bot} is not executable', warning.getvalue())
+        bot.write_text('#!/bin/sh\n')
+        bot.chmod(0o755)
+        self.assertEqual(dev.runtime_env({**self.config, 'cast_bot_bin': str(bot)})['CAST_BOT_BIN'], str(bot))
+
+    def test_the_message_router_runs_only_when_its_binary_is_set(self):
+        router = self.state / 'catalyst-message-router'
+        stale = {**self.config, 'message_router_bin': str(router)}
+        for config in (self.config, stale):
+            with patch('sys.stderr', new_callable=io.StringIO):
+                env, processes = dev.runtime_env(config), dev.project(config)['processes']
+            self.assertNotIn('MESSAGE_ROUTER_KEY', env)
+            self.assertNotIn('MESSAGE_ROUTER_IDENTITY_PREFIX', env)
+            self.assertNotIn('message-router', processes)
+        with patch('sys.stderr', new_callable=io.StringIO) as warning:
+            dev.runtime_env(stale)
+        self.assertIn(f'message_router_bin {router} is not executable', warning.getvalue())
+        router.write_text('#!/bin/sh\n')
+        router.chmod(0o755)
+        env = dev.runtime_env(stale)
+        self.assertEqual(env['MESSAGE_ROUTER_KEY'], self.config['MESSAGE_ROUTER_KEY'])
+        self.assertEqual(env['MESSAGE_ROUTER_IDENTITY_PREFIX'], 'message-router-prd')
+        process = dev.project(stale)['processes']['message-router']
+        self.assertEqual(process['depends_on'], {'livekit': {'condition': 'process_healthy'},
+                                                 'api': {'condition': 'process_healthy'}})
+        self.assertEqual(process['availability']['restart'], 'on_failure')
+        self.assertEqual(process['readiness_probe']['http_get']['port'], dev.message_router_metrics_port(stale))
+        self.assertEqual(process['readiness_probe']['http_get']['path'], '/health/ready')
+        self.assertIn('message-router', dev.SERVICES)
+        # Turning the router on under a running stack asks for a full restart.
+        dev.save_json(self.state / 'process-compose.json', {'processes': dev.project(self.config)['processes']})
+        self.assertEqual(dev.stale_graph(stale), {'message-router'})
+
+    def test_the_router_port_is_checked_only_when_the_router_runs(self):
+        base = self.config['ingress_port']
+        router = self.state / 'catalyst-message-router'
+        router.write_text('#!/bin/sh\n')
+        router.chmod(0o755)
+        checked = []
+        with patch.object(dev, 'bindable', side_effect=lambda ports: checked.append(ports) or True):
+            self.assertTrue(dev.ingress_ports_free(base, router=False))
+            self.assertTrue(dev.ingress_ports_free(base))
+        self.assertNotIn(base + 4, [port for _, port, _ in checked[0]])
+        self.assertIn(base + 4, [port for _, port, _ in checked[1]])
+        self.assertEqual(dev.message_router_metrics_port(self.config), base + 4)
+        for config, router_checked in ((self.config, False), ({**self.config, 'message_router_bin': str(router)}, True)):
+            with patch.object(dev, 'settings', return_value=config), patch.object(dev, 'supervisor_running', return_value=False), \
+                    patch.object(dev, 'ports_free', return_value=True), patch.object(dev, 'save_json'), \
+                    patch.object(dev, 'ingress_ports_free', return_value=True) as free:
+                dev.prepare_supervisor()
+            free.assert_called_once_with(base, router=router_checked)
+
+    def test_the_message_router_signs_with_its_own_key_and_reaches_loopback(self):
+        key = self.config['MESSAGE_ROUTER_KEY']
+        self.assertEqual(len(base64.urlsafe_b64decode(key + '=')), 32)
+        self.assertNotIn('=', key)
+        self.assertNotEqual(key, self.config['LIVEKIT_API_SECRET'])
+        base = self.config['port']
+        for config in (self.config, {**self.config, 'public_origin': 'https://dev.example.test'}):
+            env = dev.message_router_env(config)
+            self.assertEqual(env['MESSAGE_ROUTER_KEY'], key)
+            self.assertEqual(env['MESSAGE_ROUTER_TOKEN_URL'],
+                             f'http://127.0.0.1:{base}/internal/message-router/token/v1')
+            self.assertEqual(env['MESSAGE_ROUTER_LIVEKIT_URL'], f'ws://127.0.0.1:{dev.livekit_ports(config)[0]}')
+            self.assertEqual(env['DATABASE_URL'], dev.database_url(config))
+            self.assertEqual(env['MESSAGE_ROUTER_REPLICA'], '0')
+            self.assertNotIn('LIVEKIT_API_SECRET', env)
+            self.assertNotIn(self.config['LIVEKIT_API_SECRET'], env.values())
+        metrics = dev.message_router_metrics_port(self.config)
+        self.assertEqual(env['MESSAGE_ROUTER_METRICS_BIND'], f'127.0.0.1:{metrics}')
+        self.assertNotIn(metrics, (*dev.ingress_ports(self.config), *range(base, base + 10)))
+        older = {k: v for k, v in self.config.items() if k != 'MESSAGE_ROUTER_KEY'}
+        dev.save_json(dev.SETTINGS, older)
+        self.assertEqual({k: dev.settings()[k] for k in older}, older, 'a stack from before the key keeps its secrets')
+        self.assertTrue(dev.settings()['MESSAGE_ROUTER_KEY'])
+
+    def test_the_message_router_identity_is_the_one_the_explorer_trusts(self):
+        # The engine gets a base domain from /play only on a bare dotted host; otherwise it keeps decentraland.org.
+        for origin, prefix in ((None, 'message-router-prd'),
+                               ('https://dev.example.test:5443', 'message-router-prd'),
+                               ('https://dev.example.test', 'message-router-dev'),
+                               ('https://dev.example.test:443', 'message-router-dev'),
+                               ('http://localhost', 'message-router-prd'),
+                               ('https://play.decentraland.zone', 'message-router-dev'),
+                               ('https://play.decentraland.org', 'message-router-prd'),
+                               # the page's host in punycode is a bare dotted host
+                               ('https://dév.example.test', 'message-router-dev')):
+            config = {**self.config, 'public_origin': dev.public_origin(origin)}
+            self.assertEqual(dev.message_router_identity_prefix(config), prefix, origin)
+
     def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
         with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
             os.environ.pop('FOUNDATION_DEV_AVATAR_RENDER_BIN', None)
@@ -464,39 +561,54 @@ class DevTest(unittest.TestCase):
         self.assertEqual((Path(binary).name, argv[1:]), ('catalyst', ['pulse']))
         self.assertEqual(env, dev.pulse_env(self.config, certificate, key))
 
-    def test_api_process_readiness_can_start_pulse_before_whole_stack_about_is_healthy(self):
+    def test_api_can_accept_traffic_before_pulse_is_ready_for_local_players(self):
         processes = dev.project(self.config)['processes']
-        pulse_ready = False
+        attempts = 0
         observed = []
         api_url = f"http://127.0.0.1:{self.config['port']}"
 
         def response(url, timeout):
             observed.append(url)
-            if url == api_url + '/about' and not pulse_ready:
-                raise dev.urllib.error.HTTPError(url, 503, 'Pulse not ready', {}, None)
+            if url == api_url + '/health':
+                details = {'comms': {'status': 'pass' if attempts >= 1 else 'fail', 'required': False},
+                           'postgres': {'status': 'fail' if attempts == 1 else 'pass', 'required': False}}
+                body = io.BytesIO(json.dumps({'status': 'pass', 'details': details}).encode())
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
-        def start_pulse(_delay):
-            nonlocal pulse_ready
+        def next_attempt(_delay):
+            nonlocal attempts
             mirrors.assert_not_called()
-            pulse_ready = True
+            attempts += 1
 
         listing = subprocess.CompletedProcess([], 0, stdout='[]')
         with patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
                 patch.object(dev, 'pc', return_value=listing), \
-                patch.object(dev, 'backoff_delays', return_value=iter([0])), \
-                patch.object(dev.time, 'sleep', side_effect=start_pulse), \
+                patch.object(dev, 'backoff_delays', return_value=iter([0, 0])), \
+                patch.object(dev.time, 'sleep', side_effect=next_attempt), \
                 patch.object(dev, 'wait_first_mirror_pass', return_value=0) as mirrors:
             probe = processes['api']['readiness_probe']['http_get']
             # The real /status route answers 200 after schema/state/listener setup,
-            # while /about includes the still-absent Pulse heartbeat.
+            # while /health includes the still-absent Pulse heartbeat.
             with dev.urllib.request.urlopen(api_url + probe['path'], timeout=3) as ready:
                 self.assertEqual(ready.status, 200)
             self.assertEqual(processes['pulse']['depends_on']['api'], {'condition': 'process_healthy'})
             self.assertEqual(dev.wait_ready(10), 0)
-        self.assertTrue(pulse_ready)
-        self.assertEqual(observed.count(api_url + '/about'), 2)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(observed.count(api_url + '/health'), 3)
         mirrors.assert_called_once()
+
+    def test_local_mirror_can_start_while_its_map_indexes_catch_up(self):
+        config = {**self.config, 'profile': 'mirror'}
+        listing = subprocess.CompletedProcess([], 0, stdout='[]')
+        with patch.object(dev, 'settings', return_value=config), \
+                patch.object(dev, 'pc', return_value=listing), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                patch.object(dev.urllib.request, 'urlopen') as request:
+            request.return_value.__enter__.return_value.status = 200
+            self.assertEqual(dev.wait_ready(10), 0)
+            self.assertEqual(request.call_args_list[0].args[0], f"http://127.0.0.1:{config['port']}/about")
 
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
         client, monitor = dev.nats_ports(self.config)
@@ -535,6 +647,7 @@ class DevTest(unittest.TestCase):
 
     def test_two_stacks_on_one_machine_do_not_share_the_metrics_exporter(self):
         env = dev.runtime_env(self.config)
+        self.assertEqual(env['INDEX_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 6}")
         self.assertEqual(env['SERVE_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 1}", "not the binary's default 5006")
         with socket.socket() as busy:
             busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -591,6 +704,26 @@ class DevTest(unittest.TestCase):
             sock.bind(('127.0.0.1', base + 2))
             self.assertFalse(dev.ports_free(base), 'Pulse needs UDP on the Sites port')
 
+    def test_a_public_origin_serves_enet_where_native_clients_dial(self):
+        # A native client dials ENet on UDP 7777 of pulse-server.<base domain>, never a port of the block.
+        base, files = self.config['port'], (Path('c'), Path('k'))
+        config = {**self.config, 'public_origin': 'https://dev.example.test'}
+        env = dev.pulse_env(config, *files)
+        self.assertEqual((env['PULSE_BIND'], env['PULSE_METRICS_BIND']), ('0.0.0.0:7777', f'127.0.0.1:{base + 7}'))
+        second = {**config, 'pulse_enet_port': 7778}
+        self.assertEqual(dev.pulse_env(second, *files)['PULSE_BIND'], '0.0.0.0:7778', 'a second stack on the machine')
+        self.assertEqual(dev.pulse_env({**self.config, 'pulse_enet_port': 7778}, *files)['PULSE_BIND'],
+                         f'127.0.0.1:{base + 7}', 'a loopback stack stays in its block')
+        # Startup checks both of Pulse's public UDP ports.
+        with patch.object(dev, 'settings', return_value=second), patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), patch.object(dev, 'save_json'), \
+                patch.object(dev, 'ports_free', return_value=True) as free:
+            dev.prepare_supervisor()
+        free.assert_called_once_with(base, (dev.WEB_PULSE_PORT, 7778))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
+            busy.bind(('0.0.0.0', 0))
+            self.assertFalse(dev.ports_free(base, (busy.getsockname()[1],)), 'a taken public port stops startup')
+
     @unittest.skipUnless(shutil.which('openssl'), 'openssl is supplied by nix develop')
     def test_pulse_keeps_its_key_and_renews_a_short_lived_certificate(self):
         certificate, key = dev.pulse_certificate()
@@ -628,6 +761,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual(dev.runtime_env({**self.config, 'public_origin': 'http://10.0.0.5:5443'})['DEV_ALLOWED_HOSTS'],
                          '10.0.0.5')
         self.assertEqual(env['HTTP_TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128', 'the front is the loopback peer')
+        self.assertEqual(env['CAST_PRESENTER_PUBLIC_URL'], 'https://cast-presenter-service.dev.example.test:5443')
         self.assertEqual((env['HTTP_SERVER_HOST'], env['HOST']), ('127.0.0.1', '127.0.0.1'), 'the front is the only listener')
         # The web Explorer dials Pulse at the page's host and port over UDP, which the front cannot carry.
         self.assertEqual(dev.pulse_ports(config)[0], 5443)
@@ -638,6 +772,7 @@ class DevTest(unittest.TestCase):
         portless = {**self.config, 'public_origin': 'http://dev.example.test'}
         self.assertEqual(dev.pulse_ports(portless)[0], dev.WEB_PULSE_PORT, "the engine's default when the page has no port")
         self.assertEqual(dev.runtime_env(portless)['COMMS_FIXED_ADAPTER'], 'archipelago:ws://dev.example.test/ws')
+        self.assertNotIn('CAST_PRESENTER_PUBLIC_URL', dev.runtime_env(portless), 'the API refuses a plain http URL')
         loopback = dev.runtime_env(self.config)
         self.assertEqual(loopback['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
         self.assertNotIn('LIVEKIT_WS_URL', loopback)
@@ -840,12 +975,20 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS'], 'true')
         self.assertNotIn('WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS', dev.runtime_env(self.config))
         for key in ('SYNC_ENABLED', 'WORLDS_CONTENT_MIRROR_ENABLED', 'SCENE_HOST_ENABLED',
-                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
+                    'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
-        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
+        # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does; its
+        # listings wait for the trade-events index, which walks mainnet over the tagged endpoints.
         for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
-                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED'):
+                    'SHOP_RENTALS_INDEX_ENABLED', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED',
+                    'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
+        self.assertEqual(sorted(e.split('=', 1)[0] for e in env['TRADE_RPC_URLS'].split(',')), ['1', '137'])
+        self.assertTrue(all(e.endswith('?project=dcl-one-dev') for e in env['TRADE_RPC_URLS'].split(',')))
+        # The mirror posture's pause between index passes, and the tag naming dev stacks in the RPC's logs.
+        self.assertEqual(env['MARKETPLACE_INDEX_INTERVAL_SECS'], '30')
+        for key in ('ETH_RPC_URL', 'RPC_ENDPOINT_POLYGON'):
+            self.assertTrue(env[key].endswith('?project=dcl-one-dev'), key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
         self.assertNotIn('index', dev.project(self.config)['processes'])
@@ -863,7 +1006,8 @@ class DevTest(unittest.TestCase):
         self.assertNotIn('MEDIA_CONVERT_REMOTE_SOURCES', dev.runtime_env(self.config))
         self.assertEqual(env['PROFILE_IMAGES_ORIGIN_URL'], 'https://profile-images.decentraland.org')
         self.assertNotIn('PROFILE_IMAGES_ORIGIN_URL', offline)
-        self.assertEqual(env['EXPLORER_MAP_SOURCE_URL'], 'https://api.decentraland.org')
+        # The map grid is built from the node's own indexes, not copied from api.decentraland.org.
+        self.assertNotIn('EXPLORER_MAP_SOURCE_URL', env)
         self.assertEqual(env['PRICE_POLL_ENABLED'], 'true')
         self.assertNotIn('WORLD_MANIFEST_UPSTREAM_URL', env)
         self.assertNotIn('PULSE_ROOM_AUTHORITY_KEY', env)
@@ -881,7 +1025,9 @@ class DevTest(unittest.TestCase):
         # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
         self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
-        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        # A trade signed into the stack closes within seconds: the testnet keeps the binary's pause, not the mirror's.
+        self.assertEqual((env['MARKETPLACE_INDEX_INTERVAL_SECS'], mirror['MARKETPLACE_INDEX_INTERVAL_SECS']), ('5', '30'))
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
@@ -1264,12 +1410,15 @@ class DevTest(unittest.TestCase):
         api_url = f"http://127.0.0.1:{self.config['port']}"
         restarting = json.dumps([{'name': 'pulse', 'status': 'Restarting', 'exit_code': 1, 'is_running': False}])
         running = json.dumps([{'name': 'pulse', 'status': 'Running', 'exit_code': 1, 'is_running': True}])
-        about = []
+        health_checks = []
 
         def response(url, timeout):
-            # /about can still answer from the last heartbeat while Pulse waits for its restart.
-            if url == api_url + '/about':
-                about.append(url)
+            # The last heartbeat can still be fresh while Pulse waits for its restart.
+            if url == api_url + '/health':
+                health_checks.append(url)
+                body = io.BytesIO(b'{"status":"pass","details":{"comms":{"status":"pass"},"postgres":{"status":"pass"}}}')
+                body.status = 200
+                return body
             return contextlib.nullcontext(type('Response', (), {'status': 200})())
 
         listings = iter([subprocess.CompletedProcess([], 0, restarting), subprocess.CompletedProcess([], 0, running)])
@@ -1281,7 +1430,7 @@ class DevTest(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(dev.wait_ready(10), 0)
         # Ready only on the listing after the restart.
-        self.assertEqual(len(about), 1)
+        self.assertEqual(len(health_checks), 1)
         self.assertIsNone(next(listings, None))
         exhausted = subprocess.CompletedProcess([], 0, json.dumps([
             {'name': 'pulse', 'status': 'Completed', 'exit_code': 1, 'is_running': False, 'restarts': 10}]))

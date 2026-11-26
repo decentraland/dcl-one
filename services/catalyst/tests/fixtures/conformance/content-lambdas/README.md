@@ -44,8 +44,8 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 
 The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 2, GAP 5, DIVERGENT 2, MISSING 4, the four ABR admin routes outside catalyst parity; `/queues/status` is forwarded, outside parity scope), 16 backlog items (7 with no work, 9 open), no P0.
 
-Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
-`/about` exists here.
+The Lambdas about handler is exposed at both `GET /about` and `GET /lambdas/about`.
+`GET /lamb2/status` serves the legacy gateway's process status path.
 
 Most rows are DIVERGENT on one field, header or error branch rather than on the whole response. Each file
 lists its own dcl-one-only routes at the end.
@@ -82,7 +82,7 @@ These problems show up in several files, so one fix can close several rows.
     - lamb2's bare 500 on `/users/:a/parcels/:x/:y/permissions`;
     - 503 on the other subgraph and index readers: names, lands, operators, lands-permissions,
       `/users/:a/{wearables,emotes}` and the on-chain by-owner lists (LL-9, LL-10, LI-15);
-    - an empty provider list on a third-party registry failure, where upstream answers 502 (LI-10).
+    - an empty provider list when both third-party registry sources are disabled (LI-10).
   - Some 400/503 bodies here carry internal error text, where upstream sends a fixed message (CW-9).
 - **Page-size limits.** This tree clamps or rejects at 1000 where upstream has no cap, and the reverse
   (LL, LI). Paged subgraph reads also stop at 10,000–20,000 rows, where upstream reads every page.
@@ -100,15 +100,15 @@ These problems show up in several files, so one fix can close several rows.
   unfiltered data until the sources are configured:
   - **Ownership** of collections, names and LAND comes from TheGraph subgraphs or this tree's chain
     indexes, depending on the route.
-  - **Third-party wearables** come from the registry subgraph plus the NFT worker when
+  - **Third-party wearables** use the Polygon registry index for provider data and use the NFT worker when
     `NFT_WORKER_BASE_URL` is set, else JSON-RPC (LI-9).
   - **EIP-1654** (contract-wallet signatures) needs `ETH_RPC_URL`.
 
   Upstream ships production defaults for each of these sources. In this tree `NODE_POSTURE=mirror` sets the
-  collections, marketplace, third-party registry and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on
+  collections, marketplace and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on
   the chain indexes, and leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs`).
-  A mirror refuses to start with the third-party registry URL or the NFT worker set empty. With `NODE_POSTURE`
-  unset, `island` or `journey`, the subgraph URLs stay unset (LL-3). The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
+  A mirror refuses to start with the NFT worker set empty. With `NODE_POSTURE`
+  unset, `island` or `journey`, the subgraph URLs stay unset by default (LL-3). The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
   the data" sections.
 
 ## Rows that need a live capture

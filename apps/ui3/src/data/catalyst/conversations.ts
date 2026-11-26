@@ -1,5 +1,5 @@
 import { sendSignedJSON } from "./client";
-import { field, isRecord, listOf } from "./rows";
+import { field, isRecord, listOf } from "@web-core/catalyst/rows";
 
 export type ConversationKind = "direct" | "community";
 export type Conversation = { id: string; name: string };

@@ -1,5 +1,5 @@
 // from: shop@2d3bf62:app/src/lib/topCreators.ts, app/src/lib/avatarColor.ts (getDisplayName, getAvatarBackgroundColor)
-import { getAvatarBackgroundColor, getDisplayName } from "./avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 export type CreatorRank = {
   id: string;

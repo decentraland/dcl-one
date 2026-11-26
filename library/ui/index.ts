@@ -1,4 +1,5 @@
 export * from './foundations'
+export * from './apps/shop'
 
 export { NavBar } from './components/NavBar/NavBar'
 export type {
@@ -26,9 +27,19 @@ export type {
   DecentralandNavigationSectionId
 } from './components/NavBar/NavBar.navigation'
 
+export * from './components/AppChrome/chrome-auth'
+export * from './components/AppChrome/chrome-nav'
+export * from './components/AppChrome/thumbnail-public-base'
+export { default as ChromeBody } from './components/AppChrome/ChromeBody'
+export { default as ChromeLink } from './components/AppChrome/ChromeLink'
+export { default as SiteLayout, useSiteLayout } from './components/AppChrome/SiteLayout'
+export type { SiteLayoutProps } from './components/AppChrome/SiteLayout'
+
 export { Button } from './components/Button/Button'
 export type { ButtonProps } from './components/Button/Button'
 
+export * from './components/AnimatedBackground/AnimatedBackground'
+export { FRAGMENT_SHADER, VERTEX_SHADER } from './components/AnimatedBackground/shaders'
 export * from './components/CardActionButton/CardActionButton'
 export * from './components/CommunityCard/CommunityCard'
 export * from './components/CopyFeedback/CopyFeedback'
@@ -101,6 +112,8 @@ export type { ModalProps } from './components/Modal/Modal'
 
 export { Toast } from './components/Toast/Toast'
 export type { ToastProps, ToastVariant } from './components/Toast/Toast'
+export { Tooltip } from './components/Tooltip/Tooltip'
+export type { TooltipAlign, TooltipProps, TooltipSide } from './components/Tooltip/Tooltip'
 
 export { ProgressBar } from './components/ProgressBar/ProgressBar'
 export type { ProgressBarProps } from './components/ProgressBar/ProgressBar'
@@ -121,3 +134,5 @@ export type {
   ConnectionStatusProps,
   ConnectionStatusValue
 } from './components/ProfilePic/ConnectionStatus'
+
+export * from './apps/sites'

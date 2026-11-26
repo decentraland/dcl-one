@@ -5,8 +5,8 @@
 //! on a broker, so a stalled or absent one never slows a tracker pass, and none returns an
 //! error the caller has to handle.
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::protocol::bus::cluster::ClusterChange;
@@ -93,15 +93,15 @@ pub struct RecordingClusterFeed {
 
 impl RecordingClusterFeed {
     pub fn changes(&self) -> Vec<RecordedChange> {
-        self.changes.lock().unwrap().clone()
+        self.changes.lock().clone()
     }
 
     pub fn topologies(&self) -> Vec<Vec<(String, usize)>> {
-        self.topologies.lock().unwrap().clone()
+        self.topologies.lock().clone()
     }
 
     pub fn active_peers(&self) -> Vec<u32> {
-        self.active_peers.lock().unwrap().clone()
+        self.active_peers.lock().clone()
     }
 
     pub fn current(&self, wallet: &str, session: &str) -> Option<PeerClusterSnapshot> {
@@ -109,13 +109,13 @@ impl RecordingClusterFeed {
     }
 
     pub fn clear(&self) {
-        self.changes.lock().unwrap().clear();
-        self.topologies.lock().unwrap().clear();
-        self.active_peers.lock().unwrap().clear();
+        self.changes.lock().clear();
+        self.topologies.lock().clear();
+        self.active_peers.lock().clear();
     }
 
     pub fn set_control_snapshot(&self, snapshot: ControlSnapshot) {
-        *self.control.lock().unwrap() = snapshot;
+        *self.control.lock() = snapshot;
     }
 }
 
@@ -124,7 +124,7 @@ impl ClusterFeedPublisher for RecordingClusterFeed {
         Some(self.current.clone())
     }
     fn control_snapshot(&self) -> ControlSnapshot {
-        self.control.lock().unwrap().clone()
+        self.control.lock().clone()
     }
     fn replace_assignments(
         &self,
@@ -142,7 +142,7 @@ impl ClusterFeedPublisher for RecordingClusterFeed {
         realm: &str,
         session: &ClusterSession,
     ) {
-        self.changes.lock().unwrap().push(RecordedChange {
+        self.changes.lock().push(RecordedChange {
             wallet: wallet.to_string(),
             cluster_id: cluster_id.to_string(),
             realm: realm.to_string(),
@@ -151,8 +151,8 @@ impl ClusterFeedPublisher for RecordingClusterFeed {
     }
 
     fn publish_topology(&self, pass: &ClusterPass, active_peers: u32) {
-        self.active_peers.lock().unwrap().push(active_peers);
-        self.topologies.lock().unwrap().push(
+        self.active_peers.lock().push(active_peers);
+        self.topologies.lock().push(
             pass.clusters
                 .iter()
                 .map(|c| (c.id.clone(), c.count))
@@ -434,17 +434,14 @@ mod tests {
     #[test]
     fn retry_admission_serializes_with_a_fresh_producer() {
         let outbox = std::sync::Arc::new(Mutex::new(ClusterOutbox::new(2)));
-        outbox.lock().unwrap().queue_change("first".into(), vec![1]);
+        outbox.lock().queue_change("first".into(), vec![1]);
         let producer = outbox.clone();
         std::thread::spawn(move || {
-            producer
-                .lock()
-                .unwrap()
-                .queue_change("fresh".into(), vec![2]);
+            producer.lock().queue_change("fresh".into(), vec![2]);
         })
         .join()
         .unwrap();
-        let mut queue = outbox.lock().unwrap();
+        let mut queue = outbox.lock();
         assert_eq!(queue.try_queue_retry("retained".into(), vec![3]), None);
         assert_eq!(queue.try_dequeue_next(), Some(("first".into(), vec![1])));
         assert_eq!(

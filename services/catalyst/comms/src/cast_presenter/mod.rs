@@ -23,6 +23,21 @@
 //!   it joins, allowed to publish a screen share): any other answers 401
 //!   before a slot is taken or a bot started ([`session`]). Multipart uploads
 //!   are read under a permit, as many at once as there are slots (429).
+//! - A room runs one presentation: a new one, with a bot token of the room's
+//!   active Cast credential, stops the room's running one when its slot is
+//!   taken, so a forgotten presentation never blocks a new share of its scene
+//!   (upstream runs both, and clients then show different ones). The
+//!   replaced bot keeps its slot until it has shut down, and the new bot
+//!   publishes only after every presentation of the room that stopped
+//!   before (replaced or stopped) sent `presentation:stopped`. A token of a
+//!   revoked or rotated credential replaces nothing. A token whose bot is
+//!   running answers 409 and stops nothing (upstream starts it, and LiveKit
+//!   drops the first bot). An upload to a full node is answered 429 before it
+//!   is read, its room unknown then; the JSON `url` form replaces the room's
+//!   presentation on a full node too.
+//! - A bot whose process ended without leaving is removed from its room at
+//!   once, after the node sends `presentation:stopped` in its place.
+//!   Upstream leaves it to LiveKit, which keeps it about 20 s.
 //! - The bot then connects with the token before any rendering; a token
 //!   LiveKit refuses answers 401 on the JSON path (checked before the
 //!   download; 503 when the bot or LiveKit is unavailable) and 500 on the
@@ -31,12 +46,20 @@
 //!   track, the commands `navigate`, `get-state`, `stop` and
 //!   `overlay:update` from the room's presenters, the state broadcast and
 //!   bot metadata ([`wire`]), and the idle reaper ([`session`]).
+//! - Client composition, with `CAST_PRESENTER_PUBLIC_URL` only: the state
+//!   names the current slide as a picture (`slide`) and the presenter
+//!   (`presenterIdentity`: the request's, then a presenter's
+//!   `presentation:presenter:claim`), and `GET /presentations/{id}/slides/{hash}.png`
+//!   serves a session's last 8 slides. The Unity Explorer composes from
+//!   these. The SCREENSHARE track stays for the clients that show it;
+//!   upstream drops it
+//!   (`docs/adr/2026-11-20-cast-client-composition.md`).
 //!
 //! Not yet: PPTX (answers 422), embedded video playback (`video:play`
 //! answers upstream's `presentation:error` event, the other `video:*`
-//! commands are ignored and `videoState` stays `idle`), client composition (no
-//! `slide` field, no `GET /presentations/:id/slides/:file`,
-//! `presenter:claim` ignored) and upstream's `/api/drive-video` and `/ping`.
+//! commands are ignored, `videoState` stays `idle`, and there is no
+//! `presentation-video` track or `slideVideos[i].source`) and upstream's
+//! `/api/drive-video` and `/ping`.
 //!
 //! The LiveKit connection lives in a `cast-bot` process ([`bot`]); with no
 //! `CAST_BOT_BIN` or no LiveKit configured the route answers 503.
@@ -56,27 +79,32 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use crate::shared::routing::post;
+use crate::shared::routing::{get, post};
 
 pub use session::{LiveKitTarget, Presenter};
 
 /// A presenter that starts `binary` for each session against the node's
-/// LiveKit, or none without both.
+/// LiveKit, or none without both. `rooms` removes a bot that ended without
+/// leaving.
 pub fn presenter(
+    rooms: Arc<dyn bot::Rooms>,
     binary: Option<std::path::PathBuf>,
     livekit: Option<LiveKitTarget>,
     max_concurrent: usize,
+    public_url: Option<String>,
 ) -> Option<Arc<Presenter>> {
     let presenter = Presenter::new(
         Arc::new(bot::ProcessLauncher { binary: binary? }),
         livekit?,
         max_concurrent,
+        public_url,
     );
     presenter.spawn_reaper();
+    presenter.set_room_service(rooms);
     Some(presenter)
 }
 
-/// `POST /presentations`, with upstream's security headers and its CORS
+/// The routes, with upstream's security headers and its CORS
 /// (any origin, no credentials: the request is authorized by the LiveKit
 /// token in its body): the Cast page posts the JSON form cross-origin, which
 /// a browser sends only after a preflight. This node also sends a max-age.
@@ -90,6 +118,10 @@ const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServe
 pub fn router(presenter: Option<Arc<Presenter>>) -> Router {
     Router::new()
         .route("/presentations", post(http::create_presentation))
+        .route(
+            "/presentations/{id}/slides/{file}",
+            get(http::slide_picture),
+        )
         .layer(axum::middleware::from_fn(http::security_headers))
         .layer(axum::middleware::from_fn(|request, next| {
             CORS.run(request, next)

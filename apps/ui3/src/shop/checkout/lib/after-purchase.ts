@@ -4,9 +4,10 @@
 // exactly one thing was bought; a basket invalidates them broadly.
 
 import type { QueryClient } from "@tanstack/react-query";
+import { CREDITS_BALANCE_QUERY_KEY } from "@shop/credits/balance-query";
 
 export const SHOP_QUERY_KEYS = {
-  balance: "shop-usd-balance",
+  balance: CREDITS_BALANCE_QUERY_KEY,
   manaBalance: "shop-mana-balance",
   purchases: "shop-purchases",
   creditOrders: "shop-credit-orders",

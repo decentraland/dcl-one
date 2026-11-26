@@ -4,9 +4,10 @@
 use bevy::prelude::*;
 use bevy::render::camera::ViewportConversionError;
 use bevy::render::primitives::Aabb;
+use bevy::window::PrimaryWindow;
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryCamera;
-use console::{DoAddConsoleCommand, PendingConsoleResponses};
+use console::{reply::Screen, DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::{SceneComponentId, SceneEntityId};
 use dcl_types::interface::CrdtStore;
 use scene_runner::update_scene::synthetic_pointer::{anchor_point, Anchor};
@@ -26,8 +27,10 @@ impl Plugin for ScreenPositionCommandPlugin {
 /// Report, as JSON, where a scene entity of the active scene is on screen, in logical window
 /// pixels from the top left, as /click_at takes them: `x` and `y` (null while the entity is behind
 /// the camera), `onScreen`, `inFront`, `depth` along the view direction, `distance` from the
-/// camera, the `anchor` aimed at and the camera's `viewport`. The entity is named as in
-/// /entity_components, and a click needs the point on screen and not under the HUD
+/// camera, the `anchor` aimed at, the camera's `viewport`, the point `normalized` (0 to 1 of the
+/// window, as /click_at --normalized takes it) and the window's `screen` {width, height, scale}.
+/// The entity is named as in /entity_components, and a click needs the point on screen and not
+/// under the HUD
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/entity_screen_position")]
 struct EntityScreenPositionCommand {
@@ -43,6 +46,7 @@ fn entity_screen_position_cmd(
     mut input: ConsoleCommand<EntityScreenPositionCommand>,
     resolver: SceneResolver,
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     transforms: Query<&GlobalTransform>,
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
@@ -77,6 +81,10 @@ fn entity_screen_position_cmd(
         input.reply_failed("no primary camera");
         return;
     };
+    let Some(window) = Screen::primary(&windows) else {
+        input.reply_failed("no primary window");
+        return;
+    };
 
     let anchor = if cmd.bounds {
         Anchor::Bounds
@@ -105,7 +113,9 @@ fn entity_screen_position_cmd(
             return;
         }
     };
-    let json = screen.to_json(&cmd.entity, &ctx.hash, anchor).to_string();
+    let json = screen
+        .to_json(&cmd.entity, &ctx.hash, anchor, &window)
+        .to_string();
 
     // The root, the player and the camera are placed by the engine and carry no Transform in the
     // scene's own state; any other entity without one sits at the scene's origin by default, which
@@ -156,9 +166,15 @@ struct ScreenPoint {
 }
 
 impl ScreenPoint {
-    fn to_json(&self, entity: &str, scene: &str, anchor: &str) -> serde_json::Value {
-        // hundredths of a pixel or unit, which is finer than anything a click or a scene can tell
-        let round = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
+    fn to_json(
+        &self,
+        entity: &str,
+        scene: &str,
+        anchor: &str,
+        window: &Screen,
+    ) -> serde_json::Value {
+        use console::reply::{round, round_fine};
+        let normalized = self.position.map(|p| window.to_normalized(p));
         serde_json::json!({
             "entity": entity,
             "scene": scene,
@@ -175,6 +191,11 @@ impl ScreenPoint {
                 "width": round(self.viewport.width()),
                 "height": round(self.viewport.height()),
             },
+            "normalized": normalized.map(|n| serde_json::json!({
+                "x": round_fine(n.x),
+                "y": round_fine(n.y),
+            })),
+            "screen": window.to_json(),
         })
     }
 }
@@ -414,8 +435,14 @@ mod tests {
         assert!((screen.depth + 10.0).abs() < EPSILON);
         assert!((screen.distance - 10.0).abs() < EPSILON);
 
-        let json = screen.to_json("512", "hash", "origin");
+        let window = Screen {
+            width: 1280.0,
+            height: 720.0,
+            scale: 1.0,
+        };
+        let json = screen.to_json("512", "hash", "origin", &window);
         assert!(json["x"].is_null() && json["y"].is_null());
+        assert!(json["normalized"].is_null());
         assert_eq!(json["inFront"], false);
         assert_eq!(json["onScreen"], false);
     }
@@ -438,7 +465,12 @@ mod tests {
     fn the_reply_names_what_a_test_needs() {
         let (camera, transform) = default_camera();
         let screen = project(&camera, &transform, Vec3::new(0.0, 0.0, -10.0)).unwrap();
-        let json = screen.to_json("512", "bafy", "bounds");
+        let window = Screen {
+            width: 1280.0,
+            height: 720.0,
+            scale: 1.0,
+        };
+        let json = screen.to_json("512", "bafy", "bounds", &window);
         assert_eq!(json["entity"], "512");
         assert_eq!(json["scene"], "bafy");
         assert_eq!(json["anchor"], "bounds");
@@ -450,6 +482,10 @@ mod tests {
         assert_eq!(json["distance"], 10.0);
         assert_eq!(json["viewport"]["width"], 1280.0);
         assert_eq!(json["viewport"]["height"], 720.0);
+        assert_eq!(json["normalized"]["x"], 0.5);
+        assert_eq!(json["normalized"]["y"], 0.5);
+        assert_eq!(json["screen"]["width"], 1280.0);
+        assert_eq!(json["screen"]["height"], 720.0);
     }
 
     #[test]

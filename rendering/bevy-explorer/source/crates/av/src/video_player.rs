@@ -14,7 +14,7 @@ use common::{
 };
 use dcl_component::proto_components::sdk::components::{PbAudioEvent, PbVideoEvent};
 use ipfs::IpfsResource;
-use livestream_manager::{ReceiverImage, ReceiverVolume};
+use livestream_manager::{ReceiverImage, ReceiverVolume, SelectedVideoReceiver, VideoTrackSource};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -146,46 +146,38 @@ fn new_video_player_source(
         sinks.command_sender.send(AVCommand::Dispose).report();
     }
 
-    let livestream = &**source == LIVEKIT_VIDEO_STREAM;
-    if livestream != has_stream {
-        if livestream {
-            debug!("VideoPlayer {} now a stream.", entity);
-            commands.entity(entity).try_insert(Stream);
-        } else {
-            debug!("VideoPlayer {} no longer a stream.", entity);
-            commands.entity(entity).try_remove::<Stream>();
-            let _ = maybe_video_texture_output.take();
-        }
+    // Refresh the receiver when its source changes, including between live tracks.
+    if has_stream {
+        commands.entity(entity).try_remove::<Stream>();
+        maybe_video_texture_output = None;
+    }
+    commands
+        .entity(entity)
+        .try_remove::<SelectedVideoReceiver>();
+    if let Some((identity, track_sid)) = selected_track(source) {
+        commands
+            .entity(entity)
+            .try_insert(SelectedVideoReceiver(VideoTrackSource {
+                scene_hash: context.hash.to_string(),
+                identity: identity.to_owned(),
+                track_sid: track_sid.to_owned(),
+            }));
+        commands.entity(entity).try_insert(Stream);
+        return;
+    }
+    if &**source == LIVEKIT_VIDEO_STREAM {
+        commands.entity(entity).try_insert(Stream);
+        return;
     }
 
-    let mut create_image_handle = || match maybe_video_texture_output {
-        None => {
-            let mut image = Image::new_fill(
-                bevy::render::render_resource::Extent3d {
-                    width: 8,
-                    height: 8,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                &basic::FUCHSIA.to_u8_array(),
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::all(),
-            );
-            image.texture_descriptor.usage = TextureUsages::COPY_DST
-                | TextureUsages::TEXTURE_BINDING
-                | TextureUsages::RENDER_ATTACHMENT;
-            image.transfer_priority = RenderAssetTransferPriority::Immediate;
-            images.add(image)
-        }
-        Some(texture) => {
+    let image = match (&(**source), maybe_video_texture_output) {
+        // a cleared source shows black, never the last frame of what played before
+        ("", _) => images.add(video_output_image(basic::BLACK)),
+        (_, Some(texture)) => {
             debug!("Reusing VideoTextureOutput.");
             texture.0.clone()
         }
-    };
-
-    let image = match &(**source) {
-        LIVEKIT_VIDEO_STREAM => return,
-        _ => create_image_handle(),
+        (_, None) => images.add(video_output_image(basic::FUCHSIA)),
     };
     let sinks = match &(**source) {
         "" => noop_sinks::<VideoPlayer>((**source).to_owned(), Some(image.clone())),
@@ -207,6 +199,30 @@ fn new_video_player_source(
     commands
         .entity(entity)
         .try_insert((VideoTextureOutput(image), sinks));
+}
+
+fn selected_track(source: &str) -> Option<(&str, &str)> {
+    let (identity, sid) = source.strip_prefix("livekit-video://")?.split_once('/')?;
+    (!identity.is_empty() && !sid.is_empty() && !sid.contains('/')).then_some((identity, sid))
+}
+
+/// An 8x8 image of `color` that a player's frames are copied into.
+fn video_output_image(color: Srgba) -> Image {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: 8,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &color.to_u8_array(),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::all(),
+    );
+    image.texture_descriptor.usage =
+        TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT;
+    image.transfer_priority = RenderAssetTransferPriority::Immediate;
+    image
 }
 
 fn player_source_replaced<T: AVPlayer>(

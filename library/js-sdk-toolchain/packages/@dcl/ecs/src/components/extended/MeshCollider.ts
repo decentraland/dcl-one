@@ -1,5 +1,6 @@
-import { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
-import { ColliderLayer, MeshCollider, PBMeshCollider } from '../generated/index.gen'
+import type { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
+import type { ColliderLayer, PBMeshCollider } from '../generated/index.gen'
+import { MeshCollider } from '../generated/index.gen'
 
 /**
  * @public

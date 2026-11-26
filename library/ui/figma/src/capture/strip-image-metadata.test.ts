@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { snapshotDir } from '../../test/snapshot.js'
 import {
   rawComponentPageSchema,
@@ -128,28 +128,49 @@ describe('stripPngMetadata', () => {
     ['Demo Nav', 'iCCP'],
     ['Demo Cursors', 'gAMA']
   ])('when a captured %s raster with %s gets planted editor metadata', (name, colourChunk) => {
-    it('should remove every planted chunk and give back the original bytes, colour chunks and samples', async () => {
-      const original = await capturedPng(name, colourChunk)
-      const planted = plant(original)
+    let original: Buffer
+    let planted: Buffer
+    let stripped: Buffer
+
+    beforeEach(async () => {
+      original = await capturedPng(name, colourChunk)
+      planted = plant(original)
+      stripped = stripPngMetadata(planted)
+    })
+
+    it('should start from a raster carrying every planted chunk', () => {
       expect(chunks(planted).map((entry) => entry.type)).toEqual(
         expect.arrayContaining(PLANTED_TYPES)
       )
+    })
 
-      const stripped = stripPngMetadata(planted)
-
+    it('should remove every planted chunk', () => {
       expect(chunks(stripped).some((entry) => NON_RENDERING.has(entry.type))).toBe(false)
+    })
+
+    it('should give back the original bytes and samples', () => {
       expect(stripped.equals(original)).toBe(true)
+    })
+
+    it('should keep the colour chunk', () => {
       expect(chunks(stripped).map((entry) => entry.type)).toContain(colourChunk)
     })
   })
 
   describe('when a PNG names its author in a text chunk', () => {
-    it('should remove it', () => {
-      const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-      const ihdr = chunk('IHDR', Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]))
-      const author = chunk('tEXt', Buffer.from('Author\0Jane Doe', 'latin1'))
-      const iend = chunk('IEND', Buffer.alloc(0))
+    let signature: Buffer
+    let ihdr: Buffer
+    let author: Buffer
+    let iend: Buffer
 
+    beforeEach(() => {
+      signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      ihdr = chunk('IHDR', Buffer.from([0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]))
+      author = chunk('tEXt', Buffer.from('Author\0Jane Doe', 'latin1'))
+      iend = chunk('IEND', Buffer.alloc(0))
+    })
+
+    it('should remove it', () => {
       expect(stripPngMetadata(Buffer.concat([signature, ihdr, author, iend]))).toEqual(
         Buffer.concat([signature, ihdr, iend])
       )
@@ -157,9 +178,13 @@ describe('stripPngMetadata', () => {
   })
 
   describe('when the bytes are not a complete PNG', () => {
-    it('should return them unchanged for validation to reject', () => {
-      const truncated = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
+    let truncated: Buffer
 
+    beforeEach(() => {
+      truncated = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
+    })
+
+    it('should return them unchanged for validation to reject', () => {
       expect(stripPngMetadata(truncated)).toBe(truncated)
     })
   })
@@ -169,21 +194,37 @@ describe('stripImageMetadata', () => {
   describe.each(['Demo Nav', 'Demo Cursors'])(
     'when every raster of the %s capture gets planted editor metadata',
     (name) => {
-      it('should give back the clean page exactly, with each transport checksum recomputed', async () => {
-        const clean = await page(name)
-        const planted = plantPage(clean)
-        const rasters = pageRasters(planted)
-        expect(rasters.length).toBeGreaterThan(0)
+      let clean: RawComponentPage
+      let planted: RawComponentPage
+      let stripped: RawComponentPage
+
+      beforeEach(async () => {
+        clean = await page(name)
+        planted = plantPage(clean)
+        stripped = stripImageMetadata(planted)
+      })
+
+      it('should start from a page that holds rasters', () => {
+        expect(pageRasters(planted).length).toBeGreaterThan(0)
+      })
+
+      it('should start from rasters that each carry every planted chunk', () => {
         expect(
-          rasters.every((raster) =>
+          pageRasters(planted).every((raster) =>
             PLANTED_TYPES.every((type) => chunks(raster.bytes).some((entry) => entry.type === type))
           )
         ).toBe(true)
+      })
+
+      it('should start from a page that differs from the clean capture', () => {
         expect(JSON.stringify(planted)).not.toBe(JSON.stringify(clean))
+      })
 
-        const stripped = stripImageMetadata(planted)
-
+      it('should give back the clean page exactly, with each transport checksum recomputed', () => {
         expect(stripped).toEqual(clean)
+      })
+
+      it('should leave an already stripped page unchanged', () => {
         expect(stripImageMetadata(stripped)).toEqual(stripped)
       })
     }

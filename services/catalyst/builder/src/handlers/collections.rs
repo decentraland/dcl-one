@@ -44,6 +44,14 @@ fn should_paginate(page: Option<i64>, limit: Option<i64>) -> bool {
 
 /// Counts published-collection creator reads that failed, so the stored
 /// (possibly previous) owner answered.
+const CREATOR_READ_FAILURE_COUNTER: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    CREATOR_READ_FAILURES,
+    "Collection creator lookups that failed and used the stored owner.",
+    Some(dcl_metrics::Unit::Count),
+    &[],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[CREATOR_READ_FAILURE_COUNTER.descriptor];
+
 pub const CREATOR_READ_FAILURES: &str = "builder_collection_creator_read_failures_total";
 
 /// The collection with a published standard collection's owner taken from
@@ -85,7 +93,7 @@ pub(super) async fn synced_collection(
             Ok::<_, std::convert::Infallible>(match read.await {
                 Ok(creator) => Some(creator),
                 Err(error) => {
-                    metrics::counter!(CREATOR_READ_FAILURES).increment(1);
+                    CREATOR_READ_FAILURE_COUNTER.handle([]).increment(1);
                     tracing::warn!(collection = %id, error = ?error, "collection creator read failed; the stored owner answers");
                     None
                 }
@@ -710,8 +718,8 @@ mod tests {
             let pool = pool.clone();
             async move {
                 sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
-                     VALUES ('committee', 'matic', 0, 100, 100, 100, {folded_at}, true) \
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
+                     VALUES ('committee', 'matic', 0, 100, 100, 100, {folded_at}, true, 137) \
                      ON CONFLICT (indexer, network) DO UPDATE SET folded_at = EXCLUDED.folded_at, last_block = EXCLUDED.last_block"
                 )))
                 .execute(&pool)
@@ -737,6 +745,26 @@ mod tests {
             "past the published block"
         );
         assert!(is_committee(&state, &admin).await.unwrap());
+
+        // A cursor not bound to Polygon, or in quarantine, admits no member.
+        for (sql, why) in [
+            (
+                "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'committee'",
+                "an unadopted cursor",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'committee'",
+                "a cursor in quarantine",
+            ),
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+            assert!(!is_committee(&state, &member).await.unwrap(), "{why}");
+        }
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'committee'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(is_committee(&state, &member).await.unwrap());
 
         sqlx::query("UPDATE shop.chain_cursor SET last_block = 200 WHERE indexer = 'committee'")
             .execute(&pool)
@@ -827,8 +855,8 @@ mod tests {
         assert!(committee(&body).is_empty(), "unpublished index: {body}");
 
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history) \
-             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true)",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, fold_through, folded_at, full_history, chain_id) \
+             VALUES ('committee', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
         )
         .execute(&pool)
         .await
@@ -867,8 +895,8 @@ mod tests {
             eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
             return;
         };
-        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let _recording = metrics::set_default_local_recorder(&recorder);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let (owner, next) = (address_of(OWNER_KEY), address_of(STRANGER_KEY));
         let contract = format!("0x{}00000000", Uuid::new_v4().simple());
         let polygon = Arc::new(Mutex::new(FakePolygon {

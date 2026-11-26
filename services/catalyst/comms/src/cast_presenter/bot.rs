@@ -21,8 +21,8 @@
 //! - Events: `dataReceived {identity, payload}` (base64 packet; only from
 //!   the room metadata's presenters and carrying `presentation:`, so scene
 //!   traffic never crosses), `roomMetadata {metadata}`, `participantCount
-//!   {count}` (remote participants) and `disconnected {reason}`, after which
-//!   the bot exits.
+//!   {count}` (the audience: remote participants but presentation bots and
+//!   the RTMP ingress) and `disconnected {reason}`, after which the bot exits.
 //!
 //! One reader takes the bot's stdout and never waits on the session: replies
 //! complete their commands at once, the room's metadata and participant
@@ -65,7 +65,7 @@ pub struct RoomData {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoomState {
     pub metadata: String,
-    /// Remote participants in the room.
+    /// The room's audience: no presentation bot, no RTMP ingress.
     pub participants: usize,
 }
 
@@ -99,6 +99,30 @@ pub struct Connected {
     pub room: watch::Receiver<RoomState>,
 }
 
+/// The gatekeeper's side of the presenter: the room service calls for a bot
+/// that ended without leaving (it holds the LiveKit key), and whether a bot's
+/// Cast credential is still the room's active one.
+#[async_trait::async_trait]
+pub trait Rooms: Send + Sync {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_>;
+    /// Whether the bot `identity` of `room` holds the room's active Cast
+    /// credential: a bot of a revoked or rotated one does not.
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool>;
+}
+
+#[async_trait::async_trait]
+impl Rooms for crate::gatekeeper::CommsState {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_> {
+        Self::room_service(self)
+    }
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool> {
+        Ok(
+            crate::gatekeeper::streaming::publisher_credential_current(&self.pool, room, identity)
+                .await?,
+        )
+    }
+}
+
 /// Starts bots.
 #[async_trait::async_trait]
 pub trait BotLauncher: Send + Sync {
@@ -110,7 +134,7 @@ pub struct ProcessLauncher {
     pub binary: PathBuf,
 }
 
-type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Result<(), String>>>>>;
+type Pending = Arc<parking_lot::Mutex<HashMap<u64, oneshot::Sender<Result<(), String>>>>>;
 
 struct ProcessLink {
     stdin: Mutex<Option<ChildStdin>>,
@@ -179,9 +203,9 @@ impl ProcessLink {
     /// Writes command `id`'s line and waits for its answer.
     async fn request(&self, id: u64, line: &[u8]) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().insert(id, tx);
         if let Err(e) = write_line(&self.stdin, line).await {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock().remove(&id);
             return Err(e);
         }
         match tokio::time::timeout(COMMAND_TIMEOUT, rx).await {
@@ -189,7 +213,7 @@ impl ProcessLink {
             Ok(Ok(Err(why))) => Err(anyhow::anyhow!(why)),
             Ok(Err(_)) => Err(anyhow::anyhow!("bot exited")),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().remove(&id);
                 Err(anyhow::anyhow!("bot did not answer in time"))
             }
         }
@@ -267,12 +291,12 @@ fn spawn_reader(
                     }
                 }
                 ("ack", Some(id)) => {
-                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    if let Some(tx) = pending.lock().remove(&id) {
                         let _ = tx.send(Ok(()));
                     }
                 }
                 ("error", Some(id)) => {
-                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    if let Some(tx) = pending.lock().remove(&id) {
                         let _ = tx.send(Err(line.message.unwrap_or_default()));
                     }
                 }
@@ -324,7 +348,7 @@ fn spawn_reader(
             )));
         }
         // Fail what is still waiting; dropping the senders tells the session.
-        pending.lock().unwrap().clear();
+        pending.lock().clear();
     });
 }
 

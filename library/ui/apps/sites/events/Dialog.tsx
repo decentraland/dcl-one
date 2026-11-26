@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import styles from './Dialog.module.css'
 
 // TODO(figma-ds): a minimal modal dialog until the design system ships one: focus moves in and is
@@ -33,10 +33,13 @@ function tabbable(root: HTMLElement): HTMLElement[] {
 function Dialog({
   labelledBy,
   onClose,
+  maxWidth,
   children
 }: {
   labelledBy: string
   onClose: () => void
+  /** The panel's widest size in pixels on desktop; the event detail's 880px when omitted. */
+  maxWidth?: number
   children: ReactNode
 }) {
   const panel = useRef<HTMLDivElement | null>(null)
@@ -95,6 +98,7 @@ function Dialog({
         aria-labelledby={labelledBy}
         tabIndex={-1}
         className={styles.panel}
+        style={maxWidth ? ({ '--dialog-max-width': `${maxWidth}px` } as CSSProperties) : undefined}
       >
         {children}
       </div>

@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -45,6 +46,10 @@ enum Outbound {
     },
     Disconnect {
         peer: u32,
+        reason: u32,
+    },
+    RefuseConnection {
+        connection: u64,
         reason: u32,
     },
 }
@@ -156,7 +161,6 @@ impl WtHost {
             .application
             .peers
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&peer)
             .cloned()
             .ok_or_else(|| {
@@ -183,6 +187,12 @@ impl WtHost {
 
     pub fn disconnect(&self, peer: u32, reason: u32) {
         let _ = self.outbound_tx.send(Outbound::Disconnect { peer, reason });
+    }
+
+    pub(in crate::pulse::transport) fn refuse_connection(&self, connection: u64, reason: u32) {
+        let _ = self
+            .outbound_tx
+            .send(Outbound::RefuseConnection { connection, reason });
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -247,6 +257,9 @@ fn run_loop(
                     if let Some(&qid) = sessions.quic_by_peer.get(&peer) {
                         quic.disconnect(qid, reason);
                     }
+                }
+                Outbound::RefuseConnection { connection, reason } => {
+                    quic.disconnect(connection, reason);
                 }
                 Outbound::Send { peer, packet } => {
                     let Some(&qid) = sessions.quic_by_peer.get(&peer) else {
@@ -374,23 +387,20 @@ fn handle_connect(
         },
     );
     quic_by_peer.insert(slot, peer_id);
-    application
-        .peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            slot,
-            ApplicationPeer {
-                connection: peer_id,
-                budget: ApplicationBudget::new(application.global.clone()),
-            },
-        );
+    application.peers.lock().insert(
+        slot,
+        ApplicationPeer {
+            connection: peer_id,
+            budget: ApplicationBudget::new(application.global.clone()),
+        },
+    );
     tracing::debug!(peer = slot, %remote_addr, "webtransport peer connected");
     send_event(
         events_tx,
         Event::Connect {
             peer: slot as PeerId,
             ip: Some(parse_ip(&remote_addr)),
+            webtransport_connection: Some(peer_id),
         },
     )
 }
@@ -493,11 +503,7 @@ fn handle_disconnect(
         return Ok(());
     };
     quic_by_peer.remove(&session.our_peer);
-    application
-        .peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&session.our_peer);
+    application.peers.lock().remove(&session.our_peer);
     free_slots.push(session.our_peer);
     tracing::debug!(peer = session.our_peer, "webtransport peer disconnected");
     send_event(

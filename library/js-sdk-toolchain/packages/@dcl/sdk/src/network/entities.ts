@@ -1,16 +1,11 @@
+import type { Entity, IEngine, INetowrkEntity, INetowrkParent, TransformComponent, ISyncComponents } from '@dcl/ecs'
 import {
-  Entity,
-  IEngine,
   NetworkEntity as _NetworkEntity,
-  INetowrkEntity,
   NetworkParent as _NetworkParent,
   Transform as _Transform,
-  SyncComponents as _SyncComponents,
-  INetowrkParent,
-  TransformComponent,
-  ISyncComponents
+  SyncComponents as _SyncComponents
 } from '@dcl/ecs'
-import { IProfile } from './message-bus-sync'
+import type { IProfile } from './message-bus-sync'
 import { getDesyncedComponents } from './state'
 
 export type SyncEntity = (entityId: Entity, componentIds: number[], entityEnumId?: number) => void

@@ -56,7 +56,6 @@ const rel = (abs: string) => path.relative(SITES, abs);
 
 const WAIVED = new Set([
   "src/data/lib/auth/pair-store.test.ts -> @/routes/routes/internal.pair",
-  "src/data/lib/catalyst/landings/rsvp.ts -> @/features/social/rsvp-event/machine",
 ]);
 
 function importViolations(): { key: string; message: string }[] {

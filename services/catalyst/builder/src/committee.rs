@@ -17,6 +17,7 @@ const MEMBERS_SQL: &str = "\
 WITH ready AS (
   SELECT folded_block FROM shop.chain_cursor
   WHERE indexer = 'committee' AND network = 'matic' AND full_history
+    AND chain_id = 137 AND quarantined_at IS NULL
     AND folded_block IS NOT NULL
     AND folded_at <= timezone('UTC', now())
     AND folded_at >= timezone('UTC', now()) - interval '30 minutes'

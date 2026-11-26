@@ -75,6 +75,9 @@ pub struct SyncSettings {
     pub entity_types: Option<HashSet<String>>,
     pub from_timestamp_ms: i64,
     pub phased_sync: bool,
+    pub snapshot_resync_initial_delay: Duration,
+    pub snapshot_resync_interval: Duration,
+    pub pointer_changes_wait_time_ms: u64,
     pub content_download_concurrency: usize,
     pub connections_max_idle: usize,
     pub snapshot_concurrency: usize,
@@ -86,6 +89,8 @@ pub struct SyncSettings {
     pub max_retries: u32,
     pub retry_concurrency: usize,
     pub prune_ttl_days: i64,
+    /// [`RetryFailedConfig::discard_overtaken`]: `CONTENT_HISTORY_PRUNE_ENABLED`.
+    pub discard_overtaken: bool,
 }
 
 impl SyncSettings {
@@ -149,6 +154,18 @@ impl SyncSettings {
             entity_types,
             from_timestamp_ms: config.content.sync_from_timestamp_ms,
             phased_sync: config.content.phased_sync,
+            snapshot_resync_initial_delay: Duration::from_secs(
+                config
+                    .content
+                    .sync_snapshot_resync_initial_delay_secs
+                    .into(),
+            ),
+            snapshot_resync_interval: Duration::from_secs(
+                config.content.sync_snapshot_resync_interval_secs.into(),
+            ),
+            pointer_changes_wait_time_ms: u64::from(
+                config.content.sync_pointer_changes_poll_interval_secs,
+            ) * 1_000,
             content_download_concurrency: config.content.concurrent_sync_downloads,
             connections_max_idle: config.content.connections_max_idle,
             snapshot_concurrency: config.content.sync_snapshot_concurrency,
@@ -166,6 +183,7 @@ impl SyncSettings {
             max_retries: config.content.max_failed_deployment_retries,
             retry_concurrency: config.content.sync_retry_concurrency,
             prune_ttl_days: config.content.retry_failed_prune_ttl_days,
+            discard_overtaken: config.content.content_history_prune_enabled,
         }))
     }
 }
@@ -429,6 +447,7 @@ impl Leader {
         let limits = memory_limits();
         let deployer = Arc::new(LiveSyncDeployer::with_limits(
             self.pool.clone(),
+            self.storage.clone(),
             settings.flush_concurrency,
             limits,
             self.validation.clone(),
@@ -478,6 +497,9 @@ impl Leader {
                 from_timestamp: settings.from_timestamp_ms,
                 entity_types: settings.entity_types.clone(),
                 phased_sync: settings.phased_sync,
+                snapshot_resync_initial_delay: settings.snapshot_resync_initial_delay,
+                snapshot_resync_interval: settings.snapshot_resync_interval,
+                pointer_changes_wait_time_ms: settings.pointer_changes_wait_time_ms,
                 snapshot_concurrency: settings.snapshot_concurrency,
                 snapshot_scheduling: settings.snapshot_scheduling,
                 ..Default::default()
@@ -517,6 +539,7 @@ impl Leader {
                 max_retries: settings.max_retries,
                 retry_concurrency: settings.retry_concurrency,
                 prune_ttl_days: settings.prune_ttl_days,
+                discard_overtaken: settings.discard_overtaken,
             },
             FailedDeploymentDeps {
                 pool: self.pool.clone(),
@@ -542,6 +565,8 @@ pub struct FailedDeploymentSettings {
     pub max_retries: u32,
     pub retry_concurrency: usize,
     pub prune_ttl_days: i64,
+    /// [`RetryFailedConfig::discard_overtaken`]: `CONTENT_HISTORY_PRUNE_ENABLED`.
+    pub discard_overtaken: bool,
 }
 
 impl FailedDeploymentSettings {
@@ -551,6 +576,7 @@ impl FailedDeploymentSettings {
             max_retries: config.content.max_failed_deployment_retries,
             retry_concurrency: config.content.sync_retry_concurrency,
             prune_ttl_days: config.content.retry_failed_prune_ttl_days,
+            discard_overtaken: config.content.content_history_prune_enabled,
         }
     }
 }
@@ -566,25 +592,57 @@ struct FailedDeploymentDeps {
     bootstrapped: Option<watch::Receiver<bool>>,
 }
 
-/// How long the retry loop waits for the sync leader's bootstrap before it starts anyway.
-const RETRY_FAILED_START: Duration = Duration::from_secs(60);
-/// The same for the prune loop.
+/// How long the prune loop waits for the sync leader's bootstrap before it starts anyway. The
+/// retry loop has no such limit: a retry fetches and deploys, and must not race the bootstrap's
+/// own deployments.
 const PRUNE_START: Duration = Duration::from_secs(300);
 
-/// Returns at bootstrap completion or after `delay`, whichever comes first, so a peer that never
-/// answers holds the node in `Bootstrapping` without holding the loop; at once with no bootstrap
-/// to wait for, and on cancellation, which the loop then sees.
+/// How often a loop still held by [`wait_to_start`] says so. Longer than [`PRUNE_START`], so only
+/// a wait without a limit (the retry loop's) reports.
+const STILL_WAITING_EVERY: Duration = Duration::from_secs(600);
+
+/// Returns at bootstrap completion (the node `Syncing`, see
+/// [`run_sync_job`]), or after `delay` when one is given, whichever comes first; at once with no
+/// bootstrap to wait for, and on cancellation, which the loop then sees. While it waits, every
+/// [`STILL_WAITING_EVERY`] it warns and sets the job's progress line: a node that never reaches
+/// `Syncing` never starts the loop, and this is what shows it. `job` names the loop in the log.
 async fn wait_to_start(
     ctx: &JobContext,
+    job: &str,
     bootstrapped: Option<watch::Receiver<bool>>,
-    delay: Duration,
+    delay: Option<Duration>,
 ) {
     let Some(mut bootstrapped) = bootstrapped else {
         return;
     };
-    tokio::select! {
-        _ = ctx.cancel.cancelled() => {}
-        _ = tokio::time::timeout(delay, bootstrapped.wait_for(|done| *done)) => {}
+    let done = async {
+        let _ = bootstrapped.wait_for(|done| *done).await;
+    };
+    let limit = async {
+        match delay {
+            Some(delay) => tokio::time::sleep(delay).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(done, limit);
+    let waiting_since = tokio::time::Instant::now();
+    let mut reminder =
+        tokio::time::interval_at(waiting_since + STILL_WAITING_EVERY, STILL_WAITING_EVERY);
+    loop {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => return,
+            _ = &mut done => return,
+            _ = &mut limit => return,
+            _ = reminder.tick() => {
+                let waited_min = waiting_since.elapsed().as_secs() / 60;
+                tracing::warn!(
+                    job,
+                    waited_min,
+                    "Still waiting for the sync bootstrap to reach Syncing; this loop has not started"
+                );
+                ctx.progress(format!("waiting for the sync bootstrap ({waited_min} min)"));
+            }
+        }
     }
 }
 
@@ -601,6 +659,7 @@ fn spawn_failed_deployment_jobs(
             RetryFailedConfig {
                 max_retries: settings.max_retries,
                 retry_concurrency: settings.retry_concurrency,
+                discard_overtaken: settings.discard_overtaken,
                 ..Default::default()
             },
             deps.client,
@@ -611,7 +670,8 @@ fn spawn_failed_deployment_jobs(
         );
         let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
-            wait_to_start(&ctx, bootstrapped, RETRY_FAILED_START).await;
+            let _exported = retry.export_failed_deployments().await;
+            wait_to_start(&ctx, "retry-failed", bootstrapped, None).await;
             let trace = ctx.clone();
             retry
                 .run(ctx.cancel.clone(), move |outcome| match outcome {
@@ -626,7 +686,13 @@ fn spawn_failed_deployment_jobs(
     let pool = deps.pool;
     let bootstrapped = deps.bootstrapped;
     jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
-        wait_to_start(&ctx, bootstrapped, PRUNE_START).await;
+        wait_to_start(
+            &ctx,
+            "failed-deployments-prune",
+            bootstrapped,
+            Some(PRUNE_START),
+        )
+        .await;
         let trace = ctx.clone();
         run_prune_loop(
             pool,
@@ -661,6 +727,7 @@ pub fn start_failed_deployments(
         let jobs = registry.clone();
         let deployer = Arc::new(LiveSyncDeployer::with_limits(
             pool.clone(),
+            storage.clone(),
             crate::sync_deployer::DEFAULT_FLUSH_CONCURRENCY,
             memory_limits(),
             validation.clone(),
@@ -850,6 +917,28 @@ mod tests {
     }
 
     #[test]
+    fn only_history_pruning_discards_overtaken_retries() {
+        let sync = [
+            "--sync-enabled",
+            "--sync-source",
+            "https://peer.example/content",
+        ];
+        let keeps = SyncSettings::from_config(&config(&sync)).unwrap().unwrap();
+        assert!(!keeps.discard_overtaken);
+        assert!(!FailedDeploymentSettings::from_config(&config(&[])).discard_overtaken);
+        let mut prunes = sync.to_vec();
+        prunes.extend(["--content-history-prune-enabled", "true"]);
+        let prunes = config(&prunes);
+        assert!(
+            SyncSettings::from_config(&prunes)
+                .unwrap()
+                .unwrap()
+                .discard_overtaken
+        );
+        assert!(FailedDeploymentSettings::from_config(&prunes).discard_overtaken);
+    }
+
+    #[test]
     fn valid_settings_carry_the_parsed_peers_and_types() {
         let settings = SyncSettings::from_config(&config(&[
             "--sync-enabled",
@@ -954,12 +1043,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_loop_starts_at_bootstrap_or_after_its_delay_whichever_comes_first() {
+    async fn retries_wait_for_the_bootstrap_and_pruning_for_its_delay_at_most() {
         let jobs = Arc::new(Jobs::new());
-        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Duration| {
+        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Option<Duration>| {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let cancel = jobs.spawn("gate", move |ctx| async move {
-                wait_to_start(&ctx, bootstrapped, delay).await;
+                wait_to_start(&ctx, "gate", bootstrapped, delay).await;
                 let _ = tx.send(());
                 Ok(())
             });
@@ -967,11 +1056,30 @@ mod tests {
         };
         let start = tokio::time::Instant::now();
 
-        gate(None, PRUNE_START).1.await.unwrap();
+        gate(None, Some(PRUNE_START)).1.await.unwrap();
         assert_eq!(start.elapsed(), Duration::ZERO, "no bootstrap to wait for");
 
+        // The retry loop's gate: no delay, only the bootstrap releases it.
         let (bootstrapped, rx) = watch::channel(false);
-        let (_, started) = gate(Some(rx), PRUNE_START);
+        let (_, mut started) = gate(Some(rx), None);
+        tokio::time::sleep(PRUNE_START * 10).await;
+        assert!(
+            started.try_recv().is_err(),
+            "a retry loop never starts while the bootstrap is held"
+        );
+        let waiting: Vec<String> = (jobs.report().into_iter())
+            .filter_map(|job| job.progress)
+            .collect();
+        assert!(
+            matches!(&waiting[..], [line] if line.starts_with("waiting for the sync bootstrap (")),
+            "the held loop reports its wait: {waiting:?}"
+        );
+        bootstrapped.send(true).unwrap();
+        started.await.unwrap();
+        let start = tokio::time::Instant::now();
+
+        let (bootstrapped, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), Some(PRUNE_START));
         tokio::time::sleep(Duration::from_secs(1)).await;
         bootstrapped.send(true).unwrap();
         started.await.unwrap();
@@ -982,16 +1090,16 @@ mod tests {
         );
 
         let (_held, rx) = watch::channel(false);
-        let (_, started) = gate(Some(rx), RETRY_FAILED_START);
+        let (_, started) = gate(Some(rx), Some(PRUNE_START));
         started.await.unwrap();
         let after_delay = start.elapsed() - at_bootstrap;
         assert!(
-            after_delay >= RETRY_FAILED_START && after_delay < PRUNE_START,
-            "a held bootstrap released the loop after {after_delay:?}"
+            after_delay >= PRUNE_START && after_delay < PRUNE_START * 2,
+            "a held bootstrap released the prune loop after {after_delay:?}"
         );
 
         let (_held, rx) = watch::channel(false);
-        let (cancel, started) = gate(Some(rx), PRUNE_START);
+        let (cancel, started) = gate(Some(rx), None);
         cancel.cancel();
         started.await.unwrap();
         assert!(

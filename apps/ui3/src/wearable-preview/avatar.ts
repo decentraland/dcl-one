@@ -14,6 +14,7 @@ import {
   resolveOutfit,
 } from "./outfit";
 import type { Entity, HidingRules, OutfitData, ResolvedOutfit } from "./outfit";
+import { shareSkeleton } from "./skeleton";
 
 type AvatarColors = { skin: THREE.Color | null; hair: THREE.Color | null; eyes: THREE.Color | null };
 
@@ -93,6 +94,12 @@ const EMOTES: Record<string, string> = {
 
 const PART_CACHE_MAX = 32;
 const GLB_TIMEOUT_MS = 20000;
+/**
+ * How long a part waits for its held files other than its model. Past it, a file still downloading is left to the
+ * loader, which reads it only if the model references it: a stalled file the model never uses does not cost the part.
+ * The downloads themselves are not cut: a slow model keeps downloading, and its part waits for it.
+ */
+const HELD_FILES_MS = GLB_TIMEOUT_MS / 2;
 export const OUTFIT_SWAP_DEBOUNCE_MS = 120;
 
 function defaultBase(): string {
@@ -122,6 +129,25 @@ function disposeObject(root: THREE.Object3D): void {
       m.dispose?.();
     }
   });
+}
+
+/**
+ * The wave's wait for optional files: `late` settles HELD_FILES_MS from now, or at once when `signal` aborts (the
+ * downloads ended). `release` settles it and drops its timer, for a wave whose parts have all settled.
+ */
+function heldFilesWait(signal: AbortSignal): { late: Promise<void>; release(): void } {
+  let settle: () => void = () => {};
+  const late = new Promise<void>((resolve) => (settle = resolve));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const release = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    signal.removeEventListener("abort", release);
+    settle();
+  };
+  timer = setTimeout(release, HELD_FILES_MS);
+  signal.addEventListener("abort", release, { once: true });
+  return { late, release };
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -390,8 +416,10 @@ export function createAvatarScene(
 
   // The parts' files by content hash, each download started once when the entities arrive, so a GLB's textures
   // download beside it instead of after its parse.
-  // `signal` ends the wave: the preview's disposal or the parts' timeout.
-  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal };
+  // `signal` ends the downloads: the preview's disposal or the parts' timeout. `late` is the wave's wait for optional
+  // files (`heldFilesWait`): it settles HELD_FILES_MS after the wave starts, when `signal` aborts, or once every part of
+  // the wave has settled.
+  type HeldFiles = Map<string, Promise<Blob | null>> & { signal: AbortSignal; late: Promise<void> };
 
   /**
    * Starts the downloads of an entity's files under the wave's signal. A failed answer's body is cancelled. A file
@@ -410,14 +438,19 @@ export function createAvatarScene(
   }
 
   /**
-   * Object URLs of the held files among `hashes`; a file that did not download is left to the loader. Once the wave
-   * has ended it throws instead: the part is not loaded, so its loader does not download its files again, and the
-   * failure drops the part from its cache, so wearing it again loads it anew.
+   * Object URLs of the held files among `hashes`. The part waits for `essential` (its model, or a feature's texture),
+   * which it cannot draw without, for as long as that download runs; for the others, until it has `essential` and the
+   * wave is HELD_FILES_MS old. A file that failed early, or an optional one still on its way by then, is left to the
+   * loader, which reads it if the model references it. Once the downloads have ended (the preview was disposed, or the
+   * parts' timeout ran out) the part is not loaded at all: a loader started then would read the same files again with
+   * nothing left to stop it.
    */
-  async function heldUrls(files: HeldFiles, hashes: string[]): Promise<Map<string, string>> {
-    const blobs: (Blob | null | undefined)[] = [];
-    for (const hash of hashes) blobs.push(await files.get(hash));
-    if (files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
+  async function heldUrls(files: HeldFiles, hashes: string[], essential: string): Promise<Map<string, string>> {
+    const first = await files.get(essential);
+    const blobs = await Promise.all(
+      hashes.map((hash) => (hash === essential ? first : Promise.race([files.get(hash), files.late.then(() => undefined)]))),
+    );
+    if (disposed || files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
     const urls = new Map<string, string>();
     hashes.forEach((hash, i) => {
       const blob = blobs[i];
@@ -436,7 +469,7 @@ export function createAvatarScene(
       (mainBase !== undefined ? fileMap.get(mainBase.toLowerCase()) : undefined);
     if (!mainHash) return null;
     const mainUrl = `${base}/content/contents/${mainHash}`;
-    const held = await heldUrls(files, representationHashes(entity, bodyShape));
+    const held = await heldUrls(files, representationHashes(entity, bodyShape), mainHash);
     const manager = new THREE.LoadingManager();
     manager.setURLModifier((url) => {
       if (/^(blob:|data:)/.test(url)) return url;
@@ -448,6 +481,7 @@ export function createAvatarScene(
     });
     try {
       const gltf = await new GLTFLoader(manager).loadAsync(mainUrl);
+      shareSkeleton(gltf.scene);
       return gltf.scene;
     } finally {
       for (const url of held.values()) URL.revokeObjectURL(url);
@@ -466,7 +500,7 @@ export function createAvatarScene(
     const texHash = hashOf(names.find((n) => n.endsWith(".png") && !n.endsWith("_mask.png")));
     if (!texHash) return null;
     const maskHash = hashOf(names.find((n) => n.endsWith("_mask.png")));
-    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash]);
+    const held = await heldUrls(files, maskHash ? [texHash, maskHash] : [texHash], texHash);
     const loadTex = async (hash: string, srgb: boolean): Promise<THREE.Texture> => {
       const t = await new THREE.TextureLoader().loadAsync(held.get(hash) ?? `${base}/content/contents/${hash}`);
       t.flipY = false;
@@ -502,16 +536,26 @@ export function createAvatarScene(
       partCache.set(key, pending);
       return pending;
     }
-    pending = withTimeout(loadEntityGlb(entity, bodyShape, files), GLB_TIMEOUT_MS)
+    const load = loadEntityGlb(entity, bodyShape, files);
+    let lost = false;
+    pending = withTimeout(load, GLB_TIMEOUT_MS)
       .then((obj) => {
         if (obj) mattify(obj);
         return obj;
       })
       .catch((err) => {
+        lost = true;
         if (!disposed) console.warn("[wearable-preview] failed", key, err);
         partCache.delete(key);
         return null;
       });
+    // A model that arrives after its part gave up is not shown: free it.
+    load.then(
+      (obj) => {
+        if (lost && obj) disposeObject(obj);
+      },
+      () => {},
+    );
     partCache.set(key, pending);
     trimPartCache();
     return pending;
@@ -520,11 +564,25 @@ export function createAvatarScene(
   function cachedFeature(key: string, entity: Entity, bodyShape: string, files: HeldFiles): Promise<FacialFeature | null> {
     let pending = featureCache.get(key);
     if (!pending) {
-      pending = loadFacialFeature(entity, bodyShape, files).catch((err) => {
+      // Bounded as a part is: a texture the loader reads itself (its held copy did not arrive) that never answers must
+      // not hold the avatar's other parts, and a failed feature leaves the cache so wearing it again reads it anew.
+      const load = loadFacialFeature(entity, bodyShape, files);
+      let lost = false;
+      pending = withTimeout(load, GLB_TIMEOUT_MS).catch((err) => {
+        lost = true;
         if (!disposed) console.warn("[wearable-preview] failed", key, err);
         featureCache.delete(key);
         return null;
       });
+      // Textures that arrive after their feature gave up are not shown: free them.
+      load.then(
+        (feat) => {
+          if (!lost || !feat) return;
+          feat.tex.dispose();
+          feat.mask?.dispose();
+        },
+        () => {},
+      );
       featureCache.set(key, pending);
     }
     return pending;
@@ -808,7 +866,7 @@ export function createAvatarScene(
     const bodyLc = bodyShape.toLowerCase();
     const byPointer = await fetchEntities(base, [bodyShape, ...wearables]);
     if (stale(gen)) return null;
-    const rules = computeHiding(wearables, byPointer);
+    const rules = computeHiding(wearables, byPointer, bodyShape, target.forceRender);
 
     const wantParts: { key: string; urn: string; isBody: boolean; entity: Entity }[] = [];
     const wantFeatures: { key: string; cat: string; entity: Entity }[] = [];
@@ -826,17 +884,19 @@ export function createAvatarScene(
       else wantParts.push({ key: partKey(urn, bodyLc), urn, isBody: false, entity: e });
     }
 
-    // The wave ends with the preview or with the parts' own timeout. An outfit change does not end it: the parts it
-    // feeds stay in the part cache, where the next outfit picks them up.
-    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
-      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
-    });
+    // The downloads end with the preview or with the parts' own timeout. An outfit change does not end them: the parts
+    // they feed stay in the part cache, where the next outfit picks them up.
+    const signal = AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]);
+    const wait = heldFilesWait(signal);
+    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), { signal, late: wait.late });
     for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
     for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
     const [objs, feats] = await Promise.all([
       Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape, files))),
       Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape, files))),
     ]);
+    // Every part of the wave has settled: nothing waits on its timer any more.
+    wait.release();
     if (stale(gen)) return null;
 
     const at = mixers.values().next().value?.time ?? 0;

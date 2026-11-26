@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { Address } from 'viem';
+import { analytics } from '#preload';
 import { useAuth } from '/@/hooks/useAuth';
 import { useLandTxFlow } from '/@/hooks/useLandTxFlow';
 import type { Land } from '/@/lib/land';
@@ -32,6 +33,13 @@ export function TransferLandModal({ open, land, name, onClose }: Props) {
   const doneText = t('tx.done.transfer');
   useTxResultSnackbar({ open, flow, doneText });
 
+  const phase = flow?.phase;
+  useEffect(() => {
+    if (phase && phase !== 'signing' && phase !== 'pending') {
+      void analytics.track('Transfer LAND Result', { land_type: land.type, result: phase });
+    }
+  }, [phase]);
+
   const close = () => {
     if (!flow || flow.phase === 'done') reset();
     setRecipient(null);
@@ -55,9 +63,11 @@ export function TransferLandModal({ open, land, name, onClose }: Props) {
           : {
               label: t('land_transfer.confirm'),
               state: recipient ? 'idle' : 'blocked',
-              onClick: () =>
-                recipient &&
-                void start([buildTransferLand(land, wallet as Address, recipient.address)]),
+              onClick: () => {
+                if (!recipient) return;
+                void analytics.track('Transfer LAND Started', { land_type: land.type });
+                void start([buildTransferLand(land, wallet as Address, recipient.address)]);
+              },
             }
       }
     >

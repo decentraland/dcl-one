@@ -1,12 +1,12 @@
-# Worlds: intended differences from worlds-content-server
+# Worlds: compatibility differences
 
 The `worlds` crate serves the worlds content server's HTTP surface (under
 `/worlds-content-server`, and at the root where no catalyst route has the
 path; see "Mounts") and its comms admission. The wire
 contract follows
 [`decentraland/worlds-content-server`](https://github.com/decentraland/worlds-content-server).
-This page lists where the catalyst answers differently on purpose. A
-difference not listed here is a gap, not a decision.
+This page records intended differences and their operational limitations.
+A difference not listed here is a gap, not a decision.
 
 ## HTTP
 
@@ -47,21 +47,32 @@ difference not listed here is a gap, not a decision.
   both the stored owner and the live holder of each DCL NAME world.
   A publish credits back only the replaced scenes of a world charged to
   the same owner.
+- **Allowance monitoring.** Before enabling production Worlds writes,
+  verify that every serving node has effective `ETH_RPC_URL` and
+  `RPC_ENDPOINT_POLYGON` values for the intended chains. Mirror nodes and
+  nodes with no posture default to Decentraland's public RPCs. Scrape each
+  node's `SERVE_METRICS_BIND` endpoint in production. The
+  `worlds_allowance_read_failures_total` counter increments once per
+  terminal chain lookup failure.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
-  digest, which covers files of one chunk (256 KiB) or less. It also serves
-  CIDv0 (`Qm…`) keys. An invalid key answers 404 without a body, as a miss
-  does (upstream: 400). A key on the content denylist answers 404, and with
-  `READ_THROUGH_ENABLED` a missing key is fetched from the sync sources
-  before the 404.
+  digest, which covers files of one chunk (256 KiB) or less. The mirror and
+  cutover importer record verified SHA-256 aliases for thumbnails larger
+  than one chunk and up to 1 MiB. The route also serves CIDv0 (`Qm…`) keys.
+  Invalid and missing keys answer 404 without a body. A key on the content
+  denylist answers 404. With `READ_THROUGH_ENABLED`, the route tries to fetch
+  a missing key from the sync sources before answering 404.
 - **Content types.** The worlds `/contents` and `/ipfs` routes answer
   `file-type@16`'s Content-Type for scene formats: images, glTF binary,
   audio, video, fonts, PDF, WebAssembly, gzip and ZIP. Other formats, and a
   ZIP's office or EPUB subtypes, are `application/octet-stream` (or the type
-  of a ported signature their bytes also match) or `application/zip`. XML is
-  `application/octet-stream` (upstream: `application/xml`): these routes
-  share the node's origin, where a browser would run an XHTML or SVG
-  document's scripts. A file that opens with `{` or `[` is
+  of a ported signature their bytes also match) or `application/zip`. A
+  document type (`text/*`, `*/xml`, `*+xml` or HTML; of the ported checks,
+  XML) is `application/octet-stream` (upstream: `application/xml`): these
+  routes share the node's origin, where a browser would run an XHTML or SVG
+  document's scripts. Every answer carries `Content-Security-Policy: sandbox`
+  and `X-Content-Type-Options: nosniff`, so a file opened as a page runs
+  sandboxed. A file that opens with `{` or `[` is
   `application/json` (upstream: `application/octet-stream`). A file of more
   than 16 chained ID3 tags, 256 PNG chunks before the image data, or 64 EBML
   header elements is `application/octet-stream`.
@@ -127,9 +138,11 @@ difference not listed here is a gap, not a decision.
   allowed clock skew (upstream `0`), and it carries the participant
   attribute `dcl.worldAuthorization`, the re-admission proof other
   participants can read.
-- **Kicks on access change.** Owners and holders of any world or live-scene
-  grant (deployment or streaming) are never kicked. A switch to an
-  allow-list keeps participants already on the new list. A participant
+- **Kicks on access change.** Owners and wallets with deployment or streaming
+  grants keep their place in an open world room when an access edit would
+  otherwise remove them. A parcel-scoped grant must cover an active scene
+  in the room inventory. Platform and scene bans still apply. A switch to
+  an allow-list keeps participants already on the new list. A participant
   whose access cannot be decided stays.
 
 - **`/about` health.** `healthy`, `acceptingUsers` and `content.healthy`
@@ -141,6 +154,16 @@ difference not listed here is a gap, not a decision.
   Mirrored worlds keep the suffix. The comms mints (`/worlds/<name>/comms`,
   `/get-comms-adapter/world-<name>`) take the stripped name for the
   `.dcl.eth` world when no world is stored under the bare label.
+  `/get-scene-adapter` takes it for that world's active scene when the
+  signed `sceneId` equals the signed `realmName` (the Unity explorer signs
+  a realm without a scene manifest this way, and no realm URL) and the
+  active scene was published here. `REALM_NAME`, the preview realm names
+  and a realm name signed beside a scene id keep their shared room.
+  A scene's signed request with the stripped name stands in that world when
+  the signed realm host is the realm URL (`<host>/world/<name>.dcl.eth`, the
+  web Explorer) or `worlds-content-server.<domain>` alone, with or without
+  a scheme and a trailing `/` (the Unity client); this node's `REALM_NAME`
+  signed there keeps its shared reading.
 - **Owner admission.** The owner is the name authority's current holder,
   memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
   one minute). It is asked only when the world's access setting refuses,
@@ -164,23 +187,26 @@ difference not listed here is a gap, not a decision.
   participants and admitting the user.
 - **Presence from LiveKit.** `/live-data` and
   `/wallet/{wallet}/connected-world` read the occupancy recovered from
-  LiveKit every 30 seconds (about 5 seconds after a webhook), the same on
-  every replica. `lastUpdated` is the last complete observation
-  (`1970-01-01T00:00:00.000Z` before the first), `perWorld` is in name
-  order, the `authoritative-server` participant is not counted, and after
-  90 seconds without an observation both answer empty. A wallet's world
-  counts scene rooms and ENS worlds; in several worlds it is the one it
-  joined last, and a tie answers 503. A LiveKit room this node does not
-  resolve (no catalogue row, an upstream-format or non-canonical name) is
-  left out; while one could belong to a world, that world's mints answer
-  503.
+  LiveKit every 30 seconds. A webhook can bring the next observation on
+  its receiving replica forward to about 5 seconds. Both endpoints answer
+  503 with `Retry-After` before the first complete observation and after
+  90 seconds without one. A fresh observation can report zero occupants
+  or a 404 for a disconnected wallet. `/live-data` sets `lastUpdated` to
+  the latest complete observation and reports lobby counts in world-name
+  order and excludes the `authoritative-server` participant.
+  Connected-world includes scene rooms and ENS worlds. It reports the latest
+  world the wallet joined and picks the first normalized name in alphabetical
+  order for a tie. The public projection accepts legacy scene room names
+  when they match exactly one current catalogue entry. Admission and social
+  presence continue to use canonical room names.
 - **Scene room names.** A scene room is `w1:<base36 byte length of the world
   key>:<world key><scene id>`, with the scene id's case preserved. The
   prefix is fixed; there is no `SCENE_ROOM_PREFIX` or `COMMS_ROOM_PREFIX`
   setting. The world lobby room keeps `world-<name>`.
 - **Room events.** Participant joins and leaves are published on the NATS
-  subject `comms.room_events.v1`. No `peer.<id>.world.join|leave` subjects
-  are published.
+  subject `comms.room_events.v1`; every `serve` applies World joins and leaves to
+  social online status, which treats being inside a World as online. No
+  `peer.<id>.world.join|leave` subjects are published.
 - **LiveKit webhook.** `POST /livekit-webhook` (also under
   `/worlds-content-server` and `/comms-gatekeeper`) is the gatekeeper's one
   webhook: a missing or bad signature answers 401, an event it cannot read
@@ -193,6 +219,11 @@ difference not listed here is a gap, not a decision.
   signed-login adapter.
 - **LiveKit only.** The comms adapter is always LiveKit; there is no
   ws-room mode and no `COMMS_ADAPTER` / `COMMS_FIXED_ADAPTER` setting.
+- **`place_id` on `GET /scene-admin`.** The signed scene names the place for
+  a scene and for the authoritative server, as upstream. A `place_id` query
+  (upstream reads none) must name that scene, by its entity id or by the key
+  of its place; another value answers 400. A signed scene that is not
+  deployed answers 400 and a resolver fault 503, never an empty list.
 - **Ban, deny-list and capacity on `/get-comms-adapter`.** The adapter route
   applies the same platform-ban, deny-list and capacity checks as the world
   comms mint.
@@ -210,9 +241,12 @@ difference not listed here is a gap, not a decision.
   copied from its source's `/contents` and stored under the CIDv1 of its
   bytes, so for a thumbnail uploaded to the source (stored there under the
   SHA-256 hex of its bytes) `GET /world/{name}/settings` names the CID where
-  the source names the hex key. `/contents/<hex key>` still answers it on the
-  worlds mount. A thumbnail the source does not serve, or whose bytes are not
-  an image, leaves the mirrored world without one.
+  the source names the hex key. For larger thumbnails, the next successful
+  mirror of those settings or a replay of the cutover import records the
+  alias for the saved hex URL. The alias keeps the blob reachable after
+  settings edits. A failed source read keeps the existing thumbnail. A
+  successful read of a blob with an unsupported format leaves the world
+  without a thumbnail.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
   Only names whose labels the upstream's UTS46 normalization leaves
@@ -222,16 +256,20 @@ difference not listed here is a gap, not a decision.
   name has an owner only while the ENS Registry still gives its node to
   the NameWrapper (upstream trusts the NameWrapper alone).
 - **DCL NAME holder reader.** A DCL NAME world's owner is the NAME's
-  current holder, read from `MARKETPLACE_SUBGRAPH_URL` (upstream's
-  marketplace subgraph); it has no default and only the `mirror` posture
-  sets it. Without it a DCL NAME world has no owner for writes: publishes,
+  current holder, read from the nft index on a node that walks it
+  (`MARKETPLACE_NFT_INDEX_ENABLED` on mainnet), which authorizes only while
+  every block it walked is folded and published (between walking a
+  transfer and publishing it, and while the index is behind, owner writes
+  and admission answer 503); elsewhere from `MARKETPLACE_SUBGRAPH_URL`
+  (upstream's marketplace subgraph), which has no default and only the
+  `mirror` posture sets. Without either a DCL NAME world has no owner for writes: publishes,
   the owner-gated permission, settings, undeploy and storage routes, and
   the owner's scene-admin rights (admins, bans, stream key, Cast) are
   refused (upstream reads the stored owner first, which keeps naming a
   former holder until a publish replaces it). The reads still
   use the stored owner then: `GET /world/{name}/permissions`, `/limits`,
   owner admission, the ban-protected set and the quota pass. `catalyst serve`
-  with `WORLDS_WRITES_ENABLED=true` refuses to start without the URL, before
+  with `WORLDS_WRITES_ENABLED=true` refuses to start without either, before
   it opens the database (`catalyst index` takes no world writes and skips
   this rule), unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true` (a node
   without chain access, such as the `journey` posture), where it logs a
@@ -398,7 +436,11 @@ difference not listed here is a gap, not a decision.
   the request's `Origin` with `Access-Control-Allow-Credentials: true` and
   `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler
   names no header, and sets `X-Content-Type-Options: nosniff`. Upstream
-  answers `Access-Control-Allow-Origin: *`.
+  answers `Access-Control-Allow-Origin: *`. `/world-storage` reflects any
+  `Origin` the same way but never sends `Access-Control-Allow-Credentials`:
+  signed fetch carries its auth in headers, not cookies. Upstream
+  world-storage reflects only the origins that match its `CORS_ORIGINS`
+  patterns and exposes `ETag, Retry-After`.
 - **`/available-content`** answers a cid on the content denylist as
   `available: false`.
 - **`POST /entities/active`** answers a body that is not JSON with 400
@@ -427,12 +469,29 @@ difference not listed here is a gap, not a decision.
 
 - **Delivery.** World notices are written to the catalyst's own inbox and
   email outbox, in the same transaction as the grant edit or quota change,
-  instead of being published to SNS. Re-detecting the same quota block keeps
-  the first notice unchanged; a new block notifies again even on the same
-  day. Every grant or revoke is its own notice, so the latest notice matches
-  the current grant. One edit notifies at most 50 added and 50 removed
-  addresses. The notice description does not name the world (it is in the
-  `world` field).
+  instead of being published to SNS. Quota notices deduplicate by wallet,
+  notice kind and UTC date of block creation. Warning, restriction and
+  restoration are separate kinds; restoration uses the block's creation day,
+  even when access is restored on a later day. Repeats keep the first row's
+  metadata, occurrence time, read state and email delivery state without
+  requeuing email. Every grant or revoke is its own notice, so the latest
+  notice matches the current grant.
+  One edit notifies every added and removed address in
+  batches of at most 50, all in the edit transaction. The description names
+  the world when it matches the world-name pattern, or says "a world"
+  otherwise; the `world` field keeps the world name.
+- **Quota history at cutover.** When the block's exact creation time is
+  available, the writer links existing native notices for all three quota
+  kinds to their daily keys on any quota emission, retaining their row IDs,
+  contents, read state and email delivery records. Already closed native
+  blocks and imported history may lack the information needed for that link.
+  Such unlinked history can coexist with one additional daily notice per
+  wallet and kind at cutover; this change does not consolidate all historical
+  duplicates. Later repeats use the daily key. Retire quota writers that do
+  not set daily keys before relying on daily uniqueness. The
+  [quota identity decision](../../../docs/adr/2026-11-21-world-quota-notice-identity.md)
+  states this boundary. Quota enforcement, grace timing and the notification
+  deadline metadata are unchanged.
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 - **Settings events.** `PUT /world/{name}/settings` publishes no
@@ -445,10 +504,19 @@ difference not listed here is a gap, not a decision.
 ## Permissions
 
 - **Community ids** in an allow-list must be UUIDs.
+- **Deployment and streaming lists.** When supplied, `wallets` must be an
+  array of wallet address strings. Invalid values answer 400 and leave
+  existing grants in place.
 - **Allow-list caps.** `ACCESS_MAX_WALLETS` (1..=10,000, default 1000) and
   `ACCESS_MAX_COMMUNITIES` (1..=1,000, default 50) are refused at startup
   outside their range; upstream takes any number, and `0` there refuses
-  every addition.
+  every addition. Deployment and streaming allow-lists have no application
+  count cap, as upstream. Auth-chain validation limits the complete signed
+  payload to 100,000 bytes (`dcl-auth`'s `MAX_AUTH_LINK_FIELD_LEN`); HTTP
+  header limits also apply to the signed metadata. These byte limits do not
+  define a fixed wallet count. Notification batches contain at most 50
+  addresses, but the total edit transaction grows with the number of changed
+  addresses.
 - **Allow-list documents** are stored normalized: `GET .../permissions`
   returns the access wallets lowercased and deduplicated, in the order they
   were added, and the community ids as lowercase UUIDs, whatever spelling
@@ -458,6 +526,9 @@ difference not listed here is a gap, not a decision.
   <w>.`), `nft` must be a string, a `secret` that is not a non-empty string
   is a 400 (upstream: 500 for a non-string), and a parcel coordinate outside
   32 bits is 400 `Invalid parcels: …` (upstream stores it).
+- **Deployment and streaming allow-list edits** clear the grants when
+  `wallets` is omitted, `null` or an empty array. Other non-array values
+  and non-string elements answer 400 and preserve the grants.
 - **Parcel holder lookups** (`POST .../permissions/{permission}/parcels`)
   match the requested parcels in canonical form, so `00,01` finds a grant on
   `0,1`.
@@ -496,7 +567,15 @@ difference not listed here is a gap, not a decision.
 - **Settings superset.** `GET`/`PUT /world/{name}/settings` also carry
   `realm_name_override` and `preview_wearable_urns` (always present, `null`
   or a list), and the PUT form accepts both; `preview_wearable_urns` may
-  repeat, like `categories`.
+  repeat, like `categories`. A `realm_name_override` that names another
+  world with a scene on this node answers 400: its label (read as
+  `<label>.dcl.eth` beside the worlds host) or its full `.eth` name, in any
+  case. The gatekeeper reads a signed realm name as the world it names, so
+  the override would seat this world's visitors in that world's room. Any
+  other override is accepted, and so is the world's own name. `/about` makes
+  the same check each time it answers: an override whose world was deployed
+  here after it was saved is not advertised, and `realmName` falls back to
+  the world's own name.
 - **Settings uploads.** `spawn_coordinates` must be two integers (spaces
   around them allowed); upstream's `parseInt` also takes `5abc,3` or
   `5.9,3` and stores them as sent. The form must be `multipart/form-data`
@@ -527,6 +606,24 @@ difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+- **Places freshness.** A committed deploy, undeploy, settings edit,
+  spawn edit, access change, operator block change, or owner reconciliation
+  queues the affected world for a Places listing refresh. `places-derive`
+  checks for pending worlds every two seconds and refreshes up to 64 per
+  pass. The job still reconciles the full catalogue
+  every `PLACES_DERIVE_INTERVAL_SECS` (300 seconds by default). A full pass
+  already in progress or a backlog can delay the targeted refresh.
+
+## Scene Insights cutover
+
+Set `WORLDS_CONTENT_SERVER_URL` in the Scene Insights deployment to the
+public dcl-one base with the `/worlds-content-server` prefix when Worlds
+becomes authoritative. Verify that the base serves
+`GET /world/{name}/permissions` and `GET /world/{name}/scenes` for a World
+published on dcl-one. Then use signed Scene Insights requests to check a
+wallet listed in the active scene's `metadata.logsPermissions` and a separate
+wallet granted deployment permission for that scene. Each check should use
+a wallet whose access depends on the permission being tested.
 
 ## World storage
 
@@ -543,8 +640,81 @@ difference not listed here is a gap, not a decision.
 - **Genesis collaborators.** A wallet in a Genesis scene's
   `logsPermissions` is admitted only while the LAND index has complete,
   fresh ownership history for the whole footprint and no parcel changed
-  owner after the scene was deployed. Upstream admits it on the active
-  deployment alone.
+  owner after the scene was deployed (see "Genesis access"). Upstream
+  admits it on the active deployment alone.
+
+### Genesis access
+
+A Genesis request names one parcel in its signed metadata. Storage
+resolves the active scene standing there and admits the signer by its role
+at that parcel. Scene admins (`social.scene_admins`) get no Genesis storage
+access.
+
+- **Roles.** A LAND manager of the parcel is its owner (the estate's owner
+  when the parcel sits in an estate), its operator (the estate's operator
+  when the parcel sits in an estate), its update operator (a cleared parcel
+  update operator falls back to the estate's), an
+  `UpdateManager` of the owner or an `ApprovalForAll` operator of the
+  owner. A collaborator is a wallet in the active deployment's
+  `metadata.logsPermissions`.
+- **Routes.** A LAND manager reaches every owner and deployer route: the
+  world and player values (read, write, delete, list and the clears),
+  `GET /players` and its clear, `/usage/world`,
+  `/usage/players/{address}`, `/usage/env`, `POST /exports`, and the env
+  writes, key list and clear. A collaborator reaches the per-key and list
+  routes of world and player values, `GET /players` and `POST /exports`,
+  never a clear, `/usage` or `/env`. Neither role reads an env value:
+  `GET /env/{key}` admits only the authorized addresses and the scoped
+  delegation. `GET /collaborator` lists the Genesis scenes whose
+  `logsPermissions` name the signer and that pass the collaborator rule
+  below; a LAND manager missing from `logsPermissions` is not listed.
+- **Manager sources.** The LAND authorization index alone. Until it has
+  a published fold (below), storage management answers 503 `LAND rights
+  are unavailable on this node: the land-authz index has no fresh
+  published fold`, and neither `COMMS_LAND_OPERATORS_URL` nor a subgraph
+  stands in (`catalyst serve` always attaches the index; the URL is read
+  only by a permission core without one). A read of the index that fails
+  answers 401 `Unauthorized: Failed to verify world permissions` before
+  `logsPermissions` is consulted.
+- **Collaborator source.** The index alone. Without a published index
+  `GET /collaborator` lists no Genesis scene.
+- **Index publication.** `LAND_AUTHZ_INDEX_ENABLED=true` with
+  `ETH_RPC_URL` runs the indexer in `catalyst index` (`NODE_POSTURE=mirror`
+  turns the flag on); `catalyst serve` reads the published index from the
+  shared database whatever its own flag says. A pass runs every
+  `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120) and publishes a fold within 25
+  blocks of a head kept `LAND_AUTHZ_CONFIRMATIONS` (12) blocks back. The
+  managers read the index while its fold is current (folded at the walk's
+  head, or no authorization event walked past it), at most 30
+  minutes old on the database clock and its registries are the node's; a
+  fold older than that makes them unavailable at once.
+  The lamb2 LAND routes require a fold at most ten minutes
+  old. The index interval is capped at four minutes. The batch permissions
+  preview uses the same 30-minute window as deploy authorization. They
+  answer the 503 `land-authz-index` envelope when the fold expires; no
+  subgraph stands in. `GET /lambdas/land-authz/status`
+  reports Lambdas readiness as `ready`, with `readyWindowSecs` and
+  `cursor.foldAgeSecs`, `cursor.foldedBlock` and `cursor.lastBlock`.
+- **Collaborator freshness.** Collaborator readiness is a separate
+  condition from status `ready`. The collaborator rule needs a full replay
+  started (`cursor.fullReplayStarted`), a published fold
+  (`cursor.foldedBlock` not null) at most 30 minutes old, registries
+  matching the node's and `history_timestamps_ready` (every indexed log
+  carries its block time). It does not need `cursor.foldedBlock` to equal
+  `cursor.lastBlock`. The status route does not report
+  `history_timestamps_ready`; the admin `GET /admin/api/mirrors` returns
+  the whole `land_authz.index_cursor` row under `body.landAuthz`. For
+  every parcel of the scene, the latest LAND transfer, the latest estate
+  membership change and the estate's latest transfer must be at or below
+  the fold and more than 15 minutes older than the deployment's signed
+  timestamp. That timestamp must not be ahead of the database clock, and
+  the deployer refuses one more than 15 minutes ahead of the node's clock
+  (`REQUEST_TTL_FORWARDS_MS` in `content/src/write_deployer.rs`). A parcel
+  the index does not know, or one held by the zero address, refuses the
+  scene; a transfer newer than the fold refuses it until folded. A scene
+  deployed less than 15 minutes after a transfer stays refused, since its
+  timestamp never changes: only a new deployment admits its collaborators
+  again.
 
 ### HTTP
 
@@ -568,6 +738,10 @@ difference not listed here is a gap, not a decision.
 - **`GET /collaborator` lists local scenes only.** Mirrored world scenes
   are left out, as their `logsPermissions` grant no storage access on this
   node; upstream lists every scene its deployment consumer indexed.
+- **Status checks.** `/health/live`, `/health/ready` and `/health/startup`
+  answer as upstream's status check component: live answers `alive`, ready
+  and startup a static pass of the `server` component
+  (`{"details":{"server":{"status":"pass"}},"status":"pass"}`).
 
 ### Quotas, export and configuration
 

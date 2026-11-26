@@ -12,6 +12,8 @@ A per-frame time budget is a share of the target frame (`SceneUpdates::frame_tar
 frame of 60 fps when the frame rate is uncapped): a tenth for capped raycasts, a quarter for
 instantiation. A fixed duration is a different share at 30, 60 and 144 fps. Budget from the
 target, not the measured frame, so a slow frame does not raise the next frame's budget.
+Avatar processing (`process_avatar`) is measured and deliberately not budgeted: see
+[decisions](decisions.md#deliberate-choices-that-look-like-mistakes) before adding one.
 
 All set types live in `crates/common/src/sets.rs`; the chains are configured in
 `crates/scene_runner/src/lib.rs` (`SceneSets`, `SceneLoopSets`) and
@@ -31,6 +33,15 @@ flowchart LR
   end
   Update --> PostUpdate
 ```
+
+`PreUpdate`, `RunFixedMainLoop`, `Update`, `SpawnScene` and `Last` run their systems one
+after another on the thread that runs the schedule (the engine worker on the web), in an order
+that still honours every `before`, `after` and set chain (`run_small_schedules_in_order`,
+`src/lib.rs`). Most of their systems take microseconds, and handing one to a compute thread and
+waiting for it costs more than running it. `PostUpdate` keeps the multi-threaded executor: its
+systems (transform propagation, visibility) are large enough to gain from the compute threads.
+A system in one of the in-order schedules cannot rely on running beside another: order what
+must be ordered.
 
 `SceneSets`, chained in `Update`:
 
@@ -58,6 +69,49 @@ budget. It is also the frame pacer on native: the budget is one frame at the con
 target, capped at the monitor refresh rate under vsync, and after the loop the thread spin-sleeps
 to the deadline.
 
+The deadline is bounded below by 1 ms after the loop starts and above by one frame target
+(`crates/scene_runner/src/loop_pacing.rs`). Natively it stays on a grid of frame targets
+(`grid_deadline`): a long frame leaves the next loop what remains of the grid. On the web the
+browser paces the frame, and the loop ends one frame target after the frame's start, less the
+time the frame still needs after the loop (`frame_deadline`, `loop_pacing/web.rs`). That reserve
+is the 90th percentile, over the last 32 frames, of the time from the loop's end to the handoff
+to the render worker less the frame's waits for that worker (`frame_tail`: `WAIT_RENDER` for the
+render app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 6 %
+of the frame target (`TAIL_MARGIN_SHARE`). The waits shrink when the loop runs longer, so they
+are left out. The pipelined-rendering diagnostics (`PipelinedRenderingDiagnosticsPlugin`, added
+by the explorer's performance plugin on the web) measure the handoff and the waits; without them
+no tail is measured, the web keeps the grid, and the scene runner warns at startup. Until 32
+frames are measured, and with an uncapped frame rate, the web uses the grid: with fewer frames
+the 90th percentile is their maximum, and a few heavy frames at the start would hold the loop on
+its floor.
+
+On the web each scene runs in a sandbox worker whose relay moves messages between the engine
+and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`,
+`deploy/web/engine/sandbox_worker.js`). The relays of the scene the player stands in (also
+while they are kept out of the world arriving at a teleport's destination), of the portable
+experiences and of the named priority scenes (`SceneUpdates::priority_scenes`, such as the
+movement controller) wait on a word in engine memory with `Atomics.waitAsync`. The engine bumps
+the word and notifies it when it sends that scene something, so a tick sent early in the loop
+can be answered within the same frame. Every wait is at most 1 ms; the
+timeout still covers global updates, the kill flag and the scene's own replies. Other scenes'
+relays poll their channels between 1 ms sleeps. Each running scene's engine handle carries a
+flag the relay shares (`dcl_types::SceneWake`): `update_scene_priority` sets it each frame,
+before the frame's dispatch, from the same lookup of the player's position that ranks the
+player's scenes first (`player_scenes`), and the relay reads it before each pump.
+
+The page parameter `?sceneLoop=` selects the web scheduling for diagnostics: `both`, the
+default, applies both of the above; `relay` keeps only the relay wake; `deadline` keeps only the
+frame-start deadline. All three also end the loop's wait for replies when a reply arrives and
+keep its timed waits clear of the deadline by their lateness (below). `legacy` uses none of
+these. The runtime debug panel's "Scene Loop" section (web) switches the mode without a reload
+(`/scene_loop_mode`) and shows where the last loop's deadline came from, its budget, the tail
+reserve, the waits' lateness and, in the modes that wake the relays, the scenes whose relays
+wake (`/scene_loop_state`, `loop_pacing/web/debug_panel.rs`). It also shows the time from a frame's handoff to the next
+frame's start: the engine worker runs unpaced after the handoff (the render worker's animation
+frame paces it inside the handoff), so that time is the runner's and its event loop's work
+between frames and, under a frame rate cap, the wait for the cap's next frame. The reserve covers
+neither: the work is small, and the cap's wait is time the frame does not need.
+
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
 1. **`SendToScene`**: `send_scene_updates` takes the highest-priority eligible scene off the
@@ -76,7 +130,23 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    the system. Only transforms and text shapes have hand-written loop systems.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
-scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
+scenes or replies outstanding. When no scene can be started (none is queued, or the next queued
+scene must wait for a thread: only priority scenes bypass the `scene_threads` limit) and replies
+are outstanding, it sleeps so that the next pass starts `SCENE_REPLY_POLL` (250 µs) after this
+one started, or at the deadline if that is sooner. On native no sleep ends closer to the
+deadline than the spin sleeper's accuracy, because a native sleep can wake that late; the loop
+spins through that last stretch. On the web a timed wait can end a millisecond or more late, so
+in every `?sceneLoop=` mode but `legacy` a reply also ends the wait: each relay counts what it
+forwards to the engine and wakes the loop (`dcl_wasm::scene_replies`). A reply that arrives
+before the deadline is then received in the same frame. In those modes the loop also records
+how late each timed-out wait woke, and no timed wait ends closer to the deadline than the 90th
+percentile of the last 32 (`WaitLateness`); it spins through the rest, as on native. A wait
+counts for 1 s (`LATENESS_AGE`): a margin that leaves the loop no timed wait also stops the
+measurement, so a burst of late wakes, such as a background tab's, would otherwise keep the
+loop spinning for the rest of the session. The loop's schedule runs on the single-threaded
+executor: a pass is a chain of systems that mostly find nothing to do.
+
+Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
 `update_scene_partitions`); both are divided by the time since the scene was last sent, so a
@@ -102,7 +172,7 @@ index of every ordering point around the avatar, camera and collider transform p
 
 | Variant | Purpose |
 |---|---|
-| `EarlyTransformPropagate` | A first propagation so the sets below see current globals |
+| `EarlyTransformPropagate` | A first propagation so the sets below see current globals: bevy's `PropagateTransforms` schedule, which `TransformPropagate` runs again for what changed in between |
 | `EarlyBillboard` | Re-applies billboard rotations a scene transform write replaced, facing the previous frame's camera, so local transforms read below (a virtual camera parented to a billboard) are billboarded. Globals keep the scene's write until `TransformPropagate` |
 | `ColliderUpdate` | Collider transforms and the scene qbvh |
 | `PlayerUpdate` | Player movement and ground resolution |
@@ -129,7 +199,9 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`Startup`**: `SetupSets::Init` before `SetupSets::Main`. `Init` creates the resources and
   entities other setup depends on (cameras, UI roots, the system scene); `Main` is everything
   that needs them.
-- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
+- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters, and on the web
+  the scene loop's frame start (`web_frame_start`, `loop_pacing/web.rs`), unordered: a system
+  there that runs before it moves the frame's start, and the deadline mode's deadline, later.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
   The input manager's readers (bindings, the system-action stream, native input) run after
@@ -145,6 +217,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     instances already in progress first, and reveals each when its last node is done;
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
+    The avatar crate measures `process_avatar`, which runs in `Update`, into a third, from
+    `PostUpdate`.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
   profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).

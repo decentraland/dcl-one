@@ -19,7 +19,7 @@ describe.each(["pending", "failed", "manageable", "not manageable"] as const)("w
       profile: null, profileError: null,
       communities: state === "manageable" ? [{ id: "preselected", name: "Managed community" }] : [],
       communitiesError: state === "failed" ? "Unavailable" : null,
-      schedules: [], schedulesError: null, worlds: [], worldsError: null,
+      worlds: [], worldsError: null,
     };
     user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/edit?step=details"]}>
@@ -30,6 +30,9 @@ describe.each(["pending", "failed", "manageable", "not manageable"] as const)("w
 
   if (state === "not manageable") {
     it("should block a known unauthorized association while allowing it to be cleared", async () => {
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toBe("Choose a community you manage, or select None.");
+      expect(alert.dataset.tone).toBe("error");
       expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(true);
       await user.selectOptions(screen.getByRole("combobox", { name: "Community" }), "");
       expect((screen.getByRole("button", { name: "Continue" }) as HTMLButtonElement).disabled).toBe(false);
@@ -41,4 +44,22 @@ describe.each(["pending", "failed", "manageable", "not manageable"] as const)("w
       expect(screen.getByRole("combobox", { name: "Location Type" })).toBeTruthy();
     });
   }
+});
+
+describe.each([
+  [true, "warning", "Categories couldn't be loaded right now — you can continue and pick one later."],
+  [false, "info", "No categories are available right now — you can continue without one."],
+] as const)("when the details step has no categories and their read failed is %s", (categoriesError, tone, message) => {
+  beforeEach(() => {
+    render(<MemoryRouter initialEntries={["/edit?step=details"]}>
+      <SubmitHangout trackCtx={{ sid: "test", story: "landings/submit-hangout", variant: "wizard" }} categories={[]} categoriesError={categoriesError} signedIn draft={emptyDraft()} options={null} track={vi.fn()} />
+    </MemoryRouter>);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it(`should explain it in a ${tone} notice`, () => {
+    const notice = screen.getByText(message).closest<HTMLElement>("[data-tone]");
+    expect(notice?.getAttribute("role")).toBe("status");
+    expect(notice?.dataset.tone).toBe(tone);
+  });
 });

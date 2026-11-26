@@ -48,12 +48,16 @@ pub mod communities;
 
 pub mod media;
 pub mod messaging;
+mod metrics;
 mod mls;
 pub mod notifications;
 pub mod profile_images;
+pub mod request_auth;
+pub use metrics::FAMILIES as SERVICE_FAMILIES;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_fixtures;
 pub mod writes;
 
@@ -95,7 +99,7 @@ pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> R
         response
     }));
     Router::new()
-        .fallback_service(router)
+        .fallback_service(dcl_metrics::http::component(router, "social"))
         .layer(axum::middleware::from_fn(
             communities::http::social_api_methods,
         ))

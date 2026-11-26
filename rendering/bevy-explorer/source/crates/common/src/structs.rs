@@ -24,7 +24,7 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    default_color_grading, scatter_bloom, scatter_lerp, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
     GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
@@ -56,11 +56,11 @@ pub struct PrimaryUser {
 impl Default for PrimaryUser {
     fn default() -> Self {
         Self {
-            walk_speed: 2.5,
-            jog_speed: 8.18,
-            run_speed: 11.0,
-            jump_height: 1.9,
-            run_jump_height: 2.95,
+            walk_speed: 1.5,
+            jog_speed: 8.0,
+            run_speed: 10.0,
+            jump_height: 1.0,
+            run_jump_height: 1.5,
             block_all: false,
             block_run: false,
             block_walk: false,
@@ -109,6 +109,10 @@ pub struct PlayerModifiers {
     pub block_jump: bool,
     pub block_emote: bool,
     pub areas: Vec<ActiveAvatarArea>,
+    /// The scenes whose areas hide the primary player's avatar, passport or nametag now.
+    pub hide_scenes: Vec<Entity>,
+    /// The scenes whose areas or input modifiers change or block the primary player's movement now.
+    pub locomotion_scenes: Vec<Entity>,
 }
 
 #[derive(Clone, Debug)]
@@ -293,6 +297,21 @@ pub struct EmoteCommand {
     pub mask: EmoteMask,
 }
 
+/// The local player triggered an emote: `source` is `self` (the HUD, the console) or `scene`,
+/// the `used_emote` source values.
+#[derive(Event, Clone, Debug)]
+pub struct PlayerEmoteTriggered {
+    pub urn: String,
+    pub source: &'static str,
+}
+
+/// The local player reacted with an emoji over their avatar: `emoji_index` is the emoji's index
+/// on the wire, the `react_situation` reaction id.
+#[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerReacted {
+    pub emoji_index: i32,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from
@@ -372,6 +391,9 @@ pub struct SceneDrivenAnimationRequest {
     // dedups per-avatar so leaving identical entries across consecutive updates doesn't
     // re-fire; the scene clears the list on frames it doesn't want sound.
     pub sounds: Vec<String>,
+    // The scene is a startup portable, as the movement scene is, so the clip's file name says the
+    // avatar's motion (`ClipMotion::of_clip`). False for remote requests.
+    pub movement_scene: bool,
 }
 
 // Current scene-driven animation playback state, written by `play_current_emote` in
@@ -456,6 +478,8 @@ pub struct PrimaryCamera {
     pub roll: f32,
     // override
     pub scene_override: Option<CameraOverride>,
+    /// The scene whose camera mode area or virtual camera set `scene_override`.
+    pub scene_override_owner: Option<Entity>,
 }
 
 /// Where the camera sits relative to the player, with a scene's override applied.
@@ -533,6 +557,7 @@ impl Default for PrimaryCamera {
             roll: Default::default(),
             distance: 1.0,
             scene_override: None,
+            scene_override_owner: None,
         }
     }
 }
@@ -607,6 +632,18 @@ pub struct PreviousLogin {
 pub fn default_home_realm() -> String {
     crate::base_domain::url(crate::base_domain::Service::RealmProvider, "/main")
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PinnedHome {
+    pub realm: String,
+    pub location: IVec2,
+}
+
+/// The key of an account's entry in [`AppConfig::homes`].
+pub fn home_account(address: &Address) -> String {
+    format!("{address:#x}")
+}
+
 /// The values the "Live Scene Ring" setting takes, in parcel rings.
 pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=3;
 /// The values the "Near LOD Ring" setting takes, in parcel rings.
@@ -618,15 +655,20 @@ pub const FAR_LOD_RINGS: RangeInclusive<u16> = 5..=40;
 #[derive(Serialize, Deserialize, Resource, Clone)]
 #[serde(default)]
 pub struct AppConfig {
-    /// The pinned home scene. Written ONLY by SetHomeScene; None = never pinned, so the
-    /// home keeps tracking the base-domain-derived default. A pinned home persists (and
-    /// survives switching base domains) even when it happens to equal some domain's
-    /// default. --realm / --position are startup params (like the web's ?realm= /
-    /// ?position=) and are deliberately never merged in here — the config file is
-    /// rewritten wholesale on any settings change, which would silently persist a
-    /// one-off CLI target as home.
+    /// A home pinned for no account: the first account to sign in adopts it
+    /// ([`Self::adopt_home`]), and the headless server boots from it. --realm / --position are
+    /// startup params (like the web's ?realm= / ?position=) and are deliberately never merged
+    /// in here — the config file is rewritten wholesale on any settings change, which would
+    /// silently persist a one-off CLI target as home.
     pub home_realm: Option<String>,
     pub home_location: Option<IVec2>,
+    /// The home each account pinned, by [`home_account`]. An account with no entry has no home,
+    /// and starts at the base-domain-derived default realm, on 0,0. A pinned home persists (and
+    /// survives switching base domains) even when it happens to equal some domain's default.
+    pub homes: HashMap<String, PinnedHome>,
+    /// The account a home was last read for: the one whose home applies at startup when no
+    /// sign-in is stored.
+    pub home_last_account: Option<String>,
     pub previous_login: Option<PreviousLogin>,
     /// The root key of the benchmark autopilot's local guest (`wallet::local_guest`): it signs each
     /// ephemeral identity, so an expired one is signed again for the same account. Nothing but the
@@ -666,7 +708,13 @@ pub struct AppConfig {
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
+    /// Shows every nearby avatar, whatever `max_avatars` says; that value is kept for when this
+    /// goes off again.
+    pub max_avatars_unlimited: bool,
     pub constrain_scene_ui: bool,
+    /// "Allow overriding scene controls": the player may change what the scene they stand in
+    /// controls, today the time of day.
+    pub allow_scene_control_override: bool,
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
@@ -703,7 +751,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 5;
+pub const SETTINGS_GENERATION: u32 = 6;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -717,6 +765,8 @@ impl Default for AppConfig {
         Self {
             home_realm: None,
             home_location: None,
+            homes: HashMap::new(),
+            home_last_account: None,
             previous_login: None,
             guest_root_key: None,
             accepted_terms: None,
@@ -740,7 +790,9 @@ impl Default for AppConfig {
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
+            max_avatars_unlimited: false,
             constrain_scene_ui: false,
+            allow_scene_control_override: false,
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,
@@ -790,24 +842,71 @@ impl AppConfig {
         }
     }
 
-    /// The effective home realm: the pinned value, else the base-domain-derived default.
-    pub fn home_realm(&self) -> String {
-        self.home_realm.clone().unwrap_or_else(default_home_realm)
+    fn startup_home_account(&self) -> Option<String> {
+        self.previous_login
+            .as_ref()
+            .map(|login| home_account(&login.root_address))
+            .or_else(|| self.home_last_account.clone())
     }
 
-    /// The effective home parcel: the pinned value, else 0,0.
+    fn accountless_home(&self) -> Option<PinnedHome> {
+        (self.home_realm.is_some() || self.home_location.is_some()).then(|| PinnedHome {
+            realm: self.home_realm.clone().unwrap_or_else(default_home_realm),
+            location: self.home_location.unwrap_or(IVec2::ZERO),
+        })
+    }
+
+    /// The account-less home stands in until an account adopts it.
+    pub fn pinned_home(&self, account: Option<&str>) -> Option<PinnedHome> {
+        account
+            .and_then(|account| self.homes.get(account).cloned())
+            .or_else(|| self.accountless_home())
+    }
+
+    pub fn startup_home(&self) -> Option<PinnedHome> {
+        self.pinned_home(self.startup_home_account().as_deref())
+    }
+
+    /// Record `account` as the one signed in: it takes the account-less home unless it has its
+    /// own, and no later account inherits it. True when the config changed.
+    pub fn adopt_home(&mut self, account: &str) -> bool {
+        let mut changed = false;
+        if let Some(home) = self.accountless_home() {
+            self.homes.entry(account.to_owned()).or_insert(home);
+            self.home_realm = None;
+            self.home_location = None;
+            changed = true;
+        }
+        if self.home_last_account.as_deref() != Some(account) {
+            self.home_last_account = Some(account.to_owned());
+            changed = true;
+        }
+        changed
+    }
+
+    /// The realm the engine starts in: the startup home's, else the base-domain-derived default.
+    pub fn home_realm(&self) -> String {
+        self.startup_home()
+            .map_or_else(default_home_realm, |home| home.realm)
+    }
+
+    /// The parcel the engine starts on: the startup home's, else 0,0.
     pub fn home_location(&self) -> IVec2 {
-        self.home_location.unwrap_or(IVec2::ZERO)
+        self.startup_home()
+            .map_or(IVec2::ZERO, |home| home.location)
     }
 
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
-    /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 2: moved configs off an old bloom level; bloom is only on or off now (`BloomSetting`),
+    /// so there is nothing left to move.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
+    /// gen 6: new defaults for the player speeds and jump heights, which now measure a jump
+    /// released at once. A value still on its old default moves to the new default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -815,9 +914,6 @@ impl AppConfig {
         let default = Self::default();
         if self.settings_generation < 1 {
             self.reset_preset_settings(&default);
-        }
-        if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
-            self.graphics.bloom = default.graphics.bloom;
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
@@ -828,6 +924,20 @@ impl AppConfig {
         if self.settings_generation < 5 {
             self.graphics
                 .set_render_scale_steps(self.graphics.render_scale_steps());
+        }
+        if self.settings_generation < 6 {
+            let (saved, new) = (&mut self.player_settings, &default.player_settings);
+            for (value, old, new) in [
+                (&mut saved.walk_speed, 2.5, new.walk_speed),
+                (&mut saved.jog_speed, 8.18, new.jog_speed),
+                (&mut saved.run_speed, 11.0, new.run_speed),
+                (&mut saved.jump_height, 1.9, new.jump_height),
+                (&mut saved.run_jump_height, 2.95, new.run_jump_height),
+            ] {
+                if *value == old {
+                    *value = new;
+                }
+            }
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -1033,6 +1143,9 @@ impl AppConfig {
     }
 }
 
+/// The `fps_target` meaning no cap (Max).
+pub const UNCAPPED_FPS: usize = 999;
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct GraphicsSettings {
@@ -1105,7 +1218,7 @@ impl Default for GraphicsSettings {
             // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
             msaa: AaSetting::FxaaHigh,
             fps_target: 60,
-            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
+            // one cascade on the 2048 map (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
             // one cascade
             shadow_settings: ShadowSetting::Low,
@@ -1115,7 +1228,7 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
+            bloom: BloomSetting::On,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
@@ -1159,7 +1272,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
-    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range and
+    /// wins over the player's setting, Unlimited Avatars included.
     pub max_avatars: Option<usize>,
 }
 
@@ -1173,15 +1287,24 @@ impl SessionGraphics {
         self.fps_target.unwrap_or(config.graphics.fps_target)
     }
 
+    /// The value of "no cap" in a Max Avatars count.
+    pub const NO_AVATAR_CAP: usize = usize::MAX;
+
+    /// The session's cap if it set one, else no cap when the player turned Max Avatars off, else
+    /// the player's count.
     pub fn max_avatars(&self, config: &AppConfig) -> usize {
-        self.max_avatars.unwrap_or(config.max_avatars)
+        self.max_avatars.unwrap_or(if config.max_avatars_unlimited {
+            Self::NO_AVATAR_CAP
+        } else {
+            config.max_avatars
+        })
     }
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
     /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
-    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
-    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
-    /// sleep, sets the frame time.
+    /// applies, and Max ([`UNCAPPED_FPS`]) means the monitor's rate. `refresh_hz`, when known, is
+    /// the monitor's rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not
+    /// the pacer's sleep, sets the frame time.
     pub fn paced_fps(
         session: Option<&Self>,
         config: &AppConfig,
@@ -1242,6 +1365,8 @@ pub struct AudioSettings {
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
+    /// Whether [`Self::microphone_focus`] passes the client window's focus through.
+    pub mute_mic_in_background: bool,
 }
 
 impl Default for AudioSettings {
@@ -1253,11 +1378,20 @@ impl Default for AudioSettings {
             scene: 100,
             system: 100,
             avatar: 100,
+            mute_mic_in_background: true,
         }
     }
 }
 
 impl AudioSettings {
+    /// `focus` while `mute_mic_in_background` is on, `Focused` while it is off.
+    pub const fn microphone_focus(&self, focus: ClientWindowFocus) -> ClientWindowFocus {
+        if self.mute_mic_in_background {
+            focus
+        } else {
+            ClientWindowFocus::Focused
+        }
+    }
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
     }
@@ -1289,6 +1423,9 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
+/// How far Low's one cascade reaches, in metres, whatever the shadow distance: past it the
+/// 2048 map's texels are too large to hold an avatar's shadow (see decisions.md).
+pub const SUN_LOW_MAX_DISTANCE: f32 = 40.0;
 
 /// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
 /// shadows on or off.
@@ -1305,7 +1442,8 @@ pub struct ShadowlessLight;
 #[derive(Component)]
 pub struct StageCamera;
 
-/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows. Low's
+/// one cascade stops at `SUN_LOW_MAX_DISTANCE`.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
         return None;
@@ -1313,7 +1451,7 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     let far = distance.max(MIN_CASCADE + f32::EPSILON);
     let bounds = match setting {
         ShadowSetting::Off => return None,
-        ShadowSetting::Low => vec![far],
+        ShadowSetting::Low => vec![far.min(SUN_LOW_MAX_DISTANCE)],
         ShadowSetting::High => {
             let mut previous = MIN_CASCADE;
             SUN_CASCADE_4_SPLITS
@@ -1369,11 +1507,13 @@ pub enum FogSetting {
     On,
 }
 
+/// Bloom is on or off. A saved config may name one of the two levels there used to be: both
+/// read as on. On is saved as `High`, the old level it draws, so an older client reads it.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BloomSetting {
     Off,
-    Low,
-    High,
+    #[serde(rename = "High", alias = "Low", alias = "On")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1622,6 +1762,11 @@ impl std::str::FromStr for PortableExperiencesToggle {
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
 
+/// On the scene whose request to turn nearby voice off the player is visiting: the answer of
+/// the `DisableVoice` permission, `None` until there is one. Removed when the player leaves.
+#[derive(Component)]
+pub struct VoiceOffAnswer(pub Option<bool>);
+
 /// On the root of a scene loaded as a portable experience whose scene.json also declares
 /// `isPortableExperience: true`: the only scenes whose `MapPin`s are read.
 #[derive(Component)]
@@ -1755,6 +1900,11 @@ pub struct PermissionUsed {
     pub additional: Option<String>,
     pub scene: String,
     pub was_allowed: bool,
+    /// `None` for a use: the scene asked and was allowed or refused. `Some` reports instead that
+    /// what the permission allows started (`true`) or stopped (`false`) acting on the player,
+    /// such as a camera the scene holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_force: Option<bool>,
 }
 
 #[derive(Resource)]
@@ -1898,6 +2048,13 @@ pub enum MoveKind {
 #[derive(Component, Default)]
 pub struct AvatarDynamicState {
     pub velocity: Vec3,
+    /// Primary player only: how far a startup portable's controller (launch-time, console or
+    /// server-hosted, such as the default controller) moved the player this frame, after collisions
+    /// and without lifts or platforms, with movement input held; zero while a parcel scene, a
+    /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
+    /// player.
+    pub own_displacement: Vec3,
+    /// Height of the feet above the ground the avatar can stand on.
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,
@@ -1950,11 +2107,32 @@ pub struct PlayerTeleported {
     pub position: Vec3,
 }
 
+/// The local player's parcel changed, the scene the realm lists at it did, or the player entered
+/// or left the world. `old` is the parcel before (`None` for the first; `parcel` itself when only
+/// the scene or `in_world` changed). `scene`: `None` unresolved, `Some(None)` an empty parcel,
+/// `Some(Some(hash))` a scene. `in_world` is read with the parcel: false behind the loading
+/// screen ([`OutOfWorld`]).
+///
+/// A change of the scene alone is reported too: analytics cannot read the scene pointers, and a
+/// realm change at the same parcel lists another scene there.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayerParcelChanged {
+    pub old: Option<IVec2>,
+    pub parcel: IVec2,
+    pub scene: Option<Option<String>>,
+    pub in_world: bool,
+}
+
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
 /// position — until the destination scene resolves and they're placed in-world. Lives here (rather
 /// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
-#[derive(Component)]
-pub struct OutOfWorld;
+#[derive(Component, Default, Debug)]
+pub struct OutOfWorld {
+    /// The name of the spawn point of the destination scene to be placed on, compared in
+    /// lowercase. Without one, or when the scene has none of that name, the scene's default spawn
+    /// points are used.
+    pub spawn_point: Option<String>,
+}
 
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.
@@ -2012,10 +2190,18 @@ pub struct SceneGlobalLight {
     pub layers: RenderLayers,
 }
 
-#[derive(Resource)]
+/// The time the sky shows and who sets it. Sent whole to every scene, which reads it with
+/// `~system/Runtime.getWorldTime`.
+#[derive(Resource, Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize)]
 pub struct TimeOfDay {
     /// secs since midnight
     pub time: f32,
+    /// The scene the player stands in holds the time of day and the player may not change it.
+    pub locked: bool,
+    /// The speed of the player's clock; 0 when it is stopped.
+    pub speed: f32,
+    /// The player's clock sets the sky: no scene's time does.
+    pub follows_clock: bool,
 }
 
 impl TimeOfDay {
@@ -2158,7 +2344,8 @@ pub struct MicState {
     /// through [`MicState::set_scene_disabled`] and [`MicState::set_scene_banned`].
     #[serde(default)]
     scene_blocked: bool,
-    /// The scene the player stands in turns nearby voice off.
+    /// The scene the player stands in turns nearby voice off, and the player's `DisableVoice`
+    /// permission allows it.
     #[serde(skip)]
     scene_disabled: bool,
     /// The current scene's room refused the player as banned.
@@ -2261,7 +2448,7 @@ pub struct DebugInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GlobalCrdtStateUpdate {
     Crdt(Vec<u8>, dcl_component::Localizer),
-    Time(f32),
+    Time(TimeOfDay),
     /// Vertical FOV of the active camera, in radians. Pushed when the value
     /// changes (camera zoom etc.).
     CameraFov(f32),
@@ -2677,22 +2864,26 @@ mod tests {
 
     #[test]
     fn bloom_weighs_mips_by_scatter() {
-        let b = scatter_bloom();
-        assert_eq!(b.prefilter.threshold, 1.0);
-        // the knee is threshold * 0.5; bevy: knee = threshold * softness
-        assert_eq!(b.prefilter.threshold_softness, 0.5);
-        assert_eq!(b.high_pass_frequency, 1.0);
-        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
-        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
-        let max_mip = 7.0;
-        let mut weight = 1.0;
-        for mip in 0..=7 {
-            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
-            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
-            assert!(
-                (weight - scatter).abs() < 0.002,
-                "mip {mip}: bevy {weight} vs scatter {scatter}"
-            );
+        // the Explorer's scatter and the avatar preview's
+        for setting in [BLOOM_SCATTER, 0.6] {
+            let b = scatter_bloom(setting);
+            assert_eq!(b.prefilter.threshold, 1.0);
+            // the knee is threshold * 0.5; bevy: knee = threshold * softness
+            assert_eq!(b.prefilter.threshold_softness, 0.5);
+            assert_eq!(b.high_pass_frequency, 1.0);
+            // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once:
+            // mip i weighs (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+            let s = scatter_lerp(setting);
+            let max_mip = 7.0;
+            let mut weight = 1.0;
+            for mip in 0..=7 {
+                weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+                let scatter = (1.0 - s) * s.powi(mip);
+                assert!(
+                    (weight - scatter).abs() < 0.002,
+                    "scatter {setting}, mip {mip}: bevy {weight} vs scatter {scatter}"
+                );
+            }
         }
     }
 
@@ -2712,8 +2903,15 @@ mod tests {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
         assert_eq!(high.minimum_distance, MIN_CASCADE);
-        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
-        assert_eq!(medium.bounds, vec![60.0]);
+        let medium = sun_cascades(ShadowSetting::Low, 20.0).unwrap();
+        assert_eq!(medium.bounds, vec![20.0]);
+        // Low's one cascade stops at 40 m; High's four reach the whole distance
+        for distance in [40.0, 60.0, 300.0] {
+            let low = sun_cascades(ShadowSetting::Low, distance).unwrap();
+            assert_eq!(low.bounds, vec![SUN_LOW_MAX_DISTANCE]);
+        }
+        let far = sun_cascades(ShadowSetting::High, 300.0).unwrap();
+        assert_eq!(far.bounds.last(), Some(&300.0));
         assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
         assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
         // a distance under the minimum still yields a strictly increasing config
@@ -2736,7 +2934,22 @@ mod tests {
                 scene: 30,
                 system: 20,
                 avatar: 10,
+                mute_mic_in_background: true,
             }
+        );
+    }
+
+    #[test]
+    fn the_mic_follows_the_window_focus_only_while_it_mutes_in_the_background() {
+        let mut audio = AudioSettings::default();
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::NoFocus
+        );
+        audio.mute_mic_in_background = false;
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::Focused
         );
     }
 
@@ -2864,10 +3077,55 @@ mod tests {
     }
 
     #[test]
+    fn reset_outdated_settings_moves_movement_still_on_the_old_defaults() {
+        // written by the old build and read back through JSON, as at startup
+        let saved = |settings_generation, walk_speed| {
+            let old = AppConfig {
+                settings_generation,
+                player_settings: PrimaryUser {
+                    walk_speed,
+                    jog_speed: 8.18,
+                    run_speed: 11.0,
+                    jump_height: 1.9,
+                    run_jump_height: 2.95,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut config = AppConfig::from_json(&serde_json::to_vec(&old).unwrap());
+            config.reset_outdated_settings();
+            config
+        };
+        let moved = |user: &PrimaryUser| {
+            (
+                user.jog_speed,
+                user.run_speed,
+                user.jump_height,
+                user.run_jump_height,
+            )
+        };
+
+        let config = saved(5, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 1.5);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+
+        // a value the player set stays
+        let config = saved(5, 3.2);
+        assert_eq!(config.player_settings.walk_speed, 3.2);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+
+        // a config already on the current generation chose these values
+        let config = saved(SETTINGS_GENERATION, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 2.5);
+        assert_eq!(moved(&config.player_settings), (8.18, 11.0, 1.9, 2.95));
+    }
+
+    #[test]
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
-        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::On, true));
         assert_eq!(
             (
                 g.shadow_settings,
@@ -2908,10 +3166,10 @@ mod tests {
         assert_eq!(paced(&config, None, Some(61)), 61);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
         assert_eq!(paced(&config, None, None), 60);
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(paced(&config, None, Some(144)), 144);
         config.graphics.vsync = false;
-        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, None, Some(144)), UNCAPPED_FPS);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
     }
 
@@ -2920,15 +3178,40 @@ mod tests {
         let mut config = AppConfig::default();
         let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
         config.graphics.vsync = true;
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), 60);
-        assert_eq!(shown(&config, None), 999);
+        assert_eq!(shown(&config, None), UNCAPPED_FPS);
         config.graphics.fps_target = 60;
         assert_eq!(shown(&config, Some(61)), 60);
         assert_eq!(shown(&config, Some(145)), 60);
         config.graphics.vsync = false;
-        config.graphics.fps_target = 999;
-        assert_eq!(shown(&config, Some(61)), 999);
+        config.graphics.fps_target = UNCAPPED_FPS;
+        assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
+    }
+
+    #[test]
+    fn unlimited_avatars_lifts_the_cap_but_keeps_the_count_and_yields_to_the_session() {
+        let mut config = AppConfig::default();
+        let mut session = SessionGraphics::default();
+        assert_eq!(session.max_avatars(&config), 20);
+        config.max_avatars_unlimited = true;
+        assert_eq!(session.max_avatars(&config), SessionGraphics::NO_AVATAR_CAP);
+        assert_eq!(config.max_avatars, 20);
+        session.max_avatars = Some(5);
+        assert_eq!(session.max_avatars(&config), 5);
+    }
+
+    #[test]
+    fn a_saved_bloom_level_reads_as_on() {
+        let read = |saved: &str| serde_json::from_str::<BloomSetting>(saved).unwrap();
+        assert_eq!(read(r#""Low""#), BloomSetting::On);
+        assert_eq!(read(r#""High""#), BloomSetting::On);
+        assert_eq!(read(r#""On""#), BloomSetting::On);
+        assert_eq!(read(r#""Off""#), BloomSetting::Off);
+        // saved under the old name an older client reads
+        let write = |setting| serde_json::to_string(&setting).unwrap();
+        assert_eq!(write(BloomSetting::On), r#""High""#);
+        assert_eq!(write(BloomSetting::Off), r#""Off""#);
     }
 
     #[test]
@@ -2941,7 +3224,7 @@ mod tests {
         };
         let g = &mut config.graphics;
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
-        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::Off, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
         g.lens_flare = false;
         (g.ambient_brightness, g.oob) = (10, 0.0);
@@ -3244,5 +3527,106 @@ mod tests {
         ] {
             assert!(!meta(field).declares_portable_experience(), "{field}");
         }
+    }
+
+    fn home(realm: &str, x: i32, y: i32) -> PinnedHome {
+        PinnedHome {
+            realm: realm.to_owned(),
+            location: IVec2::new(x, y),
+        }
+    }
+
+    #[test]
+    fn an_account_with_no_home_starts_at_the_default() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.pinned_home(Some("0xa")), None);
+        assert_eq!(config.startup_home(), None);
+        assert_eq!(config.home_location(), IVec2::ZERO);
+        assert_eq!(config.home_realm(), default_home_realm());
+
+        config.homes.insert("0xa".into(), home("w.dcl.eth", 0, 0));
+        assert_eq!(config.pinned_home(Some("0xb")), None);
+        assert_eq!(config.pinned_home(None), None);
+    }
+
+    #[test]
+    fn each_account_keeps_its_own_home_and_clearing_one_leaves_the_other() {
+        let mut config = AppConfig::default();
+        config.homes.insert("0xa".into(), home("realm-a", 3, 4));
+        config.homes.insert("0xb".into(), home("realm-b", -5, 6));
+        assert_eq!(config.pinned_home(Some("0xa")), Some(home("realm-a", 3, 4)));
+        assert_eq!(
+            config.pinned_home(Some("0xb")),
+            Some(home("realm-b", -5, 6))
+        );
+
+        config.homes.remove("0xa");
+        assert_eq!(config.pinned_home(Some("0xa")), None);
+        assert_eq!(
+            config.pinned_home(Some("0xb")),
+            Some(home("realm-b", -5, 6))
+        );
+    }
+
+    #[test]
+    fn the_first_account_adopts_the_accountless_home_and_no_later_one_inherits_it() {
+        let mut config = AppConfig {
+            home_realm: Some("realm-old".into()),
+            home_location: Some(IVec2::new(7, 8)),
+            ..Default::default()
+        };
+        assert_eq!(config.startup_home(), Some(home("realm-old", 7, 8)));
+
+        assert!(config.adopt_home("0xa"));
+        assert_eq!(
+            config.pinned_home(Some("0xa")),
+            Some(home("realm-old", 7, 8))
+        );
+        assert_eq!(
+            (config.home_realm.clone(), config.home_location),
+            (None, None)
+        );
+        assert!(!config.adopt_home("0xa"));
+
+        assert!(config.adopt_home("0xb"));
+        assert_eq!(config.pinned_home(Some("0xb")), None);
+    }
+
+    #[test]
+    fn an_account_with_its_own_home_keeps_it_over_the_accountless_one() {
+        let mut config = AppConfig {
+            home_location: Some(IVec2::new(7, 8)),
+            ..Default::default()
+        };
+        config.homes.insert("0xa".into(), home("realm-a", 1, 2));
+        assert!(config.adopt_home("0xa"));
+        assert_eq!(config.pinned_home(Some("0xa")), Some(home("realm-a", 1, 2)));
+        assert_eq!(config.home_location, None);
+    }
+
+    #[test]
+    fn startup_uses_the_stored_sign_in_then_the_last_account() {
+        let mut config = AppConfig::default();
+        let address = Address::repeat_byte(0x11);
+        let account = home_account(&address);
+        assert_eq!(account, format!("0x{}", "11".repeat(20)));
+        config.homes.insert(account.clone(), home("realm-a", 9, 9));
+        config.homes.insert("0xb".into(), home("realm-b", 2, 2));
+
+        config.home_last_account = Some("0xb".into());
+        assert_eq!(config.home_location(), IVec2::new(2, 2));
+        assert_eq!(config.home_realm(), "realm-b");
+
+        config.previous_login = Some(PreviousLogin {
+            root_address: address,
+            ephemeral_key: Vec::new(),
+            auth: Vec::new(),
+            guest_account: false,
+        });
+        assert_eq!(config.home_location(), IVec2::new(9, 9));
+
+        let old: AppConfig =
+            serde_json::from_str(r#"{"home_realm":"r","home_location":[1,2]}"#).unwrap();
+        assert_eq!(old.startup_home(), Some(home("r", 1, 2)));
     }
 }

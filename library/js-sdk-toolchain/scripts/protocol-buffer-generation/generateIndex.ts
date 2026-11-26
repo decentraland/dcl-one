@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { Component } from './generateComponent'
+import type { Component } from './generateComponent'
 import generateExportedTypes from './generateExportedTypes'
 
 function importComponent(component: Component) {

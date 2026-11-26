@@ -1,9 +1,182 @@
 //! Deployment control metadata is independent of Pulse's in-memory assignment ledger.
-#[path = "support/db.rs"]
-mod db;
-#[path = "support/gate.rs"]
-mod gate;
+#[cfg(unix)]
+#[path = "support/auth.rs"]
+mod auth;
+use crate::db;
+use crate::gate;
 use catalyst::comms::interfaces::PulseGeneration;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pulse_process_disconnects_enet_peers_on_unix_signals() {
+    use catalyst::comms::protocol::pulse::decentraland::pulse::{
+        ClientMessage, HandshakeRequest, ServerMessage, client_message, server_message,
+    };
+    use catalyst::comms::pulse::{
+        handshake::build_signed_fetch_payload,
+        transport::{Event, Host, HostConfig, Packet},
+    };
+    use prost::Message as _;
+    use std::{net::TcpListener, path::PathBuf, process::Stdio, time::Duration};
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        process::Command,
+        time::{Instant, timeout, timeout_at},
+    };
+
+    struct ReplayFiles(PathBuf);
+    impl Drop for ReplayFiles {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+            let _ = std::fs::remove_file(self.0.with_extension("replay-journal.lock"));
+            let _ = std::fs::remove_file(self.0.with_extension("replay-journal.tmp"));
+        }
+    }
+
+    gate::required_database_in_ci();
+    let Some(url) = catalyst::db::scratch::url().await else {
+        return;
+    };
+    let audience = format!("pulse-signal-test-{}", uuid::Uuid::new_v4());
+    let replay = ReplayFiles(std::env::temp_dir().join(format!("{audience}.tsv")));
+    let bans = TcpListener::bind("127.0.0.1:0").unwrap();
+    let bans_url = format!("http://{}/bans", bans.local_addr().unwrap());
+    for signal in ["-TERM", "-INT"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_catalyst"))
+            .arg("pulse")
+            .env_clear()
+            .env("DATABASE_URL", &url)
+            .env("ARCHIPELAGO_CONTROL_V4_AUDIENCE", &audience)
+            .env("COMMS_MODERATOR_TOKEN", "pulse-test")
+            .env("PULSE_BANS_URL", &bans_url)
+            .env("PULSE_BIND", "127.0.0.1:0")
+            .env("PULSE_METRICS_BIND", "127.0.0.1:0")
+            .env("PULSE_REPLAY_STATE_PATH", &replay.0)
+            .env("RUST_LOG", "info")
+            .env("NO_COLOR", "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let bind = timeout(Duration::from_secs(30), async {
+            while let Some(line) = lines.next_line().await.unwrap() {
+                if line.contains("listening (enet)") {
+                    return line
+                        .split_ascii_whitespace()
+                        .find_map(|field| field.strip_prefix("local="))
+                        .expect("Pulse did not log its bound ENet address")
+                        .parse()
+                        .unwrap();
+                }
+            }
+            panic!("Pulse exited before starting its ENet listener");
+        })
+        .await
+        .expect("Pulse startup timed out");
+        let stdout_drain = tokio::spawn(async move {
+            tokio::io::copy(&mut lines.into_inner(), &mut tokio::io::sink()).await
+        });
+
+        let mut client = Host::bind(HostConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            max_peers: 1,
+            channel_limit: 3,
+        })
+        .await
+        .unwrap();
+        let peer = client.connect(bind, 3).unwrap();
+        timeout(Duration::from_secs(10), async {
+            while !matches!(client.service().await.unwrap(), Some(Event::Connect { .. })) {}
+        })
+        .await
+        .expect("client did not connect to Pulse");
+
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        let metadata = r#"{"signer":"dcl:explorer"}"#;
+        let payload = build_signed_fetch_payload("connect", "/", &timestamp, metadata);
+        let chain = auth::signed_chain(&payload).await;
+        let auth_chain = serde_json::to_vec(&serde_json::json!({
+            "x-identity-auth-chain-0": serde_json::to_string(&chain[0]).unwrap(),
+            "x-identity-auth-chain-1": serde_json::to_string(&chain[1]).unwrap(),
+            "x-identity-timestamp": timestamp,
+            "x-identity-metadata": metadata,
+        }))
+        .unwrap();
+        let request = ClientMessage {
+            message: Some(client_message::Message::Handshake(HandshakeRequest {
+                auth_chain,
+                ..Default::default()
+            })),
+        };
+        client
+            .send(peer, Packet::reliable(0, request.encode_to_vec()))
+            .await
+            .unwrap();
+        client.flush();
+        timeout(Duration::from_secs(10), async {
+            loop {
+                match client.service().await.unwrap() {
+                    Some(Event::Receive { packet, .. }) => {
+                        let response = ServerMessage::decode(packet.data).unwrap();
+                        if let Some(server_message::Message::Handshake(handshake)) =
+                            response.message
+                        {
+                            assert!(
+                                handshake.success,
+                                "Pulse refused the test login: {handshake:?}"
+                            );
+                            return;
+                        }
+                    }
+                    Some(Event::Disconnect { .. }) => panic!("Pulse disconnected before login"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("Pulse did not complete the test login");
+        let wire_deadline = Instant::now() + Duration::from_secs(2);
+        assert!(
+            Command::new("kill")
+                .args([signal, &pid.to_string()])
+                .status()
+                .await
+                .unwrap()
+                .success()
+        );
+        let (received_notice, status, drained) = tokio::join!(
+            async {
+                timeout_at(wire_deadline, async {
+                    while !matches!(
+                        client.service().await.unwrap(),
+                        Some(Event::Disconnect { .. })
+                    ) {}
+                })
+                .await
+                .is_ok()
+                    && Instant::now() < wire_deadline
+            },
+            timeout(Duration::from_secs(10), child.wait()),
+            timeout(Duration::from_secs(10), stdout_drain),
+        );
+        let status = status.expect("Pulse did not shut down").unwrap();
+        drained
+            .expect("Pulse stdout did not close")
+            .expect("Pulse stdout reader task failed")
+            .expect("could not drain Pulse stdout");
+        assert!(
+            status.success(),
+            "Pulse exited after {signal} with {status}"
+        );
+        assert!(
+            received_notice,
+            "the ENet peer did not disconnect after {signal}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn generation_is_exclusive_monotonic_and_does_not_persist_assignments() {
@@ -199,7 +372,7 @@ async fn unregistered_sources_allocate_no_slots_and_complete_new_generation_recl
     assert!(fence.recover_selected_target(&current, &target).await);
     assert_eq!(
         fence.selected_reconciliation_targets(),
-        vec![(wallet, target.session)]
+        vec![(wallet.clone(), target.session.clone())]
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM social.archipelago_v4_assignments")
@@ -208,8 +381,47 @@ async fn unregistered_sources_allocate_no_slots_and_complete_new_generation_recl
             .unwrap(),
         0
     );
+    // A wallet that owned its row under one generation takes it back under the next,
+    // inside the lease, after its old slot retired.
+    let selected =
+        |source: &str| catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
+            wallet: wallet.clone(),
+            session: target.session.clone(),
+            cluster_id: "c1".into(),
+            realm: "realm".into(),
+            source_incarnation: source.into(),
+            assignment_version: 1,
+            token_not_before: Some(0),
+            pass: 1,
+            ..Default::default()
+        };
+    let owned = fence
+        .lock_selected(&selected(&current.source_incarnation))
+        .await
+        .unwrap()
+        .token_fence();
     successor.close().await;
-    drop((first, successor, fence));
+    let third =
+        catalyst::pulse_generation::HeldPulseGeneration::acquire(db.pool.clone(), audience.into())
+            .await
+            .unwrap();
+    let next = third.binding().clone();
+    assert!(fence.complete_generation_view(&next).await);
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    fence.retire_obsolete_generation(&next, 128, &[]).await;
+    fence.retire_obsolete_generation(&next, 128, &[]).await;
+    assert!(fence.selected_reconciliation_targets().is_empty());
+    let lease = fence
+        .lock_selected(&selected(&next.source_incarnation))
+        .await
+        .unwrap();
+    assert!(!lease.read_only() && lease.token_fence().owner_epoch > owned.owner_epoch);
+    drop(lease);
+    third.close().await;
+    drop((first, successor, third, fence));
     db.teardown().await;
 }
 

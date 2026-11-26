@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useShopServices } from "../checkout/services";
-import { waitForReceipt } from "../checkout/chain/rpc";
+import { defaultSleep, waitForReceipt } from "../checkout/chain/rpc";
 import { fetchOwnsItem } from "../checkout/lib/api";
 
 export type Settlement = "pending" | "indexing" | "confirmed" | "failed" | "timed-out";
@@ -28,15 +28,17 @@ export function useSettlement(
       return;
     }
     let cancelled = false;
+    // Leaving the page stops the receipt reads at once, the one in flight and the wait before the next.
+    const stop = new AbortController();
     const attempts = opts.attempts ?? 8;
-    const sleep = wait?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep = wait?.sleep ?? ((ms: number) => defaultSleep(ms, stop.signal));
     const run = async () => {
       const outcomes = await Promise.all(
         txs.map(async (tx) => {
           for (let i = 0; i < attempts && !cancelled; i++) {
             // Only the first window polls fast (waitForReceipt's first 15 s); every later one reads every 2 s.
             const pollMs = wait?.pollMs ?? (i === 0 ? undefined : SLOW_POLL_MS);
-            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep });
+            const receipt = await waitForReceipt(reader, tx.chainId, tx.hash, { timeoutMs: opts.windowMs ?? wait?.timeoutMs ?? 15_000, pollMs, sleep: wait?.sleep, signal: stop.signal });
             if (receipt) return receipt.status;
           }
           return null;
@@ -48,17 +50,22 @@ export function useSettlement(
       if (!own) return setState("confirmed");
       setState("indexing");
       for (let i = 0; i < 40 && !cancelled; i++) {
-        if (await fetchOwnsItem(own.owner, own.contractAddress, own.itemId, client)) {
+        if (await fetchOwnsItem(own.owner, own.contractAddress, own.itemId, client, stop.signal)) {
           if (!cancelled) setState("confirmed");
           return;
         }
+        if (cancelled) return;
         await sleep(3000);
       }
       if (!cancelled) setState("timed-out");
     };
-    void run();
+    void run().catch((e: unknown) => {
+      // Stopped by leaving the page: nothing is left to report.
+      if (!cancelled) throw e;
+    });
     return () => {
       cancelled = true;
+      stop.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, opts.skip, ownerKey]);

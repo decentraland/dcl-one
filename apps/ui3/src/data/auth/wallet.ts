@@ -1,8 +1,6 @@
-export type Eip1193Provider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on?(event: string, handler: (...args: unknown[]) => void): void;
-  removeListener?(event: string, handler: (...args: unknown[]) => void): void;
-};
+import type { Eip1193Provider } from "@web-core/auth/eip1193";
+
+export type { Eip1193Provider } from "@web-core/auth/eip1193";
 
 declare global {
   interface Window {

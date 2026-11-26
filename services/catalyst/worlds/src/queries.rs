@@ -115,6 +115,49 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
     Ok(WorldAbout { world, scenes })
 }
 
+/// The world a realm name override stands for when a client signs it: a
+/// world name as it is, a bare label as its `.dcl.eth` world on the worlds
+/// host ([`crate::comms::world_identity::bare_world`]). `None` for a name no
+/// world can be read from (the shared realms, `node_realm`).
+pub fn override_world(
+    name: &str,
+    node_realm: &str,
+) -> Option<crate::comms::world_identity::WorldName> {
+    use crate::comms::world_identity::{WorldName, bare_world, is_world_realm_name};
+    let name = name.trim();
+    match is_world_realm_name(name) {
+        true => WorldName::parse(name).ok(),
+        false => bare_world(name, node_realm),
+    }
+}
+
+/// Whether `name`, as the realm name override of `world`, would send that
+/// world's visitors to another world's room on this node: it names another
+/// world ([`override_world`]) that has a scene here. A name no world here
+/// holds is free, and so is the world's own name in any case. Checked when
+/// the override is saved and each time `/about` hands it out, so a world
+/// deployed here later wins its name back.
+pub async fn override_names_another_world(
+    pool: &PgPool,
+    world: &str,
+    name: &str,
+    node_realm: &str,
+) -> AppResult<bool> {
+    let Some(other) = override_world(name, node_realm) else {
+        return Ok(false);
+    };
+    if other.key() == world.trim().to_lowercase() {
+        return Ok(false);
+    }
+    let held: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1)",
+    )
+    .bind(other.key())
+    .fetch_one(pool)
+    .await?;
+    Ok(held)
+}
+
 /// The filters of `GET`/`POST /world/{name}/scenes` (the old `GetWorldScenesFilters`).
 #[derive(Debug, Clone, Default)]
 pub struct SceneFilters {

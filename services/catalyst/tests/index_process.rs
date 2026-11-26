@@ -20,6 +20,7 @@ async fn index_process_restarts_without_binding_or_stopping_the_api_port() {
             .arg("index")
             .env_clear()
             .env("DATABASE_URL", &url)
+            .env("INDEX_METRICS_BIND", "127.0.0.1:0")
             .env("HTTP_SERVER_HOST", address.ip().to_string())
             .env("HTTP_SERVER_PORT", address.port().to_string())
             .env("PG_POOL_SIZE", "2")
@@ -61,5 +62,19 @@ async fn index_process_restarts_without_binding_or_stopping_the_api_port() {
         );
         tokio::net::TcpStream::connect(address).await.unwrap();
         previous = Some(pid);
+    }
+}
+
+#[test]
+fn index_rejects_invalid_and_non_loopback_metrics_sockets_before_opening_the_database() {
+    for raw in ["invalid", "0.0.0.0:5006"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_catalyst"))
+            .args(["index", "--index-metrics-bind", raw])
+            .env_clear()
+            .env("DATABASE_URL", "postgres:///unused")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("INDEX_METRICS_BIND"));
     }
 }

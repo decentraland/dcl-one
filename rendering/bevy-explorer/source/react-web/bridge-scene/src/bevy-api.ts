@@ -54,9 +54,9 @@ import type {
 export type { FriendData, FriendStatusData, FriendRequestData }
 export type BlockingStatus = BlockingStatusData
 
-// Per-player modifiers from AvatarModifierArea (privacy zones etc), only for players carrying one —
-// e.g. hideProfile means the local player is standing in a DISABLE_PASSPORTS area, so `userId`'s
-// passport should not be opened. Only present in the array when at least one flag is set.
+// Per-player AvatarModifierArea flags and Pulse absence. For example, hideProfile disables
+// opening the player's passport. A room-only peer appears with pulseAbsent even when both hide
+// flags are false. An entry is present when at least one flag is set.
 export type { AvatarModifierState }
 
 export type SocialApi = {
@@ -148,6 +148,9 @@ export type PermissionUsedRaw = {
   additional: string | null
   scene: string
   wasAllowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player; an engine that does not report it never sends it. */
+  inForce?: boolean | null
 }
 
 export type BevyApiInterface = {
@@ -159,6 +162,7 @@ export type BevyApiInterface = {
   getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
+  clearHomeScene: () => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -256,7 +260,7 @@ export type BevyApiInterface = {
    *  JPEG bytes (no `data:` prefix). `path` is relative to the tile source. Rejects on failure;
    *  absent in builds without tile decoding. */
   getSatelliteTile?: (path: string) => Promise<string>
-  setAvatar: (data: SetAvatarData) => Promise<unknown>
+  setAvatar: (data: SetAvatarData) => Promise<number>
   /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
    *  is not the signed-in account, or when the catalyst refuses it. */
   deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>
@@ -272,6 +276,8 @@ export type BevyApiInterface = {
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */
   getServiceUrls: () => Promise<Record<string, string>>
+  /** The official wallets the nametags mark (lowercase `0x` addresses). Older engines lack it. */
+  getOfficialWallets?: () => Promise<string[]>
   getRealmProvider: () => Promise<string>
   getPreviousLogin: () => Promise<{ userId: string | null }>
   loginPrevious: () => Promise<{ success: boolean; error: string }>

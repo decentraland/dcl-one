@@ -1,11 +1,9 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/ws_island_dedup.rs
-#[path = "support/gate.rs"]
-mod gate;
+use crate::gate;
 #[path = "support/nats_broker.rs"]
 mod nats_broker;
+use crate::archipelago;
 use alloy::signers::{SignerSync, local::PrivateKeySigner};
-#[path = "support/archipelago.rs"]
-mod archipelago;
 use catalyst::comms::archipelago::AppState;
 use catalyst::comms::archipelago::config::Settings;
 use catalyst::comms::archipelago::feed::{Routed, route_island};
@@ -957,7 +955,6 @@ async fn an_assigned_socket_recovers_a_lost_move_and_reannounces_after_broker_re
         state.clone(),
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     )
     .stats;

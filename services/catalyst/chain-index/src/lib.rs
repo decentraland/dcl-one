@@ -1,7 +1,10 @@
-//! The chain-derived readers every domain shares: the collections,
-//! marketplace and land-manager subgraph clients (`graph`, `land_graph`),
+//! The chain-derived readers every domain shares: the collections index's
+//! readiness rule over the catalogue (`catalogue`), the collections and
+//! marketplace subgraph clients (`graph`),
+//! the DCL NAME authority interface (`names`),
 //! the LAND registries per network (`registries`), Ethereum RPC logs and
-//! headers (`rpc`), and the unavailable
+//! headers (`rpc`), the log source the chain walks read (`logs`), a read-only portal
+//! client the walks are compared with (`portal`), and the unavailable
 //! envelope naming a missing source (`source`). [`ChainIndex`] holds the
 //! ONE outbound client, the subgraph URLs and the readers' memos; the shop's
 //! `MarketplaceState` builds it, and content, land_authz, worlds, social and
@@ -11,8 +14,11 @@
 pub(crate) use catalyst_shared as shared;
 pub(crate) use dcl_http as http;
 
+pub mod catalogue;
 pub mod graph;
-pub mod land_graph;
+pub mod logs;
+pub mod names;
+pub mod portal;
 pub mod registries;
 pub mod rpc;
 pub mod source;
@@ -28,7 +34,6 @@ pub struct IndexSettings {
     pub eth_collections_subgraph_url: Option<String>,
     pub matic_collections_subgraph_url: Option<String>,
     pub marketplace_subgraph_url: Option<String>,
-    pub land_subgraph_url: Option<String>,
     /// `ETH_NETWORK` (`mainnet` | `sepolia`): picks the LAND registries.
     pub eth_network: String,
 }
@@ -47,8 +52,6 @@ pub struct ChainIndex {
     pub http: Outbound,
     pub settings: IndexSettings,
     pub graph: graph::Caches,
-    /// The land-manager subgraph reader's memo (`land_graph`).
-    pub(crate) land_graph: land_graph::Caches,
     allow_loopback: Arc<AtomicBool>,
 }
 
@@ -58,7 +61,6 @@ impl ChainIndex {
             http,
             settings,
             graph: graph::Caches::default(),
-            land_graph: land_graph::Caches::default(),
             allow_loopback: Arc::new(AtomicBool::new(false)),
         }
     }

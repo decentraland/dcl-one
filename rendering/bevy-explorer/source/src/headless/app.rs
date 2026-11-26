@@ -22,10 +22,10 @@ use common::{
     rpc::RpcCallEvent,
     sets::SetupSets,
     structs::{
-        AppConfig, AvatarDynamicState, CursorLocks, EngineMovementControl, GraphicsSettings,
-        HeadSync, NoRenderApp, PermissionType, PermissionUsed, PermissionValue, PointAtSync,
-        PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, PrimaryUser, SceneGlobalLight,
-        SceneLoadDistance, ShowOutOfBounds, SystemAudio, TimeOfDay, ToolTips,
+        AppConfig, AvatarDynamicState, ClientWindowFocus, CursorLocks, EngineMovementControl,
+        GraphicsSettings, HeadSync, NoRenderApp, PermissionType, PermissionUsed, PermissionValue,
+        PointAtSync, PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, PrimaryUser,
+        SceneGlobalLight, SceneLoadDistance, ShowOutOfBounds, SystemAudio, TimeOfDay, ToolTips,
     },
     util::UtilsPlugin,
 };
@@ -167,6 +167,9 @@ pub fn assemble(
             add_bevy_console: false,
         })
         .add_plugins(WalletPlugin)
+        // no client window: always focused
+        .insert_resource(ClientWindowFocus::Focused)
+        .insert_resource(config.audio.clone())
         .add_plugins(CommsPlugin)
         .add_plugins(ban_block::BanBlockPlugin)
         // emote metadata (the loop flag scenes are told) resolves through the collectible
@@ -212,6 +215,7 @@ pub fn assemble(
         .insert_resource(wallet)
         .insert_resource(TimeOfDay {
             time: 10.0 * 3600.0,
+            ..Default::default()
         })
         .insert_resource(SceneLoadDistance {
             load: 100.0,

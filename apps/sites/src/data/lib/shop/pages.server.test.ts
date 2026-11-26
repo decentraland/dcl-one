@@ -1,12 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createShopClient, fetchTransport } from "@ui/shop/api";
 import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { resetDappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
-import { defaultShopSeo, shopMetaDescriptors } from "./pages";
-import { loadShopPage, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
+import { defaultShopSeo } from "./pages";
+import { loadShopPage, readBodyThenWait, serverShopClient, SHOP_SSR_SHARE_MS, SHOP_SSR_STALE_MS } from "./pages.server";
 import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
@@ -28,6 +28,49 @@ function node(routes: Route[]) {
 
 const request = (path: string) => new Request(`https://sites.test${path}`);
 const now = () => 1_700_000_000_000;
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("when two Shop loaders overlap with different flag answers", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("should keep each listing and variant on the request that loaded it", async () => {
+    const flag = `dapps-${REMOTE_FLAG.creatorSales}`;
+    const variant = `dapps-${REMOTE_FLAG.myStore}`;
+    const firstStarted = deferred();
+    const releaseFirst = deferred();
+    const row = {
+      listingType: "primary", source: "native", contractAddress: C, itemId: "1",
+      name: "Discounted hat", priceCredits: 14, compareAtCredits: 20,
+    };
+    let listingReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("sortBy") === "newest" && ++listingReads === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      return Response.json({ data: [row], total: 1 });
+    });
+    const input = { request: request("/shop/overview"), params: {}, now, env: { CATALYST_URL: "https://flag-isolation.test" } };
+    const first = loadShopPage("overview", { ...input, flags: { [flag]: true }, flagVariants: { [variant]: "first" } });
+    await firstStarted.promise;
+    const second = loadShopPage("overview", { ...input, flags: { [flag]: false }, flagVariants: { [variant]: "second" } });
+    releaseFirst.resolve();
+    const [on, off] = await Promise.all([first, second]);
+    const listings = (page: typeof on) => page.data.queries.find(([key]) => key[0] === "overview-listings")?.[1];
+    expect(listings(on)).toMatchObject({ items: [{ name: "Discounted hat", compareAtCredits: 20 }] });
+    expect(listings(off)).toMatchObject({ items: [{ name: "Discounted hat", compareAtCredits: undefined }] });
+    expect(listingReads).toBe(2);
+    expect(on.data.featureFlagVariants).toEqual({ [variant]: "first" });
+    expect(off.data.featureFlagVariants).toEqual({ [variant]: "second" });
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
+  });
+});
 
 const ITEM_ROUTES: Route[] = [
   { path: "/shop-api/v1/items", body: { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC", available: 3, data: { wearable: { description: " A hat for pirates. " } } }], total: 1 } },
@@ -129,6 +172,64 @@ describe("the page's flags, read by the server", () => {
     const { data } = await load;
     expect(data.featureFlags).toEqual({ "dapps-shop-creator-sales": true });
     expect(data.queries.find(([key]) => key[0] === "shop-item")?.[1]).toMatchObject({ priceCredits: 5, compareAtCredits: 7 });
+  });
+
+  it("hands on an answer with no body (204, 304) as it came, and any other with its body", async () => {
+    for (const status of [204, 304]) {
+      const answer = await readBodyThenWait(async () => new Response(null, { status }), Promise.resolve())("http://node.test/x");
+      expect(answer.status).toBe(status);
+      expect(await answer.text()).toBe("");
+    }
+    const ok = await readBodyThenWait(async () => new Response('{"a":1}', { status: 200, headers: { "content-type": "application/json" } }), Promise.resolve())("http://node.test/x");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("application/json");
+    expect(await ok.json()).toEqual({ a: 1 });
+  });
+
+  it("reads each answer's body under its own deadline before it waits for the flags", async () => {
+    // Every read's deadline, run out by the test while the flags are still unanswered.
+    const deadlines: AbortController[] = [];
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      deadlines.push(controller);
+      return controller.signal;
+    });
+    onTestFinished(() => timeout.mockRestore());
+    const item = "0xabc0000000000000000000000000000000000006";
+    const asked: string[] = [];
+    let answerFlags: (res: Response) => void = () => {};
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/dapps.json") return new Promise<Response>((resolve) => (answerFlags = resolve));
+      asked.push(url.pathname);
+      const hit = ITEM_ROUTES.find((r) => r.path === url.pathname);
+      const text = JSON.stringify(hit?.body ?? {});
+      // As a real fetch's: a body not read yet fails once the request's signal aborts.
+      let read = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => {
+            if (!read) controller.error(init.signal!.reason);
+          });
+        },
+        pull(controller) {
+          read = true;
+          controller.enqueue(new TextEncoder().encode(text));
+          controller.close();
+        },
+      }, { highWaterMark: 0 });
+      return new Response(body, { status: hit ? 200 : 404 });
+    });
+
+    const load = loadShopPage("itemDetail", { request: request(`/shop/item/${item}/7`), params: { contractAddress: item, itemId: "7" }, now, env: { CATALYST_URL: "http://node.test" } });
+    await vi.waitFor(() => expect(asked).toHaveLength(3));
+    await new Promise((settled) => setTimeout(settled, 10));
+    for (const deadline of deadlines) deadline.abort(new DOMException("Request deadline exceeded", "TimeoutError"));
+    answerFlags(new Response(JSON.stringify({ flags: {} })));
+    const { data, status } = await load;
+    expect(status).toBe(200);
+    expect(data.queries.map(([key]) => key[0])).toEqual(["shop-item", "item-meta", "collection-meta"]);
+    expect(data.seo.title).toBe("Pirate Hat");
   });
 });
 
@@ -262,7 +363,7 @@ describe("the other pages", () => {
     expect("featureFlagVariants" in overview.data).toBe(false);
   });
 
-  it("sends the flags' variants on with them, primed on the server as in the browser", async () => {
+  it("sends the flags and variants without modifying the browser store", async () => {
     const { client } = node([]);
     const list = "0x00000000000000000000000000000000000000aa";
     const flags = { "dapps-shop-my-store": true };
@@ -270,7 +371,7 @@ describe("the other pages", () => {
     const page = await loadShopPage("myStore", { request: request("/shop/my-store"), params: {}, client, now, env: {}, flags, flagVariants: variants });
     expect(page.data.featureFlags).toEqual(flags);
     expect(page.data.featureFlagVariants).toEqual(variants);
-    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list);
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
   });
 
   it("the collectibles grid primes its first page under the key the page asks for", async () => {
@@ -297,12 +398,13 @@ describe("the other pages", () => {
     expect(asked).toEqual([]);
   });
 
-  it("a LAND token's page is the Marketplace's: never indexed, with no canonical", async () => {
+  it("a LAND token's page is the Marketplace's: never indexed, with no canonical, its map a large card", async () => {
     const { client } = node([]);
     const land = Object.values(LAND_NETWORKS)[0]!.land.toLowerCase();
     const res = await loadShopPage("tokenDetail", { request: request(`/shop/token/${land}/1`), params: { contractAddress: land, tokenId: "1" }, client, now, env: {} });
     expect(res.data.seo.noindex).toBe(true);
     expect(res.data.seo.canonical).toBeUndefined();
+    expect(res.data.seo.largeImage).toBe(true);
   });
 
   it("an account page is never indexed and asks the node for nothing", async () => {
@@ -313,8 +415,8 @@ describe("the other pages", () => {
       expect(res.data.queries).toEqual([]);
     }
     expect(asked).toEqual([]);
-    expect(shopMetaDescriptors(defaultShopSeo("cart"))).toContainEqual({ name: "robots", content: "noindex" });
-    expect(shopMetaDescriptors(defaultShopSeo("items", "https://x.test/shop/items"))).toContainEqual({ tagName: "link", rel: "canonical", href: "https://x.test/shop/items" });
+    expect(defaultShopSeo("cart")).toMatchObject({ noindex: true, canonical: undefined });
+    expect(defaultShopSeo("items", "https://x.test/shop/items")).toMatchObject({ noindex: false, canonical: "https://x.test/shop/items" });
   });
 
   it("PUBLIC_CATALYST_URL names the canonical origin", async () => {

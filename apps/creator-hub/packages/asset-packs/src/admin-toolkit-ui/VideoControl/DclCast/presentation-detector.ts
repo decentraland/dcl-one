@@ -8,6 +8,7 @@ import {
   getDclCastInfo,
   groupTracksByParticipant,
   hasPresentationTrack,
+  resetPresentationTracking,
   subscribeToPresentationTopic,
 } from '../api';
 import {
@@ -146,6 +147,7 @@ function stopPresentationSystem(engine: IEngine): void {
     clearInterval(engine, presentationSystem);
     presentationSystem = null;
   }
+  resetPresentationTracking();
   clearPresentationState();
 }
 

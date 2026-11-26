@@ -6,11 +6,11 @@
 //! requests, 1 h identities), so every API replica behind the gateway serves
 //! the same requests (DATABASE.md "Auth API relay state workload").
 
-use crate::shared::routing::{erase, get, post};
+use crate::shared::routing::{delete, erase, get, post};
 use axum::Extension;
-use axum::body::Body;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::body::{Body, Bytes};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -27,16 +27,26 @@ use crate::shared::client_ip::{
     client_ip, is_internal, is_trusted_proxy, normalize_ip, single_real_ip, source_key,
 };
 
+mod accounts;
+pub use accounts::FAMILIES;
+mod contract_checks;
 mod identities;
+mod socket;
+pub use socket::SOCKET_FAMILIES;
+pub(crate) use socket::{SocketBindings, router as socket_router};
 mod validation;
+
+pub(crate) use accounts::MagicDeletion;
+pub use contract_checks::ContractChecks;
+use contract_checks::{Budgeted, Offline, Spent};
 
 use identities::{create_identity, get_identity};
 pub use identities::{sweep_expired_identities, sweep_identity_tombstones};
-use validation::{validate_auth_chain, validate_request_message};
+use validation::{
+    ChainRefusal, needs_contract_check, validate_auth_chain, validate_request_message,
+};
 
 const REQUEST_TTL_SECONDS: i64 = 300;
-/// An expired request still answers 410 for this long before the sweep drops it.
-const REQUEST_EXPIRED_GRACE_SECONDS: i64 = 300;
 const MAX_PENDING_REQUESTS: usize = 10_000;
 const MAX_REQUESTS_PER_SOURCE: usize = 100;
 const DEFAULT_BODY_SIZE_BYTES: usize = 16 * 1024;
@@ -110,6 +120,9 @@ pub fn spawn_identity_sweeper(state: &AppState, jobs: &crate::jobs::Jobs) {
                     sweep_expired_identities(&mut conn, now).await?;
                     sweep_identity_tombstones(&mut conn, now).await?;
                     sweep_expired_requests(&mut conn, now).await?;
+                    if state.settings.magic_deletion.is_some() {
+                        accounts::sweep_attempts(&mut conn).await?;
+                    }
                 }
                 Ok(())
             }
@@ -239,35 +252,21 @@ async fn insert_request(conn: &mut PgConnection, record: &ChallengeRecord) -> sq
     .map(drop)
 }
 
-/// A request as stored, or why there is none to work with: an expired
-/// request is deleted on the read that finds it and answers 410 once.
-enum Loaded {
-    Missing,
-    Expired,
-    Found(ChallengeRecord),
-}
-
-async fn load_request(state: &AppState, id: &str, now: DateTime<Utc>) -> sqlx::Result<Loaded> {
+async fn load_request(
+    state: &AppState,
+    id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<Option<ChallengeRecord>> {
     let row: Option<RequestRow> = sqlx::query_as(concat!(
         "SELECT ",
         request_columns!(),
-        " FROM explore_api.auth_requests WHERE request_id = $1"
+        " FROM explore_api.auth_requests WHERE request_id = $1 AND expiration >= $2"
     ))
     .bind(id)
+    .bind(naive(now))
     .fetch_optional(&state.pool)
     .await?;
-    let Some(record) = row.map(RequestRow::into_record) else {
-        return Ok(Loaded::Missing);
-    };
-    if record.expiration >= now {
-        return Ok(Loaded::Found(record));
-    }
-    sqlx::query("DELETE FROM explore_api.auth_requests WHERE request_id = $1 AND expiration < $2")
-        .bind(id)
-        .bind(naive(now))
-        .execute(&state.pool)
-        .await?;
-    Ok(Loaded::Expired)
+    Ok(row.map(RequestRow::into_record))
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,7 +280,7 @@ pub struct CreateRequestBody {
     pub unknown_fields: Map<String, Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct CreateRequestResponse {
     #[serde(rename = "requestId")]
     pub request_id: String,
@@ -375,6 +374,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health/live", get(health_live))
         .route("/health", get(health_live))
+        .route("/accounts", delete(accounts::delete_account))
         .route("/requests", post(create_request))
         .route(
             "/requests/{id}",
@@ -388,27 +388,41 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/identities", post(create_identity))
         .route("/identities/{id}", get(get_identity))
-        .layer(middleware::from_fn(cors_preflight))
         .layer(middleware::from_fn(enforce_body_cap))
         .layer(middleware::from_fn(record_request_telemetry))
+        .layer(middleware::from_fn(crate::shared::cors::decentraland_cors))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_SIZE_BYTES))
 }
 
-async fn cors_preflight(req: Request, next: Next) -> Response {
-    if req.method() == Method::OPTIONS {
-        return Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
-            .header(
-                header::ACCESS_CONTROL_ALLOW_HEADERS,
-                "content-type, x-dcl-client, x-correlation-id, x-identity-verifier",
-            )
-            .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, CORRELATION_HEADER)
-            .header(header::ACCESS_CONTROL_MAX_AGE, "3600")
-            .body(Body::empty())
-            .expect("static preflight response");
+struct RelayJson<T>(T);
+
+impl<S, T> FromRequest<S> for RelayJson<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let body = Bytes::from_request(req, state).await.map_err(|error| {
+            if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                payload_too_large()
+            } else {
+                invalid_json_body()
+            }
+        })?;
+        serde_json::from_slice(&body)
+            .map(Self)
+            .map_err(|_| invalid_json_body())
     }
-    next.run(req).await
+}
+
+fn invalid_json_body() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "Bad request", "message": "Invalid JSON body" })),
+    )
+        .into_response()
 }
 
 async fn enforce_body_cap(req: Request, next: Next) -> Response {
@@ -577,14 +591,13 @@ async fn health_live() -> impl IntoResponse {
     })
 }
 
-/// Drops the requests past their expiry and its 410 grace window.
+/// Drops requests past their expiry.
 pub async fn sweep_expired_requests(
     conn: &mut PgConnection,
     now: DateTime<Utc>,
 ) -> sqlx::Result<u64> {
-    let horizon = now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS);
     sqlx::query("DELETE FROM explore_api.auth_requests WHERE expiration < $1")
-        .bind(naive(horizon))
+        .bind(naive(now))
         .execute(conn)
         .await
         .map(|done| done.rows_affected())
@@ -737,14 +750,10 @@ async fn create_request(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-    Json(body): Json<CreateRequestBody>,
+    RelayJson(body): RelayJson<CreateRequestBody>,
 ) -> Response {
     let validated = match validate_request_message(&body) {
         Ok(validated) => validated,
-        Err(msg) => return bad_request(&msg),
-    };
-    let sender = match validate_auth_chain(validated.auth_chain) {
-        Ok(verified) => verified.sender.to_lowercase(),
         Err(msg) => return bad_request(&msg),
     };
     let now = now_micros();
@@ -753,6 +762,38 @@ async fn create_request(
         peer.map(|Extension(ConnectInfo(p))| p),
         &state.settings.trusted_proxy_cidrs,
     );
+    let chain = validated.auth_chain;
+    let offline = match validate_auth_chain(chain, Some(&Offline::default())).await {
+        Ok(verified) => verified,
+        Err(refusal) => return chain_refused(refusal),
+    };
+    let budget = budgeted(&state, source.as_deref());
+    // A network with no contract-wallet budget left costs no database count.
+    if needs_contract_check(chain)
+        && budget.is_some()
+        && let Err(spent) = state
+            .contract_checks
+            .has_room(source.as_deref(), std::time::Instant::now())
+    {
+        return chain_refused(ChainRefusal::Throttled(spent));
+    }
+    // Before the RPC and the admission lock.
+    // A network at its cap neither reaches the RPC nor queues on the lock every
+    // create takes, holding pool connections.
+    match network_at_cap(&state, Pending::Requests, source.as_deref(), now).await {
+        Ok(false) => {}
+        Ok(true) => return too_many_from_network(),
+        Err(err) => return internal_error("auth-api: counting the network's requests", err),
+    }
+    let sender = if needs_contract_check(chain) {
+        match validate_auth_chain(chain, as_validator(&budget)).await {
+            Ok(verified) => verified.sender,
+            Err(refusal) => return chain_refused(throttled_if_spent(&budget, refusal)),
+        }
+    } else {
+        offline.sender
+    }
+    .to_lowercase();
 
     let request_id = Uuid::new_v4().to_string();
     let expiration = now + Duration::seconds(REQUEST_TTL_SECONDS);
@@ -770,12 +811,15 @@ async fn create_request(
         expiration,
         requires_validation: false,
         status: ChallengeStatus::Pending,
-        source,
+        source: source.clone(),
     };
     match admit_request(&state, &record, now).await {
         Ok(None) => {}
         Ok(Some(refusal)) => return refusal,
         Err(err) => return internal_error("auth-api: storing the request", err),
+    }
+    if let Some(budget) = budget {
+        budget.refund();
     }
 
     (
@@ -790,6 +834,56 @@ async fn create_request(
         .into_response()
 }
 
+/// The relay's tables with a per-network cap of live rows.
+#[derive(Clone, Copy)]
+enum Pending {
+    Requests,
+    Identities,
+}
+
+impl Pending {
+    /// A network's live rows, by `source` and the expiry bound.
+    fn count_sql(self) -> &'static str {
+        match self {
+            Pending::Requests => {
+                "SELECT count(*) FROM explore_api.auth_requests \
+                 WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'"
+            }
+            Pending::Identities => {
+                "SELECT count(*) FROM explore_api.auth_identities \
+                 WHERE source = $1 AND expiration >= $2"
+            }
+        }
+    }
+
+    fn cap(self) -> usize {
+        match self {
+            Pending::Requests => MAX_REQUESTS_PER_SOURCE,
+            Pending::Identities => identities::MAX_IDENTITIES_PER_SOURCE,
+        }
+    }
+}
+
+/// Whether `source` holds its cap of live rows in `table`, counted without
+/// the admission lock; under the lock the count is taken again, exactly. No
+/// source has no per-network cap.
+async fn network_at_cap(
+    state: &AppState,
+    table: Pending,
+    source: Option<&str>,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    let Some(source) = source else {
+        return Ok(false);
+    };
+    let from_source: i64 = sqlx::query_scalar(table.count_sql())
+        .bind(source)
+        .bind(naive(now))
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(from_source >= table.cap() as i64)
+}
+
 /// The caps checked and the request stored in one transaction under the
 /// admission lock, so concurrent creates on any replica cannot overshoot.
 async fn admit_request(
@@ -797,22 +891,8 @@ async fn admit_request(
     record: &ChallengeRecord,
     now: DateTime<Utc>,
 ) -> sqlx::Result<Option<Response>> {
-    // A network over its cap is refused before the admission lock: a flood
-    // from one network does not queue on the lock every create takes, holding
-    // pool connections. Under the lock the count is taken again, exactly.
-    if let Some(source) = record.source.as_deref() {
-        let from_source: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore_api.auth_requests \
-             WHERE source = $1 AND expiration >= $2 AND status <> 'fulfilled'",
-        )
-        .bind(source)
-        .bind(naive(now))
-        .fetch_one(&state.pool)
-        .await?;
-        if from_source >= MAX_REQUESTS_PER_SOURCE as i64 {
-            return Ok(Some(too_many_from_network()));
-        }
-    }
+    // The caller already refused a network over its cap (`network_at_cap`);
+    // under the lock the count is taken again, exactly.
     let mut tx = state.pool.begin().await?;
     admission_lock(&mut tx, REQUEST_ADMISSION_LOCK).await?;
     if let Some(refusal) = request_capacity_refusal(&mut tx, record.source.as_deref(), now).await? {
@@ -823,16 +903,6 @@ async fn admit_request(
     Ok(None)
 }
 
-fn expired(id: &str) -> Response {
-    (
-        StatusCode::GONE,
-        Json(ErrorBody {
-            error: format!("Request with id \"{}\" has expired", id),
-        }),
-    )
-        .into_response()
-}
-
 /// The answer for a request that is not there to work with, or the record.
 async fn found_request(
     state: &AppState,
@@ -840,9 +910,8 @@ async fn found_request(
     now: DateTime<Utc>,
 ) -> Result<ChallengeRecord, Box<Response>> {
     match load_request(state, id, now).await {
-        Ok(Loaded::Found(record)) => Ok(record),
-        Ok(Loaded::Missing) => Err(Box::new(not_found(id))),
-        Ok(Loaded::Expired) => Err(Box::new(expired(id))),
+        Ok(Some(record)) => Ok(record),
+        Ok(None) => Err(Box::new(not_found(id))),
         Err(err) => Err(Box::new(internal_error(
             "auth-api: reading the request",
             err,
@@ -883,17 +952,7 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
     // the outcome; the record then frees its slot and keeps only the 410.
     // A concurrent poller waits on the row lock, finds it no longer signed
     // and returns nothing.
-    let delivered: sqlx::Result<Option<String>> = sqlx::query_scalar(
-        "UPDATE explore_api.auth_requests AS r \
-         SET status = 'fulfilled', outcome = NULL, params = '[]', challenge = '' \
-         FROM (SELECT request_id, outcome FROM explore_api.auth_requests \
-               WHERE request_id = $1 AND status = 'signed' FOR UPDATE) AS signed \
-         WHERE r.request_id = signed.request_id \
-         RETURNING signed.outcome::text",
-    )
-    .bind(&id)
-    .fetch_optional(&state.pool)
-    .await;
+    let delivered = claim_outcome(&state.pool, &id, now_micros()).await;
     match delivered {
         Ok(Some(outcome)) => (
             StatusCode::OK,
@@ -913,20 +972,43 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
     }
 }
 
+async fn claim_outcome<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
+    id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(
+        "UPDATE explore_api.auth_requests AS r \
+         SET status = 'fulfilled', outcome = NULL, params = '[]', challenge = '' \
+         FROM (SELECT request_id, outcome FROM explore_api.auth_requests \
+               WHERE request_id = $1 AND status = 'signed' AND expiration >= $2 FOR UPDATE) AS signed \
+         WHERE r.request_id = signed.request_id \
+         RETURNING signed.outcome::text",
+    )
+    .bind(id)
+    .bind(naive(now))
+    .fetch_optional(conn)
+    .await
+}
+
 async fn post_request_outcome(
     state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     path: Path<String>,
-    body: Json<HttpOutcomeMessage>,
+    body: RelayJson<HttpOutcomeMessage>,
 ) -> Response {
-    submit_outcome(state, path, body).await
+    submit_outcome(state, peer, headers, path, body).await
 }
 
 async fn post_request_outcome_legacy(
     state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     path: Path<String>,
-    body: Json<HttpOutcomeMessage>,
+    body: RelayJson<HttpOutcomeMessage>,
 ) -> Response {
-    submit_outcome(state, path, body).await
+    submit_outcome(state, peer, headers, path, body).await
 }
 
 fn already_answered(id: &str, status: ChallengeStatus) -> Response {
@@ -941,19 +1023,16 @@ fn already_answered(id: &str, status: ChallengeStatus) -> Response {
 
 async fn submit_outcome(
     State(state): State<AppState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
-    Json(body): Json<HttpOutcomeMessage>,
+    RelayJson(body): RelayJson<HttpOutcomeMessage>,
 ) -> Response {
     if let Err(msg) = validate_outcome_body(&body) {
         return bad_request(&msg);
     }
 
-    if let Some(chain) = body.auth_chain.as_ref()
-        && let Err(msg) = validate_auth_chain(chain)
-    {
-        return bad_request(&msg);
-    }
-
+    // The pending request first: a chain for an unknown id reaches no RPC.
     let now = now_micros();
     let record = match found_request(&state, &id, now).await {
         Ok(record) => record,
@@ -963,9 +1042,26 @@ async fn submit_outcome(
         return already_answered(&id, record.status);
     }
 
+    let source = request_source(
+        &headers,
+        peer.map(|Extension(ConnectInfo(p))| p),
+        &state.settings.trusted_proxy_cidrs,
+    );
+    let budget = budgeted(&state, source.as_deref());
+    if let Some(chain) = body.auth_chain.as_ref() {
+        if let Err(refusal) = validate_auth_chain(chain, Some(&Offline::default())).await {
+            return chain_refused(refusal);
+        }
+        if needs_contract_check(chain)
+            && let Err(refusal) = validate_auth_chain(chain, as_validator(&budget)).await
+        {
+            return chain_refused(throttled_if_spent(&budget, refusal));
+        }
+    }
+
     let outcome = OutcomeResponseMessage {
         request_id: id.clone(),
-        sender: body.sender.to_lowercase(),
+        sender: body.sender,
         result: body.result,
         error: body.error,
         auth_chain: body.auth_chain,
@@ -978,15 +1074,21 @@ async fn submit_outcome(
     // once, the second finds it signed.
     let stored = sqlx::query(
         "UPDATE explore_api.auth_requests SET status = 'signed', outcome = $2::json \
-         WHERE request_id = $1 AND status = 'pending'",
+         WHERE request_id = $1 AND status = 'pending' AND expiration >= $3",
     )
     .bind(&id)
     .bind(outcome)
+    .bind(naive(now_micros()))
     .execute(&state.pool)
     .await;
     match stored {
-        Ok(done) if done.rows_affected() > 0 => StatusCode::OK.into_response(),
-        Ok(_) => match found_request(&state, &id, now).await {
+        Ok(done) if done.rows_affected() > 0 => {
+            if let Some(budget) = budget {
+                budget.refund();
+            }
+            StatusCode::OK.into_response()
+        }
+        Ok(_) => match found_request(&state, &id, now_micros()).await {
             Ok(record) => already_answered(&id, record.status),
             Err(answer) => *answer,
         },
@@ -1007,9 +1109,10 @@ async fn post_request_validation(
     }
     let marked = sqlx::query(
         "UPDATE explore_api.auth_requests SET requires_validation = true \
-         WHERE request_id = $1 AND status <> 'fulfilled'",
+         WHERE request_id = $1 AND status <> 'fulfilled' AND expiration >= $2",
     )
     .bind(&id)
+    .bind(naive(now_micros()))
     .execute(&state.pool)
     .await;
     match marked {
@@ -1089,6 +1192,58 @@ fn gone_already_fulfilled(id: &str) -> Response {
         }),
     )
         .into_response()
+}
+
+/// The state's validator with its calls charged to `source`'s budget of
+/// contract-wallet checks; `None` without a validator.
+fn budgeted<'a>(state: &'a AppState, source: Option<&'a str>) -> Option<Budgeted<'a>> {
+    state
+        .eip1654_validator()
+        .map(|v| Budgeted::new(v, &state.contract_checks, source))
+}
+
+fn as_validator<'a>(
+    budget: &'a Option<Budgeted<'_>>,
+) -> Option<&'a dyn crate::auth::eip1654::Eip1654Validator> {
+    budget
+        .as_ref()
+        .map(|b| b as &dyn crate::auth::eip1654::Eip1654Validator)
+}
+
+/// `refusal`, or a 429 when a call was refused because a budget was spent.
+fn throttled_if_spent(budget: &Option<Budgeted<'_>>, refusal: ChainRefusal) -> ChainRefusal {
+    match budget.as_ref().and_then(Budgeted::spent) {
+        Some(spent) => ChainRefusal::Throttled(spent),
+        None => refusal,
+    }
+}
+
+fn chain_refused(refusal: ChainRefusal) -> Response {
+    match refusal {
+        ChainRefusal::Invalid(msg) => bad_request(&msg),
+        ChainRefusal::Throttled(spent) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ErrorBody {
+                error: match spent {
+                    Spent::Network => {
+                        "Too many contract wallet signature checks from this network, try again later"
+                    }
+                    Spent::Replica => {
+                        "Too many contract wallet signature checks on this node, try again later"
+                    }
+                }
+                .into(),
+            }),
+        )
+            .into_response(),
+        ChainRefusal::Unavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorBody {
+                error: "Contract wallet signature verification unavailable".into(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 fn bad_request(msg: &str) -> Response {
@@ -1188,7 +1343,8 @@ mod tests {
 
         let app = Router::new()
             .route("/", get(|| async { StatusCode::NO_CONTENT }))
-            .layer(middleware::from_fn(record_request_telemetry));
+            .layer(middleware::from_fn(record_request_telemetry))
+            .layer(middleware::from_fn(crate::shared::cors::decentraland_cors));
         let supplied = "4ef97fa3-9dcf-4630-9bc4-5f742706e87a";
         let response = app
             .clone()
@@ -1469,6 +1625,576 @@ mod tests {
             .unwrap()
     }
 
+    fn contract_request(signature: &str) -> Vec<u8> {
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let chain =
+            validation::contract_wallet::chain(&format!("{:#x}", ephemeral.address()), signature);
+        serde_json::to_vec(
+            &json!({ "method": "personal_sign", "params": ["hi"], "authChain": chain }),
+        )
+        .unwrap()
+    }
+
+    fn contract_outcome(signature: &str) -> Vec<u8> {
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        serde_json::to_vec(&json!({
+            "sender": validation::contract_wallet::CONTRACT,
+            "result": "0xsig",
+            "authChain": validation::contract_wallet::chain(
+                &format!("{:#x}", ephemeral.address()),
+                signature,
+            ),
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn contract_wallet_chains_need_the_validator() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let (status, body) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request(SIGNATURE)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            body["error"],
+            "Contract wallet signature verification unavailable"
+        );
+
+        assert!(state.attach_eip1654(Some(std::sync::Arc::new(Wallet::default()))));
+        let (status, body) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request("0xbad0")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    /// An identity post from the contract wallet: its signed-fetch chain's
+    /// contract link signed `header_sig`, its identity chain's `identity_sig`.
+    fn contract_identity_post(header_sig: &str, identity_sig: &str, peer: Option<&str>) -> Request {
+        use crate::shared::signed_fetch as sf;
+        use alloy_signer::SignerSync;
+        use validation::contract_wallet::chain;
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let eph_address = format!("{:#x}", ephemeral.address());
+        let identity = json!({
+            "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+            "expiration": "2100-01-01T00:00:00.000Z",
+            "authChain": chain(&eph_address, identity_sig),
+        });
+        let mut req = json_post(
+            "/auth-api/identities",
+            serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
+        );
+        if let Some(peer) = peer {
+            req = from_peer(req, peer);
+        }
+        let timestamp = Utc::now().timestamp_millis().to_string();
+        let payload = sf::build_payload_v6("post", "/auth-api/identities", &timestamp, "{}");
+        let signature = ephemeral.sign_message_sync(payload.as_bytes()).unwrap();
+        let mut links = chain(&eph_address, header_sig);
+        links.push(crate::auth::AuthLink {
+            link_type: crate::auth::AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature.to_string()),
+        });
+        let headers = req.headers_mut();
+        headers.insert(sf::AUTH_TIMESTAMP_HEADER, timestamp.parse().unwrap());
+        headers.insert(sf::AUTH_METADATA_HEADER, "{}".parse().unwrap());
+        for (i, link) in links.iter().enumerate() {
+            headers.insert(
+                axum::http::HeaderName::try_from(format!("{}{i}", sf::AUTH_CHAIN_HEADER_PREFIX))
+                    .unwrap(),
+                serde_json::to_string(link).unwrap().parse().unwrap(),
+            );
+        }
+        req
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_identity_is_checked_without_the_rpc_until_its_owner_matches() {
+        use validation::contract_wallet::{SIGNATURE, Unreachable, Wallet, chain};
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state.clone()));
+        let (status, err) = call(&app, contract_identity_post(SIGNATURE, SIGNATURE, None)).await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("Contract wallet signature verification unavailable")
+            ),
+            "no validator"
+        );
+
+        let unreachable = crate::api::tests_support::state_without_db().await;
+        assert!(unreachable.attach_eip1654(Some(std::sync::Arc::new(Unreachable))));
+        let (status, err) = call(
+            &Router::new().nest("/auth-api", routes().with_state(unreachable)),
+            contract_identity_post(SIGNATURE, SIGNATURE, None),
+        )
+        .await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("Contract wallet signature verification unavailable")
+            ),
+            "an RPC that cannot answer the signed fetch's contract link"
+        );
+
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let eph_address = format!("{:#x}", ephemeral.address());
+        let identity = json!({
+            "ephemeralIdentity": { "address": eph_address, "privateKey": format!("0x{}", hex::encode(ephemeral.to_bytes())), "publicKey": "0x04" },
+            "expiration": "2100-01-01T00:00:00.000Z",
+            "authChain": chain(&eph_address, SIGNATURE),
+        });
+        let mut req = json_post(
+            "/auth-api/identities",
+            serde_json::to_vec(&json!({ "identity": identity })).unwrap(),
+        );
+        req.headers_mut().extend(
+            crate::shared::signed_fetch::test_support::signed_headers(
+                "post",
+                "/auth-api/identities",
+                "{}",
+                true,
+            )
+            .await,
+        );
+        let (status, err) = call(&app, req).await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (
+                StatusCode::FORBIDDEN,
+                Some("Request sender does not match identity owner")
+            )
+        );
+        assert_eq!(wallet.calls(), 0, "a 403 costs no contract call");
+
+        let mut forged = contract_identity_post(SIGNATURE, SIGNATURE, None);
+        let ts = forged.headers()[crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER]
+            .to_str()
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        forged.headers_mut().insert(
+            crate::shared::signed_fetch::AUTH_TIMESTAMP_HEADER,
+            (ts + 1).to_string().parse().unwrap(),
+        );
+        let (status, err) = call(&app, forged).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{err}");
+        assert_eq!(
+            wallet.calls(),
+            0,
+            "a forged request chain costs no contract call"
+        );
+
+        let (status, err) = call(&app, contract_identity_post(SIGNATURE, "0xbad0", None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
+        assert!(wallet.calls() > 0);
+    }
+
+    #[tokio::test]
+    async fn a_network_that_spends_its_contract_checks_reaches_no_validator() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let mut refused = 0;
+        let throttled = loop {
+            let (status, err) = call(
+                &app,
+                contract_identity_post("0xbad0", SIGNATURE, Some("203.0.113.5:1")),
+            )
+            .await;
+            if status != StatusCode::UNAUTHORIZED {
+                break (status, err);
+            }
+            refused += 1;
+            assert!(refused <= contract_checks::PER_SOURCE, "never throttled");
+        };
+        assert_eq!(
+            (throttled.0, throttled.1["error"].as_str()),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                Some(
+                    "Too many contract wallet signature checks from this network, try again later"
+                )
+            ),
+            "the signed-fetch chain is charged too"
+        );
+        assert_eq!(
+            wallet.calls() as u32,
+            contract_checks::PER_SOURCE,
+            "each call is charged"
+        );
+        let asked = wallet.calls();
+        let (status, _) = call(
+            &app,
+            contract_identity_post("0xbad0", SIGNATURE, Some("203.0.113.5:2")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            wallet.calls(),
+            asked,
+            "a spent network reaches no validator"
+        );
+        let (status, _) = call(
+            &app,
+            contract_identity_post("0xbad0", SIGNATURE, Some("198.51.100.7:1")),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "another network is still asked"
+        );
+        assert!(wallet.calls() > asked);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_network_with_no_budget_left_is_refused_before_any_count() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        // No database behind this state: a count would answer 500.
+        let state = crate::api::tests_support::state_without_db().await;
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        for _ in 0..contract_checks::PER_SOURCE {
+            assert!(
+                state
+                    .contract_checks
+                    .charge(Some("203.0.113.5"), std::time::Instant::now())
+                    .is_ok()
+            );
+        }
+        let app = Router::new().nest("/auth-api", routes().with_state(state));
+        let spent =
+            Some("Too many contract wallet signature checks from this network, try again later");
+        let (status, err) = call(
+            &app,
+            from_peer(
+                json_post("/auth-api/requests", contract_request(SIGNATURE)),
+                "203.0.113.5:1",
+            ),
+        )
+        .await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (StatusCode::TOO_MANY_REQUESTS, spent)
+        );
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, SIGNATURE, Some("203.0.113.5:1")),
+        )
+        .await;
+        assert_eq!(
+            (status, err["error"].as_str()),
+            (StatusCode::TOO_MANY_REQUESTS, spent)
+        );
+        assert_eq!(wallet.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_network_at_its_identity_cap_spends_no_contract_call() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let now = now_micros();
+        let mut conn = state.pool.acquire().await.unwrap();
+        for i in 0..identities::MAX_IDENTITIES_PER_SOURCE {
+            identities::insert_identity(
+                &mut conn,
+                &identities::IdentityRecord {
+                    identity_id: format!("i{i}"),
+                    identity: Value::Null,
+                    ip_address: String::new(),
+                    source: Some("203.0.113.5".into()),
+                    is_mobile: false,
+                    created_at: now,
+                    expiration: now + Duration::seconds(3600),
+                    auth_request_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+        let (status, err) = call(
+            &app,
+            contract_identity_post(SIGNATURE, SIGNATURE, Some("203.0.113.5:1")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{err}");
+        assert_eq!(wallet.calls(), 0);
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_request_is_created_with_the_contract_as_sender() {
+        use validation::contract_wallet::{CONTRACT, SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let (status, created) = call(
+            &app,
+            json_post("/auth-api/requests", contract_request(SIGNATURE)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let id = created["requestId"].as_str().unwrap();
+        let (status, recovered) = call(&app, get_req(&format!("/auth-api/v2/requests/{id}"))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(recovered["sender"], CONTRACT);
+
+        let asked = wallet.calls();
+        let (status, _) = call(
+            &app,
+            json_post(
+                "/auth-api/v2/requests/8c545b52-c08e-4c39-a854-46e2b5b03c48/outcome",
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(wallet.calls(), asked, "an unknown id reaches no validator");
+
+        let without_validator = self::app(&other_replica(&db).await);
+        let (status, body) = call(
+            &without_validator,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = call(
+            &app,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome("0xbad0"),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let (status, body) = call(
+            &app,
+            json_post(
+                &format!("/auth-api/v2/requests/{id}/outcome"),
+                contract_outcome(SIGNATURE),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_spent_budget_says_whose_it_was() {
+        for (spent, says) in [
+            (
+                Spent::Network,
+                "Too many contract wallet signature checks from this network, try again later",
+            ),
+            (
+                Spent::Replica,
+                "Too many contract wallet signature checks on this node, try again later",
+            ),
+        ] {
+            let res = chain_refused(ChainRefusal::Throttled(spent));
+            assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+            let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap()["error"],
+                says
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_malformed_chain_is_refused_before_the_network_count() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state));
+        let mut chain = delegated("0x00000000000000000000000000000000000000e1");
+        chain[1].signature = Some(format!("0x{}", "11".repeat(65)));
+        let body = serde_json::to_vec(
+            &json!({ "method": "personal_sign", "params": ["hi"], "authChain": chain }),
+        )
+        .unwrap();
+        let (status, err) = call(
+            &app,
+            from_peer(json_post("/auth-api/requests", body), "203.0.113.5:1"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "no database behind this state: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_network_that_spends_its_refused_contract_checks_posts_no_outcome() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let (status, created) = call(
+            &app,
+            from_peer(
+                json_post("/auth-api/requests", contract_request(SIGNATURE)),
+                "198.51.100.7:1",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let outcome = format!(
+            "/auth-api/v2/requests/{}/outcome",
+            created["requestId"].as_str().unwrap()
+        );
+        let post = |signature: &str, peer: &str| {
+            from_peer(json_post(&outcome, contract_outcome(signature)), peer)
+        };
+        let before = wallet.calls();
+        let mut refused = 0;
+        while wallet.calls() - before < contract_checks::PER_SOURCE as usize {
+            let (status, body) = call(&app, post("0xbad0", "203.0.113.5:1")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            refused += 1;
+            assert!(refused <= contract_checks::PER_SOURCE);
+        }
+        let asked = wallet.calls();
+        let (status, body) = call(&app, post(SIGNATURE, "203.0.113.5:2")).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        assert_eq!(
+            wallet.calls(),
+            asked,
+            "a spent network reaches no validator"
+        );
+        let (status, body) = call(&app, post(SIGNATURE, "198.51.100.7:2")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "another network still answers: {body}"
+        );
+        db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn socket_io_pushes_validation_and_outcome_written_by_another_replica() {
+        use tower::ServiceExt;
+
+        let Some((db, socket_state)) = replica().await else {
+            return;
+        };
+        let socket_router = crate::api::router(socket_state.clone());
+        let http_router = crate::api::router(other_replica(&db).await);
+        let endpoint = "/auth-api/socket.io/?EIO=4&transport=polling";
+        let exchange = |method: &'static str, uri: String, body: String| {
+            let app = socket_router.clone();
+            async move {
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(uri)
+                            .header(header::ORIGIN, "https://decentraland.org")
+                            .header(header::CONTENT_TYPE, "text/plain")
+                            .body(Body::from(body))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = axum::body::to_bytes(response.into_body(), 65_536)
+                    .await
+                    .unwrap();
+                String::from_utf8(bytes.to_vec()).unwrap()
+            }
+        };
+        let open = exchange("GET", endpoint.into(), String::new()).await;
+        let handshake: Value = serde_json::from_str(open.strip_prefix('0').unwrap()).unwrap();
+        let session = format!("{endpoint}&sid={}", handshake["sid"].as_str().unwrap());
+        exchange("POST", session.clone(), "40".into()).await;
+        assert!(
+            exchange("GET", session.clone(), String::new())
+                .await
+                .starts_with("40")
+        );
+
+        let ephemeral = alloy_signer_local::PrivateKeySigner::random();
+        let chain = delegated(&format!("{:#x}", ephemeral.address()));
+        let request = json!(["request", {
+            "method": "eth_sendTransaction", "params": [{}], "authChain": chain
+        }]);
+        exchange("POST", session.clone(), format!("421{request}")).await;
+        let ack = loop {
+            let packet = exchange("GET", session.clone(), String::new()).await;
+            if packet != "2" {
+                break packet;
+            }
+            exchange("POST", session.clone(), "3".into()).await;
+        };
+        let reply: Value = serde_json::from_str(
+            ack.strip_prefix("431")
+                .unwrap_or_else(|| panic!("expected request acknowledgement, got {ack:?}")),
+        )
+        .unwrap();
+        let id = reply[0]["requestId"].as_str().unwrap();
+
+        let path = format!("/auth-api/v2/requests/{id}");
+        let (status, _) = call(
+            &http_router,
+            json_post(&format!("{path}/validation"), vec![]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        socket_state.auth_sockets.push(&socket_state).await.unwrap();
+        let push = exchange("GET", session.clone(), String::new()).await;
+        let event: Value = serde_json::from_str(push.strip_prefix("42").unwrap()).unwrap();
+        assert_eq!(
+            event,
+            json!(["request-validation-status", { "requestId": id, "code": reply[0]["code"] }])
+        );
+
+        let sender = "0x1234567890123456789012345678901234567890";
+        let outcome = serde_json::to_vec(&json!({ "sender": sender, "result": null })).unwrap();
+        let (status, _) = call(&http_router, json_post(&format!("{path}/outcome"), outcome)).await;
+        assert_eq!(status, StatusCode::OK);
+        socket_state.auth_sockets.push(&socket_state).await.unwrap();
+        let push = exchange("GET", session, String::new()).await;
+        let event: Value = serde_json::from_str(push.strip_prefix("42").unwrap()).unwrap();
+        assert_eq!(
+            event,
+            json!(["outcome", { "requestId": id, "sender": sender, "result": null }])
+        );
+        let (status, _) = call(&http_router, get_req(&format!("/auth-api/requests/{id}"))).await;
+        assert_eq!(status, StatusCode::GONE);
+        db.teardown().await;
+    }
+
     #[tokio::test]
     async fn a_null_result_is_delivered_as_null() {
         let Some((_db, state)) = replica().await else {
@@ -1549,10 +2275,8 @@ mod tests {
         .await;
         assert_eq!(v["requiresValidation"], true);
 
-        let outcome = serde_json::to_vec(
-            &json!({ "sender": "0x1234567890123456789012345678901234567890", "result": "0xsig" }),
-        )
-        .unwrap();
+        let sender = "0xabcdefABCDEFabcdefABCDEFabcdefABCDEFabcd";
+        let outcome = serde_json::to_vec(&json!({ "sender": sender, "result": "0xsig" })).unwrap();
         let (status, _) = call(
             &app,
             json_post(
@@ -1571,6 +2295,7 @@ mod tests {
         let (status, answered) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(answered["result"], "0xsig");
+        assert_eq!(answered["sender"], sender);
         assert_eq!(answered["requestId"], id);
         let (status, gone) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
         assert_eq!(status, StatusCode::GONE);
@@ -1676,6 +2401,25 @@ mod tests {
         }
         let (status, _) = call(&app, post("203.0.113.5:4001")).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let wallet = std::sync::Arc::new(validation::contract_wallet::Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let (status, _) = call(
+            &app,
+            from_peer(
+                json_post(
+                    "/auth-api/requests",
+                    contract_request(validation::contract_wallet::SIGNATURE),
+                ),
+                "203.0.113.5:4001",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            wallet.calls(),
+            0,
+            "a network over its cap reaches no validator"
+        );
         let (status, _) = call(&app, post("198.51.100.7:4000")).await;
         assert_eq!(
             status,
@@ -1858,26 +2602,27 @@ mod tests {
             return;
         };
         let now = now_micros();
-        let in_grace = now - Duration::seconds(1);
         seed_requests(
             &state,
             MAX_PENDING_REQUESTS,
             ChallengeStatus::Pending,
-            in_grace,
+            now - Duration::seconds(1),
             now,
         )
         .await;
         assert_eq!(
             refusal(&state, Some("new"), now).await,
             None,
-            "expired requests in their grace window hold no slot"
+            "expired requests hold no slot"
         );
-        let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
-        sqlx::query("UPDATE explore_api.auth_requests SET expiration = $1")
-            .bind(naive(live))
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        seed_requests(
+            &state,
+            MAX_PENDING_REQUESTS,
+            ChallengeStatus::Pending,
+            now + Duration::seconds(REQUEST_TTL_SECONDS),
+            now,
+        )
+        .await;
         assert_eq!(
             refusal(&state, None, now).await,
             Some(StatusCode::SERVICE_UNAVAILABLE)
@@ -1970,32 +2715,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_sweep_keeps_requests_through_their_grace_window() {
+    async fn the_sweep_removes_expired_requests() {
         let Some((db, state)) = replica().await else {
             return;
         };
         let now = now_micros();
         let mut conn = state.pool.acquire().await.unwrap();
         for (id, expiration) in [
-            (
-                "old",
-                now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS + 1),
-            ),
-            ("grace", now - Duration::seconds(1)),
+            ("old", now - Duration::seconds(300)),
+            ("just-expired", now - Duration::seconds(1)),
             ("live", now + Duration::seconds(60)),
         ] {
             insert_request(&mut conn, &record(id, "", expiration))
                 .await
                 .unwrap();
         }
-        assert_eq!(sweep_expired_requests(&mut conn, now).await.unwrap(), 1);
+        assert_eq!(sweep_expired_requests(&mut conn, now).await.unwrap(), 2);
         assert_eq!(
             sweep_expired_requests(&mut conn, now).await.unwrap(),
             0,
             "a second sweep, as another replica runs it, finds nothing"
         );
         drop(conn);
-        assert_eq!(request_ids(&state).await, ["grace", "live"]);
+        assert_eq!(request_ids(&state).await, ["live"]);
         db.teardown().await;
     }
 
@@ -2214,7 +2956,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_expired_request_answers_410_once_then_404_on_any_replica() {
+    async fn an_expired_request_answers_404_on_any_replica() {
         let Some((db, state)) = replica().await else {
             return;
         };
@@ -2229,8 +2971,8 @@ mod tests {
         .unwrap();
         drop(conn);
         let (status, body) = call(&b, get_req("/auth-api/v2/requests/expired")).await;
-        assert_eq!(status, StatusCode::GONE);
-        assert_eq!(body["error"], "Request with id \"expired\" has expired");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "Request with id \"expired\" not found");
         let (status, _) = call(&a, get_req("/auth-api/requests/expired")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         db.teardown().await;
@@ -2281,32 +3023,95 @@ mod tests {
         db.teardown().await;
     }
 
-    /// A cross-origin client may send its verifier on pickup.
     #[tokio::test]
-    async fn the_preflight_allows_the_identity_verifier_header() {
+    async fn auth_routes_use_the_allowlist_for_preflight_and_responses() {
         use tower::ServiceExt;
-        let res = Router::new()
-            .nest(
-                "/auth-api",
-                routes().with_state(crate::api::tests_support::state_without_db().await),
-            )
-            .oneshot(
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = crate::api::router(state);
+        for (origin, allowed) in [
+            ("https://decentraland.org", true),
+            ("http://localhost:3000", true),
+            ("https://decentraland.org.example.com", false),
+            ("null", false),
+        ] {
+            let preflight = Request::builder()
+                .method("OPTIONS")
+                .uri("/auth-api/identities/0f007385-b6f9-44b7-aeb2-748605afe1a9")
+                .header(header::ORIGIN, origin)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "x-identity-verifier",
+                )
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(preflight).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(
+                response.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS),
+                allowed
+                    .then(|| HeaderValue::from_static("x-identity-verifier"))
+                    .as_ref(),
+            );
+            let request = Request::builder()
+                .uri("/auth-api/health")
+                .header(header::ORIGIN, origin)
+                .body(Body::empty())
+                .unwrap();
+            for response in [response, app.clone().oneshot(request).await.unwrap()] {
+                assert_eq!(
+                    response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    allowed.then(|| HeaderValue::from_static(origin)).as_ref(),
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_json_bodies_use_the_relay_error_envelope() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = app(&state);
+        for uri in [
+            "/auth-api/requests",
+            "/auth-api/requests/test",
+            "/auth-api/v2/requests/test/outcome",
+            "/auth-api/identities",
+        ] {
+            for request in [
+                json_post(uri, b"{".to_vec()),
+                json_post(uri, b"[]".to_vec()),
                 Request::builder()
-                    .method("OPTIONS")
-                    .uri("/auth-api/identities/0f007385-b6f9-44b7-aeb2-748605afe1a9")
-                    .body(Body::empty())
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::from("{}"))
                     .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::NO_CONTENT);
-        let allowed = res.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
-            .to_str()
-            .unwrap();
-        assert!(
-            allowed.split(", ").any(|h| h == "x-identity-verifier"),
-            "{allowed}"
-        );
+            ] {
+                let (status, body) = call(&app, request).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+                assert_eq!(
+                    body,
+                    json!({ "error": "Bad request", "message": "Invalid JSON body" })
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn request_json_is_decoded_without_a_json_content_type() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = app(&state);
+        for content_type in [None, Some("text/plain")] {
+            let mut request = Request::builder().method("POST").uri("/auth-api/requests");
+            if let Some(content_type) = content_type {
+                request = request.header(header::CONTENT_TYPE, content_type);
+            }
+            let request = request
+                .body(Body::from(r#"{"method":"eth_sendTransaction"}"#))
+                .unwrap();
+            let (status, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body, json!({ "error": "params is required" }));
+        }
     }
 
     /// An identity bound to a deep-link request is served to the verifier it

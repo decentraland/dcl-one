@@ -313,6 +313,7 @@ impl Harness {
     /// The profile has loaded, at `version`.
     fn profile(&mut self, version: u32) {
         self.world.insert_resource(CurrentUserProfile {
+            is_deployed: true,
             profile: Some(UserProfile {
                 version,
                 ..default()
@@ -323,7 +324,9 @@ impl Harness {
 
     /// The player is behind the loading screen.
     fn leave_world(&mut self) {
-        self.world.entity_mut(self.user).insert(OutOfWorld);
+        self.world
+            .entity_mut(self.user)
+            .insert(OutOfWorld::default());
     }
 
     /// The player is placed in the world.

@@ -56,6 +56,8 @@ pub(crate) struct FakeMarket {
     pub orders: Vec<ListingRow>,
     pub trades: HashMap<String, TradeLookup>,
     pub mana_usd: Option<String>,
+    /// The creator coupon every trade is priced with, when set.
+    pub coupon: Option<crate::types::TradeCoupon>,
     pub item_reads: AtomicUsize,
     pub order_reads: AtomicUsize,
     pub oracle_reads: AtomicUsize,
@@ -109,6 +111,15 @@ impl FakeMarket {
         self.trades.insert(id.to_string(), TradeLookup::Open(trade));
         self
     }
+
+    fn with_coupon(mut self, discount_ppm: u32) -> Self {
+        self.coupon = Some(crate::types::TradeCoupon {
+            contract: crate::types::EvmAddress::parse("0xc914507fe297b2dddd1232ac3a8903f1c125e794")
+                .unwrap(),
+            discount_ppm,
+        });
+        self
+    }
 }
 
 #[async_trait]
@@ -151,7 +162,7 @@ impl Market for FakeMarket {
         _trade: &crate::types::SignedTrade,
         _trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        Ok(None)
+        Ok(self.coupon)
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
@@ -310,6 +321,8 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
+    daily_studio_deposit_limit_cents: Option<i64>,
+    revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
 }
 
 impl Default for StateCfg {
@@ -323,6 +336,8 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
+            daily_studio_deposit_limit_cents: None,
+            revenue_events: None,
         }
     }
 }
@@ -343,19 +358,24 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
+        daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
     })
     .unwrap();
-    Arc::new(State::with_sources(
+    let state = Arc::new(State::with_sources(
         pool,
         Outbound::for_tests(),
         settings,
         Arc::new(market),
         Arc::new(broker),
         None,
-    ))
+    ));
+    if let Some(events) = cfg.revenue_events {
+        state.attach_revenue_events(events);
+    }
+    state
 }
 
 fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
@@ -374,8 +394,18 @@ pub(super) fn scratch_wallet() -> Wallet {
 }
 
 pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    signed_headers_with(w, method, path, "{}").await
+}
+
+/// [`signed_headers`] with `metadata` signed into the payload.
+pub(super) async fn signed_headers_with(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: &'static str,
+) -> HeaderMap {
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let payload = build_payload_v6(method, path, &timestamp, metadata);
     let signature = w
         .signer
         .sign_message(payload.as_bytes())
@@ -399,7 +429,7 @@ pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Head
         AUTH_TIMESTAMP_HEADER,
         HeaderValue::from_str(&timestamp).unwrap(),
     );
-    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(metadata));
     for (i, link) in chain.iter().enumerate() {
         headers.insert(
             axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -439,6 +469,22 @@ pub(super) async fn send(
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, headers, body)
+}
+
+/// A signed web3 session's metadata, as the web Shop signs it (`walletKind`).
+const WEB3: &str = r#"{"walletKind":"web3"}"#;
+
+/// [`call`] with `metadata` signed into the request.
+async fn call_signed(
+    app: &Router,
+    w: &Wallet,
+    path: &str,
+    metadata: &'static str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let headers = signed_headers_with(w, "post", path, metadata).await;
+    let (status, _, body) = send(app, "POST", path, headers, Some(body)).await;
+    (status, body)
 }
 
 /// A signed call over the PUBLIC path (`/credits/...`), the way the explorer signs it.
@@ -664,7 +710,7 @@ async fn cleanup(pool: &PgPool, addr: &str) {
     }
 }
 
-fn unique(tag: &str) -> String {
+pub(super) fn unique(tag: &str) -> String {
     format!("{tag}-{}", uuid::Uuid::new_v4().simple())
 }
 
@@ -3969,7 +4015,7 @@ async fn mock_topup_is_gated_validated_capped_and_idempotent() {
     cleanup(&pool, &wallet.address).await;
 }
 
-const WEBHOOK_SECRET: &str = "whsec_query_counts";
+pub(super) const WEBHOOK_SECRET: &str = "whsec_query_counts";
 
 fn stripe_headers(body: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -3986,7 +4032,7 @@ fn stripe_headers(body: &str) -> HeaderMap {
     headers
 }
 
-async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
+pub(super) async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method("POST")
         .uri("/credits/stripe/webhook");
@@ -4292,7 +4338,7 @@ fn session_event(
 }
 
 /// One pack order of 50 credits for 500 USD cents, opened as a Checkout Session.
-async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
+pub(super) async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
     let pack = PackRow {
         sku: "settle-pack".into(),
         title: "Settle".into(),
@@ -4340,6 +4386,102 @@ async fn delete_events(pool: &PgPool, prefix: &str) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// The Stripe webhook queues the purchase feed in its transaction: a pack
+/// credited once (a redelivery adds nothing), a refund clawing part of it
+/// back, and a chargeback that matches no paid purchase.
+#[tokio::test]
+async fn the_webhook_queues_the_purchase_feed_in_its_transaction() {
+    use super::alerts;
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "feed-pack".into(),
+        title: "Feed".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_feed");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let app = app(state.clone());
+    let feed = async |kind: &str, key: &str| -> Vec<Value> {
+        sqlx::query_scalar::<_, sqlx::types::Json<Value>>(
+            "SELECT payload FROM credits.alerts WHERE kind = $1 AND dedupe_key = $2",
+        )
+        .bind(kind)
+        .bind(key)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|payload| payload.0)
+        .collect()
+    };
+
+    let paid = json!({ "id": unique("evt_feed_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    for _ in 0..2 {
+        let (status, out) = deliver(&app, &paid).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+    }
+    let credited = feed(alerts::PACK_CREDITED, &format!("pack:{pi}")).await;
+    assert_eq!(credited.len(), 1, "{credited:?}");
+    assert_eq!(credited[0]["address"], addr.as_str());
+    assert_eq!(credited[0]["packId"], "feed-pack");
+    assert_eq!(credited[0]["chargedCents"], 500);
+    assert_eq!(credited[0]["quantity"], 1);
+
+    let refund_evt = unique("evt_feed_refund");
+    let refund = json!({ "id": refund_evt, "type": "charge.refunded", "data": { "object": { "payment_intent": pi, "amount_refunded": 250 } } }).to_string();
+    assert_eq!(deliver(&app, &refund).await.0, StatusCode::OK);
+    let reversed = feed(alerts::PACK_REVERSED, &format!("stripe:{refund_evt}:{pi}")).await;
+    assert_eq!(reversed.len(), 1, "{reversed:?}");
+    assert!(
+        reversed[0]["chargedBack"]
+            .as_str()
+            .unwrap()
+            .starts_with("25"),
+        "{reversed:?}"
+    );
+    assert_eq!(reversed[0]["packId"], "feed-pack");
+    assert_eq!(reversed[0]["reason"], "refund");
+    assert_eq!(reversed[0]["hasShortfall"], false);
+
+    let (ghost, dispute_evt) = (unique("pi_ghost"), unique("evt_feed_dispute"));
+    let dispute = json!({ "id": dispute_evt, "type": "charge.dispute.created", "data": { "object": { "payment_intent": ghost, "status": "needs_response" } } }).to_string();
+    assert_eq!(deliver(&app, &dispute).await.0, StatusCode::OK);
+    let unmatched = feed(
+        alerts::REVERSAL_UNMATCHED,
+        &format!("stripe:{dispute_evt}:{ghost}"),
+    )
+    .await;
+    assert_eq!(unmatched.len(), 1, "{unmatched:?}");
+    assert_eq!(unmatched[0]["reason"], "chargeback");
+
+    for key in [
+        format!("pack:{pi}"),
+        format!("stripe:{refund_evt}:{pi}"),
+        format!("stripe:{dispute_evt}:{ghost}"),
+    ] {
+        sqlx::query("DELETE FROM credits.alerts WHERE dedupe_key = $1")
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM credits.purchases WHERE stripe_payment_intent = $1")
+        .bind(&pi)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &addr).await;
 }
 
 fn webhook_state(pool: &PgPool) -> SharedState {
@@ -7902,6 +8044,7 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
         contract_address: None,
         item_id: None,
         registered_name: None,
+        credits_cents: None,
     };
     let derived =
         super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
@@ -8394,6 +8537,25 @@ async fn opid_lane_with(
     market: FakeMarket,
     trial: Option<super::trial::TrialBuyers>,
 ) -> Router {
+    opid_lane_flagged(pool, contract, market, trial, split_on()).await
+}
+
+/// The market's flags with the Credits + MANA split on: a node that takes a Credits part.
+fn split_on() -> Arc<crate::market::features::DappsFlags> {
+    crate::market::features::DappsFlags::for_tests(&[(
+        crate::market::features::CREDITS_MANA_SPLIT,
+        true,
+    )])
+}
+
+/// [`opid_lane_with`] over the given `dapps` flags.
+async fn opid_lane_flagged(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+    flags: Arc<crate::market::features::DappsFlags>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -8424,7 +8586,8 @@ async fn opid_lane_with(
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_dapps_flags(flags),
     );
     app(state)
 }
@@ -8549,6 +8712,572 @@ async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_
     let (status, _) = authorize(opid_item(200, "200", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// A request of one line of one unit may pay part of the price with credits
+/// (`creditsCents`) and the rest with MANA, on either route. The price check
+/// stays on the whole quote; the Credits part alone is reserved, recorded and
+/// echoed; the credit is that part's share of the whole price's cap; an
+/// operation binds the part. Every refusal comes before a reservation.
+#[tokio::test]
+async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
+    let Some((db, lane, wallet)) = opid_setup("credits-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let post = |w: &'static str, body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, w, WEB3, body).await }
+    };
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = |cents: i64, item: &str, leg: Value| {
+        let mut body = opid_item(cents, item, None);
+        body["creditsCents"] = leg;
+        body
+    };
+    // Item 200 is 4 MANA at 0.5 USD/MANA, a 200-cent quote: a part's credit is
+    // its share of those 4 MANA, with no buffer and no headroom.
+    let share = |leg: u64| {
+        (alloy_primitives::U256::from(4_000_000_000_000_000_000u64)
+            * alloy_primitives::U256::from(leg)
+            / alloy_primitives::U256::from(200u64))
+        .to_string()
+    };
+
+    let mut two_units = part(200, "200", json!(120));
+    two_units["quantity"] = json!(2);
+    for (body, why) in [
+        (part(200, "200", json!(200)), "the whole price"),
+        (part(200, "200", json!(210)), "above the price"),
+        (part(200, "200", json!(125)), "not whole credits"),
+        (part(200, "200", json!(0)), "nothing"),
+        (part(200, "200", json!(-10)), "negative"),
+        (part(200, "200", json!("120")), "not a number"),
+        (two_units, "two units"),
+        (
+            json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }),
+            "a NAME registration",
+        ),
+    ] {
+        let (status, v) = post(SINGLE, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("\"creditsCents\""),
+            "{why}: the message names the field: {v}"
+        );
+    }
+    for (items, index) in [
+        (
+            json!([part(200, "200", json!(120)), opid_item(95, "95", None)]),
+            0,
+        ),
+        (
+            json!([opid_item(95, "95", None), part(200, "200", json!(120))]),
+            1,
+        ),
+    ] {
+        let (status, v) = post(BATCH, json!({ "items": items })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(
+            v["error"],
+            format!("items[{index}]: {}", super::batch::CREDITS_CENTS_ALONE),
+            "a Credits part beside another line"
+        );
+    }
+    let (status, v) = post(SINGLE, part(210, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"], "Price changed",
+        "the whole price is still checked"
+    );
+    let poor = scratch_wallet();
+    seed_paid_credits(&pool, &poor.address, "5").await;
+    let (status, v) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(
+        (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
+        (Some(50), Some(120)),
+        "the balance is checked against the part"
+    );
+    let (status, _) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(50))).await;
+    assert_eq!(status, StatusCode::OK, "a part the balance covers");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused request reserved anything"
+    );
+
+    // The single route: the part is reserved and echoed, the credit is its share.
+    let (status, v) = post(SINGLE, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["usdCents"], 120);
+    assert_eq!(
+        v["credit"]["amount"],
+        share(120),
+        "floor(4 MANA * 120 / 200): 2.4 MANA, the buyer's MANA the other 1.6"
+    );
+    assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
+    let salt = v["credit"]["id"].as_str().unwrap().to_string();
+    let (quoted, charged): (Option<i64>, i64) =
+        sqlx::query_as("SELECT quoted_cents, usd_cents FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (quoted, charged),
+        (Some(200), 120),
+        "the quote checked, the part charged"
+    );
+    let line: (i64, i64) = sqlx::query_as(
+        "SELECT quoted_cents, charged_cents FROM credits.authorization_lines WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        line,
+        (120, 120),
+        "the line is its Credits part, quoted and charged"
+    );
+
+    // The batch route with one line, as the in-world Shop authorizes: the
+    // operation binds the part; a retry replays one credit, another part is
+    // refused without a reservation.
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let body = json!({ "operationId": op, "items": [part(200, "200", json!(80))] });
+    let (status, first) = post(BATCH, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        (
+            first["usdCents"].as_i64(),
+            first["lines"][0]["usdCents"].as_i64()
+        ),
+        (Some(80), Some(80))
+    );
+    assert_eq!(first["credit"]["amount"], share(80));
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = post(BATCH, body).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    for other in [
+        json!({ "operationId": op, "items": [part(200, "200", json!(90))] }),
+        json!({ "operationId": op, "items": [opid_item(200, "200", None)] }),
+    ] {
+        let (status, v) = post(BATCH, other).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{v}");
+        assert_eq!(v["code"], "operation_reused", "{v}");
+    }
+    assert_eq!(
+        (
+            authorized_count(&pool, &wallet.address).await,
+            authorized_sum_cents(&pool, &wallet.address).await
+        ),
+        (2, 200),
+        "the refused operations reserved nothing"
+    );
+
+    db.drop().await;
+}
+
+/// A Credits part is judged on the session the signed metadata states, as
+/// the quote that offered it was: a signed web2 session, or none stated, is
+/// refused on both routes with nothing reserved; a signed web3 wallet is
+/// authorized. A whole-price credit needs no metadata, as before.
+#[tokio::test]
+async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
+    let Some((db, lane, wallet)) = opid_setup("part-session").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200", "creditsCents": 120 });
+    let bodies = [
+        (SINGLE, part.clone()),
+        (BATCH, json!({ "items": [part.clone()] })),
+    ];
+    for (metadata, why) in [
+        (r#"{"walletKind":"web2"}"#, "a signed web2 session"),
+        ("{}", "no stated session"),
+    ] {
+        for (route, body) in bodies.clone() {
+            let (status, v) = call_signed(&lane, &wallet, route, metadata, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why} on {route}: {v}");
+            assert_eq!(
+                v["refusal"], "mana_remainder_not_allowed",
+                "{why} on {route}: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused session reserved anything"
+    );
+    for (route, body) in bodies {
+        let (status, v) = call_signed(&lane, &wallet, route, WEB3, body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed web3 wallet on {route}: {v}"
+        );
+        assert_eq!(v["usdCents"], 120);
+    }
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        SINGLE,
+        &[],
+        Some(opid_item(200, "200", None)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price needs no metadata: {v}"
+    );
+
+    db.drop().await;
+}
+
+/// The Credits + MANA split's rollout (`dapps-shop-credits-mana-split`) is read
+/// on the shared authorization path. Off, a request with `creditsCents` is a
+/// 400 on either route before anything else, a replay of an operation it
+/// authorized while on included, and nothing new is reserved; a whole price
+/// authorizes, and a credit issued while it was on is still cancelled. On, a
+/// Credits part authorizes on both routes.
+#[tokio::test]
+async fn a_credits_part_follows_its_rollout_on_both_routes_and_a_whole_price_never_does() {
+    let Some(db) = OwnDatabase::create("split-rollout").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_mana_usd("0.5");
+    let flags = crate::market::features::DappsFlags::for_tests(&[]);
+    let lane = opid_lane_flagged(&pool, OPID_MANAGER, market, None, flags.clone()).await;
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let split = crate::market::features::CREDITS_MANA_SPLIT;
+    const OP_A: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a01";
+    const OP_B: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a02";
+    let part = |op: &str| {
+        let mut body = opid_item(200, "200", Some(op));
+        body["creditsCents"] = json!(120);
+        body
+    };
+    let refused = |status: StatusCode, v: &Value, why: &str| {
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert_eq!(v["code"], "credits_mana_split_off", "{why}: {v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("dapps-shop-credits-mana-split"),
+            "{why}: {v}"
+        );
+    };
+
+    // Off from the start (absent reads off): no Credits part on either route, nothing reserved.
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "single, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "batch, off");
+    assert_eq!(v["index"], 0);
+    assert_eq!(rows_of(&pool, &wallet.address).await, 0);
+
+    // On: both routes authorize the part.
+    flags.set_for_tests(split, true);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    assert_eq!(status, StatusCode::OK, "single, on: {v}");
+    assert_eq!(v["usdCents"], 120);
+    let issued = v["credit"]["id"].as_str().unwrap().to_string();
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch, on: {v}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+
+    // Off again: a replay of the operation it authorized is refused before it is recovered, and nothing new is
+    // reserved; a whole price authorizes on both routes.
+    flags.set_for_tests(split, false);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "a replay, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "a batch replay, off");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK, "a whole price, off: {v}");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        "{}",
+        json!({ "items": [opid_item(200, "200", None)] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price on the batch route, off: {v}"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 4);
+
+    // A credit issued while it was on is still cancelled.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [issued] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["released"].as_i64(), Some(1), "{v}");
+
+    db.drop().await;
+}
+
+/// A USD-pegged trade has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement. Refused with the rule's reason,
+/// before the feed is read and before anything is reserved; its whole price
+/// still authorizes.
+#[tokio::test]
+async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_reservation() {
+    let Some(db) = OwnDatabase::create("feed-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    // $2.00 pegged (USD wei) on Polygon's V3 marketplace.
+    let trade = json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+        "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+        "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+        "received": [{ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR }] });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade)
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(OPID_MANAGER.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(OPID_MANAGER.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone())
+        .with_dapps_flags(split_on()),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "50").await;
+    feed.answer(Address::from_str(LISTED).unwrap(), Ok("0.55"));
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, "/credits/credits/authorize", WEB3, body).await }
+    };
+
+    let (status, v) =
+        authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+    assert!(feed.asked().is_empty(), "the feed was not read");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "nothing reserved"
+    );
+    let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+
+    db.drop().await;
+}
+
+/// The split vector through the route: a listing of 101 MANA wei with a 10%
+/// coupon moves 91; quoted 30 cents, a 10-cent part. The credit signs 30 wei
+/// (floor(91 * 10 / 30)), the buyer's MANA is the other 61, the 10 cents are
+/// what is reserved, and none of it moves with the node's buffer or headroom.
+/// A listing paid in another ERC-20 than the chain's MANA is refused before
+/// anything is reserved.
+#[tokio::test]
+async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_sizing() {
+    let Some(db) = OwnDatabase::create("split-vector").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let trade = |token: &str| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+            "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+            "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+            "received": [{ "assetType": 1, "contractAddress": token, "amount": "101", "beneficiary": CREATOR }] })
+    };
+    let lane = |buffer_bps: u32, headroom_pct: u32| {
+        // 3.2e15 USD a MANA: 101 wei is 33 cents rounded up, 30 after the coupon.
+        let market = FakeMarket::default()
+            .with_item(COLLECTION, "4", "4000000000000000000", true)
+            .with_trade("5b1a", trade(MANA_POLYGON))
+            .with_trade("0e20", trade("0x00000000000000000000000000000000000000e2"))
+            .with_coupon(100_000)
+            .with_mana_usd("3200000000000000");
+        let mut settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            mock_card: true,
+            usage_chain_id: super::usage::CHAIN_AMOY,
+            credits_onchain_authorize_enabled: true,
+            credits_signer_key: Some(
+                "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+            ),
+            credits_manager_contract: Some(OPID_MANAGER.to_string()),
+            mana_price_max_staleness_secs: 3600,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        settings.usage = super::usage::Settings {
+            enabled: true,
+            rpc_url: Some("http://127.0.0.1:9/".into()),
+            chain_id: 137,
+            contract: Some(OPID_MANAGER.to_string()),
+            ..super::usage::Settings::default()
+        };
+        settings.credit_buffer_bps = buffer_bps;
+        settings.credit_cap_headroom_pct = headroom_pct;
+        app(Arc::new(
+            State::with_sources(
+                pool.clone(),
+                Outbound::for_tests(),
+                settings,
+                Arc::new(market),
+                Arc::new(MockBroker::configured()),
+                None,
+            )
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+            .with_dapps_flags(split_on()),
+        ))
+    };
+    let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
+
+    for (buffer, headroom) in [(200, 100), (1_000, 150)] {
+        let lane = lane(buffer, headroom);
+        let wallet = scratch_wallet();
+        seed_paid_credits(&pool, &wallet.address, "50").await;
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+        assert_eq!(
+            authorized_count(&pool, &wallet.address).await,
+            0,
+            "nothing reserved for another ERC-20"
+        );
+
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            part.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
+        assert_eq!(
+            v["credit"]["amount"], "30",
+            "floor(91 * 10 / 30), with no buffer or headroom"
+        );
+        assert_eq!(v["maxCreditedValue"], "30");
+        assert_eq!(v["usdCents"], 10, "the part is what is charged");
+        assert_eq!(
+            authorized_sum_cents(&pool, &wallet.address).await,
+            10,
+            "and what is reserved"
+        );
+    }
 
     db.drop().await;
 }
@@ -10004,7 +10733,7 @@ async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
 
 /// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
 /// session on 200; a read answers `session`. Both are counted.
-async fn stub_stripe(
+pub(super) async fn stub_stripe(
     expire_status: StatusCode,
     session: Value,
 ) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
@@ -10187,4 +10916,3216 @@ async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
         cancel_return_with(&pool, StatusCode::OK, open, true).await,
         ("abandoned".to_string(), 0, 0)
     );
+}
+
+/// An authorization of `address` under `salt` with its charged total and state; `lines` line rows, each charged
+/// `cents_per_line` (none: a single-line credit keeps its line on the authorization row).
+async fn authorization_fixture(
+    pool: &PgPool,
+    salt: &str,
+    address: &str,
+    usd_cents: i64,
+    status: &str,
+    lines: i32,
+    cents_per_line: i64,
+) {
+    sqlx::query(
+        "INSERT INTO credits.authorizations (id, address, usd_cents, amount_wei, status, expires_at) \
+         VALUES ($1, $2, $3, 1, $4, $5)",
+    )
+    .bind(salt)
+    .bind(address)
+    .bind(usd_cents)
+    .bind(status)
+    .bind(super::store::now() + chrono::Duration::hours(1))
+    .execute(pool)
+    .await
+    .unwrap();
+    for position in 0..lines {
+        sqlx::query(
+            "INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, \
+                 sale_kind, asset_kind, asset_chain_id, asset_contract) \
+             VALUES ($1, $2, $3, $3, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000c0de1')",
+        )
+        .bind(salt)
+        .bind(position)
+        .bind(cents_per_line)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// `GET /credits/authorize/{salt}` answers what the signer's credit debits, as credits-server answers it: the
+/// charged total, how many lines settle under it (a single-line credit is one) and its state. Another wallet's
+/// salt is the same 404 as an unknown one; a salt that is not a bytes32 is a 400; the canonical
+/// `/shop-api/v1/credit-authorizations/{salt}` answers the same.
+#[tokio::test]
+async fn the_charge_lookup_answers_what_the_signers_credit_debits() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state.clone()));
+    let buyer = scratch_wallet();
+    let other = scratch_wallet();
+    let group = format!("0x{}", super::handlers::random_32_hex());
+    let single = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &group, &buyer.address, 2500, "authorized", 2, 1250).await;
+    authorization_fixture(&pool, &single, &buyer.address, 700, "consumed", 0, 0).await;
+
+    let upper = format!("0x{}", group[2..].to_ascii_uppercase());
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{upper}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": group, "usdCents": 2500, "lines": 2, "status": "pending" }),
+        "either case, answered lowercase"
+    );
+    let (status, v) = call(
+        &canonical,
+        &buyer,
+        "get",
+        &format!("/shop-api/v1/credit-authorizations/{single}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": single, "usdCents": 700, "lines": 1, "status": "settled" })
+    );
+    // A buyer's cancel keeps a signed credit spendable until it expires: it still debits.
+    let cancelled = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &cancelled, &buyer.address, 500, "retired", 0, 0).await;
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{cancelled}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": cancelled, "usdCents": 500, "lines": 1, "status": "pending" })
+    );
+
+    let (status, v) = call(
+        &app,
+        &other,
+        "get",
+        &format!("/credits/credits/authorize/{group}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another wallet's credit: {v}"
+    );
+    let unknown = format!("0x{}", super::handlers::random_32_hex());
+    let (status, _) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{unknown}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        "/credits/credits/authorize/0x1234",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+
+    let (status, headers, _) = send(
+        &app,
+        "GET",
+        &format!("/credits/credits/authorize/{group}"),
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsigned: the ADR-44 refusal"
+    );
+    assert!(headers.get(axum::http::header::RETRY_AFTER).is_none());
+}
+
+/// A wallet asks the charge of its credits at most `LOOKUPS_PER_MINUTE` times a minute, as credits-server's lookup
+/// limiter allows: past it, credits-server's 429 with `Retry-After` and the seconds in the body. Another wallet
+/// keeps its own budget.
+#[tokio::test]
+async fn the_charge_lookup_is_limited_per_wallet() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let buyer = scratch_wallet();
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let path = format!("/credits/credits/authorize/{salt}");
+    let limit = super::handlers::charge::LOOKUPS_PER_MINUTE;
+    let mut answered = 0;
+    let (headers, body) = loop {
+        let (status, headers, body) = send(
+            &app,
+            "GET",
+            &path,
+            signed_headers(&buyer, "get", &path).await,
+            None,
+        )
+        .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            break (headers, body);
+        }
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        answered += 1;
+        assert!(answered <= 2 * limit, "the wallet's budget trips");
+    };
+    assert!(answered >= limit, "{answered}");
+    assert_eq!(headers[axum::http::header::RETRY_AFTER], "1");
+    assert_eq!(
+        body,
+        json!({ "error": "Too many requests. Slow down and try again shortly.", "retryAfterSeconds": 1 })
+    );
+    let other = scratch_wallet();
+    let (status, _) = call(&app, &other, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "another wallet's own budget");
+}
+
+/// The cancel landing sends the buyer back to the surface that opened the
+/// checkout, with `order=<id>&canceled=1` (the query the apps read), as
+/// credits-server does: a builder order to the builder's cancel page, any
+/// other or an unknown order to the Shop's.
+#[tokio::test]
+async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
+    let Some(pool) = pool().await else { return };
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        checkout_success_url: "https://shop/credits".into(),
+        checkout_cancel_url: "https://shop/credits".into(),
+        checkout_success_url_builder: Some("https://builder/ok".into()),
+        checkout_cancel_url_builder: Some("https://builder/no".into()),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (shop_order, _) = session_order_fixture(&state, &addr).await;
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let builder_order = unique("ord");
+    state
+        .credits
+        .insert_pending_order(
+            &builder_order,
+            &addr,
+            &pack.order(1).unwrap().from_source(Some("builder")),
+            &unique("cs"),
+        )
+        .await
+        .unwrap();
+    let landing = |order: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/credits/credits/orders/{order}/cancel-return"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(resp.status().is_redirection(), "{}", resp.status());
+            resp.headers()[axum::http::header::LOCATION]
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(
+        landing(builder_order.clone()).await,
+        format!("https://builder/no?order={builder_order}&canceled=1")
+    );
+    assert_eq!(
+        landing(shop_order.clone()).await,
+        format!("https://shop/credits?order={shop_order}&canceled=1")
+    );
+    assert_eq!(
+        landing("ord_unknown".into()).await,
+        "https://shop/credits?order=ord_unknown&canceled=1"
+    );
+}
+
+/// The next `data:` event of a server-sent event body, skipping comments
+/// (the heartbeat); `None` after `wait`.
+async fn next_sse_event(
+    body: &mut (impl futures::Stream<Item = Result<axum::body::Bytes, axum::Error>> + Unpin),
+    buffer: &mut String,
+    wait: std::time::Duration,
+) -> Option<Value> {
+    use futures::StreamExt;
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if let Some(end) = buffer.find("\n\n") {
+            let block: String = buffer.drain(..end + 2).collect();
+            let data: String = block
+                .lines()
+                .filter_map(|line| line.strip_prefix("data:"))
+                .map(str::trim_start)
+                .collect();
+            if data.is_empty() {
+                continue;
+            }
+            return Some(serde_json::from_str(&data).unwrap());
+        }
+        let chunk = tokio::time::timeout_at(deadline, body.next())
+            .await
+            .ok()??;
+        buffer.push_str(std::str::from_utf8(&chunk.unwrap()).unwrap());
+    }
+}
+
+/// The balance stream answers its signer alone, with credits-server's
+/// refusals; it sends what `GET /users/{address}/credits` answers at once,
+/// then again when the wallet's row changes in the database, whoever wrote
+/// it; another wallet's change sends nothing; a flag reaches the open stream
+/// and refuses a new one.
+#[tokio::test]
+async fn the_balance_stream_follows_the_signers_balance() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let other = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    seed_paid_credits(&pool, &other.address, "10").await;
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&other, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(
+        v,
+        json!({ "error": "Address does not match the signed fetch authentication" })
+    );
+    let malformed = "/credits/users/0x12/credits/stream";
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        malformed,
+        signed_headers(&wallet, "get", malformed).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "Invalid address" })
+        )
+    );
+    let (status, _, _) = send(&app, "GET", &path, HeaderMap::new(), None).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsigned: the ADR-44 refusal"
+    );
+
+    let mut request = Request::builder().uri(&path);
+    for (k, v) in signed_headers(&wallet, "get", &path).await.iter() {
+        request = request.header(k, v);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "text/event-stream"
+    );
+    assert_eq!(response.headers()["x-accel-buffering"], "no");
+    let mut body = response.into_body().into_data_stream();
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(10);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the balance at once");
+    let (_, read) = call(
+        &app,
+        &wallet,
+        "get",
+        &format!("/credits/users/{}/credits", wallet.address),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(first, read, "what GET /users/{{address}}/credits answers");
+
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let changed = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the changed balance");
+    assert_eq!(
+        changed["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        50,
+        "{changed}"
+    );
+
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&other.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        next_sse_event(
+            &mut body,
+            &mut buffer,
+            std::time::Duration::from_millis(800)
+        )
+        .await,
+        None,
+        "another wallet's change sends nothing"
+    );
+
+    sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let flagged = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the flag reaches the open stream");
+    assert_eq!(flagged["isBlockedForClaiming"], true, "{flagged}");
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&wallet, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    assert_eq!(
+        (v["ok"].clone(), v["isBlockedForClaiming"].clone()),
+        (json!(false), json!(true))
+    );
+
+    sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &wallet.address).await;
+    cleanup(&pool, &other.address).await;
+}
+
+/// The database announces a wallet's address on `credits_balance` when its
+/// wallet row, the status of one of its credits or its flag changes; another
+/// change to a credit announces nothing.
+#[tokio::test]
+async fn a_balance_change_is_announced_on_its_channel() {
+    let Some(db) = OwnDatabase::create("balance_channel").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
+        .await
+        .unwrap();
+    listener.listen(super::stream::CHANNEL).await.unwrap();
+    let wallet = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let mut heard = async |what: &str| -> Option<String> {
+        loop {
+            let n = tokio::time::timeout(std::time::Duration::from_secs(3), listener.recv())
+                .await
+                .ok()?
+                .unwrap();
+            // Other tests write wallets too: only this wallet's counts.
+            if n.payload() == wallet {
+                return Some(what.to_string());
+            }
+        }
+    };
+
+    seed_paid_credits(&pool, &wallet, "10").await;
+    assert_eq!(
+        heard("insert").await.as_deref(),
+        Some("insert"),
+        "a new wallet row"
+    );
+    sqlx::query("UPDATE credits.wallets SET available = available + 1 WHERE address = $1")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("update").await.as_deref(),
+        Some("update"),
+        "a balance change"
+    );
+    authorization_fixture(&pool, &salt, &wallet, 500, "authorized", 0, 0).await;
+    assert_eq!(
+        heard("pledge").await.as_deref(),
+        Some("pledge"),
+        "a new pledge"
+    );
+    sqlx::query("UPDATE credits.authorizations SET status = 'retired' WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("status").await.as_deref(),
+        Some("status"),
+        "a pledge's status"
+    );
+    sqlx::query("UPDATE credits.authorizations SET submitted_tx_hash = $2 WHERE id = $1")
+        .bind(&salt)
+        .bind(format!("0x{}", "ab".repeat(32)))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(heard("other").await, None, "another column of a credit");
+    sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(heard("flag").await.as_deref(), Some("flag"), "a flag");
+    // A re-flag is the admin's upsert: an UPDATE, not an INSERT.
+    sqlx::query(
+        "INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'other') \
+         ON CONFLICT (address) DO UPDATE SET source = EXCLUDED.source",
+    )
+    .bind(&wallet)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("reflag").await.as_deref(),
+        Some("reflag"),
+        "a re-flag"
+    );
+    sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+        .bind(&wallet)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        heard("unflag").await.as_deref(),
+        Some("unflag"),
+        "an unflag"
+    );
+    let (goal_salt, goal_hash, goal_contract) = goal_credit_fixture(&pool, &wallet).await;
+    assert_eq!(
+        heard("granted").await.as_deref(),
+        Some("granted"),
+        "a goal credit granted"
+    );
+    sqlx::query(
+        "UPDATE credits.goal_grants SET claimed_at = timezone('UTC', now()) WHERE salt = $1",
+    )
+    .bind(&goal_salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("claimed").await.as_deref(),
+        Some("claimed"),
+        "a goal credit claimed"
+    );
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) \
+         VALUES (137, 1, 0, $1, $2, $3, $4, $5, 1, 0, 1)",
+    )
+    .bind(&goal_contract)
+    .bind(format!("0x{}", "cd".repeat(32)))
+    .bind(&wallet)
+    .bind(&goal_hash)
+    .bind(&goal_salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("used").await.as_deref(),
+        Some("used"),
+        "its use on chain, by sender"
+    );
+    sqlx::query("DELETE FROM credits.authorizations WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The listener holds one of the pool's connections, which closing the pool waits for.
+    drop(heard);
+    drop(listener);
+    db.drop().await;
+}
+
+/// A signed request to open `wallet`'s balance stream on `app`: the data
+/// stream of its body.
+async fn open_balance_stream(
+    app: &Router,
+    wallet: &Wallet,
+) -> (StatusCode, axum::body::BodyDataStream) {
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+    let mut request = Request::builder().uri(&path);
+    for (k, v) in signed_headers(wallet, "get", &path).await.iter() {
+        request = request.header(k, v);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    (response.status(), response.into_body().into_data_stream())
+}
+
+/// A state over `pool` whose balance streams read again every 200 ms.
+fn fast_refresh_state(pool: PgPool) -> SharedState {
+    let mut state = test_state(pool, StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_refresh(std::time::Duration::from_millis(200));
+    state
+}
+
+/// Season 1's photo goal completed by `wallet` (which must hold a wallet row)
+/// and its goal credit of 10 MANA, unclaimed, expiring in eight seconds:
+/// `(salt, credit hash, contract)`.
+async fn goal_credit_fixture(pool: &PgPool, wallet: &str) -> (String, String, String) {
+    sqlx::raw_sql(
+        "INSERT INTO credits.seasons (id, name, start_date, end_date, max_mana_wei) \
+             VALUES (1, 'Test', timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '21 days', 1000000000000000000000000); \
+         INSERT INTO credits.season_goals (season_id, goal_id, title, thumbnail, total_steps, reward_wei, start_week, end_week) \
+             VALUES (1, 'take-photo', 'Take a photo', 'photo.png', 1, 10000000000000000000, 1, 20);",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO credits.goal_progress (address, season_id, week_id, goal_id, title, thumbnail, total_steps, reward_wei, completed_steps, completed_at) \
+         VALUES ($1, 1, 1, 'take-photo', 'Take a photo', 'photo.png', 1, 10000000000000000000, 1, timezone('UTC', now()))",
+    )
+    .bind(wallet)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (salt, hash, contract) = (
+        format!("0x{}", super::handlers::random_32_hex()),
+        format!("0x{}", super::handlers::random_32_hex()),
+        scratch_wallet().address,
+    );
+    // Expires in a few seconds: long enough for the claim and the use below.
+    sqlx::query(
+        "INSERT INTO credits.goal_grants (address, season_id, week_id, goal_id, salt, chain_id, contract, credit_hash, amount_wei, signature, created_at, expires_at) \
+         VALUES ($1, 1, 1, 'take-photo', $2, 137, $3, $4, 10000000000000000000, 'sig', timezone('UTC', now()), timezone('UTC', now()) + interval '8 seconds')",
+    )
+    .bind(wallet)
+    .bind(&salt)
+    .bind(&contract)
+    .bind(&hash)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    (salt, hash, contract)
+}
+
+/// What reaches an open stream with no write to the wallet's row: a goal
+/// credit claimed, its use on chain, and its expiry, which only the clock
+/// changes.
+#[tokio::test]
+async fn the_balance_stream_follows_goal_credits_their_use_and_their_expiry() {
+    let Some(db) = OwnDatabase::create("stream_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let app = app(fast_refresh_state(pool.clone()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (salt, hash, contract) = goal_credit_fixture(&pool, &wallet.address).await;
+
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(10);
+    let first = next_sse_event(&mut body, &mut buffer, wait).await.unwrap();
+    assert_eq!(
+        first["totalCredits"].as_f64(),
+        Some(0.0),
+        "an unclaimed goal credit counts nothing: {first}"
+    );
+
+    sqlx::query(
+        "UPDATE credits.goal_grants SET claimed_at = timezone('UTC', now()) WHERE salt = $1",
+    )
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let claimed = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the claim");
+    assert_eq!(
+        claimed["totalCredits"].as_f64(),
+        Some(1e19),
+        "in wei: {claimed}"
+    );
+
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) \
+         VALUES (137, 1, 0, $1, $2, $3, $4, $5, 1, 0, 4000000000000000000)",
+    )
+    .bind(&contract)
+    .bind(format!("0x{}", "cd".repeat(32)))
+    .bind(&wallet.address)
+    .bind(&hash)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let used = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the use on chain");
+    assert_eq!(used["totalCredits"].as_f64(), Some(6e18), "{used}");
+
+    let expired = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(20))
+        .await
+        .expect("the expiry");
+    assert_eq!(expired["totalCredits"].as_f64(), Some(0.0), "{expired}");
+    db.drop().await;
+}
+
+/// The stream's listener holds its own connection: on a request pool of one
+/// connection, a balance read still answers while a stream is open and after
+/// it closes.
+#[tokio::test]
+async fn the_balance_streams_listener_leaves_the_request_pool_alone() {
+    let Some(scratch) = pool().await else { return };
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .connect_with((*scratch.connect_options()).clone())
+        .await
+        .unwrap();
+    let app = app(test_state(one.clone(), StateCfg::default()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&scratch, &wallet.address, "10").await;
+    let read = format!("/credits/users/{}/credits", wallet.address);
+
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .expect("the first balance");
+    // Long enough for the listener to have connected.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (status, v) = call(&app, &wallet, "get", &read, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read with the stream open: {v}");
+    drop(body);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let (status, v) = call(&app, &wallet, "get", &read, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read after it closed: {v}");
+    one.close().await;
+    cleanup(&scratch, &wallet.address).await;
+}
+
+/// A read that fails is retried: the stream sends the balance once the
+/// database answers again, with no further write to prompt it.
+#[tokio::test]
+async fn a_balance_stream_retries_a_failed_read() {
+    let Some(db) = OwnDatabase::create("stream_retry").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let app = app(fast_refresh_state(pool.clone()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let first = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
+    // Every read fails while the pledges' table is away.
+    sqlx::raw_sql("ALTER TABLE credits.authorizations RENAME TO authorizations_away")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        next_sse_event(
+            &mut body,
+            &mut buffer,
+            std::time::Duration::from_millis(700)
+        )
+        .await,
+        None,
+        "nothing to send while the read fails"
+    );
+    sqlx::raw_sql("ALTER TABLE credits.authorizations_away RENAME TO authorizations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recovered = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .expect("the retry sends the balance");
+    assert_eq!(
+        recovered["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        50
+    );
+    db.drop().await;
+}
+
+/// The operator bearer the studio tests send.
+fn admin_bearer() -> HeaderMap {
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    bearer
+}
+
+fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: daily_limit_cents,
+            ..StateCfg::default()
+        },
+    )
+}
+
+/// Creates a studio over the admin route and answers its id.
+async fn create_test_studio(app: &Router, name: &str) -> String {
+    let (status, _, v) = send(
+        app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    v["studio"]["id"].as_str().unwrap().to_string()
+}
+
+/// A studio's life over the operator routes, with credits-server's codes.
+#[tokio::test]
+async fn a_studio_is_created_listed_renamed_and_paused() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let name = unique("Studio");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        HeaderMap::new(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "no bearer and no admin wallet, no studio: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": format!("  {name}  ") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let studio = &v["studio"];
+    let id = studio["id"].as_str().unwrap().to_string();
+    assert_eq!(studio["name"], name.as_str(), "trimmed");
+    assert_eq!(studio["status"], "active");
+    assert_eq!(studio["createdBy"], "token:CATALYRST_CREDITS_ADMIN_TOKEN");
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["operatorCount"].as_i64()
+        ),
+        (Some(0), Some(0))
+    );
+    assert!(
+        studio["createdAt"].as_i64().unwrap() > 1_700_000_000_000,
+        "epoch milliseconds"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name.to_uppercase() })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_NAME_TAKEN")),
+        "a name differing only in case: {v}"
+    );
+    for (body, why) in [
+        (json!({ "name": "two\nlines" }), "a line break"),
+        (json!({ "name": "zero\u{200B}width" }), "a format character"),
+        (json!({}), "no name"),
+        (json!([name]), "not an object"),
+    ] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/studios",
+            admin_bearer(),
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            (status, v["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+            "{why}: {v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", "/credits/admin/studios", admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(
+        v["studios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str()),
+        "{v}"
+    );
+
+    let path = format!("/credits/admin/studios/{id}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        admin_bearer(),
+        Some(json!({ "status": "paused", "name": format!("{name} Two") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["studio"]["status"].as_str(), v["studio"]["name"].as_str()),
+        (Some("paused"), Some(format!("{name} Two").as_str()))
+    );
+    for (body, message) in [
+        (json!({}), "Nothing to update"),
+        (
+            json!({ "status": "closed" }),
+            "\"status\" must be \"active\" or \"paused\"",
+        ),
+        (json!({ "name": null }), "\"name\" is required"),
+    ] {
+        let (status, _, v) = send(&app, "PATCH", &path, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str(), v["code"].as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                Some(message),
+                Some("INVALID_REQUEST")
+            ),
+            "{v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", &path, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["status"], "paused");
+    assert_eq!(v["page"], json!({ "limit": 50, "offset": 0, "total": 0 }));
+    assert_eq!(v["grantLimits"], json!({ "maxGrantCents": null }));
+
+    let unknown = format!("/credits/admin/studios/{}", uuid::Uuid::new_v4());
+    let (status, _, v) = send(&app, "GET", &unknown, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &unknown,
+        admin_bearer(),
+        Some(json!({ "status": "active" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        "/credits/admin/studios/not-a-uuid",
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid studio id")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actions, ["studio.create", "studio.update"]);
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// An operator is added once (in any case) and removed once; an unknown
+/// studio and an unknown operator are told apart.
+#[tokio::test]
+async fn a_studio_operator_is_added_once_and_removed_once() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let id = create_test_studio(&app, &unique("Operators")).await;
+    let wallet = scratch_wallet();
+    let operators = format!("/credits/admin/studios/{id}/operators");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address.to_uppercase().replace("0X", "0x") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "added": true })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["added"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "already an operator: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": "0x12" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("\"address\" must be a wallet address")
+        ),
+        "{v}"
+    );
+    let unknown = uuid::Uuid::new_v4();
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{unknown}/operators"),
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["operatorCount"], 1);
+    assert_eq!(v["operators"][0]["address"], wallet.address.as_str());
+    assert_eq!(
+        v["operators"][0]["addedBy"],
+        "token:CATALYRST_CREDITS_ADMIN_TOKEN"
+    );
+
+    let one = format!("{operators}/{}", wallet.address);
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "removed": true })
+    );
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("OPERATOR_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!(
+            "/credits/admin/studios/{unknown}/operators/{}",
+            wallet.address
+        ),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!("{operators}/nope"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid wallet address")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actions,
+        [
+            "studio.create",
+            "studio.operator.add",
+            "studio.operator.remove"
+        ],
+        "a no-op is not audited"
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A studio's budget: a deposit, its replay, the day's ceiling over every
+/// studio, an adjustment either way never below zero, and new budget refused
+/// while no ceiling is set. Its own database: the ceiling sums every studio.
+#[tokio::test]
+async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
+    let Some(db) = OwnDatabase::create("studio_budget").await else {
+        return;
+    };
+    clear_of_utc_midnight(&db.pool).await;
+    // $12.00 of new budget a day.
+    let unset = app(studio_state(db.pool.clone(), None));
+    let app = app(studio_state(db.pool.clone(), Some(1200)));
+    let id = create_test_studio(&app, "Acme").await;
+    let other = create_test_studio(&app, "Other").await;
+    let budget = format!("/credits/admin/studios/{id}/budget");
+    let change = |kind: &str, credits: i64, note: Option<&str>, key: &str| json!({ "kind": kind, "credits": credits, "note": note, "idempotencyKey": key });
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let first = v["entryId"].as_str().unwrap().to_string();
+    assert_eq!(
+        v,
+        json!({ "entryId": first, "studioId": id, "kind": "deposit", "usdCents": 1000, "balanceCents": 1000, "replayed": false })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["entryId"].as_str(), v["replayed"].as_bool()),
+        (StatusCode::OK, Some(first.as_str()), Some(true)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 101, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("IDEMPOTENCY_KEY_REUSED")),
+        "{v}"
+    );
+
+    // The ceiling counts every studio's new budget.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 30, None, "deposit-0002")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["code"], "DAILY_DEPOSIT_LIMIT_EXCEEDED");
+    assert_eq!(
+        v["error"],
+        "Daily studio deposit limit exceeded: $10.00 already added today, $3.00 requested, limit $12.00"
+    );
+
+    for (body, message) in [
+        (
+            change("deposit", -5, None, "deposit-0003"),
+            "A deposit must be positive; use an adjustment to take budget away",
+        ),
+        (
+            change("adjustment", -50, None, "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("adjustment", -50, Some("  "), "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("refund", 5, None, "refund-0001"),
+            "\"kind\" must be \"deposit\" or \"adjustment\"",
+        ),
+    ] {
+        let (status, _, v) = send(&app, "POST", &budget, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str()),
+            (StatusCode::BAD_REQUEST, Some(message)),
+            "{v}"
+        );
+    }
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 5, None, "short")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+        "a short key: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -50, Some("overpaid"), "adjust-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(500)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -60, Some("too far"), "adjust-0002")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_BUDGET_EXCEEDED")),
+        "{v}"
+    );
+    // An upward adjustment is new budget: exactly up to the ceiling.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", 20, Some("bonus"), "adjust-0003")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0004")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the day is spent: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}?limit=2"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["page"], json!({ "limit": 2, "offset": 0, "total": 3 }));
+    let entries = v["entries"].as_array().unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|e| (e["kind"].as_str().unwrap(), e["usdCents"].as_i64().unwrap()))
+            .collect::<Vec<_>>(),
+        [("adjustment", 200), ("adjustment", -500)],
+        "newest first"
+    );
+    assert_eq!(entries[1]["note"], "overpaid");
+    assert_eq!(
+        (
+            entries[0]["creditId"].clone(),
+            entries[0]["recipient"].clone()
+        ),
+        (Value::Null, Value::Null)
+    );
+    let studio = &v["studio"];
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["depositedCents"].as_i64(),
+            studio["grantedCents"].as_i64(),
+            studio["grantCount"].as_i64()
+        ),
+        (Some(700), Some(1000), Some(0), Some(0))
+    );
+
+    // Without a ceiling new budget is refused; a replay and a reduction are not.
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0005")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("DEPOSITS_NOT_CONFIGURED")
+        ),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool(), v["balanceCents"].as_i64()),
+        (StatusCode::OK, Some(true), Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -10, Some("fee"), "adjust-0004")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(600)),
+        "{v}"
+    );
+
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'studio.budget' AND target = $1")
+        .bind(&id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        audited, 4,
+        "one row per written entry, none for a replay or a refusal"
+    );
+    db.drop().await;
+}
+
+/// Waits out the database clock's last two minutes of a UTC day, so a test
+/// of the day's deposit ceiling runs within one day.
+async fn clear_of_utc_midnight(pool: &PgPool) {
+    let left: f64 = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM date_trunc('day', timezone('UTC', clock_timestamp())) \
+             + interval '1 day' - timezone('UTC', clock_timestamp()))::float8",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if left < 120.0 {
+        tokio::time::sleep(std::time::Duration::from_secs_f64(left + 1.0)).await;
+    }
+}
+
+/// Two deposits that each fit the day's ceiling but not together: the
+/// deposits lock lets exactly one through, across studios, round after round,
+/// even with every connection defaulting to REPEATABLE READ (the budget
+/// transaction pins its own level; inherited, a waiter's snapshot would
+/// predate the deposit it waited for).
+#[tokio::test]
+async fn concurrent_studio_deposits_never_pass_the_days_ceiling_together() {
+    let Some(db) = OwnDatabase::create("studio_ceiling").await else {
+        return;
+    };
+    clear_of_utc_midnight(&db.pool).await;
+    sqlx::raw_sql(
+        "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation = %L', \
+         current_database(), 'repeatable read'); END $$",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let level: String = sqlx::query_scalar("SHOW transaction_isolation")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, "repeatable read");
+    let setup = app(studio_state(pool.clone(), Some(1_000_000)));
+    let a = create_test_studio(&setup, "A").await;
+    let b = create_test_studio(&setup, "B").await;
+    for round in 0..5_i64 {
+        // Room for one more 600-cent deposit this round, not two.
+        let app = app(studio_state(pool.clone(), Some(600 * round + 1000)));
+        let deposit = |studio: &str, key: String| {
+            let app = app.clone();
+            let path = format!("/credits/admin/studios/{studio}/budget");
+            let body = json!({ "kind": "deposit", "credits": 60, "idempotencyKey": key });
+            async move { send(&app, "POST", &path, admin_bearer(), Some(body)).await }
+        };
+        let ((sa, _, va), (sb, _, vb)) = tokio::join!(
+            deposit(&a, format!("race-a-{round:04}")),
+            deposit(&b, format!("race-b-{round:04}"))
+        );
+        let mut statuses = [sa, sb];
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            [StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS],
+            "round {round}: {va} {vb}"
+        );
+    }
+    let inflow: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(inflow, 5 * 600);
+    pool.close().await;
+    db.drop().await;
+}
+
+/// A studio's page reads one snapshot: while deposits commit, its balance,
+/// its entries and their total always agree.
+#[tokio::test]
+async fn a_studio_page_agrees_with_itself_while_deposits_commit() {
+    let Some(db) = OwnDatabase::create("studio_page").await else {
+        return;
+    };
+    let state = studio_state(db.pool.clone(), Some(1_000_000));
+    let id = create_test_studio(&app(state.clone()), "Page").await;
+    let writer = {
+        let state = state.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            for n in 0..40 {
+                state
+                    .credits
+                    .record_studio_budget_change(super::studios::BudgetChangeRequest {
+                        studio_id: &id,
+                        kind: "deposit",
+                        usd_cents: 10,
+                        note: None,
+                        idempotency_key: &format!("page-{n:04}"),
+                        daily_deposit_limit_cents: Some(1_000_000),
+                        actor: "token:test",
+                    })
+                    .await
+                    .unwrap();
+            }
+        })
+    };
+    let mut reads = 0;
+    while reads == 0 || !writer.is_finished() {
+        let page = state
+            .credits
+            .studio_detail(&id, 200, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        let sum: i64 = page.entries.iter().map(|e| e.usd_cents).sum();
+        assert_eq!(
+            (
+                page.studio.balance_cents,
+                page.studio.deposited_cents,
+                page.total
+            ),
+            (sum, sum, page.entries.len() as i64),
+            "read {reads}"
+        );
+        reads += 1;
+    }
+    writer.await.unwrap();
+    let page = state
+        .credits
+        .studio_detail(&id, 200, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((page.studio.balance_cents, page.total), (400, 40));
+    db.drop().await;
+}
+
+/// The ops dashboard's wallets, as credits-server's read and read-write
+/// admins: a write admin's signed change names its address as the actor, and
+/// it reads too; a read admin reads but changes nothing; a signature binds
+/// its method; anyone else gets the gate's 401. The bearer keeps working.
+#[tokio::test]
+async fn studio_admins_sign_with_their_wallets() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let reader = scratch_wallet();
+    let stranger = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        read_admin_addresses: reader.address.clone(),
+        write_admin_addresses: format!(" {} ,", writer.address.to_uppercase().replace("0X", "0x")),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        "/credits/admin/studios",
+        &[],
+        Some(json!({ "name": unique("Signed") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        v["studio"]["createdBy"],
+        writer.address.as_str(),
+        "the signer is the actor"
+    );
+    let path = format!("/credits/admin/studios/{id}");
+
+    let (status, v) = call(&app, &reader, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read admin reads: {v}");
+    let (status, v) = call(
+        &canonical,
+        &writer,
+        "get",
+        &format!("/shop-api/admin/studios/{id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a write admin reads, on the canonical path too: {v}"
+    );
+    let (status, v) = call(
+        &app,
+        &reader,
+        "patch",
+        &path,
+        &[],
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a read admin changes nothing: {v}"
+    );
+    let (status, v) = call(&app, &stranger, "get", "/credits/admin/studios", &[], None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        signed_headers(&writer, "get", &path).await,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a signature binds its method: {v}"
+    );
+
+    let operator = scratch_wallet();
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        &format!("{path}/operators"),
+        &[],
+        Some(json!({ "address": operator.address })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        bearer,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the bearer still works: {v}");
+
+    let actors: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, actor FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actors,
+        [
+            ("studio.create".to_string(), writer.address.clone()),
+            ("studio.operator.add".to_string(), writer.address.clone()),
+            (
+                "studio.update".to_string(),
+                "token:CATALYRST_CREDITS_ADMIN_TOKEN".to_string()
+            ),
+        ]
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn a_bad_write_admin_address_fails_startup() {
+    let err = Settings::parse(RawSettings {
+        write_admin_addresses: "0x12".to_string(),
+        ..RawSettings::default()
+    })
+    .err()
+    .expect("refused");
+    assert!(
+        err.to_string().contains("CREDITS_WRITE_ADMIN_ADDRESSES"),
+        "{err}"
+    );
+}
+
+/// A shared cache within its acceptance TTL after a contract wallet's owner
+/// was removed: the cached answer still accepts; the contract itself (the
+/// fresh path) refuses.
+struct RevokedContract;
+
+/// The contract asked directly: it refuses.
+struct ContractRefuses;
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for RevokedContract {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(&ContractRefuses)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(true)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for ContractRefuses {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(self)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(false)
+    }
+}
+
+/// A contract wallet's chain for `method path`: SIGNER (the contract), its
+/// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
+/// signs.
+async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+    let ephemeral = PrivateKeySigner::random();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let expiration =
+        (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let links = [
+        json!({ "type": "SIGNER", "payload": contract, "signature": "" }),
+        json!({ "type": "ECDSA_EIP_1654_EPHEMERAL",
+            "payload": format!("Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}", ephemeral.address()),
+            "signature": format!("0x{}", "11".repeat(65)) }),
+        json!({ "type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": signature }),
+    ];
+    let mut headers = HeaderMap::new();
+    for (index, link) in links.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+            link.to_string().parse().unwrap(),
+        );
+    }
+    headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
+    headers.insert("x-identity-metadata", "{}".parse().unwrap());
+    headers
+}
+
+/// A studio change asks the contract itself, so a contract wallet whose owner
+/// was removed stops changing studios at once while a read keeps the cached
+/// answer. The proxy's `x-original-path` counts only when it is the route
+/// (the credits host signs credits-server's own path); a signature over
+/// another path that merely ends with it opens nothing, on either mount.
+#[tokio::test]
+async fn studio_admin_writes_ask_the_contract_and_bind_their_route() {
+    let Some(pool) = pool().await else { return };
+    let contract = format!("0x{:0>40}", "c0de5");
+    let wallet = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        write_admin_addresses: format!("{contract},{}", wallet.address),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        Some(Arc::new(RevokedContract)),
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+    let list = "/credits/admin/studios";
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        list,
+        contract_wallet_headers(&contract, "get", list).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        contract_wallet_headers(&contract, "post", list).await,
+        Some(json!({ "name": unique("Revoked") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a write asks the contract: {v}"
+    );
+
+    let mut proxied = signed_headers(&wallet, "post", "/admin/studios").await;
+    proxied.insert("x-original-path", "/admin/studios".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        proxied,
+        Some(json!({ "name": unique("Proxied") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the credits host's own path: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+
+    for (router, path) in [(&app, list), (&canonical, "/shop-api/admin/studios")] {
+        let mut foreign = signed_headers(&wallet, "post", "/elsewhere/admin/studios").await;
+        foreign.insert(
+            "x-original-path",
+            "/elsewhere/admin/studios".parse().unwrap(),
+        );
+        let (status, _, v) = send(
+            router,
+            "POST",
+            path,
+            foreign,
+            Some(json!({ "name": unique("Foreign") })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {v}");
+    }
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A wallet's studio write may commit to its body: the signed `bodySha256`
+/// must be the SHA-256 of the exact bytes sent, or the write is refused before
+/// anything is written. With `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` a write
+/// that signs no hash is refused too; off, it is accepted as credits-server
+/// accepted it. The bearer signs nothing and is unaffected.
+#[tokio::test]
+async fn a_wallet_studio_write_is_bound_to_its_body() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let state_requiring = |required: bool| -> SharedState {
+        let settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            usage_chain_id: super::usage::CHAIN_POLYGON,
+            checkout_fulfillment_mode: "secondary".into(),
+            marketplace_markup_bps: 0,
+            mana_price_max_staleness_secs: 3600,
+            admin_token: Some("s3cret".into()),
+            write_admin_addresses: writer.address.clone(),
+            admin_writes_require_bound_body: required,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        Arc::new(State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(FakeMarket::default()),
+            Arc::new(MockBroker::configured()),
+            None,
+        ))
+    };
+    let path = "/credits/admin/studios";
+    let sha = |body: &Value| {
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+            body.to_string().as_bytes(),
+        ))
+    };
+    let bound = |hash: String| -> &'static str {
+        Box::leak(json!({ "bodySha256": hash }).to_string().into_boxed_str())
+    };
+    let created = |v: &Value| v["studio"]["id"].as_str().map(str::to_string);
+    let mut ids = Vec::new();
+
+    for required in [true, false] {
+        let app = app(state_requiring(required));
+        let body = json!({ "name": unique("Bound") });
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&body))).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(body)).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "a body matching its signed hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let signed_for = json!({ "name": unique("Signed") });
+        let swapped_name = unique("Swapped");
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&signed_for))).await;
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            headers,
+            Some(json!({ "name": swapped_name })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "another body than the one signed (required: {required}): {v}"
+        );
+        let written: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+                .bind(&swapped_name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(written, 0, "refused before anything is written");
+
+        let unbound = json!({ "name": unique("Unbound") });
+        let headers = signed_headers(&writer, "post", path).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(unbound)).await;
+        let expected = if required {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(
+            status, expected,
+            "a write that signs no hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            admin_bearer(),
+            Some(json!({ "name": unique("Bearer") })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "the bearer signs nothing (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+    }
+    for id in ids {
+        sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// [`signed_headers_with`] over the legacy payload (everything folded to
+/// lowercase), signing `signed` and sending `sent` as the metadata: two
+/// spellings the legacy signature treats as the same.
+async fn legacy_signed_headers(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    signed: &str,
+    sent: &'static str,
+) -> HeaderMap {
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let payload =
+        crate::shared::signed_fetch::build_legacy_payload(method, path, &timestamp, signed);
+    let signature = w
+        .signer
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let chain = [
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: w.address.clone(),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature),
+        },
+    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTH_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&timestamp).unwrap(),
+    );
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(sent));
+    for (i, link) in chain.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                .unwrap(),
+            HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+        );
+    }
+    headers
+}
+
+/// A signed body hash holds in either signature format and in any casing of
+/// its key, while the unbound compatibility branch is on: a legacy signature
+/// over `bodySha256` sent as `BODYSHA256` with another body is refused, as is
+/// a metadata that spells the key twice, with nothing written; a DELETE's
+/// signed hash commits to the bytes it sends, so the operator stays.
+#[tokio::test]
+async fn a_studio_write_keeps_its_body_binding_in_every_spelling() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        write_admin_addresses: writer.address.clone(),
+        admin_writes_require_bound_body: false,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let app = app(Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    )));
+    let path = "/credits/admin/studios";
+    let sha = |bytes: &[u8]| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes));
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let written = async |name: &str| -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let signed_for = json!({ "name": unique("Signed") });
+    let hash = sha(signed_for.to_string().as_bytes());
+
+    // Legacy, the key recased in the header: another body is refused.
+    let swapped = unique("Swapped");
+    let signed = json!({ "bodySha256": hash }).to_string();
+    let sent = leak(json!({ "BODYSHA256": hash }).to_string());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a recased key still binds: {v}"
+    );
+    assert_eq!(written(&swapped).await, 0);
+    // Legacy, the key as signed: another body is refused, the signed one written.
+    let sent = leak(signed.clone());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(&app, "POST", path, headers, Some(signed_for.clone())).await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the signed body, legacy format: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    // Two spellings of the key: refused, whatever they hold.
+    let both = leak(json!({ "bodySha256": hash, "BodySha256": hash }).to_string());
+    let headers = signed_headers_with(&writer, "post", path, both).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "an ambiguous key: {v}");
+    assert_eq!(written(&swapped).await, 0);
+
+    // A DELETE signed for an empty body but sending one keeps its operator.
+    let operator = scratch_wallet().address;
+    let operators = format!("/credits/admin/studios/{id}/operators");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": operator })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let one = format!("{operators}/{operator}");
+    let empty = leak(json!({ "bodySha256": sha(b"") }).to_string());
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &one,
+        headers,
+        Some(json!({ "anything": 1 })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the bytes sent are what the hash binds: {v}"
+    );
+    let still: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.studio_operators WHERE studio_id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(still, 1, "the operator stays");
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(&app, "DELETE", &one, headers, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an empty DELETE matching its hash: {v}"
+    );
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A paid pack is reported once, after the webhook's commit, with what the
+/// buyer paid and got (`stripe_credit_granted`, credits-server's payload): a
+/// mismatched charge, a redelivery and the purchase's other settled event
+/// report nothing.
+#[tokio::test]
+async fn a_granted_pack_is_reported_once() {
+    let Some(pool) = pool().await else { return };
+    let mut captured = super::events::capture::events();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            revenue_events: Some(captured.events.clone()),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let pack = PackRow {
+        sku: "events-pack".into(),
+        title: "Events".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let (order_id, session, payment_intent) = (unique("ord"), unique("cs"), unique("pi"));
+    state
+        .credits
+        .insert_pending_order(
+            &order_id,
+            &wallet.address,
+            &pack.order(3).unwrap(),
+            &session,
+        )
+        .await
+        .unwrap();
+    let session_event = |id: &str, amount: i64| {
+        json!({ "id": id, "type": "checkout.session.completed", "data": { "object": {
+            "id": session, "payment_status": "paid", "amount_total": amount, "currency": "usd",
+            "payment_intent": payment_intent, "metadata": { "orderId": order_id } } } })
+        .to_string()
+    };
+    let quiet = std::time::Duration::from_millis(400);
+
+    deliver(&app, &session_event(&unique("evt"), 500)).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "a mismatched charge grants and reports nothing"
+    );
+
+    let paid = session_event(&unique("evt"), 1500);
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "processed");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the grant is reported");
+    assert_eq!(posted["event"], "stripe_credit_granted");
+    let mut body = posted["body"].clone();
+    body.as_object_mut().unwrap().remove("env");
+    assert_eq!(
+        body,
+        json!({ "orderId": order_id, "userAddress": wallet.address, "amount": 150, "chargedCents": 1500,
+                "packId": "events-pack", "quantity": 3, "usdTopUpId": null })
+    );
+
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "already processed");
+    let intent =
+        json!({ "id": unique("evt"), "type": "payment_intent.succeeded", "data": { "object": {
+        "id": payment_intent, "amount": 1500, "currency": "usd" } } })
+        .to_string();
+    deliver(&app, &intent).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "the purchase is reported once"
+    );
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// A credit's first settlement is reported once, after its commit
+/// (`usd_purchase_settled`, credits-server's payload): the charge, the MANA
+/// that moved, the transaction and whether the backstop recovered a
+/// released credit. A later use of the same credit reports nothing.
+#[tokio::test]
+async fn a_settled_purchase_is_reported_once() {
+    let Some(db) = OwnDatabase::create("settled_once").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet();
+    seed_paid_credits(&pool, &buyer.address, "100").await;
+    let contract = scratch_wallet().address;
+    let (live, released) = (
+        format!("0x{}", super::handlers::random_32_hex()),
+        format!("0x{}", super::handlers::random_32_hex()),
+    );
+    authorization_fixture(&pool, &live, &buyer.address, 700, "authorized", 0, 0).await;
+    authorization_fixture(&pool, &released, &buyer.address, 200, "released", 0, 0).await;
+    let tx_hash = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, salt, wei) in [
+        (1_i64, &live, "1000000000000000000"),
+        (2, &released, "2000000000000000000"),
+        (3, &live, "5"),
+    ] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) \
+             VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&contract)
+        .bind(tx_hash(block as u8))
+        .bind(&buyer.address)
+        .bind(salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let diffs = super::settlement::settle(&credits, 137, &contract, -1, 10)
+        .await
+        .unwrap();
+    assert_eq!(diffs.iter().filter(|d| d.consumed).count(), 3, "{diffs:?}");
+
+    let mut reported = Vec::new();
+    while let Some(posted) = captured.next(std::time::Duration::from_secs(5)).await {
+        assert_eq!(posted["event"], "usd_purchase_settled");
+        let mut body = posted["body"].clone();
+        body.as_object_mut().unwrap().remove("env");
+        reported.push(body);
+        if reported.len() == 2 {
+            break;
+        }
+    }
+    reported.sort_by_key(|b| b["usdCents"].as_i64());
+    assert_eq!(
+        reported,
+        [
+            json!({ "salt": released, "userAddress": buyer.address, "usdCents": 200,
+                    "manaSettledWei": "2000000000000000000", "tradeId": null, "txHash": tx_hash(2), "recovered": true }),
+            json!({ "salt": live, "userAddress": buyer.address, "usdCents": 700,
+                    "manaSettledWei": "1000000000000000000", "tradeId": null, "txHash": tx_hash(1), "recovered": false }),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "a remainder is not a new purchase"
+    );
+    db.drop().await;
+}
+
+/// Each balance frame is one snapshot: while pledges are committed, the
+/// spendable balance and the hold always add up to the wallet's funds.
+#[tokio::test]
+async fn a_balance_frame_is_one_snapshot_while_pledges_commit() {
+    let Some(db) = OwnDatabase::create("stream_snapshot").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let state = test_state(pool.clone(), StateCfg::default());
+    let wallet = scratch_wallet().address;
+    seed_paid_credits(&pool, &wallet, "1000").await;
+    let writer = {
+        let pool = pool.clone();
+        let wallet = wallet.clone();
+        tokio::spawn(async move {
+            for _ in 0..60 {
+                let salt = format!("0x{}", super::handlers::random_32_hex());
+                authorization_fixture(&pool, &salt, &wallet, 10, "authorized", 0, 0).await;
+            }
+        })
+    };
+    let mut frames = 0;
+    while frames == 0 || !writer.is_finished() {
+        let body = super::handlers::users::user_credits_body(&state, &wallet, None)
+            .await
+            .unwrap();
+        let held = body.usd.held.as_ref().map_or(0, |h| h.cents);
+        assert_eq!(body.usd.balance_cents + held, 10_000, "frame {frames}");
+        frames += 1;
+    }
+    writer.await.unwrap();
+    db.drop().await;
+}
+
+/// A wallet holds at most its share of open streams: past it, 429 with
+/// `Retry-After`; a closed stream gives its slot back.
+#[tokio::test]
+async fn a_wallets_open_balance_streams_are_capped() {
+    let Some(pool) = pool().await else { return };
+    let mut state = test_state(pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_limits(super::stream::REFRESH, 1, 100);
+    let app = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, first) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+    let (status, headers, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&wallet, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(
+        v,
+        json!({ "error": "Too many open balance streams for this wallet" })
+    );
+    assert!(headers.get(header::RETRY_AFTER).is_some());
+    drop(first);
+    let (status, _) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK, "the closed stream's slot is free");
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// A new stream's first balance read waits for a read permit like every
+/// other, so a burst of (re)connections queues there, not in the pool.
+#[tokio::test]
+async fn an_opening_balance_stream_waits_for_a_read_permit() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let address = wallet.address.clone();
+    let held = state.balance_changes.hold_reads();
+    let opening = tokio::spawn(async move { open_balance_stream(&app, &wallet).await.0 });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !opening.is_finished(),
+        "it waits for a permit before its first read"
+    );
+    drop(held);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(10), opening)
+        .await
+        .expect("it opens once a permit is free")
+        .unwrap();
+    assert_eq!(status, StatusCode::OK);
+    cleanup(&pool, &address).await;
+}
+
+/// A TCP proxy to `target` that can stall the connections it holds: their
+/// sockets stay open and nothing passes either way, while connections opened
+/// afterwards pass, until [`StallProxy::resume`] lets them pass again or
+/// [`StallProxy::release`] closes them. It can also stall the next connection
+/// for good (until released) as soon as its client sends `LISTEN`, so the
+/// server's acknowledgement never arrives.
+struct StallProxy {
+    port: u16,
+    stall: Arc<tokio::sync::watch::Sender<u64>>,
+    resume: Arc<tokio::sync::watch::Sender<u64>>,
+    release: Arc<tokio::sync::watch::Sender<u64>>,
+    hold_next_listen: Arc<std::sync::atomic::AtomicBool>,
+    accepted: Arc<AtomicUsize>,
+    open: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+}
+
+/// One connection the proxy holds, counted while it lives.
+struct Held(Arc<AtomicUsize>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl StallProxy {
+    async fn start(target: String) -> Self {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let signal = || Arc::new(tokio::sync::watch::channel(0_u64).0);
+        let proxy = Self {
+            port,
+            stall: signal(),
+            resume: signal(),
+            release: signal(),
+            hold_next_listen: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            accepted: Arc::new(AtomicUsize::new(0)),
+            open: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+        };
+        let (stall, resume, release) = (
+            proxy.stall.clone(),
+            proxy.resume.clone(),
+            proxy.release.clone(),
+        );
+        let hold_next_listen = proxy.hold_next_listen.clone();
+        let (accepted, open, peak) = (
+            proxy.accepted.clone(),
+            proxy.open.clone(),
+            proxy.peak.clone(),
+        );
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                accepted.fetch_add(1, Ordering::SeqCst);
+                peak.fetch_max(open.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                let held = Held(open.clone());
+                let mut stalled = stall.subscribe();
+                let mut seen = *stalled.borrow_and_update();
+                let mut resumed = resume.subscribe();
+                resumed.borrow_and_update();
+                let mut released = release.subscribe();
+                released.borrow_and_update();
+                let hold_listen = hold_next_listen.swap(false, Ordering::SeqCst);
+                let target = target.clone();
+                tokio::spawn(async move {
+                    let _held = held;
+                    let Ok(mut server) = tokio::net::TcpStream::connect(target).await else {
+                        return;
+                    };
+                    let (mut from_client, mut to_client) = client.split();
+                    let (mut from_server, mut to_server) = server.split();
+                    let (mut up, mut down) = ([0_u8; 8192], [0_u8; 8192]);
+                    loop {
+                        let stall_now = async {
+                            loop {
+                                if *stalled.borrow_and_update() > seen {
+                                    return;
+                                }
+                                if stalled.changed().await.is_err() {
+                                    std::future::pending::<()>().await;
+                                }
+                            }
+                        };
+                        tokio::select! {
+                            read = from_client.read(&mut up) => {
+                                let n = match read { Ok(0) | Err(_) => return, Ok(n) => n };
+                                if hold_listen && up[..n].windows(6).any(|w| w == b"LISTEN") {
+                                    let _ = released.changed().await;
+                                    return;
+                                }
+                                if to_server.write_all(&up[..n]).await.is_err() {
+                                    return;
+                                }
+                            }
+                            read = from_server.read(&mut down) => {
+                                let n = match read { Ok(0) | Err(_) => return, Ok(n) => n };
+                                if to_client.write_all(&down[..n]).await.is_err() {
+                                    return;
+                                }
+                            }
+                            () = stall_now => {
+                                // Open and silent: a half-open connection.
+                                tokio::select! {
+                                    _ = released.changed() => return,
+                                    _ = resumed.changed() => {}
+                                }
+                                // Stalls sent while it was stalled are over.
+                                seen = *stalled.borrow_and_update();
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        proxy
+    }
+
+    /// Stalls every connection open now.
+    fn stall(&self) {
+        self.stall.send_modify(|generation| *generation += 1);
+    }
+
+    /// Lets every stalled connection pass again.
+    fn resume(&self) {
+        self.resume.send_modify(|generation| *generation += 1);
+    }
+
+    /// Closes every stalled connection.
+    fn release(&self) {
+        self.release.send_modify(|generation| *generation += 1);
+    }
+
+    /// Stalls the next connection when its client sends `LISTEN`.
+    fn hold_next_listen(&self) {
+        self.hold_next_listen.store(true, Ordering::SeqCst);
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn open(&self) -> usize {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    fn peak(&self) -> usize {
+        self.peak.load(Ordering::SeqCst)
+    }
+}
+
+/// A state whose balance listener connects through `proxy`, pings after
+/// 300ms and gives up a registration after 2s, and whose streams refresh only
+/// hourly: a change reaches an open
+/// stream only by notification.
+fn stalling_state(pool: &PgPool, proxy: &StallProxy) -> SharedState {
+    let options = (*pool.connect_options()).clone();
+    let mut state = test_state(pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_limits(std::time::Duration::from_secs(3600), 8, 100)
+            .listening_at(
+                options.host("127.0.0.1").port(proxy.port),
+                std::time::Duration::from_millis(300),
+                std::time::Duration::from_secs(2),
+            );
+    state
+}
+
+/// The listener's connection goes half-open (nothing answers, nothing
+/// closes): its ping times out and it listens again on a new connection,
+/// though the old one never returns, and a change reaches the open stream
+/// again (the refresh is an hour away, so only a notification delivers it).
+#[tokio::test]
+async fn the_balance_listener_recovers_from_a_stalled_connection() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    let app = app(stalling_state(&pool, &proxy));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    let add = async |credits: &str| {
+        sqlx::query(
+            "UPDATE credits.wallets SET available = available + $2::numeric WHERE address = $1",
+        )
+        .bind(&wallet.address)
+        .bind(credits)
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    // Once listening, a change arrives by notification.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add("1").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard while connected");
+    proxy.stall();
+    // The ping times out after the idle wait; the listener reconnects on a new
+    // connection (about a second of backoff).
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    add("2").await;
+    let again = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard again after the stalled connection");
+    assert_eq!(
+        again["usd"]["balanceCents"].as_i64().unwrap()
+            - heard["usd"]["balanceCents"].as_i64().unwrap(),
+        20
+    );
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// Adds `credits` to a wallet's available balance with a direct write.
+async fn add_available(pool: &PgPool, address: &str, credits: &str) {
+    sqlx::query(
+        "UPDATE credits.wallets SET available = available + $2::numeric WHERE address = $1",
+    )
+    .bind(address)
+    .bind(credits)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Waits up to 15 seconds for `holds`.
+async fn eventually(what: &str, holds: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !holds() {
+        assert!(tokio::time::Instant::now() < deadline, "never: {what}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Stall after stall, the listener replaces its connection only while fewer
+/// than its cap are open: the stalled ones it gave up never pile up, and at
+/// the cap it makes no attempt. Once they answer again, their cleanup ends
+/// and they close (none is kept idle to fill the cap); the listener listens
+/// again, and a change reaches the open stream by notification (the refresh
+/// is an hour away).
+#[tokio::test]
+async fn the_balance_listener_caps_its_stalled_connections() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    let app = app(stalling_state(&pool, &proxy));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    let cap = super::stream::MAX_LISTENER_CONNECTIONS;
+    for _ in 0..cap + 2 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        proxy.stall();
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+    assert_eq!(proxy.peak(), cap, "the stalled connections never pile up");
+    assert_eq!(proxy.open(), cap);
+    let accepted = proxy.accepted();
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert_eq!(proxy.accepted(), accepted, "no attempt at the cap");
+
+    proxy.resume();
+    eventually("a connection once the stalled ones close", || {
+        proxy.accepted() > accepted
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add_available(&pool, &wallet.address, "2").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard once listening again");
+    assert_eq!(
+        heard["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        20
+    );
+    assert_eq!(proxy.open(), 1, "only the live connection is open");
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// The listener's first connection never sees its `LISTEN` acknowledged: the
+/// registration's deadline gives it up, the next connection listens, and a
+/// change reaches the open stream by notification.
+#[tokio::test]
+async fn the_balance_listener_gives_up_an_unanswered_listen() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    proxy.hold_next_listen();
+    let app = app(stalling_state(&pool, &proxy));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    eventually("a second connection after the unanswered LISTEN", || {
+        proxy.accepted() >= 2
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add_available(&pool, &wallet.address, "1").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard on the second connection");
+    assert_eq!(
+        heard["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        10
+    );
+    proxy.release();
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// A real grouped reservation (its first line's trade copied onto the
+/// credit) settles as one event per line, as credits-server reported one per
+/// intent: each line's cents, its own trade and its share of the MANA.
+#[tokio::test]
+async fn a_grouped_purchase_is_reported_per_line() {
+    let Some(db) = OwnDatabase::create("grouped_settled").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let line = |cents: i64, trade: &str, item: &str| super::authorize::GroupLine {
+        quoted_cents: cents,
+        charged_cents: cents,
+        sale_kind: "primary_mint",
+        asset_kind: "wearable",
+        asset_chain_id: 137,
+        asset_contract: "0x00000000000000000000000000000000000c0de1".into(),
+        asset_item_id: Some(item.into()),
+        asset_token_id: None,
+        trade_id: Some(trade.into()),
+        contract_address: None,
+        item_id: None,
+        registered_name: None,
+    };
+    let lines = [line(300, "trade-a", "1"), line(200, "trade-b", "2")];
+    let reserved = credits
+        .reserve_credit_group(
+            &super::authorize::NewGroup {
+                id: &salt,
+                address: &buyer,
+                chain_id: 137,
+                contract: &manager,
+                credit_hash: &salt,
+                quoted_cents: 500,
+                charged_cents: 500,
+                amount_wei: "1",
+                oracle_rate: "1",
+                oracle_decimals: 8,
+                source: None,
+                expires_at: future(),
+                lines: &lines,
+            },
+            &unique("authz-group"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(reserved.is_ok(), "{reserved:?}");
+    let parent: Option<String> =
+        sqlx::query_scalar("SELECT trade_id FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some("trade-a"),
+        "the reservation copies the first line's trade"
+    );
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 1001)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "ee".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::settlement::settle(&credits, 137, &manager, -1, 10)
+        .await
+        .unwrap();
+
+    let mut reported = Vec::new();
+    while reported.len() < 2 {
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("one event per line");
+        reported.push((
+            posted["body"]["usdCents"].as_i64().unwrap(),
+            posted["body"]["tradeId"].as_str().unwrap().to_string(),
+            posted["body"]["manaSettledWei"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            posted["body"]["salt"].as_str().unwrap().to_string(),
+        ));
+    }
+    reported.sort();
+    assert_eq!(
+        reported,
+        [
+            (200, "trade-b".to_string(), "400".to_string(), salt.clone()),
+            (300, "trade-a".to_string(), "601".to_string(), salt.clone()),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None
+    );
+    db.drop().await;
+}
+
+/// Waits until `waiting` sessions of the current database wait on a lock.
+async fn until_lock_waiters(pool: &PgPool, waiting: i64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let now: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if now >= waiting {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{waiting} sessions wait for the lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Two passes settling different logs of one credit at once (the operator's
+/// full fold and the index's), in both orders: each waits for the credit's
+/// lock in turn (Postgres grants a row lock in the order it was asked for),
+/// and reads what the one before it committed. Block 1 first: block 1 is the
+/// purchase and block 2, counting it, a remainder. Block 2 first: block 2 is
+/// deferred behind block 1, which is the purchase; a pass over both then
+/// settles block 2 as a remainder. One purchase debit and one event, with
+/// block 1's transaction, either way.
+#[tokio::test]
+async fn overlapping_folds_settle_one_purchase_per_credit() {
+    let Some(db) = OwnDatabase::create("settle_overlap").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let tx = |block: i64| format!("0x{}", format!("{block:02x}").repeat(32));
+    for (round, first) in [(0_i64, 1_i64), (1, 2)] {
+        let buyer = scratch_wallet().address;
+        seed_paid_credits(&pool, &buyer, "100").await;
+        let manager = scratch_wallet().address;
+        let salt = format!("0x{}", super::handlers::random_32_hex());
+        authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+        for block in [1_i64, 2] {
+            sqlx::query(
+                "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                     credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, 5)",
+            )
+            .bind(10 * round + block)
+            .bind(&manager)
+            .bind(tx(10 * round + block))
+            .bind(&buyer)
+            .bind(&salt)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // The window of one block of this round.
+        let pass = |block: i64| {
+            let credits = credits.clone();
+            let manager = manager.clone();
+            let at = 10 * round + block;
+            tokio::spawn(async move {
+                super::settlement::settle(&credits, 137, &manager, at - 1, at).await
+            })
+        };
+        let mut holder = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM credits.authorizations WHERE id = $1 FOR UPDATE")
+            .bind(&salt)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let earlier = pass(first);
+        until_lock_waiters(&pool, 1).await;
+        let later = pass(3 - first);
+        until_lock_waiters(&pool, 2).await;
+        holder.commit().await.unwrap();
+        earlier.await.unwrap().unwrap();
+        later.await.unwrap().unwrap();
+        super::settlement::settle(&credits, 137, &manager, 10 * round, 10 * round + 2)
+            .await
+            .unwrap();
+
+        let settled: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT block_number - $2, kind FROM credits.usage_settlements WHERE authorization_id = $1 ORDER BY block_number",
+        )
+        .bind(&salt)
+        .bind(10 * round)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            settled,
+            [(1, "purchase".to_string()), (2, "remainder".to_string())],
+            "block {first} first: the first use is the purchase"
+        );
+        assert_eq!(
+            available(&pool, &buyer).await,
+            "30",
+            "one purchase debit of 70 credits"
+        );
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("the purchase");
+        assert_eq!(posted["body"]["salt"], salt.as_str());
+        assert_eq!(
+            posted["body"]["txHash"],
+            tx(10 * round + 1),
+            "the first use's transaction"
+        );
+        assert_eq!(
+            captured.next(std::time::Duration::from_millis(300)).await,
+            None,
+            "reported once"
+        );
+    }
+    db.drop().await;
+}
+
+/// A credit's purchase is its first use, whichever pass reaches a later one
+/// first: a pass over the later log alone leaves it for later, and the pass
+/// over both settles the first as the purchase (its transaction and MANA in
+/// the event) and the second as a remainder priced at the credit's rate.
+#[tokio::test]
+async fn a_later_use_never_settles_as_the_purchase() {
+    let Some(db) = OwnDatabase::create("settle_order").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    // 0.30 USD per MANA.
+    sqlx::query("UPDATE credits.authorizations SET oracle_rate = 300000000000000000, oracle_decimals = 18 WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let tx = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, wei) in [(1_i64, "1000000000000000000"), (2, "3000000000000000000")] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&manager)
+        .bind(tx(block as u8))
+        .bind(&buyer)
+        .bind(&salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let later = super::settlement::settle(&credits, 137, &manager, 1, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        later
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed))
+            .collect::<Vec<_>>(),
+        [("deferred", false)],
+        "the later log waits for the first"
+    );
+    assert_eq!(available(&pool, &buyer).await, "100", "nothing debited yet");
+
+    super::settlement::settle(&credits, 137, &manager, -1, 2)
+        .await
+        .unwrap();
+    let settled: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT block_number, kind, debited_credits::text FROM credits.usage_settlements \
+         WHERE authorization_id = $1 ORDER BY block_number",
+    )
+    .bind(&salt)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        settled,
+        [
+            (1, "purchase".to_string(), "70".to_string()),
+            (2, "remainder".to_string(), "9".to_string())
+        ],
+        "the purchase's 700 cents, then 3 MANA at 0.30 USD"
+    );
+    assert_eq!(available(&pool, &buyer).await, "21");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the purchase");
+    assert_eq!(posted["body"]["txHash"], tx(1));
+    assert_eq!(posted["body"]["manaSettledWei"], "1000000000000000000");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "the remainder is not a purchase"
+    );
+    db.drop().await;
+}
+
+/// A purchase whose debit the ledger already holds (one recorded, and
+/// reported, before this node kept settlement rows) settles without debiting
+/// or reporting it again.
+#[tokio::test]
+async fn a_purchase_the_ledger_already_holds_is_not_reported_again() {
+    let Some(db) = OwnDatabase::create("settle_replayed").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    // Debited under the settlement's own key before the credit's settlement row.
+    let key = format!("credit-used:{salt}");
+    credits.spend(&buyer, "70", &key, Some(&key)).await.unwrap();
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 5)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "01".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let diffs = super::settlement::settle(&credits, 137, &manager, -1, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        diffs
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed, d.replayed))
+            .collect::<Vec<_>>(),
+        [("purchase", true, true)]
+    );
+    assert_eq!(available(&pool, &buyer).await, "30", "debited once");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "already reported with the purchase"
+    );
+    db.drop().await;
 }

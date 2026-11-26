@@ -46,8 +46,8 @@ use super::deploy::{
 use super::metrics as worlds_metrics;
 use super::store::{PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
 use super::upload_limits;
-use super::upload_spool::SpooledFile;
 use super::{CoreState, SharedState};
+use catalyst_storage::upload_spool::SpooledFile;
 
 pub const QUERY_WITHOUT_FIELD_MESSAGE: &str =
     "The 'partial=true' query parameter requires the 'partial=true' form field";
@@ -575,6 +575,7 @@ async fn stage_batch(
     response
 }
 
+#[allow(clippy::too_many_arguments, reason = "one caller")]
 async fn stage_batch_on(
     state: &SharedState,
     session: &mut SessionEntityGuard,
@@ -1111,6 +1112,7 @@ enum Reservation {
 
 /// Charges the batch's bytes against the per-minute rate, then its receipts against the
 /// scene cap and the account, world, source and node staging budgets, atomically.
+#[allow(clippy::too_many_arguments, reason = "each limit is a distinct budget")]
 async fn reserve(
     state: &CoreState,
     conn: &mut PgConnection,

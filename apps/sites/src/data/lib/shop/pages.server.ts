@@ -13,25 +13,32 @@ import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
 import { readUrlFilters } from "@ui/shop/discovery/hooks";
-import { shopFlags } from "@ui/shop/discovery/flags";
-import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
+import { REMOTE_FLAG, remoteFlagOn } from "@shop/discovery/lib/rolloutFlags";
 import { RAIL_KEYS, readDeals, readListings, readTrending } from "@ui/shop/discovery/pages/overviewRails";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { catalystUrl, processEnv, publicPageUrl, type BaseEnv } from "../catalyst/bases";
-import { dappsFlagsAnswer, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
+import { dappsFlagsAnswer, hasCachedDappsFlags, type DappsFlags, type DappsFlagsAnswer, type DappsFlagVariants } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
-
-/** The creator-sales switch the reads map with: the page's, primed (primeRemoteFlags) before any answer is mapped. */
-const creatorSales = (): boolean => shopFlags().creatorSales;
 
 /** How long one server read may hold the document before the page falls back to its own fetch. */
 export const SHOP_SSR_READ_MS = 1_500;
 
-/** The server's unsigned client for CATALYST_URL. */
+let shared: { key: string; client: ShopClient } | null = null;
+
+function shopTarget(env: BaseEnv) {
+  const base = catalystUrl(undefined, env);
+  const mode = serverShopApiMode(env);
+  return { base, mode, key: JSON.stringify([base, mode]) };
+}
+
+/** The server's unsigned client for CATALYST_URL, rebuilt when the base or the mode changes. */
 export function serverShopClient(env: BaseEnv = processEnv(), fetchImpl?: typeof fetch): ShopClient {
-  return createShopClient(hostApiOptions({ base: catalystUrl(undefined, env), mode: serverShopApiMode(env), signer: null, fetchImpl }));
+  const { base, mode, key } = shopTarget(env);
+  if (fetchImpl) return createShopClient(hostApiOptions({ base, mode, signer: null, fetchImpl }));
+  if (!shared || shared.key !== key) shared = { key, client: createShopClient(hostApiOptions({ base, mode, signer: null })) };
+  return shared.client;
 }
 
 export type ShopLoadInput = {
@@ -68,7 +75,7 @@ const SHARED_MAX = 256;
 type Shared = { at: number; read: Promise<{ value: unknown; at: number }>; reloading?: boolean; missed?: boolean };
 const sharedReads = new Map<string, Shared>();
 
-type ReadCtx = { request: Request; now: () => number; share: boolean };
+type ReadCtx = { request: Request; now: () => number; shareTarget: string | null; creatorSales: boolean };
 
 /** Newest last, so the oldest entry goes first when the map is full. */
 function remember(key: string, entry: Shared, trackMiss: boolean): void {
@@ -90,8 +97,9 @@ function remember(key: string, entry: Shared, trackMiss: boolean): void {
  * `missIsFinal` off, a null answer (the asset is not known) is not served past its share: an item or collection
  * indexed since then renders on the next document instead of a 404.
  */
-function publicRead<T>(ctx: ReadCtx, key: string, read: (signal: AbortSignal) => Promise<T>, staleMs = 0, missIsFinal = true): Promise<{ value: T; at: number }> {
-  if (!ctx.share) return read(deadline(ctx.request)).then((value) => ({ value, at: ctx.now() }));
+function publicRead<T>(ctx: ReadCtx, queryKey: string, read: (signal: AbortSignal) => Promise<T>, staleMs = 0, missIsFinal = true): Promise<{ value: T; at: number }> {
+  if (ctx.shareTarget === null) return read(deadline(ctx.request)).then((value) => ({ value, at: ctx.now() }));
+  const key = JSON.stringify([ctx.shareTarget, ctx.creatorSales, queryKey]);
   const at = ctx.now();
   const hit = sharedReads.get(key);
   if (hit && at - hit.at < SHOP_SSR_SHARE_MS) return hit.read as Promise<{ value: T; at: number }>;
@@ -132,7 +140,7 @@ const ADDRESS = /^0x[0-9a-f]{40}$/;
 const ITEM_ID = /^\d{1,78}$/;
 
 /** Shares only reads whose key parts are well formed, so made-up URLs cannot push real pages out of the share. */
-const sharedIf = (ctx: ReadCtx, wellFormed: boolean): ReadCtx => (wellFormed ? ctx : { ...ctx, share: false });
+const sharedIf = (ctx: ReadCtx, wellFormed: boolean): ReadCtx => (wellFormed ? ctx : { ...ctx, shareTarget: null });
 
 type Collected = { queries: PrimedQuery[]; seo: ShopSeo; status: number };
 
@@ -145,7 +153,7 @@ async function itemPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput[
   const seo = defaultShopSeo(token ? "tokenDetail" : "itemDetail", publicPageUrl(request, path, env));
   if (!ADDRESS.test(contract) || (token ? !tokenId : !itemId)) return { queries: [], seo, status: 404 };
 
-  const opts = { client, creatorSales };
+  const opts = { client, creatorSales: () => ctx.creatorSales };
   const itemCtx = sharedIf(ctx, ITEM_ID.test(itemId ?? ""));
   /**
    * One of the item's public facts, shared across documents under its page key; it keeps the time it was read. A
@@ -185,7 +193,15 @@ async function itemPage(ctx: ReadCtx, client: ShopClient, params: ShopLoadInput[
   const land = token && Object.values(LAND_NETWORKS).some((n) => n.land.toLowerCase() === contract || n.estate.toLowerCase() === contract);
   return {
     queries,
-    seo: { ...seo, title: name || seo.title, description, image: image || undefined, noindex: missing || land, canonical: land ? undefined : seo.canonical },
+    seo: {
+      ...seo,
+      title: name || seo.title,
+      description,
+      image: image || undefined,
+      ...(land ? { largeImage: true } : {}),
+      noindex: missing || land,
+      canonical: land ? undefined : seo.canonical,
+    },
     status: missing ? 404 : 200,
   };
 }
@@ -195,7 +211,7 @@ async function collectionPage(ctx: ReadCtx, client: ShopClient, params: ShopLoad
   const seo = defaultShopSeo("collection", publicPageUrl(ctx.request, `/shop/collection/${contract ?? ""}`, env));
   if (!contract) return { queries: [], seo, status: 404 };
   const key = ["collection-meta", contract];
-  const read = await settle(publicRead(sharedIf(ctx, ADDRESS.test(contract.toLowerCase())), JSON.stringify(key), (signal) => fetchCollection(contract, { client, creatorSales, signal }), SHOP_SSR_STALE_MS, false));
+  const read = await settle(publicRead(sharedIf(ctx, ADDRESS.test(contract.toLowerCase())), JSON.stringify(key), (signal) => fetchCollection(contract, { client, creatorSales: () => ctx.creatorSales, signal }), SHOP_SSR_STALE_MS, false));
   if (!read.ok) return { queries: [], seo, status: 200 };
   const found = read.value.value;
   const queries: PrimedQuery[] = [[key, found, read.value.at]];
@@ -209,12 +225,11 @@ async function collectionPage(ctx: ReadCtx, client: ShopClient, params: ShopLoad
 
 async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
   const seo = defaultShopSeo("overview", publicPageUrl(ctx.request, "/shop/overview", env));
-  const flags = shopFlags();
   // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
   const [listings, trending, deals] = await Promise.all([
-    settle(publicRead(ctx, "overview-listings", (signal) => readListings({ client, creatorSales, signal }))),
-    settle(publicRead(ctx, "overview-trending|primary", (signal) => readTrending("primary", { client, creatorSales, signal }))),
-    flags.creatorSales ? settle(publicRead(ctx, "overview-deals", (signal) => readDeals({ client, creatorSales, signal }))) : Promise.resolve(null),
+    settle(publicRead(ctx, "overview-listings", (signal) => readListings({ client, creatorSales: () => ctx.creatorSales, signal }))),
+    settle(publicRead(ctx, "overview-trending|primary", (signal) => readTrending("primary", { client, creatorSales: () => ctx.creatorSales, signal }))),
+    ctx.creatorSales ? settle(publicRead(ctx, "overview-deals", (signal) => readDeals({ client, creatorSales: () => ctx.creatorSales, signal }))) : Promise.resolve(null),
   ]);
   // Under the page's own keys (overviewRails.ts), so the page and a link's prefetch find them.
   const queries: PrimedQuery[] = [];
@@ -229,41 +244,56 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
   const url = new URL(ctx.request.url);
   const seo = defaultShopSeo("items", publicPageUrl(ctx.request, url.pathname, env));
   const { q } = itemsQuery(url.searchParams);
-  const filters = readUrlFilters(url.searchParams, itemsFilterDefaults(q, dealsRequestedIn(url.searchParams)));
-  const grid = itemsGrid(filters, q);
+  const filters = readUrlFilters(url.searchParams, itemsFilterDefaults(q, dealsRequestedIn(url.searchParams, ctx.creatorSales)));
+  const grid = itemsGrid(filters, q, ctx.creatorSales);
   if (!grid.key) return { queries: [], seo, status: 200 };
-  const page = await settle(publicRead(ctx, JSON.stringify(grid.key), (signal) => grid.fetchPage(0, { client, creatorSales, signal })));
+  const page = await settle(publicRead(ctx, JSON.stringify(grid.key), (signal) => grid.fetchPage(0, { client, creatorSales: () => ctx.creatorSales, signal })));
   return { queries: page.ok ? [[grid.key, page.value.value, page.value.at]] : [], seo, status: 200 };
+}
+
+/** Statuses whose response has no body (a Response built with one throws). */
+const NULL_BODY: ReadonlySet<number> = new Set([101, 204, 205, 304]);
+
+/**
+ * A fetch whose answers wait for `ready` (the page's flags) before they are handed on, with each body already read: the
+ * body is read under the request's own deadline, which waiting first would leave running against a slow `ready`.
+ */
+export function readBodyThenWait(fetchImpl: typeof fetch, ready: Promise<unknown>): typeof fetch {
+  return async (...args) => {
+    const res = await fetchImpl(...args);
+    const body = NULL_BODY.has(res.status) ? null : await res.arrayBuffer();
+    await ready;
+    return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  };
 }
 
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
-  // The page's flags decide what the overview and the grid read (the Best Deals rail), and every answer is mapped with
-  // them (creator sales). They go with the page, so the browser primes the same answer before it hydrates; their
-  // variants (My Store's address list) go with them. The other reads start together with the flags read: each answer
-  // waits until the flags are primed.
+  const { request, params } = input;
+  const now = input.now ?? Date.now;
+  const pathname = new URL(request.url).pathname;
+  const detail = page === "itemDetail" || page === "tokenDetail" || page === "collection";
+  // A cold detail read can start before its flags, but cannot use a shared cache key until the flag is known.
+  const coldDetail = detail && !input.flags && !input.client && !hasCachedDappsFlags();
   const flagsRead: Promise<DappsFlagsAnswer> = input.flags
     ? Promise.resolve({ flags: input.flags, variants: input.flagVariants ?? {} })
     : input.client
       ? Promise.resolve({ flags: {}, variants: {} })
       : dappsFlagsAnswer();
-  const primed = flagsRead.then((answer) => {
-    primeRemoteFlags(answer.flags, answer.variants);
+  let creatorSales = false;
+  const ready = flagsRead.then((answer) => {
+    creatorSales = remoteFlagOn(answer, REMOTE_FLAG.creatorSales);
     return answer;
   });
-  const client =
-    input.client ??
-    serverShopClient(env, async (...args) => {
-      const res = await fetch(...args);
-      await primed;
-      return res;
-    });
-  const now = input.now ?? Date.now;
-  const { request, params } = input;
-  const pathname = new URL(request.url).pathname;
-  // Only the server's own client shares reads: an injected one (a test's node) always asks.
-  const ctx: ReadCtx = { request, now, share: !input.client };
+  if (!coldDetail) await ready;
+  const client = input.client ?? serverShopClient(env, coldDetail ? readBodyThenWait((...args) => fetch(...args), ready) : undefined);
+  const ctx: ReadCtx = {
+    request,
+    now,
+    shareTarget: input.client || coldDetail ? null : shopTarget(env).key,
+    get creatorSales() { return creatorSales; },
+  };
   let collected: Collected;
   switch (page) {
     case "itemDetail":
@@ -274,11 +304,9 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
       collected = await collectionPage(ctx, client, params, env);
       break;
     case "overview":
-      await primed;
       collected = await overviewPage(ctx, client, env);
       break;
     case "items":
-      await primed;
       collected = await itemsPage(ctx, client, env);
       break;
     case "notFound":
@@ -287,7 +315,7 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     default:
       collected = { queries: [], seo: defaultShopSeo(page, publicPageUrl(request, pathname, env)), status: 200 };
   }
-  const answer = await primed;
+  const answer = await ready;
   const featureFlags = answer.flags;
   const featureFlagVariants = Object.keys(answer.variants).length > 0 ? answer.variants : undefined;
   return {

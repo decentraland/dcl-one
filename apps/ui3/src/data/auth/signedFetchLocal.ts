@@ -6,7 +6,7 @@ import {
   parseStoredIdentity,
   type StoredAuthIdentity,
 } from "./engineLogin";
-import { signAuthChain } from "./signerCore";
+import { signAuthChain } from "@web-core/auth/signerCore";
 
 export function loadStoredIdentity(now = Date.now()): StoredAuthIdentity | null {
   let raw: string | null = null;

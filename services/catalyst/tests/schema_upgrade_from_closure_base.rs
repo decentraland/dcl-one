@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 31] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -43,6 +43,13 @@ const PREPARED_PENDING_STEPS: [&str; 31] = [
     "0050_explore_poster_avif",
     "0051_explore_auth_identity_request_id",
     "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
+    "0056_signatures_rental_cancel_reason",
+    "0057_worlds_thumbnail_alias_expiry",
+    "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -64,8 +71,33 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     .unwrap()
 }
 
+fn expected_pending_steps() -> Vec<&'static str> {
+    PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
+            "0065_shop_collections_projection",
+            "0066_map_grid_change_marks",
+            "0067_rental_asset_membership_block",
+            "0068_shop_bid_fingerprint",
+            "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
+            "0071_shop_testnet_sale_and_trade_venues",
+            "0072_shop_verified_item_rows",
+            "0073_land_authz_transfer_parties",
+            "0078_shop_nft_last_sale",
+            "0079_credits_seasonal_visit_goals",
+            "0094_shop_historical_holdings",
+        ])
+        .collect()
+}
+
 fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
-    assert_eq!(after.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(after.len(), before.len() + expected_pending_steps().len());
     for row in before {
         assert!(
             after.contains(row),
@@ -75,7 +107,7 @@ fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
     let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_pending_steps()
     );
     let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
     for row in added {
@@ -422,6 +454,53 @@ async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
 }
 
 #[tokio::test]
+async fn sale_accounting_upgrade_preserves_unverified_historical_rows() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    // This captured schema predates the sale event table. Install its legacy
+    // accounting inputs before applying the real incremental step.
+    sqlx::raw_sql("CREATE TABLE shop.sale_event(kind text NOT NULL, price numeric);
+        INSERT INTO shop.sale_event VALUES ('bid_accepted', 150), ('mint', 250);
+        INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,full_history)
+        VALUES('nft','matic',1,99,99,true)")
+        .execute(&old.pool).await.unwrap();
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0064_shop_sale_accounting.sql"
+    ));
+    sqlx::raw_sql(migration).execute(&old.pool).await.unwrap();
+    let values: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT price::text, bid_fee::text FROM shop.sale_event ORDER BY price")
+            .fetch_all(&old.pool)
+            .await
+            .unwrap();
+    assert_eq!(values, [("150".into(), None), ("250".into(), None)]);
+    let cursor: (i64, Option<i32>, Option<i64>) = sqlx::query_as(
+        "SELECT folded_block,sale_input_version,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer='nft'")
+        .fetch_one(&old.pool).await.unwrap();
+    assert_eq!(cursor, (99, None, None));
+    assert!(
+        sqlx::query("UPDATE shop.sale_event SET bid_fee=1 WHERE kind='mint'")
+            .execute(&old.pool)
+            .await
+            .is_err()
+    );
+    let validated = || {
+        sqlx::query_scalar::<_, bool>(
+        "SELECT convalidated FROM pg_constraint WHERE conrelid='shop.sale_event'::regclass AND conname='sale_event_bid_fee_check'")
+        .fetch_one(&old.pool)
+    };
+    assert!(!validated().await.unwrap());
+    sqlx::query("ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check")
+        .execute(&old.pool)
+        .await
+        .unwrap();
+    assert!(validated().await.unwrap());
+    old.drop().await;
+}
+
+#[tokio::test]
 async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows() {
     let Some(old) = stamped_with_the_closure_base().await else {
         return;
@@ -636,16 +715,67 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     .execute(pool)
     .await
     .unwrap();
+    assert!(!has_column(pool, "content.processed_snapshots", "entity_types").await);
+    let legacy_snapshot = catalyst::auth::hash_bytes_v1(b"legacy processed snapshot");
+    sqlx::query("INSERT INTO content.processed_snapshots (hash, process_time) VALUES ($1, now())")
+        .bind(&legacy_snapshot)
+        .execute(pool)
+        .await
+        .unwrap();
 
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps,
+        expected_pending_steps(),
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let estate_trigger: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM pg_trigger WHERE tgrelid='shop.chain_cursor'::regclass
+         AND tgname='reset_estate_creation_repair' AND tgenabled='O')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        estate_trigger,
+        "upgrading installs the estate rebuild trigger"
+    );
+    let snapshots = catalyst::content::sync::LiveProcessedSnapshotStore::new(pool.clone());
+    let hashes = [legacy_snapshot];
+    let recorded_coverage: Vec<String> =
+        sqlx::query_scalar("SELECT entity_types FROM content.processed_snapshots WHERE hash = $1")
+            .bind(&hashes[0])
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(recorded_coverage.is_empty());
+    let scenes = std::collections::HashSet::from(["scene".to_string()]);
+    for filter in [None, Some(&scenes)] {
+        assert!(
+            snapshots
+                .filter_processed_in_chunks(hashes.clone(), filter)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a migrated receipt must leave the snapshot eligible for replay"
+        );
+    }
+    snapshots
+        .mark_processed_many(&hashes, Some(&scenes))
+        .await
+        .unwrap();
+    assert!(
+        snapshots
+            .filter_processed_in_chunks(hashes.clone(), Some(&scenes))
+            .await
+            .unwrap()
+            .contains(&hashes[0]),
+        "a replay proves coverage for the current filter"
+    );
     let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
     assert_eq!(
         captcha_after.0, captcha_before,
@@ -746,7 +876,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(worlds, 1);
-    let marked: Vec<(String, bool, Option<String>, bool, Option<String>)> = sqlx::query_as(
+    type Marked = (String, bool, Option<String>, bool, Option<String>);
+    let marked: Vec<Marked> = sqlx::query_as(
         "SELECT name, access_set_here, access_set_by, settings_set_here, settings_set_by \
          FROM worlds.worlds WHERE name IN ('owner-set.dcl.eth', 'as-mirrored.dcl.eth') ORDER BY name",
     )
@@ -1344,7 +1475,8 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .await
                 .unwrap();
         assert_eq!(
-            applied.steps, PREPARED_PENDING_STEPS,
+            applied.steps,
+            expected_pending_steps(),
             "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();
@@ -1562,6 +1694,38 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
         .await
         .expect("a fresh upgraded catalogue does not need a release conversion");
+    let notifications: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid \
+         WHERE f.oid = 'worlds.notify_world_authority'::regproc AND NOT t.tgisinternal",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notifications, 5,
+        "the object pass adds the stream key triggers"
+    );
+    // The scene admin release runs after the migrate, which creates what it reads.
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/scene-admin-place-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_scene_admin_place_release(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/genesis-scene-ban-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_genesis_scene_ban_release(pool)
+        .await
+        .unwrap();
     // The previous main has the same schema version and throttle relation,
     // but not this additive queue. Only this test-owned database is changed.
     sqlx::query("DROP TABLE social.world_access_rechecks")
@@ -1840,11 +2004,22 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
             "the object pass keeps {index}"
         );
     }
+    // A database the previous binary migrated also holds the decoded index
+    // on the unwrapped metadata path, which no query reads.
+    let unwrapped = "content.deployments_scene_logs_permissions_decoded_idx";
+    sqlx::query(
+        "CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
+             USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+             WHERE entity_type = 'scene' AND deleter_deployment IS NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     // An invalid decoded index, as a failed concurrent build leaves, is refused.
     let set_valid = |valid: bool| async move {
         sqlx::query(
             "UPDATE pg_index SET indisvalid = $1
-             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+             WHERE indexrelid = 'content.deployments_scene_v_logs_permissions_decoded_idx'::regclass",
         )
         .bind(valid)
         .execute(pool)
@@ -1857,7 +2032,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     set_valid(true).await;
     release_statements(pool, &release).await.unwrap();
     assert!(!has_function("worlds.logs_permissions(text)").await);
-    for index in old_objects {
+    for index in old_objects.into_iter().chain([unwrapped]) {
         assert!(!has_relation(pool, index).await, "{index} is dropped");
     }
     assert!(has_function("worlds.logs_permissions_decoded(text)").await);
@@ -1865,7 +2040,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     assert!(
         has_relation(
             pool,
-            "content.deployments_scene_logs_permissions_decoded_idx"
+            "content.deployments_scene_v_logs_permissions_decoded_idx"
         )
         .await
     );

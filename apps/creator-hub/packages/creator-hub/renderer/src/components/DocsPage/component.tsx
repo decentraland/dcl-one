@@ -1,6 +1,6 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { t } from '/@/modules/store/translation/utils';
-import { misc } from '#preload';
+import { openLearnResource } from '/@/lib/openLearnResource';
 
 import { Container } from '../Container';
 import { Title } from '../Title';
@@ -13,7 +13,7 @@ function Link(props: { url: string; title: string }) {
   return (
     <div
       className="link"
-      onClick={() => misc.openExternal(props.url)}
+      onClick={() => openLearnResource('docs', 'doc', props.title, props.url)}
     >
       <i className="icon" />
       <span className="title">{props.title}</span>

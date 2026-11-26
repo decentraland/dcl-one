@@ -11,14 +11,19 @@ pub(crate) fn meta_str(meta: &Value, key: &str) -> Option<String> {
 
 /// The signed realm name, `realmName` else `realm.serverName`; a non-world
 /// name signed beside a realm URL naming a world reads as that world
-/// ([`crate::world_identity::signed_realm_name`]).
-pub fn realm_name_from_metadata(metadata: &Value) -> Option<String> {
+/// ([`crate::world_identity::signed_realm_name`]); `node_realm` is this
+/// node's `REALM_NAME`.
+pub fn realm_name_from_metadata(metadata: &Value, node_realm: &str) -> Option<String> {
     let signed = meta_str(metadata, "realmName").or_else(|| {
         metadata
             .get("realm")
             .and_then(|r| meta_str(r, "serverName"))
     })?;
-    Some(signed_realm_name(&signed, signed_realm_url(metadata)))
+    Some(signed_realm_name(
+        &signed,
+        signed_realm_url(metadata),
+        node_realm,
+    ))
 }
 
 /// The signed realm URL (`realm.hostname`), when it is a string.
@@ -26,21 +31,10 @@ pub(crate) fn signed_realm_url(metadata: &Value) -> Option<&str> {
     metadata.pointer("/realm/hostname").and_then(Value::as_str)
 }
 
-/// The place a scene-signed request stands on: the world name for a world
-/// realm, else the scene id.
-pub fn place_from_metadata(meta: &Value) -> Option<String> {
-    if let Some(realm) = realm_name_from_metadata(meta)
-        && is_world_realm_name(&realm)
-    {
-        return Some(realm);
-    }
-    meta_str(meta, "sceneId")
-}
-
 /// The key the scene-bans listings use: a world realm keys on its scene hash
 /// when the metadata carries one, else on the world name (resolved below).
-pub(crate) fn listing_key_candidate(meta: &Value) -> Option<String> {
-    let realm_name = realm_name_from_metadata(meta);
+pub(crate) fn listing_key_candidate(meta: &Value, node_realm: &str) -> Option<String> {
+    let realm_name = realm_name_from_metadata(meta, node_realm);
     let scene_id = meta_str(meta, "sceneId");
     match realm_name {
         Some(realm) if is_world_realm_name(&realm) => match scene_id {
@@ -156,7 +150,7 @@ pub(crate) async fn resolve_adapter_room(
             room: gatekeeper_scene_room(realm_name, scene_id),
         });
     }
-    let realm = crate::world_identity::RealmId::World(name);
+    let realm = crate::world_identity::RealmId::World(name.clone());
     let request = if scene.is_world_shaped() {
         RoomRequest::Adapter {
             realm: &realm,
@@ -164,7 +158,7 @@ pub(crate) async fn resolve_adapter_room(
         }
     } else {
         RoomRequest::WorldScene {
-            world: realm.world().unwrap(),
+            world: &name,
             scene: &scene,
         }
     };
@@ -187,11 +181,13 @@ pub(crate) async fn resolve_adapter_room(
 /// `worlds::rooms::genesis_scene`); whether it still holds a pointer in
 /// `content.active_pointers` is not checked. An unknown or denylisted id is
 /// 404 and an unreadable catalogue 503, never a mint. With
-/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked.
+/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked and
+/// answers `None`; else the room found, with the deployment whose place keys
+/// its bans.
 pub(crate) async fn require_genesis_deployment(
     state: &CommsState,
     resolved: &ResolvedRoom,
-) -> Result<(), ApiError> {
+) -> Result<Option<ResolvedRoom>, ApiError> {
     let scene = resolved
         .scene_id
         .as_ref()
@@ -199,7 +195,7 @@ pub(crate) async fn require_genesis_deployment(
     if state.settings.allow_local_preview
         && is_local_preview(resolved.realm.as_str(), scene.as_str())
     {
-        return Ok(());
+        return Ok(None);
     }
     let not_found = || ApiError::not_found(format!("No scene entity found for scene ID {scene}"));
     if state.content_denylist.contains(scene.as_str()) {
@@ -213,7 +209,7 @@ pub(crate) async fn require_genesis_deployment(
         })
         .await
     {
-        Ok(found) if found.deployment.is_some() => Ok(()),
+        Ok(found) if found.deployment.is_some() => Ok(Some(found)),
         Ok(_) | Err(ResolveError::NoParcels { .. }) => Err(not_found()),
         Err(error) => {
             tracing::error!(%error, scene = %scene, "genesis scene lookup failed");
@@ -225,12 +221,7 @@ pub(crate) async fn require_genesis_deployment(
     }
 }
 
-/// A local preview scene: a `b64-` scene id or a `preview`/`localpreview` realm.
-fn is_local_preview(realm_name: &str, scene_id: &str) -> bool {
-    scene_id.starts_with("b64-")
-        || realm_name.eq_ignore_ascii_case("preview")
-        || realm_name.eq_ignore_ascii_case("localpreview")
-}
+use crate::rooms::is_local_preview;
 
 /// The scene-bans listing key: an explicit `place_id`, else the metadata's,
 /// with a world name resolved to its active scene.
@@ -241,7 +232,7 @@ pub async fn resolve_listing_place_id(
 ) -> Result<String, ApiError> {
     let candidate = explicit
         .filter(|s| !s.is_empty())
-        .or_else(|| listing_key_candidate(meta))
+        .or_else(|| listing_key_candidate(meta, &state.settings.realm_name))
         .ok_or_else(|| ApiError::bad_request("missing place_id query"))?;
     if !is_world_realm_name(&candidate) {
         return Ok(candidate);
@@ -304,46 +295,48 @@ pub async fn try_load_place_info(
 pub struct PlaceLookup<'a> {
     state: &'a CommsState,
     place_id: String,
+    /// The `social.scene_admins.place_id` of the explicit admins: the place
+    /// of a scene (`ActiveDeployment::place_key`), or [`NO_ADMINS`].
+    admin_key: String,
     cell: tokio::sync::OnceCell<Result<Option<PlaceInfo>, String>>,
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    use super::*;
-    pub(crate) fn cached_place<'a>(
-        state: &'a CommsState,
-        id: &str,
-        info: PlaceInfo,
-    ) -> PlaceLookup<'a> {
-        PlaceLookup {
-            state,
-            place_id: id.to_owned(),
-            cell: tokio::sync::OnceCell::new_with(Some(Ok(Some(info)))),
-        }
-    }
-}
+/// The admin key of a lookup that no `/scene-admin` grant reaches: a
+/// catalogue place or a whole world. `place_id` is never that key: the
+/// identity of a world scene can equal the id of an imported place.
+pub const NO_ADMINS: &str = "";
 
 impl<'a> PlaceLookup<'a> {
     /// A place already bound to a current deployment by the ONE resolver.
     /// Moderation requests share this footprint for policy and room effects.
-    pub(crate) fn resolved(state: &'a CommsState, place_id: &str, info: PlaceInfo) -> Self {
+    pub(crate) fn resolved(
+        state: &'a CommsState,
+        place_id: &str,
+        info: PlaceInfo,
+        admin_key: &str,
+    ) -> Self {
         Self {
-            state,
-            place_id: place_id.to_owned(),
             cell: tokio::sync::OnceCell::new_with(Some(Ok(Some(info)))),
+            ..Self::new(state, place_id, admin_key)
         }
     }
 
-    pub fn new(state: &'a CommsState, place_id: &str) -> Self {
+    pub fn new(state: &'a CommsState, place_id: &str, admin_key: &str) -> Self {
         Self {
             state,
             place_id: place_id.to_string(),
+            admin_key: admin_key.to_string(),
             cell: tokio::sync::OnceCell::new(),
         }
     }
 
     pub fn place_id(&self) -> &str {
         &self.place_id
+    }
+
+    /// The `social.scene_admins.place_id` of this place's explicit admins.
+    pub fn admin_key(&self) -> &str {
+        &self.admin_key
     }
 
     /// `Err` carries the catalogue error text; callers map it to their status.
@@ -358,5 +351,17 @@ impl<'a> PlaceLookup<'a> {
             .as_ref()
             .map(Option::as_ref)
             .map_err(String::as_str)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    pub(crate) fn cached_place<'a>(
+        state: &'a CommsState,
+        id: &str,
+        info: PlaceInfo,
+    ) -> PlaceLookup<'a> {
+        PlaceLookup::resolved(state, id, info, id)
     }
 }

@@ -36,13 +36,19 @@ fn host_config() -> HostConfig {
 struct Rig {
     server: Running,
     clients: Vec<Client>,
+    shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl Rig {
     async fn start(host: Host) -> Self {
         let address = host.local_addr().unwrap();
-        let server: Running =
-            Box::pin(PulseServer::new().serve(Transports::enet_only(host, 4), 50));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let server: Running = Box::pin(PulseServer::new().run_inspected(
+            Transports::enet_only(host, 4),
+            50,
+            None,
+            shutdown.clone().cancelled_owned(),
+        ));
         let clients = (0..2)
             .map(|_| {
                 let mut client = rusty_enet::Host::new(
@@ -58,7 +64,11 @@ impl Rig {
                 client
             })
             .collect();
-        let mut rig = Self { server, clients };
+        let mut rig = Self {
+            server,
+            clients,
+            shutdown,
+        };
         let mut connected = [false; 2];
         let deadline = Instant::now() + DEADLINE;
         while !connected.iter().all(|c| *c) {
@@ -149,6 +159,41 @@ impl Rig {
     }
 }
 
+#[tokio::test]
+async fn shutdown_notifies_every_connected_enet_peer() {
+    let host = Host::bind(host_config()).await.unwrap();
+    let mut rig = Rig::start(host).await;
+    for index in 0..rig.clients.len() {
+        rig.handshake_is_answered(index).await;
+    }
+
+    rig.shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(2), rig.server.as_mut())
+        .await
+        .expect("Pulse did not finish shutting down")
+        .expect("Pulse failed to shut down");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    for (index, client) in rig.clients.iter_mut().enumerate() {
+        loop {
+            if let Some(rusty_enet::EventNoRef::Disconnect { data, .. }) =
+                client.service().unwrap().map(|event| event.no_ref())
+            {
+                assert_eq!(
+                    data, 1,
+                    "client {index} did not receive the GRACEFUL reason"
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "client {index} did not disconnect"
+            );
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+}
+
 /// The value of `pulse_enet_socket_errors_total` for one operation and error kind.
 fn counted(rendered: &str, operation: &str, kind: &str) -> u64 {
     rendered
@@ -169,6 +214,8 @@ enum Operation {
 /// Errors that concern one datagram, as each operating system reports them (see the transport's
 /// `ReadySocket`): the expected `kind` label is written out by hand.
 fn per_datagram_errors() -> Vec<(Operation, Error, &'static str)> {
+    // Only the Windows-specific errors extend the list.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut errors = vec![
         // A peer vanished: the ICMP port unreachable its closed port sent back.
         (
@@ -242,7 +289,7 @@ async fn an_error_about_one_datagram_costs_that_datagram_and_both_clients_stay_s
             .unwrap()
             .build_recorder();
         let metrics = recorder.handle();
-        let _recording = ::metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let faults = SocketFaults::default();
         let host = Host::bind_with_faults(host_config(), faults.clone())
             .await
@@ -279,7 +326,7 @@ async fn an_interrupted_receive_is_read_again_and_not_counted() {
         .unwrap()
         .build_recorder();
     let metrics = recorder.handle();
-    let _recording = ::metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let faults = SocketFaults::default();
     let host = Host::bind_with_faults(host_config(), faults.clone())
         .await
@@ -330,7 +377,7 @@ async fn a_client_whose_socket_closed_does_not_stop_the_server() {
         .unwrap()
         .build_recorder();
     let metrics = recorder.handle();
-    let _recording = ::metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let mut rig = Rig::start(Host::bind(host_config()).await.unwrap()).await;
 
     // The server's answer to this goes to a port that is closed by the time it is sent.

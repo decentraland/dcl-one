@@ -566,7 +566,7 @@ describe('in-world shop', () => {
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'Golden Armor' }))
     const panel = screen.getByRole('complementary', { name: 'Golden Armor' })
-    expect(within(panel).getByText(/epic\s*35\/1000/i)).toBeInTheDocument()
+    expect(within(panel).getByText('35/1000').parentElement).toHaveTextContent(/^epic 35\/1000$/i)
     expect(await within(panel).findByText('No flesh, just bones!')).toBeInTheDocument()
     expect(within(panel).getByText('tiara')).toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: /buy item/i })).toBeInTheDocument()

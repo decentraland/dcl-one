@@ -1,5 +1,7 @@
 """Copies the blobs a source's imported rows name into the node's blob store (`migrate.py blobs`),
-and the badge art the imported catalog names into the node's `BADGES_ASSETS_DIR`.
+the badge art the imported catalog names into the node's `BADGES_ASSETS_DIR`, the imported
+communities' thumbnails into the store (`blobs social-service-ea`), and the imported events' posters
+(`blobs events`).
 
 The store layout is `services/catalyst/storage`'s: `<STORAGE_ROOT_FOLDER>/contents/<shard>/<cid>`,
 shard = the first four hex digits of sha1(cid), written through a `<name>.<pid>.<seq>.tmp` staging
@@ -15,6 +17,7 @@ import dataclasses
 import errno
 import gzip
 import hashlib
+import http.client
 import itertools
 import os
 import re
@@ -397,6 +400,7 @@ class Outcome:
     cid: str | None = None
     size: int = 0
     reason: str | None = None
+    content_type: str | None = None
 
 
 REASONS = {'corrupt': 'bytes do not hash to the key', 'invalid': 'not a content id'}
@@ -630,6 +634,150 @@ def copy_art(source, art_dir, path):
         staged.unlink(missing_ok=True)
         raise
     return Outcome(path, 'copied', path, len(data))
+
+
+# ── community thumbnails (social-service-ea) ────────────────────────────────
+
+# Upstream keeps a community's picture outside its database, at this path on its CDN bucket (unity-explorer
+# reads `https://assets-cdn.<domain>/social/communities/<id>/raw-thumbnail.png`).
+COMMUNITY_THUMBNAIL_BASE = 'https://assets-cdn.decentraland.org/'
+COMMUNITY_ID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+# Upstream accepts at most 500 KiB; anything far over that is not one of its thumbnails.
+MAX_THUMBNAIL_BYTES = 4 << 20
+
+
+def community_thumbnail_path(community_id):
+    return f'social/communities/{community_id}/raw-thumbnail.png'
+
+
+def image_type(data):
+    """The image type the leading bytes announce, as the node's `detect_image_mime_type`; else None."""
+    if data.startswith(PNG_MAGIC):
+        return 'png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'gif'
+    if len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'webp'
+    return None
+
+
+def hash_bytes_v0(data):
+    """`hash.rs::hash_bytes`: the CIDv0 of the bytes' SHA-256, the key the node stores thumbnails under."""
+    return _base58(_multihash(hashlib.sha256(data).digest()))
+
+
+def _read_capped(source, key, path, cap):
+    """Reads at most `cap` + 1 bytes of `path`, retrying transient failures: (bytes, None), or (None, the
+    `missing`/`failed` Outcome)."""
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            stream = source.open(path)
+            with contextlib.closing(stream):
+                data = stream.read(cap + 1)
+                # a bounded read returns short, without raising, when the connection drops mid-body;
+                # the response still counts the bytes it was promised (a capped read leaves some too)
+                left = getattr(stream, 'length', None)
+                if isinstance(left, int) and left > 0 and len(data) <= cap:
+                    raise ReadError(f'body cut short: {left} of its Content-Length bytes missing')
+            return data, None
+        except Missing as e:
+            return None, Outcome(key, 'missing', reason=str(e))
+        except (ReadError, OSError, http.client.HTTPException) as e:
+            if attempt + 1 == READ_ATTEMPTS:
+                return None, Outcome(key, 'failed', reason=f'read failed {READ_ATTEMPTS} times: {e}')
+            time.sleep(RETRY_DELAY * 2 ** attempt)
+
+
+def _store_bytes(store, cid, data):
+    """Stores `data` under `cid` through a staging file: 'present' when the store already holds those bytes."""
+    final = store.path(cid)
+    try:
+        if final.read_bytes() == data:
+            return 'present'
+        replace = True  # a truncated or foreign file under this name
+    except FileNotFoundError:
+        replace = False
+    staged, out = store.staging(cid)
+    try:
+        with out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        store.commit(staged, cid, replace=replace)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return 'copied'
+
+
+def copy_community_thumbnail(source, store, community_id):
+    """Copies one community's upstream thumbnail into the store. `cid` is its key there; `missing` when
+    upstream has none (most communities), which is not an error."""
+    if not COMMUNITY_ID.fullmatch(community_id):
+        return Outcome(community_id, 'invalid', reason='not a community id')
+    data, failure = _read_capped(source, community_id, community_thumbnail_path(community_id), MAX_THUMBNAIL_BYTES)
+    if failure:
+        return failure
+    if len(data) > MAX_THUMBNAIL_BYTES or image_type(data) is None:
+        return Outcome(community_id, 'corrupt', reason='not a PNG, JPEG, GIF or WebP image')
+    cid = hash_bytes_v0(data)
+    return Outcome(community_id, _store_bytes(store, cid, data), cid, len(data))
+
+
+# ── event posters (events) ──────────────────────────────────────────────────
+#
+# Imported events name upstream's poster bucket as `/poster[-vertical]/<file>`; the node serves those
+# from `explore.poster`, reading the bucket through only while `EVENTS_MIRROR_UPSTREAM` is on
+# (`explore/src/api/posters.rs`). This copy fills the same index ahead of turning the mirror off.
+
+EVENT_POSTER_BASE = 'https://events-assets-099ac00.decentraland.org/'
+EVENT_POSTER_KEY = re.compile(r'(poster|poster-vertical)/([A-Za-z0-9][A-Za-z0-9._-]{0,199})')
+# The read-through's body cap.
+MAX_POSTER_BYTES = 16 << 20
+POSTER_TYPES = {'png': 'image/png', 'jpeg': 'image/jpeg', 'gif': 'image/gif', 'webp': 'image/webp'}
+
+
+def avif_file_type(data):
+    """`posters.rs::avif_file_type`: a complete leading ISO-BMFF `ftyp` box naming `avif` or `avis`."""
+    if len(data) < 8 or data[4:8] != b'ftyp':
+        return False
+    size, offset = int.from_bytes(data[:4], 'big'), 8
+    if size == 1:
+        if len(data) < 16:
+            return False
+        size, offset = int.from_bytes(data[8:16], 'big'), 16
+    if size < offset or size > len(data):
+        return False
+    payload = data[offset:size]
+    if len(payload) < 8 or (len(payload) - 8) % 4:
+        return False
+    brands = [payload[:4]] + [payload[i:i + 4] for i in range(8, len(payload), 4)]
+    return any(b in (b'avif', b'avis') for b in brands)
+
+
+def poster_type(data):
+    """The media type the read-through records for these bytes; else None."""
+    kind = image_type(data)
+    if kind:
+        return POSTER_TYPES[kind]
+    return 'image/avif' if avif_file_type(data) else None
+
+
+def copy_event_poster(source, store, key):
+    """Copies one poster (`poster/<file>` or `poster-vertical/<file>`) into the store under its CIDv1, the key
+    the read-through stores it by; `content_type` is what it records."""
+    if not EVENT_POSTER_KEY.fullmatch(key):
+        return Outcome(key, 'invalid', reason='not a poster path')
+    data, failure = _read_capped(source, key, key, MAX_POSTER_BYTES)
+    if failure:
+        return failure
+    content_type = poster_type(data) if 0 < len(data) <= MAX_POSTER_BYTES else None
+    if content_type is None:
+        return Outcome(key, 'corrupt', reason='not a PNG, JPEG, GIF, WebP or AVIF image')
+    cid = hash_bytes_v1(data)
+    return Outcome(key, _store_bytes(store, cid, data), cid, len(data), content_type=content_type)
 
 
 # Camera object keys are immutable UUID filenames, not content hashes. Only

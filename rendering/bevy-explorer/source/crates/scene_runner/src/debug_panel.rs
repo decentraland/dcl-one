@@ -31,6 +31,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneState, _>(scene_state)
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
+            .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
             .add_console_command::<TextureState, _>(texture_state)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
@@ -41,6 +42,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Parcels", "parcels"),
                     ("Height (m)", "height"),
                     ("Collider height limit (m)", "colliderHeight"),
+                    ("Scenes whose colliders reach the player", "scenesInReach"),
                     ("Global position (m) (X / Y / Z)", "world"),
                     ("Scene position (m) (X / Y / Z)", "relative"),
                     ("Tick", "tick"),
@@ -156,6 +158,13 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Broken scenes", "broken"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene permissions in force",
+                query: "/permissions_in_force",
+                fields: &[("In force now (scene, permission)", "inForce")],
+                actions: &[],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -298,6 +307,7 @@ fn scene_state(
     bounds: Res<ShowBounds>,
     histories: Query<&SceneTraffic>,
     colliders: Query<&SceneColliderData>,
+    parcel_scenes: Query<(&RendererSceneContext, &SceneColliderData), Without<SuperUserScene>>,
 ) {
     if input.take().is_none() {
         return;
@@ -357,6 +367,9 @@ fn scene_state(
         "bounds": bounds.0, "name": scene.title, "sdk": scene.sdk_version, "parcels": scene.parcels.len(),
         "height": scene.bounds.iter().map(|r| r.height).reduce(f32::max),
         "colliderHeight": colliders.get(root).ok().and_then(SceneColliderData::height_limit),
+        "scenesInReach": player.map(|(_, at)| parcel_scenes.iter().filter(|(scene, colliders)| {
+            !scene.is_portable && colliders.reaches_avatar(at.translation().as_dvec3())
+        }).count()),
         "world": position.map(|p| p.to_array()), "relative": position.map(|p| (p-base).to_array()), "tick": scene.tick_number,
         "history": history, "engines": engines,
         "bytesPerSecond": scene.crdt_bytes_per_second.map(f64::round),
@@ -546,6 +559,26 @@ fn scene_content(
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
 }
 
+/// Report, as JSON, the permissions whose effect acts on the player now: `inForce`, a list of
+/// `scene` (the hash of the scene that causes it) and `type`.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/permissions_in_force")]
+struct PermissionsInForceState;
+
+fn permissions_in_force_state(
+    mut input: ConsoleCommand<PermissionsInForceState>,
+    in_force: Res<crate::permissions::PermissionsInForce>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let list = in_force
+            .0
+            .iter()
+            .map(|(scene, ty)| json!({"scene": scene, "type": ty}))
+            .collect::<Vec<_>>();
+        input.reply_ok(json!({ "inForce": list }).to_string());
+    }
+}
+
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_loading_state")]
 struct LoadingState;
@@ -647,6 +680,7 @@ mod tests {
     use super::*;
     use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
+    use common::sync::MutexExt;
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
@@ -671,7 +705,7 @@ mod tests {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
-            Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
+            Arc::new(move |reply| *result.lock_ignore_poison() = Some(reply))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
             command_name: "/current_scene_state".into(),
@@ -679,7 +713,7 @@ mod tests {
             responder: Some(responder),
         });
         app.update();
-        let reply = result.lock().unwrap().take().unwrap().unwrap();
+        let reply = result.lock_ignore_poison().take().unwrap().unwrap();
         serde_json::from_str(&reply).unwrap()
     }
 
@@ -767,6 +801,66 @@ mod tests {
             read_scene_state(&mut app)["history"]["tickFps"]["samples"],
             json!([50.0])
         );
+    }
+
+    #[test]
+    fn scene_state_counts_the_scenes_whose_colliders_reach_the_player() {
+        let mut app = scene_state_app();
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
+            ))
+            .id();
+        // two scenes side by side: parcel (0, 0) spans world x 0 to 16, parcel (1, 0) x 16 to 32
+        for parcel in [IVec2::ZERO, IVec2::X] {
+            let world = app.world_mut();
+            let root = world.spawn_empty().id();
+            let hash = parcel.to_string();
+            let regions = vec![scene_material::BoundRegion::new(parcel, parcel, 1)];
+            world.entity_mut(root).insert((
+                SceneColliderData::for_regions(&regions, 1),
+                RendererSceneContext::new(
+                    dcl_types::SceneId(root),
+                    hash.clone(),
+                    String::new(),
+                    false,
+                    0,
+                    hash.clone(),
+                    parcel,
+                    [parcel].into_iter().collect(),
+                    regions,
+                    default(),
+                    vec![],
+                    root,
+                    0.0,
+                    false,
+                    "sdk7",
+                    false,
+                    false,
+                ),
+            ));
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.clone(), root);
+            world
+                .resource_mut::<ScenePointers>()
+                .insert(parcel, PointerResult::Exists { hash, urn: None });
+        }
+        let mut scenes_in_reach = |at: Vec3| {
+            *app.world_mut().get_mut::<GlobalTransform>(player).unwrap() =
+                GlobalTransform::from_translation(at);
+            app.update();
+            read_scene_state(&mut app)["scenesInReach"].clone()
+        };
+
+        assert_eq!(scenes_in_reach(Vec3::new(8.0, 0.0, -8.0)), json!(1));
+        // the capsule reaches over the edge between the two
+        assert_eq!(scenes_in_reach(Vec3::new(15.8, 0.0, -8.0)), json!(2));
+        // above the 20 m a scene of one parcel is drawn to
+        assert_eq!(scenes_in_reach(Vec3::new(8.0, 30.0, -8.0)), json!(0));
     }
 
     #[test]
