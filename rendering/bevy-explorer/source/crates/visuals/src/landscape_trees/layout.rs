@@ -1,7 +1,7 @@
 //! The baked tree layouts: every tree, bush and stone of Genesis City and of the Worlds, grouped
 //! by parcel.
 //!
-//! unity-explorer's two layouts place the same instances and differ only in their scales, so one
+//! The two layouts place the same instances and differ only in their scales, so one
 //! file holds both (`crates/assets/landscape_tools/tree_layout.py` writes it from them). It is
 //! little-endian: `b"TRL1"`, `i32 min_x, min_z, max_x, max_z` (max exclusive), one `u8` instance
 //! count per parcel in z-major order, then the instances parcel by parcel, 6 bytes each:
@@ -19,9 +19,9 @@ use common::partition::PARCEL_SIZE;
 use super::prototypes::PROTOTYPES;
 
 const MAGIC: &[u8; 4] = b"TRL1";
-/// Largest width or depth, in parcels, the reference loader accepts.
+/// Largest width or depth, in parcels, a layout may declare; a larger one is a corrupt file.
 const SIZE_LIMIT: i32 = 512;
-/// Largest instance count the reference loader accepts.
+/// Largest instance count a layout may declare; a larger one is a corrupt file.
 const INSTANCE_LIMIT: usize = 1 << 19;
 /// The labels of the two realms' layouts in the file's asset.
 pub(crate) const GENESIS_LABEL: &str = "genesis";

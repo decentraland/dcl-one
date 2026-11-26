@@ -53,7 +53,8 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 const TERRAIN_UV_PER_METRE: f32 = 0.1;
 
 // Where the terrain texture lies over the world: u along +x and v along bevy +z, which is the
-// reference's layout with its z negated and its v flipped (its v runs up the image, bevy's down).
+// texture's authored layout with its z negated and its v flipped (its v runs up the image, bevy's
+// down).
 fn terrain_uv(world: vec3<f32>) -> vec2<f32> {
     let tiling = stone_terrain.y;
     let offset = stone_terrain.z;

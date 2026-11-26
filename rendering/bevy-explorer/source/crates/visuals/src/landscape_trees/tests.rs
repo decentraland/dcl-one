@@ -101,13 +101,13 @@ fn parcels_outside_bounds_have_no_instances() {
 }
 
 #[test]
-fn instance_transform_matches_unity() {
+fn instance_transform_lands_in_bevy_axes() {
     // Bytes are {prototype, posX, posZ, rotY, genesisScale, worldsScale}; Genesis City's layout is
     // checked. Parcel (0,0) holds two instances (indices 148482 and 148483 at file offsets 990128
     // and 990134); the third is from parcel (-1,-1) (index 147525, offset 984386) so negative
     // parcels are covered too.
     //
-    // The reference formula, in the reference's left-handed frame (x east, z north):
+    // The layout's formula, in its left-handed frame (x east, z north):
     //   x = (parcel.x + posX / 255) * 16          z = (parcel.y + posZ / 255) * 16
     //   yaw = rotY * 360 / 255 degrees about +y   (+x turns towards -z)
     //   scale = lerp(min, max, scale / 255) on every axis (its horizontal and vertical ranges)

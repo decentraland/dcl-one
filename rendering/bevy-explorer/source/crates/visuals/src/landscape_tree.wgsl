@@ -1,5 +1,5 @@
 // Vertex stage of the landscape trees, bushes and stones: the mesh as bevy draws it, with the
-// leaves swaying and fluttering in the wind. The wind is worked out in the reference frame
+// leaves swaying and fluttering in the wind. The wind is worked out in the layout's frame
 // (x east, z north, so z is bevy's -z), with its noise and phases taken from world positions
 // there. Every pass applies it, so depth, shadows and colour agree.
 #import bevy_pbr::{mesh_functions, view_transformations::position_world_to_clip}
@@ -15,7 +15,7 @@
 
 // speed, strength, frequency, turbulence
 @group(2) @binding(100) var<uniform> sway_settings: vec4<f32>;
-// direction in the reference frame, in xyz
+// direction in the layout's frame, in xyz
 @group(2) @binding(101) var<uniform> wind_direction: vec4<f32>;
 // flutter speed, strength, frequency; w is 1 while the surface sways
 @group(2) @binding(102) var<uniform> flutter_settings: vec4<f32>;

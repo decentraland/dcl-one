@@ -376,7 +376,7 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
-    (trees, wind): (Query<(), With<Tree>>, Option<Res<TreeWind>>),
+    (trees, wind): (Query<(), With<Tree>>, Res<TreeWind>),
     grass: Query<(), With<ParcelGrass>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -393,7 +393,7 @@ fn landscape_command(
     }
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass,
         "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0,
-        "treeWind":wind.is_some_and(|wind| wind.0)}).to_string());
+        "treeWind":wind.0}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

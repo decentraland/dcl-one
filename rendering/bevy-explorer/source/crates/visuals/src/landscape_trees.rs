@@ -1,4 +1,4 @@
-//! Trees, bushes and stones from unity-explorer's baked layout, so they stand where Unity's do.
+//! Trees, bushes and stones, each instance where the baked layout (`layout`) places it.
 //!
 //! Only empty parcels carry them, as the realm's resolved pointers say: a parcel that is unknown,
 //! occupied or outside the terrain counts as occupied, and an instance whose footprint reaches
@@ -229,12 +229,8 @@ fn setup(
 fn add_texture_mips(
     mut events: EventReader<AssetEvent<Image>>,
     mut images: ResMut<Assets<Image>>,
-    materials: Option<Res<TreeMaterials>>,
+    materials: Res<TreeMaterials>,
 ) {
-    let Some(materials) = materials else {
-        events.clear();
-        return;
-    };
     for event in events.read() {
         let AssetEvent::LoadedWithDependencies { id } = event else {
             continue;
@@ -263,12 +259,11 @@ type ModelMesh = (
 /// padded bounds are worked out once per mesh, not once per spawned instance.
 fn dress_trees(
     mut commands: Commands,
-    materials: Option<Res<TreeMaterials>>,
+    materials: Res<TreeMaterials>,
     meshes: Res<Assets<Mesh>>,
     added: Query<ModelMesh, Added<MeshMaterial3d<StandardMaterial>>>,
     mut padded: Local<HashMap<(AssetId<Mesh>, Surface), Aabb>>,
 ) {
-    let Some(materials) = materials else { return };
     for (entity, material, mesh) in &added {
         let Some((surface, surface_material)) = materials.by_model_material.get(&material.id())
         else {
@@ -325,10 +320,9 @@ fn tree_wind_command(mut cmd: ConsoleCommand<TreeWindCommand>, mut wind: ResMut<
 /// The wind in the surfaces' materials: their own, or none.
 fn apply_tree_wind(
     wind: Res<TreeWind>,
-    materials: Option<Res<TreeMaterials>>,
+    materials: Res<TreeMaterials>,
     mut assets: ResMut<Assets<TreeMaterial>>,
 ) {
-    let Some(materials) = materials else { return };
     if !wind.is_changed() {
         return;
     }
@@ -350,9 +344,9 @@ struct Landscape<'w> {
     layouts: Res<'w, Assets<TreeLayout>>,
 }
 
-/// How far from the player instances stand, in metres. Unity draws a prototype's full mesh only
-/// while it covers enough of the screen, which ends between about 15 m (bushes) and 140 m (the
-/// largest tree) at scale 1, and an impostor or nothing beyond; this covers the farthest full mesh.
+/// How far from the player instances stand, in metres: past it a full mesh covers too little of
+/// the screen to be worth drawing (from about 15 m for the bushes to 140 m for the largest tree,
+/// at scale 1), and the far trees are left to impostors.
 pub(crate) const TREE_DISTANCE: f32 = 150.0;
 
 /// The most instances spawned in one frame. Filling the distance at start or after a teleport

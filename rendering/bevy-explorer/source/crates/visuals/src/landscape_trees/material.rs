@@ -1,4 +1,4 @@
-//! The surfaces of the trees, bushes and stones: the reference values on bevy's lit material, the
+//! The surfaces of the trees, bushes and stones: their authored values on bevy's lit material, the
 //! leaves swaying in the wind, the stones taking the ground's colour and moss, and the mip chains
 //! their textures need.
 
@@ -34,7 +34,7 @@ pub(crate) enum Surface {
     Rock03,
 }
 
-/// Wind on a surface, in the reference's frame (x east, z north).
+/// Wind on a surface, in the layout's frame (x east, z north).
 pub(crate) struct Wind {
     pub speed: f32,
     pub strength: f32,
@@ -209,7 +209,7 @@ pub(crate) struct TreeSway {
     /// Speed, strength, frequency and turbulence of the sway.
     #[uniform(100)]
     sway: Vec4,
-    /// Direction in the reference's frame (x east, z north).
+    /// Direction in the layout's frame (x east, z north).
     #[uniform(101)]
     direction: Vec4,
     /// Speed, strength and frequency of the flutter; w is 1 while the surface sways, else 0.

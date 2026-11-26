@@ -737,7 +737,7 @@ fn spawned_meshes_wear_the_surface_materials() {
             tree.push(surface);
         } else {
             assert_eq!(root, roots[1]);
-            // the rock blends the terrain colour and its moss with the reference's values
+            // the rock blends the terrain colour and its moss with its own values
             let SurfaceMaterial::Stone(handle) = &material else {
                 panic!("{surface:?} draws without the stone blend");
             };
