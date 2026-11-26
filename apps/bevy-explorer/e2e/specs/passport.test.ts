@@ -2,23 +2,23 @@
 // header and modules, and its name and bio can be edited and restored.
 //
 // | Unity test                           | Here                                                                         | Class   |
-// | TestOpenOwnPassportFromSidebar       | the rail's Profile button opens the passport, Close closes it                | Port    |
+// | TestOpenOwnPassportFromSidebar       | the rail's Me panel has a Profile row that opens the passport, Close closes it | Port  |
 // | TestPassportOverviewShowsCoreContent | the header's controls, the engine's name and address, and the module titles   | Partial |
 // | TestEditUserNameAndRevert            | rename twice through Edit Username and back, reading the engine's name       | Partial |
 // | TestEditAboutMeAndRestore            | edit the bio, reopen to check it persisted, restore it                       | Partial |
-// | TestEquippedItemsShownInPassport     | the Equipped Wearables module is on screen and the avatar wears something    | Partial |
+// | TestEquippedItemsShownInPassport     | the Equipped Items module is on screen and the avatar wears something        | Partial |
 //
-// Port, TestOpenOwnPassportFromSidebar: the rail's `Profile` button opens the passport itself;
-// there is no profile menu and no "View PROFILE" step.
+// Port, TestOpenOwnPassportFromSidebar: the rail's `Me` button opens the profile menu (a dialog
+// named `Me`) and its `Profile` row opens the passport, as Unity's "View PROFILE" step does.
 //
 // The passport's header text (name, `#` tag, address snippet), bio text and equipped tiles are
 // plain `span`, `p` and `div` in the HUD: they have no role, so `/hud_list` and `/hud_read` cannot
 // name them. What is addressable is the controls (`Edit name`, `Copy address`, `Edit profile`, the
-// tabs), the `h2` headings (`About Me` only while a bio is set; `Equipped Wearables` only while
-// something is equipped) and, in edit mode, the `About me` field's value. Hence the Partials:
+// tabs), the `h2` headings (`About Me`, on the own passport with or without a bio; `Equipped Items`
+// only while something is equipped) and, in edit mode, the `About me` field's value. Hence the Partials:
 // - Overview: the name and the address come from `/get_user_data`, not the header; the `#` tag and
 //   the address snippet become the `Copy address` control; "About Me" and "Equipped Items" titles
-//   become the `Equipped Wearables` heading and the `Edit profile` card, since the bio's text and
+//   become the `Equipped Items` heading and the `Edit profile` card, since the bio's text and
 //   its empty state are not addressable.
 // - Rename: the discriminator (the address's last four digits, never part of the stored name)
 //   becomes "the address did not change". The name is read from `/get_user_data`, which stores it
@@ -31,6 +31,7 @@
 // The rename and bio scenarios put the name and the bio back afterwards, whatever the outcome.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
+import { pressRailRow } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -38,7 +39,7 @@ const PASSPORT: Selector = { name: 'Passport sections', role: 'tablist' }
 const BIO_FIELD: Selector = { name: 'About me', role: 'textbox' }
 const USERNAME_FIELD: Selector = { name: 'Username', role: 'textbox' }
 const SAVE: Selector = { name: 'SAVE', role: 'button' }
-const EQUIPPED_WEARABLES: Selector = { name: 'Equipped Wearables', role: 'heading' }
+const EQUIPPED_ITEMS: Selector = { name: 'Equipped Items', role: 'heading' }
 const ABOUT_ME_HEADING: Selector = { name: 'About Me', role: 'heading' }
 
 const READY_TIMEOUT_MS = 40_000
@@ -52,14 +53,14 @@ const BIO = 'Automated passport test bio'
 const baseOf = (name: string): string => name.split('#')[0] ?? name
 
 async function openOwnPassport(explorer: Explorer): Promise<void> {
-  await explorer.hud.click({ name: 'Profile', role: 'button' })
+  await pressRailRow(explorer, { button: 'Me', row: 'Profile' })
   await explorer.hud.wait(PASSPORT, { timeoutMs: READY_TIMEOUT_MS })
   // The edit controls arrive with the session's profile.
   await explorer.hud.wait({ name: 'Edit name', role: 'button' }, { timeoutMs: READY_TIMEOUT_MS })
   // The passport shows the identity first and fetches the rest as it opens (the bio, the links,
   // the equipped items): a bio read before that lands is the identity's empty one. The Equipped
   // Wearables module comes with it.
-  await explorer.hud.wait(EQUIPPED_WEARABLES, { timeoutMs: READY_TIMEOUT_MS })
+  await explorer.hud.wait(EQUIPPED_ITEMS, { timeoutMs: READY_TIMEOUT_MS })
 }
 
 async function closePassport(explorer: Explorer): Promise<void> {
@@ -111,9 +112,9 @@ async function saveBio(explorer: Explorer, text: string): Promise<void> {
   await until(() => explorer.profileVersion(), (version) => version > before, { timeoutMs: 15_000, what: 'the profile version to grow after the bio was saved' })
 }
 
-scenario('the rail Profile button opens the own passport and Close closes it', async ({ explorer }) => {
+scenario("the Profile row of the rail's Me panel opens the own passport and Close closes it", async ({ explorer }) => {
   await openOwnPassport(explorer)
-  assert.ok(await explorer.hud.isVisible(PASSPORT), 'the passport should be open after the Profile button')
+  assert.ok(await explorer.hud.isVisible(PASSPORT), 'the passport should be open after the Profile row')
   await closePassport(explorer)
   assert.equal(await explorer.hud.isVisible(PASSPORT), false, 'the passport should be closed after Close')
 })
@@ -133,7 +134,7 @@ scenario('the own passport shows its header controls and its About and Equipped 
   ] satisfies Selector[]) {
     assert.ok(await explorer.hud.isVisible(control), `the passport should show its ${control.name} ${control.role}`)
   }
-  await explorer.hud.wait(EQUIPPED_WEARABLES, { timeoutMs: READY_TIMEOUT_MS })
+  await explorer.hud.wait(EQUIPPED_ITEMS, { timeoutMs: READY_TIMEOUT_MS })
   await closePassport(explorer)
 })
 
@@ -183,7 +184,7 @@ scenario(
     const newBio = originalBio.trim() === BIO ? `${BIO} 2` : BIO
     await saveBio(explorer, newBio)
     assert.equal(await readBio(explorer), newBio, 'the bio should read the new text after the edit')
-    assert.ok(await explorer.hud.isVisible(ABOUT_ME_HEADING), 'the About Me card should show its title once the bio is set')
+    assert.ok(await explorer.hud.isVisible(ABOUT_ME_HEADING), 'the About Me card should show its title with the bio set')
 
     await closePassport(explorer)
     await openOwnPassport(explorer)
@@ -191,15 +192,15 @@ scenario(
 
     await saveBio(explorer, originalBio)
     assert.equal((await readBio(explorer)).trim(), originalBio.trim(), 'the bio should read the original text after the restore')
-    assert.equal(await explorer.hud.isVisible(ABOUT_ME_HEADING), originalBio.trim() !== '', 'the About Me title should show exactly when a bio is set')
+    assert.ok(await explorer.hud.isVisible(ABOUT_ME_HEADING), 'the About Me card should keep its title on the own passport, with a bio or without one')
     await closePassport(explorer)
   },
   { timeoutMs: 300_000 }
 )
 
-scenario('the Equipped Wearables module is shown for an avatar that wears something', async ({ explorer }) => {
+scenario('the Equipped Items module is shown for an avatar that wears something', async ({ explorer }) => {
   await openOwnPassport(explorer)
-  await explorer.hud.wait(EQUIPPED_WEARABLES, { timeoutMs: READY_TIMEOUT_MS })
+  await explorer.hud.wait(EQUIPPED_ITEMS, { timeoutMs: READY_TIMEOUT_MS })
   const avatar = await explorer.myAvatar()
   assert.ok(avatar.selected.wearables.length > 0, 'the avatar should select at least one wearable for the module to list')
   await closePassport(explorer)

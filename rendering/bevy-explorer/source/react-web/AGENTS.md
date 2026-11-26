@@ -1,9 +1,19 @@
 # react-web — Agent & Contributor Guidelines
 
 This app is the React DOM port of the Decentraland in-world HUD. UI here is built from
-the design system: tokens plus the `src/design/` primitives.
+the design system: tokens plus the design primitives.
 
-Design source of truth: the checked-in tokens and `src/design/` primitives, together with the Explorer design system supplied through authorized project context. Keep private design-file identifiers outside this public tree.
+The HUD shared with the Sites `/play` host lives in two layers. The UI is
+`library/ui/apps/hud` (`@hud/*`): the HUD's adapters of the shared components and its own primitives (`@hud/design`), the tokens
+(`@hud/styles/tokens.css`), the assets, the features and the session. The Explorer page's core is
+`library/explorer-core` (`@explorer-core/*`), with no React: the wire protocol and bindings
+(`@explorer-core/engine/*`), the drivers' contract, sign-in, shell messaging, analytics and server
+reads. Write shared code there, not in `src/`; the core never imports the UI. It imports nothing from a host: a behaviour the hosts do
+differently comes from `@hud-host` (`src/host.ts` here, implementing
+`library/explorer-core/hostContract.ts`). These guidelines apply to it as to `src/`, and
+`pnpm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
+
+Design source of truth: the checked-in tokens and design primitives, together with the Explorer design system supplied through authorized project context. Keep private design-file identifiers outside this public tree.
 
 > Before reviewing or merging anything in `react-web/`, read [`review.md`](./review.md).
 > It is the always-on pre-merge source of truth: the test harness (tiers 1 / 1.5 / 2), per-domain
@@ -15,22 +25,34 @@ Design source of truth: the checked-in tokens and `src/design/` primitives, toge
 ## 1. Always use the design system
 
 - **Tokens.** Every color, radius, spacing, shadow, z-index, font size,
-  and motion value comes from `src/styles/tokens.css` (`var(--brand)`, `--panel`,
+  and motion value comes from `library/ui/apps/hud/styles/tokens.css` (`var(--brand)`, `--panel`,
   `--text`, `--white-10`, `--green`, `--gold`, `--r-*`, `--fs-*`, `--dur-*`, …).
   Don't hardcode a brand/status hex or rgba, a radius, or a type size in a
   component. The only raw values allowed are layout primitives with no token
   (e.g. a one-off `gap: 4px`) — and even those should prefer a token when one fits.
 
-- **Primitives.** Reusable interactive elements and surfaces use the
-  components in `src/design/` — `Button`, `IconButton`, `ControlButton`, `Panel`,
-  `Icon`, not a bespoke `<button>` + CSS for something a primitive already
-  covers (close/back/menu/toggle buttons, nav controls, cards, popovers).
+- **Primitives.** Reusable interactive elements and surfaces use the shared
+  components from `@dcl/one-ui` (`Button`, `Tooltip`, `Switch`, `Checkbox`,
+  `TabsBar`, `Spinner` and `Skeleton` with `appearance="hud"` or their HUD
+  variants; `Panel`, `MenuPanel`, `MaskIcon`, `Slider`, `DateField`, `KeyCap`
+  and `EmptyState` as they are) and the components still in `@hud/design` —
+  `ControlButton`, `Icon`, and the adapters that pass the HUD's icons and the
+  engine's cancel layers to a shared component (`Chip`, `Pager`, `Dropdown`,
+  `ContextMenu`, `OptionMenu`, `IconButton`, `HintsButton`, `ColorPicker`), not a bespoke `<button>` + CSS for something
+  a primitive already covers (close/back/menu/toggle buttons, nav controls,
+  cards, popovers).
 
-- **If a primitive doesn't exist, CREATE it** in `src/design/` — don't inline custom CSS
+- **Pull the shared UI's Git LFS assets once per clone**: `git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"`. The HUD's input graph lists them, and `pnpm dev`, the tests and the native build refuse a pointer.
+- **Use the shared component when one exists.** Import it from `@dcl/one-ui` (`library/ui/components`); do not add a HUD copy of a component the library already has. A look the HUD needs is a variant on the shared component (`docs/ui-standards.md`).
+- **If a primitive doesn't exist, CREATE it** in `library/ui/apps/hud/design/` — don't inline custom CSS
   for a pattern that will recur. A new primitive must:
-  1. Live in `src/design/<Name>.tsx` (+ `.module.css`), token-driven only.
-  2. Be exported from `src/design/index.ts`.
-  3. Be added to `src/design/Showcase.tsx` (viewable at `?showcase=1`).
+  1. Live in `library/ui/apps/hud/design/<Name>.tsx` (+ `.module.css`), token-driven only.
+  2. Be exported from `library/ui/apps/hud/design/index.ts`.
+  3. Be added to the Showcase: a section in `library/ui/apps/hud/design/ShowcaseIndex.ts` that names
+     it, rendered in `Showcase.tsx` with local data (viewable at `?showcase=1` and in the UI gallery's
+     HUD section). The gallery's coverage test (`library/ui/gallery/test/hud/coverage.test.tsx`) fails
+     until a section mounts it. An export that is not a component (a function, a constant) gets its
+     reason in `SHOWCASE_NOT_COMPONENTS` in the same file instead.
   4. Support variants via props (size/variant/tone), not copy-paste.
 
 ## 2. When custom CSS is acceptable
@@ -43,7 +65,7 @@ re-implementing a primitive.
 
 ## 3. Before adding a component, ask:
 
-1. Does a `src/design/` primitive already do this? → use it.
+1. Does a `@hud/design` primitive already do this? → use it.
 2. Is this a reusable control/surface with no primitive yet? → **create the primitive**,
    then use it.
 3. Is this genuinely one-off feature layout? → CSS Module, token-driven, composing
@@ -77,13 +99,14 @@ server holds.
 
 ## 6. Checks
 
-- `npm run typecheck` must pass.
+- `pnpm run typecheck` must pass.
 - No new hardcoded brand/status colors, radii, or type sizes — grep your diff for raw
   `#` hex and `rgba(` and justify each (most should be a token).
 
 ## 7. The scene editor host
 
-Create (`src/features/editorHost`) hosts the scene editor. Use its checked-in pin, host contract and gates below. Resolve external editor development guidance through authorized task context; keep the target build self-contained. Here:
+Create hosts the scene editor: its pages in `library/ui/apps/hud/features/editorHost`, its config,
+source and host contract in `library/explorer-core/features/editorHost`. Use its checked-in pin, host contract and gates below. Resolve external editor development guidance through authorized task context; keep the target build self-contained. Here:
 
 - The editor arrives through `editorHost/config.ts`. On `PINNED_EDITOR.hosts` (decentraland.org) it
   is one version checked against its `editor.js` hash, with its editor scene pinned and
@@ -100,8 +123,8 @@ Create (`src/features/editorHost`) hosts the scene editor. Use its checked-in pi
   signing go through `lib/shell`.
 - The preview realm (`../deploy/web/PREVIEW_REALM.md`) and the scene server
   (`deploy/web/engine/headless.*`, `src/headless`) are engine-side; prove changes with the `editor`
-  and `preview-realm` gates (`playwright.gate.config.ts`, `e2e/README.md`) and
-  `src/test/editorHost*.test.tsx`.
+  and `preview-realm` gates (`playwright.gate.config.ts`, `e2e/README.md`) and the editor host tests
+  (`src/test/editorHost*.test.tsx`, `library/ui/apps/hud/test/hosted/editorHost*.test.tsx`).
 - When the editor needs the engine to behave differently, change the engine here, in its own PR.
 
 > Rationale: a single, enforced design system is what keeps the HUD consistent,

@@ -105,6 +105,8 @@ pub struct GrantRequest<'a> {
     pub actor: Option<&'a str>,
     pub idempotency_key: Option<&'a str>,
     pub detail: &'a JsonValue,
+    /// The studio giving an operator grant: its notice reads "A gift from {studio}".
+    pub studio_name: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,18 +133,32 @@ fn with_fields(detail: &JsonValue, fields: &[(&str, JsonValue)]) -> JsonValue {
 const CREDITS_GRANT_NS: uuid::Uuid =
     uuid::Uuid::from_u128(0x8d2f_41c7_5a90_4e3b_b7d6_0c1e_9a4f_62d8);
 /// The old processor's `${CDN_URL}credits/notification-icon.png`.
-const CREDITS_NOTIFICATION_ICON: &str =
-    "https://assets-cdn.decentraland.org/credits/notification-icon.png";
+pub(crate) const CREDITS_NOTIFICATION_ICON_PATH: &str = "credits/notification-icon.png";
 
 /// The credits-server USD `ON_DEMAND_CREDITS_GRANTED` event as the old
 /// parser stored it, keyed on the grant's audit row.
+struct GrantNotice<'a> {
+    pub address: crate::shared::identity::Address,
+    pub audit_id: i64,
+    pub amount: &'a str,
+    pub usd_cents: Option<i64>,
+    pub studio_name: Option<&'a str>,
+    pub shop_base_url: &'a str,
+    pub cdn_url: &'a str,
+}
+
 fn credits_granted_notification(
-    address: catalyst_social::Address,
-    audit_id: i64,
-    amount: &str,
-    usd_cents: Option<i64>,
-    shop_base_url: &str,
-) -> catalyst_social::notifications::NewNotification {
+    notice: GrantNotice<'_>,
+) -> crate::shared::notifications::NewNotification {
+    let GrantNotice {
+        address,
+        audit_id,
+        amount,
+        usd_cents,
+        studio_name,
+        shop_base_url,
+        cdn_url,
+    } = notice;
     let credits = amount
         .parse::<serde_json::Number>()
         .map_or_else(|_| JsonValue::String(amount.into()), JsonValue::Number);
@@ -150,15 +166,27 @@ fn credits_granted_notification(
     if let Some(cents) = usd_cents {
         metadata["usdCents"] = cents.into();
     }
-    metadata["image"] = CREDITS_NOTIFICATION_ICON.into();
-    metadata["title"] = "Credits added to your account".into();
-    metadata["description"] = format!(
-        "You received {} Credits. They never expire: spend them in the Shop.",
-        en_us_amount(amount)
-    )
-    .into();
+    let studio = studio_name.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(studio) = studio {
+        metadata["studioName"] = studio.into();
+    }
+    metadata["image"] =
+        crate::shared::notifications::cdn_asset(cdn_url, CREDITS_NOTIFICATION_ICON_PATH).into();
+    let amount = format!("{} Credits", en_us_amount(amount));
+    let (title, description) = match studio {
+        Some(studio) => (
+            format!("A gift from {studio}"),
+            format!("{studio} gifted you {amount}. They never expire: spend them in the Shop."),
+        ),
+        None => (
+            "Credits added to your account".to_string(),
+            format!("You received {amount}. They never expire: spend them in the Shop."),
+        ),
+    };
+    metadata["title"] = title.into();
+    metadata["description"] = description.into();
     metadata["link"] = shop_base_url.into();
-    let mut n = catalyst_social::notifications::NewNotification::now(
+    let mut n = crate::shared::notifications::NewNotification::now(
         address,
         "credits_on_demand_granted",
         metadata,
@@ -237,6 +265,17 @@ impl Credits {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         grant: GrantRequest<'_>,
     ) -> Result<GrantOutcome, ApiError> {
+        Ok(self.paid_credit_in_tx(tx, grant).await?.0)
+    }
+
+    /// [`Self::admin_grant_credits_in_tx`], with the id of the ledger row it
+    /// wrote (`None` on a replay, which writes none): a studio grant names it
+    /// in its budget entry.
+    pub(crate) async fn paid_credit_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        grant: GrantRequest<'_>,
+    ) -> Result<(GrantOutcome, Option<i64>), ApiError> {
         let GrantRequest {
             address,
             amount,
@@ -245,6 +284,7 @@ impl Credits {
             actor,
             idempotency_key,
             detail,
+            studio_name,
         } = grant;
         if !matches!(kind, "grant" | "purchase" | "refund") {
             return Err(ApiError::bad_request(
@@ -290,11 +330,14 @@ impl Credits {
                         "idempotency key already used for a different grant (address/amount mismatch)",
                     ));
                 }
-                return Ok(GrantOutcome {
-                    available: prior.get("available"),
-                    applied: prior.get("amount"),
-                    replayed: true,
-                });
+                return Ok((
+                    GrantOutcome {
+                        available: prior.get("available"),
+                        applied: prior.get("amount"),
+                        replayed: true,
+                    },
+                    None,
+                ));
             }
         }
 
@@ -319,20 +362,20 @@ impl Credits {
                 ("kind", JsonValue::String(kind.to_string())),
             ],
         );
-        let (audit_id, usd_cents): (i64, Option<i64>) = sqlx::query_as(
+        let (audit_id, usd_cents, ledger_id): (i64, Option<i64>, i64) = sqlx::query_as(
             "WITH a AS ( \
                  INSERT INTO ops.admin_audit (actor, domain, action, target, detail, result) \
                  VALUES ($5, 'credits', 'grant', $1, $6, 'ok') RETURNING id \
              ), l AS ( \
                  INSERT INTO credits.ledger (address, kind, amount, bucket, captcha_ok, admin_audit_id) \
-                 SELECT $1, $3, $2::numeric, 'paid', FALSE, a.id FROM a \
+                 SELECT $1, $3, $2::numeric, 'paid', FALSE, a.id FROM a RETURNING id \
              ), i AS ( \
                  UPDATE credits.idempotency \
                  SET available = $4::numeric, applied = $2::numeric \
                  WHERE scope = 'grant' AND idempotency_key = $7 \
              ) \
-             SELECT a.id, CASE WHEN c = trunc(c) AND c < 9e18 THEN c::int8 END \
-             FROM a, (SELECT $2::numeric * 10 AS c) cents",
+             SELECT a.id, CASE WHEN c = trunc(c) AND c < 9e18 THEN c::int8 END, l.id \
+             FROM a, l, (SELECT $2::numeric * 10 AS c) cents",
         )
         .bind(address)
         .bind(amount)
@@ -346,24 +389,28 @@ impl Credits {
 
         // Only an operator grant notifies; purchases and refunds do not.
         if kind == "grant"
-            && let Ok(recipient) = catalyst_social::Address::parse(address)
+            && let Ok(recipient) = crate::shared::identity::Address::parse(address)
         {
-            let notification = credits_granted_notification(
-                recipient,
+            let notification = credits_granted_notification(GrantNotice {
+                address: recipient,
                 audit_id,
                 amount,
                 usd_cents,
-                &self.shop_base_url,
-            );
-            catalyst_social::notifications::insert_notifications(&mut **tx, &[notification])
-                .await?;
+                studio_name,
+                shop_base_url: &self.shop_base_url,
+                cdn_url: &self.notifications_cdn_url,
+            });
+            crate::shared::notifications::insert_notifications(&mut **tx, &[notification]).await?;
         }
 
-        Ok(GrantOutcome {
-            available,
-            applied: amount.to_string(),
-            replayed: false,
-        })
+        Ok((
+            GrantOutcome {
+                available,
+                applied: amount.to_string(),
+                replayed: false,
+            },
+            Some(ledger_id),
+        ))
     }
 
     pub async fn admin_revoke_credits(

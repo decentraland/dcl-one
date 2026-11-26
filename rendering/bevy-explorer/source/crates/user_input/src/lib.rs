@@ -1,5 +1,8 @@
+#![forbid(unsafe_code)]
+
 pub mod avatar_movement;
 pub mod camera;
+mod camera_collision;
 mod debug_panel;
 pub mod point_at;
 
@@ -15,7 +18,10 @@ use common::{
     },
 };
 use console::DoAddConsoleCommand;
-use scene_runner::{update_scene::pointer_lock::update_pointer_lock, OutOfWorld};
+use scene_runner::{
+    update_scene::pointer_lock::update_pointer_lock,
+    update_world::mesh_collider::PlayerCollisionToggled, OutOfWorld,
+};
 
 use crate::avatar_movement::AvatarMovementPlugin;
 use crate::point_at::PointAtPlugin;
@@ -30,7 +36,7 @@ pub struct UserInputPlugin;
 impl Plugin for UserInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((AvatarMovementPlugin, PointAtPlugin));
-        debug_panel::register(app);
+        app.add_plugins(debug_panel::InputDebugPanelPlugin);
         app.add_systems(
             Update,
             update_camera
@@ -47,15 +53,22 @@ impl Plugin for UserInputPlugin {
             )
                 .chain(),
         );
+        app.add_event::<PlayerCollisionToggled>();
+        app.add_systems(PostUpdate, camera_collision::tag_camera_obstacle_meshes);
         app.init_resource::<EngineMovementControl>()
-            .init_resource::<CursorLocks>();
+            .init_resource::<CursorLocks>()
+            .init_resource::<camera_collision::CameraCollision>();
+        require_camera_collision_state(app);
         app.add_preview_console_command::<NoClipCommand, _>(no_clip);
         app.add_preview_console_command::<SpeedCommand, _>(speed_cmd);
         app.add_preview_console_command::<JumpCommand, _>(jump_cmd);
     }
 }
 
-#[allow(clippy::type_complexity)]
+fn require_camera_collision_state(app: &mut App) {
+    app.register_required_components::<PrimaryCamera, camera_collision::CameraCollisionState>();
+}
+
 fn manage_player_visibility(
     camera: Query<(&GlobalTransform, Has<PhotoMode>), With<PrimaryCamera>>,
     mut player: Query<
@@ -145,13 +158,16 @@ pub(crate) fn speed_cmd(
     mut user: Query<&mut PrimaryUser>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let mut user = user.single_mut().unwrap();
+        let Ok(mut user) = user.single_mut() else {
+            input.reply_failed("player not found");
+            return;
+        };
         user.run_speed = command.run;
         user.walk_speed = command.walk;
         user.jog_speed = command.jog;
         input.reply_ok(format!(
             "run speed: {}, jog speed: {}, walk speed: {}",
-            command.run, command.walk, command.jog
+            command.run, command.jog, command.walk
         ));
     }
 }
@@ -166,7 +182,10 @@ pub(crate) struct JumpCommand {
 
 pub(crate) fn jump_cmd(mut input: ConsoleCommand<JumpCommand>, mut user: Query<&mut PrimaryUser>) {
     if let Some(Ok(command)) = input.take() {
-        let mut user = user.single_mut().unwrap();
+        let Ok(mut user) = user.single_mut() else {
+            input.reply_failed("player not found");
+            return;
+        };
         user.jump_height = command.jump_height;
         user.run_jump_height = command.run_jump_height;
         input.reply_ok(format!(

@@ -85,14 +85,26 @@ pub fn payments_config(
     }
 }
 
-pub async fn config(State(state): State<SharedState>) -> Json<PaymentsConfig> {
+/// A trial (`CREDITS_TRIAL_MODE`) takes no MANA for credits: these routes would hand a client the
+/// relay's own signer as a pay-to address for a top-up the credits lane then refuses.
+fn refuse_in_a_trial(state: &SharedState) -> Result<(), ApiError> {
+    if state.settings.trial_mode {
+        return Err(ApiError::Forbidden(
+            "MANA payments are disabled in this test (CREDITS_TRIAL_MODE)".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub async fn config(State(state): State<SharedState>) -> Result<Json<PaymentsConfig>, ApiError> {
+    refuse_in_a_trial(&state)?;
     let chain_id = state.settings.collections_chain_id;
     let pay_to = state
         .transaction
         .direct_signer()
         .map(|s| s.relayer_address());
     let mana_token = DclContracts::for_chain(chain_id).map(|c| c.mana_token);
-    Json(payments_config(pay_to, mana_token, chain_id))
+    Ok(Json(payments_config(pay_to, mana_token, chain_id)))
 }
 
 pub fn encode_get_nonce(user: Address) -> Vec<u8> {
@@ -139,6 +151,7 @@ pub async fn nonce(
     State(state): State<SharedState>,
     Path(address): Path<String>,
 ) -> Result<Json<PaymentsNonceOut>, ApiError> {
+    refuse_in_a_trial(&state)?;
     let (user, signer, mana_token) = mana_reader(&state, &address, "the meta-tx nonce")?;
     let ret = signer
         .eth_call(mana_token, encode_get_nonce(user).into())
@@ -168,6 +181,7 @@ pub async fn balance(
     State(state): State<SharedState>,
     Path(address): Path<String>,
 ) -> Result<Json<PaymentsBalanceOut>, ApiError> {
+    refuse_in_a_trial(&state)?;
     let (user, signer, mana_token) = mana_reader(&state, &address, "the MANA balance")?;
     let ret = signer
         .eth_call(mana_token, encode_balance_of(user).into())
@@ -185,14 +199,11 @@ pub struct VerifyBody {
 }
 
 fn validate_tx_hash(raw: &str) -> Result<String, ApiError> {
-    let s = raw.trim();
-    let hex = s.strip_prefix("0x").unwrap_or("");
-    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(ApiError::InvalidTransaction(format!(
+    crate::types::normalize_tx_hash(raw).ok_or_else(|| {
+        ApiError::InvalidTransaction(format!(
             "invalid txHash {raw:?}: expected 0x + 64 hex chars"
-        )));
-    }
-    Ok(s.to_lowercase())
+        ))
+    })
 }
 
 pub async fn verify(
@@ -200,6 +211,7 @@ pub async fn verify(
     headers: HeaderMap,
     body: Result<Json<VerifyBody>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    refuse_in_a_trial(&state)?;
     require_admin(&state, &headers)?;
     let Json(body) = body.map_err(|e| ApiError::MalformedBody(e.body_text()))?;
     let tx_hash = validate_tx_hash(&body.tx_hash)?;
@@ -217,18 +229,27 @@ pub async fn verify(
     };
     let pay_to = signer.relayer_address();
 
-    let (outcome, logs) = signer.fetch_receipt_once(&tx_hash).await?;
+    let (outcome, logs, block_number) = signer.fetch_receipt_with_block(&tx_hash).await?;
     let response = match outcome {
         ReceiptOutcome::Pending => json!({ "status": "pending" }),
         ReceiptOutcome::Reverted => json!({ "status": "reverted" }),
         ReceiptOutcome::Confirmed => {
             match sum_erc20_transfers_to(&logs, contracts.mana_token, pay_to) {
-                Some((from, total)) => json!({
-                    "status": "confirmed",
-                    "from": format!("{from:#x}"),
-                    "to": format!("{pay_to:#x}"),
-                    "valueWei": total.to_string(),
-                }),
+                Some((from, total)) => {
+                    let block_number = block_number.ok_or_else(|| {
+                        ApiError::RelayerFailed(format!("receipt for {tx_hash} has no block"))
+                    })?;
+                    let (head, block_timestamp) = signer.head_and_block_time(block_number).await?;
+                    json!({
+                        "status": "confirmed",
+                        "from": format!("{from:#x}"),
+                        "to": format!("{pay_to:#x}"),
+                        "valueWei": total.to_string(),
+                        "blockNumber": block_number,
+                        "blockTimestamp": block_timestamp,
+                        "confirmations": head.saturating_sub(block_number),
+                    })
+                }
                 None => json!({
                     "status": "no_payment",
                     "to": format!("{pay_to:#x}"),

@@ -9,6 +9,7 @@ import type { BidsPage } from "@catalyst-api/market/BidsPage";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
 import type { Collection } from "@catalyst-api/market/Collection";
 import type { Contract } from "@catalyst-api/market/Contract";
+import type { CreatorProfile } from "@catalyst-api/market/CreatorProfile";
 import type { CreatorSearchHit } from "@catalyst-api/market/CreatorSearchHit";
 import type { CreditCatalogItem } from "@catalyst-api/market/CreditCatalogItem";
 import type { DataOnly } from "@catalyst-api/market/DataOnly";
@@ -200,6 +201,12 @@ export const ContractSchema = z.object({
   category: NftCategorySchema,
   network: NetworkSchema,
   chainId: z.number(),
+});
+
+export const CreatorProfileSchema = z.object({
+  name: z.string(),
+  face: z.string().nullable(),
+  claimed: z.boolean(),
 });
 
 export const CreatorSearchHitSchema = z.object({
@@ -636,6 +643,7 @@ export const UnifiedItemSchema = z.object({
   network: NetworkSchema,
   chainId: z.number(),
   createdAt: z.number(),
+  creatorProfile: CreatorProfileSchema.optional(),
   compareAtCredits: z.number().nullable(),
   saleEndsAt: z.number().nullable(),
   saleUnitsLeft: z.number().nullable(),
@@ -665,6 +673,8 @@ export const SalesSummaryCollectionSchema = z.object({
   contractAddress: z.string(),
   sold: z.number(),
   earnedWei: z.string(),
+  earnedUsd: z.string(),
+  unpricedSales: z.number(),
 });
 
 export const SalesSummaryItemSchema = z.object({
@@ -676,6 +686,7 @@ export const SalesSummaryItemSchema = z.object({
 export const SalesSummaryRoyaltiesSchema = z.object({
   resales: z.number(),
   volumeWei: z.string(),
+  royaltiesWei: z.string().nullable(),
 });
 
 export const SalesSummarySchema = z.object({
@@ -683,6 +694,8 @@ export const SalesSummarySchema = z.object({
   mints: z.number(),
   resales: z.number(),
   earnedWei: z.string(),
+  earnedUsd: z.string(),
+  unpricedSales: z.number(),
   byCollection: z.array(SalesSummaryCollectionSchema),
   byItem: z.array(SalesSummaryItemSchema),
   royalties: SalesSummaryRoyaltiesSchema,
@@ -793,6 +806,7 @@ export const SuggestedItemSchema = z.object({
   network: NetworkSchema,
   chainId: z.number(),
   createdAt: z.number(),
+  creatorProfile: CreatorProfileSchema.optional(),
   compareAtCredits: z.number().nullable(),
   saleEndsAt: z.number().nullable(),
   saleUnitsLeft: z.number().nullable(),
@@ -812,6 +826,7 @@ export const TopCreatorSchema = z.object({
   totalSales: z.number(),
   collections: z.number(),
   items: z.number(),
+  profile: CreatorProfileSchema.optional(),
 });
 
 export const TopCreatorsResponseBodySchema = z.object({
@@ -844,6 +859,7 @@ export const TrendingItemSchema = z.object({
   network: NetworkSchema,
   chainId: z.number(),
   createdAt: z.number(),
+  creatorProfile: CreatorProfileSchema.optional(),
   compareAtCredits: z.number().nullable(),
   saleEndsAt: z.number().nullable(),
   saleUnitsLeft: z.number().nullable(),
@@ -901,6 +917,7 @@ export type _AssertBidsPage = Assert<Mutual<BidsPage, z.infer<typeof BidsPageSch
 export type _AssertCatalogItem = Assert<Mutual<CatalogItem, z.infer<typeof CatalogItemSchema>>>;
 export type _AssertCollection = Assert<Mutual<Collection, z.infer<typeof CollectionSchema>>>;
 export type _AssertContract = Assert<Mutual<Contract, z.infer<typeof ContractSchema>>>;
+export type _AssertCreatorProfile = Assert<Mutual<CreatorProfile, z.infer<typeof CreatorProfileSchema>>>;
 export type _AssertCreatorSearchHit = Assert<Mutual<CreatorSearchHit, z.infer<typeof CreatorSearchHitSchema>>>;
 export type _AssertCreditCatalogItem = Assert<Mutual<CreditCatalogItem, z.infer<typeof CreditCatalogItemSchema>>>;
 export type _AssertDataOnly = Assert<Mutual<DataOnly<unknown>, z.infer<ReturnType<typeof DataOnlySchema<z.ZodUnknown>>>>>;

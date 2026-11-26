@@ -1,6 +1,8 @@
+import { RouterContextProvider } from "react-router";
 import fs from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { writeDocsFixture } from "@/data/lib/docs/fixture.test-helper";
 import { loader, middleware } from "./docs.$";
 
@@ -12,12 +14,12 @@ const request = (p: string, init?: RequestInit) => new Request(`https://dcl.test
 const next = vi.fn(async () => new Response("rendered"));
 async function run(p: string, init?: RequestInit): Promise<Response> {
   next.mockClear();
-  const result = await middleware[0]({ request: request(p, init) } as never, next as never);
+  const result = await middleware[0]({ request: request(p, init), context: new RouterContextProvider() } as never, next as never);
   return result instanceof Response ? result : new Response("fallthrough");
 }
 async function load(p: string) {
   try {
-    return await loader({ request: request(p) } as never);
+    return await loader({ request: request(p), context: new RouterContextProvider() } as never);
   } catch (thrown) {
     return thrown;
   }
@@ -69,5 +71,41 @@ describe("/docs loader", () => {
 
   it("404s unknown pages", async () => {
     expect(await load("/docs/nope/")).toMatchObject({ init: { status: 404 } });
+  });
+});
+
+describe("/docs and the visitor session", () => {
+  // The real docs middleware under the root session middleware. The rendered stub carries no
+  // Cache-Control, so only the docs route marking itself public keeps the session off the reply.
+  async function visit(p: string) {
+    const context = new RouterContextProvider();
+    const req = request(p);
+    let rootSid: string | null | undefined;
+    const response = await sessionMiddleware(
+      { request: req, context } as never,
+      (async () => {
+        const answered = await middleware[0]({ request: req, context } as never, (async () => {
+          rootSid = pageSid(req, context);
+          return new Response("rendered");
+        }) as never);
+        return answered instanceof Response ? answered : new Response("fallthrough");
+      }) as never,
+    );
+    return { response: response as Response, rootSid };
+  }
+
+  it.each(["/docs/player/faq/", "/docs/player/faq.data"])("gives %s no sid cookie and no sid in root data", async (p) => {
+    const { response, rootSid } = await visit(p);
+
+    expect(await response.text()).toBe("rendered");
+    expect(rootSid).toBeNull();
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("gives a docs file no sid cookie", async () => {
+    const { response } = await visit("/docs/.gitbook/assets/shot.webp");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie()).toEqual([]);
   });
 });

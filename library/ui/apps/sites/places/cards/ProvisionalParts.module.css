@@ -1,0 +1,208 @@
+/* TODO(shared-card): provisional card pieces, removed with ProvisionalParts.tsx. Sizes are cqw
+   against the card's own width, so both cards scale with their grid column as source does; each
+   value is the source design measurement, capped at its design pixel size. */
+
+.badges {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: min(1.838cqw, 8px);
+  pointer-events: none;
+}
+
+.badgeGroup {
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+/* Source's LIVE and people badges are decentraland-ui2's LiveBadge and UserCountBadge: fixed pixels, caption 12px bold on one line. */
+.badge {
+  composes: text6c6162656c2f746167 from '../../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  box-sizing: border-box;
+  height: 26px;
+  padding: 0 var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-white);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.15008px;
+}
+
+.badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+.live {
+  composes: badge;
+  background: var(--dcl-system-red);
+  text-transform: uppercase;
+}
+
+.users {
+  composes: badge;
+  gap: 6px;
+  background: var(--dcl-neutrals-shadow);
+  color: #f0f0f0;
+}
+
+.dot {
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-green);
+}
+
+/* Source's FeaturedBadge (DiscoverShell): card-relative, capped at its design pixels. */
+.featured {
+  composes: badge;
+  gap: min(0.919cqw, 4px);
+  height: min(5.974cqw, 26px);
+  padding: min(1.149cqw, 5px) min(1.379cqw, 6px);
+  border-radius: min(1.838cqw, 8px);
+  background: linear-gradient(149.456deg, #ffbc5b 0%, #ff2d55 50.521%, #c640cd 100%);
+  color: var(--dcl-neutrals-snow);
+  font-size: min(3.217cqw, 14px);
+  font-weight: 600;
+}
+
+.featured svg {
+  width: auto;
+  height: var(--featured-glyph, min(3.217cqw, 14px));
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cover {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+}
+
+.titleLink {
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+
+/* The title link covers the card, so the whole card opens the page. */
+.titleLink::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* The by-line's measurements are the grid card's (source PlaceCard); the live card sets its own through the custom properties. */
+.creatorRow {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--creator-gap, 2.298cqw);
+  min-width: 0;
+}
+
+/* `--avatar-bg` is the creator's ADR-292 colour, behind a transparent face. */
+.avatar {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  display: grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  width: var(--avatar-size, 7.352cqw);
+  height: var(--avatar-size, 7.352cqw);
+  border: var(--avatar-border, 0.525cqw) solid
+    color-mix(in srgb, var(--dcl-neutrals-white) 50%, transparent);
+  border-radius: var(--dcl-radius-full);
+  background: var(--avatar-bg, var(--dcl-brand-lavender));
+  color: var(--dcl-neutrals-white);
+  font-size: min(3.217cqw, 14px);
+  object-fit: cover;
+}
+
+.by {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--by-size, 3.217cqw);
+  line-height: 1.57;
+  letter-spacing: var(--by-tracking, 0.00938em);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Above the card's covering title link, so it stays its own target. */
+.creator {
+  position: relative;
+  z-index: 1;
+  color: var(--dcl-brand-ruby);
+  text-decoration: none;
+}
+
+/* The reference's creator link is a button: an inline-block with the browser's normal tracking, so the
+   by-line's ellipsis replaces an overlong name as a whole instead of cutting it mid-word. */
+a.creator {
+  display: inline-block;
+  letter-spacing: normal;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.jumpIn {
+  composes: text627574746f6e2f786c from '../../../../foundations/typography/text-styles.module.css';
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--jump-gap, 1.952cqw);
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--jump-radius, 2.757cqw);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-neutrals-snow);
+
+  /* The reference's button keeps the browser's button font. */
+  font-family: Arial, sans-serif;
+  line-height: normal;
+  letter-spacing: normal;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+.jumpIn svg {
+  width: auto;
+  height: var(--jump-glyph, 5.715cqw);
+}
+
+.jumpIn:hover {
+  background: var(--dcl-primary-primary-dark-1);
+}
+
+.jumpIn:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}

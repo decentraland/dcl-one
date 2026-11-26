@@ -14,9 +14,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
-use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
+use crate::deploy_remote_entity::{
+    ContentSource, CurrentDownloadPeers, DownloadPeers, RemoteDeployment, deploy_entity_streaming,
+};
+use crate::failed_deployments_store::{
+    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
+};
 use crate::storage::Storage;
-use crate::sync_deployer::{DueCursor, LiveFailedDeploymentsStore, LiveSyncDeployer};
+use crate::sync_deployer::LiveSyncDeployer;
 
 const BASE_RETRY_INTERVAL_MS: u64 = 900_000;
 const MAX_RETRY_INTERVAL_MS: u64 = 86_400_000;
@@ -41,6 +46,10 @@ pub struct RetryFailedConfig {
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
+    /// Discard a due entity a newer active entity overtook instead of deploying it as a
+    /// superseded row. Set where the history prune (`CONTENT_HISTORY_PRUNE_ENABLED`) would remove
+    /// that row again; a node that keeps history stores it.
+    pub discard_overtaken: bool,
 }
 
 impl Default for RetryFailedConfig {
@@ -50,6 +59,7 @@ impl Default for RetryFailedConfig {
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
+            discard_overtaken: false,
         }
     }
 }
@@ -126,6 +136,14 @@ fn retried_record(
     }
 }
 
+/// What a successful retry did with a due record.
+enum Retried {
+    /// Buffered for the flush, whose transaction deletes the record.
+    Buffered,
+    /// Overtaken by a newer entity: the record is deleted and nothing is written.
+    Discarded,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryDisposition {
     Due,
@@ -150,17 +168,17 @@ fn classify(failure: &FailedDeployment, max_retries: u32, now_ms: i64) -> RetryD
 
 pub struct RetryFailedDeployments {
     config: RetryFailedConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     deployer: Arc<LiveSyncDeployer>,
     failed_store: Arc<LiveFailedDeploymentsStore>,
-    peer_servers: Arc<tokio::sync::RwLock<Vec<String>>>,
+    peer_servers: CurrentDownloadPeers,
 }
 
 impl RetryFailedDeployments {
     pub fn new(
         config: RetryFailedConfig,
-        http_client: reqwest::Client,
+        http_client: crate::http::CheckedRedirectClient,
         storage: Arc<Storage>,
         deployer: Arc<LiveSyncDeployer>,
         failed_store: Arc<LiveFailedDeploymentsStore>,
@@ -209,6 +227,25 @@ impl RetryFailedDeployments {
         }
     }
 
+    /// Sets `dcl_content_server_failed_deployments` to the rows of `content.failed_deployments`.
+    async fn count_failed_deployments(&self) {
+        match self.failed_store.count_all().await {
+            Ok(rows) => crate::sync::metrics::failed_deployments(rows),
+            Err(e) => warn!(error = %e, "Failed to count failed deployments"),
+        }
+    }
+
+    /// Exports `dcl_content_server_failed_deployments` while this process retries: counted now,
+    /// as the legacy content server did at its start, then once per cycle, and zeroed when the
+    /// guard drops (the lease moved or the process stops), so only the process that retries
+    /// reports the rows and a fleet `sum()` counts them once. A guard from an earlier worker of
+    /// this process that drops later leaves the gauge alone.
+    pub async fn export_failed_deployments(&self) -> crate::sync::metrics::FailedDeploymentsExport {
+        let export = crate::sync::metrics::FailedDeploymentsExport::start();
+        self.count_failed_deployments().await;
+        export
+    }
+
     /// One cycle: `now` is fixed once, so a record re-reported during the cycle (deadline moved
     /// past `now`) or recorded fresh (deadline at the epoch, before the cursor) waits for the next
     /// cycle, and the keyset cursor moves forward even when a re-report fails to land. Each page
@@ -221,9 +258,10 @@ impl RetryFailedDeployments {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let evicted = self.evict_exhausted(now_ms).await;
         match self.failed_store.count_undecided().await {
-            Ok(undecided) => metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
+            Ok(undecided) => dcl_metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
             Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
         }
+        self.count_failed_deployments().await;
         let waiting = self.failed_store.count_waiting(now_ms).await?;
 
         let retry_concurrency = self.config.retry_concurrency.max(1);
@@ -231,11 +269,12 @@ impl RetryFailedDeployments {
         let content_semaphore = Arc::new(Semaphore::new(50));
         let succeeded = AtomicU64::new(0);
         let still_failing = AtomicU64::new(0);
-        let mut skipped: u64 = 0;
+        let discarded = AtomicU64::new(0);
+        let skipped = AtomicU64::new(0);
         let mut pages: u64 = 0;
 
         let mut cursor: Option<DueCursor> = None;
-        let mut servers: Option<Vec<String>> = None;
+        let servers = DownloadPeers::current(&[], self.peer_servers.clone());
         loop {
             let batch = self
                 .failed_store
@@ -246,18 +285,9 @@ impl RetryFailedDeployments {
                 break;
             }
             pages += 1;
-            if servers.is_none() {
-                let peers = self.peer_servers.read().await.clone();
-                if peers.is_empty() {
-                    warn!(due = fetched, "No peer servers available for retry");
-                    return Ok(RetryStats {
-                        waiting,
-                        evicted,
-                        pages,
-                        ..Default::default()
-                    });
-                }
-                servers = Some(peers);
+            if self.peer_servers.read().await.is_empty() {
+                warn!(due = fetched, "No peer servers available for retry");
+                break;
             }
             if pages == 1 {
                 info!(count = fetched, waiting, "Retrying failed deployments");
@@ -273,7 +303,7 @@ impl RetryFailedDeployments {
                             entity_type = %failure.entity_type,
                             "Can't retry failed deployment. Because it lacks of authChain"
                         );
-                        skipped += 1;
+                        skipped.fetch_add(1, Ordering::Relaxed);
                     }
                     RetryDisposition::Exhausted | RetryDisposition::Waiting { .. } => {
                         debug!(
@@ -282,45 +312,71 @@ impl RetryFailedDeployments {
                             next_retry_at = failure.next_retry_at,
                             "Due query returned a record the cycle no longer acts on"
                         );
-                        skipped += 1;
+                        skipped.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
 
-            let servers_ref: &[String] = servers.as_deref().unwrap_or_default();
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
+            let discarded_ref = &discarded;
+            let skipped_ref = &skipped;
             let content_semaphore = &content_semaphore;
 
             futures::stream::iter(due)
                 .for_each_concurrent(retry_concurrency, |failure| {
                     let content_semaphore = content_semaphore.clone();
+                    let servers = servers.clone();
                     async move {
                         let attempt = next_attempt(failure);
-                        match deploy_entity_streaming(
+                        let outcome = deploy_entity_streaming(
                             ContentSource {
                                 client: &self.http_client,
                                 storage: self.storage.clone(),
-                                servers: servers_ref,
+                                servers,
                                 content_semaphore,
                             },
                             self.deployer.as_ref(),
                             RemoteDeployment {
                                 entity_id: &failure.entity_id,
+                                entity_type: &failure.entity_type,
                                 auth_chain: &failure.auth_chain,
                                 context: DeploymentContext::SyncedFix,
                                 report: None,
                                 retry_state: Some(attempt),
+                                discard_overtaken: self.config.discard_overtaken,
                             },
                         )
-                        .await
-                        {
+                        .await;
+                        // A failed discard is re-reported below like any failed attempt, so the
+                        // record backs off instead of being checked again next cycle.
+                        let outcome = match outcome {
+                            Err(SyncError::Overtaken { .. }) => self
+                                .failed_store
+                                .remove_discarded(&failure.entity_id)
+                                .await
+                                .map(|()| Retried::Discarded),
+                            other => other.map(|()| Retried::Buffered),
+                        };
+                        match outcome {
+                            Ok(Retried::Discarded) => {
+                                info!(
+                                    entity_id = %failure.entity_id,
+                                    entity_type = %failure.entity_type,
+                                    "Discarded failed deployment overtaken by newer deployments"
+                                );
+                                discarded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
                             // Buffered, not yet written: the flush transaction that writes
                             // it deletes the failure record, so a crash or a failed flush
                             // before then leaves the record for the next cycle.
-                            Ok(()) => {
+                            Ok(Retried::Buffered) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(SyncError::NoServers) => {
+                                debug!(entity_id = %failure.entity_id, "No peers available during retry");
+                                skipped_ref.fetch_add(1, Ordering::Relaxed);
                             }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
@@ -358,9 +414,10 @@ impl RetryFailedDeployments {
         let stats = RetryStats {
             succeeded: succeeded.load(Ordering::Relaxed),
             still_failing: still_failing.load(Ordering::Relaxed),
+            discarded: discarded.load(Ordering::Relaxed),
             waiting,
             evicted,
-            skipped,
+            skipped: skipped.load(Ordering::Relaxed),
             pages,
         };
 
@@ -370,6 +427,7 @@ impl RetryFailedDeployments {
             info!(
                 succeeded = stats.succeeded,
                 still_failing = stats.still_failing,
+                discarded = stats.discarded,
                 waiting = stats.waiting,
                 evicted = stats.evicted,
                 skipped = stats.skipped,
@@ -419,31 +477,16 @@ impl RetryFailedDeployments {
 pub struct RetryStats {
     pub succeeded: u64,
     pub still_failing: u64,
+    /// Due records dropped because a newer deployment overtook the entity
+    /// ([`RetryFailedConfig::discard_overtaken`]).
+    pub discarded: u64,
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,
     pub evicted: u64,
-    /// Due records the cycle fetched but did not attempt (an auth chain that does not parse).
+    /// Due records skipped for missing auth chains or unavailable peers.
     pub skipped: u64,
     /// Due pages the cycle fetched, the page the peer guard turned back included.
     pub pages: u64,
-}
-
-/// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
-/// Undecided records stay: the retry worker gives up on them after [`UNDECIDED_GIVE_UP_MS`].
-pub async fn prune_failed_deployments(
-    pool: &sqlx::PgPool,
-    ttl_days: i64,
-) -> Result<u64, SyncError> {
-    let result = sqlx::query(
-        "DELETE FROM content.failed_deployments
-         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)
-           AND reason <> 'Validation undecided'",
-    )
-    .bind(ttl_days as i32)
-    .execute(pool)
-    .await
-    .map_err(|e| SyncError::Storage(e.to_string()))?;
-    Ok(result.rows_affected())
 }
 
 pub async fn run_prune_loop(
@@ -501,6 +544,130 @@ mod tests {
     fn without_auth_chain(mut failure: FailedDeployment) -> FailedDeployment {
         failure.auth_chain = Vec::new();
         failure
+    }
+
+    #[tokio::test]
+    async fn losing_all_peers_during_a_retry_page_preserves_due_records_and_budgets() {
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+
+        let Some(pool) = catalyst_db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let store = Arc::new(LiveFailedDeploymentsStore::new(pool.clone()));
+        for entity in [b"first due entity".as_slice(), b"second due entity"] {
+            store
+                .report_failure(FailedDeployment {
+                    entity_id: dcl_auth::hash_bytes_v1(entity),
+                    ..failure(2, 0)
+                })
+                .await
+                .unwrap();
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let peers = Arc::new(tokio::sync::RwLock::new(vec![url]));
+        let hits = Arc::new(AtomicUsize::new(0));
+        let membership = peers.clone();
+        let counted = hits.clone();
+        let app = Router::new().route(
+            "/contents/{hash}",
+            get(move || {
+                let peers = membership.clone();
+                counted.fetch_add(1, Ordering::Relaxed);
+                async move {
+                    peers.write().await.clear();
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("retry-peer-loss").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let retry = RetryFailedDeployments::new(
+            RetryFailedConfig {
+                retry_concurrency: 1,
+                ..Default::default()
+            },
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            storage,
+            deployer,
+            store.clone(),
+            peers,
+        );
+
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let rows = || {
+            crate::sync::metrics::sample(&handle.render(), "dcl_content_server_failed_deployments")
+        };
+        let stats = retry.execute_retry_cycle().await.unwrap();
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+        assert_eq!((stats.skipped, stats.still_failing), (2, 0));
+        assert_eq!(rows(), Some(2.0), "the cycle counts every row");
+        let page = store.select_due(0, 10, None, 10).await.unwrap();
+        assert_eq!(page.failures.len(), 2);
+        assert!(
+            page.failures
+                .iter()
+                .all(|record| record.retry_count == 2 && record.next_retry_at == 0)
+        );
+        server.abort();
+    }
+
+    /// The retry worker reports the rows from its start, before any cycle, and zeroes the gauge
+    /// when it stops, so a former leader does not keep reporting them.
+    #[tokio::test]
+    async fn the_retry_worker_reports_the_rows_while_it_runs() {
+        use crate::sync_test_support::{RemoveOnDrop, temp_storage};
+
+        let Some(pool) = catalyst_db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let store = Arc::new(LiveFailedDeploymentsStore::new(pool.clone()));
+        for entity in [b"one".as_slice(), b"two", b"three"] {
+            store
+                .report_failure(FailedDeployment {
+                    entity_id: dcl_auth::hash_bytes_v1(entity),
+                    ..failure(0, 0)
+                })
+                .await
+                .unwrap();
+        }
+        let (storage, tmp) = temp_storage("retry-failed-gauge").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let retry = RetryFailedDeployments::new(
+            RetryFailedConfig::default(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
+            storage,
+            deployer,
+            store,
+            Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        );
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let rows = || {
+            crate::sync::metrics::sample(&handle.render(), "dcl_content_server_failed_deployments")
+        };
+
+        assert_eq!(rows(), None);
+        let exported = retry.export_failed_deployments().await;
+        assert_eq!(rows(), Some(3.0));
+        drop(exported);
+        assert_eq!(rows(), Some(0.0));
     }
 
     #[test]

@@ -20,7 +20,10 @@
 //!   whatever it was (`retired`, `released`, `expired`: a cancel or an expiry
 //!   is not proof a signed credit went unused), and its hash is queued for
 //!   revocation. A debit the balance cannot cover rolls back and is retried
-//!   by the next pass and the reconciler.
+//!   by the reconciler's full pass. A credit used after its hold was released
+//!   or expired, one consumed near its MANA cap, and one its wallet cannot
+//!   cover each queue an alert (`alerts.rs`): the first two in the
+//!   settlement's transaction, the last once that rolled back.
 //! - **Revocation** ([`Revoker`], the `credits-settlement` job): the outbox
 //!   `credits.revocations` is drained with `revokeCredits(bytes32[])` from
 //!   the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is
@@ -37,14 +40,18 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use async_trait::async_trait;
 use sqlx::Row;
 
+use super::alerts;
 use super::errors::ApiError;
+use super::events;
+use super::metrics;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
 use crate::evm::signer::{DirectSigner, ReceiptOutcome};
 use crate::jobs::{JobContext, Jobs, PeriodicCfg};
+use crate::policy_entry::EXECUTOR_EXECUTE_SELECTOR;
 use crate::shared::cache::TtlMap;
-use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE, ops_refusal};
+use crate::shared::writes::{PassGate, WRITES_DISABLED_MESSAGE};
 use crate::types::{ManaUsdRate, ManaWei, UsdCents};
 
 pub const GATE_SOURCE: &str = "credits-manager-gate";
@@ -67,15 +74,15 @@ pub const SHARED_MANAGERS: [&str; 4] = [
     "0x037566bc90f85e76587e1b07f9184585f09c1420",
 ];
 
-/// The pass-through NAME executors (CORAL/Squid and Across) and their
-/// `execute` selector: a manager that allowlists one lets a custom call
+/// The pass-through NAME executors (CORAL/Squid and Across), whose
+/// `execute` selector is [`EXECUTOR_EXECUTE_SELECTOR`]: a manager that
+/// allowlists one lets a custom call
 /// reach a resale (CONTRACTS.md, "Can a custom call reach a resale?").
 pub const PASS_THROUGH_EXECUTORS: [&str; 3] = [
     "0x84c682b1b862859730446bca5b853a5693aefc84",
     "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7",
     "0x5e359ebd4cc379f46020fac720261dc9c1d80404",
 ];
-pub const EXECUTOR_EXECUTE_SELECTOR: [u8; 4] = [0xfd, 0x16, 0x5a, 0x73];
 
 sol! {
     interface ICreditsManager {
@@ -276,9 +283,10 @@ struct Candidate {
     salt: String,
     sender: String,
     value_wei: String,
+    tx_hash: String,
 }
 
-const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei \
+const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei, u.tx_hash \
      FROM credits.usages u \
      JOIN credits.authorizations a ON a.id = u.salt \
      LEFT JOIN credits.usage_settlements s ON s.chain_id = u.chain_id AND s.block_number = u.block_number AND s.log_index = u.log_index \
@@ -317,6 +325,7 @@ pub async fn settle(
                 salt: r.get("salt"),
                 sender: r.get("sender"),
                 value_wei: r.get("value_wei"),
+                tx_hash: r.get("tx_hash"),
             };
             after_block = candidate.block_number;
             after_log = candidate.log_index;
@@ -349,11 +358,92 @@ pub fn remainder_credits(
     })
 }
 
+/// The kind of a log left for later: an earlier use of its credit is not
+/// settled yet, and the purchase must be the credit's first use.
+pub const DEFERRED: &str = "deferred";
+
+/// One line of a settled credit, as its event reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupLineCharge {
+    position: i32,
+    charged_cents: i64,
+    trade_id: Option<String>,
+}
+
+/// A purchase's settled lines as credits-server reported them, one per
+/// intent: each line's charged cents, its trade and its share of the MANA the
+/// log moved, pro rata by cents, the rounding remainder to the largest line
+/// (the first by position among equals). A credit without line rows (a
+/// single-line reserve) is one line with its own cents and trade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettledLine {
+    usd_cents: i64,
+    trade_id: Option<String>,
+    mana_settled_wei: String,
+}
+
+fn settled_lines(
+    usd_cents: i64,
+    trade_id: Option<&str>,
+    lines: &[GroupLineCharge],
+    value_wei: &str,
+) -> Vec<SettledLine> {
+    if lines.is_empty() {
+        return vec![SettledLine {
+            usd_cents,
+            trade_id: trade_id.map(str::to_string),
+            mana_settled_wei: value_wei.to_string(),
+        }];
+    }
+    let total = U256::from_str_radix(value_wei, 10).unwrap_or_else(|_| {
+        tracing::warn!(
+            value_wei,
+            "a settled credit's MANA is not a decimal number; its lines report 0"
+        );
+        U256::ZERO
+    });
+    let group_cents: i64 = lines.iter().map(|l| l.charged_cents.max(0)).sum();
+    // total * cents / group as (total / group) * cents + (total % group) *
+    // cents / group: neither product can overflow, since a line's cents are
+    // at most the group's, whatever the total.
+    let mut shares: Vec<U256> = lines
+        .iter()
+        .map(|l| match u64::try_from(group_cents) {
+            Ok(group) if group > 0 => {
+                let (group, cents) = (U256::from(group), U256::from(l.charged_cents.max(0) as u64));
+                total / group * cents + total % group * cents / group
+            }
+            _ => U256::ZERO,
+        })
+        .collect();
+    let allocated = shares.iter().fold(U256::ZERO, |sum, share| sum + *share);
+    let largest = lines
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.charged_cents
+                .cmp(&b.charged_cents)
+                .then(b.position.cmp(&a.position))
+        })
+        .map_or(0, |(i, _)| i);
+    shares[largest] += total - allocated;
+    lines
+        .iter()
+        .zip(shares)
+        .map(|(line, share)| SettledLine {
+            usd_cents: line.charged_cents,
+            trade_id: line.trade_id.clone(),
+            mana_settled_wei: share.to_string(),
+        })
+        .collect()
+}
+
 impl Credits {
     /// One log's settlement in one transaction: the authorization row is
     /// locked, the kind decided from the settlements already recorded, the
-    /// debit made under an idempotency key, the settlement row inserted, the
-    /// status flipped to `consumed` and the revocation queued. A concurrent
+    /// status flipped to `consumed` (so its own pledge no longer counts as
+    /// held against the debit), the debit made under an idempotency key, the
+    /// settlement row inserted and the revocation queued. A concurrent
     /// pass loses on the settlement PK and moves nothing.
     async fn settle_usage(
         &self,
@@ -362,10 +452,17 @@ impl Credits {
         c: &Candidate,
     ) -> Result<CreditUsageDiff, ApiError> {
         let mut tx = self.pool.begin().await?;
+        // The settlement facts are read in their own statements once the lock
+        // is held, at a pinned READ COMMITTED: a statement that waited for
+        // the lock still reads from the snapshot it started with, so a count
+        // taken alongside the lock could miss the settlement the previous
+        // holder just committed, and two passes would both settle a purchase.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
         let row = sqlx::query(
-            "SELECT address, usd_cents, oracle_rate::text AS oracle_rate, oracle_decimals, credit_hash, status, \
-                    (SELECT count(*) FROM credits.usage_settlements s WHERE s.authorization_id = a.id)::bigint AS settled \
-             FROM credits.authorizations a WHERE id = $1 FOR UPDATE",
+            "SELECT address, usd_cents, oracle_rate::text AS oracle_rate, oracle_decimals, credit_hash, status, trade_id \
+             FROM credits.authorizations WHERE id = $1 FOR UPDATE",
         )
         .bind(&c.salt)
         .fetch_one(&mut *tx)
@@ -375,7 +472,84 @@ impl Credits {
         let oracle_rate: Option<String> = row.get("oracle_rate");
         let oracle_decimals: Option<i16> = row.get("oracle_decimals");
         let credit_hash: Option<String> = row.get("credit_hash");
-        let settled: i64 = row.get("settled");
+        // Released or expired: its hold no longer counted against the balance.
+        let status: String = row.get("status");
+        let recovered = matches!(status.as_str(), "released" | "expired");
+        // A later log of an already consumed credit (a remainder) moves no pledge.
+        let newly_consumed = status != "consumed";
+        let trade_id: Option<String> = row.get("trade_id");
+        // Another pass settled this log while this one waited for the lock.
+        if let Some(recorded) = sqlx::query(
+            "SELECT kind, debited_credits::text AS debited FROM credits.usage_settlements \
+             WHERE chain_id = $1 AND block_number = $2 AND log_index = $3",
+        )
+        .bind(chain_id)
+        .bind(c.block_number)
+        .bind(c.log_index)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            tx.rollback().await?;
+            return Ok(CreditUsageDiff {
+                credit_id: c.salt.clone(),
+                address,
+                debited: recorded.get("debited"),
+                consumed: true,
+                replayed: true,
+                new_balance: String::new(),
+                kind: recorded.get("kind"),
+            });
+        }
+        // A credit's purchase is its first use: a log waits while an earlier
+        // log of its salt is unsettled, whichever pass reached it first, and
+        // the pass that covers the earlier one settles both in order.
+        let earlier_unsettled: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM credits.usages u \
+                 WHERE u.salt = $1 AND u.chain_id = $2 AND u.contract = $3 \
+                   AND (u.block_number, u.log_index) < ($4, $5) \
+                   AND NOT EXISTS (SELECT 1 FROM credits.usage_settlements s \
+                                   WHERE s.chain_id = u.chain_id AND s.block_number = u.block_number \
+                                     AND s.log_index = u.log_index))",
+        )
+        .bind(&c.salt)
+        .bind(chain_id)
+        .bind(contract)
+        .bind(c.block_number)
+        .bind(c.log_index)
+        .fetch_one(&mut *tx)
+        .await?;
+        if earlier_unsettled {
+            tx.rollback().await?;
+            return Ok(CreditUsageDiff {
+                credit_id: c.salt.clone(),
+                address,
+                debited: "0".into(),
+                consumed: false,
+                replayed: false,
+                new_balance: String::new(),
+                kind: DEFERRED.to_string(),
+            });
+        }
+        let settled: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM credits.usage_settlements WHERE authorization_id = $1",
+        )
+        .bind(&c.salt)
+        .fetch_one(&mut *tx)
+        .await?;
+        let lines: Vec<GroupLineCharge> = sqlx::query(
+            "SELECT position, charged_cents, trade_id FROM credits.authorization_lines \
+             WHERE authorization_id = $1 ORDER BY position",
+        )
+        .bind(&c.salt)
+        .fetch_all(&mut *tx)
+        .await?
+        .iter()
+        .map(|r| GroupLineCharge {
+            position: r.get("position"),
+            charged_cents: r.get("charged_cents"),
+            trade_id: r.get("trade_id"),
+        })
+        .collect();
         if c.sender != address {
             tracing::warn!(credit = %c.salt, %address, sender = %c.sender, "credits-settlement: a credit this node signed for one wallet was used by another; debiting the signer's wallet");
         }
@@ -396,6 +570,15 @@ impl Credits {
         } else {
             format!("credit-used:{}:{}:{}", c.salt, c.block_number, c.log_index)
         };
+        // Out of the held set before the debit: the wallet's held sum counts
+        // `authorized` and `retired` pledges, and this credit's own pledge is
+        // the one being paid, not a hold against it. A refused debit rolls
+        // the status back with the transaction.
+        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
+            .bind(&c.salt)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
         let spent = match self
             .settle_in_tx(&mut tx, &address, &amount, &key, Some(&key))
             .await
@@ -404,7 +587,26 @@ impl Credits {
             Err(ApiError::Database(e)) => return Err(ApiError::Database(e)),
             Err(e) => {
                 tx.rollback().await?;
-                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the next pass and the reconciler");
+                tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
+                // Once per log, however often the fold retries it. A failed
+                // insert is logged and the pass goes on: the next fold retries
+                // the debit and queues the alert then.
+                let queued = async {
+                    alerts::record(
+                        &mut *self.pool.acquire().await?,
+                        alerts::UNPAID_CONSUMPTION,
+                        &format!("{chain_id}:{}:{}", c.block_number, c.log_index),
+                        serde_json::json!({
+                            "salt": c.salt, "address": address, "status": status, "kind": kind,
+                            "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                        }),
+                    )
+                    .await
+                }
+                .await;
+                if let Err(error) = queued {
+                    tracing::error!(credit = %c.salt, %error, "queueing the unpaid-consumption alert failed; the next fold retries it");
+                }
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,
@@ -431,15 +633,63 @@ impl Credits {
         .bind(&key)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE credits.authorizations SET status = 'consumed', consumed_at = COALESCE(consumed_at, $2) WHERE id = $1")
-            .bind(&c.salt)
-            .bind(now())
-            .execute(&mut *tx)
-            .await?;
         if let Some(hash) = credit_hash {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
+        if recovered {
+            alerts::record(
+                &mut tx,
+                alerts::RECOVERED_CONSUMPTION,
+                &c.salt,
+                serde_json::json!({
+                    "salt": c.salt, "address": address, "status": status, "usdCents": usd_cents,
+                    "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                }),
+            )
+            .await?;
+        }
+        alerts::record_cap_near_limit(&mut tx, &c.salt, &c.tx_hash).await?;
+        // The feed's line, once: a replayed debit was reported when recorded.
+        if kind == "purchase" && !spent.replayed {
+            alerts::record_purchase_settled(
+                &mut tx,
+                &c.salt,
+                chain_id,
+                &c.tx_hash,
+                &c.value_wei,
+                recovered,
+            )
+            .await?;
+        }
         tx.commit().await?;
+        // This pass inserted the log's settlement row (its key), so the log
+        // and the pledge's move are counted once, after the commit.
+        metrics::settlement(kind, recovered);
+        if newly_consumed {
+            metrics::pledges(metrics::Pledge::Consumed, 1);
+        }
+        // The settlement row's key makes this the one pass that recorded the
+        // purchase, so it is reported once, after the commit: one event per
+        // line, as credits-server reported one per intent. A purchase debit
+        // the ledger already held (a replay: the purchase was recorded, and
+        // reported, before this settlement row) is not reported again.
+        if kind == "purchase" && !spent.replayed {
+            for line in settled_lines(usd_cents, trade_id.as_deref(), &lines, &c.value_wei) {
+                events::fire(
+                    self.revenue_events(),
+                    events::USD_PURCHASE_SETTLED,
+                    events::purchase_settled(&events::PurchaseSettled {
+                        salt: &c.salt,
+                        user_address: &address,
+                        usd_cents: line.usd_cents,
+                        mana_settled_wei: &line.mana_settled_wei,
+                        trade_id: line.trade_id.as_deref(),
+                        tx_hash: &c.tx_hash,
+                        recovered,
+                    }),
+                );
+            }
+        }
         Ok(CreditUsageDiff {
             credit_id: c.salt.clone(),
             address,
@@ -561,20 +811,11 @@ impl Revoker {
         })
     }
 
-    /// One pass: claim due rows one at a time (`FOR UPDATE SKIP LOCKED`),
-    /// broadcast a `pending` one, poll a `sent` one; every chain call runs
-    /// with no transaction open.
+    /// One durable bounded sweep page: broadcast a `pending` row, poll a
+    /// `sent` row; every chain call runs with no transaction open.
     pub async fn run_pass(&self, ctx: Option<&JobContext>) -> Result<RevocationOutcome, ApiError> {
         let mut outcome = RevocationOutcome::default();
-        let rows = sqlx::query(
-            "SELECT credit_hash, contract, status, tx_hash, attempts FROM credits.revocations \
-             WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 ORDER BY created_at LIMIT $3",
-        )
-        .bind(self.chain_id)
-        .bind(REVOCATION_MAX_ATTEMPTS)
-        .bind(REVOCATIONS_PER_PASS)
-        .fetch_all(&self.credits.pool)
-        .await?;
+        let rows = revocation_batch(&self.credits.pool, self.chain_id).await?;
         for r in rows {
             if ctx.is_some_and(|c| c.is_cancelled()) {
                 break;
@@ -664,10 +905,62 @@ impl Revoker {
     }
 }
 
+/// How often the settlement job reports the processing orders past
+/// [`super::orders::REPORT_PROCESSING_AFTER`]: daily, not on every pass.
+pub(super) const REPORT_STALE_PROCESSING_EVERY: Duration = Duration::from_secs(24 * 3600);
+
+/// The settlement job's report of processing orders that outlived their
+/// payment's delay: an error log, at most once per `every`, so the order
+/// nothing else will move reaches a person without a line every pass. The
+/// limit is held in memory, per process: a restart, or another replica
+/// taking over the job's lease, reports again at its first pass.
+#[derive(Default)]
+pub(super) struct StaleProcessingReport {
+    last: parking_lot::Mutex<Option<std::time::Instant>>,
+}
+
+impl StaleProcessingReport {
+    /// What it counted when the report was due and the count succeeded;
+    /// `None` when it was not due yet, or the count failed (retried next pass).
+    pub(super) async fn run(
+        &self,
+        credits: &Credits,
+        every: Duration,
+    ) -> Option<super::orders::StaleProcessing> {
+        let due = {
+            let last = self.last.lock();
+            last.is_none_or(|at| at.elapsed() >= every)
+        };
+        if !due {
+            return None;
+        }
+        let stale = match credits
+            .stale_processing_orders(super::orders::REPORT_PROCESSING_AFTER)
+            .await
+        {
+            Ok(stale) => stale,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not count the pack orders still processing");
+                return None;
+            }
+        };
+        *self.last.lock() = Some(std::time::Instant::now());
+        if stale.count > 0 {
+            tracing::error!(
+                count = stale.count,
+                oldest_order = stale.oldest_order.as_deref().unwrap_or(""),
+                "pack orders still processing long after their session completed: their payment's outcome event was likely lost; check each payment at Stripe"
+            );
+        }
+        Some(stale)
+    }
+}
+
 /// The `credits-settlement` job: every `interval`, the pack-order abandon
 /// sweep and, with a revoker, the revocation pass; both write local
-/// authority, so neither runs while `OPS_WRITES_ENABLED` is off, and a pass
-/// is skipped while the restore stamps hold the operator plane.
+/// authority, so neither runs while `OPS_WRITES_ENABLED` is off. Each pass
+/// also reports, daily, the processing orders nothing moved
+/// ([`settlement_job_pass`]).
 pub fn spawn_settlement_job(
     jobs: &Jobs,
     credits: Credits,
@@ -686,7 +979,10 @@ pub fn spawn_settlement_job(
             "CREDITS_REVOKER_KEY_FILE unset: credit revocations queue in credits.revocations and are not sent"
         );
     }
-    let gate = Arc::new(PassGate::new(JOB_NAME, ops_refusal));
+    let gate = Arc::new(PassGate::new(JOB_NAME));
+    let report = Arc::new(StaleProcessingReport::default());
+    // The pass's gauges are cleared when the lease they were set under ends.
+    let gauges = Arc::new(metrics::LeaseGauges::settlement());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -696,13 +992,16 @@ pub fn spawn_settlement_job(
             let credits = credits.clone();
             let revoker = revoker.clone();
             let gate = gate.clone();
+            let report = report.clone();
+            gauges.arm(&ctx.cancel);
             async move {
-                settlement_pass(
+                settlement_job_pass(
                     &credits,
                     revoker.as_deref(),
                     &gate,
                     writes_enabled,
                     Some(&ctx),
+                    &report,
                 )
                 .await
                 .map(|_| ())
@@ -711,7 +1010,27 @@ pub fn spawn_settlement_job(
     );
 }
 
-/// One settlement pass; `false` when `gate` held it and nothing was written.
+/// One pass of the settlement job: [`settlement_pass`], then the daily
+/// report. The report only reads, so a pass that failed (its sweep, or its
+/// revocations) still runs it: an order stuck processing is not silenced by
+/// another failure. A pass with the switch off skips it, as it skips every
+/// write: this node does not speak for the ledger yet.
+pub(super) async fn settlement_job_pass(
+    credits: &Credits,
+    revoker: Option<&Revoker>,
+    gate: &PassGate,
+    writes_enabled: bool,
+    ctx: Option<&JobContext>,
+    report: &StaleProcessingReport,
+) -> anyhow::Result<bool> {
+    let ran = settlement_pass(credits, revoker, gate, writes_enabled, ctx).await;
+    if !matches!(ran, Ok(false)) {
+        report.run(credits, REPORT_STALE_PROCESSING_EVERY).await;
+    }
+    ran
+}
+
+/// One settlement pass; `false` when the switch is off and nothing was written.
 pub(super) async fn settlement_pass(
     credits: &Credits,
     revoker: Option<&Revoker>,
@@ -719,9 +1038,9 @@ pub(super) async fn settlement_pass(
     writes_enabled: bool,
     ctx: Option<&JobContext>,
 ) -> anyhow::Result<bool> {
-    if let Some(refusal) = gate.check(writes_enabled) {
+    if !gate.allows(writes_enabled) {
         if let Some(ctx) = ctx {
-            ctx.progress(refusal.message("operator-plane", WRITES_DISABLED_MESSAGE));
+            ctx.progress(WRITES_DISABLED_MESSAGE);
         }
         return Ok(false);
     }
@@ -735,11 +1054,24 @@ pub(super) async fn settlement_pass(
             "retired pack orders nobody paid within a session's lifetime"
         );
     }
-    if let Some(revoker) = revoker {
-        revoker
-            .run_pass(ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let revoked = match revoker {
+        Some(revoker) => Some(revoker.run_pass(ctx).await),
+        None => None,
+    };
+    if let Some(Ok(outcome)) = &revoked {
+        metrics::revocations(outcome.sent, outcome.confirmed, outcome.failed);
+    }
+    // The settlement gauges, from one read per pass, taken whatever the
+    // revoker did (an RPC outage is when pending revocations matter); a
+    // failed read leaves them as they were and never fails the pass.
+    match metrics::Snapshot::read(credits).await {
+        Ok(snapshot) => snapshot.record(),
+        Err(e) => {
+            tracing::warn!(error = %e, "credits metrics snapshot failed; gauges keep their last values")
+        }
+    }
+    if let Some(Err(e)) = revoked {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(true)
 }
@@ -789,10 +1121,128 @@ mod tests {
     }
 
     #[test]
+    fn a_settled_purchase_reports_each_line_with_its_share_of_the_mana() {
+        let line = |position: i32, charged_cents: i64, trade: &str| GroupLineCharge {
+            position,
+            charged_cents,
+            trade_id: Some(trade.to_string()),
+        };
+        assert_eq!(
+            settled_lines(700, Some("t0"), &[], "12345"),
+            [SettledLine {
+                usd_cents: 700,
+                trade_id: Some("t0".into()),
+                mana_settled_wei: "12345".into()
+            }],
+            "a single-line credit is one line with its own trade"
+        );
+        let shares = |lines: &[GroupLineCharge], wei: &str| {
+            settled_lines(0, Some("first"), lines, wei)
+                .into_iter()
+                .map(|l| (l.usd_cents, l.trade_id.unwrap(), l.mana_settled_wei))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shares(
+                &[line(0, 300, "a"), line(1, 500, "b"), line(2, 200, "c")],
+                "1001"
+            ),
+            [
+                (300, "a".into(), "300".into()),
+                (500, "b".into(), "501".into()),
+                (200, "c".into(), "200".into())
+            ],
+            "pro rata, the remainder to the largest line; the parent's trade is not every line's"
+        );
+        assert_eq!(
+            shares(&[line(0, 100, "a"), line(1, 100, "b")], "3"),
+            [(100, "a".into(), "2".into()), (100, "b".into(), "1".into())],
+            "among equals the first by position takes the remainder"
+        );
+        let half: U256 = U256::from(1u8) << 254usize;
+        let whole: U256 = half * U256::from(2u8);
+        assert_eq!(
+            shares(&[line(0, 2, "a"), line(1, 2, "b")], &whole.to_string()),
+            [
+                (2, "a".into(), half.to_string()),
+                (2, "b".into(), half.to_string())
+            ],
+            "no product overflows, at 2^255 wei"
+        );
+        let big = "123456789012345678901234567890123456789";
+        let sum = shares(&[line(0, 333, "a"), line(1, 667, "b")], big)
+            .iter()
+            .fold(U256::ZERO, |s, (_, _, w)| {
+                s + U256::from_str_radix(w, 10).unwrap()
+            });
+        assert_eq!(sum.to_string(), big, "the shares add up to what moved");
+    }
+
+    #[test]
     fn redaction_hides_urls() {
         assert_eq!(
             redact("post https://rpc.example/v1/SECRET failed"),
             "post <url> failed"
         );
+    }
+}
+
+async fn revocation_batch(
+    pool: &sqlx::PgPool,
+    chain: i64,
+) -> sqlx::Result<Vec<sqlx::postgres::PgRow>> {
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, "credit_revocations", chain).await?;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        if sweep.key_position == sweep.key_ceiling {
+            sweep.key_position = vec![String::new()];
+            sweep.started_at = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
+                .fetch_one(&mut *sweep.tx)
+                .await?;
+            let upper: Option<String> = sqlx::query_scalar("SELECT max(credit_hash) FROM credits.revocations WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 AND created_at <= $3")
+                .bind(chain).bind(REVOCATION_MAX_ATTEMPTS).bind(sweep.started_at).fetch_one(&mut *sweep.tx).await?;
+            sweep.key_ceiling = vec![upper.unwrap_or_default()];
+        }
+        rows = sqlx::query("SELECT credit_hash, contract, status, tx_hash, attempts FROM credits.revocations WHERE status IN ('pending', 'sent') AND chain_id = $1 AND attempts < $2 AND credit_hash > $3 AND credit_hash <= $4 AND created_at <= $6 ORDER BY credit_hash LIMIT $5")
+            .bind(chain).bind(REVOCATION_MAX_ATTEMPTS).bind(&sweep.key_position[0]).bind(&sweep.key_ceiling[0]).bind(REVOCATIONS_PER_PASS).bind(sweep.started_at)
+            .fetch_all(&mut *sweep.tx).await?;
+        if let Some(last) = rows.last() {
+            sweep.key_position = vec![last.get("credit_hash")];
+            break;
+        }
+        sweep.key_position = sweep.key_ceiling.clone();
+    }
+    sweep.commit().await?;
+    Ok(rows)
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn revocation_sweep_reaches_ready_tail_and_resumes_after_restart() {
+        let Some(db) = crate::test_db::OwnDatabase::create("revocation_sweep").await else {
+            return;
+        };
+        sqlx::query("INSERT INTO credits.revocations (credit_hash, authorization_id, chain_id, contract, reason, status, tx_hash) SELECT '0x' || lpad(to_hex(n * 100), 64, '0'), n::text, 137, '0x0000000000000000000000000000000000000001', 'test', 'sent', CASE WHEN n = 21 THEN 'ready' ELSE 'pending' END FROM generate_series(1, 21) n").execute(&db.pool).await.unwrap();
+        let first = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(first.len(), 20);
+        assert!(
+            first
+                .iter()
+                .all(|r| r.get::<String, _>("tx_hash") == "pending")
+        );
+        assert!(revocation_batch(&db.pool, 1).await.unwrap().is_empty());
+        sqlx::query("INSERT INTO credits.revocations (credit_hash, authorization_id, chain_id, contract, reason) VALUES ('0x' || lpad(to_hex(2050), 64, '0'), 'new', 137, '0x0000000000000000000000000000000000000001', 'new')").execute(&db.pool).await.unwrap();
+        let next = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].get::<String, _>("tx_hash"), "ready");
+        let retry = revocation_batch(&db.pool, 137).await.unwrap();
+        assert_eq!(
+            retry[0].get::<String, _>("credit_hash"),
+            first[0].get::<String, _>("credit_hash")
+        );
+        db.drop().await;
     }
 }

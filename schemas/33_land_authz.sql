@@ -29,6 +29,12 @@ CREATE TABLE land_authz.authz_event (
     account varchar(42),
     operator varchar(42),
     approved boolean,
+    -- A transfer's sender (the zero address for a mint) and transaction, for
+    -- the activity's transfer leg; NULL on every other kind, and on a
+    -- transfer indexed before they were kept until the indexer's repair
+    -- reads them again.
+    from_address varchar(42),
+    tx_hash text,
     PRIMARY KEY (block_number, log_index),
     CONSTRAINT authz_event_kind_known CHECK (kind IN (
         'update_operator', 'approval', 'transfer', 'update_manager', 'approved_for_all', 'add_land', 'remove_land')),
@@ -50,6 +56,18 @@ CREATE INDEX authz_event_ownership_idx ON land_authz.authz_event
 -- (92.880 to 0.075 ms p50 on the same fixture); it empties after repair.
 CREATE INDEX authz_event_missing_time_idx ON land_authz.authz_event (block_number)
     WHERE block_time <= 0;
+-- The activity's transfer leg: one wallet's transfers on each side, newest
+-- first by time then position, as the activity merges them.
+CREATE INDEX authz_event_transfer_to_idx ON land_authz.authz_event
+    (account, block_time DESC, block_number DESC, log_index DESC)
+    WHERE kind = 'transfer';
+CREATE INDEX authz_event_transfer_from_idx ON land_authz.authz_event
+    (from_address, block_time DESC, block_number DESC, log_index DESC)
+    WHERE kind = 'transfer';
+-- The transfers still without their sender or transaction: the repair's due
+-- set and the leg's readiness probe. It empties once the repair is done.
+CREATE INDEX authz_event_transfer_unrepaired_idx ON land_authz.authz_event (block_number)
+    WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL);
 -- The account legs: DISTINCT ON (token_address, account, operator, kind).
 CREATE INDEX authz_event_account_idx ON land_authz.authz_event (token_address, account, operator, kind, block_number, log_index)
     WHERE account IS NOT NULL AND operator IS NOT NULL;
@@ -113,6 +131,27 @@ CREATE TABLE land_authz.estate_land (
 -- The parcels of an estate (parcels_updatable_by's estate branch, estate size).
 CREATE INDEX estate_land_estate_idx ON land_authz.estate_land (estate_token_id);
 
+-- Estate data documents, appended with the log they came from: the Estate
+-- registry's CreateEstate and Update logs whose data parses as a version-0
+-- document (the marketplace subgraph's buildData), with the name and
+-- description it carries (NULL when absent). The latest row of an estate
+-- names it; a document that does not parse writes no row. A reorg rewind
+-- deletes the rows past its block, as it does the log's.
+CREATE TABLE land_authz.estate_data_event (
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    token_address varchar(42) NOT NULL,
+    estate_id numeric(78,0) NOT NULL,
+    name text,
+    description text,
+    PRIMARY KEY (block_number, log_index),
+    CONSTRAINT estate_data_event_token_address_lowercase CHECK (token_address = lower(token_address))
+);
+
+-- An estate's latest document: one index probe per dissolved-estate read.
+CREATE INDEX estate_data_event_estate_idx ON land_authz.estate_data_event
+    (token_address, estate_id, block_number DESC, log_index DESC);
+
 -- Account-wide rights per registry: UpdateManager and ApprovalForAll
 -- authorise an operator over everything an account holds in one contract.
 CREATE TABLE land_authz.account_right (
@@ -134,20 +173,48 @@ CREATE INDEX account_right_operator_idx ON land_authz.account_right (operator, k
 -- Durable progress per network: `last_block` advances per inserted chunk,
 -- `folded_block` is the publish marker (set only after the three folds
 -- committed on a row whose full replay ran); a repair scan rewinds it.
+-- `last_block_hash` is the hash `last_block` had when it was indexed (NULL
+-- until recorded). `checkpoint_block`/`checkpoint_hash` is an indexed block
+-- 128 to 256 blocks below `last_block` and its hash (NULL until a pass
+-- verifies the cursor hash). A pass whose cursor block hash changed rewinds
+-- to the checkpoint if the chain still has its hash, else to the start
+-- block, deletes the log past it and refolds.
 CREATE TABLE land_authz.index_cursor (
     network text PRIMARY KEY,
     land_registry varchar(42) NOT NULL,
     estate_registry varchar(42) NOT NULL,
     last_block bigint NOT NULL,
     folded_block bigint,
+    folded_block_hash text,
     folded_at timestamp without time zone,
     full_replay_started boolean NOT NULL DEFAULT false,
     -- Set only after the indexer repairs legacy missing block timestamps.
     history_timestamps_ready boolean NOT NULL DEFAULT false,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_block_hash text,
+    checkpoint_block bigint,
+    checkpoint_hash text,
+    -- Raised in the statement of every write that changes the log other than
+    -- by appending past the cursor (a reorg or replay rewind, the block-time
+    -- repair): between two raises, a change to what the folds publish moves
+    -- the newest folded event instead.
+    rewrites bigint NOT NULL DEFAULT 0,
     CONSTRAINT index_cursor_network_known CHECK (network IN ('ethereum-mainnet', 'ethereum-sepolia')),
     CONSTRAINT index_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block)
 );
+
+-- Retain the published header identity while later windows advance the walk.
+CREATE OR REPLACE FUNCTION land_authz.remember_folded_block_hash() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.folded_block_hash := CASE WHEN NEW.folded_block IS NOT NULL THEN NEW.last_block_hash END;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER remember_folded_block_hash
+BEFORE UPDATE OF folded_block ON land_authz.index_cursor
+FOR EACH ROW EXECUTE FUNCTION land_authz.remember_folded_block_hash();
 
 -- Bounded scene-footprint probes use token_right_xy_idx and authz_event_ownership_idx.
 -- The source deployment must have passed signed-entity validation (including its

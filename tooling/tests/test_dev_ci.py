@@ -1,4 +1,4 @@
-"""Pull requests run the Rust tests on macOS for build, toolchain and dev-stack inputs; source stays on Linux. The
+"""Pull requests run the Rust tests on Linux and get a notice for build, toolchain and dev-stack inputs. The
 workflow runs on every pull request and skips its jobs when nothing it tests changed, so its CI gate always reports."""
 import contextlib
 import importlib.util
@@ -18,11 +18,11 @@ SPEC.loader.exec_module(dev)
 
 class DevCiTest(unittest.TestCase):
     def setUp(self):
-        # The smoke job runs these tests; they must not write its outputs or summary.
+        # The tooling job runs these tests; they must not write its outputs or summary.
         environment = patch.dict(os.environ)
         environment.start()
         self.addCleanup(environment.stop)
-        for key in ('GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY'):
+        for key in ('GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'CI_MACOS_LABEL'):
             os.environ.pop(key, None)
         self.dev = dev.load_ci_local()
 
@@ -32,11 +32,12 @@ class DevCiTest(unittest.TestCase):
     def test_linux_covered_inputs_skip_macos(self):
         for changed in (['apps/ui3/src/play/Hud.tsx'], ['apps/sites/src/app.ts', 'apps/ui3/package.json'],
                         ['tooling/tests/test_dev.py'], ['tooling/bevy-ci.py'],
-                        ['rendering/bevy-explorer/upstream.lock.json'],
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql']):
+                        ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js'],
+                        ['.github/workflows/closed-pr-cache.yml'], ['.github/workflows/creator-hub-ci.yml'],
+                        ['.github/workflows/bevy-explorer-benchmark.yml']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
@@ -47,10 +48,35 @@ class DevCiTest(unittest.TestCase):
                      'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
+                     'tooling/catalyst-test.sh', 'tooling/catalyst-test-resources.sh', 'tooling/catalyst-test-targets.py',
+                     'tooling/tests/test_catalyst_test_resources.py',
                      'tooling/tests/test_dev_regressions.py', 'tooling/tests/test_enet_provenance.py',
                      '.github/workflows/development.yml'):
             with self.subTest(path=path):
                 self.assertTrue(self.macos('apps/ui3/src/a.ts', path))
+
+    def test_descriptor_provisioning_is_confined_to_the_auth_stress_step(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        for job in ('rust', 'smoke', 'tooling'):
+            with self.subTest(job=job):
+                steps = workflow.split(f'\n  {job}:', 1)[1]
+                steps = re.split(r'\n  [a-z][a-z-]*:', steps, maxsplit=1)[0]
+                if job == 'rust':
+                    ordinary, stress = steps.split('      - name: Run provisioned auth stress\n', 1)
+                    stress, remaining = stress.split('      - name:', 1)
+                    self.assertIn('        if: matrix.shard == 2\n', stress)
+                    self.assertIn('macOS:github-hosted', stress)
+                    provision = stress.index('provision_hosted_macos_test_resources')
+                    environment = stress.index('nix develop')
+                    readback = stress.index('prepare_catalyst_test_resources')
+                    runtime = stress.index('python3 tooling/dev-regressions.py --auth-stress')
+                    self.assertLess(provision, environment)
+                    self.assertLess(environment, readback)
+                    self.assertLess(readback, runtime)
+                    steps = ordinary + remaining
+                for resource in ('catalyst-test-resources.sh', 'provision_hosted_macos_test_resources',
+                                 'prepare_catalyst_test_resources', '--auth-stress'):
+                    self.assertNotIn(resource, steps)
 
     def test_every_script_the_rust_suite_runs_is_a_macos_input(self):
         script = (dev.ROOT / 'tooling/dev-test.sh').read_text()
@@ -62,10 +88,13 @@ class DevCiTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(self.macos(path))
 
-    def test_a_missing_plan_runs_macos(self):
-        # Push and dispatch skip the plan, and a failed plan leaves no output: both must keep macOS.
+    def test_pull_requests_run_macos_only_with_the_label(self):
+        # Push and dispatch keep macOS; the plan no longer selects it.
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
-        self.assertIn("needs.changes.outputs.macos != 'false'", workflow)
+        self.assertNotIn('needs.changes.outputs.macos', workflow)
+        self.assertEqual(workflow.count(
+            "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos')"
+            " && '[\"ubuntu-26.04\"]' || '[\"ubuntu-26.04\", \"macos-15\"]'"), 3)
 
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         # PRs test source on Linux only; finished main runs are its macOS check.
@@ -92,7 +121,7 @@ class DevCiTest(unittest.TestCase):
         self.assertEqual(dev.watched_changes(['docs/development.md', 'README.md'], self.dev), [])
         self.assertEqual(dev.watched_changes(['docs/a.md', 'apps/ui3/src/a.ts'], self.dev), ['apps/ui3/src/a.ts'])
         self.assertTrue(dev.watched_changes(['services/catalyst/db/src/lib.rs'], self.dev))
-        for path in ('.github/workflows/bevy-explorer-benchmark.yml', 'infra/gateway/smoke.py'):
+        for path in ('.github/workflows/bevy-explorer-benchmark.yml', 'infra/gateway/smoke.py', '.github/workflows/closed-pr-cache.yml'):
             with self.subTest(path=path):
                 self.assertEqual(dev.watched_changes([path], self.dev), [path])
         # No change and an unfiltered workflow: nothing to skip on, so everything runs.
@@ -139,7 +168,7 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
 
-    def test_the_gate_always_reports_and_requires_rust_and_web(self):
+    def test_the_gate_always_reports_and_requires_rust_clippy_smoke_tooling_and_web(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
         pull_request = on.split('  pull_request:', 1)[1]
@@ -147,20 +176,200 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, web]', gate)
+        self.assertIn('needs: [changes, rust, clippy, smoke, tooling, web]', gate)
+        self.assertIn('for result in "$CHANGES" "$RUST" "$CLIPPY" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'web'):
+        for job in ('rust', 'clippy', 'smoke', 'tooling', 'web'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
+                # Only the Rust jobs read the Rust answer: the others run on every watched change.
+                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job in ('rust', 'clippy'))
+        self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
+
+    def test_clippy_lints_the_workspace_with_and_without_the_ts_feature_in_one_target_dir(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        job = workflow.split('\n  clippy:\n', 1)[1].split('\n  smoke:\n', 1)[0] + '\n'
+        target = 'CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy\n'
+        command = 'cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets '
+        self.assertEqual(job.count(target), 2)
+        self.assertIn(command + '-- -D warnings\n', job)
+        self.assertIn(command + '--features catalyst/ts -- -D warnings\n', job)
+        self.assertLess(job.index(command + '-- -D'), job.index(command + '--features catalyst/ts'))
+
+    def rust(self, *changed):
+        return dev.needs_rust(changed, 'HEAD', self.dev)[0]
+
+    def scanned_once(self):
+        """Give every needs_rust call in the test the result of one real scan: a scan takes seconds on macOS."""
+        references = dev.rust_source_references('HEAD')
+        scan = patch.object(dev, 'rust_source_references', return_value=references)
+        scan.start()
+        self.addCleanup(scan.stop)
+        return references
+
+    def test_files_outside_the_rust_inputs_skip_the_rust_tests(self):
+        self.scanned_once()
+        for changed in (['apps/ui3/src/play/Hud.tsx'], ['apps/sites/src/app.ts', 'apps/ui3/package.json'],
+                        ['library/ui/apps/hud/Hud.tsx', 'apps/sites/pnpm-lock.yaml', 'docs/development.md'],
+                        ['rendering/bevy-explorer/source/src/main.rs', 'rendering/bevy-explorer/source/Cargo.lock'],
+                        ['apps/bevy-explorer/e2e/play.spec.ts', '.github/workflows/bevy-explorer-ci.yml'],
+                        ['apps/creator-hub/package.json', 'library/explorer-core/lib/hudAutomation.ts'],
+                        ['tooling/bevy-ci.py', 'tooling/tests/test_bevy_ci.py', 'library/uix/a.ts'],
+                        # A crate the Rust job does not compile, and names the scene CLI gives scene folders.
+                        ['apps/ui3/src-native/Cargo.toml', 'apps/ui3/src-native/src/lib.rs'],
+                        ['README.md', 'docs/a.md', '.claude/skills/implement-figma-design/SKILL.md'],
+                        ['.github/workflows/closed-pr-cache.yml']):
+            with self.subTest(changed=changed):
+                self.assertFalse(self.rust(*changed))
+
+    def test_rust_inputs_run_the_rust_tests(self):
+        for path in ('services/catalyst/db/src/lib.rs', 'services/catalyst/docs/events.md',
+                     'services/catalyst/tests/fixtures/a.json', 'services/catalyst/rust-toolchain.toml',
+                     'schemas/storage.sql', 'library/vendor/rusty_enet/src/lib.rs', 'library/dcl-http/src/lib.rs',
+                     'library/catalyst-api/openapi/a.json', 'library/protocol/proto/a.proto',
+                     'apps/dcl-scene-cli/Cargo.toml', '.cargo/config.toml', 'flake.nix', 'flake.lock', 'Makefile',
+                     'infra/dev/shell-hook.sh', 'infra/packages/tools.nix', 'tooling/dev.py', 'tooling/dev-test.sh',
+                     'tooling/dev-regressions.json', 'tooling/catalyst-test.sh', 'tooling/ci_paths.py',
+                     'tooling/tests/test_dev_regressions.py', '.github/workflows/development.yml'):
+            with self.subTest(path=path):
+                self.assertTrue(self.rust(path))
+                self.assertTrue(self.rust('apps/ui3/src/play/Hud.tsx', path))
+        self.assertEqual(dev.needs_rust([], 'HEAD', self.dev), (True, 'No changed files to compare'))
+
+    def test_every_rust_input_is_a_path_the_workflow_watches(self):
+        # The Rust job needs both answers of the plan. An input outside the workflow's paths gives run=false,
+        # and the tests that read it do not run. Documentation is the workflow's own exclusion.
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=dev.ROOT, text=True).split('\0')
+        tracked = [path for path in tracked if path]
+        for pattern in dev.RUST_INPUTS:
+            inputs = self.dev.non_documentation(self.dev.matching_paths(tracked, (pattern,)))
+            with self.subTest(pattern=pattern):
+                # A pattern that names no tracked file cannot be checked, and selects nothing.
+                self.assertTrue(inputs)
+                self.assertEqual(sorted(set(inputs) - set(dev.watched_changes(inputs, self.dev))), [])
+
+    def test_files_that_rust_sources_name_run_the_rust_tests(self):
+        references = self.scanned_once()
+        # The event poster default that the backend embeds.
+        self.assertIn('apps/ui3/public/assets/event-default.webp', references)
+        for reference in references:
+            with self.subTest(reference=reference):
+                # One name alone counts only when a path is built on it.
+                self.assertTrue('/' in reference or self.covered(reference))
+                self.assertFalse(reference.startswith(dev.SCENE_PROJECT))
+                self.assertTrue(self.rust(reference))
+                self.assertTrue(self.rust('apps/sites/src/app.ts', reference + '/below'))
+
+    def test_a_failed_scan_runs_the_rust_tests(self):
+        with patch.object(dev, 'rust_source_references', side_effect=ValueError('scan')):
+            self.assertEqual(dev.needs_rust(['apps/ui3/src/a.ts'], 'HEAD', self.dev),
+                             (True, 'Rust source scan unavailable: scan'))
+        with patch.object(dev.subprocess, 'run', return_value=subprocess.CompletedProcess([], 2, '', 'fatal')):
+            self.assertTrue(dev.needs_rust(['apps/ui3/src/a.ts'], 'HEAD', self.dev)[0])
+
+    def test_only_a_compared_pull_request_skips_the_rust_tests(self):
+        self.assertTrue(dev.plan('push', 'HEAD^1', 'HEAD')[3])
+        self.assertTrue(dev.plan('pull_request', 'not-a-revision', 'HEAD')[3])
+        with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
+            self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[3])
+        with patch.object(dev.subprocess, 'check_output', return_value='apps/ui3/src/a.ts\0docs/a.md'), \
+                patch.object(dev, 'rust_source_references', return_value=set()):
+            self.assertEqual(dev.plan('pull_request', 'base', 'head')[2:4], (True, False))
+        with patch.object(dev.subprocess, 'check_output', return_value='apps/ui3/src/a.ts\0schemas/a.sql'), \
+                patch.object(dev, 'rust_source_references', return_value=set()):
+            self.assertEqual(dev.plan('pull_request', 'base', 'head')[2:4], (True, True))
+
+    def covered(self, path):
+        return bool(self.dev.matching_paths([path, path + '/Cargo.toml'], dev.RUST_INPUTS))
+
+    def test_the_rust_inputs_cover_what_the_rust_job_reads(self):
+        root = dev.ROOT
+        # Every crate a listed manifest depends on by path.
+        tracked = subprocess.check_output(['git', 'ls-files', '-z', '*Cargo.toml'], cwd=root, text=True).split('\0')
+        manifests = self.dev.matching_paths([path for path in tracked if path], dev.RUST_INPUTS)
+        self.assertIn('services/catalyst/Cargo.toml', manifests)
+        for manifest in manifests:
+            for relative in re.findall(r'\bpath\s*=\s*"([^"]+)"', (root / manifest).read_text()):
+                if not relative.endswith('.rs'):
+                    crate = os.path.normpath(os.path.join(os.path.dirname(manifest), relative)).replace(os.sep, '/')
+                    with self.subTest(manifest=manifest, crate=crate):
+                        self.assertTrue(self.covered(crate))
+        # The dev shell's local inputs, and the scripts and tests the Rust suite runs.
+        flake = re.findall(r'\./([A-Za-z0-9_./-]+)', (root / 'flake.nix').read_text())
+        suite = (root / 'tooling/dev-test.sh').read_text().split('    rust)\n', 1)[1].split(';;', 1)[0]
+        named = [path for path in re.findall(r'(?:tooling|library)/[A-Za-z0-9_./-]+', suite) if path != 'tooling/tests']
+        named += ['tooling/tests/' + name for name in re.findall(r"-p '([^']+)'", suite)]
+        self.assertIn('infra/packages', flake)
+        self.assertIn('tooling/tests/test_dev_regressions.py', named)
+        for path in (*flake, *named, 'tooling/catalyst-test-resources.sh', 'tooling/dev-regressions.json'):
+            with self.subTest(path=path):
+                self.assertTrue(self.covered(path))
+        # The engine manifests are not listed: the engine's Test Suite runs the ENet pin check on them.
+        engine = (root / '.github/workflows/bevy-explorer-ci.yml').read_text()
+        self.assertIn('tooling/dev-regressions.py" --bevy-artifacts', engine)
+        self.assertFalse(self.covered('rendering/bevy-explorer/source'))
+
+    def test_one_name_joined_to_a_path_is_a_rust_input_or_a_scene_folder(self):
+        # The scan reads one name alone as a word. A Rust source that joins a top-level folder of this
+        # repository to a path must find that folder in RUST_INPUTS; the rest are scene project names.
+        top = subprocess.check_output(['git', 'ls-tree', '--name-only', 'HEAD'], cwd=dev.ROOT, text=True).split()
+        names = '|'.join(re.escape(name) for name in top)
+        found = subprocess.run(['git', 'grep', '-I', '-h', '-o', '-E', rf'join\("({names})/?"\)', 'HEAD', '--',
+                                *(f':(glob){root}/**/*.rs' for root in dev.RUST_ROOTS)],
+                               cwd=dev.ROOT, capture_output=True, text=True, check=True).stdout
+        joined = {line.split('"')[1].rstrip('/') for line in found.splitlines()}
+        self.assertIn('schemas', joined)
+        scene_project = {'.claude', '.gitignore', 'AGENTS.md', 'README.md', 'docs'}
+        self.assertEqual({name for name in joined - scene_project if not self.covered(name)}, set())
+
+    def test_writes_the_rust_answer_and_its_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output, summary = Path(directory, 'output'), Path(directory, 'summary')
+            os.environ.update(GITHUB_EVENT_NAME='pull_request', GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(summary))
+            printed = io.StringIO()
+            with patch.object(dev, 'plan', return_value=(False, 'Only Linux-covered inputs changed', True, False, 'No input')), \
+                    patch('sys.argv', ['dev-ci.py', 'plan']), contextlib.redirect_stdout(printed):
+                dev.main()
+            self.assertEqual(output.read_text(), 'run=true\nrust=false\n')
+            self.assertIn('Rust tests run: false (No input).', summary.read_text())
+            self.assertIn('rust=false: No input', printed.getvalue())
+
+    def notice(self, answer, event='pull_request', label=None):
+        os.environ.update(GITHUB_EVENT_NAME=event)
+        if label is not None:
+            os.environ.update(CI_MACOS_LABEL=label)
+        printed = io.StringIO()
+        with patch.object(dev, 'plan', return_value=answer), patch('sys.argv', ['dev-ci.py', 'plan']), \
+                contextlib.redirect_stdout(printed):
+            dev.main()
+        return [line for line in printed.getvalue().splitlines() if line.startswith('::notice::')]
+
+    def test_the_macos_notice_names_the_label_only_when_the_label_would_add_tests(self):
+        changed = (True, 'A Cargo manifest changed', True, True, '')
+        self.assertEqual(self.notice(changed), ['::notice::A Cargo manifest changed. Add the ci:macos label to run '
+                                                'the Rust tests on macOS before the merge.'])
+        self.assertEqual(self.notice(changed, label='false'), self.notice(changed))
+        # The label is set, main runs macOS, nothing runs, or the Rust tests are skipped.
+        self.assertEqual(self.notice(changed, label='true'), [])
+        os.environ.pop('CI_MACOS_LABEL')
+        self.assertEqual(self.notice(changed, event='push'), [])
+        self.assertEqual(self.notice((True, 'A Cargo manifest changed', False, True, '')), [])
+        self.assertEqual(self.notice((True, 'A Cargo manifest changed', True, False, 'No input')), [])
+        self.assertEqual(self.notice((False, 'Only Linux-covered inputs changed', True, True, '')), [])
+        plan = (dev.ROOT / '.github/workflows/development.yml').read_text().split('\n  rust:\n', 1)[0]
+        self.assertIn("      - name: Select the jobs\n        id: plan\n        env:\n"
+                      "          CI_MACOS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:macos') }}\n"
+                      "        run: python3 tooling/dev-ci.py plan", plan)
+        self.assertNotIn('outputs.macos', plan)
 
     def run_main(self, summary):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, 'output')
             os.environ.update(GITHUB_EVENT_NAME='pull_request', GITHUB_OUTPUT=str(output),
                               GITHUB_STEP_SUMMARY=str(summary or Path(directory, 'summary')))
-            with patch.object(dev, 'plan', return_value=(False, 'Only Linux-covered inputs changed', False)), \
+            with patch.object(dev, 'plan', return_value=(False, 'Only Linux-covered inputs changed', False, True, '')), \
                     patch('sys.argv', ['dev-ci.py', 'plan']), contextlib.redirect_stdout(io.StringIO()):
                 try:
                     dev.main()
@@ -169,8 +378,8 @@ class DevCiTest(unittest.TestCase):
             return written
 
     def test_writes_the_output_last(self):
-        self.assertEqual(self.run_main(None), 'macos=false\nrun=false\n')
-        # A failed step must leave no answer, so the Rust job falls back to macOS.
+        self.assertEqual(self.run_main(None), 'run=false\nrust=true\n')
+        # A failed step must leave no answer.
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(OSError):
             self.run_main(Path(directory))
 
@@ -213,6 +422,48 @@ class FrontendSelectionTest(unittest.TestCase):
     def selected(self, head, base=None, event='pull_request'):
         return dev.web_plan(event, base or self.base, head)['run-web-unit-tests']
 
+    def test_rust_sources_name_files_and_folders(self):
+        self.write('services/catalyst/explore/src/posters.rs',
+                   'include_bytes!(concat!(env!("DCL_ONE_ROOT"), "/apps/ui3/public/assets/poster.webp"));\n'
+                   '// The Shop pages (apps/ui3 market/access.tsx) and library/ui-kit read this.\n')
+        self.write('apps/dcl-scene-cli/src/start/chrome.rs', 'const STYLES: &str = "apps/ui3/src/atoms/";\n'
+                   'const SKILLS: &str = ".claude/skills";\n')
+        self.write('library/protocol/src/lib.rs', '// See library/ui/apps/hud/Hud.tsx.\n')
+        self.write('.claude/skills/a/SKILL.md', 'a skill of this repository')
+        # Not Rust sources: other files do not select the Rust tests.
+        self.write('services/catalyst/tests/fixtures/notes.md', 'apps/sites/src/data/a.ts')
+        self.write('tooling/dev.py', 'apps/sites')
+        head = self.commit()
+        self.assertEqual(dev.rust_source_references(head), {
+            'apps/ui3/public/assets/poster.webp', 'apps/ui3/src/atoms', 'library/ui/apps/hud/Hud.tsx',
+            # A sentence end is kept both ways.
+            'library/ui/apps/hud/Hud.tsx.'})
+        ci = dev.load_ci_local()
+        for path, rust in (('apps/ui3/public/assets/poster.webp', True), ('apps/ui3/src/atoms/button.css', True),
+                           ('library/ui/apps/hud/Hud.tsx', True), ('apps/ui3/public/assets/other.webp', False),
+                           ('apps/ui3/src/atomsphere.ts', False), ('apps/sites/src/data/a.ts', False),
+                           ('.claude/skills/a/SKILL.md', False)):
+            with self.subTest(path=path):
+                self.assertEqual(dev.needs_rust([path], head, ci)[0], rust)
+
+    def test_a_path_built_from_parts_covers_its_folder(self):
+        ci = dev.load_ci_local()
+        self.write('docs/a.md', 'prose')
+        for source, folder, other in (
+                ('let root = concat!(env!("DCL_ONE_ROOT"), "/apps/ui3/");', 'apps/ui3', 'apps/sites'),
+                ("let root = 'apps/sites';", 'apps/sites', 'apps/ui3'),
+                ('let root = format!("{root}/library/ui/`");', 'library/ui', 'library/uix'),
+                ('let path = format!("{root}/apps/{name}");', 'apps', 'docs'),
+                # One name alone is a word.
+                ('let kind = "library"; let notes = dir.join("docs"); // the apps folder', None, 'docs')):
+            with self.subTest(source=source):
+                self.write('services/catalyst/src/web.rs', source)
+                head = self.commit()
+                self.assertEqual(dev.rust_source_references(head), {folder} if folder else set())
+                if folder:
+                    self.assertTrue(dev.needs_rust([folder + '/src/a.ts'], head, ci)[0])
+                self.assertFalse(dev.needs_rust([other + '/a.md', 'library/explorer-core/a.ts'], head, ci)[0])
+
     def test_backend_implementation_and_prose_documentation_skip_units(self):
         self.write(self.backend, 'changed')
         self.write('services/catalyst/src/serve.rs', 'backend')
@@ -245,6 +496,17 @@ class FrontendSelectionTest(unittest.TestCase):
                 self.write(self.backend, name)
                 self.write(name, 'changed')
                 self.assertTrue(self.selected(self.commit(), before))
+
+    def test_sites_only_reason_is_reported_and_shared_changes_are_excluded(self):
+        self.write('apps/sites/src/example.ts', 'changed')
+        head = self.commit()
+        plan = dev.web_plan('pull_request', self.base, head)
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertEqual(plan['reason'], 'Sites source only; both suites still run')
+        self.write('library/catalyst-api/example.ts', 'changed')
+        plan = dev.web_plan('pull_request', self.base, self.commit())
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertNotIn('Sites source only', plan['reason'])
 
     def test_empty_and_documentation_only_diffs_skip_units(self):
         self.assertEqual(dev.web_plan('pull_request', self.base, self.base),

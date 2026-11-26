@@ -4,6 +4,7 @@
 // explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
 // files in one process.
 import { mkdir, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
 import { type Console, ConsoleError, scrubCredentials } from './console.ts'
@@ -13,15 +14,16 @@ import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
 import { until } from './wait.ts'
-import { BootError, WebConsole } from './web.ts'
+import { BOOT_ABANDONED, BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
 /** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
  *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
  *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
  *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
- *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
-export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); a `fresh` account, a
+ *  new key each run signed in as the automation account is, not as a guest; or `none`. */
+export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'fresh' | 'none'
 
 export interface OpenOptions {
   /** The realm to boot into; the target's by default. */
@@ -31,6 +33,13 @@ export interface OpenOptions {
   signIn?: SignIn
   /** The first login's profile name (1 to 15 alphanumerics) and curated look. */
   firstLogin?: { name?: string; look?: number }
+  /** More arguments for the standalone this session starts, which make it a separate client;
+   *  an error on the web. */
+  nativeArgs?: string[]
+  /** Gives up a boot in progress when aborted: the client is closed, the boot fails with
+   *  `BOOT_ABANDONED` and is neither counted as a failed boot nor kept as evidence. On the web it
+   *  acts from the moment the browser is up; natively, once the console answers. */
+  signal?: AbortSignal
 }
 
 export interface Session {
@@ -54,7 +63,7 @@ function message(error: unknown): string {
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
-  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account'].join('|')
+  return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account', ...(options.nativeArgs ?? [])].join('|')
 }
 
 /** The client for these options, booted on first use. The harness closes every session once the
@@ -70,6 +79,7 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
     }
     session = boot(options, target).catch(async (error: unknown) => {
       sessions.delete(id)
+      if (options.signal?.aborted) throw error
       const count = (bootFailures.get(id)?.count ?? 0) + 1
       bootFailures.set(id, { count, error })
       // Said at once: the run's own failure summary comes at its end, which a step timeout cuts off.
@@ -158,8 +168,9 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   let console_: Console
   let url: string | undefined
   if (target.transport === 'native') {
-    console_ = await nativeConsole(target, realm, position)
+    console_ = await nativeConsole(target, realm, position, options.nativeArgs)
   } else {
+    if (options.nativeArgs?.length) throw new Error('nativeArgs need DCL_E2E_TRANSPORT=native: the web client takes no service override')
     const base = target.webUrl ?? (await serveApp(target)).url
     const page = new URL(base)
     // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
@@ -175,11 +186,16 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
       chrome: target.chrome,
       headless: !target.headed,
       args: chromeArgs(),
-      windowSize: options.windowSize ?? target.windowSize
+      windowSize: options.windowSize ?? target.windowSize,
+      signal: options.signal
     })
   }
   const explorer = new Explorer(console_)
+  const { signal } = options
+  const abandon = (): void => void explorer.close().catch(() => {})
+  signal?.addEventListener('abort', abandon, { once: true })
   try {
+    if (signal?.aborted) throw new Error(BOOT_ABANDONED)
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
     if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
       // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
@@ -189,12 +205,18 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
       await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
     }
   } catch (error) {
+    if (signal?.aborted) {
+      await explorer.close().catch(() => {})
+      throw new Error(BOOT_ABANDONED, { cause: error })
+    }
     // a page that opened but never arrived: what it said and how it looks, with the error; the
     // console with the credentials the sign-in sent replaced, should the page have quoted one
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
     if (evidence) throw new BootError(message(error), evidence.console.map((line) => explorer.redactSecrets(line)), evidence.screenshot)
     throw error
+  } finally {
+    signal?.removeEventListener('abort', abandon)
   }
   return {
     explorer,
@@ -215,11 +237,28 @@ function serveApp(target: Target): Promise<StaticServer> {
   return webServer
 }
 
-async function nativeConsole(target: Target, realm: string, position: string): Promise<Console> {
+async function nativeConsole(target: Target, realm: string, position: string, extra: string[] = []): Promise<Console> {
   const { bin, port, token, args } = target.native
-  if (token && !bin) return new NativeConsole({ port, token })
+  if (token && !bin) {
+    if (extra.length > 0) throw new Error('a running standalone cannot take arguments: set DCL_E2E_NATIVE_BIN to start one')
+    return new NativeConsole({ port, token })
+  }
   if (!bin) throw new Error('set DCL_E2E_NATIVE_BIN (an automation build to start) or DCL_E2E_NATIVE_PORT and DCL_E2E_NATIVE_TOKEN (a running one)')
-  return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
+  const automationPort = extra.length > 0 ? await freePort() : port
+  return spawnNative({ bin, port: automationPort, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
+}
+
+/** A loopback port nothing is listening on right now. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      probe.close(() => (port ? resolve(port) : reject(new Error('no free port'))))
+    })
+  })
 }
 
 /** Sign in and wait for the world. On the web the sign-in goes through the HUD (`/hud_login`):
@@ -267,8 +306,8 @@ export async function signIn(
     explorer.profileDeployed()
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
-  if (mode === 'account') {
-    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
+  if (mode === 'account' || mode === 'fresh') {
+    await explorer.loginIdentity(buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey()), pick)
   } else if (mode === 'guest' || mode === 'unsigned-guest') {
     await explorer.loginGuest()
   }
@@ -301,20 +340,37 @@ export async function arrive(explorer: Explorer, realm: string, position: string
 }
 
 /** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
-export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
+export const NO_LANDING_POLLS = 3
+
+/** A native client shows the layout it stored, which may have no Landing card and so no `Jump In`:
+ *  the editor then stores the shipped layout, which has one. */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS, intervalMs = 1000): Promise<WorldState> {
+  const jumpIn = { name: 'Jump In', role: 'button', index: 0 }
   let jumped = false
+  let reset = false
+  let missing = 0
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
-      const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
+      const jump = await explorer.hud.find(jumpIn).catch(() => undefined)
       if (jump?.actionable) {
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
+        await explorer.hud.click(jumpIn)
         jumped = true
+        return state
+      }
+      if (jump != null || reset) return state
+      const customize = await explorer.hud.find({ name: 'Customize lobby layout', role: 'button' }).catch(() => undefined)
+      missing = customize?.actionable ? missing + 1 : 0
+      if (missing >= NO_LANDING_POLLS) {
+        await explorer.hud.click({ name: 'Customize lobby layout', role: 'button' })
+        await explorer.hud.click({ name: 'Reset to Default', role: 'button' })
+        await explorer.hud.click({ name: 'SAVE', role: 'button' })
+        reset = true
       }
       return state
     },
     (state) => state.inWorld,
-    { timeoutMs, intervalMs: 1000, what: 'the world after sign-in' }
+    { timeoutMs, intervalMs, what: 'the world after sign-in' }
   )
 }

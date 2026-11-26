@@ -21,9 +21,10 @@
 //! wait in line for [`THUMBNAIL_WAIT`], so a page's burst is served rather
 //! than refused, and a request past the line, or one that waited out its
 //! turn, answers 503 `Retry-After: 1`. Successful answers up to 2 MiB are
-//! memoized for 5 minutes per `(width, url)`, 256 of them, and a memoized
+//! memoized for 5 minutes per representation and URL, 256 of them, and a memoized
 //! answer never waits for a slot; concurrent misses of one key share one
-//! fetch.
+//! fetch. The native route serves a final JPEG or PNG for WebP and GIF event
+//! posters, using the same source limits and slots as a thumbnail.
 
 use std::time::Duration;
 
@@ -118,18 +119,18 @@ fn media_content_type(body: &[u8]) -> Result<String, Response> {
 }
 
 fn is_mp4(body: &[u8]) -> bool {
-    let Some(header) = body.get(..8) else {
+    let Some((size, rest)) = body.split_first_chunk::<4>() else {
         return false;
     };
-    if &header[4..8] != b"ftyp" {
+    if rest.get(..4) != Some(b"ftyp".as_slice()) {
         return false;
     }
-    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let size = u32::from_be_bytes(*size);
     let (size, offset) = if size == 1 {
-        let Some(extended) = body.get(8..16) else {
+        let Some(extended) = rest.get(4..).and_then(<[u8]>::first_chunk::<8>) else {
             return false;
         };
-        (u64::from_be_bytes(extended.try_into().unwrap()), 16)
+        (u64::from_be_bytes(*extended), 16)
     } else {
         (u64::from(size), 8)
     };
@@ -284,8 +285,35 @@ fn cached_response((status, content_type, body): Converted) -> Response {
 }
 
 pub async fn convert(State(state): State<SharedState>, Query(p): Query<ConvertParams>) -> Response {
-    if p.width
-        .is_some_and(|width| !crate::content::entity_thumbnail::valid_width(width))
+    let output = p.width.map_or(Output::Original, Output::Thumbnail);
+    serve(&state, p.url, output).await
+}
+
+pub async fn native(State(state): State<SharedState>, Query(p): Query<ConvertParams>) -> Response {
+    let output = match p.width {
+        Some(width) => Output::Thumbnail(width),
+        None if crate::explore::node_assets::is_event_poster_url(
+            &p.url,
+            state.convert_sources.own_url.as_ref(),
+        ) =>
+        {
+            Output::EventPoster
+        }
+        None => Output::Original,
+    };
+    serve(&state, p.url, output).await
+}
+
+#[derive(Clone, Copy)]
+enum Output {
+    Original,
+    Thumbnail(u32),
+    EventPoster,
+}
+
+async fn serve(state: &SharedState, url: String, output: Output) -> Response {
+    if let Output::Thumbnail(width) = output
+        && !crate::content::entity_thumbnail::valid_width(width)
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -293,7 +321,7 @@ pub async fn convert(State(state): State<SharedState>, Query(p): Query<ConvertPa
         )
             .into_response();
     }
-    let source = match reqwest::Url::parse(&p.url) {
+    let source = match reqwest::Url::parse(&url) {
         Ok(u) if matches!(u.scheme(), "http" | "https") => u,
         _ => return (StatusCode::BAD_REQUEST, "url must be http(s)").into_response(),
     };
@@ -311,15 +339,16 @@ pub async fn convert(State(state): State<SharedState>, Query(p): Query<ConvertPa
                 .into_response();
         }
     };
-    let key = p.width.map_or_else(
-        || p.url.clone(),
-        |width| format!("thumbnail:{width}:{}", p.url),
-    );
+    let key = match output {
+        Output::Original => url,
+        Output::Thumbnail(width) => format!("thumbnail:{width}:{url}"),
+        Output::EventPoster => format!("event-poster:{url}"),
+    };
     // Only a cacheable success is an Ok: an error or an oversized body is
     // answered to its own caller and the next caller fetches again.
     let outcome = state
         .convert_cache
-        .get_or_fetch(key, || fetch_and_convert(&state, source, p.width))
+        .get_or_fetch(key, || fetch_and_convert(state, source, output))
         .await;
     match outcome {
         Ok(hit) => cached_response(hit),
@@ -340,16 +369,19 @@ enum Source {
 async fn fetch_and_convert(
     state: &super::MediaState,
     source: Source,
-    width: Option<u32>,
+    output: Output,
 ) -> Result<Converted, Response> {
     // A thumbnail waits for a read-through fill or a rate-limited source with only a place in
     // line; it takes a slot (the memory bound) when the source's bytes are read, until the render.
-    let slots = width.map(|_| &state.convert_slots);
+    let slots = match output {
+        Output::Original => None,
+        Output::Thumbnail(_) | Output::EventPoster => Some(&state.convert_slots),
+    };
     let _line = match slots {
         Some(slots) => Some(slots.admit().ok_or_else(busy_response)?),
         None => None,
     };
-    let max_bytes = if width.is_some() {
+    let max_bytes = if slots.is_some() {
         MAX_THUMBNAIL_SOURCE_BYTES
     } else {
         MAX_BODY_BYTES
@@ -379,20 +411,29 @@ async fn fetch_and_convert(
         Ready::Stored(opened) => read_stored(opened).await?,
         Ready::Remote(upstream) => read_remote(upstream, max_bytes).await?,
     };
-    if let Some(width) = width {
-        if content_type.starts_with("video/") {
+    let rendered = match output {
+        Output::Thumbnail(_) if content_type.starts_with("video/") => {
             return Err((
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "video resizing is not supported",
             )
                 .into_response());
         }
-        return match crate::content::entity_thumbnail::render(body, width).await {
-            Ok((kind, bytes)) => cacheable(status, kind, bytes),
-            Err(message) => Err((StatusCode::UNPROCESSABLE_ENTITY, message).into_response()),
-        };
-    }
-    cacheable(status, &content_type, body)
+        Output::Thumbnail(width) => crate::content::entity_thumbnail::render(body, width).await,
+        Output::EventPoster if matches!(content_type.as_str(), "image/webp" | "image/gif") => {
+            crate::content::entity_thumbnail::render_event_poster(body).await
+        }
+        Output::EventPoster
+            if content_type.starts_with("image/")
+                && !matches!(content_type.as_str(), "image/jpeg" | "image/png") =>
+        {
+            return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+        }
+        _ => return cacheable(status, &content_type, body),
+    };
+    let (kind, bytes) =
+        rendered.map_err(|message| (StatusCode::UNPROCESSABLE_ENTITY, message).into_response())?;
+    cacheable(status, kind, bytes)
 }
 
 /// A source whose bytes are next to be read.
@@ -552,6 +593,7 @@ fn cacheable(status: StatusCode, content_type: &str, body: Bytes) -> Result<Conv
     }
 }
 
+#[path = "convert"]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1409,4 +1451,6 @@ mod tests {
         let big = Bytes::from(vec![0u8; CONVERT_CACHE_MAX_BODY + 1]);
         assert!(cacheable(StatusCode::OK, "image/png", big).is_err());
     }
+
+    mod poster_tests;
 }

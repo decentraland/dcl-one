@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readCopy } from "@ui/data/copyAsOf";
+import { readCopy } from "@web-core/freshness/copyAsOf";
 import { getJSON } from "./client";
 import { placesApiPath } from "./typed";
 import { ApiDataSchema, ApiDataTotalSchema } from "./generated-schemas/places";

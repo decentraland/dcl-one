@@ -22,3 +22,6 @@ test-support = ["dep:alloy"]
 
 [dev-dependencies]
 alloy.workspace = true
+
+[lints]
+workspace = true

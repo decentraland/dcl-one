@@ -1,4 +1,4 @@
-import { ComponentDefinition } from './component'
+import type { ComponentDefinition } from './component'
 
 /**
  * @public

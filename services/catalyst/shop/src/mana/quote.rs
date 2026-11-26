@@ -95,18 +95,32 @@ pub async fn mana_usd_rates(pool: &sqlx::PgPool) -> Result<QuoteRates, sqlx::Err
     })
 }
 
-/// The newest price snapshot within its freshness budget.
-async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
+/// The newest price snapshot's exact MANA/USD text (trimmed) and when it
+/// was quoted in unix seconds: the provider's quote time, or the poll's when
+/// that is earlier (`PriceSnapshot::age_at`). No freshness budget is
+/// applied here; readers that need a live spot ask [`spot_is_fresh`].
+/// `price_snapshots_newest_idx`.
+pub(crate) async fn newest_spot(pool: &sqlx::PgPool) -> Result<Option<(String, i64)>, sqlx::Error> {
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
-        "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
+        "SELECT mana_usd::text, LEAST(taken_at, COALESCE(source_updated_at, taken_at)) FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
     )
     .fetch_optional(pool)
     .await?;
-    let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
-    Ok(row.and_then(|(rate, taken_at)| {
-        let fresh = Utc::now().timestamp() - taken_at.and_utc().timestamp() <= budget;
-        fresh
-            .then(|| ManaUsdRate::parse_usd_per_mana(rate.trim()))
+    Ok(row.map(|(rate, quoted_at)| (rate.trim().to_string(), quoted_at.and_utc().timestamp())))
+}
+
+/// Whether a spot quoted at `quoted_at` is still a price at `now` (both
+/// unix seconds): within `price::store::SNAPSHOT_MAX_AGE`, the budget
+/// `PriceSnapshot::is_fresh_at` applies.
+pub(crate) fn spot_is_fresh(quoted_at: i64, now: i64) -> bool {
+    now - quoted_at <= crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64
+}
+
+/// The newest price snapshot within its freshness budget.
+async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
+    Ok(newest_spot(pool).await?.and_then(|(rate, quoted_at)| {
+        spot_is_fresh(quoted_at, Utc::now().timestamp())
+            .then(|| ManaUsdRate::parse_usd_per_mana(&rate))
             .flatten()
     }))
 }
@@ -495,6 +509,10 @@ pub async fn quote_line(
             _ => None,
         },
         mana,
+        splittable: crate::policy::offered_splittable(
+            state.market.credits_mana_split(),
+            &authoritative,
+        ),
     }))
 }
 
@@ -564,6 +582,14 @@ pub type Shared = Arc<super::State>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spot_is_fresh_through_the_snapshot_budget() {
+        let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
+        assert!(spot_is_fresh(1_000, 1_000 + budget));
+        assert!(!spot_is_fresh(1_000, 1_001 + budget));
+        assert!(spot_is_fresh(1_000, 900), "a quote stamped ahead of now");
+    }
 
     #[test]
     fn the_marketplace_rollout_gates_resales_and_rentals_only() {
@@ -775,6 +801,27 @@ mod tests {
             execution.allowance.as_ref().map(|a| a.amount.get()),
             Some(U256::from(1_530_000_000_000_000_000u128))
         );
+
+        // Once the collections index owns Polygon, a withdrawn publication
+        // is the index's unavailability, never an incomplete registry fact.
+        use crate::market::catalogue::owning;
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        assert!(
+            facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+                .await
+                .is_ok()
+        );
+        owning::rewind(&pool, "matic").await;
+        let refused = facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refused,
+            facts::ResolveError::IndexNotReady {
+                index: "collections-index"
+            }
+        );
+        assert_eq!(line_error(0, refused).source, Some("collections-index"));
         db.drop().await;
     }
 }

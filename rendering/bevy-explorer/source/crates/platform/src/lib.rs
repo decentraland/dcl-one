@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod client_login_store;
 mod http_client;
 pub use http_client::http_client_builder;
@@ -13,6 +15,72 @@ pub use native::*;
 mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::*;
+
+use bevy::{
+    core_pipeline::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
+};
+use std::ops::Range;
+
+/// The shadows weight `w` of the grading: dark pixels are multiplied by `1 + 4w`, weighted by
+/// `1 - smoothstep(0, 0.3, luma)`. It is a gain on dark pixels, not an additive lift.
+pub const GRADING_SHADOWS_WEIGHT: f32 = 0.098987624;
+/// The grading's shadows fade out from 0 to 0.3 and its highlights start at 0.55. bevy fades its
+/// shadows section out in a straight line from 0.1 under the range's start to 0.1 over it
+/// (`sectional_color_grading`), so the start is the middle of that fade: the two weights then
+/// differ by under 0.08 at any brightness.
+pub const GRADING_MIDTONES_RANGE: Range<f32> = 0.15..0.55;
+
+pub fn default_color_grading() -> ColorGrading {
+    ColorGrading {
+        global: ColorGradingGlobal {
+            midtones_range: GRADING_MIDTONES_RANGE,
+            ..Default::default()
+        },
+        shadows: ColorGradingSection {
+            gain: 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT,
+            ..Default::default()
+        },
+        midtones: ColorGradingSection::default(),
+        highlights: ColorGradingSection::default(),
+    }
+}
+
+/// The Explorer's bloom scatter setting, the one the Bloom setting turns on.
+pub const BLOOM_SCATTER: f32 = 0.5;
+
+/// A scatter setting as the lerp factor towards the coarser mip on each upsample:
+/// `lerp(0.05, 0.95, scatter)`.
+pub fn scatter_lerp(scatter: f32) -> f32 {
+    0.05 + 0.9 * scatter
+}
+
+/// A bloom with threshold 1, intensity 1 and the given scatter setting.
+///
+/// A scatter bloom upsamples with `lerp(fine, coarse, s)` folded over the mip chain, where `s`
+/// is `scatter_lerp(scatter)`, and adds the result once, so mip `i` weighs `(1 - s) s^i`. bevy's
+/// `Additive` mode adds each mip with its own blend constant (`compute_blend_factor`):
+/// `intensity` for mip 0 and `intensity + low_frequency_boost` for the rest (the boost curve is
+/// a near-step at mip 1 with curvature 0.99), and the weights multiply down the chain. So
+/// intensity is `1 - s` and the boost brings the other mips to `s`; bevy's intensity 1 would
+/// instead sum eight mips at weights above 1 and wash the frame out. The prefilter knee is
+/// `threshold * 0.5`.
+pub fn scatter_bloom(scatter: f32) -> Bloom {
+    let s = scatter_lerp(scatter);
+    let intensity = 1.0 - s;
+    Bloom {
+        intensity,
+        low_frequency_boost: s - intensity,
+        low_frequency_boost_curvature: 0.99,
+        high_pass_frequency: 1.0,
+        prefilter: BloomPrefilter {
+            threshold: 1.0,
+            threshold_softness: 0.5,
+        },
+        composite_mode: BloomCompositeMode::Additive,
+        ..Bloom::NATURAL
+    }
+}
 
 /// One stored DM, or a reaction to one. `from` is the sender's wallet (the account or the
 /// partner).
@@ -41,4 +109,4 @@ pub struct DmHistoryReaction {
 }
 
 pub mod http;
-pub use http::{fetch, FetchError, FetchedResponse, TracedJsonResponse};
+pub use http::{fetch, within, FetchError, FetchedResponse, TracedJsonResponse};

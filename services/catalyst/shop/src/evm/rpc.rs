@@ -93,6 +93,20 @@ impl Rpc {
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        Ok(self
+            .call_result(method, params)
+            .await?
+            .unwrap_or(Value::Null))
+    }
+
+    /// [`Self::call`] that tells an explicit `"result": null` (`Some(Null)`)
+    /// from a reply carrying neither `result` nor `error` (`None`), for
+    /// callers that read a `null` as evidence.
+    pub async fn call_result(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<Value>, RpcError> {
         let body = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
         let resp = self
             .http
@@ -117,7 +131,10 @@ impl Rpc {
         let bytes = read_body_capped(resp, RPC_BODY_CAP)
             .await
             .map_err(|e| RpcError::Transport(format!("{method}: {e}")))?;
-        let parsed: JsonRpcResponse = serde_json::from_slice(&bytes)
+        let reply: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| RpcError::Transport(format!("{method}: malformed rpc body: {e}")))?;
+        let has_result = reply.get("result").is_some();
+        let parsed: JsonRpcResponse = serde_json::from_value(reply)
             .map_err(|e| RpcError::Transport(format!("{method}: malformed rpc body: {e}")))?;
         if let Some(err) = parsed.error {
             return Err(RpcError::Response {
@@ -125,7 +142,7 @@ impl Rpc {
                 message: err.message,
             });
         }
-        Ok(parsed.result.unwrap_or(Value::Null))
+        Ok(has_result.then(|| parsed.result.unwrap_or(Value::Null)))
     }
 
     /// A call whose result is a `0x` hex string (quantities and data).

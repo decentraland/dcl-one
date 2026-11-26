@@ -1,8 +1,8 @@
 //! A changed peer set (the `SYNC_FROM_DAO` list refresh) reaches the running
 //! sync job through `run_sync_job`'s `watch`: after the node is `Syncing`, a
 //! new peer is streamed, a dropped peer's stream stops and the retry list
-//! follows; during the first bootstrap, dropping a peer that never answers
-//! releases the node into `Syncing`. Against in-process peers whose
+//! follows; a peer that never answers does not hold the first bootstrap, and
+//! dropping it keeps the node `Syncing`. Against in-process peers whose
 //! `/pointer-changes` counts its calls. Needs CATALYST_TEST_DATABASE_URL (one
 //! scratch database per test).
 
@@ -17,22 +17,20 @@ use axum::routing::get;
 use axum::{Json, Router};
 use catalyst::content::batch_deployer::{BatchDeployer, BatchDeployerConfig};
 use catalyst::content::bloom_filter::BloomFilter;
+use catalyst::content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst::content::sync::orchestrator::{
     SyncControl, SyncDependencies, SyncOrchestratorConfig, run_sync_job,
 };
 use catalyst::content::sync::{
     LiveDeploymentRepository, LiveProcessedSnapshotStore, SyncOrchestrator, SyncState, SyncStatus,
 };
-use catalyst::content::sync_deployer::{
-    DEFAULT_FLUSH_CONCURRENCY, LiveFailedDeploymentsStore, LiveSyncDeployer,
-};
+use catalyst::content::sync_deployer::{DEFAULT_FLUSH_CONCURRENCY, LiveSyncDeployer};
 use catalyst::jobs::Jobs;
 use catalyst::storage::Storage;
 use serde_json::json;
 use tokio::sync::{RwLock, watch};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const POLL_MS: u64 = 100;
 
@@ -84,7 +82,7 @@ async fn orchestrator(pool: &sqlx::PgPool, temp: &std::path::Path) -> Arc<SyncOr
     let storage = Arc::new(Storage::from_config(temp).await.unwrap());
     let status = Arc::new(SyncStatus::default());
     let repo = Arc::new(LiveDeploymentRepository::new(pool.clone(), status.clone()));
-    let client = reqwest::Client::new();
+    let client = catalyst::content::sync::test_sync_client(reqwest::Client::new());
     let mut bloom = BloomFilter::with_capacity(1_000);
     repo.seed_deployed_entity_ids(&mut bloom).await.unwrap();
     let deployer = Arc::new(BatchDeployer::new(
@@ -94,6 +92,7 @@ async fn orchestrator(pool: &sqlx::PgPool, temp: &std::path::Path) -> Arc<SyncOr
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
             catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),
@@ -154,8 +153,7 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
         orchestrator.state() == SyncState::Syncing
     })
     .await;
-    // The bootstrap task has ended by now (every peer streams); the job must
-    // still apply a change.
+    // Wait for initial bootstrap before replacing the peer set.
     wait_until("the bootstrap callback", || {
         callbacks.load(Ordering::SeqCst) == 1
     })
@@ -197,7 +195,7 @@ async fn a_peer_change_after_the_bootstrap_swaps_the_streams_and_the_retry_list(
 }
 
 #[tokio::test]
-async fn dropping_a_dead_peer_during_the_first_bootstrap_releases_the_node() {
+async fn a_dead_peer_does_not_hold_the_first_bootstrap() {
     let Some(db) = db::scratch_database().await else {
         return;
     };
@@ -218,20 +216,21 @@ async fn dropping_a_dead_peer_during_the_first_bootstrap_releases_the_node() {
             })
         }
     });
+    let orch = orchestrator.clone();
+    let observed = callbacks.clone();
+    wait_until("the steady state beside a dead peer", || {
+        orch.state() == SyncState::Syncing && observed.load(Ordering::SeqCst) == 1
+    })
+    .await;
     let good_calls = good.calls.clone();
     wait_until("the good peer's stream", || {
         good_calls.load(Ordering::SeqCst) >= 2
     })
     .await;
-    let held = orchestrator.state();
-    assert_eq!(callbacks.load(Ordering::SeqCst), 0);
 
     tx.send(set(&[&good.url])).unwrap();
-    let orch = orchestrator.clone();
-    wait_until("the steady state once the dead peer is dropped", || {
-        orch.state() == SyncState::Syncing && callbacks.load(Ordering::SeqCst) == 1
-    })
-    .await;
+    tokio::time::sleep(Duration::from_millis(POLL_MS * 3)).await;
+    let after_drop = orchestrator.state();
 
     job.cancel();
     good.http.abort();
@@ -240,8 +239,9 @@ async fn dropping_a_dead_peer_during_the_first_bootstrap_releases_the_node() {
     let _ = std::fs::remove_dir_all(temp);
 
     assert_eq!(
-        held,
-        SyncState::Bootstrapping,
-        "a peer that never answers holds the node in bootstrap"
+        after_drop,
+        SyncState::Syncing,
+        "dropping it keeps the node Syncing"
     );
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
 }

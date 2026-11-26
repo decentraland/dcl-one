@@ -2,7 +2,7 @@
 // address) resolved by item urn, for wearables and emotes alike.
 //   from: GET /lambdas/collections/wearables?wearableId=… and /lambdas/collections/emotes?emoteId=…
 import { getJson } from '../http'
-import type { HideData } from '../../../src/engine/avatarHides'
+import type { HideData } from '@explorer-core/engine/avatarHides'
 
 export type ItemDef = {
   id: string
@@ -35,8 +35,18 @@ export function thumbnailUrl(baseUrl: string, itemUrn: string): string {
 /** Resolve item definitions by item urn. Cached hits skip the network; only misses are fetched,
  *  batched. An empty input costs nothing. */
 export async function resolveDefsByUrn(kind: ItemKind, baseUrl: string, itemUrns: string[]): Promise<Map<string, ItemDef>> {
+  return (await resolveDefsByUrnChecked(kind, baseUrl, itemUrns)).defs
+}
+
+/** `failed` tells an urn the lambda couldn't be asked about from one it doesn't know. */
+export async function resolveDefsByUrnChecked(
+  kind: ItemKind,
+  baseUrl: string,
+  itemUrns: string[]
+): Promise<{ defs: Map<string, ItemDef>; failed: Set<string> }> {
   const cache = defByItemUrn[kind]
   const out = new Map<string, ItemDef>()
+  const failed = new Set<string>()
   const missing: string[] = []
   for (const u of itemUrns) {
     const cached = cache.get(u)
@@ -44,11 +54,13 @@ export async function resolveDefsByUrn(kind: ItemKind, baseUrl: string, itemUrns
     else missing.push(u)
   }
   for (let i = 0; i < missing.length; i += CHUNK) {
-    const qs = missing.slice(i, i + CHUNK).map((u) => `${QUERY_KEY[kind]}=${u}`).join('&')
+    const chunk = missing.slice(i, i + CHUNK)
+    const qs = chunk.map((u) => `${QUERY_KEY[kind]}=${u}`).join('&')
     const data = await getJson<Partial<Record<ItemKind, ItemDef[]>>>(`${baseUrl}/lambdas/collections/${kind}?${qs}`).catch((e: unknown) => {
       // Loud on purpose: a swallowed chunk failure shrinks the resolved set, and downstream that
       // once meant silently undressing the avatar on the next equip (see resolveEquippedSet).
       console.error(`[collections] ${kind} resolve-by-urn chunk failed`, e)
+      for (const u of chunk) failed.add(u)
       return undefined
     })
     for (const d of data?.[kind] ?? []) {
@@ -56,5 +68,5 @@ export async function resolveDefsByUrn(kind: ItemKind, baseUrl: string, itemUrns
       out.set(d.id, d)
     }
   }
-  return out
+  return { defs: out, failed }
 }

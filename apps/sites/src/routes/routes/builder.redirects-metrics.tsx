@@ -16,10 +16,10 @@ const FALLBACK: PageDefaults = {
   variant: "redirect",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = await pageLoader(
     request,
-    
+    context,
     FALLBACK,
   );
 
@@ -98,8 +98,7 @@ export default function BuilderRedirectsMetricsRoute({
                   {r.param && (
                     <span style={S.note}>
                       {" "}
-                      (:{r.param.name} &rarr;{" "}
-                      {r.param.queryKey ? `?${r.param.queryKey}` : "path"})
+                      (:{r.param.name} &rarr; path)
                     </span>
                   )}
                 </td>

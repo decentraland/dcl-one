@@ -1,6 +1,6 @@
-// Bundle the public foundations and the internal NavBar preview to validate their CSS.
+// Bundle public components with their composed foundation CSS.
 import '../../foundations/foundations.css'
-import * as ui from '../../index'
-import { NavBar } from '../../components/NavBar/NavBar'
+import * as ui from '@dcl/one-ui'
+import { Button, NavBar } from '@dcl/one-ui'
 
-export { NavBar, ui }
+export { Button, NavBar, ui }

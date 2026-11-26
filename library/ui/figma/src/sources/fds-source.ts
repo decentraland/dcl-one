@@ -543,7 +543,9 @@ async function verifyFdsCache(dir: string, lockFile: string): Promise<void> {
       cause: error
     })
   }
-  const repair = 'run `pnpm figma fetch-source`'
+  // Two routes: maintainers rebuild the cache; a consumer resolving against the mappings needs no cache.
+  const repair =
+    'maintainers run `pnpm figma fetch-source` (needs read access to figma-design-system); to resolve a component without the capture, pass --mapping-only'
   if (!existsSync(path.join(dir, MARKER)))
     throw new FdsCacheError(
       `The Figma capture is not materialized (${path.basename(dir)}): ${repair}`

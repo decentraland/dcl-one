@@ -1,20 +1,29 @@
+#![forbid(unsafe_code)]
+
 pub mod asset_cache;
 pub mod autopilot;
 pub mod base_domain;
 pub mod bounds_calc;
 pub mod dynamics;
+pub mod feature_flags;
 pub mod gateway;
 pub mod gpu_time;
 pub mod inputs;
 pub mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod movement_clip;
 pub mod partition;
+pub mod perf;
+pub mod platform_ban;
 pub mod profile;
 pub mod rpc;
 pub mod sets;
+pub mod sky_preset;
 pub mod structs;
+pub mod sync;
 pub mod terrain;
+pub mod token_bucket;
 pub mod util;
 
 /// Panics on debug builds but only logs an error on release builds

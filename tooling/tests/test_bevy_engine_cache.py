@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, MANIFEST
 
 REPO = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('bevy_build', REPO / 'apps/bevy-explorer/build-web.py')
@@ -18,6 +20,30 @@ SHA = 'a' * 40
 
 
 class EngineCacheTests(unittest.TestCase):
+    def test_hashing_changes_invalidate_web_artifacts_but_reuse_the_engine(self):
+        path = 'library/hashing/src/index.ts'
+        self.write(path, 'first hashing implementation')
+        subprocess.run(['git', 'add', path], cwd=self.root, check=True)
+        web_before = artifact.inputs(self.root)
+        engine_before = artifact.engine_inputs(self.root)
+        self.write(path, 'second hashing implementation')
+        web_after = artifact.inputs(self.root)
+        self.assertNotEqual(web_after, web_before)
+        self.assertEqual(artifact.engine_inputs(self.root), engine_before)
+        # bevy-ci.py selects no lane for markdown, so markdown is not part of the fingerprint.
+        self.write('library/hashing/README.md', 'prose')
+        subprocess.run(['git', 'add', 'library/hashing/README.md'], cwd=self.root, check=True)
+        self.assertEqual(artifact.inputs(self.root), web_after)
+        # The bridge scene's install copies Creator Hub's zip-extract: the same rules.
+        folder = 'apps/creator-hub/packages/zip-extract/'
+        self.write(folder + 'README.md', 'prose')
+        subprocess.run(['git', 'add', folder], cwd=self.root, check=True)
+        self.assertEqual(artifact.inputs(self.root), web_after)
+        self.write(folder + 'index.js', 'implementation')
+        subprocess.run(['git', 'add', folder], cwd=self.root, check=True)
+        self.assertNotEqual(artifact.inputs(self.root), web_after)
+        self.assertEqual(artifact.engine_inputs(self.root), engine_before)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -36,6 +62,7 @@ class EngineCacheTests(unittest.TestCase):
                      artifact.HUD + 'main.tsx', artifact.SOURCE + 'react-web/bridge-scene/package.json'):
             self.write(name, 'input')
         subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        seal(self.root)
         subprocess.run(['git', 'add', '.'], cwd=self.root, check=True)
         self.outputs()
 
@@ -43,6 +70,8 @@ class EngineCacheTests(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value if isinstance(value, bytes) else value.encode())
+        if (self.root / MANIFEST).exists():
+            seal(self.root)
         return path
 
     def outputs(self):
@@ -51,8 +80,34 @@ class EngineCacheTests(unittest.TestCase):
                        b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else 'fixture')
         self.write(artifact.ENGINE_PARTS['bindings'] + '/Example.ts', 'export type Example = string;')
 
+    def preview_outputs(self):
+        for name in artifact.PREVIEW_REQUIRED:
+            part, _, file = name.partition('/')
+            self.write(artifact.PREVIEW_PARTS[part] + '/' + file,
+                       b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else 'fixture')
+
     def pack(self, optimized=True):
         return artifact.pack_engine(self.cache, self.root, optimized=optimized, revision=SHA)
+
+    def test_missing_manifest_refuses_assembled_identity_without_invalidating_engine_cache(self):
+        self.pack()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / MANIFEST).unlink()
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Missing'):
+            artifact.inputs(self.root)
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        self.assertEqual(artifact.verify_engine(self.cache, self.root, False)['revision'], SHA)
+
+    def test_stale_manifest_refuses_assembled_identity_until_the_fixture_is_resealed(self):
+        before = (self.root / MANIFEST).read_bytes()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / artifact.HUD / 'main.tsx').write_text('changed HUD without regeneration')
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Stale HUD input'):
+            artifact.inputs(self.root)
+        self.assertEqual(before, (self.root / MANIFEST).read_bytes())
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        seal(self.root)
+        self.assertTrue(artifact.inputs(self.root))
 
     def test_hud_and_bridge_edits_reuse_engine_but_compiler_inputs_invalidate_it(self):
         engine_key = artifact.engine_inputs(self.root)
@@ -155,18 +210,22 @@ class EngineCacheTests(unittest.TestCase):
 
     def test_warm_build_skips_rust_but_runs_current_web_tests_and_preserves_provenance(self):
         app = self.root / 'apps/bevy-explorer'
+        preview = self.root / '.cache/avatar-preview'
         calls = []
         for name in ('index.html', 'app.html', 'engine/headless.html',
                      'bridge-scene/static/BevyExplorerUI/about', 'service_worker.js', 'preview_realm.js'):
             self.write(artifact.SOURCE + 'deploy/web/' + name, 'fixture')
         self.write(artifact.SOURCE + 'LICENSE', 'fixture')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;')
-        self.write(artifact.LOCK, json.dumps({'hud_source_sha256': artifact.hud_inputs(self.root)}))
+        self.write(artifact.BINDINGS + '/Example.ts', 'export type Example = string;')
 
         def command(*args, **kwargs):
             calls.append(args)
             if args[0] == 'wasm-pack' or args[:2] == ('bash', './scripts/gen-ts-bindings.sh'):
                 self.outputs()
+            elif args[:2] == ('bash', './build.sh'):
+                self.preview_outputs()
+            elif len(args) > 1 and str(args[1]).endswith('tools/package.py'):
+                self.write(Path(args[2]).relative_to(self.root).as_posix() + '/index.html', 'page')
             elif args[0] == 'node':
                 self.write(artifact.SOURCE + 'target/sandbox-worker.meta.json',
                            json.dumps({'outputs': {'worker': {'entryPoint': 'worker.js', 'exports': []}}}))
@@ -177,22 +236,78 @@ class EngineCacheTests(unittest.TestCase):
         with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
                 patch.object(build, 'APP', app), patch.object(build, 'run', side_effect=command), \
                 patch.dict(os.environ, {'GITHUB_SHA': SHA}):
-            build.web(engine_cache=self.cache)
+            os.environ.pop('PNPM', None)
+            build.web(engine_cache=self.cache, preview_cache=preview)
             self.assertEqual(sum(c[0] == 'wasm-pack' for c in calls), 2)
             self.assertTrue(any(c[0] == 'bash' for c in calls))
+            self.assertIn(('bash', './build.sh'), calls)
+            # The optimized preview is packaged under the size limit.
+            self.assertIn(('--max-wasm-gzip', str(build.PREVIEW_MAX_WASM_GZIP)),
+                          [c[3:5] for c in calls if str(c[1]).endswith('tools/package.py')])
             self.assertFalse((self.cache / 'pkg/sandbox_worker.bundle.js').exists())
             calls.clear()
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
-                build.web(no_opt=True, engine_cache=self.cache)
+                build.web(no_opt=True, engine_cache=self.cache, preview_cache=preview)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
-        self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
-        self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
+        self.assertNotIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test:shared-inputs'), calls)
+        self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle'), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
+        self.assertIn(('node', str(self.root / 'tooling/check-local-hashing.mjs'),
+                       str(self.source / 'react-web/bridge-scene')), calls)
+        self.assertIn(('corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+                       'install', '--frozen-lockfile', '--ignore-scripts'), calls)
         self.assertTrue(any(c[0] == 'node' for c in calls))
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
+        self.assertEqual(meta['preview']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)
         self.assertTrue(meta['optimized'])
+
+    def test_a_shell_that_carries_pnpm_runs_it_in_place_of_corepack(self):
+        with patch.dict(os.environ, {'PNPM': 'pnpm'}):
+            self.assertEqual(build.pnpm(), ('pnpm',))
+
+    def test_without_a_shell_pnpm_corepack_runs_the_pinned_version(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('PNPM', None)
+            self.assertEqual(build.pnpm(), ('corepack', 'pnpm@12.21.0'))
+
+    def test_target_only_runs_the_cargo_steps_of_a_shared_build_and_nothing_else(self):
+        calls = []
+
+        def command(*args, **kwargs):
+            calls.append((args, kwargs.get('env') or {}))
+
+        def run(*flags):
+            calls.clear()
+            with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
+                    patch.object(build, 'run', side_effect=command), \
+                    patch.object(sys, 'argv', ['build-web.py', *flags]):
+                build.main()
+            return [args for args, _ in calls]
+
+        cargo = ('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
+                 '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
+                 '--features=decentra-bevy/livekit,decentra-bevy/social')
+        # The bindings script compiles a test build in the same target.
+        bindings = ('bash', './scripts/gen-ts-bindings.sh')
+        self.assertEqual(run('--no-opt', '--target-only'), [cargo, bindings])
+        # The settings Cargo hashes are the ones of a pull request's shared build.
+        environment = calls[0][1]
+        self.assertEqual(environment['CARGO_PROFILE_RELEASE_CODEGEN_UNITS'], '16')
+        self.assertEqual(environment['RUSTUP_TOOLCHAIN'], 'nightly-2026-04-15')
+        self.assertEqual(run('--target-only'), [cargo, bindings])
+        self.assertNotIn('CARGO_PROFILE_RELEASE_CODEGEN_UNITS', calls[0][1])
+        # This mode packs no engine and takes no engine option.
+        for flags in (('--engine-cache', str(self.root / 'engine')), ('--shared-build',)):
+            with self.assertRaises(SystemExit), patch.object(sys, 'stderr'):
+                run('--target-only', *flags)
+            self.assertEqual(calls, [])
+        self.assertFalse((self.root / 'engine').exists())
 
 
 if __name__ == '__main__':

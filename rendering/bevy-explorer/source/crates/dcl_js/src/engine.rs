@@ -188,6 +188,7 @@ pub fn crdt_send_to_renderer(op_state: Rc<RefCell<impl State>>, messages: &[u8])
     if let Some(budget) = op_state.try_borrow_mut::<super::comms::CommsSendBudget>() {
         budget.sent = 0;
     }
+    super::comms_api::drain_topic_inbox(&mut *op_state);
 
     let sender = op_state.borrow_mut::<SceneResponseSender>();
     sender
@@ -484,8 +485,7 @@ pub async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<impl State>>) -> Ve
                     results.push(data);
                 }
                 GlobalCrdtStateUpdate::Time(time) => {
-                    let time_of_day = op_state.borrow_mut::<TimeOfDay>();
-                    time_of_day.time = time;
+                    *op_state.borrow_mut::<TimeOfDay>() = time;
                 }
                 GlobalCrdtStateUpdate::CameraFov(fov_y) => {
                     let camera_fov = op_state.borrow_mut::<CameraFov>();

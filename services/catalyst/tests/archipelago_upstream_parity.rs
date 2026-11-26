@@ -1,6 +1,5 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/upstream_parity.rs
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 use reqwest::Method;
 use reqwest::header::ORIGIN;
 
@@ -42,15 +41,15 @@ async fn cors_headers_on_every_route() {
             resp.headers()
                 .get("access-control-allow-origin")
                 .and_then(|v| v.to_str().ok()),
-            Some("*"),
+            Some(ORIGIN_VALUE),
             "{path} allow-origin"
         );
         assert_eq!(
             resp.headers()
-                .get("access-control-expose-headers")
+                .get("access-control-allow-credentials")
                 .and_then(|v| v.to_str().ok()),
-            Some("*"),
-            "{path} expose-headers"
+            Some("true"),
+            "{path} allow-credentials"
         );
     }
 
@@ -71,7 +70,7 @@ async fn cors_headers_on_every_route() {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|v| v.to_str().ok()),
-        Some("*"),
+        Some(ORIGIN_VALUE),
         "preflight allow-origin"
     );
     assert_eq!(
@@ -79,7 +78,7 @@ async fn cors_headers_on_every_route() {
             .headers()
             .get("access-control-allow-methods")
             .and_then(|v| v.to_str().ok()),
-        Some("*"),
+        Some("GET,HEAD,POST,PUT,DELETE,CONNECT,TRACE,PATCH"),
         "preflight allow-methods"
     );
     assert_eq!(
@@ -87,7 +86,7 @@ async fn cors_headers_on_every_route() {
             .headers()
             .get("access-control-allow-headers")
             .and_then(|v| v.to_str().ok()),
-        Some("*"),
+        Some("Cache-Control,Content-Type,Origin,Accept,User-Agent,X-Upload-Origin"),
         "preflight allow-headers"
     );
 }

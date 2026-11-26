@@ -8,6 +8,11 @@ use clap::Args;
 pub struct ContentConfig {
     /// Comma-separated peer content URLs (`https://host/content`). Plaintext
     /// http:// is accepted for loopback hosts only. Empty: no sync configured.
+    /// Sync, read-through and their retries dial a host at private addresses
+    /// only when it is named here (or in WORLDS_CONTENT_MIRROR_SOURCE with the
+    /// read-through on, or ETH_RPC_URL with SYNC_FROM_DAO on), and never
+    /// through a proxy: list a peer that is private or behind split-horizon
+    /// DNS here. A redirect to another origin must reach a public host.
     #[arg(long, env = "SYNC_SOURCE", default_value = "http://127.0.0.1:5140")]
     pub sync_source: String,
 
@@ -38,11 +43,35 @@ pub struct ContentConfig {
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,
 
+    /// Seconds after initial bootstrap before rechecking snapshots from syncing peers.
+    #[arg(
+        long,
+        env = "SYNC_SNAPSHOT_RESYNC_INITIAL_DELAY_SECS",
+        default_value_t = 3_600,
+        value_parser = clap::value_parser!(u32).range(60..)
+    )]
+    pub sync_snapshot_resync_initial_delay_secs: u32,
+
+    /// Seconds between subsequent peer snapshot checks.
+    #[arg(long, env = "SYNC_SNAPSHOT_RESYNC_INTERVAL_SECS", default_value_t = 14 * 86_400, value_parser = clap::value_parser!(u32).range(60..))]
+    pub sync_snapshot_resync_interval_secs: u32,
+
+    /// Seconds between steady-state pointer-change polls.
+    #[arg(
+        long,
+        env = "SYNC_POINTER_CHANGES_POLL_INTERVAL_SECS",
+        default_value_t = 5,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub sync_pointer_changes_poll_interval_secs: u32,
+
     /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
-    /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
-    /// is refused at startup. Unset or empty:
-    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. It must serve
+    /// historical state: a contract wallet refused at latest is asked again at
+    /// the entity's block, and a node that cannot answer there leaves the
+    /// deploy undecided (503). Plaintext http:// is refused at startup. Unset or empty:
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one
     /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
     /// from ETH_RPC_URL_FILE; an empty file fails startup.
     #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]
@@ -117,11 +146,13 @@ pub struct ContentConfig {
     #[arg(long, env = "SNAPSHOT_GENERATION_INTERVAL_HOURS", default_value_t = 6)]
     pub snapshot_generation_interval_hours: u64,
 
-    // content history prune (src/content/history_prune.rs): a sync-only node
-    // drops the deployments no pointer is served by any more (superseded or
+    // content history prune (src/content/history_prune.rs): drops the
+    // deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
-    // Off by default, and never beside CONTENT_WRITES_ENABLED: an
-    // authoritative node keeps its history.
+    // Off by default and independent of CONTENT_WRITES_ENABLED: local scenes
+    // and the rows they superseded always stay. It also makes the retry
+    // worker discard a failed deployment a newer active entity overtook,
+    // instead of storing it as a superseded row.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 
@@ -168,9 +199,46 @@ pub struct ContentConfig {
     #[arg(long, env = "MAX_UPLOAD_FIELD_SIZE", default_value_t = 32 * 1024)]
     pub max_upload_field_size: usize,
 
-    /// Bytes of `POST /entities` bodies held in memory at once across every
-    /// request, each holding at least 16 MiB; never below one maximum-size
-    /// deployment. A request that does not fit answers 503 unread.
+    /// Files a `POST /entities` form may carry.
+    #[arg(long, env = "MAX_UPLOAD_FILE_COUNT", default_value_t = 3000)]
+    pub max_upload_file_count: usize,
+
+    /// Bytes one `POST /entities` file may hold.
+    #[arg(long, env = "MAX_UPLOAD_FILE_SIZE", default_value_t = 100 * 1024 * 1024)]
+    pub max_upload_file_size: usize,
+
+    /// Bytes of every file and field value one `POST /entities` form may
+    /// carry together (2 GiB); the route's body limit is this plus the
+    /// multipart framing of its parts. The files are spooled to
+    /// `UPLOAD_SPOOL_FOLDER`, so this bounds a deploy's disk, not its memory.
+    /// The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
+    /// `infra/gateway/gateway.py`) is set for the default and must follow a
+    /// change; a route limit past it is logged at startup.
+    #[arg(
+        long,
+        env = "MAX_UPLOAD_TOTAL_SIZE",
+        default_value_t = 2 * 1024 * 1024 * 1024
+    )]
+    pub max_upload_total_size: usize,
+
+    /// Where `POST /entities` spools its files while a form is read, one
+    /// directory per request removed when it ends; directories a crashed
+    /// process left are removed at startup once older than an hour. Unset,
+    /// `<STORAGE_ROOT_FOLDER>/tmp/content-uploads`: the blob store's
+    /// filesystem, so its disk is the one the deploy fills anyway, and never
+    /// the OS temp dir, which may be memory-backed.
+    #[arg(long, env = "UPLOAD_SPOOL_FOLDER")]
+    pub upload_spool_folder: Option<std::path::PathBuf>,
+
+    /// Bytes `POST /entities` requests buffer in memory at once: a request is
+    /// admitted when 16 MiB for its fields and parsing fits, and once its
+    /// form is read reserves that, its entity file and the largest file its
+    /// validation reads (an item's thumbnail, a profile's face256); the other
+    /// files stay spooled on disk.
+    /// Never below one request's most (16 MiB plus twice
+    /// `MAX_UPLOAD_FILE_SIZE`), so a form within the limits always fits an
+    /// idle node. A request that does not fit answers 503 (unread when it
+    /// does not fit on arrival).
     #[arg(
         long,
         env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
@@ -292,14 +360,18 @@ pub struct ContentConfig {
     )]
     pub max_concurrent_uploads_per_source: u32,
 
-    /// Bytes of `POST /entities` bodies (declared, else the 200 MiB cap) one
-    /// client address may have in flight. The worlds uploads read it too, so
-    /// a set value must fit one 350 MiB world deploy; below that the config
-    /// is refused. Unset, each route keeps one maximum-size upload of its
-    /// own (content 200 MiB, worlds 350 MiB): a source with one large or
-    /// undeclared-length (chunked) body in flight is turned away (429) until
-    /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
-    /// to let one source upload several large bodies at once.
+    /// Bytes of `POST /entities` bodies one client address may have in
+    /// flight, its share of the upload spool. A content upload is admitted
+    /// when its declared length (else `MAX_UPLOAD_TOTAL_SIZE`) fits beside the
+    /// bytes the source's uploads have received, and then holds only the bytes
+    /// it receives (429 once they outgrow the share), so a slow sender does not
+    /// hold what it has not sent. The worlds uploads read it too, so a set
+    /// value must fit one 350 MiB world deploy (below that the config is
+    /// refused); a value below `MAX_UPLOAD_TOTAL_SIZE` is logged at startup,
+    /// since a larger content upload is then always refused. Unset, each route
+    /// keeps one maximum-size upload of its own (content
+    /// `MAX_UPLOAD_TOTAL_SIZE`, worlds 350 MiB); raise it to let one source
+    /// upload several large bodies at once.
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
@@ -351,10 +423,10 @@ pub struct ContentConfig {
     pub deployment_rate_limit_max_outfits: Option<u64>,
 }
 
-/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size
-/// upload of either route reading it, the larger being a world deploy
-/// (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB; content's `MAX_DEPLOYMENT_BYTES`
-/// is 200 MiB).
+/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size world
+/// deploy (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB); the content route's
+/// `MAX_UPLOAD_TOTAL_SIZE` is checked at startup
+/// ([`ContentConfig::check_upload_limits`]).
 const MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE: u64 = 350 * 1024 * 1024;
 
 /// A partial batch of the entity file (10 MiB) and one maximum-size
@@ -413,6 +485,39 @@ impl ContentConfig {
         Ok(Some(raw.to_string()))
     }
 
+    /// `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` must fit a batch of the entity
+    /// file (10 MiB) and one `MAX_UPLOAD_FILE_SIZE` file, or such a batch
+    /// would wait forever.
+    pub fn check_upload_limits(&self) -> anyhow::Result<()> {
+        let batch = 10 * 1024 * 1024 + self.max_upload_file_size as u64;
+        anyhow::ensure!(
+            self.max_partial_upload_bytes_per_minute >= batch,
+            "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE ({}) must fit the entity file and one \
+             MAX_UPLOAD_FILE_SIZE file ({batch} bytes)",
+            self.max_partial_upload_bytes_per_minute
+        );
+        Ok(())
+    }
+
+    /// What the startup log warns about in the `POST /entities` limits: a set
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` below `MAX_UPLOAD_TOTAL_SIZE`
+    /// refuses (429) every upload declaring more than it, which is the
+    /// operator's choice to make, not a reason to stop.
+    pub fn upload_limit_warnings(&self) -> Vec<String> {
+        let total = self.max_upload_total_size as u64;
+        self.max_in_flight_upload_bytes_per_source
+            .filter(|&per_source| per_source < total)
+            .map(|per_source| {
+                format!(
+                    "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE ({per_source}) is below \
+                     MAX_UPLOAD_TOTAL_SIZE ({total}): POST /entities uploads of more than \
+                     {per_source} bytes are refused"
+                )
+            })
+            .into_iter()
+            .collect()
+    }
+
     /// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
     /// splits on whitespace), deduplicated in order. Each must be an http(s)
     /// URL, checked at startup (`posture::check`); the outbound guard decides
@@ -457,12 +562,26 @@ pub struct ValidatorConfig {
     pub third_party_registry_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
+    /// Also lets `WORLDS_WRITES_ENABLED=true` start without a DCL NAME reader (the nft index or `MARKETPLACE_SUBGRAPH_URL`), with personal worlds only.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
     pub ignore_blockchain_access_checks: bool,
 
     /// A second address with the Decentraland address's deploy rights.
     #[arg(long, env = "ADDITIONAL_DECENTRALAND_ADDRESS")]
     pub additional_decentraland_address: Option<String>,
+
+    /// Count this node's active escrow leases (`shop.usage_grants`), until
+    /// their `unlock_at`, as ownership of the leased item when a local
+    /// profile or outfits deploy wears it. Off by default and under every
+    /// posture: a peer that checks ownership on chain only rejects such an
+    /// entity when it syncs it. Set it to `true`, together with
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
+    /// the explorer backpack; startup warns when the two differ. Where it
+    /// reads the collections subgraphs, this node's `/lambdas/profiles` still
+    /// serves the deployed profile without the leased item, since it keeps
+    /// the worn items the chain says are owned.
+    #[arg(long, env = "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub content_escrow_lease_ownership_enabled: bool,
 }
 
 /// The /about comms block (`content::about_comms`) and the v4 discovery it advertises.
@@ -565,6 +684,7 @@ mod tests {
         assert_eq!(cli.content.request_ttl_backwards_ms, 20 * 60 * 1000);
         assert_eq!(cli.content.max_concurrent_uploads_per_source, 4);
         assert_eq!(cli.content.max_in_flight_upload_bytes_per_source, None);
+        assert_eq!(cli.content.upload_spool_folder, None);
         assert_eq!(cli.content.deployments_default_rate_limit_ttl_ms, None);
         let with = |extra: &[&str]| parse(&[&base[..], extra].concat());
         let cli = with(&[
@@ -598,6 +718,35 @@ mod tests {
             Some(350 * 1024 * 1024)
         );
         assert!(with(&["--max-concurrent-uploads-per-source", "0"]).is_err());
+        // A source share below one MAX_UPLOAD_TOTAL_SIZE form starts with a
+        // warning; a partial rate below the entity file and one
+        // MAX_UPLOAD_FILE_SIZE file is refused at startup.
+        let warned = |extra: &[&str]| with(extra).unwrap().content.upload_limit_warnings();
+        let checked = |extra: &[&str]| with(extra).unwrap().content.check_upload_limits();
+        assert!(warned(&[]).is_empty());
+        let warning = warned(&["--max-in-flight-upload-bytes-per-source", &mib(350)]);
+        assert_eq!(warning.len(), 1);
+        assert!(warning[0].contains("are refused"), "{warning:?}");
+        assert!(checked(&["--max-in-flight-upload-bytes-per-source", &mib(350)]).is_ok());
+        assert!(
+            warned(&[
+                "--max-in-flight-upload-bytes-per-source",
+                &mib(350),
+                "--max-upload-total-size",
+                &mib(350),
+            ])
+            .is_empty()
+        );
+        assert!(checked(&["--max-upload-file-size", &mib(600)]).is_err());
+        assert!(
+            checked(&[
+                "--max-upload-file-size",
+                &mib(600),
+                "--max-partial-upload-bytes-per-minute",
+                &mib(610),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -636,6 +785,9 @@ mod tests {
         assert_eq!(c.content.sync_entity_types, "");
         assert!(c.content.phased_sync);
         assert_eq!(c.content.sync_from_timestamp_ms, 0);
+        assert_eq!(c.content.sync_snapshot_resync_initial_delay_secs, 3_600);
+        assert_eq!(c.content.sync_snapshot_resync_interval_secs, 14 * 86_400);
+        assert_eq!(c.content.sync_pointer_changes_poll_interval_secs, 5);
         assert!(c.content.eth_rpc_url.is_none());
         assert_eq!(c.content.concurrent_sync_downloads, 200);
         assert_eq!(c.content.connections_max_idle, 25);
@@ -648,6 +800,15 @@ mod tests {
         assert_eq!(c.content.bloom_filter_expected_elements, 10_000_000);
         assert_eq!(c.content.sync_profile_max_age_days, 365);
         assert!(!c.content.read_through_enabled);
+        assert_eq!(
+            (
+                c.content.max_upload_file_count,
+                c.content.max_upload_file_size,
+                c.content.max_upload_total_size,
+            ),
+            (3000, 100 * 1024 * 1024, 2 * 1024 * 1024 * 1024)
+        );
+        assert!(c.content.check_upload_limits().is_ok());
         assert_eq!(
             (
                 c.content.max_upload_field_count,
@@ -707,6 +868,28 @@ mod tests {
     }
 
     #[test]
+    fn sync_poll_intervals_enforce_their_minimums() {
+        let cli =
+            |flag, value| parse(&["x", "--database-url", "postgres:///catalyst", flag, value]);
+        for flag in [
+            "--sync-snapshot-resync-initial-delay-secs",
+            "--sync-snapshot-resync-interval-secs",
+        ] {
+            assert!(cli(flag, "59").is_err(), "{flag}");
+            assert!(cli(flag, "60").is_ok(), "{flag}");
+        }
+        let flag = "--sync-pointer-changes-poll-interval-secs";
+        assert!(cli(flag, "0").is_err());
+        assert_eq!(
+            cli(flag, "17")
+                .unwrap()
+                .content
+                .sync_pointer_changes_poll_interval_secs,
+            17
+        );
+    }
+
+    #[test]
     fn data_plane_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
@@ -715,6 +898,10 @@ mod tests {
             !c.validator.ignore_blockchain_access_checks
                 && c.validator.additional_decentraland_address.is_none(),
             "local deploys run every access check"
+        );
+        assert!(
+            !c.validator.content_escrow_lease_ownership_enabled,
+            "escrow leases are no item ownership without an opt-in"
         );
     }
 

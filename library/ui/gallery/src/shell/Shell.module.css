@@ -1,0 +1,310 @@
+.layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-block-size: 100vh;
+}
+
+.nav {
+  position: sticky;
+  inset-block-start: 0;
+  max-block-size: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: var(--dcl-space-16);
+  border-inline-end: 1px solid var(--dcl-border-subtle);
+  background: var(--dcl-bg-surface);
+  box-sizing: border-box;
+}
+
+.filter {
+  inline-size: 100%;
+  box-sizing: border-box;
+  padding: var(--dcl-space-8);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  font: inherit;
+}
+
+.navHeading {
+  margin: var(--dcl-space-24) 0 var(--dcl-space-4);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.navNote {
+  margin: 0 0 var(--dcl-space-8);
+  font-size: 12px;
+  color: var(--dcl-text-secondary);
+}
+
+.groupHeading {
+  margin: var(--dcl-space-12) 0 var(--dcl-space-4);
+  font-size: 12px;
+  color: var(--dcl-text-secondary);
+}
+
+/* A group's heading is the button that collapses and expands its list: it keeps the heading's type. */
+.groupToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  inline-size: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--dcl-space-4) var(--dcl-space-8) var(--dcl-space-4) 0;
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.groupToggle:hover:not([aria-disabled='true']),
+.collapseAll:hover:not([aria-disabled='true']) {
+  background: var(--dcl-bg-hover);
+}
+
+.groupToggle:focus-visible,
+.collapseAll:focus-visible,
+.navLink:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.groupToggle[aria-disabled='true'],
+.collapseAll[aria-disabled='true'] {
+  cursor: default;
+}
+
+.chevron {
+  flex-shrink: 0;
+  inline-size: 6px;
+  block-size: 6px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease-out;
+}
+
+.groupToggle[aria-expanded='true'] .chevron {
+  transform: rotate(45deg);
+}
+
+.groupToggle[aria-disabled='true'] .chevron {
+  visibility: hidden;
+}
+
+.collapseAll {
+  display: block;
+  margin: var(--dcl-space-8) 0 0 auto;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: var(--dcl-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collapseAll[aria-disabled='true'] {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
+.navList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-xs);
+  color: var(--dcl-text-primary);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.navLink:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.navLink[aria-current='page'] {
+  background: var(--dcl-bg-pressed);
+  font-weight: 600;
+}
+
+.navLink span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex-shrink: 0;
+  background: var(--dcl-bg-surface-raised);
+  color: var(--dcl-text-secondary);
+  padding: 0 var(--dcl-space-4);
+  border-radius: var(--dcl-radius-xs);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.reference {
+  margin-block-start: var(--dcl-space-24);
+  padding-block-start: var(--dcl-space-8);
+  border-block-start: 1px solid var(--dcl-border-default);
+}
+
+.reference summary {
+  cursor: pointer;
+}
+
+.main {
+  min-inline-size: 0;
+  padding: var(--dcl-space-24);
+}
+
+.header {
+  display: grid;
+  gap: var(--dcl-space-8);
+  margin-block-end: var(--dcl-space-16);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  font-size: 24px;
+}
+
+.summary,
+.exports,
+.missing {
+  margin: 0;
+  color: var(--dcl-text-secondary);
+}
+
+.summary a {
+  color: var(--dcl-text-link);
+}
+
+/* The export names wrap between names on a narrow window instead of widening the page. */
+.exports {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--dcl-space-8);
+}
+
+.exports code {
+  color: var(--dcl-text-primary);
+}
+
+.missing {
+  color: var(--dcl-text-primary);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+.toolbar a {
+  color: var(--dcl-text-link);
+}
+
+.control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  font-size: 14px;
+}
+
+.control input {
+  inline-size: 90px;
+}
+
+.viewport {
+  overflow-x: auto;
+  padding: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-surface);
+}
+
+.canvas,
+.generated {
+  display: block;
+  border: 1px solid var(--dcl-border-default);
+  background: var(--dcl-bg-page);
+}
+
+.fit {
+  margin-inline: auto;
+}
+
+.canvas {
+  max-inline-size: none;
+  margin-inline: auto;
+  /* A canvas drawn scaled down to fit keeps its layout size; the frame around it takes the scaled size. */
+  transform-origin: 0 0;
+}
+
+.scaled {
+  margin: 0 0 var(--dcl-space-8);
+  color: var(--dcl-text-secondary);
+  font-size: 13px;
+}
+
+/* A HUD canvas is a window: the HUD scales to its width and height, fixes dialogs to it and scrolls inside. Narrow
+   widths keep a usable height. */
+.window {
+  block-size: auto;
+  aspect-ratio: 16 / 9;
+  min-block-size: 480px;
+}
+
+.generated {
+  inline-size: 100%;
+  block-size: calc(100vh - 160px);
+  min-block-size: 480px;
+}
+
+@media (width < 768px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav {
+    position: static;
+    max-block-size: 40vh;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--dcl-border-subtle);
+  }
+
+  .main {
+    padding: var(--dcl-space-16);
+  }
+}

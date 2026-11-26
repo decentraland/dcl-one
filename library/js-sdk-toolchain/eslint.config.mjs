@@ -25,6 +25,10 @@ export default [
     rules: {
       'no-param-reassign': 'warn',
       'no-console': 'error',
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'separate-type-imports', disallowTypeAnnotations: false }
+      ],
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {
@@ -49,6 +53,7 @@ export default [
       '**/*.js',
       'packages/@dcl/ecs/dist/**',
       'packages/@dcl/ecs/src/components/generated',
+      'packages/@dcl/sdk-commands/src/generated',
       'packages/@dcl/js-runtime',
       'packages/@dcl/playground-assets/dist',
       'packages/@dcl/sdk/dist/**',

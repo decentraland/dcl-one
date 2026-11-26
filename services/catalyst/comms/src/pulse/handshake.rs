@@ -1,4 +1,4 @@
-use crate::auth::verify_auth_chain;
+use crate::auth::verify_login_chain;
 use crate::auth::{AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS};
 
 use crate::protocol::pulse::decentraland::pulse::HandshakeRequest;
@@ -68,9 +68,7 @@ fn extract_from_object(
         };
         let link: AuthLink = serde_json::from_str(raw).map_err(|e| {
             let mut detail = e.to_string();
-            if detail.len() > 64 {
-                detail.truncate(64);
-            }
+            detail.truncate(detail.floor_char_boundary(64));
             format!("invalid auth-chain link {i}: {detail}")
         })?;
         match link.link_type {
@@ -175,7 +173,7 @@ pub fn verify_handshake_bytes(
         ));
     }
 
-    verify_auth_chain(&chain, &expected_payload, Some(now_ms))
+    verify_login_chain(&chain, &expected_payload, Some(now_ms))
         .map_err(|e| HandshakeError::InvalidAuthChain(e.to_string()))?;
 
     let user_address = signer_address(&chain)
@@ -229,6 +227,26 @@ mod tests {
         );
         assert!(!error.message().contains(CANARY));
         assert_eq!(error.message(), "Invalid auth chain");
+    }
+
+    #[test]
+    fn a_long_invalid_link_detail_is_cut_on_a_character_boundary() {
+        // The parser's message echoes the link type, so byte 64 falls inside `é`.
+        let link_type = format!("{}é", "a".repeat(46));
+        let raw = format!(r#"{{"type":"{link_type}","payload":"x"}}"#);
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            format!("{AUTH_CHAIN_HEADER_PREFIX}0"),
+            serde_json::Value::String(raw),
+        );
+        let error = extract_from_object(&obj).unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "invalid auth-chain link 0: unknown variant `{}",
+                "a".repeat(46)
+            )
+        );
     }
 
     fn header_bag_json(links: &[(usize, &AuthLink)], ts: &str, metadata: &str) -> String {
@@ -379,6 +397,46 @@ mod tests {
         );
     }
 
+    /// A scoped login (ADR-162) never opens a Pulse session.
+    #[test]
+    fn rejects_a_scoped_login() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let ts = "1700000000000";
+        let metadata = "{}";
+        let payload = build_signed_fetch_payload("connect", "/", ts, metadata);
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "comms".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                1_700_000_600_000,
+                &grants,
+                &payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let links: Vec<(usize, &AuthLink)> = chain.iter().enumerate().collect();
+        let req = HandshakeRequest {
+            auth_chain: header_bag_json(&links, ts, metadata).into_bytes(),
+            profile_version: 0,
+            initial_state: None,
+            protocol_features: 0,
+        };
+        let err = verify_handshake(&req, ts.parse().unwrap()).unwrap_err();
+        assert!(
+            matches!(&err, HandshakeError::InvalidAuthChain(m) if m.contains("without a service identifier")),
+            "{err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn accepts_real_signed_chain() {
         use crate::auth::AuthChain as Chain;
@@ -464,5 +522,68 @@ mod tests {
             verify_handshake(&bad_req, now_ms).unwrap_err(),
             HandshakeError::InvalidAuthChain(_)
         ));
+    }
+
+    /// A handshake whose delegation's first line is `first_line`, verified at its timestamp.
+    async fn handshake_delegating(first_line: &str) -> Result<VerifiedHandshake, HandshakeError> {
+        use alloy::signers::{Signer, local::PrivateKeySigner};
+
+        let root: PrivateKeySigner =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let ephemeral: PrivateKeySigner =
+            "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+                .parse()
+                .unwrap();
+        let ts = "1700000000000";
+        let metadata = "{}";
+        let connect_payload = build_signed_fetch_payload("connect", "/", ts, metadata);
+        let eph_payload = format!(
+            "{first_line}\nEphemeral address: {:#x}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        let sign = async |key: &PrivateKeySigner, text: &str| {
+            Some(key.sign_message(text.as_bytes()).await.unwrap().to_string())
+        };
+        let chain = [
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: format!("{:#x}", root.address()),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEphemeral,
+                signature: sign(&root, &eph_payload).await,
+                payload: eph_payload,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                signature: sign(&ephemeral, &connect_payload).await,
+                payload: connect_payload,
+            },
+        ];
+        let links: Vec<(usize, &AuthLink)> = chain.iter().enumerate().collect();
+        let req = HandshakeRequest {
+            auth_chain: header_bag_json(&links, ts, metadata).into_bytes(),
+            profile_version: 0,
+            initial_state: None,
+            protocol_features: 0,
+        };
+        verify_handshake(&req, ts.parse().unwrap())
+    }
+
+    #[tokio::test]
+    async fn requires_a_login_delegation() {
+        handshake_delegating("Decentraland Login")
+            .await
+            .expect("a login delegation verifies");
+        let err = handshake_delegating("Decentraland Authoritative Storage Delegation")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, HandshakeError::InvalidAuthChain(_)),
+            "{err:?}"
+        );
     }
 }

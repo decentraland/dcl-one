@@ -1,17 +1,18 @@
+import { RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action, normalizeReport } from "./internal.client-error";
 
-function post(body: string): Request {
+function post(body: string, userAgent?: string): Request {
   return new Request("https://example.org/internal/client-error", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(userAgent ? { "User-Agent": userAgent } : {}) },
     body,
   });
 }
 
 function call(request: Request) {
-  return action({ request } as unknown as Parameters<typeof action>[0]);
+  return action({ request, context: new RouterContextProvider() } as unknown as Parameters<typeof action>[0]);
 }
 
 describe("normalizeReport", () => {
@@ -33,8 +34,8 @@ describe("normalizeReport", () => {
     expect(r!.stack.length).toBeLessThan(20000);
     expect(r!.url).toBe("https://example.org/marketplace");
     expect(
-      normalizeReport({ message: "x", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })!.url,
-    ).toBe("https://example.org/landings/cast-stream?utm_source=x");
+      normalizeReport({ message: "x", url: "https://example.org/report?token=k&utm_source=x" })!.url,
+    ).toBe("https://example.org/report?utm_source=x");
     expect(r!.correlationId).toBe("4ef97fa3-9dcf-4630-9bc4-5f742706e87a");
     expect(r!.engineBuild).toBe("22d73274c");
     expect(r!.source).toBe("panic");
@@ -81,19 +82,40 @@ describe("action (client-error ingest)", () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     try {
       const res = await call(
-        post(JSON.stringify({ message: "boom", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })),
+        post(JSON.stringify({ message: "boom", url: "https://example.org/report?token=k&utm_source=x" })),
       );
       expect(res.status).toBe(202);
       const logged = JSON.parse(errSpy.mock.calls[0][1] as string);
-      expect(logged.url).toBe("https://example.org/landings/cast-stream?utm_source=x");
+      expect(logged.url).toBe("https://example.org/report?utm_source=x");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       expect(JSON.parse(init.body as string).properties.url).toBe(
-        "https://example.org/landings/cast-stream?utm_source=x",
+        "https://example.org/report?utm_source=x",
       );
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  describe("when a bot submits a client error", () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    beforeEach(() => {
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubEnv("SEGMENT_WRITE_KEY", "key-1");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    });
+
+    it("should accept and log the error without relaying it to Segment", async () => {
+      const res = await call(post(JSON.stringify({ message: "boom" }), "curl/8.6.0"));
+      expect(res.status).toBe(202);
+      expect(errSpy).toHaveBeenCalledOnce();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("answers non-POST 405, a signal-less body 204, an oversized body 413 and bad JSON 400, recording nothing", async () => {

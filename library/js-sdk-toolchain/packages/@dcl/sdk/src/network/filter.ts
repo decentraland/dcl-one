@@ -1,12 +1,11 @@
+import type { TransportMessage, IEngine } from '@dcl/ecs'
 import {
-  TransportMessage,
   EntityUtils,
   RESERVED_STATIC_ENTITIES,
   CrdtMessageType,
   SyncComponents as _SyncComponents,
   NetworkEntity as _NetworkEntity,
-  NetworkParent as _NetworkParent,
-  IEngine
+  NetworkParent as _NetworkParent
 } from '@dcl/ecs'
 import { shouldSyncComponent } from './state'
 

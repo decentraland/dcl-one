@@ -24,17 +24,21 @@ and a visible window: Chrome runs headed, with the benchmark runner's flags
 
 ```sh
 cd apps/bevy-explorer/e2e
-npm ci
-npm run typecheck                      # tsc
-npm test                               # the driver's tests (a stub page in headless Chrome)
-DCL_E2E_ACCOUNT_KEYS=0x... npm run e2e -- --inworld     # the InWorld scenarios against zone
-npm run e2e -- --visual                # the Visual suite (build the scenes first, see below)
-npm run e2e -- --filter 'opens the Backpack'            # a scenario-name pattern, not a file name
-npm run gpu-probe                      # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
-npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the browser runs on another (Windows)
+corepack enable                        # once: puts the pnpm that package.json pins on the PATH
+pnpm install --frozen-lockfile
+pnpm run typecheck                     # tsc
+pnpm test                              # the driver's tests (a stub page in headless Chrome)
+DCL_E2E_ACCOUNT_KEYS=0x... pnpm run e2e --inworld       # the InWorld scenarios against zone
+pnpm run e2e --visual                  # the Visual suite (build the scenes first, see below)
+pnpm run e2e --filter 'opens the Backpack'              # a scenario-name pattern, not a file name
+pnpm run gpu-probe                     # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
+pnpm run gpu-probe --adapter nvidia    # and once more on that adapter when the browser runs on another (Windows)
+pnpm run avatar-sweep                  # frame time by avatar count, one JSON line per step (see below)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+The suite serves the web app on loopback at `http://localhost:<port>` (`driver/serve.ts`; the
+events and places services answer a signed read's CORS preflight for a `localhost` origin and not
+for `127.0.0.1`), with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
 bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
 the build's root-relative one is no url to the engine and the bridge scene would never load), starts Chrome
@@ -71,6 +75,10 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_PROFILE_DIR` | Absolute directory for a spawned native client's config, logs and content cache; use a directory in the test workspace | OS profile when unset |
+| `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
+
+A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
 
 To run the native Explorer against a gateway, set
 `DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
@@ -79,7 +87,7 @@ describes the gateway layouts and service overrides.
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
-redacted) and
+redacted wherever the line puts them, found by the shape of an identity, encoded or raw JSON) and
 `final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
 the page's last 200 console lines; a failed restore adds the same as `restore-page.jpg` and
@@ -87,11 +95,109 @@ the page's last 200 console lines; a failed restore adds the same as `restore-pa
 boot, has its credentials replaced as the engine's own benchmark log does
 (`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
 and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
-`diff.png`. A client that fails to boot, at the open, at the
+`diff.png`. A media retry scenario adds `realm-requests.jsonl`: each request its loopback realm
+received, with the entity file a content hash names, the status, the duration and whether the
+answer finished; a request still open has no duration. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
 as it happens.
+
+### Drive a scene by hand or by agent
+
+`pnpm run drive` boots one client on a loopback realm holding scenes from any folder (an SDK7
+scene with its bundle built), then runs console lines from stdin, so a person or an agent can
+drive a scene without writing a spec:
+
+```sh
+pnpm run drive --scene <scene dir> [--scene <dir> ...] [--position x,y] [--report <dir>] [--web-app <dir>] < commands.txt > replies.jsonl
+```
+
+It builds each scene folder with `buildScene` (`scene.json`, the `main` bundle, `main.crdt`,
+`assets/`), serves them with `serveRealm` on `DCL_E2E_REALM_PORT` and the web app (`--web-app`,
+else `DCL_E2E_WEB_APP`), signs in a guest and arrives at `--position` (the first scene's base
+parcel by default). The paths of `--scene`, `--report` and `--web-app` are read from the folder
+the command was started in, as the shell reads `< commands.txt`. Each stdin line is one console
+line; blank lines and `#` lines are skipped, and the lines run one after the other. stdout gets
+one JSON line per command, `{"line", "ok", "reply", "ms"}` (`ok:false` carries the command's
+error, and the run goes on); stderr gets the boot and a one-line summary of each reply. A
+`/login_identity` or `/hud_login` payload is redacted in all of them, as in the suite's reports.
+When stdin closes, `final.png` (the engine's frame) and `replies.jsonl` go to the report folder
+(`report/drive` by default), and the client and both servers close. An interrupt (SIGINT or
+SIGTERM) or a reader that closes stdout closes them too, a boot in progress included, and keeps
+no report.
+
+Of the variables above, these apply: `DCL_E2E_WEB_APP`, `DCL_E2E_WEB_PORT` and
+`DCL_E2E_REALM_PORT`, `DCL_E2E_BASE_DOMAIN`, `CHROME_PATH` and `CHROME_EXTRA_ARGS`,
+`DCL_E2E_HEADLESS`, `DCL_E2E_WINDOW`, and `DCL_E2E_TRANSPORT` with the `DCL_E2E_NATIVE_*` ones.
+`DCL_E2E_WEB_URL` opens an already served app, and the tool refuses `--web-app` beside it. The
+realm and the parcel are the tool's own, and it uses no account key.
+
+The tool takes no wait or sleep lines. To pace a longer script, pipe in a feed script that writes
+each line when it is due and reads stdout to decide the next one, for example counting the reply
+lines before going on. Because lines run one at a time, a feed cannot make two commands overlap.
+
+## Avatar sweep
+
+`scripts/avatar-sweep.ts` measures how frame time grows with the number of avatars, to choose the
+Max Avatars cap. It is a measurement, not a scenario: it serves the web app as the suite does,
+opens it in scene preview as an automatic guest (`?preview&guest=1&realm=<realm>`, preview being
+what enables `/avatar_demo`), waits for `/world_state` `inWorld`, and then, for every condition,
+clears the demo avatars, spawns each count in `--counts`, waits until `/avatar_demo` reports that
+many `built`, waits `--settle` seconds and samples `/performance_state` every 250 ms for
+`--window` seconds.
+
+```sh
+pnpm run avatar-sweep                                          # 0..800 avatars, caps 20 and all, idle and dancing
+pnpm run avatar-sweep --counts 0,100,400 --caps all --emotes none --window 20 --out sweep.jsonl
+pnpm run avatar-sweep --url http://localhost:8080/            # an app served already
+pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   # repeated runs
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the Max Avatars and Unlimited Avatars settings and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
+| `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
+| `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
+| `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
+| `--seed` | `1` | The crowd: with a number, the avatar at each position has the same look in every run (`/avatar_demo seed`), so two builds are compared on the same avatars; `none` draws a new crowd each time |
+| `--wearables` | none | A text file of wearable URNs, one per line (blank lines and `#` lines ignored): the demo avatars wear random ones from it, not base wearables (`/avatar_demo catalog`) |
+| `--setup` | none | A console line to run once before the first step, such as an engine tunable under comparison; repeat it for several |
+| `--window`, `--settle`, `--load-timeout` | `10`, `3`, `180` | Seconds |
+| `--realm`, `--position` | the `genesispng.dcl.eth` world on zone, `0,0` | Where to stand |
+| `--web-app` or `--url`, `--out`, `--headless` | `dist/web` | What to open, a JSONL copy of stdout, headless Chrome (GPU timing may then be missing) |
+| `--port` | `0` (a free one) | The port `--web-app` is served on. A fixed one keeps the page's origin from run to run |
+| `--profile` | none (a temporary one, removed at the end) | A directory for Chrome's profile, kept between runs; needs a fixed `--port` (see below) |
+
+The demo avatars wear random base wearables, or with `--wearables <file>` random ones from the URNs in that file, eight each; the catalog is cleared at the end. Either way, they are a few hundred models and textures from the
+catalyst, which a crowd of several hundred asks for all at once. Run after run, that is more than
+the catalyst allows one client, and it then refuses content files for hours. For anything beyond
+a single run, pass `--profile <dir>` and a fixed `--port`: Chrome keeps its profile in `<dir>`
+instead of a temporary folder, and with it the engine's content cache, which holds every content
+file by its hash. The browser keeps that cache by the page's origin, so the port has to stay the
+same; the sweep refuses `--profile` with a port picked anew. The first run fills the cache; later
+runs take the files from it and ask the catalyst for little: a 200-avatar run downloaded 1565
+files on an empty profile and 16 on the next run. Active-entity lookups are not cached and go to
+the catalyst every run. `loadSeconds` follows: a first run is a first visit, a later one a
+returning player's. One Chrome at a time uses a profile, and a profile grows to several hundred
+megabytes. The sweep's last stderr line is `/content_request_state`: `success` counts the run's
+downloads and `cached` what the cache answered.
+
+The player enters the world at a different spot each session, so for runs that are
+compared, stand in one place first with `--setup "/move_player_to <x> <y> <z>"`.
+
+Each stdout line is one step: `count`, `built` (`-1` when the avatars did not finish building
+within `--load-timeout`), `shown` (demo avatars not hidden, by the cap say) and `drawn` (those with
+a mesh in the camera's view or a shadow's at the end of the window), `loadSeconds` (spawn to every avatar built), the condition (`cap`,
+`emote`, `nametags`, `layout`, `seed`, `wearables`: the file's name or `null`), `samples` and `gpuSamples` (the
+window's samples, and how many of them carried a GPU frame time), and `fps`, `frameMs` and `gpuFrameMs` as `{median, p95, max}` over the
+window, with the last `engineMemoryMiB` and `hiccups`. Compare `frameMs.p95` across counts at
+`cap: "all"` for the cost of drawn avatars, and `cap: 20` against `all` for what avatars hidden by
+the cap still cost. Run it on each GPU class (discrete, integrated) the cap must hold on, and give
+the machine's GPU (`pnpm run gpu-probe`) with the results. At the end the demo avatars are
+cleared, the session goes back to the Max Avatars setting, and nametags and the demo emote go
+back to what they were.
 
 ## How a spec is written
 
@@ -118,8 +224,10 @@ What the driver does for every scenario, so a spec need not:
   renders beside the rest on the one GPU.
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
-  rail reads pressed, the rail's settings popover is closed and no field holds the keys
-  (`/world_state`'s `keyboardClaimed`). The rail is read once it holds still (sliding in, it reads
+  rail reads pressed, none of the rail's lists of rows is open (Me, Discover, Shop, System, Volume,
+  Camera: each a dialog named as its button), the rail's settings popover is closed and no field
+  holds the keys (`/world_state`'s `keyboardClaimed`). The rail's Map button reads pressed while
+  the minimap shows, which is a HUD at rest. The rail is read once it holds still (sliding in, it reads
   as covered with nothing open). Each press waits for the HUD to show it took effect (a layer
   gone, the rail done sliding back in, and after leaving the chat input the engine told of it)
   before the next. A HUD already at rest gets no Escape; a client with no HUD (the standalone
@@ -152,39 +260,70 @@ What the driver does for every scenario, so a spec need not:
   wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
   change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+The in-world scenario in `specs/debug-panel.test.ts` checks that the lower-right bug button is hidden by
+default and opens the panel through Sidebar settings → Debug panel. To exercise the launcher, pass
+`--debug-panel` in `DCL_E2E_NATIVE_ARGS` when the driver starts desktop Explorer, or add
+`debugPanel=1` to `DCL_E2E_WEB_URL`. When attaching to desktop Explorer, start the client with
+`--debug-panel` before running the scenario. The driver uses whichever control the running HUD shows.
+The scenario reads the current realm, observes a live FPS-target change, checks that the player
+walks, clicks the world and opens Sidebar settings while the panel stays open, and verifies an
+avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
 signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
 guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
-Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
+Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer,
+and that the chat's `Reactions` button plays a reaction (`/reaction_state`) and keeps its bar open.
+
+`specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
+and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
+"Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
+boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
+gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
+every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
+`session.nativeArgs` is what starts that client, on an automation port of its own. On the web
+a service override stops the boot at the launch gate, so those scenarios are todos there. The
+same file checks realm entry: entered when not banned or when the check fails, and, against the
+stub, a `/changerealm` refused while banned, including for a new sign-in before it asks to enter.
+`specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
+their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
+adapter unloading its scene, a visit to a neighbouring parcel and return while still refused,
+completion of teleport arrival on return, followed by fresh admission and reloading on that
+parcel. `/ban_block_state` exposes `sceneAdmission.retainedRefusals` (scene id, scope and
+`retryDue` in elapsed engine seconds) for refusals retained while visiting another scene.
+The accepted adapter points at an unused loopback endpoint: this scenario
+checks admission and scene lifetime, not a successful LiveKit connection.
+`/scene_topics` registers the **Scene messages** debug section, covered by the registered-reading
+scenario. Routing, topic delivery and trust-policy counters share this reading; a rejected
+banned topic sender increments both `bannedSenderDrops` and `receiveDropped`.
 
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
+test is in the spec file's header. Port 49, Partial 34, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
-| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
-| Shortcuts (7) | `shortcuts` | 5 | 1 | 1 | | Gallery is `G`, not `K`; no key opens Events |
-| Navbar (4) | `navbar` | | 2 | 2 | | A fixed rail set, no flags; no help menu or controls panel |
-| Minimap (5) | `minimap` | 2 | 1 | 2 | | No favourite heart or kebab menu; name and compass are unreadable text |
+| ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel, each opened by a row of the rail's Discover, Me or System panel; the top bar's Shop tab is not driven |
+| Shortcuts (7) | `shortcuts` | 6 | 1 | | | Gallery is `G`, not `K` |
+| Navbar (4) | `navbar` | | 3 | 1 | | A fixed rail set, no flags, the other entries rows of the Me, Discover and System panels; the help rows are in the System panel, which has no controls row |
+| Minimap (5) | `minimap` | 4 | 1 | | | The rail's Map button shows the minimap; the dots menu adds the minimap's own settings; name and compass are unreadable text |
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
-| Events (3) | `events` | | | 3 | | Two lists, no calendar, detail popup or Create button |
-| Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
-| Communities (4) | `communities` | | 3 | 1 | | No invites view, titles or counts; the detail is a modal |
+| Events (3) | `events` | 2 | 1 | | | The detail opens for the first event the service lists, when there is one |
+| Places (5) | `places` | | 4 | 1 | | Tabs, category chips and Filter & Sort, without counters; a card opens the place's detail, which no scenario opens yet |
+| Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
-| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |
+| Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the Take A Shot row of the rail's Camera panel) and shows the overlay's Shoot and Close |
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |
-| BackpackOutfits (4) | `backpack-outfits` | 2 | 2 | | | No delete confirmation; two closes to commit a look |
+| BackpackOutfits (4) | `backpack-outfits` | 3 | 1 | | | Two closes to commit a look |
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
-| Passport (5) | `passport` | 1 | 4 | | | Header and bio are plain text; name and address from `/get_user_data` |
+| Passport (5) | `passport` | 1 | 4 | | | Opens from the Profile row of the rail's Me panel; header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
@@ -196,6 +335,37 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+`specs/navbar.test.ts` also covers the Me panel's `Sign Out` row, which only an account on the web
+has: a session whose sign-in was an account, the suite's own sign-in included. The standalone and a
+guest have none (a guest's stored identity stays), so both scenarios are skipped on the standalone
+and neither signs in with `--guest`. The row opens
+a dialog named `Sign out?` over the open panel, and its `Cancel` button and Escape close the dialog
+with the panel still open and the session signed in. The dialog's own `Sign Out` button ends the
+session: the page loads again without the stored sign-in and without `position`, `realm` and
+`world` in its address, so it opens on the start screen and that screen's engine answers the
+console. Its scenario has a session of its own (`E2eSignOut`), waits until `/world_state` reads
+`signedIn` false, and closes that session.
+
+On the web, `specs/navbar.test.ts` also lays the page out at 700x900 and then 1600x400 inside the
+same window (the web driver's `resizeView`, which returns once the HUD has drawn at that size) and
+waits until every rail button lies wholly inside the view and a click would land on it: the HUD's
+scale fits any window shape. The view returns to the window's size afterwards. The standalone's
+window is not resized, so that scenario is skipped there.
+
+Specs with no explorer-automation counterpart, outside the counts above:
+
+| Spec | Scenarios | Needs |
+| --- | --- | --- |
+| `debug-panel` | every debug reading resolves; the panel shows live data, stays open while the player walks and uses the world and HUD, and plays an emote | |
+| `media-retry` | a video whose source fails twice plays after two reopens, not given up, with its reopen count restarted after 5 s of playback; one whose source always fails reports `VS_ERROR` after one open and five reopens; a paused one whose source fails reports `VS_ERROR` and plays once the scene plays it (`/media_state`, `/media_retry_delay`); web only, todos on the standalone | the scene built (`pnpm run build-scenes video`) |
+| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable with no prompt (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Portable experiences` button); `/stop_portable` stops it, it stays listed as stopped, and the popover's `Restart` runs it again; a parcel scene with `portableExperiences: disabled` pauses it (blocked, still live); a configured wearable, run as a guest through the backend, runs with no prompt | the fixture built (`pnpm run build-scenes smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the fourth |
+
+The first three smart-wearable scenarios boot a guest client on a loopback realm of their own
+(`driver/realm.ts` with `previewWearables`, on an ephemeral port) that lists `scenes/smart-wearable`
+under `male/` and `female/`, as the creator preview serves a wearable. The third's realm also
+serves the same project as the parcel scene at `0,0`, its `scene.json` rewritten (`buildScene`'s
+`rewrite`) to disable portable experiences.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
@@ -203,20 +373,28 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 
 ## Visual suite
 
-`scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
+`scenes/` holds the 17 SDK7 scenes, each at its own parcels, and the smart-wearable fixture the
+InWorld spec `smart-wearables` previews ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
 960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
 `/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
-teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+clears the sky (`/cloud 0 0`: cover 0 clears the cloud strips, and speed 0 holds them and the
+horizon noise in a fixed pose; the stars keep twinkling, though the scenes are at noon and show
+none), turns the empty parcels' grass off for the session (`/session_graphics grass off`: its
+stacked shells are not drawn in a fixed order, so its pixels move with each bevy pin), teleports
+to each scene, waits for its entities and its settle time, and compares the engine's frame
+(`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
-pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last scenario turns
+the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
+show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
 ```sh
-DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes
+DCL_SCENE_CLI=/path/to/dcl-scene-cli pnpm run build-scenes
 ```
 
 References are recorded only in CI ([references/README.md](references/README.md)): a manual run
@@ -234,14 +412,14 @@ A reference counts as approved once a reviewer has checked it against the scene'
 - **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
   when a maintainer applies the `ci:e2e` label (the label admits the commit it is applied to, and
   that alone: a push takes it off and runs nothing, and the maintainer puts it back to run the
-  new commit; a draft or a fork does not run), after each Bevy Explorer / CI run of a push to
-  main, nightly against main's newest web app, and by hand (a commit, a group, record). A pull
-  request's run comes from its own event, so it is one of the pull request's checks and an
-  approval of the `e2e` deployment names its commit. `tooling/bevy-e2e-inputs.py` picks the web
-  app: a pull request's job waits for the commit's Bevy Explorer / CI run and takes the web app it
-  built (one that has expired is reported, never replaced by main's), or main's newest when the
-  pull request changed no web input but changed the suite. The job downloads it, runs the InWorld
-  scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
+  new commit; a draft or a fork does not run), nightly against main's newest web app, and by hand
+  (a commit, a group, record). A pull request's run comes from its own event, so it is one of the
+  pull request's checks and an approval of the `e2e` deployment names its commit.
+  `tooling/bevy-e2e-inputs.py` picks the web app: a pull request's job waits for the commit's Bevy
+  Explorer / CI run and takes the web app it built (one that has expired is reported, never
+  replaced by main's), or main's newest when the pull request changed no web input but changed the
+  suite. The job downloads it, runs the InWorld scenarios, then builds the scenes and runs the
+  Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
   environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
@@ -250,15 +428,15 @@ A reference counts as approved once a reviewer has checked it against the scene'
   Testing build it downloads and checks against the sum the workflow records (the image's Edge gave
   WebGPU no adapter), with `--enable-unsafe-webgpu --ignore-gpu-blocklist`, the first of which the
   app's own GPU page asks for. A GPU probe step says first what GPU that browser gives, bare and
-  with those flags (`npm run gpu-probe`), and when the browser runs on an adapter other than the
+  with those flags (`pnpm run gpu-probe`), and when the browser runs on an adapter other than the
   NVIDIA one (the VM's paravirtual display adapter comes first, the GPU second), the scenarios get
   `--use-adapter-luid=<its LUID>` as well, so the browser's GPU process starts on the GPU. The
-  scenes' CLI is built on a
-  hosted Windows runner and handed over, so the image needs no Rust toolchain. The label
-  is what admits a pull request's code to that runner and those accounts; the Inputs summary
-  names the pull request and the commit under test; the job holds no write permission and saves
-  no cache; required reviewers on the environment (a repository setting) add an approval on top.
-  Until the variable is set the job is skipped.
+  scenes' CLI is built on a hosted Windows runner and handed over, so the image needs no Rust
+  toolchain. The label is what admits a pull request's code to that runner and those accounts; the
+  Inputs summary names the pull request and the commit under test; the job holds no write
+  permission and saves no cache; required reviewers on the environment (a repository setting) add
+  an approval on top. Until the variable is set the job is skipped. The scenarios job's checkout
+  is sparse: this folder and the web driver.
 - **Status comment**, after a pull request's scenarios: a job without secrets writes the
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
@@ -293,25 +471,47 @@ Kept from explorer-automation's guides:
 
 ## Keeping the suite true
 
+Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) and
+`explorer.retryConnectivity()` (`/connectivity_retry`). The snapshot contains `connectionLost`,
+`probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
+credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
+with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
+degradation. Retry is disabled and `aria-busy` while its command is pending. The dialog
+follows engine state through retry, reopening or remaining available when a probe fails.
+Recovery retracts it automatically; Exit follows session sign-out.
+
+Connectivity and voice diagnostics share room states: `connecting` for first admission,
+`connected`, `reconnecting`, `disconnected`, `failed`, `paused`, and the terminal reasons
+`denied`, `invalid`, `identity_conflict`, `credentials_required`. A first connection has no
+retry deadline. `/room_diagnostics` reports failed attempts since the last stable reset.
+The HUD receives initial and changed connectivity snapshots through its bridge stream;
+the console commands remain available to the driver and debug panel.
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 
 | Changed | Update | Check |
 | --- | --- | --- |
-| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`react-web/src`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed; the HUD copy in `apps/ui3/src/play` and `hud_source_sha256` in `rendering/bevy-explorer/upstream.lock.json` (`python3 tooling/play-artifact.py hud-inputs --root .`) | `npm run typecheck`; the scenarios in CI |
+| A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`library/ui/apps/hud`); a row added to or removed from a rail panel (Me, Discover, System), or the title of the question a row asks | `RAIL_ROWS` and the row's selectors in `specs/navbar.test.ts` for a rail row; the selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed | `pnpm run typecheck`; the scenarios in CI |
 | A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
-| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
+| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `pnpm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
-| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
-| `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `npm test`; the two scenarios, e.g. `npm run e2e -- --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
-| `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
+| The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
+| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
+| `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
+| How a console line splits into arguments (`crates/console/src/line.rs`, `SystemApi::ConsoleLine`), or the reply conventions (`screen`, normalized coordinates: `crates/console/src/reply.rs`) | `quoteWord` and a command's `rest` in the engine's `deploy/web/engine/engine.js` and `extract_js_api` (`src/web.rs`); `normalizeLine` and `CONSOLE_SPACE` in `driver/console.ts`; the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md); the readme section | `pnpm test`; the engine's `cargo test -p console` |
+| `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
+| The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
+| The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
+| Selected Cast video frames and playback state in `/media_state` (`crates/av/src/debug_panel.rs`) | `MediaPlayerRow` in `driver/explorer.ts` and the media-state reply tests in `test/explorer.test.ts` | `pnpm run typecheck`; `pnpm test` |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
-| A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
-| The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
+| `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
+| A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
+| The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |
 
 ```sh
-cd apps/bevy-explorer/e2e && npm run typecheck && npm test
+cd apps/bevy-explorer/e2e && pnpm run typecheck && pnpm test
 python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
 ```
 

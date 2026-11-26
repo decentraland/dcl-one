@@ -26,7 +26,7 @@ use chrono::NaiveDateTime;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::social::notifications::email::{EmailSender, SendFailure};
+use crate::shared::notifications::SendFailure;
 
 pub const BATCH: i64 = 100;
 pub const MAX_ATTEMPTS: i32 = 5;
@@ -49,28 +49,24 @@ pub struct OnSaleItem {
     pub item_name: Option<String>,
 }
 
-/// What the deliveries worker sends with. The production one is the
-/// notifications module's SendGrid sender; tests plug a recorder in.
+/// What the deliveries worker sends with. `serve` plugs in the notifications
+/// module's SendGrid sender, which supplies [`send_html`](Self::send_html);
+/// tests plug a recorder in.
 #[async_trait::async_trait]
 pub trait AvailabilityMailer: Send + Sync {
     fn is_configured(&self) -> bool;
-    /// Sends the "your item is available again" email; the provider's message id when it gives one.
-    async fn send_item_available(
+
+    /// Sends one rendered email; the provider's message id when it gives one.
+    async fn send_html(
         &self,
         to: &str,
-        item_name: Option<&str>,
-        item_url: &str,
-        unsubscribe_url: &str,
-        outbox_id: i64,
+        subject: &str,
+        html: &str,
+        text: &str,
+        custom_args: &serde_json::Value,
     ) -> Result<Option<String>, SendFailure>;
-}
 
-#[async_trait::async_trait]
-impl AvailabilityMailer for EmailSender {
-    fn is_configured(&self) -> bool {
-        self.html_configured()
-    }
-
+    /// Sends the "your item is available again" email; the provider's message id when it gives one.
     async fn send_item_available(
         &self,
         to: &str,
@@ -112,6 +108,8 @@ pub fn escape_html(value: &str) -> String {
     out
 }
 
+pub const ITEM_AVAILABLE_SUBJECT: &str = "An item you asked about is available again";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedEmail {
     pub subject: String,
@@ -121,13 +119,14 @@ pub struct RenderedEmail {
 
 /// The "your item is available again" email: web2 copy only (no wallets,
 /// chains or MANA), inline styles, one call to action deep-linking the item,
-/// every interpolated value HTML-escaped; the subject and text are plain.
+/// every interpolated value HTML-escaped; the subject is fixed text (the item
+/// name is the creator's) and the text is plain.
 pub fn render_item_available_email(
     item_name: &str,
     item_url: &str,
     unsubscribe_url: Option<&str>,
 ) -> RenderedEmail {
-    let subject = format!("{item_name} is available again");
+    let subject = ITEM_AVAILABLE_SUBJECT.to_string();
     let mut text = format!(
         "Good news — {item_name} is available again in the Decentraland shop.\n\nView it here: {item_url}\n\nYou are receiving this because you asked to be notified when it came back. There is nothing else you need to do."
     );
@@ -273,12 +272,7 @@ async fn on_sale_now(
 /// (bounded): record the observation and, on a false -> true transition,
 /// enqueue the waitlist in the same transaction.
 pub async fn watch_pass(pool: &PgPool) -> anyhow::Result<WatchSummary> {
-    let items: Vec<(String, String)> = sqlx::query_as(
-        "SELECT DISTINCT contract_address, item_id FROM shop.item_notify_requests WHERE status = 'pending' ORDER BY contract_address, item_id LIMIT $1",
-    )
-    .bind(WATCH_ITEMS_PER_PASS)
-    .fetch_all(pool)
-    .await?;
+    let items = watch_batch(pool).await?;
     let mut summary = WatchSummary {
         items: items.len(),
         ..Default::default()
@@ -410,17 +404,23 @@ pub enum Outcome {
 
 /// The state transition for one claimed row's send result.
 pub fn outcome_of(claimed: &Claimed, result: Result<Option<String>, SendFailure>) -> Outcome {
+    outcome_after(claimed.attempts, result)
+}
+
+/// The state transition for a send result on the `attempts`-th claim, shared
+/// by the Shop's outboxes (this one and `credits::receipts`).
+pub fn outcome_after(attempts: i32, result: Result<Option<String>, SendFailure>) -> Outcome {
     match result {
         Ok(message_id) => Outcome::Sent(message_id),
         Err(SendFailure::NotConfigured | SendFailure::NoSigningKey) => {
             Outcome::Skipped("email delivery not configured".to_string())
         }
         Err(SendFailure::Permanent(e)) => Outcome::Failed(e),
-        Err(SendFailure::Transient(e)) if claimed.attempts >= MAX_ATTEMPTS => {
-            Outcome::Failed(format!("{e} (after {} attempts)", claimed.attempts))
+        Err(SendFailure::Transient(e)) if attempts >= MAX_ATTEMPTS => {
+            Outcome::Failed(format!("{e} (after {attempts} attempts)"))
         }
         Err(SendFailure::Transient(e)) => Outcome::Retry {
-            after: backoff(claimed.attempts),
+            after: backoff(attempts),
             error: e,
         },
     }
@@ -528,4 +528,31 @@ pub async fn run_pass(
         record(pool, row, now_utc(), &outcome).await?;
     }
     Ok(summary)
+}
+
+async fn watch_batch(pool: &PgPool) -> sqlx::Result<Vec<(String, String)>> {
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, "item_availability", 0).await?;
+    let mut items: Vec<(String, String)> = Vec::new();
+    for _ in 0..2 {
+        if sweep.key_position == sweep.key_ceiling {
+            sweep.key_position = vec![String::new(), String::new()];
+            sweep.ceiling = sqlx::query_scalar("SELECT COALESCE(max(id), 0) FROM shop.item_notify_requests WHERE status = 'pending'")
+                .fetch_one(&mut *sweep.tx).await?;
+            let upper: Option<(String, String)> = sqlx::query_as("SELECT contract_address, item_id FROM shop.item_notify_requests WHERE status = 'pending' AND id <= $1 ORDER BY contract_address DESC, item_id DESC LIMIT 1")
+                .bind(sweep.ceiling).fetch_optional(&mut *sweep.tx).await?;
+            let (contract, item) = upper.unwrap_or_default();
+            sweep.key_ceiling = vec![contract, item];
+        }
+        items = sqlx::query_as("SELECT DISTINCT contract_address, item_id FROM shop.item_notify_requests WHERE status = 'pending' AND id <= $6 AND (contract_address, item_id) > ($1, $2) AND (contract_address, item_id) <= ($3, $4) ORDER BY contract_address, item_id LIMIT $5")
+            .bind(&sweep.key_position[0]).bind(&sweep.key_position[1])
+            .bind(&sweep.key_ceiling[0]).bind(&sweep.key_ceiling[1]).bind(WATCH_ITEMS_PER_PASS).bind(sweep.ceiling)
+            .fetch_all(&mut *sweep.tx).await?;
+        if let Some((contract, item)) = items.last() {
+            sweep.key_position = vec![contract.clone(), item.clone()];
+            break;
+        }
+        sweep.key_position = sweep.key_ceiling.clone();
+    }
+    sweep.commit().await?;
+    Ok(items)
 }

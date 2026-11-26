@@ -1,0 +1,147 @@
+// Persistent guest accounts: "Explore as guest" creates a guest wallet and signs in with it like
+// any other account, so the guest keeps its avatar and name across visits. On web this runs in the
+// shell page (each host's shell), which keeps the identity and its key with the other sign-ins; on
+// native, in the page with the bridge scene making the thirdweb calls.
+import { secp256k1 } from '@noble/curves/secp256k1.js'
+import { keccak_256 } from '@noble/hashes/sha3.js'
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
+import { personalSign } from '../../shell/sign'
+import type { AuthIdentity, StoredLogin } from './sso'
+import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { THIRDWEB_GUEST_PARAM } from './guestWalletParam'
+
+/** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
+export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
+
+const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
+
+/** Where the thirdweb calls run: the page on web, which also keeps the session id; the bridge scene
+ *  on native, which keeps nothing. */
+export interface GuestBackend {
+  /** Sign `sessionId` in; the web backend also keeps it as this device's guest, replacing any earlier one. */
+  login(sessionId: string): Promise<GuestWallet>
+  sign(token: string, message: string): Promise<string>
+  /** This device's guest session id, kept from an earlier `login`: it reaches the same wallet again. */
+  keptSessionId?(): string | null | Promise<string | null>
+}
+
+export const webGuestBackend: GuestBackend = {
+  // kept only once thirdweb has signed it in: a failed login (an origin thirdweb refuses) leaves no
+  // session behind to make the next PLAY AS GUEST pick thirdweb again
+  async login(sessionId) {
+    const wallet = await guestLogin(sessionId)
+    localStorage.setItem(GUEST_SESSION_KEY, sessionId)
+    return wallet
+  },
+  sign: guestSign,
+  keptSessionId: () => localStorage.getItem(GUEST_SESSION_KEY)
+}
+
+// thirdweb only serves the guest wallet to the origins it allowlists, Decentraland's own.
+const THIRDWEB_DOMAINS = ['decentraland.org', 'decentraland.zone', 'decentraland.today']
+
+/**
+ * Elsewhere (a dcl-one deployment, a local stack) the guest wallet is a key made in this browser:
+ * the session id is the wallet's private key. It signs the identity and is then dropped, as the
+ * thirdweb session id is; the stored identity is what brings the guest back.
+ */
+export const localGuestBackend: GuestBackend = {
+  login(sessionId) {
+    const walletAddress = publicKeyAddress(secp256k1.getPublicKey(hexToBytes(sessionId), false))
+    return Promise.resolve({ token: sessionId, walletAddress })
+  },
+  sign: (token, message) => Promise.resolve(personalSign(token, message))
+}
+
+
+/** The guest wallet a web page at `location` can reach: thirdweb on Decentraland's domains, when the
+ *  page asks for it, or when this browser already keeps a thirdweb guest session (so the guest comes
+ *  back on the same wallet without the parameter); a key made in this browser otherwise. */
+export function webGuestBackendFor(location: { hostname: string; search: string }): GuestBackend {
+  const { hostname, search } = location
+  const thirdweb =
+    THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`)) ||
+    new URLSearchParams(search).get(THIRDWEB_GUEST_PARAM) === 'thirdweb' ||
+    localStorage.getItem(GUEST_SESSION_KEY) != null
+  return thirdweb ? webGuestBackend : localGuestBackend
+}
+
+function checksumAddress(address: Uint8Array): string {
+  const hex = bytesToHex(address)
+  const hash = bytesToHex(keccak_256(new TextEncoder().encode(hex)))
+  let out = '0x'
+  for (let i = 0; i < hex.length; i++) out += parseInt(hash[i], 16) >= 8 ? hex[i].toUpperCase() : hex[i]
+  return out
+}
+
+/** The checksummed address of an uncompressed secp256k1 public key. */
+export function publicKeyAddress(publicKey: Uint8Array): string {
+  return checksumAddress(keccak_256(publicKey.slice(1)).slice(-20))
+}
+
+/** A fresh ephemeral key and the message an account signs to delegate it for `IDENTITY_LIFETIME_MS`.
+ *  The catalyst parses `payload`, so every kind of account builds it here. */
+export interface EphemeralDelegation {
+  ephemeralIdentity: AuthIdentity['ephemeralIdentity']
+  expiration: string
+  payload: string
+}
+
+export function newEphemeralDelegation(lifetimeMs: number = IDENTITY_LIFETIME_MS): EphemeralDelegation {
+  const privateKey = secp256k1.utils.randomSecretKey()
+  const publicKey = secp256k1.getPublicKey(privateKey, false)
+  const address = publicKeyAddress(publicKey)
+  const expiration = new Date(Date.now() + lifetimeMs).toISOString()
+  return {
+    ephemeralIdentity: { address, publicKey: `0x${bytesToHex(publicKey)}`, privateKey: `0x${bytesToHex(privateKey)}` },
+    expiration,
+    payload: `Decentraland Login\nEphemeral address: ${address}\nExpiration: ${expiration}`
+  }
+}
+
+/** The identity of `signer` (the account's address, lower case) once it has signed `delegation.payload`. */
+export function signedIdentity(delegation: EphemeralDelegation, signer: string, signature: string): AuthIdentity {
+  return {
+    ephemeralIdentity: delegation.ephemeralIdentity,
+    expiration: delegation.expiration,
+    authChain: [
+      { type: 'SIGNER', payload: signer, signature: '' },
+      { type: 'ECDSA_EPHEMERAL', payload: delegation.payload, signature }
+    ]
+  }
+}
+
+/** An identity signed by this device's guest wallet: the kept session's, so the guest that signed out
+ *  comes back the same, as unity-explorer's does; a new wallet when there is none. */
+export async function createGuestIdentity(backend: GuestBackend): Promise<AuthIdentity> {
+  const sessionId = (await backend.keptSessionId?.()) || bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+  const { token, walletAddress } = await backend.login(sessionId)
+
+  const delegation = newEphemeralDelegation()
+  const signature = await backend.sign(token, delegation.payload)
+  return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
+}
+
+/** PLAY AS GUEST's wallet step: a new wallet, the kept wallet session again, or none (the kept guest's
+ *  sign-in still runs). */
+export type GuestWalletStep = 'new' | 'existing' | null
+export type GuestLogin = StoredLogin & { wallet: GuestWalletStep }
+
+/** Where an email sign-in's thirdweb calls run: the shell page on web, the bridge scene on native. */
+export interface EmailBackend {
+  /** Check `code` for `email`: the wallet it opens. */
+  complete(email: string, code: string): Promise<GuestWallet>
+  sign(token: string, message: string): Promise<string>
+}
+
+/** Check the code sent to `email` and sign an identity with the wallet it opens, for 7 days. */
+export async function createEmailIdentity(backend: EmailBackend, email: string, code: string): Promise<AuthIdentity> {
+  const { token, walletAddress } = await backend.complete(email, code)
+  const delegation = newEphemeralDelegation(EMAIL_IDENTITY_LIFETIME_MS)
+  // the code was right, but the wallet won't sign from here: the sign-in page can still sign in
+  const signature = await backend.sign(token, delegation.payload).catch((e: unknown) => {
+    throw new EmailLoginError('sign-refused', e instanceof Error ? e.message.slice(0, 80) : 'thirdweb sign')
+  })
+  return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
+}
+

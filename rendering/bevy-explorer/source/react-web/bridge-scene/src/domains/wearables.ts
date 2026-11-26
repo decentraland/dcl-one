@@ -4,14 +4,14 @@
 //         GET /lambdas/collections/wearables (equipped-by-urn resolve, via ./collections),
 //         the Backpack's look (equipped; ./avatarDraft, which deploys it on close).
 import { catalystBase, getJson } from '../http'
-import { resolveDefsByUrn, thumbnailUrl } from './collections'
+import { resolveDefsByUrn, resolveDefsByUrnChecked, thumbnailUrl } from './collections'
 import { resolveShopUrls } from './marketplace'
 import { itemUrn, tokenUrnOf } from './urns'
 import type { Ctx } from '../bridge'
-import type { Wearable } from '../../../src/engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { currentLook, editLook } from './avatarDraft'
-import { bodyShapesOf, splitBodyShape } from '../../../src/engine/bodyShape'
-import { itemHides, type HideData } from '../../../src/engine/avatarHides'
+import { bodyShapesOf, splitBodyShape } from '@explorer-core/engine/bodyShape'
+import { itemHides, type HideData } from '@explorer-core/engine/avatarHides'
 import { identity } from '../identity'
 
 type CatalogElement = {
@@ -118,6 +118,9 @@ type ResolveOpts = {
   shopUrls?: boolean
   /** Picks the representation whose hides apply. */
   bodyShape?: string
+  /** Leave out items whose lookup failed, rejecting when all did, so a shown list doesn't render
+   *  nameless cards. Not for the Backpack's set: the next equip must still deploy every item. */
+  dropFailed?: boolean
 }
 
 // Resolve a set of (possibly token-form) urns into displayable wearables. Resolution is by urn
@@ -126,8 +129,10 @@ type ResolveOpts = {
 // passport). Mirrors bevy-ui-scene's fetchWearablesData(...)(...wearables) on outfit equip.
 export async function resolveWearables(urns: string[], opts: ResolveOpts = {}): Promise<Wearable[]> {
   const baseUrl = await catalystBase()
-  const equippedItemUrns = [...new Set(urns.map(itemUrn))]
-  const resolved = await resolveDefsByUrn('wearables', baseUrl, equippedItemUrns)
+  const requested = [...new Set(urns.map(itemUrn))]
+  const { defs: resolved, failed } = await resolveDefsByUrnChecked('wearables', baseUrl, requested)
+  const equippedItemUrns = opts.dropFailed === true ? requested.filter((u) => !failed.has(u)) : requested
+  if (equippedItemUrns.length === 0 && requested.length > 0) throw new Error('wearables resolve failed')
   const shopUrls =
     opts.shopUrls === true
       ? await resolveShopUrls(equippedItemUrns.map((u) => ({ urn: u, collectionAddress: resolved.get(u)?.collectionAddress })))

@@ -1,0 +1,26 @@
+.ui-designer-text-align {
+  display: flex;
+  align-items: center;
+  gap: var(--uid-space-2);
+  width: 100%;
+}
+
+.ui-designer-text-align-group {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ui-designer-text-align-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0;
+}
+
+.ui-designer-text-align-cell svg {
+  width: 16px;
+  height: 16px;
+}

@@ -84,7 +84,8 @@ async fn build(
                 .trade_id
                 .as_deref()
                 .ok_or_else(|| bad("tradeId is required".into()))?;
-            let trade = facts::load_trade(&state.pool, id)
+            // Cancelling or accepting a leftover the node no longer lists keeps working.
+            let trade = facts::load_trade(&state.pool, id, crate::market::trades::TradeScope::Any)
                 .await
                 .map_err(|e| bad(e.to_string()))?
                 .ok_or_else(|| {
@@ -142,9 +143,10 @@ async fn build(
                     .ok_or_else(|| bad("the bid names no token id".into()))?;
                 checks.push(owner_check(reader, contract, token_id, actor).await);
                 if let Some(net) = chain.net {
-                    let (verdict, ready) = facts::trade_verdict(&state.pool, net, &trade.id)
-                        .await
-                        .map_err(|e| bad(e.to_string()))?;
+                    let (verdict, ready) =
+                        facts::trade_verdict(&state.pool, net, chain.chain_id.0 as i64, &trade.id)
+                            .await
+                            .map_err(|e| bad(e.to_string()))?;
                     checks.push(verify::trade_verdict_check(
                         verdict.as_ref(),
                         trade.checks.uses,
@@ -405,17 +407,19 @@ pub async fn post_action(
     }
     let chain_id = match (req.asset, req.trade_id.as_deref()) {
         (Some(asset), _) => asset.chain_id,
-        (None, Some(id)) => match facts::load_trade(&state.pool, id).await {
-            Ok(Some(t)) => crate::types::ChainId(t.chain_id.unwrap_or(0)),
-            Ok(None) => {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    "Not Found",
-                    &format!("trade {id} is not known to this node"),
-                );
+        (None, Some(id)) => {
+            match facts::load_trade(&state.pool, id, crate::market::trades::TradeScope::Any).await {
+                Ok(Some(t)) => crate::types::ChainId(t.chain_id.unwrap_or(0)),
+                Ok(None) => {
+                    return error(
+                        StatusCode::NOT_FOUND,
+                        "Not Found",
+                        &format!("trade {id} is not known to this node"),
+                    );
+                }
+                Err(e) => return error(StatusCode::BAD_REQUEST, "Bad Request", &e.to_string()),
             }
-            Err(e) => return error(StatusCode::BAD_REQUEST, "Bad Request", &e.to_string()),
-        },
+        }
         (None, None) => match req.kind {
             ActionKind::ApproveMana => crate::types::ChainId(137),
             _ => {

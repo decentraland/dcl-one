@@ -25,16 +25,20 @@ jobs:
         with:
           app-id: ${{ vars.NIXPKGS_UPDATE_APP_ID }}
           private-key: ${{ secrets.NIXPKGS_UPDATE_APP_PRIVATE_KEY }}
+      # The flake's play package checks the HUD input graph, which holds the shared UI's Git LFS assets.
+      - name: Fetch the shared UI's Git LFS assets with the checkout
+        run: git config --global lfs.fetchinclude 'library/ui/assets/**,library/ui/apps/sites/assets/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app.outputs.token }}
-      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+          lfs: true
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - name: Move the nixpkgs pin to the nixos-unstable tip
         id: update
         run: python3 tooling/nixpkgs-update.py
       - name: Evaluate the flake for every supported system
         if: steps.update.outputs.changed == 'true'
-        run: nix flake check --all-systems --no-build
+        run: nix flake check --all-systems --no-build 'git+file:.?lfs=1'
       - name: Open or update the pull request
         if: steps.update.outputs.changed == 'true'
         env:

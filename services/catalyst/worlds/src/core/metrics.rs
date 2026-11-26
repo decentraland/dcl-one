@@ -1,7 +1,16 @@
 //! The worlds series, named as worlds-content-server's `src/metrics.ts` and
 //! its default HTTP metrics so its dashboard queries carry over. Recorded
-//! through the `metrics` facade; `catalyst serve` installs the exporter
-//! (`comms::metrics`), which also sets these histograms' buckets.
+//! through the process recorder installed by `catalyst serve`. See
+//! [`FAMILIES`] for the domain contracts and source histogram boundaries.
+
+mod declarations;
+pub use declarations::FAMILIES;
+
+#[cfg(test)]
+pub(super) fn metrics_builder() -> anyhow::Result<dcl_metrics::PrometheusBuilder> {
+    dcl_metrics::Registry::new(&[FAMILIES, dcl_metrics::legacy_http::FAMILIES])?
+        .builder(dcl_metrics::PrometheusBuilder::new())
+}
 
 use std::time::{Duration, Instant};
 
@@ -14,6 +23,8 @@ use super::upload_limits;
 
 pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "http_request_duration_seconds";
+// prom-client's default (duration-style) buckets, as upstream WKC's metric.
+pub const HTTP_REQUEST_SIZE_BYTES: &str = "http_request_size_bytes";
 pub const WORLD_DEPLOYMENTS_COUNTER: &str = "world_deployments_counter";
 pub const DEPLOYMENT_PROCESSING_STAGE_DURATION_SECONDS: &str =
     "deployment_processing_stage_duration_seconds";
@@ -29,6 +40,20 @@ pub const GARBAGE_COLLECTION_REMOVED_BYTES: &str = "garbage_collection_removed_b
 pub const GARBAGE_COLLECTION_LAST_SUCCESS: &str =
     "garbage_collection_last_success_timestamp_seconds";
 pub const CONTENT_LOCK_WRITER_TIMEOUTS: &str = "content_lock_writer_timeouts";
+const ALLOWANCE_READ_FAILURES: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "worlds_allowance_read_failures_total",
+    "World storage allowance lookups that failed after the configured chain reads and retries.",
+    Some(dcl_metrics::Unit::Count),
+    &[],
+);
+
+pub fn register_series() {
+    ALLOWANCE_READ_FAILURES.handle([]).increment(0);
+}
+
+pub(super) fn allowance_read_failed() {
+    ALLOWANCE_READ_FAILURES.handle([]).increment(1);
+}
 
 /// `POST /entities`' route label, as upstream.
 pub const ENTITIES_ROUTE: &str = "entities";
@@ -44,7 +69,7 @@ pub fn outcome(status: StatusCode) -> &'static str {
 }
 
 pub fn upload_rejected(route: &'static str, reason: &'static str) {
-    metrics::counter!(MULTIPART_UPLOAD_REJECTIONS, "route" => route, "reason" => reason)
+    dcl_metrics::counter!(MULTIPART_UPLOAD_REJECTIONS, "route" => route, "reason" => reason)
         .increment(1);
 }
 
@@ -56,9 +81,9 @@ pub fn upload_received(
     elapsed: Duration,
     bytes: u64,
 ) {
-    metrics::histogram!(MULTIPART_UPLOAD_RECEIVE_DURATION_SECONDS, "route" => route, "outcome" => outcome)
+    dcl_metrics::histogram!(MULTIPART_UPLOAD_RECEIVE_DURATION_SECONDS, "route" => route, "outcome" => outcome)
         .record(elapsed.as_secs_f64());
-    metrics::histogram!(
+    dcl_metrics::histogram!(
         MULTIPART_UPLOAD_SIZE_BYTES,
         "route" => route,
         "content_length" => if content_length { "present" } else { "absent" },
@@ -70,22 +95,22 @@ pub fn upload_received(
 
 /// The process-wide upload budget's current use.
 pub fn upload_gauges() {
-    metrics::gauge!("multipart_upload_active").set(upload_limits::active_uploads() as f64);
-    metrics::gauge!("multipart_upload_reserved_bytes")
+    dcl_metrics::gauge!("multipart_upload_active").set(upload_limits::active_uploads() as f64);
+    dcl_metrics::gauge!("multipart_upload_reserved_bytes")
         .set(upload_limits::in_flight_upload_bytes() as f64);
-    metrics::gauge!("multipart_upload_reserved_files")
+    dcl_metrics::gauge!("multipart_upload_reserved_files")
         .set(upload_limits::in_flight_upload_files() as f64);
 }
 
 pub fn upload_capacity(limits: &upload_limits::UploadLimits) {
-    metrics::gauge!("multipart_upload_capacity_bytes")
+    dcl_metrics::gauge!("multipart_upload_capacity_bytes")
         .set(limits.max_in_flight_upload_bytes as f64);
 }
 
 /// Processing after the body was parsed, as upstream's `total` stage; `mode` is `regular` or `partial`.
 pub fn deployment_processed(mode: &'static str, status: StatusCode, elapsed: Duration) {
     let outcome = outcome(status);
-    metrics::histogram!(
+    dcl_metrics::histogram!(
         DEPLOYMENT_PROCESSING_STAGE_DURATION_SECONDS,
         "stage" => "total",
         "mode" => mode,
@@ -93,7 +118,7 @@ pub fn deployment_processed(mode: &'static str, status: StatusCode, elapsed: Dur
     )
     .record(elapsed.as_secs_f64());
     if outcome != "success" {
-        metrics::counter!(
+        dcl_metrics::counter!(
             DEPLOYMENT_PROCESSING_FAILURES,
             "stage" => "total",
             "mode" => mode,
@@ -102,7 +127,7 @@ pub fn deployment_processed(mode: &'static str, status: StatusCode, elapsed: Dur
         .increment(1);
     }
     if mode == PARTIAL_MODE {
-        metrics::counter!(PARTIAL_UPLOAD_REQUESTS, "outcome" => partial_outcome(status))
+        dcl_metrics::counter!(PARTIAL_UPLOAD_REQUESTS, "outcome" => partial_outcome(status))
             .increment(1);
     }
 }
@@ -149,60 +174,60 @@ fn unix_now() -> f64 {
 }
 
 pub fn partial_metadata_checks(hashes: usize) {
-    metrics::counter!(PARTIAL_UPLOAD_METADATA_CHECKS).increment(hashes as u64);
+    dcl_metrics::counter!(PARTIAL_UPLOAD_METADATA_CHECKS).increment(hashes as u64);
 }
 
 /// A stored batch: `incomplete` (202) or `finalizing`.
 pub fn partial_batch(complete: bool) {
     let outcome = if complete { "finalizing" } else { "incomplete" };
-    metrics::counter!(PARTIAL_UPLOAD_BATCHES, "outcome" => outcome).increment(1);
+    dcl_metrics::counter!(PARTIAL_UPLOAD_BATCHES, "outcome" => outcome).increment(1);
 }
 
 pub fn partial_throttled(reason: &'static str) {
-    metrics::counter!(PARTIAL_UPLOAD_THROTTLED, "reason" => reason).increment(1);
+    dcl_metrics::counter!(PARTIAL_UPLOAD_THROTTLED, "reason" => reason).increment(1);
 }
 
 pub fn partial_started() {
-    metrics::counter!(PARTIAL_UPLOADS_STARTED).increment(1);
+    dcl_metrics::counter!(PARTIAL_UPLOADS_STARTED).increment(1);
 }
 
 /// A published upload: its age since the first batch and its stored batches.
 pub fn partial_completed(age: Duration, batches: i32) {
-    metrics::counter!(PARTIAL_UPLOADS_COMPLETED).increment(1);
-    metrics::histogram!(PARTIAL_UPLOAD_DURATION_SECONDS).record(age.as_secs_f64());
-    metrics::histogram!(PARTIAL_UPLOAD_BATCHES_PER_UPLOAD).record(f64::from(batches));
+    dcl_metrics::counter!(PARTIAL_UPLOADS_COMPLETED).increment(1);
+    dcl_metrics::histogram!(PARTIAL_UPLOAD_DURATION_SECONDS).record(age.as_secs_f64());
+    dcl_metrics::histogram!(PARTIAL_UPLOAD_BATCHES_PER_UPLOAD).record(f64::from(batches));
 }
 
 pub fn partial_reserved_bytes(bytes: i64) {
-    metrics::gauge!(PARTIAL_UPLOAD_RESERVED_BYTES).set(bytes as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_RESERVED_BYTES).set(bytes as f64);
 }
 
 pub fn partial_capacity(bytes: u64) {
-    metrics::gauge!(PARTIAL_UPLOAD_CAPACITY_BYTES).set(bytes as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_CAPACITY_BYTES).set(bytes as f64);
 }
 
 /// The database snapshot a cleanup run reports: charged and expired bytes, live and expired uploads.
 pub fn partial_snapshot(charged: i64, expired_bytes: i64, live: i64, expired: i64) {
     partial_reserved_bytes(charged);
-    metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES).set(expired_bytes as f64);
-    metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "live").set(live as f64);
-    metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "expired").set(expired as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES).set(expired_bytes as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "live").set(live as f64);
+    dcl_metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "expired").set(expired as f64);
 }
 
 pub fn partial_expired_reclaimed() {
-    metrics::counter!(PARTIAL_UPLOAD_EXPIRED_UPLOADS).increment(1);
+    dcl_metrics::counter!(PARTIAL_UPLOAD_EXPIRED_UPLOADS).increment(1);
 }
 
 pub fn partial_cleanup_failed() {
-    metrics::counter!(PARTIAL_UPLOAD_CLEANUP_FAILED_UPLOADS).increment(1);
+    dcl_metrics::counter!(PARTIAL_UPLOAD_CLEANUP_FAILED_UPLOADS).increment(1);
 }
 
 /// One cleanup run: `success`, `deferred` (the store lock stayed busy) or `error`.
 pub fn partial_cleanup_run(outcome: &'static str, elapsed: Duration) {
-    metrics::counter!(PARTIAL_UPLOAD_CLEANUP_RUNS, "outcome" => outcome).increment(1);
-    metrics::histogram!(PARTIAL_UPLOAD_CLEANUP_DURATION_SECONDS).record(elapsed.as_secs_f64());
+    dcl_metrics::counter!(PARTIAL_UPLOAD_CLEANUP_RUNS, "outcome" => outcome).increment(1);
+    dcl_metrics::histogram!(PARTIAL_UPLOAD_CLEANUP_DURATION_SECONDS).record(elapsed.as_secs_f64());
     if outcome == "success" {
-        metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_LAST_SUCCESS).set(unix_now());
+        dcl_metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_LAST_SUCCESS).set(unix_now());
     }
 }
 
@@ -216,20 +241,20 @@ pub fn deployment_kind(world: &str) -> &'static str {
 }
 
 pub fn world_deployed(world: &str) {
-    metrics::counter!(WORLD_DEPLOYMENTS_COUNTER, "kind" => deployment_kind(world)).increment(1);
+    dcl_metrics::counter!(WORLD_DEPLOYMENTS_COUNTER, "kind" => deployment_kind(world)).increment(1);
 }
 
 /// One `/gc` run: `success`, `deferred` (the store lock stayed busy) or `error`.
 pub fn gc_run(outcome: &'static str, elapsed: Duration, removed: usize, removed_bytes: u64) {
-    metrics::counter!(GARBAGE_COLLECTION_RUNS, "outcome" => outcome).increment(1);
-    metrics::histogram!(GARBAGE_COLLECTION_DURATION_SECONDS).record(elapsed.as_secs_f64());
+    dcl_metrics::counter!(GARBAGE_COLLECTION_RUNS, "outcome" => outcome).increment(1);
+    dcl_metrics::histogram!(GARBAGE_COLLECTION_DURATION_SECONDS).record(elapsed.as_secs_f64());
     if outcome == "success" {
-        metrics::counter!(GARBAGE_COLLECTION_REMOVED_KEYS).increment(removed as u64);
-        metrics::counter!(GARBAGE_COLLECTION_REMOVED_BYTES).increment(removed_bytes);
-        metrics::gauge!(GARBAGE_COLLECTION_LAST_SUCCESS).set(unix_now());
+        dcl_metrics::counter!(GARBAGE_COLLECTION_REMOVED_KEYS).increment(removed as u64);
+        dcl_metrics::counter!(GARBAGE_COLLECTION_REMOVED_BYTES).increment(removed_bytes);
+        dcl_metrics::gauge!(GARBAGE_COLLECTION_LAST_SUCCESS).set(unix_now());
     }
     if outcome == "deferred" {
-        metrics::counter!(CONTENT_LOCK_WRITER_TIMEOUTS).increment(1);
+        dcl_metrics::counter!(CONTENT_LOCK_WRITER_TIMEOUTS).increment(1);
     }
 }
 
@@ -250,8 +275,21 @@ fn method_label(method: &axum::http::Method) -> &'static str {
     }
 }
 
-/// `http_requests_total` and `http_request_duration_seconds` by method, matched route (`handler`)
-/// and status (`code`), the labels of upstream's default HTTP metrics.
+/// The declared request size upstream's `http_request_size_bytes` records:
+/// `Number(content-length) || 0`.
+fn declared_request_size(request: &Request) -> f64 {
+    request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite())
+        .unwrap_or(0.0)
+}
+
+/// `http_requests_total`, `http_request_duration_seconds` and `http_request_size_bytes` by
+/// method, matched route (`handler`) and status (`code`), upstream's default HTTP metrics
+/// (worlds-content-server's and world-storage-service's alike).
 pub async fn http_metrics(request: Request, next: Next) -> Response {
     let Some(handler) = request
         .extensions()
@@ -261,12 +299,14 @@ pub async fn http_metrics(request: Request, next: Next) -> Response {
         return next.run(request).await;
     };
     let method = method_label(request.method()).to_string();
+    let size = declared_request_size(&request);
     let started = Instant::now();
     let response = next.run(request).await;
     let code = response.status().as_u16().to_string();
     let labels = [("method", method), ("handler", handler), ("code", code)];
-    metrics::counter!(HTTP_REQUESTS_TOTAL, &labels).increment(1);
-    metrics::histogram!(HTTP_REQUEST_DURATION_SECONDS, &labels)
+    dcl_metrics::histogram!(HTTP_REQUEST_SIZE_BYTES, &labels).record(size);
+    dcl_metrics::counter!(HTTP_REQUESTS_TOTAL, &labels).increment(1);
+    dcl_metrics::histogram!(HTTP_REQUEST_DURATION_SECONDS, &labels)
         .record(started.elapsed().as_secs_f64());
     response
 }
@@ -303,14 +343,14 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn http_metrics_label_the_matched_route() {
-        let recorder = crate::comms::metrics::prometheus_builder()
+        let recorder = crate::core::metrics::metrics_builder()
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
         let app = Router::new()
             .route("/world/{world_name}/about", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn(http_metrics));
-        let _guard = metrics::set_default_local_recorder(&recorder);
+        let _guard = dcl_metrics::set_default_local_recorder(&recorder);
         let response = app
             .oneshot(
                 Request::builder()
@@ -332,5 +372,47 @@ mod tests {
             rendered.contains("http_request_duration_seconds_bucket{method=\"GET\",handler=\"/world/{world_name}/about\",code=\"200\",le="),
             "a histogram with buckets: {rendered}"
         );
+        assert!(
+            rendered.contains(
+                "http_request_size_bytes_sum{method=\"GET\",handler=\"/world/{world_name}/about\",code=\"200\"} 0"
+            ),
+            "no Content-Length records 0: {rendered}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn http_metrics_record_the_declared_request_size() {
+        let recorder = crate::core::metrics::metrics_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let app = Router::new()
+            .route(
+                "/values/{key}",
+                axum::routing::put(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(axum::middleware::from_fn(http_metrics));
+        let _guard = dcl_metrics::set_default_local_recorder(&recorder);
+        for (length, body) in [("12", "{\"value\":1}x"), ("nope", "")] {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/values/k")
+                        .header("content-length", length)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let rendered = handle.render();
+        let labels = "method=\"PUT\",handler=\"/values/{key}\",code=\"204\"";
+        for line in [
+            format!("http_request_size_bytes_sum{{{labels}}} 12"),
+            format!("http_request_size_bytes_count{{{labels}}} 2"),
+        ] {
+            assert!(rendered.contains(&line), "{line}: {rendered}");
+        }
     }
 }

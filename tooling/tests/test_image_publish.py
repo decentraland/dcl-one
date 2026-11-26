@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import unittest
@@ -75,21 +76,33 @@ class PublicationTest(unittest.TestCase):
                 patch('sys.stdout', new_callable=io.StringIO):
             publish.main()
         calls = [call.args for call in commands.call_args_list]
+        components = ('apis', 'sites', 'sites-polygon-credits')
         expected_archives = [
             f'docker-archive:/archives/apis-sites-images-{arch}/{component}.tar.gz'
-            for component in ('apis', 'sites') for arch in ('amd64', 'arm64')]
-        self.assertEqual([call[3] for call in calls[:4]], expected_archives)
-        self.assertTrue(all(call[:3] == ('skopeo', 'inspect', '--config') for call in calls[:4]))
+            for component in components for arch in ('amd64', 'arm64')]
+        self.assertEqual([call[3] for call in calls[:6]], expected_archives)
+        self.assertTrue(all(call[:3] == ('skopeo', 'inspect', '--config') for call in calls[:6]))
         copies = [call for call in calls if call[:2] == ('skopeo', 'copy')]
         self.assertEqual([call[-2] for call in copies], expected_archives)
+        # The Polygon credits variant goes to the Sites repository under its own tags only.
         self.assertEqual([call[-1] for call in copies], [
-            f'docker://quay.io/example/dcl-one-{component}:sha-{sha}-{arch}'
-            for component in ('apis', 'sites') for arch in ('amd64', 'arm64')])
+            f'docker://quay.io/example/dcl-one-{repo}:sha-{sha}{suffix}-{arch}'
+            for repo, suffix in (('apis', ''), ('sites', ''), ('sites', '-polygon-credits'))
+            for arch in ('amd64', 'arm64')])
         indexes = [call for call in calls if call[:4] == ('docker', 'buildx', 'imagetools', 'create')]
-        self.assertEqual(len(indexes), 2)
+        self.assertEqual(len(indexes), 3)
+        # Every per-architecture copy lands before the first moving tag is created.
+        last_copy = max(i for i, call in enumerate(calls) if call[:2] == ('skopeo', 'copy'))
+        first_index = min(i for i, call in enumerate(calls) if call[:4] == ('docker', 'buildx', 'imagetools', 'create'))
+        self.assertLess(last_copy, first_index)
         for component, index in zip(('apis', 'sites'), indexes):
             self.assertIn(f'quay.io/example/dcl-one-{component}:main', index)
             self.assertIn(f'quay.io/example/dcl-one-{component}:sha-{sha}', index)
+        variant = indexes[2]
+        self.assertIn('quay.io/example/dcl-one-sites:main-polygon-credits', variant)
+        self.assertIn(f'quay.io/example/dcl-one-sites:sha-{sha}-polygon-credits', variant)
+        self.assertNotIn('quay.io/example/dcl-one-sites:main', variant)
+        self.assertNotIn(f'quay.io/example/dcl-one-sites:sha-{sha}', variant)
 
     def test_bevy_web_validates_both_archives_against_the_source_run_revision(self):
         sha = 'a' * 40
@@ -142,6 +155,19 @@ class PublicationTest(unittest.TestCase):
         self.assertIn(f'quay.io/example/bevy-headless:main', indexes[0])
         self.assertIn(f'quay.io/example/bevy-headless:sha-{sha}', indexes[0])
 
+    def test_the_polygon_credits_variant_settles_through_the_manager_the_server_guards(self):
+        # One address in two languages: the Sites variant's build input (infra/containers/images.nix)
+        # must be the manager the server guards on Polygon (policy_entry.rs DCL_ONE_POLYGON_MANAGER).
+        root = Path(__file__).parents[2]
+        images = (root / 'infra/containers/images.nix').read_text()
+        policy = (root / 'services/catalyst/shop/src/policy_entry.rs').read_text()
+        built = re.search(r'shopSettlement = \{ chainId = (\d+); creditsManager = "(0x[0-9a-f]{40})"; \}', images)
+        guarded = re.search(r'pub const DCL_ONE_POLYGON_MANAGER: Address =\s*address!\("(0x[0-9a-f]{40})"\)', policy)
+        self.assertIsNotNone(built, 'the variant names no settlement in images.nix')
+        self.assertIsNotNone(guarded, 'policy_entry.rs names no DCL_ONE_POLYGON_MANAGER')
+        self.assertEqual(built.group(1), '137')
+        self.assertEqual(built.group(2), guarded.group(1))
+
     def test_repositories_cannot_redirect_credentials_or_supply_a_tag(self):
         self.assertEqual(publish.repository('quay.io/example/foundation-sites'), 'quay.io/example/foundation-sites')
         for value in ('', 'example/foundation', 'other.invalid/org/repo',
@@ -158,6 +184,15 @@ class PublicationTest(unittest.TestCase):
                 publish.release_tags(sha, ref)
         with self.assertRaises(ValueError):
             publish.release_tags('short', 'refs/heads/main')
+        # A release named like a variant tag would publish over another release's variant, and a
+        # suffixed tag must fit in 128 characters: both are refused before any registry write.
+        with self.assertRaisesRegex(ValueError, 'variant suffix'):
+            publish.release_tags(sha, 'refs/tags/v1.2-polygon-credits')
+        longest = 'v' + '1' * 127
+        with self.assertRaisesRegex(ValueError, 'too long'):
+            publish.release_tags(sha, f'refs/tags/{longest}')
+        fits = 'v' + '1' * (127 - len('-polygon-credits'))
+        self.assertEqual(publish.release_tags(sha, f'refs/tags/{fits}'), [f'sha-{sha}', fits])
 
     def test_invalid_last_archive_prevents_every_registry_write(self):
         sha = 'a' * 40

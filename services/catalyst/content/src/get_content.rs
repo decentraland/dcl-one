@@ -8,11 +8,13 @@ use serde::Deserialize;
 use tower_http::compression::predicate::Predicate;
 use tower_http::compression::{CompressionLayer, CompressionLevel};
 
-use super::SharedState;
 use super::errors::{AppError, AppResult};
+use super::file_type::{SAMPLE, Window, catalyst, file_type};
 use super::formatters::{
     ParsedRange, check_not_modified, content_file_headers, parse_range_header,
 };
+use super::storage::OpenedContent;
+use super::{ContentState, SharedState};
 
 #[derive(Debug, Deserialize)]
 pub struct ContentQuery {
@@ -20,53 +22,66 @@ pub struct ContentQuery {
     pub include_mime_type: Option<String>,
 }
 
-/// The `?includeMimeType` answer for the head of a file: the binary
-/// signatures of `file-type` that content files carry, else
-/// `application/octet-stream` (`file-type` detects no text format, JSON
-/// included).
-pub fn detect_content_type(first_bytes: &[u8]) -> &'static str {
-    if first_bytes.len() >= 8 {
-        if first_bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
-            return "image/png";
-        }
-        if first_bytes.starts_with(&[0x67, 0x6C, 0x54, 0x46]) {
-            return "model/gltf-binary";
-        }
-        if &first_bytes[4..8] == b"ftyp" {
-            return "video/mp4";
-        }
+/// [`sniff`]'s answer for `key`'s `window`, kept per window, since a cut stream can answer
+/// differently from the whole file. Content is immutable by key, and a sniff can fetch up to
+/// 16 MiB of the file. Whole-file answers and range answers are kept in separate caches, so a
+/// client cycling through ranges cannot evict the whole-file answers. A kept answer reads nothing,
+/// so the window stays unread. A storage fault is an error and is not kept.
+pub(crate) async fn content_type(
+    state: &ContentState,
+    key: &str,
+    window: &mut Window<'_>,
+) -> AppResult<&'static str> {
+    let (start, end) = window.bounds();
+    if (start, end) == (0, window.file_size()) {
+        kept_sniff(&state.sniffed, key.to_string(), window).await
+    } else {
+        kept_sniff(&state.sniffed_ranges, (key.to_string(), start, end), window).await
     }
-    if first_bytes.len() >= 3 && first_bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return "image/jpeg";
-    }
-    if first_bytes.starts_with(b"GIF8") {
-        return "image/gif";
-    }
-    if first_bytes.starts_with(b"ID3")
-        || (first_bytes.len() >= 2
-            && first_bytes[0] == 0xFF
-            && matches!(first_bytes[1], 0xFB | 0xFA | 0xF3 | 0xF2 | 0xE3 | 0xE2))
-    {
-        return "audio/mpeg";
-    }
-    if first_bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-        return "application/zip";
-    }
-    if first_bytes.len() >= 12 && first_bytes.starts_with(b"RIFF") {
-        match &first_bytes[8..12] {
-            b"WEBP" => return "image/webp",
-            b"WAVE" => return "audio/wav",
-            _ => {}
-        }
-    }
-    if first_bytes.starts_with(b"OggS") {
-        return "audio/ogg";
-    }
-    if first_bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-        return "video/webm";
-    }
+}
 
-    "application/octet-stream"
+async fn kept_sniff<K: std::hash::Hash + Eq>(
+    cache: &parking_lot::Mutex<hashlink::LruCache<K, &'static str>>,
+    cache_key: K,
+    window: &mut Window<'_>,
+) -> AppResult<&'static str> {
+    if let Some(mime) = cache.lock().get(&cache_key).copied() {
+        return Ok(mime);
+    }
+    let mime = sniff(window).await?;
+    cache.lock().insert(cache_key, mime);
+    Ok(mime)
+}
+
+/// The content server's Content-Type for the stream `window` reads, as the catalyst's
+/// `createContentFileHeaders` answers it for `?includeMimeType` and the entity image and thumbnail
+/// routes: `file-type@21.1.1`'s type, else `application/octet-stream`, which is also the answer
+/// where upstream's sniff throws (a 500 there). `file-type` detects no text format, JSON
+/// included. A storage fault is an error.
+///
+/// One deliberate, permanent difference from the catalyst (`content-reads.md` CR-7,
+/// `docs/adr/2026-11-21-stored-files-served-inert.md`): a type a browser opens as a document
+/// ([`inert`]) is `application/octet-stream`.
+pub(crate) async fn sniff(window: &mut Window<'_>) -> AppResult<&'static str> {
+    let size = window.file_size();
+    Ok(catalyst::file_type(window, size)
+        .await?
+        .map_or("application/octet-stream", inert))
+}
+
+/// `mime`, or `application/octet-stream` for a type a browser opens as a document that can run
+/// scripts: `text/*`, `*/xml`, `*+xml` and any HTML type. These routes share the node's origin,
+/// where an XHTML or SVG document's scripts would run.
+fn inert(mime: &'static str) -> &'static str {
+    let document = mime.starts_with("text/")
+        || mime.ends_with("/xml")
+        || mime.ends_with("+xml")
+        || mime.contains("html");
+    if document {
+        "application/octet-stream"
+    } else {
+        mime
+    }
 }
 
 /// Marks a `/contents/{hash}` response [`compression_layer`] may compress on the
@@ -101,16 +116,27 @@ fn accepts_compression(headers: &HeaderMap) -> bool {
 /// WebP, KTX2, audio, video or archives costs CPU for nothing. GLB, glTF JSON,
 /// scene code, `.bin` buffers and WAV are what shrink.
 fn worth_compressing(head: &[u8]) -> bool {
-    const KTX2: &[u8] = &[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB];
-    const GZIP: &[u8] = &[0x1F, 0x8B];
-    const ZSTD: &[u8] = &[0x28, 0xB5, 0x2F, 0xFD];
-    if head.starts_with(KTX2) || head.starts_with(GZIP) || head.starts_with(ZSTD) {
+    const PREFIXES: &[&[u8]] = &[
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], // PNG
+        &[0xFF, 0xD8, 0xFF],                               // JPEG
+        b"GIF8",
+        &[0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB], // KTX2
+        &[0x1F, 0x8B],                                     // gzip
+        &[0x28, 0xB5, 0x2F, 0xFD],                         // zstd
+        &[0x50, 0x4B, 0x03, 0x04],                         // zip
+        b"OggS",
+        &[0x1A, 0x45, 0xDF, 0xA3], // WebM / Matroska
+        b"ID3",                    // MP3
+    ];
+    if PREFIXES.iter().any(|p| head.starts_with(p)) {
         return false;
     }
-    matches!(
-        detect_content_type(head),
-        "model/gltf-binary" | "audio/wav" | "application/octet-stream"
-    )
+    let mp3_frame = head.len() >= 2
+        && head[0] == 0xFF
+        && matches!(head[1], 0xFB | 0xFA | 0xF3 | 0xF2 | 0xE3 | 0xE2);
+    let mp4 = head.get(4..8) == Some(b"ftyp");
+    let webp = head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WEBP");
+    !(mp3_frame || mp4 || webp)
 }
 
 /// On-the-fly br/gzip for the `/contents/{hash}` routes, applied to responses
@@ -170,106 +196,44 @@ struct Mount {
     bare_not_found: bool,
 }
 
-/// The bytes the worlds mount sniffs: enough for every signature
-/// [`file_type_extra`] reads (the Ogg codec id ends at byte 36).
-const WORLDS_SNIFF_BYTES: u64 = 64;
-/// The root's sniff window.
-const ROOT_SNIFF_BYTES: u64 = 32;
-
-impl Mount {
-    /// The root answers [`detect_content_type`]'s `file-type` signatures, as
-    /// upstream's catalyst. The worlds mount reads `file-type@16`'s answers for
-    /// the formats in [`file_type_extra`] first, and answers a head that opens
-    /// a JSON object or array as `application/json`, which `file-type` (and so
-    /// worlds-content-server) answers as `application/octet-stream`
-    /// (services/catalyst/docs/worlds-compatibility.md).
-    fn sniff(self, head: &[u8]) -> &'static str {
-        if !self.always_sniff {
-            return detect_content_type(head);
+/// The worlds mount's Content-Type for `key`'s file cut at `end` (`ranged` when that is the
+/// window a ranged GET sniffs), and the head read for it, with the reader positioned after it.
+/// No head means the reader's position is unknown, so a whole GET reads the head again.
+///
+/// `file-type`'s answer, with two deliberate differences from worlds-content-server
+/// (services/catalyst/docs/worlds-compatibility.md): a type a browser opens as a document
+/// ([`inert`]) is `application/octet-stream`, since this mount shares the node's origin; and
+/// a head that opens a JSON object or array is `application/json`. A storage fault while sniffing
+/// answers `application/octet-stream`, as upstream's catch does, and no head, so a HEAD or ranged
+/// GET answers without reading the file again. Content is immutable by key, so an answer is kept
+/// and later reads of the file skip the sniff.
+async fn worlds_content_type(
+    state: &ContentState,
+    key: &str,
+    opened: &mut OpenedContent,
+    end: u64,
+    ranged: bool,
+) -> AppResult<(&'static str, Option<Bytes>)> {
+    let cache_key = (key.to_string(), ranged);
+    if let Some(mime) = state.worlds_sniffed.lock().get(&cache_key).copied() {
+        return Ok((mime, Some(Bytes::new())));
+    }
+    let mut window = Window::new(opened, end);
+    let detected = match file_type(&mut window).await {
+        Ok(detected) => detected,
+        Err(error) => {
+            tracing::warn!(key, %error, "worlds content sniff failed; answering octet-stream");
+            return Ok(("application/octet-stream", None));
         }
-        match file_type_extra(head).unwrap_or_else(|| detect_content_type(head)) {
-            "application/octet-stream" if looks_like_json(head) => "application/json",
-            detected => detected,
-        }
-    }
-
-    fn sniff_bytes(self) -> u64 {
-        if self.always_sniff {
-            WORLDS_SNIFF_BYTES
-        } else {
-            ROOT_SNIFF_BYTES
-        }
-    }
-}
-
-/// `file-type@16.5.4` (`core.js`, the version worlds-content-server's `yarn.lock`
-/// pins) for scene-file formats [`detect_content_type`] answers otherwise:
-/// BMP (checked first, as there), the ISO-BMFF major brands, fonts, FLAC,
-/// WebAssembly, RIFF WAV/AVI and the Ogg codecs.
-fn file_type_extra(b: &[u8]) -> Option<&'static str> {
-    let at = |offset: usize, sig: &[u8]| b.get(offset..offset + sig.len()) == Some(sig);
-    if at(0, b"BM") {
-        return Some("image/bmp");
-    }
-    if at(0, b"OggS") {
-        let codec = |sig: &[u8]| at(28, sig);
-        return Some(if codec(b"OpusHead") {
-            "audio/opus"
-        } else if codec(b"\x80theora") || codec(b"\x01video\0") {
-            "video/ogg"
-        } else if codec(b"\x7fFLAC") || codec(b"Speex  ") || codec(b"\x01vorbis") {
-            "audio/ogg"
-        } else {
-            "application/ogg"
-        });
-    }
-    if at(4, b"ftyp") && b.len() >= 12 && b[8] & 0x60 != 0 {
-        let brand = String::from_utf8_lossy(&b[8..12]).replacen('\0', " ", 1);
-        let brand = brand.trim();
-        return Some(match brand {
-            "avif" => "image/avif",
-            "mif1" => "image/heif",
-            "msf1" => "image/heif-sequence",
-            "heic" | "heix" => "image/heic",
-            "hevc" | "hevx" => "image/heic-sequence",
-            "qt" => "video/quicktime",
-            "M4V" | "M4VH" | "M4VP" => "video/x-m4v",
-            "M4B" | "F4A" | "F4B" => "audio/mp4",
-            "M4A" => "audio/x-m4a",
-            "crx" => "image/x-canon-cr3",
-            b if b.starts_with("3g2") => "video/3gpp2",
-            b if b.starts_with("3g") => "video/3gpp",
-            _ => "video/mp4",
-        });
-    }
-    let sfnt = |offset| at(offset, &[0x00, 0x01, 0x00, 0x00]) || at(offset, b"OTTO");
-    if at(0, b"wOFF") && sfnt(4) {
-        return Some("font/woff");
-    }
-    if at(0, b"wOF2") && sfnt(4) {
-        return Some("font/woff2");
-    }
-    if at(0, b"fLaC") {
-        return Some("audio/x-flac");
-    }
-    if at(0, &[0x00, 0x61, 0x73, 0x6D]) {
-        return Some("application/wasm");
-    }
-    if at(0, b"RIFF") {
-        if at(8, b"AVI") {
-            return Some("video/vnd.avi");
-        }
-        if at(8, b"WAVE") {
-            return Some("audio/vnd.wave");
-        }
-    }
-    if at(0, b"OTTO\0") {
-        return Some("font/otf");
-    }
-    if at(0, &[0x00, 0x01, 0x00, 0x00, 0x00]) {
-        return Some("font/ttf");
-    }
-    None
+    };
+    let head = window.into_head().await?;
+    let mime = match detected {
+        Some(mime) => inert(mime),
+        None if looks_like_json(&head) => "application/json",
+        None => "application/octet-stream",
+    };
+    state.worlds_sniffed.lock().insert(cache_key, mime);
+    Ok((mime, Some(head)))
 }
 
 /// A head that opens a JSON object or array, after an optional UTF-8 BOM.
@@ -307,7 +271,7 @@ pub async fn get_content(
 
 /// The worlds mount's GET and HEAD /contents/{hash}: worlds-content-server
 /// always sniffs the Content-Type and also answers a thumbnail's legacy
-/// SHA-256 hex key, read here as the raw-leaf CIDv1 with that digest. A miss
+/// SHA-256 hex key, resolved here to a raw-leaf CIDv1 or an imported alias. A miss
 /// is a 404 without a body (`content-file-handler.ts` `{ status: 404 }`).
 pub async fn get_world_content(
     State(state): State<SharedState>,
@@ -331,6 +295,9 @@ async fn serve(
     headers: HeaderMap,
     mount: Mount,
 ) -> AppResult<Response> {
+    if state.denylist.contains(&hash_id) {
+        return Err(missing(&hash_id));
+    }
     // `key` names the blob on disk; `hash_id` stays the client's ETag.
     let key = if crate::auth::is_canonical_cid(&hash_id) {
         hash_id.clone()
@@ -339,11 +306,24 @@ async fn serve(
         .then(|| crate::auth::raw_cid_v1_from_sha256_hex(&hash_id))
         .flatten()
     {
-        cid
+        if state.denylist.contains(&cid) {
+            return Err(missing(&hash_id));
+        }
+        if state.storage.exist(&cid).await? {
+            cid
+        } else {
+            sqlx::query_scalar(
+                "SELECT blob_cid FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
+            )
+            .bind(&hash_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or(cid)
+        }
     } else {
         return Err(missing(&hash_id));
     };
-    if state.denylist.contains(&hash_id) || state.denylist.contains(&key) {
+    if state.denylist.contains(&key) {
         return Err(missing(&hash_id));
     }
 
@@ -388,12 +368,21 @@ async fn serve(
         }
         Some(ParsedRange::Range { start, end }) => {
             if sniff {
-                // The worlds mount sniffs the file's head, as WCS does; the root the range's.
-                let from = if mount.always_sniff { 0 } else { start };
-                let head = opened
-                    .read_range(from, from + mount.sniff_bytes() - 1)
-                    .await?;
-                set_content_type(&mut base_headers, mount.sniff(&head));
+                // The worlds mount sniffs the file's first `SAMPLE` bytes, as WCS does; the root
+                // the range, as the catalyst sniffs its ranged stream.
+                let mime = if mount.always_sniff {
+                    worlds_content_type(&state, &key, &mut opened, SAMPLE, true)
+                        .await?
+                        .0
+                } else {
+                    content_type(
+                        &state,
+                        &key,
+                        &mut Window::range(&mut opened, start, end + 1),
+                    )
+                    .await?
+                };
+                set_content_type(&mut base_headers, mime);
             }
 
             let body = if method == Method::HEAD {
@@ -417,25 +406,35 @@ async fn serve(
         None => {}
     }
 
-    let accel = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key);
+    // nginx serves the body of a GET when the gateway is in front, so the app reads none of it.
+    let accel = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key)
+        .filter(|_| method != Method::HEAD);
     // A whole file this process streams itself may be compressed on the wire
     // ([`Compressible`]); nginx streams an X-Accel hand-off, outside this layer.
     let compress = method == Method::GET
         && accel.is_none()
         && total >= MIN_COMPRESSED_SIZE
         && accepts_compression(&headers);
+
     // Upstream sniffs for HEAD as for GET: the headers are the same. The
     // worlds mount sniffs every HEAD, as WCS does.
-    let sniff_type = sniff || (method == Method::HEAD && mount.always_sniff);
-    // The mount's sniff window covers every signature `worth_compressing` reads.
-    let head = if sniff_type || compress {
-        let head = opened.read_range(0, mount.sniff_bytes() - 1).await?;
-        if sniff_type {
-            set_content_type(&mut base_headers, mount.sniff(&head));
-        }
+    let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
+        let (mime, head) = if mount.always_sniff {
+            worlds_content_type(&state, &key, &mut opened, total, false).await?
+        } else {
+            let mut window = Window::new(&mut opened, total);
+            let mime = content_type(&state, &key, &mut window).await?;
+            let head = if method == Method::HEAD || accel.is_some() {
+                Bytes::new()
+            } else {
+                window.into_head().await?
+            };
+            (mime, Some(head))
+        };
+        set_content_type(&mut base_headers, mime);
         head
     } else {
-        Bytes::new()
+        Some(Bytes::new())
     };
 
     if method == Method::HEAD {
@@ -458,11 +457,17 @@ async fn serve(
         return Ok(response);
     }
 
+    // After a failed sniff the reader may be anywhere: replay the body from its start. A
+    // compression check reads the head too when no sniff read it (a kept answer reads nothing).
+    let head = match head {
+        Some(head) if !(compress && head.is_empty()) => head,
+        _ => opened.read_range(0, SAMPLE - 1).await?,
+    };
     let compressible = compress && worth_compressing(&head);
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .body(opened.into_body(head))
-        .unwrap();
+        .expect("a constant status always builds a response");
     apply_headers(&mut response, &base_headers);
     if compressible {
         response.extensions_mut().insert(Compressible);
@@ -521,57 +526,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn detect_content_type_sniffs_video() {
-        assert_eq!(
-            detect_content_type(&[0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00]),
-            "video/webm"
-        );
-        assert_eq!(
-            detect_content_type(b"\0\0\0\x20ftypisom\0\0\x02\0"),
-            "video/mp4"
-        );
-        assert_eq!(
-            detect_content_type(b"plain bytes"),
-            "application/octet-stream"
-        );
-    }
-
-    #[test]
-    fn detect_content_type_matches_file_type_on_content_formats() {
-        assert_eq!(detect_content_type(b"GIF89a\x01\x00"), "image/gif");
-        assert_eq!(
-            detect_content_type(b"ID3\x04\x00\x00\x00\x00"),
-            "audio/mpeg"
-        );
-        assert_eq!(detect_content_type(&[0xFF, 0xFB, 0x90, 0x64]), "audio/mpeg");
-        assert_eq!(
-            detect_content_type(b"RIFF\x24\x08\x00\x00WAVEfmt "),
-            "audio/wav"
-        );
-        assert_eq!(
-            detect_content_type(b"RIFF\x24\x08\x00\x00WEBPVP8 "),
-            "image/webp"
-        );
-        assert_eq!(
-            detect_content_type(b"PK\x03\x04\x14\x00"),
-            "application/zip"
-        );
-        assert_eq!(detect_content_type(b"OggS\x00\x02"), "audio/ogg");
-        // `file-type` has no text detector: JSON is not recognised.
-        assert_eq!(
-            detect_content_type(b"{\"version\":\"v3\"}"),
-            "application/octet-stream"
-        );
-        assert_eq!(
-            detect_content_type(b"\xEF\xBB\xBF[1]"),
-            "application/octet-stream"
-        );
-        assert_eq!(detect_content_type(b""), "application/octet-stream");
-    }
-
     async fn get(
         node: &TestNode,
+        method: Method,
+        mime: Option<&str>,
+        range: Option<&str>,
+    ) -> AppResult<Response> {
+        get_hash(node, TEST_CID, method, mime, range).await
+    }
+
+    async fn get_hash(
+        node: &TestNode,
+        hash: &str,
         method: Method,
         mime: Option<&str>,
         range: Option<&str>,
@@ -582,7 +548,7 @@ mod tests {
         }
         get_content(
             State(node.state.clone()),
-            Path(TEST_CID.to_string()),
+            Path(hash.to_string()),
             Query(ContentQuery {
                 include_mime_type: mime.map(str::to_string),
             }),
@@ -634,9 +600,13 @@ mod tests {
 
     #[tokio::test]
     async fn include_mime_type_sniffs_and_replays_the_head() {
+        // A PNG signature, an IHDR chunk and an IDAT chunk that runs to the end of the file.
         let mut blob = vec![0u8; 200 * 1024];
-        blob[..8].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        for (i, b) in blob.iter_mut().enumerate().skip(8) {
+        let idat_len = (blob.len() - 45) as u32;
+        blob[..16].copy_from_slice(b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR");
+        blob[33..37].copy_from_slice(&idat_len.to_be_bytes());
+        blob[37..41].copy_from_slice(b"IDAT");
+        for (i, b) in blob.iter_mut().enumerate().skip(41) {
             *b = (i % 251) as u8;
         }
         let blob = Bytes::from(blob);
@@ -675,11 +645,20 @@ mod tests {
             .unwrap();
         assert!(body.is_empty());
 
+        // A range is sniffed as the stream it is: one that ends before the IDAT chunk header
+        // has no type (upstream's sniff throws there).
+        let resp = get(&node, Method::HEAD, Some(""), Some("bytes=0-40"))
+            .await
+            .unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
         let resp = get(&node, Method::GET, Some(""), Some("bytes=0-9"))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(
+            header(&resp, "content-type").unwrap(),
+            "application/octet-stream"
+        );
         assert_eq!(
             header(&resp, "content-range").unwrap(),
             format!("bytes 0-9/{}", blob.len())
@@ -695,6 +674,47 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
+    /// `?includeMimeType` answers `file-type`'s strings, ISO-BMFF brands told apart, on GET and HEAD,
+    /// and a GET still serves the whole file after the sniff.
+    #[tokio::test]
+    async fn include_mime_type_answers_file_type_strings() {
+        let ftyp = |brand: &[u8]| [&b"\0\0\0\x18ftyp"[..], brand, b"\0\0\0\0isomiso2"].concat();
+        let mut tar = b"a.txt".to_vec();
+        tar.resize(257, 0);
+        tar.extend_from_slice(b"ustar\x0000");
+        let cases: [(&str, Vec<u8>); 9] = [
+            ("image/avif", ftyp(b"avif")),
+            ("image/heic", ftyp(b"heic")),
+            ("image/heif", ftyp(b"mif1")),
+            ("video/mp4", ftyp(b"isom")),
+            ("image/bmp", b"BM".to_vec()),
+            ("image/ktx", b"\xABKTX 11\xBB\r\n\x1A\n".to_vec()),
+            ("application/wasm", b"\0asm\x01\0\0\0".to_vec()),
+            ("application/pdf", b"%PDF-1.7\n".to_vec()),
+            ("application/x-tar", tar),
+        ];
+        let node = TestNode::without_db("content-mime-formats").await;
+        for (mime, mut bytes) in cases {
+            bytes.resize(5000, 0);
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            for method in [Method::GET, Method::HEAD] {
+                let resp = get_hash(&node, &cid, method.clone(), Some(""), None)
+                    .await
+                    .unwrap();
+                assert_eq!(header(&resp, "content-type").unwrap(), mime, "{method}");
+                if method == Method::GET {
+                    assert_eq!(
+                        body_of(resp).await,
+                        bytes,
+                        "{mime}: the body after the sniff"
+                    );
+                }
+            }
+        }
+    }
+
     async fn body_of(resp: Response) -> Bytes {
         axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
@@ -704,7 +724,7 @@ mod tests {
     #[tokio::test]
     async fn a_range_past_the_start_sniffs_from_the_range_start() {
         let mut blob = vec![b'x'; 4096];
-        blob[1000..1008].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        blob[1000..1012].copy_from_slice(b"\0\0\0\x18ftypavif");
         let blob = Bytes::from(blob);
         let node = TestNode::without_db("content-range-offset").await;
         node.store(TEST_CID, blob.clone()).await;
@@ -713,7 +733,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/avif");
         assert_eq!(header(&resp, "content-length").unwrap(), "1000");
         assert_eq!(
             header(&resp, "content-range").unwrap(),
@@ -808,7 +828,16 @@ mod tests {
     #[tokio::test]
     async fn the_worlds_mount_always_sniffs_and_the_root_does_not() {
         let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00rest-of-the-image");
-        let png = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
+        // A signature, an IHDR chunk and a one-byte IDAT chunk: `file-type` reads to the IDAT.
+        let png = Bytes::from(
+            [
+                &b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR"[..],
+                &[0; 17],
+                b"\0\0\0\x01IDAT",
+                &[0; 5],
+            ]
+            .concat(),
+        );
         let node = TestNode::without_db("content-world-sniff").await;
         let gif_cid = crate::auth::hash_bytes_v1(&gif);
         node.store(&gif_cid, gif.clone()).await;
@@ -858,12 +887,14 @@ mod tests {
                 "{method}"
             );
         }
+        let resp = get_hash(&node, &json_cid, Method::GET, Some(""), None)
+            .await
+            .unwrap();
         assert_eq!(
-            Mount::sniff(ROOT, &json),
+            header(&resp, "content-type").unwrap(),
             "application/octet-stream",
             "the root with includeMimeType"
         );
-        assert_eq!(Mount::sniff(ROOT, b"GIF87a\x01\x00"), "image/gif");
 
         let resp = get(&node, Method::GET, None, None).await.unwrap();
         assert_eq!(
@@ -881,42 +912,92 @@ mod tests {
         assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
     }
 
-    /// `file-type@16.5.4` `core.js` on the worlds mount; the root keeps its table.
-    #[test]
-    fn the_worlds_mount_reads_file_types_other_signatures() {
-        let mut ogg_opus = b"OggS".to_vec();
-        ogg_opus.resize(28, 0);
-        ogg_opus.extend_from_slice(b"OpusHead");
-        let cases: [(&[u8], &str); 12] = [
-            (b"BM\x36\x00\x00\x00", "image/bmp"),
-            (b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00", "image/avif"),
-            (
-                b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00",
-                "video/quicktime",
-            ),
-            (b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "audio/x-m4a"),
-            (b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00", "video/mp4"),
-            (b"wOFF\x00\x01\x00\x00", "font/woff"),
-            (b"wOF2OTTO", "font/woff2"),
-            (b"OTTO\x00\x0a", "font/otf"),
-            (b"\x00\x01\x00\x00\x00\x0f", "font/ttf"),
-            (b"fLaC\x00\x00\x00\x22", "audio/x-flac"),
-            (b"\x00asm\x01\x00\x00\x00", "application/wasm"),
-            (&ogg_opus, "audio/opus"),
-        ];
-        for (head, mime) in cases {
-            assert_eq!(WORLDS.sniff(head), mime, "{head:?}");
+    /// The worlds mount reads past the sniff window where `file-type` does: a whole GET walks
+    /// the PNG chunks and the PDF, a ranged GET only its first `SAMPLE` bytes. The body is the
+    /// stored file whatever the sniff read.
+    #[tokio::test]
+    async fn the_worlds_sniff_reads_past_the_window_on_a_whole_get_only() {
+        let chunk = |kind: &[u8], len: u32| {
+            [&len.to_be_bytes()[..], kind, &vec![0; len as usize + 4]].concat()
+        };
+        let mut apng = b"\x89PNG\r\n\x1a\n".to_vec();
+        apng.extend(chunk(b"IHDR", 13));
+        apng.extend(chunk(b"tEXt", 5000));
+        apng.extend(chunk(b"acTL", 8));
+        let mut illustrator = b"%PDF-1.5\n".to_vec();
+        illustrator.resize(70_000, b' ');
+        illustrator.extend_from_slice(b"AIPrivateData1");
+        let mut id3 = b"ID3\x04\x00\x00\x00\x00\x27\x08".to_vec(); // a 5000-byte tag
+        id3.resize(10 + 5000, 0);
+        id3.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x64]);
+        id3.resize(9000, 0);
+
+        let node = TestNode::without_db("content-world-sniff-past-window").await;
+        for (bytes, whole) in [
+            (apng, "image/apng"),
+            (illustrator, "application/postscript"),
+            (id3, "audio/mpeg"),
+        ] {
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            let resp = world_get(&node, &cid, Method::GET, None).await.unwrap();
+            assert_eq!(header(&resp, "content-type").unwrap(), whole);
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body, bytes, "{whole}: the body after the sniff");
+            let resp = world_get(&node, &cid, Method::GET, Some("bytes=0-1"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+            let ranged = if whole == "application/postscript" {
+                "application/pdf"
+            } else {
+                "application/octet-stream"
+            };
+            assert_eq!(header(&resp, "content-type").unwrap(), ranged, "{whole}");
         }
-        assert_eq!(
-            WORLDS.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "),
-            "audio/vnd.wave"
+    }
+
+    /// XML is octet-stream on the worlds mount (an XHTML or SVG document would run its scripts on
+    /// the node's origin), and a sniffed answer is kept for the key: content does not change
+    /// under it.
+    #[tokio::test]
+    async fn the_worlds_mount_serves_xml_as_octet_stream_and_keeps_its_answers() {
+        let node = TestNode::without_db("content-world-sniff-xml").await;
+        let xml = Bytes::from_static(
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>",
         );
-        assert_eq!(WORLDS.sniff(b"OggS\x00\x02"), "application/ogg");
+        let xml_cid = crate::auth::hash_bytes_v1(&xml);
+        node.store(&xml_cid, xml.clone()).await;
+        for range in [None, Some("bytes=0-1")] {
+            let resp = world_get(&node, &xml_cid, Method::GET, range)
+                .await
+                .unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "application/octet-stream",
+                "{range:?}"
+            );
+        }
+
+        let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00");
+        node.store(TEST_CID, gif.clone()).await;
+        let resp = world_get(&node, TEST_CID, Method::HEAD, None)
+            .await
+            .unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/gif");
+        // Other bytes under the same key (a test can store them; a real key cannot change).
+        node.store(TEST_CID, Bytes::from_static(b"BM\x36\x00\x00\x00"))
+            .await;
+        let resp = world_get(&node, TEST_CID, Method::GET, None).await.unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/gif", "kept");
         assert_eq!(
-            ROOT.sniff(b"BM\x36\x00\x00\x00"),
-            "application/octet-stream"
+            body_of(resp).await,
+            Bytes::from_static(b"BM\x36\x00\x00\x00"),
+            "the body is read whole after a kept answer"
         );
-        assert_eq!(ROOT.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "), "audio/wav");
     }
 
     #[tokio::test]
@@ -1158,5 +1239,315 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body, blob);
+    }
+
+    /// XML, after a BOM or in UTF-16 too, is `application/octet-stream` on GET, HEAD and a range
+    /// that holds the declaration: these routes share the node's origin.
+    #[tokio::test]
+    async fn include_mime_type_serves_xml_as_octet_stream() {
+        let utf16 = |bom: [u8; 2], big_endian: bool| {
+            let mut bytes = bom.to_vec();
+            for c in "<?xml version=\"1.0\"?><svg/>".bytes() {
+                bytes.extend_from_slice(&if big_endian { [0, c] } else { [c, 0] });
+            }
+            bytes
+        };
+        let cases = [
+            b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
+            b"\xEF\xBB\xBF<?xml version=\"1.0\"?><svg/>".to_vec(),
+            utf16([0xFE, 0xFF], true),
+            utf16([0xFF, 0xFE], false),
+        ];
+        let node = TestNode::without_db("content-mime-xml").await;
+        for mut bytes in cases {
+            bytes.resize(1000, b' ');
+            let detected = catalyst::file_type(&mut &bytes[..], 1000).await.unwrap();
+            assert_eq!(detected, Some("application/xml"), "{:?}", &bytes[..8]);
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            for (method, range) in [
+                (Method::GET, None),
+                (Method::HEAD, None),
+                (Method::GET, Some("bytes=0-599")),
+            ] {
+                let resp = get_hash(&node, &cid, method.clone(), Some(""), range)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    header(&resp, "content-type").unwrap(),
+                    "application/octet-stream",
+                    "{method} {range:?} {:?}",
+                    &bytes[..8]
+                );
+            }
+        }
+    }
+
+    /// A sniffed type is kept per content key and window: a later GET, HEAD or the same range
+    /// does not sniff again (other bytes under the key, which a real key cannot hold, keep the
+    /// kept type), and a GET still serves the whole file. A range and the whole file are kept
+    /// apart, in either order.
+    #[tokio::test]
+    async fn include_mime_type_keeps_the_sniffed_type_per_window() {
+        let node = TestNode::without_db("content-mime-kept").await;
+        // Past `SAMPLE`, so a kept GET serves the head and the rest of the file in one body.
+        let file = |head: &[u8]| {
+            let mut bytes: Vec<u8> = (0..5000).map(|i| (i % 251) as u8).collect();
+            bytes[..head.len()].copy_from_slice(head);
+            Bytes::from(bytes)
+        };
+        let gif = file(b"GIF89a\x01\x00\x01\x00");
+        let bmp = file(b"BM\x36\x00\x00\x00");
+        let type_of = |resp: &Response| header(resp, "content-type").unwrap();
+
+        node.store(TEST_CID, gif.clone()).await;
+        let cut = get(&node, Method::GET, Some(""), Some("bytes=0-1")).await;
+        assert_eq!(type_of(&cut.unwrap()), "application/octet-stream");
+        let whole = get(&node, Method::GET, Some(""), None).await.unwrap();
+        assert_eq!(
+            type_of(&whole),
+            "image/gif",
+            "a range is not the whole file"
+        );
+
+        node.store(TEST_CID, bmp.clone()).await;
+        let whole = get(&node, Method::GET, Some(""), None).await.unwrap();
+        assert_eq!(type_of(&whole), "image/gif", "kept");
+        assert_eq!(
+            body_of(whole).await,
+            bmp,
+            "the whole body after a kept type"
+        );
+        let head = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(type_of(&head), "image/gif", "kept for HEAD");
+        let cut = get(&node, Method::GET, Some(""), Some("bytes=0-1")).await;
+        assert_eq!(type_of(&cut.unwrap()), "application/octet-stream", "kept");
+        let other = get(&node, Method::GET, Some(""), Some("bytes=0-4")).await;
+        let other = other.unwrap();
+        assert_eq!(type_of(&other), "image/bmp", "a new window is sniffed");
+        assert_eq!(body_of(other).await, bmp.slice(..5));
+
+        let cid = crate::auth::hash_bytes_v1(&gif);
+        node.store(&cid, gif.clone()).await;
+        let whole = get_hash(&node, &cid, Method::HEAD, Some(""), None).await;
+        assert_eq!(type_of(&whole.unwrap()), "image/gif");
+        let cut = get_hash(&node, &cid, Method::GET, Some(""), Some("bytes=0-1")).await;
+        assert_eq!(
+            type_of(&cut.unwrap()),
+            "application/octet-stream",
+            "a whole file is not a range"
+        );
+    }
+
+    /// Ranges are kept apart from whole files: more distinct ranges than every cache holds leave
+    /// a whole file's kept type in place (other bytes under the key, which a real key cannot
+    /// hold, keep the kept type).
+    #[tokio::test]
+    async fn cycling_ranges_keeps_the_whole_file_type() {
+        let node = TestNode::without_db("content-mime-ranges").await;
+        let file = |head: &[u8]| {
+            let mut bytes = vec![0u8; 5000];
+            bytes[..head.len()].copy_from_slice(head);
+            Bytes::from(bytes)
+        };
+        node.store(TEST_CID, file(b"GIF89a\x01\x00\x01\x00")).await;
+        let whole = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(header(&whole, "content-type").unwrap(), "image/gif");
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let ranges = crate::SNIFFED_ENTRIES.max(crate::SNIFFED_RANGES) as u64 + 1;
+        for i in 0..ranges {
+            let (start, len) = (i % 4000, 1 + i / 4000);
+            let mut window = Window::range(&mut opened, start, start + len);
+            content_type(&node.state, TEST_CID, &mut window)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            node.state.sniffed_ranges.lock().len(),
+            crate::SNIFFED_RANGES
+        );
+
+        node.store(TEST_CID, file(b"BM\x36\x00\x00\x00")).await;
+        let whole = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(header(&whole, "content-type").unwrap(), "image/gif", "kept");
+    }
+
+    /// Behind the gateway a sniffed GET answers the sniffed type and the redirect, with no body,
+    /// whether the type is sniffed or kept.
+    #[tokio::test]
+    async fn x_accel_base_serves_the_sniffed_type() {
+        let mut settings = crate::Settings::for_tests();
+        settings.storage_x_accel_base = Some("/__protected_storage".into());
+        let node = TestNode::without_db_settings("content-accel-mime", settings).await;
+        let mut bytes = vec![0u8; 5000];
+        bytes[..6].copy_from_slice(b"GIF89a");
+        node.store(TEST_CID, Bytes::from(bytes)).await;
+        for pass in ["sniffed", "kept"] {
+            let resp = get(&node, Method::GET, Some(""), None).await.unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "image/gif",
+                "{pass}"
+            );
+            assert!(header(&resp, "x-accel-redirect").is_some(), "{pass}");
+            assert_eq!(header(&resp, "content-length").unwrap(), "0", "{pass}");
+            assert!(body_of(resp).await.is_empty(), "{pass}");
+        }
+    }
+
+    /// A type a browser opens as a document is `application/octet-stream`: `text/*`, `*/xml`,
+    /// `*+xml` and any HTML type. Other types, Office documents included, pass.
+    #[test]
+    fn a_document_type_is_inert() {
+        for mime in [
+            "text/vtt",
+            "text/calendar",
+            "text/vcard",
+            "text/html",
+            "application/xml",
+            "image/svg+xml",
+            "application/xhtml+xml",
+            "application/vnd.ms-htmlhelp",
+        ] {
+            assert_eq!(inert(mime), "application/octet-stream", "{mime}");
+        }
+        for mime in [
+            "image/png",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/epub+zip",
+            "model/3mf",
+        ] {
+            assert_eq!(inert(mime), mime);
+        }
+    }
+
+    /// Every document type `file-type` detects is served as `application/octet-stream`, whole
+    /// and ranged, with a sandbox policy and `nosniff` on each answer.
+    #[tokio::test]
+    async fn include_mime_type_serves_document_types_as_octet_stream() {
+        let cases: [(&str, &[u8]); 5] = [
+            ("text/vtt", b"WEBVTT\n\n00:00.000 --> 00:01.000\nhi\n"),
+            ("text/vcard", b"BEGIN:VCARD\r\nVERSION:4.0\r\nEND:VCARD\r\n"),
+            ("text/calendar", b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"),
+            (
+                "application/vnd.ms-htmlhelp",
+                b"ITSF\x03\x00\x00\x00\x60\x00\x00\x00",
+            ),
+            ("application/xml", b"<?xml version=\"1.0\"?><html/>"),
+        ];
+        let node = TestNode::without_db("content-mime-documents").await;
+        for (detected, bytes) in cases {
+            let mut bytes = bytes.to_vec();
+            bytes.resize(1000, b' ');
+            let found = catalyst::file_type(&mut &bytes[..], 1000).await.unwrap();
+            assert_eq!(found, Some(detected));
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            for (method, range) in [
+                (Method::GET, None),
+                (Method::HEAD, None),
+                (Method::GET, Some("bytes=0-599")),
+            ] {
+                let resp = get_hash(&node, &cid, method.clone(), Some(""), range)
+                    .await
+                    .unwrap();
+                let at = format!("{detected} {method} {range:?}");
+                assert_eq!(
+                    header(&resp, "content-type").unwrap(),
+                    "application/octet-stream",
+                    "{at}"
+                );
+                assert_eq!(
+                    header(&resp, "content-security-policy").unwrap(),
+                    "sandbox",
+                    "{at}"
+                );
+                assert_eq!(
+                    header(&resp, "x-content-type-options").unwrap(),
+                    "nosniff",
+                    "{at}"
+                );
+            }
+        }
+    }
+
+    /// A ZIP of tiny entries whose sizes follow in data descriptors: the walk fetches each byte
+    /// of the file once, not a fresh scan window per entry, and stops at its entry bound.
+    #[tokio::test]
+    async fn a_zip_of_tiny_descriptor_entries_reads_the_file_once() {
+        let mut blob = Vec::new();
+        for _ in 0..2000 {
+            blob.extend_from_slice(b"PK\x03\x04\x14\0\x08\0");
+            blob.extend_from_slice(&[0; 18]);
+            blob.extend_from_slice(b"\x01\0\0\0ax");
+            blob.extend_from_slice(b"PK\x07\x08");
+            blob.extend_from_slice(&[0; 12]);
+        }
+        // Room for a full scan window after every entry.
+        blob.resize(blob.len() + 512 * 1024, 0);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-zip-descriptors").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let mut window = Window::new(&mut opened, blob.len() as u64);
+        assert_eq!(sniff(&mut window).await.unwrap(), "application/zip");
+        let fetched = crate::file_type::Source::fetched(&window);
+        assert!(fetched < 1 << 20, "fetched {fetched} bytes");
+
+        let resp = get(&node, Method::GET, Some(""), None).await.unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "application/zip");
+        assert_eq!(body_of(resp).await, blob);
+    }
+
+    /// A ZIP walk stops once it has fetched 16 MiB of the file and answers `application/zip`:
+    /// within one data-descriptor scan, or across skipped entries before one that decides.
+    #[tokio::test]
+    async fn a_zip_walk_fetches_at_most_16_mib() {
+        // `skipped` stored entries of 64 KiB, then a `mimetype` entry that decides.
+        let file = |skipped: usize| {
+            let entry = |name: &[u8], data: &[u8]| {
+                let mut entry = b"PK\x03\x04\x14\0\0\0\0\0".to_vec();
+                entry.extend_from_slice(&[0; 8]);
+                entry.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                entry.extend_from_slice(&[0; 4]);
+                entry.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                entry.extend_from_slice(&[0; 2]);
+                entry.extend_from_slice(name);
+                entry.extend_from_slice(data);
+                entry
+            };
+            let mut bytes = entry(b"a", &[0; 64 << 10]).repeat(skipped);
+            bytes.extend_from_slice(&entry(b"mimetype", b"application/epub+zip"));
+            Bytes::from(bytes)
+        };
+        let node = TestNode::without_db("content-zip-budget-entries").await;
+        for (skipped, mime) in [(100, "application/epub+zip"), (300, "application/zip")] {
+            let blob = file(skipped);
+            let cid = crate::auth::hash_bytes_v1(&blob);
+            node.store(&cid, blob.clone()).await;
+            let mut opened = node.state.storage.open(&cid).await.unwrap().unwrap();
+            let mut window = Window::new(&mut opened, blob.len() as u64);
+            assert_eq!(sniff(&mut window).await.unwrap(), mime, "{skipped}");
+        }
+
+        let mut blob = b"PK\x03\x04\x14\0\x08\0".to_vec();
+        blob.extend_from_slice(&[0; 18]);
+        blob.extend_from_slice(b"\x01\0\0\0a");
+        blob.resize(20 << 20, 0);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-zip-budget").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let mut window = Window::new(&mut opened, blob.len() as u64);
+        assert_eq!(sniff(&mut window).await.unwrap(), "application/zip");
+        let fetched = crate::file_type::Source::fetched(&window);
+        assert!(fetched <= (16 << 20) + (1 << 20), "fetched {fetched} bytes");
     }
 }

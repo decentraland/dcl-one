@@ -1,0 +1,84 @@
+.DeployProgress {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.DeployProgress .upload {
+  /* The track keeps the light tint of the brand it had before the ui3 atom. */
+  --progress-track: #ffafbe;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.DeployProgress .details {
+  display: flex;
+  justify-content: space-between;
+  color: var(--dcl-silver);
+  font-size: 14px;
+}
+
+.DeployProgress .cancel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.DeployProgress .cancel .notice {
+  color: var(--dcl-silver);
+  font-size: 14px;
+}
+
+/* The upload bar keeps the motion it had before the ui3 atom: a known value moves in 0.4 s, and with no known
+   value two bars cross the track. The second bar is the ::after box. */
+.DeployProgress .upload [role='progressbar'] > span {
+  transition: width 0.4s linear;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .DeployProgress .upload [role='progressbar'][data-indeterminate] > span {
+    left: 0;
+    width: auto;
+    animation: deploy-progress-first 2.1s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+  }
+
+  .DeployProgress .upload [role='progressbar'][data-indeterminate]::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: var(--brand);
+    animation: deploy-progress-second 2.1s cubic-bezier(0.165, 0.84, 0.44, 1) 1.15s infinite;
+  }
+}
+
+@keyframes deploy-progress-first {
+  0% {
+    left: -35%;
+    right: 100%;
+  }
+
+  60%,
+  100% {
+    left: 100%;
+    right: -90%;
+  }
+}
+
+@keyframes deploy-progress-second {
+  0% {
+    left: -200%;
+    right: 100%;
+  }
+
+  60%,
+  100% {
+    left: 107%;
+    right: -8%;
+  }
+}

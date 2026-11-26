@@ -552,6 +552,7 @@ pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
             "a step extends an enum with ALTER TYPE ... ADD VALUE IF NOT EXISTS and changes a type in no other way",
         ),
         ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "FUNCTION" => Ok(StepStatement::Plain),
+        ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "TRIGGER" => Ok(StepStatement::Plain),
         ("CREATE", "FUNCTION") => match at(2).split_once('.') {
             Some((schema, name)) if hash_named_prefix(name).is_some() => {
                 Ok(StepStatement::CreateFunction {
@@ -839,14 +840,17 @@ where
 #[derive(Debug, Error)]
 pub enum MigrateError {
     #[error(transparent)]
+    Encoding(#[from] crate::EncodingError),
+    #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error("meta.schema is missing: an empty database takes `catalyst schema apply`, not migrate")]
     NotStamped,
     #[error(
         "the database is stamped {identity:?} version {version}; this binary's schema is {expected_identity:?} \
          version {expected_version}. `schema migrate` only brings a database of the same identity and version up \
-         to this binary's layout; a version change is the explicit data-safe release procedure (deploy/README.md, \
-         Releases), never this command. Nothing was applied."
+         to this binary's layout; a database one version behind takes `schema migrate --release` with every \
+         writer stopped, and any other version change is the explicit data-safe release procedure (DATABASE.md). \
+         Nothing was applied."
     )]
     Incompatible {
         identity: String,
@@ -854,6 +858,13 @@ pub enum MigrateError {
         expected_identity: &'static str,
         expected_version: i32,
     },
+    #[error(
+        "the release to version {version} needs every other session of this database closed (stop every \
+         writer, poller and administrative path first); {count} connected, applications: {applications}. \
+         Nothing was applied.",
+        version = crate::SCHEMA_VERSION
+    )]
+    SessionsConnected { count: usize, applications: String },
     #[error(
         "the database has these tables without columns this binary's schema.sql declares, and no step of \
          schemas/migrations/ adds them: {0}. `schema migrate` only creates missing objects and applies the recorded \
@@ -899,12 +910,43 @@ pub struct Migrated {
     pub created: Vec<Object>,
     /// The views re-created in place (`CREATE OR REPLACE VIEW`).
     pub views: Vec<Object>,
+    /// The version the run released the database to, when `--release` found it one version behind.
+    pub released: Option<i32>,
 }
 
 impl Migrated {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty() && self.created.is_empty()
+        self.released.is_none() && self.steps.is_empty() && self.created.is_empty()
     }
+}
+
+/// A stamp one version behind this binary's: what `RELEASE_SQL` accepts.
+fn release_pending(stamp: &Option<(String, i32)>) -> bool {
+    matches!(stamp, Some((identity, version))
+        if identity == crate::SCHEMA_IDENTITY && *version == crate::SCHEMA_VERSION - 1)
+}
+
+/// The `pg_stat_activity` predicate for a client session, the sessions that
+/// block the release. PostgreSQL hides `backend_type` (NULL) for a session of
+/// a role the caller is not a member of, unless the caller has
+/// `pg_read_all_stats`; such a row counts as a client session. A hidden row
+/// without a role (`usesysid` NULL) is a server process, such as an
+/// autovacuum worker, never a client session.
+pub const CLIENT_SESSION: &str = "(backend_type = 'client backend' \
+     OR (backend_type IS NULL AND usesysid IS NOT NULL))";
+
+/// The application name of every other client session of this database
+/// (`-` when unset or hidden).
+async fn other_sessions(conn: &mut sqlx::PgConnection) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT coalesce(nullif(application_name, ''), '-') \
+         FROM pg_stat_activity \
+         WHERE datname = current_database() AND pid <> pg_backend_pid() \
+           AND {CLIENT_SESSION} \
+         ORDER BY 1"
+    )))
+    .fetch_all(conn)
+    .await
 }
 
 async fn read_stamp(conn: &mut sqlx::PgConnection) -> sqlx::Result<Option<(String, i32)>> {
@@ -1036,18 +1078,66 @@ fn view_replacement(sql: &str) -> Option<String> {
 /// what it did. `sql` and `migrations` are this binary's own texts (`db::SCHEMA_SQL`,
 /// `db::MIGRATIONS_SQL`), never input.
 pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, None).await
+}
+
+/// `migrate`, preceded by `release` (this binary's `db::RELEASE_SQL`) when the
+/// database is stamped one version behind, all in the same transaction: a
+/// refusal or failure anywhere leaves the database as it was. The release
+/// runs only when no other client session is connected to the database, so
+/// every writer, poller and administrative path is stopped first. A database
+/// already at this binary's version takes the plain `migrate`.
+pub async fn migrate_with_release(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: &str,
+) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, Some(release)).await
+}
+
+async fn migrate_in_one(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: Option<&str>,
+) -> Result<Migrated, MigrateError> {
+    crate::require_utf8(pool).await?;
     let steps = parse_steps(migrations);
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
     let mut tx = pool.begin().await?;
-    let stamp = read_stamp(&mut tx).await?;
+    let mut stamp = read_stamp(&mut tx).await?;
+    let mut done = Migrated::default();
+    if let Some(release) = release
+        && release_pending(&stamp)
+    {
+        let mut sessions = other_sessions(&mut tx).await?;
+        if !sessions.is_empty() {
+            let count = sessions.len();
+            sessions.dedup();
+            return Err(MigrateError::SessionsConnected {
+                count,
+                applications: sessions.join(", "),
+            });
+        }
+        // The release backfills and builds indexes; the pool's per-statement
+        // limit is for serving, not for this.
+        sqlx::query("SET LOCAL statement_timeout = 0")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(release.to_owned()))
+            .execute(&mut *tx)
+            .await?;
+        stamp = read_stamp(&mut tx).await?;
+        done.released = Some(crate::SCHEMA_VERSION);
+    }
     check_stamp(stamp.clone())?;
     let version = stamp.expect("checked stamp").1;
     let retired = retired_voice_objects(&mut tx).await?;
     if !retired.is_empty() {
         return Err(MigrateError::RetiredDrift(retired.join(", ")));
     }
-    let mut done = Migrated::default();
     let mut made: HashSet<Object> = HashSet::new();
 
     // 1. the steps, recorded in the ledger (created first on a database
@@ -1171,8 +1261,16 @@ impl SchemaStatus {
     /// 0: this binary can serve the database as it is. 3: `schema migrate`
     /// has work (steps to apply, objects to create) and nothing stands in
     /// its way. 4: no stamp, another identity or version, a drifted or
-    /// refused step, or a missing column no pending step adds.
+    /// refused step, or a missing column no pending step adds. 5: the
+    /// database is one version behind and `schema migrate --release` takes
+    /// it to this binary's version once every writer is stopped.
     pub fn exit_code(&self) -> i32 {
+        if release_pending(&self.stamp)
+            && self.drifted_steps.is_empty()
+            && self.refused_step.is_none()
+        {
+            return 5;
+        }
         if !self.compatible()
             || !self.drifted_steps.is_empty()
             || self.refused_step.is_some()
@@ -1201,6 +1299,8 @@ impl SchemaStatus {
                 crate::SCHEMA_VERSION,
                 if self.compatible() {
                     "compatible"
+                } else if release_pending(&self.stamp) {
+                    "one version behind (`schema migrate --release` with every writer stopped)"
                 } else {
                     "INCOMPATIBLE (the data-safe release procedure, not migrate)"
                 }
@@ -1252,6 +1352,7 @@ impl SchemaStatus {
             match self.exit_code() {
                 0 => "up to date",
                 3 => "catalyst schema migrate brings it up to date",
+                5 => "catalyst schema migrate --release brings it up to date once every writer is stopped",
                 _ => "not this binary's layout and migrate cannot make it so",
             }
         ));
@@ -1515,15 +1616,122 @@ mod tests {
         }
     }
 
+    /// A stamped database gains the stream key notifications with no step.
+    #[test]
+    fn world_authority_notifications_are_in_the_existing_database_plan() {
+        let planned = plan(crate::SCHEMA_SQL).unwrap();
+        assert!(planned.iter().any(|p| matches!(&p.step, Step::Create { object: Object::Function {schema,name}, .. } if schema == "worlds" && name == "notify_world_authority")));
+        for (name, table) in [
+            (
+                "world_scenes_deployed_authority_notify",
+                "worlds.world_scenes",
+            ),
+            (
+                "world_scenes_removed_authority_notify",
+                "worlds.world_scenes",
+            ),
+            ("worlds_owner_authority_notify", "worlds.worlds"),
+            (
+                "world_permissions_authority_notify",
+                "worlds.world_permissions",
+            ),
+            (
+                "world_permission_parcels_authority_notify",
+                "worlds.world_permission_parcels",
+            ),
+        ] {
+            assert!(planned.iter().any(|p| matches!(&p.step, Step::Create { object: Object::Trigger {name:n,table:t}, .. } if n == name && t == table)), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_binding_objects_preserve_existing_identity_and_transaction_history() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("binding_upgrade_{}", uuid::Uuid::new_v4().simple());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}; CREATE TABLE {schema}.world_scene_place(world_name text,identity uuid,entity_id text,active boolean); INSERT INTO {schema}.world_scene_place VALUES ('test.eth','11111111-1111-4111-8111-111111111111','old',true)")))
+            .execute(&pool).await.unwrap();
+        let objects = plan(crate::SCHEMA_SQL)
+            .unwrap()
+            .into_iter()
+            .filter(|p| match &p.step {
+                Step::Create {
+                    object: Object::Relation(name),
+                    ..
+                } => name == "explore.world_scene_binding",
+                Step::Create {
+                    object: Object::Function { schema, name },
+                    ..
+                } => schema == "explore" && name == "retain_world_scene_binding",
+                Step::Create {
+                    object: Object::Trigger { name, table },
+                    ..
+                } => name == "world_scene_binding_retained" && table == "explore.world_scene_place",
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            objects.len(),
+            3,
+            "all recovery objects must be in the upgrade plan"
+        );
+        for object in objects {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                object.sql.replace("explore.", &format!("{schema}.")),
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {schema}.world_scene_place SET entity_id='rolled-back'"
+        )))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {schema}.world_scene_binding"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "rolled-back publication must not leave recovery evidence"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("UPDATE {schema}.world_scene_place SET entity_id='new'; UPDATE {schema}.world_scene_place SET active=false,entity_id=NULL; UPDATE {schema}.world_scene_place SET active=true,entity_id='new'; DELETE FROM {schema}.world_scene_place")))
+            .execute(&pool).await.unwrap();
+        let bindings: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT entity_id,identity::text FROM {schema}.world_scene_binding ORDER BY entity_id"
+        )))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bindings,
+            vec![
+                ("new".into(), "11111111-1111-4111-8111-111111111111".into()),
+                ("old".into(), "11111111-1111-4111-8111-111111111111".into())
+            ]
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn existing_catalogue_migration_installs_removal_triggers_and_seeds_once() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;
         };
         let schema = format!("removal_mig_{}", uuid::Uuid::new_v4().simple());
-        let columns = "id text PRIMARY KEY, creator_address text, world boolean NOT NULL DEFAULT false, world_name text, base_position text NOT NULL DEFAULT '0,0', raw jsonb NOT NULL DEFAULT '{}', disabled boolean NOT NULL DEFAULT false";
+        let columns = "id text PRIMARY KEY, creator_address text, world boolean NOT NULL DEFAULT false, world_name text, base_position text NOT NULL DEFAULT '0,0', raw jsonb NOT NULL DEFAULT '{}', removal_admin_keys text[] NOT NULL DEFAULT '{}', disabled boolean NOT NULL DEFAULT false";
         let older = format!(
-            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.place ({columns}); CREATE TABLE {schema}.place_world_local ({columns}); CREATE TABLE {schema}.place_moderation (place_id text PRIMARY KEY, disabled boolean, reason text); CREATE VIEW {schema}.place_indexed AS SELECT * FROM {schema}.place UNION ALL SELECT * FROM {schema}.place_world_local; INSERT INTO {schema}.place (id, disabled) VALUES ('existing-disabled', true), ('existing-active', false);"
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.place ({columns}); CREATE TABLE {schema}.place_world_local ({columns}); CREATE TABLE {schema}.place_moderation (place_id text PRIMARY KEY, disabled boolean, reason text); CREATE TABLE {schema}.world_scene_place (identity uuid PRIMARY KEY, world_name text, active boolean); CREATE TABLE {schema}.scene_admins (place_id text, admin_address text, added_by text, active boolean); CREATE VIEW {schema}.place_indexed AS SELECT * FROM {schema}.place UNION ALL SELECT * FROM {schema}.place_world_local; INSERT INTO {schema}.place (id, disabled) VALUES ('existing-disabled', true), ('existing-active', false);"
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(older.clone()))
             .execute(&pool)
@@ -1537,7 +1745,8 @@ mod tests {
             .next()
             .unwrap();
         let newer = format!("{older}\n-- A sparse removal outbox.{additions}")
-            .replace("explore.", &format!("{schema}."));
+            .replace("explore.", &format!("{schema}."))
+            .replace("social.", &format!("{schema}."));
         let done = migrate(&pool, &newer, "").await.unwrap();
         assert!(
             done.created.iter().any(
@@ -1551,6 +1760,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seeded, 1);
+        let notify: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT notify FROM {schema}.place_removal_pending WHERE place_id='existing-disabled'"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !notify,
+            "first-activation seed must retain cleanup without historical notices"
+        );
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {schema}.place WHERE id = 'existing-active'"
         )))
@@ -1566,6 +1785,16 @@ mod tests {
         assert_eq!(
             captured, 2,
             "trigger captures removals from preexisting tables"
+        );
+        let notify: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT notify FROM {schema}.place_removal_pending WHERE place_id='existing-active'"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            notify,
+            "live removals remain enabled after historical seeding"
         );
         assert!(migrate(&pool, &newer, "").await.unwrap().is_empty());
         let after: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -1619,6 +1848,68 @@ mod tests {
         ));
         changed.name.push_str("_another");
         assert!(!step_retired(&changed, 3).unwrap());
+    }
+
+    #[tokio::test]
+    async fn streaming_recipient_upgrade_preserves_scalar_intents_and_delivery_progress() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("stream_notice_mig_{}", uuid::Uuid::new_v4().simple());
+        let older = format!(
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.scene_stream_cleanup (recipient text,metadata jsonb); CREATE TABLE {schema}.place_removal_pending (owner_address text); INSERT INTO {schema}.scene_stream_cleanup VALUES ('saved-owner','{{\"title\":\"saved\"}}'); INSERT INTO {schema}.place_removal_pending VALUES ('place-owner');"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(older))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let steps = parse_steps(crate::MIGRATIONS_SQL);
+        let step = steps
+            .iter()
+            .find(|s| s.name == "0058_streaming_notification_recipients")
+            .unwrap();
+        lint_steps(std::slice::from_ref(step)).unwrap();
+        let sql = step
+            .sql
+            .replace("social.", &format!("{schema}."))
+            .replace("explore.", &format!("{schema}."));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state:(String,String,Vec<String>,bool,i32)=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT recipient,metadata->>'title',recipients,recipients_resolved,recipient_cursor FROM {schema}.scene_stream_cleanup")))
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            state,
+            ("saved-owner".into(), "saved".into(), vec![], false, 0)
+        );
+        let state:(String,bool,bool,i32)=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT owner_address,notify,recipients_resolved,recipient_cursor FROM {schema}.place_removal_pending")))
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(state, ("place-owner".into(), true, false, 0));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("UPDATE {schema}.scene_stream_cleanup SET recipients='{{saved-owner,admin}}',recipients_resolved=true,recipient_cursor=1; UPDATE {schema}.place_removal_pending SET recipients='{{place-owner,admin}}',recipients_resolved=true,recipient_cursor=1,notify=false;")))
+            .execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state: (bool, i32) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT recipients_resolved,recipient_cursor FROM {schema}.scene_stream_cleanup"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (true, 1));
+        let state: (bool, i32, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT recipients_resolved,recipient_cursor,notify FROM {schema}.place_removal_pending"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (true, 1, false));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -1685,6 +1976,7 @@ mod tests {
             "ALTER TABLE a.t ALTER COLUMN c DROP NOT NULL",
             "ALTER TYPE a.kind ADD VALUE IF NOT EXISTS 'x'",
             "CREATE OR REPLACE FUNCTION a.f() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$",
+            "CREATE OR REPLACE TRIGGER a_t AFTER INSERT ON a.t FOR EACH ROW EXECUTE FUNCTION a.f()",
             "CREATE FUNCTION a.f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1",
             "UPDATE a.t SET c = 1 WHERE c IS NULL",
             "COMMENT ON COLUMN a.t.c IS 'x'",

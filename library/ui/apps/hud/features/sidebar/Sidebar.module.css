@@ -1,0 +1,264 @@
+/* The navigation column: 42px circles at x=10 with 8px between them, a top group and a bottom
+   group pinned to the ends, on no surface of its own. translateZ(0)/contain isolate hover paints
+   from the engine's per-frame work on the shared main thread (same document). */
+.root {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 52px;
+  /* A reference-height box scaled by --ui-scale, so the column and what opens beside it track
+     the viewport together. */
+  height: calc(100% / var(--ui-scale));
+  /* Above the minimap and chat, so the hover labels aren't covered. */
+  z-index: calc(var(--z-hud) + 1);
+  transform: scale(var(--ui-scale)) translateZ(0);
+  transform-origin: top left;
+  contain: layout;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 3px 0 10px 10px;
+  box-sizing: border-box;
+  /* the world between the two groups takes the pointer */
+  pointer-events: none;
+  /* the hover labels: 36px high, 13px from the edge to the text, 12px corners (the shared Tooltip
+     reads these) */
+  --tooltip-pad: 9.5px 13px;
+  --tooltip-radius: var(--r-md);
+  /* Auto-hide: slide the column off-screen; `translate` composes with the scale transform. */
+  transition: translate 0.2s ease;
+}
+.root[data-hidden='true'] {
+  translate: -100% 0;
+}
+/* With auto-hide on, the whole column takes the pointer: entering and leaving it drive the hide. */
+.root[data-autohide='true'] {
+  pointer-events: auto;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 42px;
+  pointer-events: auto;
+}
+/* The bell closes the top group, 3px further from System than the pitch. */
+.top > :last-child {
+  margin-top: 3px;
+}
+/* Chat closes the bottom group; its badge sits lower than the bell's (IconButton reads these). */
+.group:not(.top) > :last-child {
+  --rail-badge-top: 7.4px;
+  --rail-badge-right: 5.5px;
+}
+
+/* The optional debug launcher at the screen's bottom right. */
+button.debugLauncher {
+  position: fixed;
+  right: calc(8px * var(--ui-scale));
+  bottom: calc(8px * var(--ui-scale));
+  z-index: var(--z-hud);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--r-button);
+  background: var(--panel-translucent);
+  transform: scale(var(--ui-scale));
+  transform-origin: bottom right;
+}
+
+/* The second copy of a raster glyph, over the first (see RasterButton). */
+.root button > .overlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+/* The "..." handle: a 42x26 target holding a 42x12 pill 7px down, 3px above the Me button. The
+   pill looks the same at rest, under the pointer and while its menu is open. */
+.root button.handle,
+.root button.handle:hover:not(:disabled) {
+  width: 42px;
+  height: 26px;
+  min-height: 0;
+  margin-bottom: -5px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.handlePill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 12px;
+  border-radius: var(--r-xs);
+  background: var(--rail-bg);
+  color: var(--text);
+}
+
+/* Invisible strip on the screen edge that brings a hidden column back. */
+.reveal {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  z-index: var(--z-hud);
+}
+
+/* What a button opens beside the column. useRailPopover sets top and left: 14px right of the
+   button, the top a panel's own rise above the button's top. */
+.panelHost {
+  position: fixed;
+  z-index: calc(var(--z-hud) + 1);
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+}
+/* without a rise the hook hands the button's centre line */
+.centred {
+  transform: translateY(-50%) scale(var(--ui-scale));
+  transform-origin: left center;
+}
+
+/* The Volume popover: the label over its slider, 192 wide inside 16px of padding. */
+div.volume {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 224px;
+  padding: 16px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-rail-panel);
+  color: var(--text);
+  font-family: var(--font-family);
+}
+.volumeLabel {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+}
+/* the slider's 26px pin stands 7px past its 12px track on both sides */
+.volumeSlider {
+  display: flex;
+  align-items: center;
+  height: 27px;
+  --slider-rail-track: var(--slider-track-solid);
+}
+
+/* The "..." menu: 255x40 beside the handle, one 36px row inside 2px of padding. */
+div.config {
+  position: fixed;
+  left: calc(64px * var(--ui-scale));
+  top: calc(10px * var(--ui-scale));
+  z-index: calc(var(--z-hud) + 1);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
+  width: 255px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  font-family: var(--font-family);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+  color: var(--text);
+  box-shadow: none;
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+}
+/* The label starts 12px in and the switch ends 13px from the right edge, which leaves about 7px
+   between them: the gap is only the least they keep. */
+.configRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 13px 0 12px;
+  white-space: nowrap;
+  /* the 39x24 switch with a 19px knob (the shared Switch reads these) */
+  --toggle-pad: 2.5px;
+  --toggle-off: var(--switch-off-rail);
+  --toggle-knob: var(--text);
+  --toggle-knob-shadow: none;
+}
+/* Under the open menu: a press outside it closes the menu and goes no further, so the menu's rows
+   never share a hit area with what they lie over. */
+.configBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-hud) + 1);
+}
+/* The debug row, a row like the switch's. */
+.configExtra {
+  height: 36px;
+  margin: 0 2px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.configExtra:hover {
+  background: var(--fill-3);
+}
+
+/* Nearby Voice while the player hears nobody: the glyph steps back. */
+.root .voiceOff > img {
+  opacity: 0.5;
+}
+/* Speaking bars on the voice button, where the glyph's sound waves are: 2px dots while quiet, a
+   ping-pong wave while heard. */
+.root .bars {
+  position: absolute;
+  left: 27px;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 1.54px;
+  height: 10px;
+  transform: translateY(-50%);
+}
+.bars i {
+  width: 2px;
+  height: 2px;
+  border-radius: var(--r-pill);
+  background: var(--voice-green);
+  transition: height 100ms linear;
+}
+.bars[data-live='true'] i {
+  animation: bar-edge 300ms ease-in-out infinite alternate;
+}
+.bars[data-live='true'] i:nth-child(2) {
+  animation-name: bar-mid;
+}
+@keyframes bar-edge {
+  from {
+    height: 4px;
+  }
+  to {
+    height: 10px;
+  }
+}
+@keyframes bar-mid {
+  from {
+    height: 10px;
+  }
+  to {
+    height: 4px;
+  }
+}

@@ -162,6 +162,18 @@ function breakpointOrder(layout: TokenCollection, index: TokenIndex) {
   return modes.sort((a, b) => a.min - b.min)
 }
 
+// The foundations breakpoints (layout.ts `breakpoints`): each Layout mode, camelCased, and its minimum width. Only a
+// captured layout/breakpoint-min counts: without it there are no breakpoints, never positional stand-ins, so a
+// responsive axis fails generation instead of emitting media queries at 0, 1 and 2px.
+function layoutBreakpoints(collections: TokenCollection[]): Map<string, number> {
+  const layout = collections.find((collection) => collection.name === 'Layout')
+  if (!layout?.variables.some((token) => token.name === 'layout/breakpoint-min')) return new Map()
+  const ordered = breakpointOrder(layout, new TokenIndex(collections))
+  return new Map(
+    ordered.filter(({ min }) => Number.isFinite(min)).map(({ mode, min }) => [camelCase(mode), min])
+  )
+}
+
 function layoutTokens(layout: TokenCollection, index: TokenIndex) {
   const ordered = breakpointOrder(layout, index)
   const variables = layout.variables.filter((v) => v.name !== 'layout/breakpoint-min')
@@ -443,6 +455,7 @@ export {
   generateFoundations,
   generateTokens,
   gradientToCss,
+  layoutBreakpoints,
   SUPPORTED_PRIMITIVE_EXCLUSIONS,
   TokenIndex
 }

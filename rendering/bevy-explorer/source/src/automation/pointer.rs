@@ -65,16 +65,20 @@ pub use machine::{
 };
 use machine::{ENTITY_NOT_LIVE, HUD_HOLDS_INPUT};
 
-pub(crate) fn register(app: &mut App) {
-    app.init_resource::<PointerJob>()
-        .add_console_command::<HoverEntityCommand, _>(hover_entity_cmd)
-        .add_console_command::<ClickEntityCommand, _>(click_entity_cmd)
-        .add_systems(
-            Update,
-            (settle_release, drive_pointer_job)
-                .chain()
-                .after(SceneSets::Input),
-        );
+pub(crate) struct AutomationPointerPlugin;
+
+impl Plugin for AutomationPointerPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PointerJob>()
+            .add_console_command::<HoverEntityCommand, _>(hover_entity_cmd)
+            .add_console_command::<ClickEntityCommand, _>(click_entity_cmd)
+            .add_systems(
+                Update,
+                (settle_release, drive_pointer_job)
+                    .chain()
+                    .after(SceneSets::Input),
+            );
+    }
 }
 
 /// The input script step pressing or releasing `binding`; `None` for a gamepad binding.
@@ -225,7 +229,6 @@ impl Job {
 /// release, once the release has been played and the pointer pipeline has run after it
 /// ([`settle_release`]), so the release lands on the aimed entity and no new command takes the aim
 /// before it does.
-#[allow(clippy::too_many_arguments)]
 fn wind_down(
     jobs: &mut PointerJob,
     synthetic: &mut SyntheticPointer,
@@ -681,7 +684,6 @@ fn target_seen(
 
 /// Follows the running job each frame after the pointer pipeline: snapshots what the pipeline
 /// saw, steps the machine, plays its presses and releases, and answers when it finishes.
-#[allow(clippy::too_many_arguments)]
 fn drive_pointer_job(
     mut jobs: ResMut<PointerJob>,
     frame: Res<FrameCount>,

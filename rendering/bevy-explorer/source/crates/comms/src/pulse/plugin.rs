@@ -25,6 +25,7 @@
 use std::sync::{Arc, OnceLock};
 
 use alloy_core::primitives::Address;
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task};
 use common::{
@@ -52,11 +53,13 @@ use super::transport::{
 };
 use super::{LocalEmote, PulseCtx, PulseDecoder, PulseEvent, PulseParcelGrid};
 use crate::global_crdt::{
-    CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage, PlayerUpdate, SceneRealms,
+    process_transport_updates, CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage,
+    PlayerUpdate, SceneRealms,
 };
 use crate::profile::CurrentUserProfile;
+use crate::room_connection::{FailureKind, RealmRoom, RoomRecovery};
 use crate::{NetworkMessage, Transport, TransportType};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 
 /// Realm to announce verbatim, instead of deriving one from the realm we're in — `--pulse-realm`
 /// on a `--server-mode` engine. The orchestrator that spawns a local-preview server already knows
@@ -166,6 +169,14 @@ pub(crate) struct PulseSession {
     /// The realm the pending or accepted handshake's initial state carried. The server holds the
     /// player there, so acceptance needs no teleport into it.
     initial_realm: Option<String>,
+    /// A teleport was skipped because the player stood outside the parcel grid: the server still
+    /// places them where the last one did, or nowhere. Sent from the player's position, in the
+    /// realm current then, once they are back inside ([`pulse_teleport_on_grid_reentry`]).
+    teleport_owed: bool,
+    /// The realm the server holds the player in on this connection, as far as we know: the
+    /// handshake's initial state, then each teleport offered. A teleport into another realm is
+    /// never owed: a realm the server never hears of would leave the avatar frozen in the old one.
+    placed_realm: Option<String>,
     state: Connection,
 }
 
@@ -435,6 +446,14 @@ impl Announcement {
 }
 
 impl PulseSession {
+    /// Watchdog input: authenticated multiplayer health and intentional/terminal suspension.
+    pub(crate) fn connectivity(&self) -> (bool, bool) {
+        (
+            matches!(self.state, Connection::Established),
+            matches!(self.state, Connection::Paused | Connection::Dead),
+        )
+    }
+
     fn connection_enabled(&self, no_render: bool) -> Result<bool, &'static str> {
         if no_render || common::structs::server_mode() {
             return Err("Only a graphical player client can control the Pulse connection");
@@ -543,7 +562,7 @@ pub struct PulsePlugin;
 
 impl Plugin for PulsePlugin {
     fn build(&self, app: &mut App) {
-        debug::register(app);
+        app.add_plugins(debug::PulseDebugPlugin);
         app.add_event::<PlayerTeleported>();
         app.add_systems(Startup, configure_pulse);
         app.add_systems(
@@ -554,7 +573,9 @@ impl Plugin for PulsePlugin {
                 // re-announce that `follow_realm` may send can't carry the previous realm's one.
                 resolve_lsd_realm,
                 follow_realm,
-                pump_pulse,
+                // On the threaded executor, the drain could empty the channel between a join
+                // and its snapshot. Finish pumping before applying membership.
+                pump_pulse.before(process_transport_updates),
                 drain_pulse_outbox,
             )
                 .chain()
@@ -574,7 +595,13 @@ impl Plugin for PulsePlugin {
                     .before(resolve_lsd_realm),
             );
         }
-        app.add_systems(Update, pulse_teleport_on_local_move);
+        app.add_systems(
+            Update,
+            (
+                pulse_teleport_on_local_move,
+                pulse_teleport_on_grid_reentry.after(pulse_teleport_on_local_move),
+            ),
+        );
     }
 }
 
@@ -718,6 +745,8 @@ fn connect_pulse(
         policy: ReconnectPolicy::default(),
         accepted: false,
         initial_realm: None,
+        teleport_owed: false,
+        placed_realm: None,
         state: Connection::Down { respawn_at: 0.0 },
     });
 
@@ -809,6 +838,8 @@ fn follow_realm(
     // flight, or as the bucket refills, it would put the player back there.
     if realm_changed {
         session.pacer.drop_waiting(FrameKind::Teleport);
+        // The dropped teleport may be the edge placement; the server never saw that realm.
+        session.placed_realm = None;
     }
     // Already up (a later realm) → re-teleport now, unless out of world (position provisional behind
     // the loading screen); the spawn `PlayerTeleported` re-announces realm + position. Otherwise the
@@ -896,7 +927,6 @@ fn release_paced(session: &mut PulseSession, now: f64) {
 }
 
 /// Drain status + inbound bytes each frame; advance the connection; decode and dispatch.
-#[allow(clippy::too_many_arguments)]
 fn pump_pulse(
     session: Option<ResMut<PulseSession>>,
     realm: Res<CurrentRealm>,
@@ -906,6 +936,7 @@ fn pump_pulse(
     profile: Option<Res<CurrentUserProfile>>,
     sinks: Query<&PulseSink>,
     world_hold: Option<Res<WorldHold>>,
+    mut realm_rooms: Query<&mut RoomRecovery, With<RealmRoom>>,
 ) {
     let Some(session) = session else {
         return;
@@ -921,7 +952,16 @@ fn pump_pulse(
         .and_then(|p| p.peer_profile().map(|p| p.version as i32))
         .unwrap_or(0);
 
-    drain_status(session, &sinks, now);
+    if drain_status(session, &sinks, now) && matches!(session.role, PulseRole::Player(_)) {
+        // Another device of this wallet signed in. The archipelago replaces only this device's
+        // own socket, so Pulse is what tells this one: the island ends too, in the identity
+        // conflict nothing retries, until a realm change replaces the realm's rooms as it ends
+        // this terminal stop. Their owners close what is still open.
+        warn!("pulse: another device of this wallet took the session over — ending the island");
+        for mut recovery in &mut realm_rooms {
+            recovery.failure = Some(FailureKind::IdentityConflict);
+        }
+    }
     drive_connection(
         session,
         &sinks,
@@ -942,7 +982,56 @@ fn pump_pulse(
         profile_version,
         now,
     );
+    retry_resyncs(session, Instant::now(), now);
     flush_listener_aoi(session, now);
+}
+
+fn retry_resyncs(session: &mut PulseSession, now: Instant, stats_now: f64) {
+    if matches!(session.state, Connection::Established) && session.link.is_some() {
+        for event in session.decoder.retry_resyncs(now) {
+            if let PulseEvent::Resync(request) = event {
+                send_resync(
+                    session.link.as_mut(),
+                    &mut session.resyncs,
+                    &mut session.decoder,
+                    request,
+                    stats_now,
+                );
+            }
+        }
+    }
+}
+
+/// Initial requests and timed retries share enqueue accounting. A full queue keeps the decoder's
+/// deadline, so it cannot turn incoming gap bursts into immediate send attempts.
+fn send_resync(
+    link: Option<&mut PulseLink>,
+    resyncs: &mut [(u64, u32); 60],
+    decoder: &mut PulseDecoder,
+    request: pulse::ResyncRequest,
+    now: f64,
+) -> bool {
+    let subject_id = request.subject_id;
+    let message = pulse::ClientMessage {
+        message: Some(pulse::client_message::Message::Resync(request)),
+    };
+    let sent = link.is_some_and(|link| {
+        link.send(PulseFrame {
+            bytes: message.encode_to_vec(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
+        })
+    });
+    if sent {
+        decoder.resync_sent(subject_id);
+        let second = now as u64;
+        let bucket = &mut resyncs[(second % 60) as usize];
+        if bucket.0 != second {
+            *bucket = (second, 0);
+        }
+        bucket.1 += 1;
+    }
+    sent
 }
 
 /// Deliver a `PulseDecoder::replay` of the realm just entered, the frame after `follow_realm` flagged
@@ -1043,8 +1132,10 @@ fn forward_movement(
 /// `try_recv`, so the arms are free to mutate `session`. A `Disconnected`/`Failed` status is the
 /// driver signing off, handled as the teardown; a bare channel close means it vanished with no word
 /// (e.g. panicked) — the fallback teardown. Either way `lost_connection` nulls the link, ending the
-/// loop and making a status-then-close sequence idempotent.
-fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) {
+/// loop and making a status-then-close sequence idempotent. Returns whether the server ended the
+/// session for a newer one of the same wallet (`DuplicateSession`).
+fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) -> bool {
+    let mut taken_over = false;
     while let Some(status) = session.link.as_mut().map(|link| link.status.try_recv()) {
         match status {
             Ok(PulseStatus::Connecting) => debug!("pulse: connecting"),
@@ -1056,6 +1147,7 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
             Ok(PulseStatus::Disconnected(reason)) => {
                 warn!("pulse: disconnected ({reason:?})");
+                taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
                 let accepted = session.accepted;
                 lost_connection(
                     session,
@@ -1077,13 +1169,13 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
             }
         }
     }
+    taken_over
 }
 
 /// Advance the connection one step. `Down` (re)builds the driver; `Connecting` waits passively for
 /// the transport-up status; signing waits additionally for an identity (`PulseConfig` may be present
 /// before login). A connection carries one handshake: a sign error or a response timeout closes it,
 /// as a rejection does, and the next attempt is a new connection.
-#[allow(clippy::too_many_arguments)]
 fn drive_connection(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1153,6 +1245,9 @@ fn drive_connection(
             }
             if let Announcement::Player { initial_state, .. } = &announcement {
                 session.initial_realm = initial_state.as_ref().map(|state| state.realm.clone());
+                // An initial state places the player afresh.
+                session.teleport_owed &= initial_state.is_none();
+                session.placed_realm = session.initial_realm.clone();
             }
             let wallet = wallet.clone();
             let server_id = session.server_id.clone();
@@ -1252,28 +1347,13 @@ fn drain_inbound(
                 }
                 // A sequence gap was detected — ask the server to replay full state, reliably.
                 PulseEvent::Resync(request) => {
-                    let subject_id = request.subject_id;
-                    let message = pulse::ClientMessage {
-                        message: Some(pulse::client_message::Message::Resync(request)),
-                    };
-                    let sent = session.link.as_mut().is_some_and(|link| {
-                        link.send(PulseFrame {
-                            bytes: message.encode_to_vec(),
-                            reliability: PulseReliability::Reliable,
-                            kind: FrameKind::Control,
-                        })
-                    });
-                    if sent {
-                        let second = now as u64;
-                        let bucket = &mut session.resyncs[(second % 60) as usize];
-                        if bucket.0 != second {
-                            *bucket = (second, 0);
-                        }
-                        bucket.1 += 1;
-                    } else {
-                        // Unsent, it would hold back every later request for the subject.
-                        session.decoder.resync_not_sent(subject_id);
-                    }
+                    send_resync(
+                        session.link.as_mut(),
+                        &mut session.resyncs,
+                        &mut session.decoder,
+                        request,
+                        now,
+                    );
                 }
                 // Emote start/stop are delivered natively (`PlayerMessage::EmoteStart` / `EmoteStop`)
                 // rather than as an rfc4 `PlayerEmote`: byte-transport emotes are dropped as
@@ -1415,7 +1495,6 @@ fn lost_connection(
 /// `TeleportRequest` announcing our realm + position, so the server begins streaming same-realm
 /// peers (peers in different realms never see each other) — unless the handshake's initial state
 /// has put us in this realm already. Then announce the profile version, once there is one.
-#[allow(clippy::too_many_arguments)]
 fn on_handshake_response(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
@@ -1481,7 +1560,6 @@ fn is_local_realm(realm: &CurrentRealm) -> bool {
 /// Keep a listening server's routing in step with the scenes it hosts: which context owns each
 /// hosted parcel, a Pulse `Transport` per context, and the AoI the whole lot adds up to.
 /// Registered in server mode only — a client has no listener and no server contexts.
-#[allow(clippy::too_many_arguments)]
 fn update_listener_aoi(
     mut commands: Commands,
     session: Option<ResMut<PulseSession>>,
@@ -1492,13 +1570,41 @@ fn update_listener_aoi(
     realm: Res<CurrentRealm>,
     states: Query<&GlobalCrdtState>,
     existing: Query<(Entity, &Transport), With<PulseSink>>,
+    added_states: Query<(), Added<GlobalCrdtState>>,
     mut announced_default: Local<Option<String>>,
+    mut scene_definitions: Local<HashSet<AssetId<EntityDefinition>>>,
+    mut rebuild_pending: Local<bool>,
 ) {
-    // The whole map is rebuilt from scratch below, so only do it when one of its four inputs moved:
-    // the loaded definitions, the scene→context registry, the orchestrator's scene→realm map, or
-    // the realm a scene without one of its own falls back to. Drained unconditionally — leaving
-    // events unread just means reading a bigger backlog next frame.
-    let definitions_changed = definition_events.read().count() > 0;
+    // The whole map is rebuilt from scratch below, so only do it when one of its inputs moved: the
+    // loaded scene definitions, the scene→context registry, a context's state landing (spawned by
+    // deferred commands after its registration), the orchestrator's scene→realm map, or the realm a
+    // scene without one of its own falls back to. Drained unconditionally — leaving events unread
+    // just means reading a bigger backlog next frame.
+    let mut definitions_changed = false;
+    for event in definition_events.read() {
+        definitions_changed |= match *event {
+            AssetEvent::Added { id } | AssetEvent::Modified { id } => {
+                // profiles and wearables have no parcel pointers and never touch the map
+                if definitions
+                    .get(id)
+                    .is_some_and(|d| definition_parcels(d).next().is_some())
+                {
+                    scene_definitions.insert(id);
+                    true
+                } else {
+                    scene_definitions.remove(&id)
+                }
+            }
+            // the asset is already gone, so only the record of what it was is left to ask
+            AssetEvent::Removed { id } => scene_definitions.remove(&id),
+            AssetEvent::Unused { .. } | AssetEvent::LoadedWithDependencies { .. } => false,
+        };
+    }
+    // kept until a complete rebuild, so a change seen before the listener exists is not lost
+    *rebuild_pending |= definitions_changed
+        || crdt_contexts.is_changed()
+        || scene_realms.is_changed()
+        || !added_states.is_empty();
 
     let Some(session) = session else {
         return;
@@ -1515,13 +1621,10 @@ fn update_listener_aoi(
     // the key in at any time.
     let default_realm = announced_realm(session, &realm);
     let default_changed = *announced_default != default_realm;
-    if !definitions_changed
-        && !default_changed
-        && !crdt_contexts.is_changed()
-        && !scene_realms.is_changed()
-    {
+    if !*rebuild_pending && !default_changed {
         return;
     }
+    *rebuild_pending = false;
     announced_default.clone_from(&default_realm);
 
     let Some(listener) = session.role.listener_mut() else {
@@ -1534,11 +1637,9 @@ fn update_listener_aoi(
     // wearables) point at addresses and urns, so they fall out of the parse; a scene whose context
     // isn't registered yet simply isn't routable yet, and gets picked up on a later frame.
     let mut context_by_parcel: HashMap<String, HashMap<IVec2, Entity>> = HashMap::default();
+    let mut live_contexts: HashSet<Entity> = HashSet::default();
     for (_, definition) in definitions.iter() {
-        let mut parcels = definition.pointers.iter().filter_map(|pointer| {
-            let (x, z) = pointer.split_once(',')?;
-            Some(IVec2::new(x.trim().parse().ok()?, z.trim().parse().ok()?))
-        });
+        let mut parcels = definition_parcels(definition);
         let Some(first) = parcels.next() else {
             continue;
         };
@@ -1552,6 +1653,7 @@ fn update_listener_aoi(
         else {
             continue;
         };
+        live_contexts.insert(context);
         let realm_parcels = context_by_parcel.entry(scene_realm).or_default();
         for parcel in std::iter::once(first).chain(parcels) {
             realm_parcels.insert(parcel, context);
@@ -1569,9 +1671,7 @@ fn update_listener_aoi(
     // carrying (the despawn observer sweeps them out of `ForeignPlayer.transports`) — the same
     // teardown a scene room gets when its room goes away.
     transport_for.retain(|context, transport| {
-        let keep = context_by_parcel
-            .values()
-            .any(|parcels| parcels.values().any(|c| c == context));
+        let keep = live_contexts.contains(context);
         if !keep {
             if let Ok(mut entity) = commands.get_entity(*transport) {
                 entity.despawn();
@@ -1580,14 +1680,12 @@ fn update_listener_aoi(
         keep
     });
 
-    for context in context_by_parcel
-        .values()
-        .flat_map(|parcels| parcels.values().copied())
-    {
+    for &context in &live_contexts {
         if transport_for.contains_key(&context) {
             continue;
         }
         let Ok(state) = states.get(context) else {
+            // spawned by deferred commands: `added_states` brings it back once the state lands
             continue;
         };
         // A whole transport, both halves, exactly like a client's: inbound state for this context
@@ -1630,22 +1728,36 @@ fn update_listener_aoi(
     let mut aoi: Vec<_> = listener
         .transport_by_parcel
         .iter()
-        .map(|(realm, parcels)| pulse::SceneListenerAoi {
-            realm: realm.clone(),
-            parcel_rects: scene_regions(parcels.keys().copied())
-                .into_iter()
-                .map(|region| pulse::ParcelRect {
-                    min_x: region.min.x,
-                    min_z: region.min.y,
-                    max_x: region.max.x,
-                    max_z: region.max.y,
-                })
-                .collect(),
+        .map(|(realm, parcels)| {
+            // ordered input: rects come out in its order
+            let mut parcels: Vec<IVec2> = parcels.keys().copied().collect();
+            parcels.sort_unstable_by_key(|p| (p.x, p.y));
+            pulse::SceneListenerAoi {
+                realm: realm.clone(),
+                parcel_rects: scene_regions(parcels.into_iter())
+                    .into_iter()
+                    .map(|region| pulse::ParcelRect {
+                        min_x: region.min.x,
+                        min_z: region.min.y,
+                        max_x: region.max.x,
+                        max_z: region.max.y,
+                    })
+                    .collect(),
+            }
         })
         .collect();
     aoi.sort_by(|a, b| a.realm.cmp(&b.realm));
 
     set_listener_aoi(session, aoi);
+}
+
+/// The parcels a definition points at. Only scenes have any: profiles and wearables point at
+/// addresses and urns.
+fn definition_parcels(definition: &EntityDefinition) -> impl Iterator<Item = IVec2> + '_ {
+    definition.pointers.iter().filter_map(|pointer| {
+        let (x, z) = pointer.split_once(',')?;
+        Some(IVec2::new(x.trim().parse().ok()?, z.trim().parse().ok()?))
+    })
 }
 
 /// Record the AoI we want observed. Before the handshake it decides what the handshake carries,
@@ -1932,9 +2044,28 @@ fn send_teleport_at(session: &mut PulseSession, realm: &CurrentRealm, world: Vec
     // Bevy render position → DCL world coords (the `-z` flip), then split into parcel + local —
     // exactly the inverse of how inbound state is decoded.
     let dcl = DclTranslation::from_bevy_translation(world).0;
-    let (parcel_index, local) = session
-        .grid
-        .encode_to_parcel(Vec3::new(dcl[0], dcl[1], dcl[2]));
+    let dcl = Vec3::new(dcl[0], dcl[1], dcl[2]);
+    // The server refuses an out-of-grid teleport for good. Within the realm it is owed until
+    // re-entry; into another realm it goes now from the nearest edge, and re-entry snaps again.
+    let encoded = match session.grid.encode_to_parcel(dcl) {
+        Some(encoded) => {
+            session.teleport_owed = false;
+            encoded
+        }
+        None => {
+            super::warn_out_of_grid(super::OutOfGrid::Teleport, dcl);
+            session.teleport_owed = true;
+            if session.placed_realm.as_deref() == Some(realm_name.as_str()) {
+                return;
+            }
+            let Some(edge) = session.grid.encode_clamped(dcl) else {
+                return;
+            };
+            edge
+        }
+    };
+    let (parcel_index, local) = encoded;
+    session.placed_realm = Some(realm_name.clone());
 
     let teleport = pulse::TeleportRequest {
         parcel_index,
@@ -1994,6 +2125,33 @@ fn pulse_teleport_on_local_move(
         return;
     };
     send_teleport_at(&mut session, &realm, position);
+}
+
+/// Send the teleport skipped outside the parcel grid once the player is back inside it.
+fn pulse_teleport_on_grid_reentry(
+    session: Option<ResMut<PulseSession>>,
+    realm: Res<CurrentRealm>,
+    player: Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
+) {
+    let Some(mut session) = session else {
+        return;
+    };
+    if !session.teleport_owed {
+        return;
+    }
+    // Behind the loading screen the position is provisional; the spawn teleport announces it.
+    let Ok((transform, false)) = player.single() else {
+        return;
+    };
+    let world = transform.translation();
+    let dcl = DclTranslation::from_bevy_translation(world).0;
+    if session
+        .grid
+        .encode_to_parcel(Vec3::new(dcl[0], dcl[1], dcl[2]))
+        .is_some()
+    {
+        send_teleport_at(&mut session, &realm, world);
+    }
 }
 
 /// What a handshake says about where the player already is: the last pose built, the realm it is
@@ -2083,7 +2241,8 @@ async fn build_auth_chain(wallet: &Wallet, server_id: &str) -> Result<Vec<u8>, S
         .map_err(|e| e.to_string())?;
 
     let mut dict = serde_json::Map::new();
-    for (key, value) in auth_chain.headers() {
+    for header in auth_chain.headers() {
+        let (key, value) = header.map_err(|e| e.to_string())?;
         dict.insert(key, serde_json::Value::String(value));
     }
     dict.insert(
@@ -2204,3 +2363,6 @@ mod tests {
 
 #[cfg(test)]
 mod connection_tests;
+
+#[cfg(test)]
+mod listener_aoi_tests;

@@ -32,6 +32,22 @@
 //! request; the community gc keeps a body younger than the blob collector's
 //! age floor.
 
+#[path = "fed_mutations.rs"]
+mod mutations;
+use mutations::{
+    ban, create, delete, is_valid_hash, join, leave, like, place_remove, places_add, post,
+    post_delete, request_status, role, unban, update,
+};
+#[path = "fed_feeds.rs"]
+mod feeds;
+pub use feeds::{ChangesQuery, changes, changes_view, snapshot, snapshot_view};
+#[path = "fed_content.rs"]
+mod content;
+#[cfg(test)]
+use content::collect;
+pub use content::{gc_content, get_content, put_content, spawn_job};
+use content::{lock_uploads, upload_lock_err, uploaded_body};
+
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -65,12 +81,19 @@ use crate::{
     CommunityStanding,
 };
 
+/// The feeds and bodies peers pull publish only entries written while their
+/// community was public; a later change of privacy changes neither way.
+const PUBLIC_ONLY: &str = "a.public_at_entry";
+
 pub const NONCES: &str = "social.community_seen_nonces";
 const DOMAIN: &str = "DecentralandCommunities";
 /// The router's body limit, which the envelope branch reads under.
 const BODY_LIMIT: usize = 512 * 1024;
-/// The old content store's `MAX_BODY_BYTES`.
-pub const MAX_CONTENT_BYTES: usize = 256 * 1024;
+/// A post body: at most `POST_CONTENT_MAX` characters of up to 4 bytes each.
+pub const MAX_CONTENT_BYTES: usize = super::posts::POST_CONTENT_MAX * 4;
+/// Uploaded bodies no post names yet, per uploader and across all of them.
+const MAX_UPLOADER_UNPOSTED_BYTES: i64 = 256 * 1024;
+const MAX_UNPOSTED_CONTENT_BYTES: i64 = 32 * 1024 * 1024;
 const DEFAULT_CHANGES: i64 = 500;
 const MAX_CHANGES: i64 = 5000;
 const SNAPSHOT_COMMUNITIES: i64 = 1000;
@@ -80,11 +103,20 @@ const GC_CHUNK: i64 = 1000;
 static LIMITER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(60)));
 
+/// Content uploads per signer.
+static CONTENT_LIMITER: LazyLock<RateLimiter> =
+    LazyLock::new(|| RateLimiter::new(30, Duration::from_secs(600)));
+
 fn ec(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
     buf.push(0);
 }
 
+// The stored payload of a role message (join, leave, role, ban, unban) is
+// projected onto the public `/federation/communities/changes` feed through
+// `feeds::public_role_payload`, which publishes only the fields it names. A
+// new field on one of these messages stays out of the feed until it is added
+// there.
 macro_rules! message {
     ($name:ident { $($field:ident : $ty:ty),* $(,)? } => |$s:ident, $b:ident| $body:block) => {
         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +334,7 @@ pub(super) fn requires_gateway_signer(method: &Method, path: &str) -> bool {
             && matches!(
                 path.split('/').collect::<Vec<_>>().as_slice(),
                 ["", "v1", "communities", _, "requests"]
+                    | ["", "federation", "communities", "content"]
             ))
 }
 
@@ -597,7 +630,10 @@ struct Entry {
     content_hash: Option<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded entry field"
+)]
 async fn record(
     conn: &mut PgConnection,
     signature_hash: &str,
@@ -610,8 +646,11 @@ async fn record(
 ) -> sqlx::Result<bool> {
     let res = sqlx::query(
         "INSERT INTO social.community_signed_actions \
-           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (signature_hash) DO NOTHING",
+           (signature_hash, community_id, community_uuid, kind, signer, target, role, action, content_hash, signed_at, payload, public_at_entry) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, \
+           COALESCE((SELECT NOT c.private FROM social.communities c WHERE c.id = $3), \
+                    NOT COALESCE(($11::jsonb ->> 'private')::boolean, false))) \
+         ON CONFLICT (signature_hash) DO NOTHING",
     )
     .bind(signature_hash)
     .bind(community_hex)
@@ -658,1282 +697,6 @@ async fn superseded(
 
 fn payload<T: Serialize>(message: &T) -> Value {
     serde_json::to_value(message).unwrap_or(Value::Null)
-}
-
-async fn create(ctx: &Ctx<'_>) -> Response {
-    let (signed, signer) = match preflight::<CommunityCreate>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    for check in [
-        validate::validate_name(&m.name),
-        validate::check_restricted_name(&m.name, &ctx.state.settings.restricted_names),
-        validate::validate_description(&m.description),
-    ] {
-        if let Err(e) = check {
-            return bad(e);
-        }
-    }
-    if !match ctx.state.has_owned_name(&signer).await {
-        Ok(owns) => owns,
-        Err(error) => return error.into_response(),
-    } {
-        return err_json(
-            StatusCode::UNAUTHORIZED,
-            format!("The user {signer} doesn't have any names"),
-        );
-    }
-    // The REST create's content check: a signed envelope is not a way around it.
-    if let Err(error) = ctx
-        .state
-        .validate_content(super::compliance::Content {
-            name: Some(&m.name),
-            description: Some(&m.description),
-            thumbnail: None,
-        })
-        .await
-    {
-        return error.into_response();
-    }
-    let community_hex = community_id_hex(signer.as_str(), &m.name, &signed.nonce);
-    let community = CommunityId::from_federation_hex(&community_hex);
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<bool> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.communities WHERE id = $1)").bind(community).fetch_one(&mut *tx).await?;
-        if exists {
-            return Ok(false);
-        }
-        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, $2, $3, $4, $5, $6)")
-            .bind(community)
-            .bind(&m.name)
-            .bind(&m.description)
-            .bind(&signer)
-            .bind(m.private)
-            .bind(m.unlisted)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner') ON CONFLICT (community_id, member_address) DO NOTHING")
-            .bind(community)
-            .bind(&signer)
-            .execute(&mut *tx)
-            .await?;
-        record(&mut tx, &signature_hash, &community_hex, community, &signer, signed.signed_at, &payload(m), &Entry { kind: "create", target: Some(signer.to_string()), role: Some("owner"), ..Default::default() }).await?;
-        tx.commit().await?;
-        Ok(true)
-    }
-    .await;
-    match applied {
-        Ok(true) => ok_with(
-            signature_hash,
-            json!({ "community_id": community_hex, "id": community.as_uuid(), "expected_id": community_hex }),
-        ),
-        Ok(false) => err_json(StatusCode::CONFLICT, "community already exists"),
-        Err(e) => db_err(e),
-    }
-}
-
-async fn update(ctx: &Ctx<'_>, id: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityUpdate>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    for check in [
-        validate::validate_name_opt(m.name.as_deref()),
-        validate::check_restricted_name_opt(
-            m.name.as_deref(),
-            &ctx.state.settings.restricted_names,
-        ),
-        validate::validate_description_opt(m.description.as_deref()),
-    ] {
-        if let Err(e) = check {
-            return bad(e);
-        }
-    }
-    if let Err(r) = require_permission(
-        ctx.state,
-        community,
-        &signer,
-        CommunityPermission::EditInfo,
-        "edit the community",
-    )
-    .await
-    {
-        return *r;
-    }
-    if m.name.is_some()
-        && let Err(r) = require_permission(
-            ctx.state,
-            community,
-            &signer,
-            CommunityPermission::EditName,
-            "edit the community name",
-        )
-        .await
-    {
-        return *r;
-    }
-    if (m.private.is_some() || m.unlisted.is_some())
-        && let Err(r) = require_permission(
-            ctx.state,
-            community,
-            &signer,
-            CommunityPermission::EditSettings,
-            "update the community privacy",
-        )
-        .await
-    {
-        return *r;
-    }
-    // The REST update's content check, gated the same way: only text that
-    // changes beyond case and surrounding whitespace is classified.
-    if m.name.is_some() || m.description.is_some() {
-        let current: Option<(String, String)> =
-            match sqlx::query_as("SELECT name, description FROM social.communities WHERE id = $1")
-                .bind(community)
-                .fetch_optional(&ctx.state.pool)
-                .await
-            {
-                Ok(current) => current,
-                Err(e) => return db_err(e),
-            };
-        let changed = |new: Option<&str>, old: fn(&(String, String)) -> &str| {
-            new.is_some_and(|new| {
-                current
-                    .as_ref()
-                    .is_some_and(|c| super::compliance::changed(new, old(c)))
-            })
-        };
-        if (changed(m.name.as_deref(), |c| &c.0) || changed(m.description.as_deref(), |c| &c.1))
-            && let Err(error) = ctx
-                .state
-                .validate_content(super::compliance::Content {
-                    name: m.name.as_deref(),
-                    description: m.description.as_deref(),
-                    thumbnail: None,
-                })
-                .await
-        {
-            return error.into_response();
-        }
-    }
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        sqlx::query(
-            "UPDATE social.communities SET name = COALESCE($2, name), description = COALESCE($3, description), \
-               private = COALESCE($4, private), unlisted = COALESCE($5, unlisted), updated_at = timezone('UTC', now()) WHERE id = $1",
-        )
-        .bind(community)
-        .bind(m.name.as_deref())
-        .bind(m.description.as_deref())
-        .bind(m.private)
-        .bind(m.unlisted)
-        .execute(&mut *tx)
-        .await?;
-        record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &Entry { kind: "update", ..Default::default() }).await?;
-        tx.commit().await
-    }
-    .await;
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-async fn delete(ctx: &Ctx<'_>, id: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityDelete>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let community = match path_community(id, &signed.message.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if let Err(r) = require_at_least(ctx.state, community, &signer, CommunityStanding::Owner).await
-    {
-        return *r;
-    }
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<bool> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        sqlx::query("UPDATE social.communities SET active = FALSE, updated_at = timezone('UTC', now()) WHERE id = $1").bind(community).execute(&mut *tx).await?;
-        let fresh = record(&mut tx, &signature_hash, &signed.message.community_id, community, &signer, signed.signed_at, &payload(&signed.message), &Entry { kind: "delete", ..Default::default() }).await?;
-        tx.commit().await?;
-        Ok(fresh)
-    }
-    .await;
-    if let Ok(true) = applied {
-        ctx.state.community_closed_to_worlds(community);
-    }
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-/// Logs a role action and projects it into the member row unless a newer
-/// one on the same member was logged first. `None` refuses a grant to a
-/// banned member: under the membership lock the REST writers take, a ban
-/// committed after the handler's pre-check is still seen.
-#[allow(clippy::too_many_arguments)]
-async fn apply_role_action<T: TypedMessage>(
-    state: &CommunitiesState,
-    signed: &Signed<T>,
-    community_hex: &str,
-    community: CommunityId,
-    signer: &Address,
-    member: &Address,
-    role: &'static str,
-    extra: impl AsyncFnOnce(&mut PgConnection) -> sqlx::Result<()>,
-) -> sqlx::Result<Option<String>> {
-    let signature_hash = signed.signature_hash();
-    let mut removed = false;
-    let grants = matches!(role, "member" | "mod" | "owner");
-    let mut guard = super::write_support::acquire_membership(&state.pool, community).await?;
-    let mut tx = guard.begin().await?;
-    if grants
-        && sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM social.community_bans \
-               WHERE community_id = $1 AND banned_address = $2 AND active)",
-        )
-        .bind(community)
-        .bind(member)
-        .fetch_one(&mut *tx)
-        .await?
-    {
-        return Ok(None);
-    }
-    if T::PRIMARY_TYPE == "CommunityJoin"
-        && sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM social.community_members WHERE community_id=$1 AND member_address=$2)",
-        )
-        .bind(community)
-        .bind(member)
-        .fetch_one(&mut *tx)
-        .await?
-    {
-        // Joining again preserves the existing role. Do not let this no-op
-        // create a newer role action that can suppress a real role update.
-        // Preflight already consumed the nonce, so replay still fails.
-        tx.commit().await?;
-        return Ok(Some(signature_hash));
-    }
-    let fresh = record(
-        &mut tx,
-        &signature_hash,
-        community_hex,
-        community,
-        signer,
-        signed.signed_at,
-        &payload(&signed.message),
-        &Entry {
-            kind: "role",
-            target: Some(member.to_string()),
-            role: Some(role),
-            ..Default::default()
-        },
-    )
-    .await?;
-    if fresh
-        && !superseded(
-            &mut tx,
-            community,
-            member.as_str(),
-            signed.signed_at,
-            &signature_hash,
-            matches!(T::PRIMARY_TYPE, "CommunityBan" | "CommunityUnban"),
-        )
-        .await?
-    {
-        match role {
-            _ if T::PRIMARY_TYPE == "CommunityUnban" => {
-                // Lifting a ban never revokes membership. Another moderator
-                // may already have unbanned this wallet and allowed it to rejoin.
-            }
-            _ if grants => {
-                let stored = CommunityRole::parse(role)
-                    .map(CommunityRole::as_stored_text)
-                    .unwrap_or("member");
-                let conflict = if T::PRIMARY_TYPE == "CommunityJoin" {
-                    "DO NOTHING"
-                } else {
-                    "DO UPDATE SET role = EXCLUDED.role"
-                };
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, $3) ON CONFLICT (community_id, member_address) {conflict}"
-                )))
-                .bind(community)
-                .bind(member)
-                .bind(stored)
-                .execute(&mut *tx)
-                .await?;
-            }
-            _ => {
-                removed = sqlx::query("DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2").bind(community).bind(member).execute(&mut *tx).await?.rows_affected() > 0;
-            }
-        }
-        extra(&mut tx).await?;
-    }
-    tx.commit().await?;
-    drop(guard);
-    if removed {
-        state.member_removed_from_worlds(community, member);
-    }
-    Ok(Some(signature_hash))
-}
-
-/// A role action that grants membership answers 403 when its member is banned.
-fn role_action_reply(result: sqlx::Result<Option<String>>) -> Response {
-    match result {
-        Ok(Some(signature_hash)) => ok(signature_hash),
-        Ok(None) => err_json(StatusCode::FORBIDDEN, "banned from community"),
-        Err(e) => db_err(e),
-    }
-}
-
-async fn join(ctx: &Ctx<'_>, id: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityJoin>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let community = match path_community(id, &signed.message.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    match super::queries::community_exists(&ctx.state.pool, community, false).await {
-        Ok(true) => {}
-        Ok(false) => return err_json(StatusCode::NOT_FOUND, "community not found"),
-        Err(e) => return db_err(e),
-    }
-    match super::queries::is_private(&ctx.state.pool, community).await {
-        Ok(true) => {
-            return err_json(
-                StatusCode::UNAUTHORIZED,
-                format!(
-                    "Cannot join private community {id} directly; a join request or invite is required"
-                ),
-            );
-        }
-        Ok(false) => {}
-        Err(e) => return db_err(e),
-    }
-    match is_banned(ctx.state, community, &signer).await {
-        Ok(true) => return err_json(StatusCode::FORBIDDEN, "banned from community"),
-        Ok(false) => {}
-        Err(r) => return *r,
-    }
-    role_action_reply(
-        apply_role_action(
-            ctx.state,
-            &signed,
-            &signed.message.community_id,
-            community,
-            &signer,
-            &signer,
-            "member",
-            async |_| Ok(()),
-        )
-        .await,
-    )
-}
-
-async fn leave(ctx: &Ctx<'_>, id: &str, address: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityLeave>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let community = match path_community(id, &signed.message.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if !signed.message.member.eq_ignore_ascii_case(signer.as_str()) {
-        return err_json(StatusCode::FORBIDDEN, "may only leave on behalf of self");
-    }
-    if !address.eq_ignore_ascii_case(signer.as_str()) {
-        return err_json(StatusCode::FORBIDDEN, "path address must match signer");
-    }
-    match load_standing(&ctx.state.pool, community, &signer).await {
-        Ok(s) if s.tier() == CommunityStanding::Owner => {
-            return err_json(
-                StatusCode::UNAUTHORIZED,
-                format!("The owner cannot leave the community {id}"),
-            );
-        }
-        Ok(_) => {}
-        Err(refusal) => return own_detail(&refusal),
-    }
-    role_action_reply(
-        apply_role_action(
-            ctx.state,
-            &signed,
-            &signed.message.community_id,
-            community,
-            &signer,
-            &signer,
-            "none",
-            async |_| Ok(()),
-        )
-        .await,
-    )
-}
-
-async fn role(ctx: &Ctx<'_>, id: &str, address: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityRoleUpdate>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if !m.target.eq_ignore_ascii_case(address) {
-        return bad("target must match path address");
-    }
-    let role: &'static str = match CommunityStanding::parse_supplied(&m.role) {
-        Some(CommunityStanding::Member) => "member",
-        Some(CommunityStanding::Moderator) => "mod",
-        _ => return bad("invalid role"),
-    };
-    if m.target.eq_ignore_ascii_case(signer.as_str()) {
-        return err_json(StatusCode::FORBIDDEN, "a user cannot update their own role");
-    }
-    let Ok(target) = Address::parse(&m.target) else {
-        return bad("target must match path address");
-    };
-    let (actor_standing, target_standing) =
-        match load_standing_pair(&ctx.state.pool, community, &signer, &target).await {
-            Ok(pair) => pair,
-            Err(refusal) => return own_detail(&refusal),
-        };
-    if !actor_standing.has(CommunityPermission::AssignRoles)
-        || !can_act_on_member(actor_standing.tier(), target_standing.tier())
-    {
-        return err_json(
-            StatusCode::FORBIDDEN,
-            "actor cannot assign roles for this member",
-        );
-    }
-    role_action_reply(
-        apply_role_action(
-            ctx.state,
-            &signed,
-            &m.community_id,
-            community,
-            &signer,
-            &target,
-            role,
-            async |_| Ok(()),
-        )
-        .await,
-    )
-}
-
-async fn ban(ctx: &Ctx<'_>, id: &str, address: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityBan>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if !m.target.eq_ignore_ascii_case(address) {
-        return bad("target must match path address");
-    }
-    let Ok(target) = Address::parse(&m.target) else {
-        return bad("target must match path address");
-    };
-    if let Err(refusal) =
-        CommunityBanAuthority::resolve(&ctx.state.pool, &signer, community, &target).await
-    {
-        return own_detail(&refusal);
-    }
-    let (reason, banned_by) = (m.reason.clone(), signer.clone());
-    let banned = target.clone();
-    let result = apply_role_action(ctx.state, &signed, &m.community_id, community, &signer, &target, "banned", async move |tx: &mut PgConnection| {
-        sqlx::query("DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2 AND status = 'pending'").bind(community).bind(&banned).execute(&mut *tx).await?;
-        sqlx::query(
-            "INSERT INTO social.community_bans (community_id, banned_address, banned_by, reason, active, banned_at) \
-             VALUES ($1, $2, $3, $4, TRUE, timezone('UTC', now())) \
-             ON CONFLICT (community_id, banned_address) DO UPDATE \
-               SET active = TRUE, banned_by = EXCLUDED.banned_by, reason = EXCLUDED.reason, banned_at = timezone('UTC', now()), \
-                   unbanned_by = NULL, unbanned_at = NULL",
-        )
-        .bind(community)
-        .bind(&banned)
-        .bind(&banned_by)
-        .bind(reason.as_deref())
-        .execute(&mut *tx)
-        .await?;
-        Ok(())
-    })
-    .await;
-    match result {
-        Ok(Some(sig)) => {
-            ctx.state
-                .evict_from_private_community_voice(community, &target)
-                .await;
-            ok(sig)
-        }
-        other => role_action_reply(other),
-    }
-}
-
-async fn unban(ctx: &Ctx<'_>, id: &str, address: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityUnban>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if !m.target.eq_ignore_ascii_case(address) {
-        return bad("target must match path address");
-    }
-    let Ok(target) = Address::parse(&m.target) else {
-        return bad("target must match path address");
-    };
-    if let Err(refusal) =
-        CommunityUnbanAuthority::resolve(&ctx.state.pool, &signer, community, &target).await
-    {
-        return own_detail(&refusal);
-    }
-    let (lifted, unbanned_by) = (target.clone(), signer.clone());
-    role_action_reply(apply_role_action(ctx.state, &signed, &m.community_id, community, &signer, &target, "none", async move |tx: &mut PgConnection| {
-        sqlx::query(
-            "UPDATE social.community_bans SET active = FALSE, unbanned_by = $3, unbanned_at = timezone('UTC', now()) \
-             WHERE community_id = $1 AND banned_address = $2 AND active",
-        )
-        .bind(community)
-        .bind(&lifted)
-        .bind(&unbanned_by)
-        .execute(&mut *tx)
-        .await?;
-        Ok(())
-    })
-    .await,
-    )
-}
-
-async fn places_add(ctx: &Ctx<'_>, id: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityPlacesAdd>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if let Err(r) = require_permission(
-        ctx.state,
-        community,
-        &signer,
-        CommunityPermission::AddPlaces,
-        "add places to the community",
-    )
-    .await
-    {
-        return *r;
-    }
-    if let Err(e) = ctx
-        .state
-        .validate_places_ownership(&m.place_ids, &signer)
-        .await
-    {
-        return e.into_response();
-    }
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        for (i, place) in m.place_ids.iter().enumerate() {
-            let entry = Entry { kind: "place", target: Some(place.clone()), action: Some("add".into()), ..Default::default() };
-            record(&mut tx, &format!("{signature_hash}-add-{i}"), &m.community_id, community, &signer, signed.signed_at, &json!({ "place_id": place, "action": "add" }), &entry).await?;
-        }
-        sqlx::query(
-            "INSERT INTO social.community_places (place_id, community_id, added_by) SELECT t.pid, $1, $2 FROM unnest($3::text[]) AS t(pid) \
-             ON CONFLICT (place_id, community_id) DO NOTHING",
-        )
-        .bind(community)
-        .bind(&signer)
-        .bind(&m.place_ids)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await
-    }
-    .await;
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-async fn place_remove(ctx: &Ctx<'_>, id: &str, place: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityPlaceRemove>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if m.place_id != place {
-        return bad("place_id mismatch");
-    }
-    if let Err(r) = require_permission(
-        ctx.state,
-        community,
-        &signer,
-        CommunityPermission::RemovePlaces,
-        "remove places from the community",
-    )
-    .await
-    {
-        return *r;
-    }
-    if let Err(e) = ctx
-        .state
-        .validate_places_ownership(std::slice::from_ref(&m.place_id), &signer)
-        .await
-    {
-        return e.into_response();
-    }
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        let entry = Entry {
-            kind: "place",
-            target: Some(m.place_id.clone()),
-            action: Some("remove".into()),
-            ..Default::default()
-        };
-        record(
-            &mut tx,
-            &signature_hash,
-            &m.community_id,
-            community,
-            &signer,
-            signed.signed_at,
-            &payload(m),
-            &entry,
-        )
-        .await?;
-        sqlx::query(
-            "DELETE FROM social.community_places WHERE place_id = $1 AND community_id = $2",
-        )
-        .bind(&m.place_id)
-        .bind(community)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await
-    }
-    .await;
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-fn is_valid_hash(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-async fn post(ctx: &Ctx<'_>, id: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityPost>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if let Err(r) = require_permission(
-        ctx.state,
-        community,
-        &signer,
-        CommunityPermission::CreatePosts,
-        "create posts in the community",
-    )
-    .await
-    {
-        return *r;
-    }
-    let body = registered_body(ctx.state, &m.content_hash.to_ascii_lowercase()).await;
-    if body.is_none() {
-        tracing::debug!(community_id = %m.community_id, content_hash = %m.content_hash, %signer, "CommunityPost accepted before its content body is here");
-    }
-    let text = body
-        .as_ref()
-        .and_then(|b| std::str::from_utf8(b).ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| m.content_hash.clone());
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        let entry = Entry { kind: "post", content_hash: Some(m.content_hash.clone()), ..Default::default() };
-        if record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await? {
-            sqlx::query("INSERT INTO social.community_posts (id, community_id, author_address, content) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING")
-                .bind(post_uuid(&signature_hash))
-                .bind(community)
-                .bind(&signer)
-                .bind(&text)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await
-    }
-    .await;
-    applied
-        .map(|_| {
-            ok_with(
-                signature_hash,
-                json!({ "content_body_local": body.is_some() }),
-            )
-        })
-        .unwrap_or_else(db_err)
-}
-
-/// `(community hex id, author)` of a logged post.
-async fn post_meta(
-    pool: &PgPool,
-    post_signature_hash: &str,
-) -> sqlx::Result<Option<(String, String)>> {
-    sqlx::query_as("SELECT community_id, signer FROM social.community_signed_actions WHERE signature_hash = $1 AND kind = 'post'").bind(post_signature_hash).fetch_optional(pool).await
-}
-
-async fn post_delete(ctx: &Ctx<'_>, id: &str, post: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityPostDelete>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let meta = match post_meta(&ctx.state.pool, &m.post_id).await {
-        Ok(meta) => meta,
-        Err(e) => return db_err(e),
-    };
-    let (post_community, author) = meta.map(|(c, a)| (c, Some(a))).unwrap_or_default();
-    if m.community_id != post_community || m.post_id != post {
-        return bad("post_id / community_id mismatch");
-    }
-    let community = CommunityId::from_federation_hex(&m.community_id);
-    let is_author = author
-        .as_deref()
-        .is_some_and(|a| a.eq_ignore_ascii_case(signer.as_str()));
-    let standing = match load_standing(&ctx.state.pool, community, &signer).await {
-        Ok(s) => s,
-        Err(refusal) => return own_detail(&refusal),
-    };
-    if !can_delete_post(standing.tier(), is_author) {
-        return err_json(
-            StatusCode::UNAUTHORIZED,
-            format!("The user {signer} doesn't have permission to delete posts from the community"),
-        );
-    }
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        record(
-            &mut tx,
-            &signature_hash,
-            &m.community_id,
-            community,
-            &signer,
-            signed.signed_at,
-            &payload(m),
-            &Entry {
-                kind: "post_delete",
-                target: Some(m.post_id.clone()),
-                ..Default::default()
-            },
-        )
-        .await?;
-        sqlx::query("DELETE FROM social.community_posts WHERE id = $1 AND community_id = $2")
-            .bind(post_uuid(&m.post_id))
-            .bind(community)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await
-    }
-    .await;
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-async fn like(ctx: &Ctx<'_>, id: &str, post: &str, liking: bool) -> Response {
-    let community = match Uuid::parse_str(id) {
-        Ok(u) => CommunityId::from_uuid(u),
-        Err(_) => return bad("invalid uuid"),
-    };
-    let (community_hex, post_id, signature_hash, signed_at, message, signer) = if liking {
-        let (signed, signer) = match preflight::<CommunityPostLike>(ctx).await {
-            Ok(x) => x,
-            Err(r) => return *r,
-        };
-        let m = signed.message.clone();
-        (
-            m.community_id.clone(),
-            m.post_id.clone(),
-            signed.signature_hash(),
-            signed.signed_at,
-            payload(&m),
-            signer,
-        )
-    } else {
-        let (signed, signer) = match preflight::<CommunityPostUnlike>(ctx).await {
-            Ok(x) => x,
-            Err(r) => return *r,
-        };
-        let m = signed.message.clone();
-        (
-            m.community_id.clone(),
-            m.post_id.clone(),
-            signed.signature_hash(),
-            signed.signed_at,
-            payload(&m),
-            signer,
-        )
-    };
-    if CommunityId::from_federation_hex(&community_hex) != community {
-        return bad("community_id mismatch");
-    }
-    if post_id != post {
-        return bad("post_id mismatch");
-    }
-    let private =
-        match sqlx::query_scalar::<_, bool>("SELECT private FROM social.communities WHERE id = $1")
-            .bind(community)
-            .fetch_optional(&ctx.state.pool)
-            .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => return err_json(StatusCode::NOT_FOUND, "community not found"),
-            Err(e) => return db_err(e),
-        };
-    let standing = match load_standing(&ctx.state.pool, community, &signer).await {
-        Ok(s) => s,
-        Err(refusal) => return own_detail(&refusal),
-    };
-    let tier = match is_banned(ctx.state, community, &signer).await {
-        Ok(true) => CommunityStanding::Banned,
-        Ok(false) => standing.tier(),
-        Err(r) => return *r,
-    };
-    if !can_like_post(tier, private) {
-        return err_json(
-            StatusCode::UNAUTHORIZED,
-            format!("{signer} cannot like/unlike posts in community {community_hex}"),
-        );
-    }
-    match post_meta(&ctx.state.pool, &post_id).await {
-        Ok(Some((c, _))) if c == community_hex => {}
-        Ok(_) => {
-            return err_json(
-                StatusCode::NOT_FOUND,
-                "post does not belong to this community",
-            );
-        }
-        Err(e) => return db_err(e),
-    }
-    let kind = if liking { "post_like" } else { "post_unlike" };
-    let applied: sqlx::Result<()> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        record(&mut tx, &signature_hash, &community_hex, community, &signer, signed_at, &message, &Entry { kind, target: Some(post_id.clone()), ..Default::default() }).await?;
-        let sql = if liking {
-            "INSERT INTO social.community_post_likes (post_id, user_address) SELECT id, $2 FROM social.community_posts WHERE id = $1 ON CONFLICT (post_id, user_address) DO NOTHING"
-        } else {
-            "DELETE FROM social.community_post_likes WHERE post_id = $1 AND user_address = $2"
-        };
-        sqlx::query(sql).bind(post_uuid(&post_id)).bind(&signer).execute(&mut *tx).await?;
-        tx.commit().await
-    }
-    .await;
-    applied.map(|_| ok(signature_hash)).unwrap_or_else(db_err)
-}
-
-async fn request_status(ctx: &Ctx<'_>, id: &str, request: &str) -> Response {
-    if let Err(r) = parse_uuid(id) {
-        return *r;
-    }
-    let (signed, signer) = match preflight::<CommunityRequestStatusUpdate>(ctx).await {
-        Ok(x) => x,
-        Err(r) => return *r,
-    };
-    let m = &signed.message;
-    let community = match path_community(id, &m.community_id) {
-        Ok(c) => c,
-        Err(r) => return *r,
-    };
-    if m.request_id != request {
-        return bad("request_id mismatch");
-    }
-    if let Err(r) =
-        require_at_least(ctx.state, community, &signer, CommunityStanding::Moderator).await
-    {
-        return *r;
-    }
-    let status = match m.status.as_str() {
-        s @ ("accepted" | "rejected" | "cancelled") => s,
-        _ => return bad("invalid request status"),
-    };
-    let signature_hash = signed.signature_hash();
-    let applied: sqlx::Result<Option<Response>> = async {
-        let mut tx = ctx.state.pool.begin().await?;
-        if let Ok(request_uuid) = Uuid::parse_str(&m.request_id) {
-            let owner: Option<Uuid> = sqlx::query_scalar("SELECT community_id FROM social.community_requests WHERE id = $1").bind(request_uuid).fetch_optional(&mut *tx).await?;
-            if owner.is_some_and(|c| c != community.as_uuid()) {
-                return Ok(Some(err_json(StatusCode::NOT_FOUND, "request does not belong to this community")));
-            }
-            sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
-                .bind(request_uuid)
-                .bind(status)
-                .bind(community)
-                .execute(&mut *tx)
-                .await?;
-        }
-        let entry = Entry { kind: "request_status", target: Some(m.request_id.clone()), action: Some(status.to_string()), ..Default::default() };
-        record(&mut tx, &signature_hash, &m.community_id, community, &signer, signed.signed_at, &payload(m), &entry).await?;
-        tx.commit().await?;
-        Ok(None)
-    }
-    .await;
-    match applied {
-        Ok(Some(refused)) => refused,
-        Ok(None) => ok(signature_hash),
-        Err(e) => db_err(e),
-    }
-}
-
-fn hash_all(hashes: &[String]) -> String {
-    let mut h = Sha256::new();
-    for s in hashes {
-        h.update(s.as_bytes());
-    }
-    hex::encode(h.finalize())
-}
-
-pub async fn snapshot_view(pool: &PgPool) -> sqlx::Result<Value> {
-    let latest = |kinds: &'static [&'static str]| async move {
-        sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT max(seq) FROM social.community_signed_actions WHERE kind = ANY($1)",
-        )
-        .bind(kinds)
-        .fetch_one(pool)
-        .await
-        .map(|v| v.unwrap_or(0))
-    };
-    let (role, posts, places) = (
-        latest(&["create", "role"]).await?,
-        latest(&["post"]).await?,
-        latest(&["place"]).await?,
-    );
-    let communities: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT a.community_id, a.signer, COALESCE(c.name, a.payload->>'name'), a.signed_at FROM social.community_signed_actions a \
-         LEFT JOIN social.communities c ON c.id = a.community_uuid WHERE a.kind = 'create' ORDER BY a.seq LIMIT $1",
-    )
-    .bind(SNAPSHOT_COMMUNITIES)
-    .fetch_all(pool)
-    .await?;
-    let role_hashes: Vec<String> = sqlx::query_scalar("SELECT signature_hash FROM social.community_signed_actions WHERE kind IN ('create', 'role') ORDER BY signature_hash").fetch_all(pool).await?;
-    Ok(json!({
-        "latest_role_seq": role,
-        "latest_posts_seq": posts,
-        "latest_places_seq": places,
-        "communities": communities.into_iter().map(|(community_id, creator, name, signed_at)| json!({ "community_id": community_id, "creator": creator, "name": name.unwrap_or_default(), "signed_at": signed_at })).collect::<Vec<_>>(),
-        "role_log_hash": hash_all(&role_hashes),
-    }))
-}
-
-/// `GET /federation/communities/snapshot`.
-pub async fn snapshot(State(state): State<SharedState>) -> Response {
-    snapshot_view(&state.pool)
-        .await
-        .map(|v| Json(v).into_response())
-        .unwrap_or_else(db_err)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ChangesQuery {
-    #[serde(default)]
-    pub since: i64,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
-
-pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> sqlx::Result<Value> {
-    let limit = limit.clamp(1, MAX_CHANGES);
-    let rows = |kinds: &'static [&'static str]| async move {
-        sqlx::query(
-            "SELECT signature_hash, community_id, kind, signer, target, role, action, content_hash, signed_at, payload, seq \
-             FROM social.community_signed_actions WHERE kind = ANY($1) AND seq > $2 ORDER BY seq ASC LIMIT $3",
-        )
-        .bind(kinds)
-        .bind(since)
-        .bind(limit)
-        .fetch_all(pool)
-        .await
-    };
-    let role: Vec<Value> = rows(&["create", "role"])
-        .await?
-        .iter()
-        .map(|r| {
-            let (community_id, signer, kind): (String, String, String) = (r.get("community_id"), r.get("signer"), r.get("kind"));
-            let payload = if kind == "create" { json!({ "type": "CommunityCreate", "community_id": community_id, "creator": signer, "role": "owner" }) } else { r.get("payload") };
-            json!({
-                "kind": "role",
-                "signature_hash": r.get::<String, _>("signature_hash"),
-                "community_id": community_id,
-                "signer": signer,
-                "target": r.get::<Option<String>, _>("target"),
-                "role": r.get::<Option<String>, _>("role"),
-                "signed_at": r.get::<i64, _>("signed_at"),
-                "payload": payload,
-                "seq": r.get::<i64, _>("seq"),
-            })
-        })
-        .collect();
-    let posts: Vec<Value> = rows(&["post"])
-        .await?
-        .iter()
-        .map(|r| {
-            json!({
-                "kind": "post",
-                "signature_hash": r.get::<String, _>("signature_hash"),
-                "community_id": r.get::<String, _>("community_id"),
-                "author": r.get::<String, _>("signer"),
-                "content_hash": r.get::<Option<String>, _>("content_hash"),
-                "signed_at": r.get::<i64, _>("signed_at"),
-                "seq": r.get::<i64, _>("seq"),
-            })
-        })
-        .collect();
-    let places: Vec<Value> = rows(&["place"])
-        .await?
-        .iter()
-        .map(|r| {
-            json!({
-                "kind": "place",
-                "signature_hash": r.get::<String, _>("signature_hash"),
-                "community_id": r.get::<String, _>("community_id"),
-                "place_id": r.get::<Option<String>, _>("target"),
-                "action": r.get::<Option<String>, _>("action"),
-                "signer": r.get::<String, _>("signer"),
-                "signed_at": r.get::<i64, _>("signed_at"),
-                "seq": r.get::<i64, _>("seq"),
-            })
-        })
-        .collect();
-    Ok(json!({ "role": role, "posts": posts, "places": places }))
-}
-
-/// `GET /federation/communities/changes?since=&limit=` (500 by default, 1..=5000 per feed).
-pub async fn changes(State(state): State<SharedState>, Query(q): Query<ChangesQuery>) -> Response {
-    changes_view(&state.pool, q.since, q.limit.unwrap_or(DEFAULT_CHANGES))
-        .await
-        .map(|v| Json(v).into_response())
-        .unwrap_or_else(db_err)
-}
-
-fn content_hash(body: &[u8]) -> String {
-    hex::encode(Sha256::digest(body))
-}
-
-/// The blob a registered body is stored as (the ONE store keys by CID).
-async fn registered_cid(pool: &PgPool, hash: &str) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
-        .bind(hash)
-        .fetch_optional(pool)
-        .await
-}
-
-async fn registered_body(state: &CommunitiesState, hash: &str) -> Option<Bytes> {
-    if !is_valid_hash(hash) {
-        return None;
-    }
-    let cid = registered_cid(&state.pool, hash).await.ok().flatten()?;
-    state.storage.retrieve(&cid).await.ok().flatten()
-}
-
-/// `POST /federation/communities/content`: stores a post body (<= 256 KiB)
-/// and registers its sha256 (the wire's content hash) against the blob.
-pub async fn put_content(State(state): State<SharedState>, body: Bytes) -> Response {
-    if body.len() > MAX_CONTENT_BYTES {
-        return err_json(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!("body exceeds {MAX_CONTENT_BYTES} bytes"),
-        );
-    }
-    let (hash, size) = (content_hash(&body), body.len());
-    let for_cid = body.clone();
-    let cid = match tokio::task::spawn_blocking(move || crate::auth::hash::hash_bytes_v1(&for_cid))
-        .await
-    {
-        Ok(cid) => cid,
-        Err(_) => return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error"),
-    };
-    let stored = async {
-        if !state.storage.exist(&cid).await? {
-            state.storage.store(&cid, body).await?;
-        }
-        Ok::<_, crate::storage::StorageError>(())
-    }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "community content store io error");
-        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error");
-    }
-    let registered = sqlx::query("INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) ON CONFLICT (content_hash) DO NOTHING")
-        .bind(&hash)
-        .bind(&cid)
-        .bind(size as i32)
-        .execute(&state.pool)
-        .await;
-    if let Err(e) = registered {
-        return db_err(e);
-    }
-    Json(json!({ "ok": true, "content_hash": hash, "size": size })).into_response()
-}
-
-/// `GET /federation/communities/content/{hash}`: the registered body.
-pub async fn get_content(State(state): State<SharedState>, Path(hash): Path<String>) -> Response {
-    let hash = hash.to_ascii_lowercase();
-    if !is_valid_hash(&hash) {
-        return bad(format!("invalid content hash: {hash}"));
-    }
-    let cid = match registered_cid(&state.pool, &hash).await {
-        Ok(Some(cid)) => cid,
-        Ok(None) => return err_json(StatusCode::NOT_FOUND, "content not found"),
-        Err(e) => return db_err(e),
-    };
-    match state.storage.retrieve(&cid).await {
-        Ok(Some(bytes)) => {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/octet-stream"),
-            );
-            if let Ok(v) = HeaderValue::from_str(&hash) {
-                headers.insert("x-content-hash", v);
-            }
-            (StatusCode::OK, headers, bytes).into_response()
-        }
-        Ok(None) => err_json(StatusCode::NOT_FOUND, "content not found"),
-        Err(e) => {
-            tracing::error!(error = %e, "community content store io error");
-            err_json(StatusCode::INTERNAL_SERVER_ERROR, "io error")
-        }
-    }
-}
-
-/// `POST /federation/communities/content/gc` (the admin bearer): drops the
-/// registered bodies no logged post names, once older than the blob
-/// collector's age floor, and their blobs when no other domain holds them.
-pub async fn gc_content(State(state): State<SharedState>, headers: HeaderMap) -> Response {
-    if !state.admin_bearer(&headers) {
-        return err_json(StatusCode::UNAUTHORIZED, "admin bearer token required");
-    }
-    match collect(&state).await {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "community content gc failed");
-            err_json(StatusCode::INTERNAL_SERVER_ERROR, "db error")
-        }
-    }
-}
-
-async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
-    let floor = chrono::Utc::now().naive_utc()
-        - chrono::Duration::from_std(crate::storage::gc::MIN_ORPHAN_AGE)?;
-    let scanned: i64 = sqlx::query_scalar("SELECT count(*) FROM social.community_contents")
-        .fetch_one(&state.pool)
-        .await?;
-    let referenced: i64 = sqlx::query_scalar("SELECT count(DISTINCT content_hash) FROM social.community_signed_actions WHERE content_hash IS NOT NULL").fetch_one(&state.pool).await?;
-    let mut removed = 0i64;
-    loop {
-        let dropped: Vec<String> = sqlx::query_scalar(
-            "DELETE FROM social.community_contents WHERE content_hash IN ( \
-               SELECT cc.content_hash FROM social.community_contents cc \
-               WHERE cc.stored_at < $1 \
-                 AND NOT EXISTS (SELECT 1 FROM social.community_signed_actions a WHERE a.content_hash = cc.content_hash) \
-               ORDER BY cc.content_hash LIMIT $2) \
-             RETURNING cid",
-        )
-        .bind(floor)
-        .bind(GC_CHUNK)
-        .fetch_all(&state.pool)
-        .await?;
-        if dropped.is_empty() {
-            break;
-        }
-        removed += dropped.len() as i64;
-        let held = crate::storage::gc::referenced_among(
-            &state.pool,
-            crate::storage::gc::Pins::new(&state.storage, &[]),
-            &dropped,
-        )
-        .await?;
-        for cid in dropped.iter().filter(|c| !held.contains(*c)) {
-            let registered_again: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM social.community_contents WHERE cid = $1)",
-            )
-            .bind(cid)
-            .fetch_one(&state.pool)
-            .await?;
-            if !registered_again {
-                state.storage.delete_strict(cid).await?;
-            }
-        }
-    }
-    Ok(
-        json!({ "ok": true, "scanned": scanned, "kept": scanned - removed, "removed": removed, "referenced": referenced }),
-    )
-}
-
-/// `community-nonce-sweep`: drops the nonces whose replay window closed.
-pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
-    let pool = state.pool.clone();
-    let cfg = PeriodicCfg::every(Duration::from_secs(300))
-        .with_jitter(Duration::from_secs(30))
-        .with_error_backoff(Duration::from_secs(900));
-    jobs.spawn_periodic_leased("community-nonce-sweep", cfg, move |_ctx| {
-        let pool = pool.clone();
-        async move {
-            crate::fed::sweep_nonces(&pool, NONCES, chrono::Utc::now().timestamp()).await?;
-            Ok(())
-        }
-    });
 }
 
 #[cfg(test)]
@@ -2019,6 +782,20 @@ mod tests {
         .await
     }
 
+    async fn upload(app: &Router, w: &PrivateKeySigner, body: &str) -> (StatusCode, Value) {
+        let path = "/federation/communities/content";
+        let headers = signed_headers_by(
+            w,
+            "post",
+            path,
+            "{}",
+            true,
+            &chrono::Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        call(app, "POST", path, headers, Body::from(body.to_string())).await
+    }
+
     fn env<T: TypedMessage>(w: &PrivateKeySigner, message: T) -> Signed<T> {
         sign(w, domains::communities(), message, now())
     }
@@ -2030,19 +807,12 @@ mod tests {
     }
 
     async fn claimed_name(pool: &PgPool, state: &CommunitiesState, w: &PrivateKeySigner) {
-        state.set_chain_index(std::sync::Arc::new(crate::chain_index::ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings::for_tests(),
-        )));
-        state.chain_index.get().unwrap().graph.names.insert(
-            address(w),
-            std::sync::Arc::new(vec![crate::chain_index::graph::OwnedName {
-                name: "Named".to_string(),
-                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
-                token_id: "1".to_string(),
-                price: None,
-            }]),
-        );
+        // One source shared by every federated test (their wallets are
+        // fresh), so a test's second named wallet joins its first.
+        static NAMES: std::sync::LazyLock<std::sync::Arc<super::super::test_names::Held>> =
+            std::sync::LazyLock::new(Default::default);
+        NAMES.grant(&address(w), "Named");
+        state.set_name_authority(NAMES.clone());
         let metadata = json!({ "v": { "avatars": [{ "name": "fed", "hasClaimedName": true, "avatar": { "snapshots": { "face256": "bafkface" } } }] } });
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
@@ -2427,6 +1197,106 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Before the place id release, a stored row may be in another case: a
+    /// federated add of it writes no second row and a federated removal in
+    /// any spelling reaches it.
+    #[tokio::test]
+    async fn federated_place_writes_match_rows_stored_in_another_case() {
+        let Some(database) = crate::db::scratch::OwnedDatabase::new(
+            "fed_place_ids",
+            crate::db::scratch::Schema::Full,
+            4,
+        )
+        .await
+        else {
+            return;
+        };
+        let pool = database.pool.clone();
+        sqlx::query("ALTER TABLE social.community_places DROP CONSTRAINT community_places_place_id_lowercase")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-place-ids-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let settings = super::super::Settings {
+            places_ownership_check: false,
+            ..super::super::Settings::for_tests()
+        };
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            settings,
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state.clone());
+        let owner = PrivateKeySigner::random();
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Cased', 'd', $2, FALSE, FALSE)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ('Kept.DCL.eth', $1, $2), ('Gone.DCL.eth', $1, $2)")
+            .bind(id)
+            .bind(address(&owner))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: vec!["kept.dcl.eth".into()],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("{base}/places/gone.dcl.eth"),
+            &env(
+                &owner,
+                CommunityPlaceRemove {
+                    community_id: hex_id.clone(),
+                    place_id: "gone.dcl.eth".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["Kept.DCL.eth"]);
+        drop((app, state));
+        database.drop().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A REST ban holds the membership lock while it removes the member and
     /// records the ban. A federation join that passed its ban pre-check
     /// before that ban committed waits for the lock, sees the ban and is
@@ -2694,6 +1564,186 @@ mod tests {
                     StatusCode::BAD_REQUEST
                 },
                 "native buffers before auth; gateway authenticates first: {body}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A deleted or suspended community answers 404 to a federated like,
+    /// unlike, join and request decision, and records none of them; the
+    /// request stays pending until the community reopens.
+    #[tokio::test]
+    async fn closed_communities_refuse_federated_writes_without_recording_them() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-closed-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state.clone());
+        let owner = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &owner).await;
+        for (closing, reopening) in [
+            (
+                "UPDATE social.communities SET active = FALSE WHERE id = $1",
+                "UPDATE social.communities SET active = TRUE WHERE id = $1",
+            ),
+            (
+                "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), suspended_by = 'op' WHERE id = $1",
+                "UPDATE social.communities SET suspended = FALSE, suspended_at = NULL, suspended_by = NULL WHERE id = $1",
+            ),
+        ] {
+            let (member, joiner, invitee) = (
+                PrivateKeySigner::random(),
+                PrivateKeySigner::random(),
+                PrivateKeySigner::random(),
+            );
+            let id = CommunityId::new();
+            let hex_id = id.as_uuid().simple().to_string();
+            let base = format!("/v1/communities/{id}");
+            sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Closed', 'd', $2, FALSE, FALSE)")
+                .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+            for (w, role) in [(&owner, "owner"), (&member, "member")] {
+                sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, $3)")
+                    .bind(id).bind(address(w)).bind(role).execute(&pool).await.unwrap();
+            }
+            let (status, stored) = upload(&app, &owner, "closed soon").await;
+            assert_eq!(status, StatusCode::OK, "{stored}");
+            let post_env = env(
+                &owner,
+                CommunityPost {
+                    community_id: hex_id.clone(),
+                    content_hash: stored["content_hash"].as_str().unwrap().to_string(),
+                },
+            );
+            let (status, body) =
+                send(&app, &owner, "POST", &format!("{base}/posts"), &post_env).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let post_id = post_env.signature_hash();
+            let invite = Uuid::new_v4();
+            sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')")
+                .bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+            sqlx::query(closing).bind(id).execute(&pool).await.unwrap();
+
+            let like_path = format!("{base}/posts/{post_id}/like");
+            let like = env(
+                &member,
+                CommunityPostLike {
+                    community_id: hex_id.clone(),
+                    post_id: post_id.clone(),
+                },
+            );
+            let unlike = env(
+                &member,
+                CommunityPostUnlike {
+                    community_id: hex_id.clone(),
+                    post_id: post_id.clone(),
+                },
+            );
+            let join = env(
+                &joiner,
+                CommunityJoin {
+                    community_id: hex_id.clone(),
+                },
+            );
+            let accept = env(
+                &invitee,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            );
+            let invite_path = format!("{base}/requests/{invite}");
+            for (what, (status, body)) in [
+                ("like", send(&app, &member, "POST", &like_path, &like).await),
+                (
+                    "unlike",
+                    send(&app, &member, "DELETE", &like_path, &unlike).await,
+                ),
+                (
+                    "join",
+                    send(&app, &joiner, "POST", &format!("{base}/members"), &join).await,
+                ),
+                (
+                    "accept",
+                    send(&app, &invitee, "PATCH", &invite_path, &accept).await,
+                ),
+            ] {
+                assert_eq!(status, StatusCode::NOT_FOUND, "{closing}: {what}: {body}");
+                if what == "accept" {
+                    assert_eq!(
+                        body["message"],
+                        format!("Community not found: {id}"),
+                        "{closing}: the client route's body"
+                    );
+                }
+            }
+            for hash in [
+                like.signature_hash(),
+                unlike.signature_hash(),
+                join.signature_hash(),
+                accept.signature_hash(),
+            ] {
+                let logged: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM social.community_signed_actions WHERE signature_hash = $1)",
+                )
+                .bind(&hash)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                assert!(!logged, "{closing}: a refused write is not recorded");
+            }
+            let likes: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM social.community_post_likes WHERE post_id = $1",
+            )
+            .bind(post_uuid(&post_id))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(likes, 0, "{closing}");
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &joiner).await,
+                None,
+                "{closing}"
+            );
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &invitee).await,
+                None,
+                "{closing}"
+            );
+
+            sqlx::query(reopening)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let accept = env(
+                &invitee,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            );
+            let (status, body) = send(&app, &invitee, "PATCH", &invite_path, &accept).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{closing}: accept after reopening: {body}"
+            );
+            assert_eq!(
+                role_of(&pool, id.as_uuid(), &invitee).await.as_deref(),
+                Some("member"),
+                "{closing}: the invite is still pending"
             );
         }
         let _ = std::fs::remove_dir_all(dir);
@@ -2969,6 +2019,64 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn role_feed_publishes_only_named_payload_fields() {
+        let (c, a) = ("c1".to_string(), "0xa".to_string());
+        let public = |stored: Value| feeds::public_role_payload(&stored);
+        let cases = [
+            (
+                payload(&CommunityJoin {
+                    community_id: c.clone(),
+                }),
+                json!({ "community_id": c }),
+            ),
+            (
+                payload(&CommunityLeave {
+                    community_id: c.clone(),
+                    member: a.clone(),
+                }),
+                json!({ "community_id": c, "member": a }),
+            ),
+            (
+                payload(&CommunityRoleUpdate {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    role: "mod".into(),
+                }),
+                json!({ "community_id": c, "target": a, "role": "mod" }),
+            ),
+            (
+                payload(&CommunityBan {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                    reason: Some("spam".into()),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+            (
+                payload(&CommunityUnban {
+                    community_id: c.clone(),
+                    target: a.clone(),
+                }),
+                json!({ "community_id": c, "target": a }),
+            ),
+        ];
+        for (stored, expected) in cases {
+            // Every field the stored payload publishes keeps its value.
+            assert_eq!(public(stored.clone()), expected, "{stored}");
+            // A field the projection does not name stays out of the feed.
+            let mut extended = stored.clone();
+            extended["note"] = json!("local");
+            assert_eq!(public(extended), expected, "{stored}");
+        }
+        assert_eq!(public(Value::Null), Value::Null);
+        // An object of no known shape publishes only the community field.
+        assert_eq!(
+            public(json!({ "reason": "spam", "note": "local" })),
+            json!({ "community_id": null })
+        );
     }
 
     #[test]
@@ -3329,7 +2437,8 @@ mod tests {
                 &member,
                 CommunityPlacesAdd {
                     community_id: hex_id.clone(),
-                    place_ids: vec!["p-1".into(), "p-2".into()],
+                    // stored lowercased, case variants once
+                    place_ids: vec!["P-1".into(), "p-2".into(), "p-1".into()],
                 },
             ),
         )
@@ -3339,12 +2448,12 @@ mod tests {
             &app,
             &owner,
             "DELETE",
-            &format!("{base}/places/p-2"),
+            &format!("{base}/places/P-2"),
             &env(
                 &owner,
                 CommunityPlaceRemove {
                     community_id: hex_id.clone(),
-                    place_id: "p-2".into(),
+                    place_id: "P-2".into(),
                 },
             ),
         )
@@ -3359,8 +2468,52 @@ mod tests {
         .unwrap();
         assert_eq!(places, ["p-1"]);
 
+        // A federated add holds the REST bounds: 1 to 100 ids of at most 256 characters.
+        let actions_sql =
+            "SELECT count(*) FROM social.community_signed_actions WHERE community_uuid = $1";
+        let actions_before: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        for (place_ids, case) in [
+            (Vec::new(), "no ids"),
+            ((0..101).map(|i| format!("q-{i}")).collect(), "101 ids"),
+            (vec!["q".repeat(257)], "a 257-character id"),
+        ] {
+            let (status, _) = send(
+                &app,
+                &member,
+                "POST",
+                &format!("{base}/places"),
+                &env(
+                    &member,
+                    CommunityPlacesAdd {
+                        community_id: hex_id.clone(),
+                        place_ids,
+                    },
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{case}");
+        }
+        let places: Vec<String> = sqlx::query_scalar(
+            "SELECT place_id FROM social.community_places WHERE community_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(places, ["p-1"]);
+        let actions_after: i64 = sqlx::query_scalar(actions_sql)
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(actions_after, actions_before);
+
         // A post whose body was uploaded first lands with its text.
-        let (status, stored) = call(
+        let (status, _) = call(
             &app,
             "POST",
             "/federation/communities/content",
@@ -3368,10 +2521,16 @@ mod tests {
             Body::from("hello peers"),
         )
         .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an unsigned upload");
+        let (status, _) = upload(&app, &PrivateKeySigner::random(), "hello peers").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a wallet that posts nowhere");
+        let (status, _) = upload(&app, &owner, &"a".repeat(MAX_CONTENT_BYTES + 1)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let (status, stored) = upload(&app, &owner, "hello peers").await;
         assert_eq!(status, StatusCode::OK, "{stored}");
         let content = stored["content_hash"].as_str().unwrap().to_string();
         assert_eq!(content, hex::encode(Sha256::digest(b"hello peers")));
-        let (status, got) = call(
+        let (status, _) = call(
             &app,
             "GET",
             &format!("/federation/communities/content/{content}"),
@@ -3379,10 +2538,14 @@ mod tests {
             Body::empty(),
         )
         .await;
-        assert_eq!(
-            (status, got),
-            (StatusCode::OK, Value::String("hello peers".into()))
-        );
+        assert_eq!(status, StatusCode::NOT_FOUND, "no post names it yet");
+
+        // A body over the post limit is refused at upload.
+        let (status, _) = upload(&app, &owner, &"a".repeat(1001)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "1001 characters");
+        let (status, _) = upload(&app, &owner, "   ").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "blank");
+
         let post_env = env(
             &owner,
             CommunityPost {
@@ -3404,6 +2567,18 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(text, "hello peers");
+        let (status, got) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{content}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(
+            (status, got),
+            (StatusCode::OK, Value::String("hello peers".into()))
+        );
 
         let (status, _) = send(
             &app,
@@ -3523,13 +2698,76 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let settled: String =
-            sqlx::query_scalar("SELECT status FROM social.community_requests WHERE id = $1")
+        let left: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.community_requests WHERE id = $1")
                 .bind(request)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(settled, "rejected", "a settled request is not reopened");
+        assert_eq!(left, 0, "settled as the client route settles it");
+        assert_eq!(
+            role_of(&pool, id, &other).await,
+            None,
+            "a late accept is only logged"
+        );
+
+        // A request of another community is not this community's to settle.
+        let elsewhere = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Elsewhere', 'd', $2, FALSE, FALSE)").bind(elsewhere).bind(address(&other)).execute(&pool).await.unwrap();
+        let foreign = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'request_to_join')").bind(foreign).bind(elsewhere).bind(address(&member)).execute(&pool).await.unwrap();
+        let (status, _) = send(
+            &app,
+            &owner,
+            "PATCH",
+            &format!("{base}/requests/{foreign}"),
+            &env(
+                &owner,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: foreign.to_string(),
+                    status: "accepted".into(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Only the invitee settles an invite, and accepting it adds them.
+        let invitee = PrivateKeySigner::random();
+        let invite = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.community_requests (id, community_id, member_address, type) VALUES ($1, $2, $3, 'invite')").bind(invite).bind(id).bind(address(&invitee)).execute(&pool).await.unwrap();
+        let accept_invite = |w: &PrivateKeySigner| {
+            env(
+                w,
+                CommunityRequestStatusUpdate {
+                    community_id: hex_id.clone(),
+                    request_id: invite.to_string(),
+                    status: "accepted".into(),
+                },
+            )
+        };
+        let invite_path = format!("{base}/requests/{invite}");
+        let (status, _) = send(&app, &owner, "PATCH", &invite_path, &accept_invite(&owner)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "a manager cannot accept for the invitee"
+        );
+        assert_eq!(role_of(&pool, id, &invitee).await, None);
+        let (status, body) = send(
+            &app,
+            &invitee,
+            "PATCH",
+            &invite_path,
+            &accept_invite(&invitee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id, &invitee).await.as_deref(),
+            Some("member")
+        );
 
         let (status, body) = send(
             &app,
@@ -3651,6 +2889,56 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "the owner cannot leave");
 
+        // A private community's actions and bodies stay out of the feeds.
+        let private_name = format!("fed private {}", &Uuid::new_v4().simple().to_string()[..8]);
+        let (status, created) = send(
+            &app,
+            &owner,
+            "POST",
+            "/v1/communities",
+            &env(
+                &owner,
+                CommunityCreate {
+                    name: private_name,
+                    description: "d".into(),
+                    private: true,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let private_hex = created["community_id"].as_str().unwrap().to_string();
+        let private_id = created["id"].as_str().unwrap().to_string();
+        let (status, secret) = upload(&app, &owner, "members only").await;
+        assert_eq!(status, StatusCode::OK, "{secret}");
+        let secret = secret["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: secret.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/content/{secret}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a private community's body");
+
         // The feeds peers pull.
         let (_, snap) = call(
             &app,
@@ -3672,6 +2960,13 @@ mod tests {
             (json!(address(&owner)), json!(format!("{name} 2")))
         );
         assert_eq!(snap["role_log_hash"].as_str().map(str::len), Some(64));
+        assert!(
+            !snap["communities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["community_id"] == json!(private_hex))
+        );
         let (_, feed) = call(
             &app,
             "GET",
@@ -3680,6 +2975,16 @@ mod tests {
             Body::empty(),
         )
         .await;
+        for kind in ["role", "posts", "places"] {
+            assert!(
+                !feed[kind]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["community_id"] == json!(private_hex)),
+                "{kind}"
+            );
+        }
         let mine: Vec<&Value> = feed["role"]
             .as_array()
             .unwrap()
@@ -3697,6 +3002,16 @@ mod tests {
             mine[0]["payload"],
             json!({ "type": "CommunityCreate", "community_id": hex_id, "creator": address(&owner), "role": "owner" })
         );
+        // A ban travels with its target; its free-text reason stays local.
+        let banned = mine.iter().find(|r| r["role"] == json!("banned")).unwrap();
+        assert_eq!(
+            (banned["target"].clone(), banned["payload"].clone()),
+            (
+                json!(address(&member)),
+                json!({ "community_id": hex_id, "target": address(&member) })
+            )
+        );
+        assert!(!feed.to_string().contains("\"reason\""), "{feed}");
         let posts: Vec<&Value> = feed["posts"]
             .as_array()
             .unwrap()
@@ -3791,6 +3106,308 @@ mod tests {
             .0,
             StatusCode::BAD_REQUEST
         );
+
+        // A re-upload repairs a lost blob and refreshes the body's age.
+        let cid: String =
+            sqlx::query_scalar("SELECT cid FROM social.community_contents WHERE content_hash = $1")
+                .bind(&content)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("UPDATE social.community_contents SET stored_at = stored_at - interval '2 hours' WHERE content_hash = $1")
+            .bind(&content)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.storage.delete_strict(&cid).await.unwrap();
+        let (status, _) = upload(&app, &owner, "hello peers").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(state.storage.exist(&cid).await.unwrap());
+        let fresh: bool = sqlx::query_scalar("SELECT stored_at > timezone('UTC', now()) - interval '1 minute' FROM social.community_contents WHERE content_hash = $1")
+            .bind(&content)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(fresh);
+
+        // A body is taken only by its uploader's post: another public
+        // community naming a private body gets the hash, not the text.
+        let mallory = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &mallory).await;
+        let (status, theirs) = send(
+            &app,
+            &mallory,
+            "POST",
+            "/v1/communities",
+            &env(
+                &mallory,
+                CommunityCreate {
+                    name: format!("fed open {}", &Uuid::new_v4().simple().to_string()[..8]),
+                    description: "d".into(),
+                    private: false,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{theirs}");
+        let theirs_hex = theirs["community_id"].as_str().unwrap().to_string();
+        let copy = env(
+            &mallory,
+            CommunityPost {
+                community_id: theirs_hex.clone(),
+                content_hash: secret.clone(),
+            },
+        );
+        let (status, body) = send(
+            &app,
+            &mallory,
+            "POST",
+            &format!("/v1/communities/{}/posts", theirs["id"].as_str().unwrap()),
+            &copy,
+        )
+        .await;
+        assert_eq!(
+            (status, body["content_body_local"].clone()),
+            (StatusCode::OK, json!(false)),
+            "{body}"
+        );
+        let text: String =
+            sqlx::query_scalar("SELECT content FROM social.community_posts WHERE id = $1")
+                .bind(post_uuid(&copy.signature_hash()))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(text, secret);
+        let get = |hash: String| {
+            let app = app.clone();
+            async move {
+                call(
+                    &app,
+                    "GET",
+                    &format!("/federation/communities/content/{hash}"),
+                    HeaderMap::new(),
+                    Body::empty(),
+                )
+                .await
+                .0
+            }
+        };
+        assert_eq!(get(secret.clone()).await, StatusCode::NOT_FOUND);
+
+        // Privacy is the entry's: turning public publishes only what follows.
+        let private_seq: i64 = sqlx::query_scalar(
+            "SELECT seq FROM social.community_signed_actions WHERE kind = 'post' AND content_hash = $1 AND NOT public_at_entry",
+        )
+        .bind(&secret)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (_, snap) = call(
+            &app,
+            "GET",
+            "/federation/communities/snapshot",
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_ne!(snap["latest_posts_seq"].as_i64(), Some(private_seq));
+        sqlx::query("UPDATE social.communities SET private = false WHERE id = $1")
+            .bind(Uuid::parse_str(&private_id).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            get(secret.clone()).await,
+            StatusCode::NOT_FOUND,
+            "an earlier private body"
+        );
+        let (status, opened) = upload(&app, &owner, "after opening").await;
+        assert_eq!(status, StatusCode::OK, "{opened}");
+        let opened = opened["content_hash"].as_str().unwrap().to_string();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("/v1/communities/{private_id}/posts"),
+            &env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: opened.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(get(opened.clone()).await, StatusCode::OK);
+        let (_, feed) = call(
+            &app,
+            "GET",
+            &format!("/federation/communities/changes?since={since}"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        let published: Vec<&Value> = feed["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["community_id"] == json!(private_hex))
+            .collect();
+        assert_eq!(
+            published
+                .iter()
+                .map(|p| p["content_hash"].clone())
+                .collect::<Vec<_>>(),
+            [json!(opened)]
+        );
+
+        // A body arriving after its post is bound as posted, so it stays
+        // served past the collector; an upper-case hash is refused.
+        let late = hex::encode(Sha256::digest(b"late body"));
+        let late_post = |hash: String| {
+            env(
+                &owner,
+                CommunityPost {
+                    community_id: private_hex.clone(),
+                    content_hash: hash,
+                },
+            )
+        };
+        let posts_path = format!("/v1/communities/{private_id}/posts");
+        let (status, _) = send(
+            &app,
+            &owner,
+            "POST",
+            &posts_path,
+            &late_post(late.to_ascii_uppercase()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "an upper-case hash");
+        let (status, body) =
+            send(&app, &owner, "POST", &posts_path, &late_post(late.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = upload(&app, &owner, "late body").await;
+        assert_eq!(status, StatusCode::OK);
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&late)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        assert_eq!(
+            get(late.clone()).await,
+            StatusCode::OK,
+            "the collector keeps it"
+        );
+
+        // The collector drops unposted bodies past the age floor.
+        let (status, stale) = upload(&app, &owner, "never posted").await;
+        assert_eq!(status, StatusCode::OK, "{stale}");
+        let stale = stale["content_hash"].as_str().unwrap().to_string();
+        for table in [
+            "community_content_uploads SET uploaded_at = uploaded_at",
+            "community_contents SET stored_at = stored_at",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE social.{table} - interval '2 hours' WHERE content_hash = $1"
+            )))
+            .bind(&stale)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        collect(&state).await.unwrap();
+        let left: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM social.community_contents WHERE content_hash = $1) \
+                  + (SELECT count(*) FROM social.community_content_uploads WHERE content_hash = $1)",
+        )
+        .bind(&stale)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+
+        // Upload budgets: per uploader, then the per-signer rate.
+        let poster = PrivateKeySigner::random();
+        let uploads_community = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Uploads', 'd', $2, FALSE, FALSE)")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(uploads_community)
+            .bind(address(&poster))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let filler = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.community_content_uploads (content_hash, uploader, size) VALUES ($1, $2, $3)")
+            .bind(&filler)
+            .bind(address(&poster))
+            .bind(MAX_UPLOADER_UNPOSTED_BYTES as i32)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = upload(&app, &poster, "over budget").await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the uploader's budget"
+        );
+        sqlx::query("DELETE FROM social.community_content_uploads WHERE content_hash = $1")
+            .bind(&filler)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for _ in 1..30 {
+            let (status, _) = upload(&app, &poster, "again").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (status, _) = upload(&app, &poster, "again").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "the signer's rate");
+
+        // The bounds are inclusive and count characters, not bytes: 100 ids, one of
+        // them 256 two-byte characters, are accepted.
+        let edge: Vec<String> = (0..99)
+            .map(|i| format!("edge-{i}"))
+            .chain([String::from("é").repeat(256)])
+            .collect();
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &format!("{base}/places"),
+            &env(
+                &owner,
+                CommunityPlacesAdd {
+                    community_id: hex_id.clone(),
+                    place_ids: edge.clone(),
+                },
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let added: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.community_places WHERE community_id = $1 AND place_id = ANY($2)",
+        )
+        .bind(id)
+        .bind(&edge)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(added, 100);
 
         let (status, _) = send(
             &app,

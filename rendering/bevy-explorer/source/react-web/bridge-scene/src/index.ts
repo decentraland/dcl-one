@@ -12,15 +12,21 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
+import { registerSkyTime } from './domains/skyTime'
 import { registerAnalytics } from './domains/analytics'
+import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerReactions } from './domains/reactions'
+import { registerNearbyMutes } from './domains/nearbyMutes'
 import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
+import { registerGifting } from './domains/gifting'
 import { registerOutfits } from './domains/outfits'
 import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
@@ -28,36 +34,53 @@ import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
+import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
+import { registerPlaces } from './domains/places'
+import { registerLobby } from './domains/lobby'
+import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
+import { registerVoiceChat } from './domains/voiceChat'
 import { registerPointer } from './domains/pointer'
 import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
+import { registerAvatarModifiers } from './domains/avatarModifiers'
 import { registerPermissions } from './domains/permissions'
+import { registerMapPins } from './domains/mapPins'
+import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
+import { registerItemPurchase } from './domains/itemPurchase'
+import { registerPlatformBan } from './domains/platformBan'
 import { registerEditor } from './domains/editor'
-import { initNametags } from './domains/nametags'
 
 export function main(): void {
   const _log = console.log
   console.log = (...args) => { _log('[System Scene]', ...args); }
 
   startBridge((ctx) => {
+    const avatarModifiers = registerAvatarModifiers(ctx)
     registerSession(ctx)
+    registerConnectivity(ctx)
+    registerSkyTime(ctx)
     registerAnalytics(ctx)
+    registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
-    registerChat(ctx)
+    registerChat(ctx, avatarModifiers)
     registerDm(ctx)
+    registerReactions(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
+    registerNearbyMutes(ctx)
+    registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
+    registerGifting(ctx)
     registerOutfits(ctx)
     registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
@@ -67,16 +90,24 @@ export function main(): void {
     registerNotifications(ctx)
     registerSettings(ctx)
     registerCommunities(ctx)
+    registerEvents(ctx)
     registerGallery(ctx)
+    registerPlaces(ctx)
+    registerLobby(ctx)
+    registerMapPlayers(ctx, avatarModifiers)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
     registerPhotoMode(ctx)
     registerSystemAction(ctx)
     registerBindings(ctx)
-    registerAvatarPointer(ctx)
+    registerAvatarPointer(ctx, avatarModifiers)
     registerPermissions(ctx)
+    registerPortables(ctx)
+    registerMapPins(ctx)
     registerWorldAccess(ctx)
+    registerItemPurchase(ctx)
+    registerPlatformBan(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
     registerMinimap(ctx)
@@ -93,7 +124,4 @@ export function main(): void {
   // 0.6..1.3, so they only ever agreed near 1920x1080). `screenInset: 'none'` likewise keeps
   // 0,0 at the screen's top-left, which is the origin those rects are measured from.
   ReactEcsRenderer.setUiRenderer(renderSceneUi, { virtualWidth: 0, virtualHeight: 0, screenInset: 'none' })
-
-  // World-space UI the DOM can't track smoothly: the billboarded nametag above each avatar's head.
-  initNametags()
 }

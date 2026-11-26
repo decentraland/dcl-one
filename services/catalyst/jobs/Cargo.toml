@@ -6,6 +6,7 @@ description = "Background job supervision for the catalyst node"
 publish = false
 
 [dependencies]
+dcl-metrics.workspace = true
 catalyst-db = { path = "../db" }
 tokio.workspace = true
 sqlx.workspace = true

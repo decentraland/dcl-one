@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use crate::update_world::pointer_events::PointerEvents;
 
-use super::pointer_results::{passes_distance_check, ActionCandidateMode, PointerTargetInfo};
+use super::pointer_results::{ActionCandidateMode, PointerTargetInfo};
 
 /// The active aim, if any. While it holds one the pointer ray goes from the camera to the aimed
 /// entity, whatever the cursor does, and the UI gate is open.
@@ -141,27 +141,22 @@ pub fn ui_gate_passes(any_root_interacting: bool, synthetic_active: bool) -> boo
     synthetic_active || any_root_interacting
 }
 
-/// The cursor entries of `pe` (proximity entries are left out), each with whether the target's
-/// distances pass its distance check
+/// The cursor entries of `pe` (proximity entries are left out), each with whether the cursor
+/// reaches it (`PointerTargetInfo::cursor_reaches`: in the scene and in reach)
 pub fn cursor_entries<'a>(
-    info: &PointerTargetInfo,
+    info: &'a PointerTargetInfo,
     pe: &'a PointerEvents,
 ) -> impl Iterator<Item = (&'a Entry, bool)> {
-    let (camera_distance, distance) = (info.camera_distance.0, info.distance.0);
     pe.iter()
         .filter(|entry| ActionCandidateMode::Cursor.matches_entry(entry))
-        .map(move |entry| {
-            let in_reach =
-                passes_distance_check(entry.event_info.as_ref(), camera_distance, distance);
-            (entry, in_reach)
-        })
+        .map(move |entry| (entry, info.cursor_reaches(entry)))
 }
 
 /// The hovered entity's cursor entries: enabled when in the scene and in reach, too far when in
 /// the scene and out of reach
 pub fn hover_entries(info: &PointerTargetInfo, pe: &PointerEvents) -> Vec<HoverEntryReport> {
     cursor_entries(info, pe)
-        .map(|(entry, in_reach)| {
+        .map(|(entry, reaches)| {
             let event_info = entry.event_info.as_ref();
             let button = event_info
                 .and_then(|i| i.button.map(|_| i.button()))
@@ -170,8 +165,8 @@ pub fn hover_entries(info: &PointerTargetInfo, pe: &PointerEvents) -> Vec<HoverE
                 button: format!("{button:?}"),
                 event: format!("{:?}", entry.event_type()),
                 hover_text: event_info.and_then(|i| i.hover_text.clone()),
-                enabled: info.in_scene && in_reach,
-                too_far: info.in_scene && !in_reach,
+                enabled: reaches,
+                too_far: info.in_scene && !reaches,
             }
         })
         .collect()

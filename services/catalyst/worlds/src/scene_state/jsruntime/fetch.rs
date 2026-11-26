@@ -19,6 +19,7 @@ use crate::scene_state::delegation::{
     RENEWAL_TIMEOUT, StorageDelegation, create_simple_auth_chain,
 };
 use crate::scene_state::runtime::RuntimeLimits;
+use crate::shared::signed_fetch::build_payload_v6;
 
 pub const MAX_URL_LENGTH: usize = 2048;
 
@@ -130,9 +131,10 @@ pub(super) fn sanitize_scene_headers(headers: Vec<(String, String)>) -> Vec<(Str
 }
 
 /// The signed-fetch headers of the authoritative server: the chain the
-/// ephemeral key signs over `method:pathname:timestamp:metadata`
-/// (lowercased; the query is unsigned, as upstream storage verifies), the
-/// metadata naming the scope, and the delegation claim.
+/// ephemeral key signs over `method:pathname:timestamp:metadata` (the 6.x
+/// payload: method and path folded, metadata verbatim; the query is unsigned,
+/// as upstream storage verifies), the metadata naming the scope, and the
+/// delegation claim.
 pub(super) fn build_signed_fetch_headers(
     delegation: &StorageDelegation,
     method: &str,
@@ -150,7 +152,7 @@ pub(super) fn build_signed_fetch_headers(
         "parcel": delegation.parcel,
     })
     .to_string();
-    let payload = format!("{method}:{path}:{timestamp}:{metadata}").to_lowercase();
+    let payload = build_payload_v6(method, path, &timestamp, &metadata);
     let chain =
         create_simple_auth_chain(&delegation.ephemeral, &payload).map_err(|_| "signing failed")?;
     let links = chain.as_array().cloned().unwrap_or_default();

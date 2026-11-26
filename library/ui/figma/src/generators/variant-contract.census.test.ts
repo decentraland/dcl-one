@@ -5,7 +5,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { viewKey } from '../../review/src/components/figma-view-state.js'
 
 const generatedDir = path.resolve(import.meta.dirname, '../../review/src/generated/components')
@@ -67,7 +67,7 @@ describe('generated variant contracts', () => {
 
   // Type-checking every prop object takes ~5 s for PlaceCard alone, past vitest's 5 s default under load.
   it.each(sparse)(
-    '%s: compiles exactly the prop objects that default to a drawn view',
+    '%s: should compile exactly the prop objects that default to a drawn view',
     { timeout: 20_000 },
     (name) => {
       const source = sources.get(name)!
@@ -116,16 +116,27 @@ describe('generated variant contracts', () => {
       const valueOf = (object: Record<string, unknown>, axis: string) =>
         object[axis] === UNDEFINED || object[axis] === undefined ? defaults[axis] : object[axis]
 
-      const renderable = objects.map((object) => {
-        const selection = {
-          values: Object.fromEntries(values.map((axis) => [axis, valueOf(object, axis) as string])),
-          booleans: Object.fromEntries(
-            booleans.map((axis) => [axis, valueOf(object, axis) as boolean])
-          ),
-          flags: {}
-        }
-        return keys.has(viewKey(selection))
-      })
+      // A responsive axis left unset renders every option's view, so the object is drawn only when each of them is.
+      const responsive = /responsive=\{\{ prop: '(\w+)'/.exec(fn)?.[1]
+      const selections = (object: Record<string, unknown>) =>
+        responsive && valueOf(object, responsive) === undefined
+          ? domain(responsive).map((option) => ({ ...object, [responsive]: option }))
+          : [object]
+      const renderable = objects.map((object) =>
+        selections(object).every((selected) =>
+          keys.has(
+            viewKey({
+              values: Object.fromEntries(
+                values.map((axis) => [axis, valueOf(selected, axis) as string])
+              ),
+              booleans: Object.fromEntries(
+                booleans.map((axis) => [axis, valueOf(selected, axis) as boolean])
+              ),
+              flags: {}
+            })
+          )
+        )
+      )
       const failures = rejected(
         source,
         objects.map((object, index) => `const t${index}: ${name}Props = ${literal(object)};`)
@@ -139,30 +150,43 @@ describe('generated variant contracts', () => {
     }
   )
 
-  it('should reject spreads and wider-typed objects that reach an undrawn NavBar selection', () => {
-    const source = sources.get('NavBar')!
-    const statements = [
-      // Positive: a drawn row, spread from a typed object, plus a standard element prop.
-      'const drawn = { viewport: "mobile", signedIn: true, balances: "credits" } as const; const ok1: NavBarProps = { ...drawn, id: "nav" };',
-      // Positive: a typed union member passed through.
-      'declare const member: NavBarProps; const ok2: NavBarProps = { ...member };',
-      // Negative: a spread that defaults into an undrawn tuple (signed-out with balances).
-      'const undrawn = { balances: "credits" } as const; const bad1: NavBarProps = { ...undrawn };',
-      // Negative: a wider string where the axis needs a literal.
-      'declare const wide: string; const bad2: NavBarProps = { viewport: wide };',
-      // Negative: a widened boolean that may select signedIn: true without balances support.
-      'declare const signed: boolean; const bad4: NavBarProps = { signedIn: signed, balances: "credits" };'
-    ]
-    const failures = rejected(source, statements)
-    expect([...failures].sort()).toEqual([2, 3, 4])
+  describe('when NavBar props come from spreads and wider-typed objects', () => {
+    let source: string
+    let statements: string[]
+    beforeEach(() => {
+      source = sources.get('NavBar')!
+      statements = [
+        // Positive: a drawn row, spread from a typed object, plus a standard element prop.
+        'const drawn = { viewport: "mobile", signedIn: true, balances: "credits" } as const; const ok1: NavBarProps = { ...drawn, id: "nav" };',
+        // Positive: a typed union member passed through.
+        'declare const member: NavBarProps; const ok2: NavBarProps = { ...member };',
+        // Negative: a spread that defaults into an undrawn tuple (signed-out with balances).
+        'const undrawn = { balances: "credits" } as const; const bad1: NavBarProps = { ...undrawn };',
+        // Negative: a wider string where the axis needs a literal.
+        'declare const wide: string; const bad2: NavBarProps = { viewport: wide };',
+        // Negative: a widened boolean that may select signedIn: true without balances support.
+        'declare const signed: boolean; const bad4: NavBarProps = { signedIn: signed, balances: "credits" };'
+      ]
+    })
+
+    it('should reject the ones that reach an undrawn NavBar selection', () => {
+      expect([...rejected(source, statements)].sort()).toEqual([2, 3, 4])
+    })
   })
 
   // An arbitrary Record<string, unknown> is not claimed to be rejected statically: its values are unknown, and the
   // runtime validates them (unknown values throw, reserved names are dropped). A fixture that refers to a missing
   // global must fail outright rather than pass as a rejection.
-  it('should fail on a missing-global diagnostic instead of counting it as a contract rejection', () => {
-    expect(() =>
-      rejected(sources.get('NavBar')!, ['const missing: NavBarProps = notDeclaredAnywhere;'])
-    ).toThrow('Fixture diagnostic TS2304')
+  describe('when a fixture refers to a missing global', () => {
+    let statements: string[]
+    beforeEach(() => {
+      statements = ['const missing: NavBarProps = notDeclaredAnywhere;']
+    })
+
+    it('should fail on the diagnostic instead of counting it as a contract rejection', () => {
+      expect(() => rejected(sources.get('NavBar')!, statements)).toThrow(
+        'Fixture diagnostic TS2304'
+      )
+    })
   })
 })

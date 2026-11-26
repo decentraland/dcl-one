@@ -4,7 +4,7 @@
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 
 pub const DEFAULT_MAX_AGE: u32 = 120;
 pub const DEFAULT_SWR: u32 = 180;
@@ -16,7 +16,7 @@ const HTTP_DATE_FMT: &str = "%a, %d %b %Y %H:%M:%S GMT";
 pub fn format_http_date(ms: i64) -> String {
     Utc.timestamp_millis_opt(ms)
         .single()
-        .unwrap_or_else(|| Utc.timestamp_millis_opt(0).single().unwrap())
+        .unwrap_or(DateTime::UNIX_EPOCH)
         .format(HTTP_DATE_FMT)
         .to_string()
 }
@@ -94,12 +94,16 @@ pub fn apply_etag(resp: &mut Response, last_modified_ms: i64, etag: &str, max_ag
 }
 
 pub fn apply(resp: &mut Response, last_modified_ms: i64, max_age: u32, swr: u32) {
-    let headers = resp.headers_mut();
     if let Ok(v) = HeaderValue::from_str(&format_http_date(last_modified_ms)) {
-        headers.insert(header::LAST_MODIFIED, v);
+        resp.headers_mut().insert(header::LAST_MODIFIED, v);
     }
+    apply_policy(resp, max_age, swr);
+}
+
+/// The cache policy alone, for an answer the grid stamp does not validate.
+pub fn apply_policy(resp: &mut Response, max_age: u32, swr: u32) {
     if let Ok(v) = HeaderValue::from_str(&cache_control_value(max_age, swr)) {
-        headers.insert(header::CACHE_CONTROL, v);
+        resp.headers_mut().insert(header::CACHE_CONTROL, v);
     }
 }
 

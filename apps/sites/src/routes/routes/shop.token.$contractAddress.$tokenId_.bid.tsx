@@ -5,7 +5,7 @@ import { ShopPage, shopClientLoader, shopHeaders, shopMeta } from "../shop/page"
 
 import type { Route } from "./+types/shop.token.$contractAddress.$tokenId_.bid";
 
-export const loader = ({ request, params }: Route.LoaderArgs) => shopLoader("tokenBid", request, params);
+export const loader = ({ request, params, context }: Route.LoaderArgs) => shopLoader("tokenBid", request, params, context);
 export const clientLoader = shopClientLoader;
 export const meta = shopMeta("tokenBid");
 export const headers = shopHeaders;

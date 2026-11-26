@@ -5,4 +5,4 @@
 - `crates/`, `src/`: the engine (Rust). It runs natively and, built to wasm, in the browser. A
   local dev loop is the `justfile` here (`just wasm`, `just native-debug`); the distributable
   wasm build is `make web` in `apps/bevy-explorer` (`python3 build-web.py`).
-- For the hosted scene editor, start at `react-web/src/features/editorHost/`; its checked-in pin and host contract define the integration. Resolve any external editor handbook through authorized task context.
+- For the hosted scene editor, start at `library/ui/apps/hud/features/editorHost/` (the screens) and `library/explorer-core/features/editorHost/` (its checked-in pin and host contract, which define the integration). Resolve any external editor handbook through authorized task context.

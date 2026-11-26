@@ -1,0 +1,89 @@
+/* Gallery, on the menu's 1920x1080 canvas: the 68px header band the menu pages share,
+   with the storage meter beside the title, then the month-grouped grid. */
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-family);
+  pointer-events: auto;
+}
+.page > :not(:first-child) {
+  position: relative;
+}
+.head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 68px;
+  padding: 0 24px;
+  background: var(--scrim-head);
+}
+.title {
+  margin: 0;
+  font-size: var(--type-36);
+  font-weight: 600;
+  line-height: 44px;
+  color: var(--text);
+}
+
+/* Storage meter (current / max photos): the line over its bar. */
+.storage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+.storageBar {
+  width: 240px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+.storageFill {
+  width: var(--fill, 0%);
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  transition: width var(--dur-fast) ease;
+}
+.storageText {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 280px;
+}
+
+.emptyBody {
+  color: var(--ink-7);
+}
+.emptyCamera {
+  color: var(--text);
+  font-weight: var(--fw-bold);
+  text-decoration: underline;
+}
+
+/* Clear of the section modal's close button, on its 68 px header line. */
+.compact {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.compact .head {
+  height: 68px;
+  padding: 0 92px 0 30px;
+}

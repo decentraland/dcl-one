@@ -40,6 +40,7 @@
 # shared-backend
 /library/dcl-auth/ @decentraland/apis
 /library/dcl-http/ @decentraland/apis
+/library/dcl-metrics/ @decentraland/apis
 /library/catalyst-api/ @decentraland/apis
 /services/catalyst/fed/ @decentraland/apis
 /services/catalyst/jobs/ @decentraland/apis
@@ -56,11 +57,16 @@
 
 # sdk
 # UNASSIGNED /library/js-sdk-toolchain/
+# UNASSIGNED /library/hashing/
 # UNASSIGNED /.github/workflows/sdk.yml
+# UNASSIGNED /.github/workflows/sdk-release.yml
 
 # database
 /schemas/ @decentraland/apis
 /services/catalyst/db/ @decentraland/apis
+/tooling/migration/ @decentraland/apis
+/tooling/tests/migration_*.py @decentraland/apis
+/tooling/tests/test_migration.py @decentraland/apis
 
 # creator-sdk
 /apps/dcl-scene-cli/ @decentraland/client
@@ -71,8 +77,12 @@
 
 # comms
 /services/catalyst/comms/ @decentraland/apis
+/services/catalyst/message-router/ @decentraland/apis
+/services/catalyst/cast-bot/ @decentraland/apis
+/.github/workflows/cast-presenter.yml @decentraland/apis
 /library/vendor/rusty_enet/ @decentraland/apis
 /library/dcl-livekit-token/ @decentraland/apis
+/services/catalyst/comms-e2e/ @decentraland/apis
 
 # pulse
 /services/catalyst/comms/src/pulse/ @decentraland/apis
@@ -81,6 +91,10 @@
 /apps/sites/ @decentraland/web-applications
 /apps/ui3/ @decentraland/web-applications
 /library/ui/ @decentraland/web-applications
+/library/web-core/ @decentraland/web-applications
+/tooling/creators-e2e/ @decentraland/web-applications
+/tooling/ui-kit-ceiling.json @decentraland/web-applications
+/tooling/ui-token-floor.json @decentraland/web-applications
 
 # async
 /library/async/ @decentraland/web-applications @decentraland/apis
@@ -88,6 +102,7 @@
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications
 /library/shop/ @decentraland/web-applications
+/library/ui/apps/shop/ @decentraland/web-applications
 /apps/sites/src/routes/shop/ @decentraland/web-applications
 /tooling/shop-parity/ @decentraland/web-applications
 /tooling/shop-trade-journey/ @decentraland/web-applications
@@ -96,15 +111,25 @@
 /apps/ui3/src/explorer/ @decentraland/web-applications
 
 # creator-ui
-/apps/ui3/src/editor/ @decentraland/web-applications
 /apps/ui3/editor-scene/ @decentraland/web-applications
 /apps/creator-hub/ @decentraland/web-applications
+/.github/workflows/creator-hub-*.yml @decentraland/web-applications
+/.github/actions/creator-hub-*/ @decentraland/web-applications
 
 # explorer-client
 /rendering/bevy-explorer/ @decentraland/client
+/library/ui/apps/hud/ @decentraland/client
+/library/explorer-core/ @decentraland/client
 /apps/bevy-explorer/ @decentraland/client
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
+/tooling/bevy-*.py @decentraland/client
+/tooling/patched-sources.py @decentraland/client
+/tooling/vendor-provenance.py @decentraland/client
+/tooling/tests/test_bevy_*.py @decentraland/client
+/infra/dev/explorer-shell-hook.sh @decentraland/client
+/infra/packages/bevy-explorer-native.nix @decentraland/client
+/infra/packages/bevy-explorer.nix @decentraland/client
 
 # explorer-rust
 /rendering/bevy-explorer/source/crates/ @robtfm
@@ -116,9 +141,8 @@
 /rendering/bevy-explorer/source/local-harness/benchmark/ @robtfm
 /rendering/bevy-explorer/source/local-harness/presence/harness-util/ @robtfm
 /rendering/bevy-explorer/source/vendor/ @robtfm
-/rendering/bevy-explorer/bevy/ @robtfm
-/rendering/bevy-explorer/cargo-patches.toml @robtfm
-/rendering/bevy-explorer/forks.toml @robtfm
+/rendering/bevy-explorer/vendor/ @robtfm
+/rendering/bevy-explorer/patches/ @robtfm
 
 # uuav-native
 /library/uuav/ @decentraland/client
@@ -126,6 +150,10 @@
 /tooling/native-lock/ @decentraland/client
 /.github/workflows/uuav-native.yml @decentraland/client
 /.github/workflows/uuav-verify.yml @decentraland/client
+
+# avatar-preview
+/rendering/avatar-preview/ @decentraland/client
+/.github/workflows/avatar-preview*.yml @decentraland/client
 
 # quality
 /services/catalyst/tests/ @decentraland/qa

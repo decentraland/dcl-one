@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use crate::shared::cache::TtlMap;
-use crate::storage::Storage;
+use crate::storage::{Storage, gc};
 use dcl_auth::{hash_bytes_v0_unixfs, hash_bytes_v1, is_canonical_cid, verify_hash};
 use dcl_http::{Outbound, read_body_capped};
 
@@ -421,6 +421,7 @@ async fn pull_first(pull: &PullSource, hash: &str) -> Result<Option<Vec<u8>>, Up
 
 /// `catalyst builder seed <contents-base-url> <cid>...`: pre-pulls the listed
 /// files into the ONE store, verified; reports the liars and the misses.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn seed(
     blobs: &Storage,
     http: &Outbound,
@@ -514,7 +515,15 @@ fn model_from_composite(composite: &Value) -> Option<String> {
     None
 }
 
-async fn store_file(blobs: &Storage, bytes: Vec<u8>, stored: &mut usize) -> Result<String> {
+/// Stores one walked file and remembers where it came from, so the catalogue
+/// write can store it again if it left the store meanwhile.
+async fn store_file(
+    blobs: &Storage,
+    path: &Path,
+    walked: &mut HashMap<String, PathBuf>,
+    stored: &mut usize,
+) -> Result<String> {
+    let bytes = fs::read(path)?;
     let hash = hash_bytes_v1(&bytes);
     if !blobs.exist(&hash).await? {
         blobs
@@ -523,15 +532,18 @@ async fn store_file(blobs: &Storage, bytes: Vec<u8>, stored: &mut usize) -> Resu
             .with_context(|| format!("store {hash}"))?;
         *stored += 1;
     }
+    walked.insert(hash.clone(), path.to_path_buf());
     Ok(hash)
 }
 
 /// `catalyst builder catalog <packs-dir>` (the old `catalyrst-builder catalog
 /// <packs> <dir>`): walks the `@dcl/asset-packs` tree, stores every asset
 /// file in the ONE store under its CIDv1 and upserts the one catalogue row.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()> {
     let mut packs_json: Vec<Value> = Vec::new();
     let mut stored = 0usize;
+    let mut walked: HashMap<String, PathBuf> = HashMap::new();
     let mut total_assets = 0usize;
 
     for pack_dir in subdirs_with_data(Path::new(packs_dir))? {
@@ -557,9 +569,11 @@ pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()
             continue;
         }
 
-        let pack_thumbnail = match fs::read(pack_dir.join("thumbnail.png")) {
-            Ok(bytes) => Value::String(store_file(blobs, bytes, &mut stored).await?),
-            Err(_) => Value::Null,
+        let thumbnail = pack_dir.join("thumbnail.png");
+        let pack_thumbnail = if thumbnail.is_file() {
+            Value::String(store_file(blobs, &thumbnail, &mut walked, &mut stored).await?)
+        } else {
+            Value::Null
         };
 
         let mut assets_json: Vec<Value> = Vec::new();
@@ -590,8 +604,10 @@ pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()
 
             let mut contents: BTreeMap<String, String> = BTreeMap::new();
             for (rel, abs) in files {
-                let bytes = fs::read(&abs)?;
-                contents.insert(rel, store_file(blobs, bytes, &mut stored).await?);
+                contents.insert(
+                    rel,
+                    store_file(blobs, &abs, &mut walked, &mut stored).await?,
+                );
             }
 
             let mut asset = data.as_object().cloned().unwrap_or_default();
@@ -618,7 +634,26 @@ pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()
     }
 
     let packs = packs_json.len();
-    write_catalog(pool, Value::Array(packs_json), packs_dir).await?;
+    // The walk holds no lock; an unlink batch may have removed a file it found
+    // stored. Under the store lock's shared side every named file is checked
+    // and stored again if gone, and the row commits before the lock goes.
+    let mut tx = pool.begin().await?;
+    gc::lock_store_shared_within(&mut tx, gc::SHARED_LOCK_WAIT)
+        .await
+        .context("the content store is being collected; retry the catalogue build")?;
+    let named: Vec<&str> = walked.keys().map(String::as_str).collect();
+    let present = blobs.exist_multiple(&named).await?;
+    for (hash, path) in &walked {
+        if !present.get(hash.as_str()).copied().unwrap_or(false) {
+            blobs
+                .store(hash, Bytes::from(fs::read(path)?))
+                .await
+                .with_context(|| format!("store {hash}"))?;
+            stored += 1;
+        }
+    }
+    write_catalog(&mut *tx, Value::Array(packs_json), packs_dir).await?;
+    tx.commit().await?;
     println!(
         "catalog: {packs} packs, {total_assets} assets, {stored} content files stored -> builder.asset_catalog"
     );
@@ -628,8 +663,10 @@ pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()
 /// `catalyst builder catalog <catalog.json>`: the catalogue the npm
 /// `@dcl/asset-packs` package ships, which names every file by its hash
 /// instead of carrying it. Upserts the same row [`build`] writes and stores
-/// nothing; the files are pulled from `BUILDER_CONTENT_BUCKET_URL` on first
-/// read like any other miss.
+/// nothing, so it takes no store lock; the files are pulled from
+/// `BUILDER_CONTENT_BUCKET_URL` on first read like any other miss, including a
+/// file an unlink batch removed before the row committed.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn import(pool: &PgPool, catalog_json: &str) -> Result<()> {
     let catalog = read_json(Path::new(catalog_json))?;
     let packs = packs_from_catalog_json(&catalog)?;
@@ -704,14 +741,18 @@ pub fn packs_from_catalog_json(catalog: &Value) -> Result<Value> {
 }
 
 /// Upserts the one catalogue row (`packs` must be an array).
-pub async fn write_catalog(pool: &PgPool, packs: Value, source: &str) -> Result<()> {
+pub async fn write_catalog(
+    executor: impl sqlx::PgExecutor<'_>,
+    packs: Value,
+    source: &str,
+) -> Result<()> {
     sqlx::query(
         "INSERT INTO builder.asset_catalog (id, packs, source, built_at) VALUES (1, $1, $2, timezone('UTC', now())) \
          ON CONFLICT (id) DO UPDATE SET packs = EXCLUDED.packs, source = EXCLUDED.source, built_at = EXCLUDED.built_at",
     )
     .bind(packs)
     .bind(source)
-    .execute(pool)
+    .execute(executor)
     .await
     .context("writing builder.asset_catalog")?;
     Ok(())

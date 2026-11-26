@@ -7,12 +7,14 @@ use bevy::{
     tasks::{IoTaskPool, Task},
 };
 use bevy_console::ConsoleCommand;
+use common::sync::MutexExt;
 use common::{
     structs::DebugInfo,
-    util::{TaskExt, UrlLoopbackExt},
+    util::{TaskCompat, TaskExt, UrlLoopbackExt},
 };
 use console::DoAddConsoleCommand;
-use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
+use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer, IpfsResource};
+use system_bridge::SystemApi;
 
 #[cfg(target_arch = "wasm32")]
 use crate::CHANNELS;
@@ -21,7 +23,7 @@ use common::util::JoinRelativeExt;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{AssetForProcessing, ProcessingAssetType};
+use crate::{AssetForProcessing, ProcessingAssetType, ProcessorRequest};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -30,8 +32,10 @@ pub struct ImageProcessingPlugin;
 impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
-        app.add_systems(Update, (check_assets, pipe_events));
-        app.preregister_asset_loader::<crate::ktx2_loader::Ktx2Loader>(&["ktx2"]);
+        app.add_systems(Update, (check_assets, pipe_events, handle_satellite_tile));
+        // every KTX2 bevy decodes (one loaded by path through its `ImageLoader`, or an image
+        // embedded in a glTF) goes through `ktx2::transcode_ktx2_image`
+        crate::ktx2::install_ktx2_transcoder();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -45,18 +49,19 @@ impl Plugin for ImageProcessingPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let (req_sx, resp_rx) = CHANNELS.get().unwrap().lock().unwrap().0.take().unwrap();
+            let (req_sx, resp_rx) = CHANNELS
+                .get()
+                .unwrap()
+                .lock_ignore_poison()
+                .0
+                .take()
+                .unwrap();
             app.insert_resource(Channels { req_sx, resp_rx });
         }
 
         app.init_resource::<ImgReprocessStats>();
         app.init_resource::<DebugProcessingEnabled>();
         app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
-    }
-
-    fn finish(&self, app: &mut App) {
-        // after the renderer, which reports the compressed formats the gpu takes
-        app.init_asset_loader::<crate::ktx2_loader::Ktx2Loader>();
     }
 }
 
@@ -85,7 +90,7 @@ fn toggle_debug_processing(
 
 #[derive(Resource)]
 struct Channels {
-    req_sx: UnboundedSender<AssetForProcessing>,
+    req_sx: UnboundedSender<ProcessorRequest>,
     resp_rx: UnboundedReceiver<Result<AssetForProcessing, ()>>,
 }
 
@@ -100,6 +105,7 @@ struct ImgReprocessStats {
     skip_unknown: usize,
     skip_unhashable: usize,
     skip_shouldnt_cache: usize,
+    skip_variant: usize,
     already_compressed: usize,
     started: usize,
     processed: usize,
@@ -107,18 +113,17 @@ struct ImgReprocessStats {
     swapped: usize,
 }
 
-/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
+/// Frees a ktx2 transcode the loader stashed when its cache write is not going to happen
 /// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
-/// is evicted by `ktx2_loader::evict_stale_results`.
+/// is evicted by `ktx2::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     if matches!(ty, ProcessingAssetType::Ktx2Cache) {
-        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
-            results.remove(&path.to_string());
-        }
+        crate::ktx2::KTX2_RESULTS
+            .lock_ignore_poison()
+            .remove(&path.to_string());
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn check_assets(
     mut a: EventReader<AssetEvent<Image>>,
     mut failed_gltfs: EventReader<AssetLoadFailedEvent<Gltf>>,
@@ -131,7 +136,7 @@ fn check_assets(
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
 ) {
     // before any early return, so stale transcodes go even when nothing can be cached
-    crate::ktx2_loader::evict_stale_results();
+    crate::ktx2::evict_stale_results();
 
     #[cfg(not(target_arch = "wasm32"))]
     let Some(cache_root) = ipfas.ipfs_cache_path() else {
@@ -158,23 +163,21 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
-            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
-            // or bc7 ktx2 has nothing waiting and is left as it is
-            let ktx2 = asset_path.label().is_none()
-                && asset_path
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
-            if ktx2 {
-                let waiting = crate::ktx2_loader::KTX2_RESULTS
-                    .lock()
-                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
-                if !waiting {
-                    stats.already_compressed += 1;
-                    continue;
-                }
-            } else if image.is_compressed() {
+            // an abgen variant is not the original's bytes: compressing it, or writing the
+            // result over the original's cache entry, would mix the two
+            if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+                stats.skip_variant += 1;
+                continue;
+            }
+            // a ktx2 loads compressed already; when bevy's image loader transcoded it
+            // (`ktx2::transcode_ktx2_image`), the dds is waiting in `KTX2_RESULTS` to be
+            // written over the cached ktx2 bytes, whatever the path's extension. an embedded
+            // ktx2 that was transcoded queues its gltf, whose pass writes it back as dds. a
+            // cached or bc ktx2 has nothing waiting and is skipped as compressed, like any
+            // cached image
+            let ktx2 = crate::ktx2::has_waiting_transcode(asset_path)
+                || crate::ktx2::take_embedded_transcode(asset_path);
+            if !ktx2 && image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
                 continue;
@@ -239,21 +242,22 @@ fn check_assets(
         }
     }
 
-    // a gltf that fails to load because it is draco-compressed or has basisu
-    // textures (the loader rejects the extension by name, and spec-compliant
-    // files without a fallback must list it in extensionsRequired) is run
-    // through the processor once, which decompresses or transcodes and persists
-    // it. the processor independently verifies the extension against the
-    // actual bytes.
+    // a gltf that fails to load because it is draco-compressed (the loader
+    // rejects the extension by name) is run through the processor once, which
+    // decompresses and persists it. the processor independently verifies the
+    // extension against the actual bytes. a required KHR_texture_basisu no
+    // longer fails: the loader reads it natively
     for ev in failed_gltfs.read() {
         let error = ev.error.to_string();
-        if !["KHR_draco_mesh_compression", "KHR_texture_basisu"]
-            .iter()
-            .any(|extension| error.contains(extension))
-        {
+        if !ipfs::cache_heal::names_repairable_extension(&error) {
             continue;
         }
         let asset_path = ev.path.clone();
+        // a failed variant falls back to its original (`ipfs::bevy_variants`), which comes
+        // through here on its own if it fails too
+        if ipfas.ipfs().served_bevy_variant(asset_path.path()) {
+            continue;
+        }
         let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(asset_path.path()) else {
             stats.skip_unknown += 1;
             continue;
@@ -350,7 +354,6 @@ fn check_assets(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_events(
     mut channels: ResMut<Channels>,
     mut events: EventReader<AssetForProcessing>,
@@ -368,7 +371,7 @@ fn pipe_events(
 ) {
     for event in events.read() {
         stats.started += 1;
-        let _ = channels.req_sx.send(event.clone());
+        let _ = channels.req_sx.send(ProcessorRequest::Asset(event.clone()));
     }
 
     if stats.started == 0 {
@@ -386,7 +389,7 @@ fn pipe_events(
                     ProcessingAssetType::Gltf => {
                         if let Some(h) = asset_server.get_handle::<Gltf>(&req.base_path) {
                             // on wasm the cache path is the source url (the processed bytes
-                            // overwrite the service-worker cache entry for that url), so wrap
+                            // overwrite the web cache entry for that url), so wrap
                             // it in a url-form IpfsPath to make it loadable
                             #[cfg(target_arch = "wasm32")]
                             let cache_path = {
@@ -481,5 +484,110 @@ fn pipe_events(
     if imgs_replaced > 0 {
         debug!("replaced {} imgs", imgs_replaced);
         stats.swapped += imgs_replaced;
+    }
+}
+
+/// The satellite tile fetch's wait for response headers, and for each body chunk after them.
+const TILE_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const TILE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Tiles are under a megabyte; anything this large is not one.
+const TILE_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// Answers `SystemApi::GetSatelliteTile`: fetches the tile from the abgen CDN's satellite maps
+/// and replies with its JPEG, base64-encoded. The path is validated before any request.
+fn handle_satellite_tile(
+    mut events: EventReader<SystemApi>,
+    ipfs: Res<IpfsResource>,
+    channels: Res<Channels>,
+) {
+    for event in events.read() {
+        let SystemApi::GetSatelliteTile(path, reply) = event else {
+            continue;
+        };
+        let reply = reply.clone();
+        let Some(path) = crate::validate_satellite_tile_path(path) else {
+            reply.send(Err("invalid satellite tile path".to_owned()));
+            continue;
+        };
+        let url = common::base_domain::url(
+            common::base_domain::Service::AbgenCdn,
+            &format!("/SatelliteMaps/{path}"),
+        );
+        let client = ipfs.client();
+        let req_sx = channels.req_sx.clone();
+
+        IoTaskPool::get()
+            .spawn_compat(async move {
+                let result = fetch_satellite_tile(client, url, req_sx).await;
+                reply.send(result);
+            })
+            .detach();
+    }
+}
+
+// `req_sx` reaches the processor worker, which only the web engine converts on
+#[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+async fn fetch_satellite_tile(
+    client: reqwest::Client,
+    url: String,
+    req_sx: UnboundedSender<ProcessorRequest>,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let body = download_satellite_tile(&client, &url).await?;
+
+    // the conversion is tens of milliseconds: off the frame loop and the scene's thread
+    #[cfg(not(target_arch = "wasm32"))]
+    let jpeg = bevy::tasks::AsyncComputeTaskPool::get()
+        .spawn(async move { crate::satellite_tile_jpeg(&body) })
+        .await;
+    #[cfg(target_arch = "wasm32")]
+    let jpeg = {
+        let (sx, rx) = tokio::sync::oneshot::channel();
+        req_sx
+            .send(ProcessorRequest::SatelliteTile(body, sx))
+            .map_err(|_| "image processor is not running".to_owned())?;
+        rx.await.map_err(|_| "image processor stopped".to_owned())?
+    };
+
+    jpeg.map(|jpeg| STANDARD.encode(jpeg))
+        .map_err(|e| format!("satellite tile conversion failed: {e}"))
+}
+
+/// The tile's bytes, read chunk by chunk so a body over `TILE_MAX_BYTES` stops downloading at
+/// the limit; a `Content-Length` over it is refused before the body is read.
+async fn download_satellite_tile(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    use futures_lite::StreamExt;
+
+    let response = platform::within(TILE_HEADERS_TIMEOUT, client.get(url).send())
+        .await
+        .ok_or("satellite tile request timed out")?
+        .map_err(|e| format!("satellite tile request failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "satellite tile request returned {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|len| len > TILE_MAX_BYTES as u64)
+    {
+        return Err("satellite tile is too large".to_owned());
+    }
+    let mut stream = Box::pin(response.bytes_stream());
+    let mut body = Vec::new();
+    loop {
+        match platform::within(TILE_IDLE_TIMEOUT, stream.next()).await {
+            Some(Some(Ok(chunk))) => {
+                if body.len() + chunk.len() > TILE_MAX_BYTES {
+                    return Err("satellite tile is too large".to_owned());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Some(Some(Err(e))) => return Err(format!("satellite tile download failed: {e}")),
+            Some(None) => return Ok(body),
+            None => return Err("satellite tile download stalled".to_owned()),
+        }
     }
 }

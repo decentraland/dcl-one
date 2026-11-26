@@ -13,28 +13,32 @@ use common::{
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use wallet::Wallet;
 
-pub(super) fn register(app: &mut App) {
-    app.init_resource::<ClientLoginDelivery>()
-        .add_console_command::<ClientLoginDebug, _>(debug)
-        .add_debug_section(DebugSection {
-            title: "Client login events",
-            query: "/client_login_state",
-            fields: &[
-                ("Delivery active", "active"),
-                ("Pending events", "pending"),
-                ("Queue saved", "durable"),
-                ("Memory-only delivery", "memoryOnly"),
-                ("Storage failures", "storageFailures"),
-                ("Storage in flight", "storageInFlight"),
-                ("Request in flight", "inFlight"),
-                ("Attempts", "attempts"),
-                ("Result", "result"),
-                ("Discarded events", "discarded"),
-                ("Retry in milliseconds", "retryInMs"),
-            ],
-            actions: &[],
-            inputs: &[],
-        });
+pub(super) struct ClientLoginPlugin;
+
+impl Plugin for ClientLoginPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ClientLoginDelivery>()
+            .add_console_command::<ClientLoginDebug, _>(debug)
+            .add_debug_section(DebugSection {
+                title: "Client login events",
+                query: "/client_login_state",
+                fields: &[
+                    ("Delivery active", "active"),
+                    ("Pending events", "pending"),
+                    ("Queue saved", "durable"),
+                    ("Memory-only delivery", "memoryOnly"),
+                    ("Storage failures", "storageFailures"),
+                    ("Storage in flight", "storageInFlight"),
+                    ("Request in flight", "inFlight"),
+                    ("Attempts", "attempts"),
+                    ("Result", "result"),
+                    ("Discarded events", "discarded"),
+                    ("Retry in milliseconds", "retryInMs"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+    }
 }
 
 #[derive(Resource)]
@@ -372,8 +376,10 @@ mod tests {
 
     fn pending_state(wallet: &Wallet, endpoint: &str) -> ClientLoginDelivery {
         IoTaskPool::get_or_init(Default::default);
-        let mut state = ClientLoginDelivery::default();
-        state.active = Some(format!("{:#x}", wallet.address().unwrap()));
+        let mut state = ClientLoginDelivery {
+            active: Some(format!("{:#x}", wallet.address().unwrap())),
+            ..Default::default()
+        };
         state.queue.push(PendingClientLogin {
             wallet: state.active.clone().unwrap(),
             endpoint: endpoint.into(),
@@ -534,7 +540,7 @@ mod tests {
         poll_until(&mut state, &wallet, endpoint, |s| !s.memory_only);
         assert_eq!(
             state.queue.begin_save().unwrap().additions,
-            [original.clone()]
+            std::slice::from_ref(&original)
         );
         state.storage = Some(
             IoTaskPool::get()

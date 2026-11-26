@@ -211,7 +211,7 @@ pub enum RegistryError {
 }
 
 const PROFILE_SQL: &str = "\
-    SELECT ap.pointer, d.entity_metadata::jsonb #> '{v,avatars,0}' AS avatar \
+    SELECT ap.pointer, d.entity_id, d.entity_metadata::jsonb #> '{v,avatars,0}' AS avatar \
     FROM content.active_pointers ap \
     JOIN content.deployments d ON d.entity_id=ap.entity_id \
     WHERE ap.pointer=ANY($1::text[]) AND d.entity_type='profile' \
@@ -224,16 +224,30 @@ const CACHE_WRITE_SQL: &str = "INSERT INTO social.registry_profile_cache(profile
 #[derive(Debug)]
 pub struct RegistryReader {
     pool: Option<PgPool>,
+    /// Derives the picture of a profile that deployed no `face256`.
+    faces: Option<FaceUrls>,
     #[cfg(test)]
-    seen: std::sync::Mutex<HashSet<String>>,
+    seen: parking_lot::Mutex<HashSet<String>>,
 }
 impl RegistryReader {
     pub fn new(pool: Option<PgPool>) -> Self {
         Self {
             pool,
+            faces: None,
             #[cfg(test)]
             seen: Default::default(),
         }
+    }
+    /// A reader that derives the picture of a profile with no deployed `face256` from `faces`,
+    /// as the lambdas' snapshots do.
+    pub fn with_faces(pool: Option<PgPool>, faces: FaceUrls) -> Self {
+        Self {
+            faces: Some(faces),
+            ..Self::new(pool)
+        }
+    }
+    fn reduce(&self, entity_id: &str, avatar: &serde_json::Value) -> Option<RegistryProfile> {
+        reduce_registry_profile(avatar, entity_id, self.faces.as_ref())
     }
     pub fn attached(&self) -> bool {
         self.pool.is_some()
@@ -244,7 +258,7 @@ impl RegistryReader {
         keys: &[String],
     ) -> Result<HashMap<String, RegistryProfile>, sqlx::Error> {
         #[cfg(test)]
-        self.seen.lock().unwrap().extend(keys.iter().cloned());
+        self.seen.lock().extend(keys.iter().cloned());
         let Some(pool) = &self.pool else {
             return Ok(HashMap::new());
         };
@@ -276,7 +290,7 @@ impl RegistryReader {
             values.push(serde_json::to_value(profile).expect("minimal JSON profile"));
         }
         #[cfg(test)]
-        self.seen.lock().unwrap().extend(keys.iter().cloned());
+        self.seen.lock().extend(keys.iter().cloned());
         if let Err(error) = sqlx::query(CACHE_WRITE_SQL)
             .bind(&keys)
             .bind(&values)
@@ -304,7 +318,7 @@ impl RegistryReader {
     async fn avatars(
         &self,
         keys: &[String],
-    ) -> Result<Vec<(String, Option<serde_json::Value>)>, sqlx::Error> {
+    ) -> Result<Vec<(String, String, Option<serde_json::Value>)>, sqlx::Error> {
         let Some(pool) = &self.pool else {
             return Ok(Vec::new());
         };
@@ -318,13 +332,19 @@ impl RegistryReader {
                 .or_insert_with(|| key.clone());
         }
         let pointers = first_seen(keys.iter().map(|key| key.to_lowercase()));
-        let rows: Vec<(String, Option<serde_json::Value>)> = sqlx::query_as(PROFILE_SQL)
+        let rows: Vec<(String, String, Option<serde_json::Value>)> = sqlx::query_as(PROFILE_SQL)
             .bind(&pointers)
             .fetch_all(pool)
             .await?;
         Ok(rows
             .into_iter()
-            .map(|(pointer, avatar)| (actors.remove(&pointer).expect("requested pointer"), avatar))
+            .map(|(pointer, entity_id, avatar)| {
+                (
+                    actors.remove(&pointer).expect("requested pointer"),
+                    entity_id,
+                    avatar,
+                )
+            })
             .collect())
     }
     pub async fn single(&self, address: &str) -> Result<RegistryProfile, RegistryError> {
@@ -332,7 +352,7 @@ impl RegistryReader {
         if let Some(profile) = self.cached(std::slice::from_ref(&key)).await?.remove(&key) {
             return Ok(profile);
         }
-        let Some((_, avatar)) = self
+        let Some((_, entity_id, avatar)) = self
             .avatars(std::slice::from_ref(&key))
             .await?
             .into_iter()
@@ -342,7 +362,7 @@ impl RegistryReader {
         };
         let profile = avatar
             .as_ref()
-            .and_then(reduce_registry_profile)
+            .and_then(|avatar| self.reduce(&entity_id, avatar))
             .ok_or_else(|| RegistryError::Invalid(key.clone()))?;
         self.put(&key, &profile).await;
         Ok(profile)
@@ -370,8 +390,11 @@ impl RegistryReader {
             .collect::<Vec<_>>();
         if !missing.is_empty() {
             let mut to_cache = Vec::new();
-            for (actor, avatar) in self.avatars(&missing).await? {
-                let Some(profile) = avatar.as_ref().and_then(reduce_registry_profile) else {
+            for (actor, entity_id, avatar) in self.avatars(&missing).await? {
+                let Some(profile) = avatar
+                    .as_ref()
+                    .and_then(|avatar| self.reduce(&entity_id, avatar))
+                else {
                     continue;
                 };
                 to_cache.push((profile.address.clone(), profile.clone()));
@@ -388,7 +411,7 @@ impl RegistryReader {
     }
     #[cfg(test)]
     async fn clear_seen(&self) {
-        let keys = self.seen.lock().unwrap().drain().collect::<Vec<_>>();
+        let keys = self.seen.lock().drain().collect::<Vec<_>>();
         if let Some(pool) = &self.pool {
             sqlx::query(
                 "DELETE FROM social.registry_profile_cache WHERE profile_key=ANY($1::text[])",
@@ -400,7 +423,16 @@ impl RegistryReader {
         }
     }
 }
-fn reduce_registry_profile(avatar: &serde_json::Value) -> Option<RegistryProfile> {
+/// The public profile of the first avatar: it needs a userId and a name (or unclaimedName). Its
+/// picture is the deployed `face256`, kept as stored. A profile deployed without snapshots (the
+/// clients leave them to the server) gets the face the lambdas' snapshots name for its entity
+/// when `faces` derives one, and no picture otherwise; it is never dropped for it, since the
+/// source registry reads profiles through the lambdas, which always name a face.
+fn reduce_registry_profile(
+    avatar: &serde_json::Value,
+    entity_id: &str,
+    faces: Option<&FaceUrls>,
+) -> Option<RegistryProfile> {
     let nonempty = |key| {
         avatar
             .get(key)
@@ -412,11 +444,16 @@ fn reduce_registry_profile(avatar: &serde_json::Value) -> Option<RegistryProfile
         name: nonempty("name")
             .or_else(|| nonempty("unclaimedName"))?
             .to_string(),
-        profile_picture_url: avatar
-            .pointer("/avatar/snapshots/face256")?
-            .as_str()
-            .filter(|value| !value.is_empty())?
-            .to_string(),
+        profile_picture_url: match avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            Some(stored) => stored.to_string(),
+            None => faces
+                .and_then(|faces| faces.picture(entity_id, None))
+                .unwrap_or_default(),
+        },
         has_claimed_name: avatar
             .get("hasClaimedName")
             .and_then(serde_json::Value::as_bool)
@@ -430,9 +467,9 @@ pub struct ProfilesCache {
     registry: Arc<RegistryReader>,
 }
 impl ProfilesCache {
-    pub fn new(pool: PgPool, _faces: FaceUrls) -> Self {
+    pub fn new(pool: PgPool, faces: FaceUrls) -> Self {
         Self {
-            registry: Arc::new(RegistryReader::new(Some(pool))),
+            registry: Arc::new(RegistryReader::with_faces(Some(pool), faces)),
         }
     }
     pub fn registry(&self) -> Arc<RegistryReader> {
@@ -882,6 +919,65 @@ mod tests {
             "{compared} key comparisons for {} addresses: the kept keys are scanned, not probed",
             addrs.len()
         );
+    }
+
+    #[test]
+    fn a_profile_deployed_without_snapshots_is_kept_with_the_derived_face() {
+        // Clients leave snapshots to the server, so the deployed entity often has none.
+        let bare =
+            serde_json::json!({"userId":"0xAbC","name":"Dafu","hasClaimedName":true,"avatar":{}});
+        let cdn = FaceUrls::new(Some("https://cdn/"), "https://node/profile-images/", false);
+        let profile = reduce_registry_profile(&bare, "bafyprofile", Some(&cdn)).expect("kept");
+        assert_eq!(profile.address, "0xabc");
+        assert_eq!(profile.name, "Dafu");
+        assert_eq!(
+            profile.profile_picture_url,
+            "https://cdn/entities/bafyprofile/face.png"
+        );
+        assert!(profile.has_claimed_name);
+        let empty_face = serde_json::json!({"userId":"0xabc","name":"Dafu","avatar":{"snapshots":{"face256":""}}});
+        assert_eq!(
+            reduce_registry_profile(&empty_face, "bafyprofile", Some(&cdn))
+                .unwrap()
+                .profile_picture_url,
+            "https://cdn/entities/bafyprofile/face.png"
+        );
+        // a node that derives no face still knows the player, with no picture
+        let node = FaceUrls::new(None, "https://node/profile-images/", false);
+        assert_eq!(
+            reduce_registry_profile(&bare, "bafyprofile", Some(&node))
+                .unwrap()
+                .profile_picture_url,
+            ""
+        );
+        assert_eq!(
+            reduce_registry_profile(&bare, "bafyprofile", None)
+                .unwrap()
+                .profile_picture_url,
+            ""
+        );
+    }
+
+    #[test]
+    fn a_deployed_face_is_kept_verbatim_and_a_profile_needs_a_user_and_a_name() {
+        let cdn = FaceUrls::new(Some("https://cdn/"), "https://node/profile-images/", false);
+        let stored = serde_json::json!({"userId":"0xabc","unclaimedName":"guest","avatar":{"snapshots":{"face256":"https://images.example.org/f.png"}}});
+        let profile = reduce_registry_profile(&stored, "bafyprofile", Some(&cdn)).unwrap();
+        assert_eq!(
+            profile.profile_picture_url,
+            "https://images.example.org/f.png"
+        );
+        assert_eq!(profile.name, "guest");
+        for invalid in [
+            serde_json::json!({"name":"Dafu","avatar":{}}),
+            serde_json::json!({"userId":"0xabc","avatar":{}}),
+            serde_json::json!({"userId":"0xabc","name":"","unclaimedName":"","avatar":{}}),
+        ] {
+            assert!(
+                reduce_registry_profile(&invalid, "bafyprofile", Some(&cdn)).is_none(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]

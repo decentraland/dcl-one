@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use bevy::{platform::collections::HashSet, prelude::Entity};
 use common::rpc::{CompareSnapshot, RpcCall};
 
@@ -159,50 +161,81 @@ impl SceneResponseSender {
     }
 }
 
+/// Whether the engine wakes a scene's runtime when it sends the scene something, rather than the
+/// runtime finding it on its next poll: the engine sets it each frame (scene_runner
+/// `update_scene_priority`) and, on the web, the scene's relay reads it before each pump
+/// (dcl_wasm `inner::relay`). Nothing reads it natively. Shared between the engine's handle to the
+/// scene and the runtime, like the kill flag.
+#[derive(Clone, Debug, Default)]
+pub struct SceneWake(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl SceneWake {
+    /// Engine: whether the engine wakes the scene; written only when that changes. A runtime
+    /// that reads a stale value keeps its poll, or waits at most its timeout, until the next
+    /// read, so no ordering with other memory is needed.
+    pub fn set(&self, wakes: bool) {
+        if self.get() != wakes {
+            self.0.store(wakes, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Runtime: whether the engine wakes the scene.
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum CommsMessageType {
     String = 1,
     Binary = 2,
+    /// A `CommsApi` topic message: `[u16 LE topic length][topic UTF-8][data UTF-8]`.
+    CommsData = 3,
+}
+
+/// Longest `CommsApi` topic, in UTF-8 bytes.
+pub const MAX_TOPIC_BYTES: usize = 512;
+/// Longest `CommsApi` topic message, including the type byte and the topic length prefix.
+pub const MAX_TOPIC_MESSAGE_BYTES: usize = 13 * 1024;
+
+pub const MAX_COMMS_MESSAGE_BYTES: usize = 30_000;
+/// A binary receiver's 13 KiB buffer includes a length byte and a 42-byte wallet address.
+pub const MAX_BINARY_MESSAGE_BYTES: usize = 13 * 1024 - 1 - 42;
+
+/// Tagged frames reserve the Explorer routing byte; legacy strings use the whole frame.
+pub fn scene_message_fits(data: &[u8]) -> bool {
+    match data.split_first() {
+        Some((&kind, payload)) if kind == CommsMessageType::Binary as u8 => {
+            payload.len() <= MAX_BINARY_MESSAGE_BYTES
+        }
+        Some((&kind, _)) if kind == CommsMessageType::CommsData as u8 => {
+            data.len() <= MAX_TOPIC_MESSAGE_BYTES
+        }
+        Some((&kind, payload)) if kind == CommsMessageType::String as u8 => {
+            payload.len() <= MAX_COMMS_MESSAGE_BYTES
+        }
+        Some(_) => data.len() <= MAX_COMMS_MESSAGE_BYTES,
+        None => false,
+    }
 }
 
 #[cfg(test)]
-mod rpc_calls_tests {
+mod comms_message_tests {
     use super::*;
-    use bevy::prelude::Quat;
 
-    fn a_call() -> RpcCall {
-        RpcCall::MoveCamera {
-            facing: Quat::IDENTITY,
-        }
-    }
-
-    // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;
-    // draining (the flush) resets the count so the next tick accepts again.
     #[test]
-    fn push_is_bounded_and_resets_on_drain() {
-        let mut calls = RpcCalls::default();
-        for _ in 0..MAX_RPC_CALLS_PER_TICK {
-            calls.push(a_call()).unwrap();
+    fn scene_string_limits_include_the_legacy_first_byte() {
+        for (size, accepted) in [
+            (MAX_COMMS_MESSAGE_BYTES, true),
+            (MAX_COMMS_MESSAGE_BYTES + 1, false),
+        ] {
+            let legacy = vec![b'x'; size];
+            assert_eq!(scene_message_fits(&legacy), accepted, "legacy {size}");
+            let mut framed = vec![CommsMessageType::String as u8];
+            framed.extend_from_slice(&legacy);
+            assert_eq!(scene_message_fits(&framed), accepted, "framed {size}");
         }
-        assert_eq!(calls.len(), MAX_RPC_CALLS_PER_TICK);
-
-        assert!(
-            calls.push(a_call()).is_err(),
-            "over-budget push is rejected"
-        );
-        assert_eq!(
-            calls.len(),
-            MAX_RPC_CALLS_PER_TICK,
-            "a rejected call must not be enqueued"
-        );
-
-        let drained = std::mem::take(&mut calls);
-        assert_eq!(drained.len(), MAX_RPC_CALLS_PER_TICK);
-        assert!(
-            calls.push(a_call()).is_ok(),
-            "a fresh tick accepts calls again"
-        );
     }
 }
 
@@ -272,7 +305,16 @@ pub struct SceneResourceCounters {
     pub fetch_status_3xx: u64,
     pub fetch_status_4xx: u64,
     pub fetch_status_5xx: u64,
+    /// Scene sockets held: connecting, open, and closing until the connection is dropped.
     pub ws_open: u64,
+    /// Sockets refused by policy: URL or scheme, address, socket cap or the user.
+    pub ws_refused: u64,
+    /// Sockets that passed policy and failed to connect: resolution, TCP, TLS, handshake, timeout.
+    pub ws_failed: u64,
+    pub ws_msgs_in: u64,
+    pub ws_bytes_in: u64,
+    pub ws_msgs_out: u64,
+    pub ws_bytes_out: u64,
     pub comms_msgs_in: u64,
     pub comms_bytes_in: u64,
     pub updates_completed: u64,
@@ -322,4 +364,44 @@ pub struct SceneLogMessage {
     pub timestamp: f64, // scene local time
     pub level: SceneLogLevel,
     pub message: String,
+}
+
+#[cfg(test)]
+mod rpc_calls_tests {
+    use super::*;
+    use bevy::prelude::Quat;
+
+    fn a_call() -> RpcCall {
+        RpcCall::MoveCamera {
+            facing: Quat::IDENTITY,
+        }
+    }
+
+    // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;
+    // draining (the flush) resets the count so the next tick accepts again.
+    #[test]
+    fn push_is_bounded_and_resets_on_drain() {
+        let mut calls = RpcCalls::default();
+        for _ in 0..MAX_RPC_CALLS_PER_TICK {
+            calls.push(a_call()).unwrap();
+        }
+        assert_eq!(calls.len(), MAX_RPC_CALLS_PER_TICK);
+
+        assert!(
+            calls.push(a_call()).is_err(),
+            "over-budget push is rejected"
+        );
+        assert_eq!(
+            calls.len(),
+            MAX_RPC_CALLS_PER_TICK,
+            "a rejected call must not be enqueued"
+        );
+
+        let drained = std::mem::take(&mut calls);
+        assert_eq!(drained.len(), MAX_RPC_CALLS_PER_TICK);
+        assert!(
+            calls.push(a_call()).is_ok(),
+            "a fresh tick accepts calls again"
+        );
+    }
 }

@@ -15,8 +15,6 @@
 //! change no durable state), `reset-settings` and every moderation,
 //! suspension, broadcast and badge write answer the social 503.
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -50,10 +48,8 @@ fn mounted(route: &str) -> OriginalUri {
 const DOMAIN: &str = "social";
 
 async fn gate(state: &SharedState, method: &Method, path: &str) -> Result<(), Response> {
-    if writes::is_gated(method, path)
-        && let Some(r) = crate::shared::writes::refusal(state.domains.social_writes_enabled)
-    {
-        return Err(refused(writes::refused_response(&r)).await);
+    if !state.domains.social_writes_enabled && writes::is_gated(method, path) {
+        return Err(refused(writes::disabled_response()).await);
     }
     Ok(())
 }

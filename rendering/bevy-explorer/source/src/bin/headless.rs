@@ -6,6 +6,7 @@
 //! uses. `--server-mode` makes `isServer()` return true to scene JS, so a scene's
 //! authoritative-server branch runs. Intended to replace hammurabi-headless.
 
+use common::sync::MutexExt;
 use std::{str::FromStr, sync::OnceLock, time::Duration};
 use webgpu_build::headless::{scene_stats_sample, EmittedSceneStats};
 
@@ -13,12 +14,14 @@ use bevy::tasks::IoTaskPool;
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
 use clap::Parser;
 use common::{
-    structs::{AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance},
+    structs::{
+        AppConfig, AppError, IVec2Arg, PreviewMode, SceneLoadDistance, StartupScene, StartupScenes,
+    },
     util::{TaskCompat, TaskExt},
 };
 use comms::{
     livekit::{
-        room::{ConnectFailed, Connecting, Disconnected, LivekitRoom, ServerRoomTerminal},
+        room::{Connecting, Disconnected, LivekitRoom, ServerRoomTerminal},
         LivekitTransport,
     },
     AdapterManager, ServerSceneRooms,
@@ -26,11 +29,13 @@ use comms::{
 use dcl_deno_ipc::init_runtime;
 use dcl_types::SceneLogMessage;
 use ipfs::{map_realm_name, IpfsAssetServer};
+use restricted_actions::process_startup_scenes;
 use scene_runner::{
     initialize_scene::{PortableScenes, PortableSource, SceneHash, SceneLoading},
     renderer_context::RendererSceneContext,
 };
 use system_api_types::launch_options::{help_heading::HEADLESS, LaunchOptions};
+use user_input::avatar_movement::AvatarMovementPlugin;
 use wallet::{
     delegation::{StorageDelegation, StorageDelegations},
     sign_request, Wallet,
@@ -183,11 +188,16 @@ fn parse_args() -> Args {
             "--automation-token and --automation-port are for a client run: --server-mode takes no console server",
         );
     }
+    if args.server_mode && args.launch.portables.is_some() {
+        usage_error("--portables is for a client run: --server-mode runs no startup scenes");
+    }
     args
 }
 
 /// harness support: a seeded wallet gives a deterministic address, so livekit tokens
-/// (identity == address) can be minted before the process starts
+/// (identity == address) can be minted before the process starts. harness-util derives the
+/// same key through the wallet crate; services/catalyst/comms-e2e/src/identity.rs derives it
+/// on its own with rand_chacha and k256, so a change here or a rand or alloy bump must match it
 fn finalize_guest_wallet(wallet: &mut Wallet, seed: Option<u64>) {
     match seed {
         Some(seed) => {
@@ -411,6 +421,24 @@ fn main() -> AppExit {
         if let Some(server) = args.automation.server() {
             app.add_plugins(server);
         }
+        // a client walks like the desktop one: the startup portables (the movement scene by
+        // default) drive the player through the scene movement controller
+        app.add_plugins(AvatarMovementPlugin)
+            .insert_resource(StartupScenes {
+                scenes: args
+                    .launch
+                    .portable_sources()
+                    .map(|source| StartupScene {
+                        source: source.to_owned(),
+                        super_user: false,
+                        preview: false,
+                        hot_reload: None,
+                        hash: None,
+                        failed: false,
+                    })
+                    .collect(),
+            })
+            .add_systems(Update, process_startup_scenes);
     }
     if args.orchestrated {
         // never load by player position — scenes come ONLY from the control channel
@@ -526,7 +554,6 @@ mod shutdown_signal {
 
 /// Liveness supervisor. Logs when the scene first ticks; exits non-zero on a
 /// broken scene or the optional wall-clock timeout, zero on graceful conditions.
-#[allow(clippy::too_many_arguments)]
 fn supervisor(
     time: Res<Time>,
     scenes: Query<&RendererSceneContext>,
@@ -661,25 +688,25 @@ fn reap_scene_contexts(
     live: Query<&RendererSceneContext>,
     loading: Query<&SceneHash, With<SceneLoading>>,
 ) {
-    crdt_contexts.0.retain(|hash, context| {
+    let present: std::collections::HashSet<&str> = live
+        .iter()
+        .map(|ctx| &*ctx.hash)
+        .chain(loading.iter().map(|SceneHash(hash)| hash.as_str()))
+        .collect();
+    let reaped = comms::global_crdt::CrdtContexts::reap(&mut crdt_contexts, |hash| {
         if hash.is_empty() {
             // the shared context
             return true;
         }
         // a wanted scene keeps its context even while unqueued (a mint in flight, a room still
         // being re-dialled): its room points at it and the scene reloads into it
-        if portables.contains_key(hash)
-            || orch.wanted.contains_key(hash)
-            || live.iter().any(|ctx| *ctx.hash == **hash)
-            || loading.iter().any(|loading_hash| &loading_hash.0 == hash)
-        {
-            return true;
-        }
-        if let Ok(mut c) = commands.get_entity(*context) {
+        portables.contains_key(hash) || orch.wanted.contains_key(hash) || present.contains(hash)
+    });
+    for context in reaped {
+        if let Ok(mut c) = commands.get_entity(context) {
             c.despawn();
         }
-        false
-    });
+    }
 }
 
 /// The adapter a scene room was dialled with.
@@ -725,21 +752,26 @@ fn dial_scene_room(
 /// Tear down scene rooms whose LiveKit room hit a terminal disconnect (DuplicateIdentity /
 /// kicked) or whose connect was refused: the token is spent, the parent re-adds the scene
 /// with a freshly minted adapter.
-#[allow(clippy::type_complexity)]
 fn reap_terminal_scene_rooms(
     mut commands: Commands,
     mut orch: ResMut<OrchestratedScenes>,
-    terminal: Query<
-        (
-            Entity,
-            &comms::SceneRoom,
-            &SceneRoomAdapter,
-            Has<DisconnectReported>,
-        ),
-        Or<(With<ServerRoomTerminal>, With<ConnectFailed>)>,
-    >,
+    terminal: Query<(
+        Entity,
+        &comms::SceneRoom,
+        &SceneRoomAdapter,
+        Has<DisconnectReported>,
+        &comms::room_connection::RoomRecovery,
+        Has<ServerRoomTerminal>,
+        Has<Disconnected>,
+        Has<Connecting>,
+    )>,
 ) {
-    for (entity, room, adapter, reported) in terminal.iter() {
+    for (entity, room, adapter, reported, recovery, server_terminal, disconnected, connecting) in
+        terminal.iter()
+    {
+        if !server_terminal && (recovery.failure.is_none() || disconnected || connecting) {
+            continue;
+        }
         info!(
             "[headless] scene room for {} terminally disconnected (duplicate identity / kicked / connect refused); tearing down",
             room.0
@@ -768,7 +800,6 @@ fn reap_terminal_scene_rooms(
 /// adapter's token has long expired, so the engine cannot re-dial it. The room is kept
 /// until the orchestrator either removes the scene or re-sends `add-scene` with a fresh
 /// adapter.
-#[allow(clippy::type_complexity)]
 fn report_disconnected_scene_rooms(
     mut commands: Commands,
     rooms: Query<
@@ -791,7 +822,6 @@ fn report_disconnected_scene_rooms(
 
 /// `ServerSceneRooms` is read in other crates (realm info, signed fetch): a projection of
 /// the scene rooms, rewritten when they change.
-#[allow(clippy::type_complexity)]
 fn project_server_scene_rooms(
     rooms: Query<(Entity, &comms::SceneRoom, &SceneRoomAdapter)>,
     changed: Query<(), Or<(Changed<comms::SceneRoom>, Changed<SceneRoomAdapter>)>>,
@@ -852,7 +882,6 @@ fn request_delegation_renewals(
 
 /// Gather: apply the orchestrator's commands to `OrchestratedScenes` and the per-scene
 /// resources. Rooms are not touched here; `reconcile_scene_rooms` does that.
-#[allow(clippy::too_many_arguments)]
 fn drain_control_commands(
     control: Res<ControlChannel>,
     mut orch: ResMut<OrchestratedScenes>,
@@ -892,7 +921,7 @@ fn drain_control_commands(
         }
     };
 
-    let Ok(rx) = control.0.lock() else { return };
+    let rx = control.0.lock_ignore_poison();
     while let Ok(cmd) = rx.try_recv() {
         match cmd {
             ControlCommand::AddScene {
@@ -980,7 +1009,6 @@ fn drain_control_commands(
 /// wanted one is re-dialled on the same transport, so the messages it holds carry over
 /// and its players rejoin through it. A removed scene is torn down even if it is wanted
 /// again: its entry waits until the old room and scene entity are gone, then dials afresh.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn reconcile_scene_rooms(
     mut commands: Commands,
     mut orch: ResMut<OrchestratedScenes>,
@@ -1007,11 +1035,16 @@ fn reconcile_scene_rooms(
             }
         }
     }
-    orch.removed.retain(|scene_id| {
-        rooms.iter().any(|(_, room, ..)| room.0 == *scene_id)
-            || live.iter().any(|ctx| &*ctx.hash == scene_id.as_str())
-            || loading.iter().any(|SceneHash(hash)| hash == scene_id)
-    });
+    if !orch.removed.is_empty() {
+        let present: std::collections::HashSet<&str> = rooms
+            .iter()
+            .map(|(_, room, ..)| room.0.as_str())
+            .chain(live.iter().map(|ctx| &*ctx.hash))
+            .chain(loading.iter().map(|SceneHash(hash)| hash.as_str()))
+            .collect();
+        orch.removed
+            .retain(|scene_id| present.contains(scene_id.as_str()));
+    }
     let OrchestratedScenes { wanted, removed } = &mut *orch;
     for (scene_id, wanted) in wanted.iter_mut() {
         if removed.contains(scene_id) {
@@ -1038,12 +1071,7 @@ fn reconcile_scene_rooms(
         {
             portables.insert(
                 scene_id.clone(),
-                PortableSource {
-                    pid: wanted.urn.clone(),
-                    parent_scene: None,
-                    ens: None,
-                    super_user: false,
-                },
+                PortableSource::new(wanted.urn.clone(), None, None, false),
             );
         }
         if matches!(wanted.credential, RoomCredential::Unminted) {
@@ -1120,12 +1148,7 @@ fn reconcile_scene_rooms(
         if !portables.contains_key(scene_id) {
             portables.insert(
                 scene_id.clone(),
-                PortableSource {
-                    pid: wanted.urn.clone(),
-                    parent_scene: None,
-                    ens: None,
-                    super_user: false,
-                },
+                PortableSource::new(wanted.urn.clone(), None, None, false),
             );
         }
     }

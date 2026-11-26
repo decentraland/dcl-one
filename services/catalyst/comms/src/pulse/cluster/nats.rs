@@ -8,9 +8,10 @@
 //! returns, and a task of its own drains it. A stalled broker therefore costs pending messages,
 //! never a slowed pass.
 
+use parking_lot::Mutex;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_nats::PublishErrorKind;
@@ -19,14 +20,14 @@ use prost::Message;
 use tokio::sync::Notify;
 
 use crate::protocol::bus::REQUEST_DEADLINE;
-use crate::protocol::bus::cluster::{ClusterLookup, MAX_REPLY_BYTES};
+use crate::protocol::bus::cluster::{ClusterLookup, MAX_REPLY_BYTES, SelectionRetirementLookup};
 use crate::protocol::bus::topology::{DISCOVERY_SUBJECT, encode_discovery};
 use crate::pulse::cluster::control::{
     ControlPositions, ControlSnapshot, DEFAULT_CONTROL_POSITION_CAPACITY,
 };
 use crate::pulse::cluster::feed::{
     ClusterFeedPublisher, ClusterOutbox, CurrentAssignment, CurrentAssignments, QueueOutcome,
-    encode_topology,
+    topology_message,
 };
 use crate::pulse::cluster::{ClusterPass, ClusterSession};
 
@@ -74,24 +75,54 @@ impl Default for NatsFeedOptions {
 }
 
 struct Shared {
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
     outbox: Mutex<ClusterOutbox>,
     pending: Notify,
     user_count: AtomicU32,
-    current: CurrentAssignments,
-    control: Mutex<ControlPositions>,
+    current: Arc<CurrentAssignments>,
+    // std on purpose: control positions fail closed once poisoned.
+    control: std::sync::Mutex<ControlPositions>,
     control_enabled: Notify,
+    control_poison_logged: AtomicBool,
+    statistics: Mutex<crate::pulse::statistics::Statistics>,
+    statistics_epoch: uuid::Uuid,
+    statistics_sequence: AtomicU64,
+    statistics_pending: Notify,
+}
+
+impl Shared {
+    // Poison is permanent: revoke the generation so the process exits and is restarted.
+    fn control_poisoned(&self) {
+        if self.control_poison_logged.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let Some(authority) = &self.generation else {
+            tracing::error!("control positions lock poisoned");
+            return;
+        };
+        if authority.lost().is_cancelled() {
+            tracing::error!(
+                "control positions lock poisoned; the Pulse generation was already lost"
+            );
+        } else {
+            tracing::error!("control positions lock poisoned; revoking the Pulse generation");
+        }
+        authority.lost().cancel();
+    }
 }
 
 /// Holds the outbox and the handle to the task draining it. Dropping it aborts that task, so the
 /// feed lives exactly as long as the server that owns it.
 pub struct NatsClusterFeed {
     shared: Arc<Shared>,
-    drain: tokio::task::JoinHandle<()>,
+    drain: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Drop for NatsClusterFeed {
     fn drop(&mut self) {
-        self.drain.abort();
+        if let Some(drain) = self.drain.get_mut().take() {
+            drain.abort();
+        }
     }
 }
 
@@ -99,24 +130,52 @@ impl NatsClusterFeed {
     /// Returns immediately: the first connection is established by the drain task, so a broker
     /// that is down at boot delays no startup and needs no ordering against it in the unit file.
     pub fn spawn(options: NatsFeedOptions) -> Self {
+        Self::spawn_with_generation(options, None)
+    }
+    pub fn spawn_with_generation(
+        options: NatsFeedOptions,
+        generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+    ) -> Self {
+        let current = Arc::new(match &generation {
+            Some(authority) => {
+                CurrentAssignments::with_source(authority.binding().source_incarnation.clone())
+            }
+            None => CurrentAssignments::default(),
+        });
+        let statistics_epoch = uuid::Uuid::new_v4();
         let shared = Arc::new(Shared {
+            generation,
             outbox: Mutex::new(ClusterOutbox::new(options.capacity)),
             pending: Notify::new(),
             user_count: AtomicU32::new(0),
-            current: CurrentAssignments::default(),
-            control: Mutex::new(ControlPositions::default()),
+            current,
+            control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
+            control_poison_logged: AtomicBool::new(false),
+            statistics: Mutex::new(crate::pulse::statistics::Statistics::with_incarnation(
+                statistics_epoch,
+            )),
+            statistics_epoch,
+            statistics_sequence: AtomicU64::new(0),
+            statistics_pending: Notify::new(),
         });
-        let drain = tokio::spawn(supervise(shared.clone(), options));
-        Self { shared, drain }
+        let drain = crate::shared::task::spawn(supervise(shared.clone(), options));
+        Self {
+            shared,
+            drain: Mutex::new(Some(drain)),
+        }
     }
 
     pub fn pending_changes(&self) -> usize {
-        self.shared.outbox.lock().unwrap().pending_changes()
+        self.shared.outbox.lock().pending_changes()
     }
 
     pub fn enable_control_positions(&self, audience: &str) -> Result<(), &'static str> {
-        self.shared.control.lock().unwrap().enable(audience)?;
+        self.shared
+            .control
+            .lock()
+            .map_err(|_| "control positions lock poisoned")?
+            .enable(audience)?;
         self.shared.control_enabled.notify_waiters();
         Ok(())
     }
@@ -131,8 +190,25 @@ fn record(outcome: QueueOutcome) {
 }
 
 impl ClusterFeedPublisher for NatsClusterFeed {
+    fn shutdown(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        let drain = self.drain.lock().take();
+        Box::pin(async move {
+            if let Some(drain) = drain {
+                drain.abort();
+                let _ = drain.await;
+            }
+        })
+    }
+    fn current_assignments(&self) -> Option<Arc<CurrentAssignments>> {
+        Some(self.shared.current.clone())
+    }
     fn control_snapshot(&self) -> ControlSnapshot {
-        self.shared.control.lock().unwrap().snapshot()
+        // Poisoned: no control member joins the pass.
+        let Ok(mut control) = self.shared.control.lock() else {
+            self.shared.control_poisoned();
+            return ControlSnapshot::default();
+        };
+        control.snapshot()
     }
 
     fn replace_assignments(
@@ -141,7 +217,21 @@ impl ClusterFeedPublisher for NatsClusterFeed {
         valid_for: Duration,
         assignments: Vec<CurrentAssignment>,
     ) {
-        for snapshot in self.shared.current.replace(pass, valid_for, assignments) {
+        if self
+            .shared
+            .generation
+            .as_ref()
+            .is_some_and(|authority| authority.lost().is_cancelled())
+        {
+            return;
+        }
+
+        for snapshot in self.shared.current.replace_checked(
+            pass,
+            valid_for,
+            assignments,
+            Some(&self.shared.control),
+        ) {
             queue_snapshot(&self.shared, snapshot);
         }
     }
@@ -161,15 +251,17 @@ impl ClusterFeedPublisher for NatsClusterFeed {
         self.shared
             .user_count
             .store(active_peers, Ordering::Relaxed);
-        let payload = match encode_topology(pass) {
-            Ok(payload) => payload,
-            Err(error) => {
-                crate::pulse::metrics::nats_publish_failed();
-                tracing::warn!(%error, "complete topology exceeds broker payload cap; dropping");
-                return;
-            }
-        };
-        record(self.shared.outbox.lock().unwrap().queue_topology(payload));
+        let payload = topology_message(pass).encode_to_vec();
+        self.shared.statistics.lock().topology(payload.clone());
+        self.shared.statistics_pending.notify_one();
+        if payload.len() > crate::protocol::bus::topology::MAX_ISLANDS_BYTES {
+            crate::pulse::metrics::nats_publish_failed();
+            tracing::warn!(
+                "complete topology exceeds single-frame cap; statistics retains the full report"
+            );
+            return;
+        }
+        record(self.shared.outbox.lock().queue_topology(payload));
         self.shared.pending.notify_one();
     }
 }
@@ -284,6 +376,7 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
                     _ = serve_lookups(&shared, &client) => {}
                     _ = serve_completions(&shared, &client) => {}
                     _ = serve_control_positions(&shared, &client) => {}
+                    _ = serve_statistics(&shared, &client) => {}
                 }
                 // A socket the server accepts and drops at once is a failure
                 // for the backoff: the delay resets after a link that held.
@@ -302,30 +395,218 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
     }
 }
 
+/// Reuses Pulse's connection. Subscription is installed before the first full
+/// snapshot so readers can use that first snapshot as the producer-ready fence.
+/// `OBSERVATIONS_SUBJECT` is subscribed before `PRODUCER_SUBJECT` on the same
+/// client, so a producer reply also proves observations are subscribed; the
+/// live-Pulse test in `tests/archipelago_socket_bounds.rs` relies on that order.
+async fn serve_statistics(shared: &Shared, client: &async_nats::Client) {
+    use crate::protocol::bus::statistics::{
+        OBSERVATIONS_SUBJECT, Observation, PRODUCER_SUBJECT, ProducerRequest,
+    };
+    let Ok(Ok(observations)) =
+        tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(OBSERVATIONS_SUBJECT)).await
+    else {
+        return;
+    };
+    let Ok(Ok(control)) =
+        tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(PRODUCER_SUBJECT)).await
+    else {
+        return;
+    };
+    let mut observations = futures::stream::select(observations, control);
+    let receive = async {
+        while let Some(message) = observations.next().await {
+            if message.subject.as_str() == PRODUCER_SUBJECT {
+                let Some(reply) = message.reply.filter(|reply| private_reply(reply.as_str()))
+                else {
+                    continue;
+                };
+                let Some(request) = ProducerRequest::decode(&message.payload) else {
+                    continue;
+                };
+                let response = shared.statistics.lock().control(request).encode();
+                if let Some(response) = response {
+                    let _ = tokio::time::timeout(
+                        REQUEST_DEADLINE,
+                        client.publish(reply, response.into()),
+                    )
+                    .await;
+                }
+                continue;
+            }
+            let Some(observation) = Observation::decode(&message.payload) else {
+                crate::pulse::metrics::statistics_observation_rejected();
+                continue;
+            };
+            shared
+                .statistics
+                .lock()
+                .observe(observation, chrono::Utc::now().timestamp_millis());
+            shared.statistics_pending.notify_one();
+        }
+    };
+    tokio::select! {
+        _ = receive => {}
+        _ = publish_statistics(shared, client) => {}
+    }
+}
+
+async fn publish_statistics(shared: &Shared, client: &async_nats::Client) {
+    use crate::protocol::bus::statistics::SNAPSHOTS_SUBJECT;
+    publish_statistics_with(
+        shared,
+        || {
+            (client.connection_state() == async_nats::connection::State::Connected)
+                .then(|| client.max_payload())
+        },
+        |parts| async {
+            for part in parts {
+                if client.connection_state() != async_nats::connection::State::Connected {
+                    return false;
+                }
+                if !matches!(
+                    tokio::time::timeout(
+                        REQUEST_DEADLINE,
+                        client.publish(SNAPSHOTS_SUBJECT, part.into())
+                    )
+                    .await,
+                    Ok(Ok(()))
+                ) {
+                    return false;
+                }
+            }
+            true
+        },
+    )
+    .await;
+}
+
+/// The transport adapter lets tests control arrivals at actual transfer boundaries.
+/// Scheduling, checkpoint selection, encoding and the send deadline stay here.
+async fn publish_statistics_with<F: Future<Output = bool>>(
+    shared: &Shared,
+    ready: impl Fn() -> Option<usize>,
+    mut send: impl FnMut(crate::protocol::bus::statistics::Frames) -> F,
+) {
+    use crate::protocol::bus::statistics::{Frames, TRANSFER_TIMEOUT};
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut recovery = true;
+    let mut pending = false;
+    loop {
+        let full = tokio::select! {
+            biased;
+            _ = interval.tick() => true,
+            _ = shared.statistics_pending.notified() => false,
+            _ = std::future::ready(()), if pending => false,
+        };
+        let Some(limit) = ready() else {
+            recovery = true;
+            pending = false;
+            continue;
+        };
+        let update = {
+            let mut statistics = shared.statistics.lock();
+            if recovery {
+                statistics.require_recovery();
+            }
+            statistics.next_update(full)
+        };
+        pending = update.is_some();
+        let Some(update) = update else {
+            continue;
+        };
+        let Ok(previous) =
+            shared
+                .statistics_sequence
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+        else {
+            return;
+        };
+        let producer = shared.statistics_epoch;
+        // Await one encoding at a time; a cancelled blocking task may still finish.
+        let Ok(Some(parts)) = tokio::task::spawn_blocking(move || {
+            Frames::new(&update, producer, previous + 1, limit)
+        })
+        .await
+        else {
+            recovery = true;
+            pending = false;
+            tracing::warn!("statistics transfer exceeds supported capacity or frame budget");
+            continue;
+        };
+        recovery = !matches!(
+            tokio::time::timeout(TRANSFER_TIMEOUT, send(parts)).await,
+            Ok(true)
+        );
+        if recovery {
+            pending = false;
+            tracing::warn!("statistics transfer interrupted; awaiting complete recovery");
+            continue;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
 async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
     loop {
         let enabled = shared.control_enabled.notified();
         tokio::pin!(enabled);
         enabled.as_mut().enable();
-        if shared.control.lock().unwrap().is_enabled() {
-            break;
+        let enabled_now = shared.control.lock().ok().map(|c| c.is_enabled());
+        match enabled_now {
+            Some(true) => break,
+            Some(false) => {}
+            None => return control_poisoned(shared).await,
         }
         enabled.await;
     }
-    let Ok(mut updates) = client
+    let Ok(updates) = client
         .subscribe(crate::protocol::bus::control_position::SUBJECT)
         .await
     else {
         return;
     };
-    while let Some(message) = updates.next().await {
-        let Some(update) =
-            crate::protocol::bus::control_position::ControlPosition::decode(&message.payload)
-        else {
-            continue;
-        };
-        shared.control.lock().unwrap().ingest(update);
+    let Ok(intents) = client
+        .subscribe(crate::protocol::bus::control_position::LegacyRoomIntent::SUBJECT)
+        .await
+    else {
+        return;
+    };
+    let mut updates = futures::stream::select(updates, intents);
+    let mut poisoned = false;
+    while !poisoned && let Some(message) = updates.next().await {
+        use crate::protocol::bus::control_position::{ControlPosition, LegacyRoomIntent};
+        match message.subject.as_str() {
+            crate::protocol::bus::control_position::SUBJECT => {
+                if let Some(update) = ControlPosition::decode(&message.payload) {
+                    poisoned = shared.control.lock().map(|mut c| c.ingest(update)).is_err();
+                }
+            }
+            LegacyRoomIntent::SUBJECT => {
+                if let Some(update) = LegacyRoomIntent::decode(&message.payload) {
+                    poisoned = shared
+                        .control
+                        .lock()
+                        .map(|mut c| c.ingest_intent(update))
+                        .is_err();
+                }
+            }
+            _ => {}
+        }
     }
+    if poisoned {
+        // Unpolled subscriptions would fill and turn into slow-consumer drops.
+        drop(updates);
+        control_poisoned(shared).await;
+    }
+}
+
+// Parks rather than returning, which would rebuild the link against the same poisoned lock.
+async fn control_poisoned(shared: &Shared) {
+    shared.control_poisoned();
+    std::future::pending().await
 }
 
 fn snapshot_change(
@@ -361,7 +642,6 @@ fn queue_snapshot(
         shared
             .outbox
             .lock()
-            .unwrap()
             .queue_change(change.subject(), change.encode()),
     );
     shared.pending.notify_one();
@@ -379,15 +659,15 @@ async fn serve_completions(shared: &Shared, client: &async_nats::Client) {
             message = completions.next() => {
                 let Some(message) = message else { return };
                 let Some(completion) = Completion::decode(message.subject.as_str(), &message.payload) else { continue };
-                if let Some(snapshot) = shared.current.complete(&completion.wallet, &completion.completion) {
+                if let Some(snapshot) = shared.current.complete_checked(&completion.wallet, &completion.completion, Some(&shared.control)) {
                     queue_snapshot(shared, snapshot);
                 }
             }
             _ = retry.tick() => {
-                let budget = shared.outbox.lock().unwrap().capacity();
-                for snapshot in shared.current.retained_hints(budget) {
+                let budget = shared.outbox.lock().capacity();
+                for snapshot in shared.current.retained_hints_checked(budget, Some(&shared.control)) {
                     let change = snapshot_change(snapshot);
-                    let admitted = shared.outbox.lock().unwrap()
+                    let admitted = shared.outbox.lock()
                         .try_queue_retry(change.subject(), change.encode());
                     if let Some(outcome) = admitted {
                         record(outcome);
@@ -412,37 +692,113 @@ fn private_reply(subject: &str) -> bool {
 }
 
 async fn serve_lookups(shared: &Shared, client: &async_nats::Client) {
-    let Ok(Ok(mut requests)) =
+    let Ok(Ok(requests)) =
         tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(ClusterLookup::SUBJECTS)).await
     else {
         return;
     };
+    let Ok(Ok(retirements)) = tokio::time::timeout(
+        REQUEST_DEADLINE,
+        client.subscribe(SelectionRetirementLookup::SUBJECTS),
+    )
+    .await
+    else {
+        return;
+    };
+    let mut requests = futures::stream::select(requests, retirements).boxed();
+    if let Some(authority) = &shared.generation {
+        let scope = crate::protocol::bus::selection_view::source_subject(authority.binding(), "*");
+        let Ok(Ok(scoped)) = tokio::time::timeout(REQUEST_DEADLINE, client.subscribe(scope)).await
+        else {
+            return;
+        };
+        requests = futures::stream::select(requests, scoped).boxed();
+    }
+    let mut selection_view: Option<(
+        tokio::time::Instant,
+        crate::protocol::bus::selection_view::SelectionView,
+    )> = None;
     while let Some(request) = requests.next().await {
+        if shared
+            .generation
+            .as_ref()
+            .is_some_and(|authority| authority.lost().is_cancelled())
+        {
+            continue;
+        }
         let Some(reply) = request
             .reply
             .filter(|subject| private_reply(subject.as_str()))
         else {
             continue;
         };
-        let Ok(lookup) = ClusterLookup::decode(request.subject.as_str(), &request.payload) else {
-            continue;
-        };
-        crate::pulse::metrics::cluster_lookup_requested();
-        let Some(snapshot) = shared.current.lookup(&lookup.wallet, &lookup.session) else {
-            continue;
-        };
-        if let Some((epoch, native)) = shared.current.registration_identity(&lookup.wallet)
-            && !shared.control.lock().unwrap().allows_assignment(
+        let payload = if let Some(view_request) =
+            crate::protocol::bus::selection_view::ViewRequest::decode(
+                request.subject.as_str(),
+                &request.payload,
+            ) {
+            let Some(authority) = &shared.generation else {
+                continue;
+            };
+            if &view_request.generation != authority.binding() {
+                continue;
+            }
+            let Some(payload) = crate::protocol::bus::selection_view::SelectionView::cached_page(
+                &mut selection_view,
+                &view_request,
+                || {
+                    shared
+                        .current
+                        .selection_view_checked(authority.binding(), Some(&shared.control))
+                },
+            ) else {
+                continue;
+            };
+            payload
+        } else if let Some(lookup) = crate::protocol::bus::selection_view::FencedLookup::decode(
+            request.subject.as_str(),
+            &request.payload,
+        ) {
+            let Some(authority) = &shared.generation else {
+                continue;
+            };
+            if &lookup.generation != authority.binding() {
+                continue;
+            }
+            let Some(snapshot) = shared.current.lookup_checked(
                 &lookup.wallet,
                 &lookup.session,
-                &snapshot.realm,
-                epoch,
-                native,
-            )
+                Some(&shared.control),
+            ) else {
+                continue;
+            };
+            snapshot.encode_to_vec()
+        } else if let Some(lookup) =
+            SelectionRetirementLookup::decode(request.subject.as_str(), &request.payload)
         {
-            continue;
-        }
-        let payload = snapshot.encode_to_vec();
+            let Some(payload) = shared
+                .current
+                .lookup_retirement_checked(&lookup, Some(&shared.control))
+                .and_then(|reply| reply.encode())
+            else {
+                continue;
+            };
+            payload
+        } else {
+            let Ok(lookup) = ClusterLookup::decode(request.subject.as_str(), &request.payload)
+            else {
+                continue;
+            };
+            crate::pulse::metrics::cluster_lookup_requested();
+            let Some(snapshot) = shared.current.lookup_checked(
+                &lookup.wallet,
+                &lookup.session,
+                Some(&shared.control),
+            ) else {
+                continue;
+            };
+            snapshot.encode_to_vec()
+        };
         if payload.len() > MAX_REPLY_BYTES {
             continue;
         }
@@ -539,6 +895,8 @@ async fn drain<S: FeedSink + Sync>(shared: &Arc<Shared>, options: &NatsFeedOptio
                     chrono::Utc::now().timestamp_millis().max(0) as u64,
                     shared.user_count.load(Ordering::Relaxed),
                 );
+                shared.statistics.lock().discovery(payload.clone());
+                shared.statistics_pending.notify_one();
                 let error = match tokio::time::timeout(
                     crate::topology::TOPOLOGY_RECEIPT_TTL, sink.send(DISCOVERY_SUBJECT.to_string(), payload)
                 ).await {
@@ -566,7 +924,7 @@ async fn next_heartbeat(timer: Option<&mut tokio::time::Interval>) {
 
 /// The lock is taken and released inside this call so no guard is ever held across an await.
 fn next(shared: &Arc<Shared>) -> Option<(String, Vec<u8>, tokio::time::Instant)> {
-    shared.outbox.lock().unwrap().try_dequeue_next_timed()
+    shared.outbox.lock().try_dequeue_next_timed()
 }
 
 #[cfg(test)]
@@ -683,20 +1041,116 @@ mod tests {
 
     impl FeedSink for FlakySink {
         async fn send(&self, subject: String, _: Vec<u8>) -> Option<PublishErrorKind> {
-            self.sent.lock().unwrap().push(subject);
+            self.sent.lock().push(subject);
             self.reject
         }
     }
 
-    fn feed_shared(capacity: usize) -> Arc<Shared> {
+    pub(super) fn feed_shared(capacity: usize) -> Arc<Shared> {
         Arc::new(Shared {
+            generation: None,
             outbox: Mutex::new(ClusterOutbox::new(capacity)),
             pending: Notify::new(),
             user_count: AtomicU32::new(0),
-            current: CurrentAssignments::default(),
-            control: Mutex::new(ControlPositions::default()),
+            current: Arc::new(CurrentAssignments::default()),
+            control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
+            control_poison_logged: AtomicBool::new(false),
+            statistics: Mutex::new(crate::pulse::statistics::Statistics::default()),
+            statistics_epoch: uuid::Uuid::nil(),
+            statistics_sequence: AtomicU64::new(0),
+            statistics_pending: Notify::new(),
         })
+    }
+
+    struct Generation {
+        binding: crate::interfaces::PulseGenerationBinding,
+        lost: tokio_util::sync::CancellationToken,
+    }
+
+    impl crate::interfaces::PulseGeneration for Generation {
+        fn binding(&self) -> &crate::interfaces::PulseGenerationBinding {
+            &self.binding
+        }
+        fn lost(&self) -> &tokio_util::sync::CancellationToken {
+            &self.lost
+        }
+    }
+
+    fn poison_control(shared: &Shared) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = shared.control.lock();
+            panic!("poison the control lock");
+        }));
+        assert!(shared.control.is_poisoned());
+    }
+
+    #[test]
+    fn a_poisoned_control_lock_fails_closed() {
+        let shared = feed_shared(8);
+        poison_control(&shared);
+        let feed = NatsClusterFeed {
+            shared: shared.clone(),
+            drain: Mutex::new(None),
+        };
+
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(feed.enable_control_positions("audience").is_err());
+        let selected = CurrentAssignment {
+            wallet: "wallet".into(),
+            session: "session".into(),
+            realm: "realm".into(),
+            cluster_id: "room".into(),
+            owner_epoch: 1,
+            selected_origin: 2,
+            owner_peer: 0,
+            registration: None,
+        };
+        assert!(
+            shared
+                .current
+                .replace_checked(
+                    1,
+                    Duration::from_secs(2),
+                    vec![selected.clone()],
+                    Some(&shared.control)
+                )
+                .is_empty()
+        );
+        assert!(
+            !shared
+                .current
+                .replace_checked(1, Duration::from_secs(2), vec![selected], None)
+                .is_empty(),
+            "admitted without the control filter"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_control_lock_revokes_the_generation() {
+        let lost = tokio_util::sync::CancellationToken::new();
+        let mut shared = Arc::into_inner(feed_shared(8)).expect("fresh shared state");
+        shared.generation = Some(Arc::new(Generation {
+            binding: crate::interfaces::PulseGenerationBinding {
+                audience: "audience".into(),
+                epoch: 1,
+                source_incarnation: uuid::Uuid::new_v4().to_string(),
+            },
+            lost: lost.clone(),
+        }));
+        let shared = Arc::new(shared);
+        poison_control(&shared);
+        let feed = NatsClusterFeed {
+            shared,
+            drain: Mutex::new(None),
+        };
+
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(lost.is_cancelled(), "the pass fences and ends this process");
+        assert!(feed.shared.control_poison_logged.load(Ordering::Relaxed));
+        // Later passes still fail closed without logging again.
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(feed.shared.control_poison_logged.load(Ordering::Relaxed));
     }
 
     // On a paused clock the 50 ms window only closes once the drain loop is idle, after it
@@ -709,7 +1163,7 @@ mod tests {
         };
         let shared = feed_shared(8);
         {
-            let mut outbox = shared.outbox.lock().unwrap();
+            let mut outbox = shared.outbox.lock();
             outbox.queue_topology(vec![9]);
             for peer in 0..3u32 {
                 outbox.queue_change(format!("peer.0x{peer}.cluster_change"), vec![1, 2, 3]);
@@ -726,7 +1180,7 @@ mod tests {
                 .is_err();
         assert!(survived, "a rejected payload must not end the drain loop");
         assert_eq!(
-            sink.sent.lock().unwrap().len(),
+            sink.sent.lock().len(),
             4,
             "every queued message is attempted despite the first one failing"
         );
@@ -735,7 +1189,6 @@ mod tests {
         shared
             .outbox
             .lock()
-            .unwrap()
             .queue_change("peer.0xa.cluster_change".to_string(), vec![1]);
         shared.pending.notify_one();
         let sink = FlakySink {
@@ -760,3 +1213,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "statistics_tests.rs"]
+mod statistics_tests;

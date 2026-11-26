@@ -7,30 +7,41 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
 SOURCE = 'rendering/bevy-explorer/source/'
 SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
+SCENE_SUITE = 'apps/bevy-explorer/scene-tests.txt'
+SNAPSHOT_SCENES = ('52,-62', '52,-64', '52,-66')
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
+# On a draft these jobs on larger runners wait for ready for review or this label. The web job is on a
+# larger runner too, but it is not held: the development smoke job and the images need its output.
+HELD_ON_DRAFT = ('test', 'headless')
+ENGINE_LABEL = 'ci:engine'
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
-                      'apps/ui3/src/play/engine/generated/serviceTable.ts')
+                      'library/explorer-core/engine/generated/serviceTable.ts')
 # Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
 _ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
 _artifact = importlib.util.module_from_spec(_ARTIFACT)
 _ARTIFACT.loader.exec_module(_artifact)
-HUD_SHARED = _artifact.HUD_SHARED
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
+PATCHES = 'rendering/bevy-explorer/patches'
+PATCH_TOOL = 'tooling/patched-sources.py'
+# The in-tree exact-bytes crates and the tools that prove them against their public repositories.
+PROVENANCE_INPUTS = ('rendering/bevy-explorer/vendor', 'tooling/vendor-provenance.py', 'tooling/enet-provenance.py')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
-INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          *(path.rstrip('/') for path in HUD_SHARED),
+INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-explorer/vendor', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
-          'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
+          'tooling/bevy-ci.py', 'tooling/bevy-dead-code-check.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/hashing', 'tooling/check-local-hashing.mjs', 'apps/creator-hub/packages/zip-extract',
+          'rendering/avatar-preview',
+          'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
@@ -40,13 +51,12 @@ INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'lib
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
 # also an input of the Test Suite.
 HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
-                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts',
-                     'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
+                     'rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts',
+                     'library/explorer-core/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
-    'rendering/bevy-explorer/bevy/**',
-    'rendering/bevy-explorer/upstream.lock.json',
+    'rendering/bevy-explorer/vendor/**',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -54,6 +64,10 @@ IMAGES_INPUTS = (
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
+    'tooling/hud_shared_inputs.py',
+    'tooling/tests/hud_manifest_fixture.py',
+    'tooling/tests/hud_manifest_invalid_cases.json',
+    'tooling/tests/check_hud_manifest_nix.py',
     'tooling/tests/test_play_*.py',
     'rust-toolchain*',
     'infra/packages/**',
@@ -61,15 +75,38 @@ IMAGES_INPUTS = (
     'services/catalyst/**',
     'schemas/**',
     'library/**',
+    ':(exclude)library/js-sdk-toolchain',
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',
+    'apps/creator-hub/packages/zip-extract/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
     'tooling/ci_paths.py',
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
+    '.github/workflows/apis-sites-compile.yml',
+)
+# How the images are built and published, and what the fixed dependency hashes in infra/packages
+# follow (manifests, lockfiles, toolchain). A PR builds the images only for these; main builds
+# them for every input above. The architecture choice in apis-sites-images.yml reads a subset.
+IMAGES_PACKAGING = (
+    'flake.*', 'rust-toolchain*', 'infra/packages/**', 'infra/containers/**', '.cargo/**',
+    'services/catalyst/rust-toolchain*', 'services/catalyst/Cargo.*', 'services/catalyst/**/Cargo.toml',
+    'library/**/Cargo.toml', 'apps/dcl-scene-cli/Cargo.toml',
+    # cast-bot's lock, and the patched LiveKit SDK it builds from (infra/packages/cast-bot.nix).
+    'services/catalyst/cast-bot/Cargo.lock', 'rendering/bevy-explorer/patches/client-sdk-rust/**',
+    'tooling/patched-sources.py',
+    'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    # The UI gallery Sites serves (infra/packages/ui-gallery.nix) pins library/ui's dependency set.
+    'library/ui/package.json', 'library/ui/pnpm-lock.yaml', 'library/ui/pnpm-workspace.yaml',
+    'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
+    'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
+    'tooling/tests/check_hud_manifest_nix.py',
+    'tooling/tests/test_ci_publication.py', 'tooling/tests/test_image_publish.py',
+    '.github/workflows/bevy-explorer-ci.yml', '.github/workflows/apis-sites-images.yml',
+    '.github/workflows/apis-sites-compile.yml',
 )
 IMAGES_JOBS = {'APIs + Sites / build (amd64, ubuntu-26.04)',
                'APIs + Sites / build (arm64, ubuntu-26.04-arm)'}
@@ -78,6 +115,20 @@ HEADLESS_JOBS = {
     'Headless packages / build (macos-amd64, darwin-x64, macos-15, x86_64-apple-darwin)',
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
+# What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
+# its crate and every path dependency it reaches, in the workspace or vendored (the selection tests
+# derive this list from Cargo.lock), the protocol that dcl_component's build script compiles, the
+# Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the fork's
+# revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
+# restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
+# main it follows the web lane's baseline.
+RELAY_WAKE_CRATE_DIRS = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+    'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
+    'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
+                     PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
+                     '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
+                     'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),
@@ -91,8 +142,11 @@ APP_INPUTS = {
     'install-web-tools.py': ('web',),
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
+    # The Test Suite on each platform and the graphical scenes link CEF.
+    'install-cef.py': ('test', 'native-matrix', 'scenes'),
     'install-tools.sh': (*LANES, 'native-matrix'),
-    'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'prepare-native-cache.py': ('headless', 'native-matrix', 'scenes'),
+    'scene-tests.txt': ('scenes',),
 }
 
 
@@ -111,11 +165,38 @@ def tested_base(merge, pr_head, fallback):
     return parents[0] if len(parents) == 2 and parents[1] == pr_head else fallback
 
 
+def event_pull_request():
+    try:
+        pull_request = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']
+        return pull_request if isinstance(pull_request, dict) else {}
+    except (KeyError, OSError, TypeError, ValueError):
+        return {}
+
+
 def event_pr_head():
     try:
-        return json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']['head']['sha']
-    except (KeyError, OSError, TypeError, ValueError):
+        return event_pull_request()['head']['sha']
+    except (KeyError, TypeError):
         return None
+
+
+def hold_for_draft(result, pull_request):
+    """A draft does not run the held jobs; they wait until it is ready for review or labelled.
+
+    An unreadable event holds nothing.
+    """
+    try:
+        draft = pull_request.get('draft') is True
+        labelled = any(label.get('name') == ENGINE_LABEL for label in pull_request.get('labels') or [])
+    except (AttributeError, TypeError):
+        return result
+    held = [lane for lane in HELD_ON_DRAFT if result.get(lane) is True]
+    if not draft or labelled or not held:
+        return result
+    print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
+          f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False), 'held': True,
+            'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 
 def api(path):
@@ -193,14 +274,16 @@ def ensure_commit(sha):
 
 
 def full_selection(reason):
-    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
+    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), True), 'reason': reason}
 
 
 def platform_input(path):
     """A source path whose change can behave differently on Windows or macOS."""
     path = path.removeprefix(SOURCE)
     return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
-            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/',
+                                # The native platform layer: OS paths, profiles, files and deep links.
+                                'crates/platform/src/native.rs', 'crates/platform/src/native/'))
             or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
 
 
@@ -228,8 +311,17 @@ def changed_inputs(base, head, inputs):
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
-    paths = changed_inputs(base, head, INPUTS)
-    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    shared = _artifact.shared_inputs.input_hashes(ROOT, head)
+    bootstrap = False
+    try:
+        previous = _artifact.shared_inputs.input_hashes(ROOT, base)
+    except _artifact.shared_inputs.ManifestError:
+        previous, bootstrap = {}, True
+    shared_paths = set(shared) | set(previous)
+    paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
+    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), False)
+    if bootstrap:
+        selected['web'] = True
     for path in paths:
         if path == SCENES_WORKFLOW:
             affected = ('scenes',)
@@ -240,16 +332,28 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path == 'tooling/play-artifact.py':
+        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
+            affected = ('web',)
+        elif path.startswith(('library/hashing/', 'apps/creator-hub/packages/zip-extract/')) or path == 'tooling/check-local-hashing.mjs':
+            # The bridge scene's SDK commands load library/hashing and its install copies
+            # Creator Hub's zip-extract (pnpm-workspace.yaml); play-artifact.py fingerprints
+            # these paths with the web app.
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
             # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
             # install protoc with install-protoc.py.
             affected = (*LANES, 'native-matrix')
-        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
+        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')) or path in (
+                'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py',
+                'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path == PATCH_TOOL or path.startswith(PATCHES + '/bevy/'):
+            # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates
+            # on each system; Clippy rebuilds it for a shader that `common`'s tests include. Every
+            # build takes a patched source by the revision that Cargo.lock names.
+            affected = ('test', 'clippy', 'native-matrix')
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
             # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
             affected = ('test',)
@@ -258,8 +362,12 @@ def select(base, head):
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
-        elif _artifact.hud_shared(path):
-            # The web HUD compiles them (react-web/vite.shared.ts); the engine never reads them.
+        elif path in shared_paths and not path.startswith(SOURCE):
+            # Shared library inputs are web-only; owned source keeps its existing lane rules.
+            affected = ('web',)
+        elif path.startswith('rendering/avatar-preview/'):
+            # The avatar preview is built, packaged and published with the web app
+            # (play-artifact.py); no native lane compiles it.
             affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
@@ -287,6 +395,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix', 'scenes')
         for lane in affected:
             selected[lane] = True
+        if path.startswith(RELAY_WAKE_INPUTS):
+            selected['relay-wake'] = True
     names = [name for name, enabled in selected.items() if enabled]
     return {**selected, 'base': base,
             'reason': 'Selected: ' + ', '.join(names) if names else 'Inputs unchanged; integrity checks only'}
@@ -306,14 +416,53 @@ def plan(event, base, head, repo):
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
             result['native-matrix'] = result['test']
+            result['relay-wake'] = selections[baselines.get('web')]['relay-wake']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):
             raise ValueError('Unknown event')
         return select(base, head)
+    except _artifact.shared_inputs.ManifestError as exc:
+        print(_artifact.shared_inputs.validation_message(exc), file=sys.stderr)
+        raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative full build: {exc}')
         return full_selection('Comparison unavailable; full run')
+
+
+def pin_names(paths):
+    """The patched sources whose pin file, patches/<name>/source.toml, is among the paths."""
+    pin = re.compile(re.escape(PATCHES) + r'/([A-Za-z0-9_.-]+)/source\.toml')
+    return sorted({match.group(1) for match in map(pin.fullmatch, paths) if match})
+
+
+def guards_plan(event, base, head):
+    """The online guards of the `source` job that a change needs. `pins`: the patched sources whose
+    source.toml the change adds or edits; each is then proved to be on the ref it names.
+    `verify`: the patched sources to rebuild from their upstream commit and patch series, which
+    proves the `tree` and the `rev` that Cargo takes: each source with a change under
+    patches/<name>/, and every source when the tool that rebuilds them changes.
+    `provenance`: whether the change touches an in-tree crate or the tools that prove them against
+    their public repositories. Without a comparison every guard runs; the daily upstream workflow
+    runs them for the whole tree."""
+    sources = pin_names(git('ls-files', '--', PATCHES).splitlines())
+    try:
+        if event not in ('push', 'pull_request', 'local'):
+            raise ValueError('No comparison for this event')
+        ensure_commit(base)
+        ensure_commit(head)
+        pins = pin_names(git('diff', '--name-only', '--no-renames', '--diff-filter=d', '-z', base, head, '--', PATCHES).split('\0'))
+        changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', PATCHES, PATCH_TOOL).split('\0')
+        touched = {path.removeprefix(PATCHES + '/').split('/', 1)[0] for path in changed if path.startswith(PATCHES + '/')}
+        verify = sources if PATCH_TOOL in changed else [name for name in sources if name in touched]
+        provenance = bool(git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *PROVENANCE_INPUTS).strip('\0'))
+        reason = (f'{len(pins)} changed pin(s) to prove on their refs; {len(verify)} patch series to prove; '
+                  f'in-tree crates {"changed" if provenance else "unchanged"}')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f'Every online guard runs: {exc}')
+        pins = verify = sources
+        provenance, reason = True, 'Comparison unavailable; every online source guard runs'
+    return {'pins': ' '.join(pins), 'verify': ' '.join(verify), 'provenance': provenance, 'reason': reason}
 
 
 def scenes_plan(event, base, head):
@@ -324,14 +473,77 @@ def scenes_plan(event, base, head):
             raise ValueError('Unknown graphical event')
         selected = select(base, head)
         return {'scenes': selected['scenes'], 'sha': head, 'reason': selected['reason']}
+    except _artifact.shared_inputs.ManifestError as exc:
+        print(_artifact.shared_inputs.validation_message(exc), file=sys.stderr)
+        raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative graphical run: {exc}')
         return {'scenes': True, 'sha': head, 'reason': 'Comparison unavailable; run graphical tests'}
 
 
+def scene_suite(suite):
+    """The --test_scenes argument: each scene's parcel, then the failures it allows."""
+    scenes = []
+    for line in (ROOT / SCENE_SUITE).read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        parcel, *allowed = line.split('/')
+        if (not re.fullmatch(r'-?[0-9]+,-?[0-9]+', parcel) or ';' in line
+                or any(not name or name != name.strip() for name in allowed)):
+            raise ValueError(f'Malformed scene suite line: {line!r}')
+        scenes.append(line)
+    if suite == 'snapshots':
+        scenes = [scene for scene in scenes if scene.split('/')[0] in SNAPSHOT_SCENES]
+    if not scenes:
+        raise ValueError(f'Empty {suite} scene suite')
+    return ';'.join(scenes)
+
+
+def unescape(text):
+    """The text of a Rust `{:?}` string literal body."""
+    escapes = {'n': '\n', 'r': '\r', 't': '\t', '0': '\0'}
+    return re.sub(r'\\u\{([0-9a-fA-F]+)\}|\\(.)',
+                  lambda m: chr(int(m[1], 16)) if m[1] else escapes.get(m[2], m[2]), text)
+
+
+def scene_summary(suite, outcome, log):
+    """One step-summary line: assertion counts, failures the suite does not list, listed ones
+    that pass again, and that acceptance stays open while any failure is listed."""
+    log = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', log)
+    verdicts = re.findall(r'automatic_testing: test .*: (true|false) \[[0-9]+ remaining\]', log)
+    passed, failed = verdicts.count('true'), verdicts.count('false')
+    # The runner prints its failure block only when it reaches the end of the suite. The block
+    # omits failures from scenes outside the suite, which the runner discards.
+    finished = 'all tests passed!' in log or 'some tests failed:' in log
+    failures = {(parcel, unescape(name)): expected == 'true' for parcel, name, expected in
+                re.findall(r'"\[\((-?[0-9]+,-?[0-9]+)\) : (.*)\]",\n\s*".*",\n\s*(true|false),', log)}
+    listed = {(scene.split('/')[0], name) for scene in scene_suite(suite).split(';')
+              for name in scene.split('/')[1:]}
+    unexpected = sorted(f'({parcel}) {name}' for (parcel, name), expected in failures.items() if not expected)
+    stale = sorted(f'({parcel}) {name}' for parcel, name in listed - failures.keys()) if finished else []
+    discarded = failed - len(failures) if finished else 0
+    text = (f'Graphical scene tests ({suite}): **{outcome}**. '
+            f'{passed} assertion{"s" if passed != 1 else ""} passed, {failed - discarded} failed')
+    if not verdicts:
+        text += '; no assertion ran, see the scene-test log artifact'
+    elif not finished:
+        text += f'; the run stopped before its end, so which failures `{SCENE_SUITE}` lists is not determined'
+    elif failed - discarded:
+        text += f'; {len(failures) - len(unexpected)} of them are listed in `{SCENE_SUITE}`, so graphical acceptance stays open'
+    else:
+        text += '; graphical acceptance holds for this suite' if not listed else f'; `{SCENE_SUITE}` still lists failures'
+    if discarded:
+        text += f'; the runner discarded {discarded} failure{"s" if discarded != 1 else ""} outside the suite'
+    if unexpected:
+        text += '. Not listed: ' + ', '.join(unexpected)
+    if stale:
+        text += '. Listed but passing, remove them: ' + ', '.join(stale)
+    return text + '. Only the full suite establishes graphical acceptance; see the scene-test log artifact.\n'
+
+
 def image_matrix(products):
     return {'include': [
-        {'product': product, 'arch': arch, 'runner': 'ubuntu-24.04' + ('-arm' if arch == 'arm64' else '')}
+        {'product': product, 'arch': arch, 'runner': 'ubuntu-26.04' + ('-arm' if arch == 'arm64' else '')}
         for product in products for arch in (('amd64', 'arm64') if product == 'web' else ('amd64',))]}
 
 
@@ -381,7 +593,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = changed_inputs(base, head, IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS if event == 'push' else IMAGES_PACKAGING)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')
@@ -418,11 +630,22 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan'))
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan', 'guards-plan',
+                                            'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
     parser.add_argument('--head', default=os.environ.get('GITHUB_SHA', 'HEAD'))
+    parser.add_argument('--suite', choices=('full', 'snapshots'), default='full')
+    parser.add_argument('--outcome', default='')
+    parser.add_argument('--log', default='scene-tests.log')
     args = parser.parse_args()
+    if args.command == 'scene-suite':
+        print(scene_suite(args.suite))
+        return
+    if args.command == 'scene-summary':
+        log = Path(args.log).read_text() if Path(args.log).exists() else ''
+        print(scene_summary(args.suite, args.outcome, log), end='')
+        return
     if args.command != 'source':
         head = git('rev-parse', args.head).strip()
         event = os.environ.get('GITHUB_EVENT_NAME', 'local')
@@ -433,8 +656,13 @@ def main():
         if args.command == 'consumer-plan':
             write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
             return
+        if args.command == 'guards-plan':
+            write_outputs(guards_plan(event, base, head))
+            return
         result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
                   plan(event, base, head, os.environ.get('GH_REPO', '')))
+        if args.command == 'plan' and event == 'pull_request':
+            result = hold_for_draft(result, event_pull_request())
         write_outputs(result)
     else:
         repo, run_id = os.environ['GH_REPO'], os.environ['SOURCE_RUN']

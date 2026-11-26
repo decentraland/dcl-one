@@ -9,7 +9,7 @@
 //! `land_authz` pattern:
 //! - `eth_getLogs` over `CREDITS_MANAGER_CONTRACT` and the CreditUsed topic
 //!   on the collections chain (`RPC_ENDPOINT_POLYGON`, `COLLECTIONS_CHAIN_ID`)
-//!   through the land_authz JSON-RPC log client (`land_authz::indexer::Rpc`,
+//!   through the shared JSON-RPC log client (`chain_index::rpc::Rpc`,
 //!   over the ONE guarded client), up to the chain's `finalized` block
 //!   (Polygon milestones: a few blocks behind the head; an endpoint without
 //!   the tag gets head - [`FALLBACK_CONFIRMATIONS`]), so a reorg never
@@ -56,10 +56,10 @@ use sqlx::{PgConnection, PgPool};
 use super::errors::ApiError;
 use super::reconcile::CreditUsageDiff;
 use super::store::Credits;
+pub use crate::chain_index::rpc::{Rpc, RpcLog};
+use crate::chain_index::rpc::{RpcError, hex_to_i64};
 use crate::http::Outbound;
 use crate::jobs::JobContext;
-use crate::land_authz::indexer::{IndexError as RpcError, hex_to_i64};
-pub use crate::land_authz::indexer::{Rpc, RpcLog};
 
 pub const JOB_NAME: &str = "credits-usage-index";
 /// The source a refusal names, and the variable that attaches the job.
@@ -200,14 +200,10 @@ fn is_word(s: &str) -> bool {
     s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn is_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// A 0x-prefixed 20-byte address, lowercased; `None` for anything else.
 pub fn normalize_address(raw: &str) -> Option<String> {
     let lower = raw.trim().to_ascii_lowercase();
-    is_address(&lower).then_some(lower)
+    crate::types::is_hex_address(&lower).then_some(lower)
 }
 
 pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {
@@ -545,6 +541,10 @@ pub struct PassOutcome {
     pub paused: bool,
     pub consumed: usize,
     pub failed: usize,
+    /// Logs left for later behind an earlier, unsettled use of their credit
+    /// (`settlement::DEFERRED`): settled by a pass that covers both, the
+    /// operator's reconcile when this one's window has moved past them.
+    pub deferred: usize,
     pub published: bool,
 }
 
@@ -573,6 +573,18 @@ impl UsageIndex {
             replay_requested: AtomicBool::new(false),
             chain_checked: AtomicBool::new(false),
         }
+    }
+
+    /// `credits_usage_index_ready` and `credits_usage_index_lag_seconds`
+    /// as [`Self::ready_at`] reads the lane at `now`; the lag is from the
+    /// last folded block's time, set only while the lane is open.
+    pub async fn record_readiness(&self, now: DateTime<Utc>) {
+        let ready = self.ready_at(now).await;
+        let lag = ready
+            .as_ref()
+            .and_then(|c| c.folded_block_time)
+            .map(|t| (now.naive_utc() - t).num_milliseconds() as f64 / 1000.0);
+        super::metrics::usage_index(ready.is_some(), lag);
     }
 
     /// The cursor row when the authorize lane may mint at `now`; a
@@ -688,13 +700,38 @@ impl UsageIndex {
         Ok(())
     }
 
+    /// The `credits-usage-index` job's pass ([`super::State::spawn_jobs`]):
+    /// [`Self::run_pass`], folding only when `gate` lets this pass write
+    /// (`OPS_WRITES_ENABLED`); a skipped fold says so in the job's progress.
+    pub(super) async fn gated_pass(
+        &self,
+        ctx: Option<&JobContext>,
+        gate: &crate::shared::writes::PassGate,
+        writes_enabled: bool,
+    ) -> anyhow::Result<PassOutcome> {
+        let allowed = gate.allows(writes_enabled);
+        let outcome = self.run_pass(ctx, allowed).await;
+        // After every pass, a failed one included: the lane's state is what
+        // the gauges report, not the pass's success.
+        self.record_readiness(Utc::now()).await;
+        let outcome = outcome?;
+        if let (false, Some(ctx)) = (allowed, ctx) {
+            ctx.progress(format!(
+                "indexed to {}; not folded, not published: {}",
+                outcome.indexed_to,
+                crate::shared::writes::WRITES_DISABLED_MESSAGE
+            ));
+        }
+        Ok(outcome)
+    }
+
     /// One pass: replay if asked, catch up to the finalized block under the
     /// request budget, fold the new usages, publish when still at the head.
-    /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off or held by the
-    /// restore stamps: the fold debits the ledger) the pass indexes the log
+    /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off: the fold debits
+    /// the ledger) the pass indexes the log
     /// and stops before the fold, so nothing is published and the authorize
     /// lane stays closed.
-    pub async fn run_pass(
+    pub(super) async fn run_pass(
         &self,
         ctx: Option<&JobContext>,
         fold_enabled: bool,
@@ -800,7 +837,19 @@ impl UsageIndex {
         .await
         .map_err(|e| anyhow::anyhow!("folding the usages: {e}"))?;
         outcome.consumed = diffs.iter().filter(|d| d.consumed && !d.replayed).count();
-        outcome.failed = diffs.iter().filter(|d| !d.consumed).count();
+        outcome.failed = diffs
+            .iter()
+            .filter(|d| !d.consumed && d.kind != super::settlement::DEFERRED)
+            .count();
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == super::settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        outcome.deferred = deferred.len();
+        if !deferred.is_empty() {
+            tracing::warn!(count = deferred.len(), credit_ids = ?deferred, "credits-usage: logs left behind an earlier, unsettled use of their credit; a pass covering both (the reconcile) settles them");
+        }
         if settings.stop_block.is_some_and(|s| s < final_block.number) {
             if let Some(ctx) = ctx {
                 ctx.progress(format!("indexed to {target}: CREDITS_USAGE_STOP_BLOCK holds the index short, not published"));
@@ -834,8 +883,8 @@ impl UsageIndex {
         }
         if let Some(ctx) = ctx {
             ctx.progress(format!(
-                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused; published={}",
-                outcome.usages_written, outcome.consumed, outcome.failed, outcome.published
+                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused, {} deferred; published={}",
+                outcome.usages_written, outcome.consumed, outcome.failed, outcome.deferred, outcome.published
             ));
         }
         Ok(outcome)

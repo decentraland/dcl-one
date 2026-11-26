@@ -1,9 +1,11 @@
 //! A request answered before its body was read: a writes gate's 503, an auth
 //! check's 401, a 404 or a 413. hyper closes a connection whose request body
 //! is dropped before its end, and the kernel answers the bytes the client is
-//! still sending with a reset. nginx buffers an upload and writes it upstream
-//! after the answer is already there, so it fails the write (`Broken pipe`),
-//! retries the next process, answers 502 and counts both down (`max_fails`).
+//! still sending with a reset. nginx is still writing the upload upstream
+//! when the answer is already there (a buffered body after it arrived, a
+//! streamed one, as content deploys are, as it arrives), so it fails the
+//! write (`Broken pipe`), retries the next process, answers 502 and counts
+//! both down (`max_fails`).
 //! [`drain_unread`] hands every body a handler drops early to a task that
 //! reads and discards the rest, as nginx itself does with a body it refuses:
 //! the answer goes out at once, the client finishes sending, and the
@@ -20,17 +22,28 @@ use axum::middleware;
 use futures::StreamExt;
 use http_body::{Frame, SizeHint};
 
+/// How long a drain reads before it gives up and the connection closes:
+/// nginx's `client_body_timeout` on the upload routes and the default upload
+/// timeout, so a client trickling the rest of a refused body (nginx streams
+/// content deploys unbuffered) holds the drain no longer than an upload.
+pub const DRAIN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Wraps every request `router` answers, fallbacks included. A body dropped
-/// unread is drained in the background, up to `limit` more bytes; one
-/// declaring more than that, or longer than that, closes the connection as
-/// before.
+/// unread is drained in the background, up to `limit` more bytes and for at
+/// most [`DRAIN_DEADLINE`]; one declaring more than that, longer than that or
+/// still arriving at the deadline closes the connection as before.
 pub fn drain_unread(router: Router, limit: u64) -> Router {
+    drain_unread_within(router, limit, DRAIN_DEADLINE)
+}
+
+/// [`drain_unread`] with its own deadline.
+pub fn drain_unread_within(router: Router, limit: u64, deadline: std::time::Duration) -> Router {
     router.layer(middleware::map_request(move |req: Request| async move {
-        wrap(req, limit)
+        wrap(req, limit, deadline)
     }))
 }
 
-fn wrap(req: Request, limit: u64) -> Request {
+fn wrap(req: Request, limit: u64, deadline: std::time::Duration) -> Request {
     let awaits_continue = req
         .headers()
         .get(header::EXPECT)
@@ -39,6 +52,7 @@ fn wrap(req: Request, limit: u64) -> Request {
         Body::new(DrainOnDrop {
             body: Some(body),
             limit,
+            deadline,
             awaits_continue,
             polled: false,
         })
@@ -48,6 +62,7 @@ fn wrap(req: Request, limit: u64) -> Request {
 struct DrainOnDrop {
     body: Option<Body>,
     limit: u64,
+    deadline: std::time::Duration,
     /// `Expect: 100-continue` and never polled: the client has not been told
     /// to send, so nothing is in flight to drain.
     awaits_continue: bool,
@@ -97,16 +112,19 @@ impl Drop for DrainOnDrop {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let limit = self.limit;
+        let (limit, deadline) = (self.limit, self.deadline);
         runtime.spawn(async move {
             let mut rest = body.into_data_stream();
-            let mut read = 0u64;
-            while let Some(Ok(chunk)) = rest.next().await {
-                read += chunk.len() as u64;
-                if read > limit {
-                    break;
+            let drain = async {
+                let mut read = 0u64;
+                while let Some(Ok(chunk)) = rest.next().await {
+                    read += chunk.len() as u64;
+                    if read > limit {
+                        break;
+                    }
                 }
-            }
+            };
+            let _ = tokio::time::timeout(deadline, drain).await;
         });
     }
 }
@@ -134,7 +152,7 @@ mod tests {
     /// A hang guard only: every exchange here ends in milliseconds.
     const HANG_GUARD: Duration = Duration::from_secs(60);
 
-    fn refuse(_: &crate::writes::Refusal) -> Response {
+    fn refuse() -> Response {
         (StatusCode::SERVICE_UNAVAILABLE, "writes are off").into_response()
     }
 
@@ -142,7 +160,6 @@ mod tests {
         enabled: false,
         open_while_disabled: &[],
         refuse,
-        blobs: false,
     };
 
     fn uploads() -> Router {
@@ -290,6 +307,37 @@ mod tests {
         })
         .await
         .expect("hang guard");
+    }
+
+    /// A client that stops sending the rest of a refused body is not waited
+    /// on past the drain's deadline: the connection closes.
+    #[tokio::test]
+    async fn a_stalled_drain_ends_at_its_deadline() {
+        let socket = TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener = socket.listen(16).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = drain_unread_within(
+            guard_with(uploads(), OFF),
+            LIMIT,
+            Duration::from_millis(200),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        tokio::time::timeout(HANG_GUARD, async {
+            let mut conn = connect(addr).await;
+            let head =
+                format!("PUT /manifest HTTP/1.1\r\nhost: node\r\ncontent-length: {BODY}\r\n\r\n");
+            send(&mut conn, &head, 1024).await.unwrap();
+            assert_eq!(
+                response(&mut conn).await.unwrap(),
+                (503, "writes are off".to_string())
+            );
+            let mut rest = Vec::new();
+            let _ = conn.read_to_end(&mut rest).await;
+            assert!(rest.is_empty(), "{:?}", String::from_utf8_lossy(&rest));
+        })
+        .await
+        .expect("the stalled drain ended and closed the connection");
     }
 
     #[tokio::test]

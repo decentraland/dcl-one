@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
 import AssetCard from "../components/AssetCard";
 import BrowseLayout from "../components/BrowseLayout";
@@ -18,7 +18,7 @@ import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
-import { shopFlags } from "../flags";
+import { useShopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
@@ -50,13 +50,13 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const { rawQuery, q } = itemsQuery(searchParams);
   useSeo({ title: seo?.title ?? (rawQuery ? seoSearchTitle(rawQuery) : SEO_TITLE) });
 
-  const flags = shopFlags();
+  const flags = useShopFlags();
   const marketplace = useMarketplace();
-  const dealsRequested = dealsRequestedIn(searchParams);
+  const dealsRequested = dealsRequestedIn(searchParams, flags.creatorSales);
   const filterDefaults = useMemo(() => itemsFilterDefaults(q, dealsRequested), [dealsRequested, q]);
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
   const { subCategory, rarities, priceMin, priceMax, smart } = filterState;
-  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus, marketplace });
+  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, flags.creatorSales, { contracts, hideNames, lockStatus, marketplace });
   const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   useScrollTopOnChange(`${category}:${subCategory ?? ""}`);
   const [filtersOpen, setFiltersOpen] = useState(false);

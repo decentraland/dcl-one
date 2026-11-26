@@ -16,6 +16,7 @@ describe('runSync guard and retirements', () => {
   let app: App
 
   // The generated baseline is the same for every case: build it once and give each case its own copy.
+  // A full developer sync per test would multiply the suite's runtime, so this one-time build stays a beforeAll.
   let template: string
   beforeAll(async () => {
     template = await mkdtemp(path.join(os.tmpdir(), 'dcl-app-sync-template-'))
@@ -96,69 +97,130 @@ describe('runSync guard and retirements', () => {
     )
   }
 
+  const firstManifestFile = async () => {
+    const manifest = await read('components/manifest.ts')
+    return (/"file": "([^"]+)"/.exec(manifest) as RegExpExecArray)[1]!
+  }
+  const firstManifestEntry = async () => {
+    const manifest = await read('components/manifest.ts')
+    const entry = JSON.parse(manifest.slice(manifest.indexOf('= [') + 2))[0] as {
+      file: string
+      page: string
+    }
+    const saved = JSON.parse(
+      await readFile(
+        path.join(root, SNAPSHOT, `components/${encodePageFileName(entry.page)}`),
+        'utf8'
+      )
+    )
+    return { entry, pageId: saved.page.id as string }
+  }
+  // Starts a sync expected to fail; the rejection is handled here so each it() can await it on its own.
+  const failingSync = (options: Parameters<typeof runSync>[1]) => {
+    const outcome = runSync(app, options)
+    outcome.catch(() => undefined)
+    return outcome
+  }
+
   describe('when an automated sync finds a stale file', () => {
-    it('should report it and keep it', async () => {
+    let report: Awaited<ReturnType<typeof runSync>>
+
+    beforeEach(async () => {
       await mkdir(path.dirname(generated('icons/Gone.tsx')), { recursive: true })
       await writeFile(generated('icons/Gone.tsx'), 'old')
 
-      const report = await runSync(app, { source: 'snapshot' })
+      report = await runSync(app, { source: 'snapshot' })
+    })
 
+    it('should report it as removed', () => {
       expect(report.diff.removed).toEqual(['icons/Gone.tsx'])
+    })
+
+    it('should keep it', async () => {
       expect(await read('icons/Gone.tsx')).toBe('old')
     })
   })
 
   describe('when an automated sync would rewrite output it does not own', () => {
-    it('should refuse and write nothing', async () => {
-      const manifest = await read('components/manifest.ts')
-      const file = (/"file": "([^"]+)"/.exec(manifest) as RegExpExecArray)[1]!
-      const target = `components/${file}.tsx`
-      await writeFile(generated(target), '// edited by hand')
+    let target: string
 
-      await expect(runSync(app, { source: 'snapshot' })).rejects.toThrow(/does not own/)
-      expect(await read(target)).toBe('// edited by hand')
+    beforeEach(async () => {
+      target = `components/${await firstManifestFile()}.tsx`
+      await writeFile(generated(target), '// edited by hand')
     })
 
-    it('should let a developer regenerate it', async () => {
-      const manifest = await read('components/manifest.ts')
-      const file = (/"file": "([^"]+)"/.exec(manifest) as RegExpExecArray)[1]!
-      const target = `components/${file}.tsx`
-      await writeFile(generated(target), '// edited by hand')
+    describe('and the sync is automated', () => {
+      let outcome: Promise<unknown>
 
-      await runSync(app, { source: 'snapshot', developer: true })
+      beforeEach(() => {
+        outcome = failingSync({ source: 'snapshot' })
+      })
 
-      expect(await read(target)).not.toBe('// edited by hand')
+      it('should refuse', async () => {
+        await expect(outcome).rejects.toThrow(/does not own/)
+      })
+
+      it('should write nothing', async () => {
+        await outcome.catch(() => undefined)
+        expect(await read(target)).toBe('// edited by hand')
+      })
+    })
+
+    describe('and a developer runs the sync', () => {
+      beforeEach(async () => {
+        await runSync(app, { source: 'snapshot', developer: true })
+      })
+
+      it('should regenerate it', async () => {
+        expect(await read(target)).not.toBe('// edited by hand')
+      })
     })
   })
 
   describe('when an automated sync is pointed at the repository by another route', () => {
-    it('should guard a symlink to the generated folder like the folder itself', async () => {
-      const link = path.join(root, 'link-to-generated')
-      await symlink(path.join(root, GENERATED), link)
-      const manifest = await read('components/manifest.ts')
-      const file = (/"file": "([^"]+)"/.exec(manifest) as RegExpExecArray)[1]!
-      await writeFile(generated(`components/${file}.tsx`), '// edited by hand')
+    describe('and the route is a symlink to the generated folder', () => {
+      let link: string
 
-      await expect(runSync(app, { source: 'snapshot', outDir: link })).rejects.toThrow(
-        /does not own/
-      )
+      beforeEach(async () => {
+        link = path.join(root, 'link-to-generated')
+        await symlink(path.join(root, GENERATED), link)
+        await writeFile(
+          generated(`components/${await firstManifestFile()}.tsx`),
+          '// edited by hand'
+        )
+      })
+
+      it('should guard it like the folder itself', async () => {
+        await expect(runSync(app, { source: 'snapshot', outDir: link })).rejects.toThrow(
+          /does not own/
+        )
+      })
     })
 
-    it('should refuse any other folder inside the repository', async () => {
-      await expect(
-        runSync(app, { source: 'snapshot', outDir: path.join(root, 'components') })
-      ).rejects.toThrow(/only write the generated folder/)
+    describe('and the route is any other folder inside the repository', () => {
+      it('should refuse it', async () => {
+        await expect(
+          runSync(app, { source: 'snapshot', outDir: path.join(root, 'components') })
+        ).rejects.toThrow(/only write the generated folder/)
+      })
     })
 
-    it('should reject a scratch folder outside the repository', async () => {
-      const scratch = await mkdtemp(path.join(os.tmpdir(), 'dcl-scratch-'))
-      try {
+    describe('and the route is a scratch folder outside the repository', () => {
+      let scratch: string
+
+      beforeEach(async () => {
+        scratch = await mkdtemp(path.join(os.tmpdir(), 'dcl-scratch-'))
+      })
+
+      afterEach(async () => {
+        await rm(scratch, { recursive: true, force: true })
+      })
+
+      it('should reject it', async () => {
         await expect(runSync(app, { source: 'snapshot', outDir: scratch })).rejects.toThrow(
           'outDir must stay inside'
         )
-      } finally {
-        await rm(scratch, { recursive: true, force: true })
-      }
+      })
     })
   })
 
@@ -170,20 +232,30 @@ describe('runSync guard and retirements', () => {
       await writeFile(path.join(root, 'index.ts'), 'export {}\n')
     })
 
-    it('should inherit the unstaged library and leave its bytes unchanged', async () => {
-      const before = await readFile(promotion())
+    describe('and nothing shared changed', () => {
+      let before: Buffer
 
-      await runSync(app, { source: 'snapshot' })
+      beforeEach(async () => {
+        before = await readFile(promotion())
 
-      expect(await readFile(promotion())).toEqual(before)
+        await runSync(app, { source: 'snapshot' })
+      })
+
+      it('should inherit the unstaged library and leave its bytes unchanged', async () => {
+        expect(await readFile(promotion())).toEqual(before)
+      })
     })
 
-    it('should still reject a Review token change that affects an unselected page', async () => {
-      expect(await alterUsedReviewToken()).toBe(true)
+    describe('and a Review token change affects an unselected page', () => {
+      beforeEach(async () => {
+        expect(await alterUsedReviewToken()).toBe(true)
+      })
 
-      await expect(runSync(app, { source: 'snapshot' })).rejects.toThrow(
-        /shared input change affects an unselected page/
-      )
+      it('should still reject the sync', async () => {
+        await expect(runSync(app, { source: 'snapshot' })).rejects.toThrow(
+          /shared input change affects an unselected page/
+        )
+      })
     })
   })
 
@@ -244,108 +316,160 @@ describe('runSync guard and retirements', () => {
         '/* stale output belonging to the captured page */\n'
       )
     })
-    it('should update the selected page through stageOutput and preserve library and frozen bytes', async () => {
-      const result = await runSync(app, {
-        source: 'snapshot',
-        capturedPageIds: [selectedPageId]
+
+    describe('and only the selected page changed', () => {
+      let result: Awaited<ReturnType<typeof runSync>>
+
+      beforeEach(async () => {
+        result = await runSync(app, {
+          source: 'snapshot',
+          capturedPageIds: [selectedPageId]
+        })
       })
-      expect(result.diff.changed.some((file) => file.startsWith('components/demo-field/'))).toBe(
-        true
-      )
-      expectSameBytes(await fixtureBytes(library()), libraryBefore)
-      expectSameBytes(await frozenOutputs(), frozenBefore)
+
+      it('should update the selected page through stageOutput', () => {
+        expect(result.diff.changed.some((file) => file.startsWith('components/demo-field/'))).toBe(
+          true
+        )
+      })
+
+      it('should preserve the library bytes', async () => {
+        expectSameBytes(await fixtureBytes(library()), libraryBefore)
+      })
+
+      it('should preserve the frozen output bytes', async () => {
+        expectSameBytes(await frozenOutputs(), frozenBefore)
+      })
     })
+
     describe('and a Review token used by an unselected page differs', () => {
       let generatedBefore: Awaited<ReturnType<typeof fixtureBytes>>
+      let outcome: Promise<unknown>
       beforeEach(async () => {
         expect(await alterUsedReviewToken('demo-field')).toBe(true)
         generatedBefore = await fixtureBytes(path.join(root, GENERATED))
+        outcome = failingSync({
+          source: 'snapshot',
+          capturedPageIds: [selectedPageId]
+        })
       })
-      it('should reject the frozen dependency through the API without publishing output', async () => {
-        await expect(
-          runSync(app, {
-            source: 'snapshot',
-            capturedPageIds: [selectedPageId]
-          })
-        ).rejects.toThrow(/shared input change affects an unselected page/)
+
+      it('should reject the frozen dependency through the API', async () => {
+        await expect(outcome).rejects.toThrow(/shared input change affects an unselected page/)
+      })
+
+      it('should not publish output', async () => {
+        await outcome.catch(() => undefined)
         expectSameBytes(await fixtureBytes(path.join(root, GENERATED)), generatedBefore)
+      })
+
+      it('should leave the library bytes unchanged', async () => {
+        await outcome.catch(() => undefined)
         expectSameBytes(await fixtureBytes(library()), libraryBefore)
       })
     })
   })
 
   describe('when the config names a snapshotDir other than figma/figma-snapshot', () => {
-    it('should refuse before ownership, retirements or the guard read the hard-coded capture', async () => {
+    let before: string
+    let errors: unknown[]
+
+    beforeEach(async () => {
       const other = path.join(root, 'figma/other-snapshot')
       await cp(path.join(root, SNAPSHOT), other, { recursive: true })
       app.config.snapshotDir = 'other-snapshot'
-      const before = await read('components/manifest.ts')
+      before = await read('components/manifest.ts')
 
+      errors = []
       for (const options of [
         { source: 'snapshot' as const },
         { source: 'snapshot' as const, developer: true },
         { source: 'snapshot' as const, developer: true, applyRetirements: true }
       ])
-        await expect(runSync(app, options)).rejects.toThrow('names another snapshotDir')
+        errors.push(
+          await runSync(app, options).then(
+            () => undefined,
+            (error: unknown) => error
+          )
+        )
+    })
+
+    it('should refuse an automated, a developer and a retirement sync', () => {
+      expect(errors).toEqual([
+        expect.objectContaining({ message: expect.stringContaining('names another snapshotDir') }),
+        expect.objectContaining({ message: expect.stringContaining('names another snapshotDir') }),
+        expect.objectContaining({ message: expect.stringContaining('names another snapshotDir') })
+      ])
+    })
+
+    it('should refuse before ownership, retirements or the guard change the manifest', async () => {
       expect(await read('components/manifest.ts')).toBe(before)
     })
   })
 
   describe('when applying retirements', () => {
-    it('should refuse without the developer flag', async () => {
-      await expect(runSync(app, { source: 'snapshot', applyRetirements: true })).rejects.toThrow(
-        /developer/
-      )
+    describe('and the developer flag is missing', () => {
+      it('should refuse', async () => {
+        await expect(runSync(app, { source: 'snapshot', applyRetirements: true })).rejects.toThrow(
+          /developer/
+        )
+      })
     })
 
-    it('should block an automated sync while a retirement is pending', async () => {
-      const manifest = await read('components/manifest.ts')
-      const entry = JSON.parse(manifest.slice(manifest.indexOf('= [') + 2))[0] as {
-        file: string
-        page: string
-      }
-      const saved = JSON.parse(
-        await readFile(
-          path.join(root, SNAPSHOT, `components/${encodePageFileName(entry.page)}`),
-          'utf8'
-        )
-      )
-      await writeRetirements([`${GENERATED}/components/${entry.file}.tsx`], saved.page.id)
+    describe('and a retirement is pending', () => {
+      beforeEach(async () => {
+        const { entry, pageId } = await firstManifestEntry()
+        await writeRetirements([`${GENERATED}/components/${entry.file}.tsx`], pageId)
+      })
 
-      await expect(runSync(app, { source: 'snapshot' })).rejects.toThrow(/pending/)
-      await expect(runSync(app, { source: 'snapshot', developer: true })).rejects.toThrow(/pending/)
+      it('should block an automated sync', async () => {
+        await expect(runSync(app, { source: 'snapshot' })).rejects.toThrow(/pending/)
+      })
+
+      it('should block a developer sync that does not apply it', async () => {
+        await expect(runSync(app, { source: 'snapshot', developer: true })).rejects.toThrow(
+          /pending/
+        )
+      })
     })
 
-    it('should reject an incomplete retirement without changing published output', async () => {
-      await mkdir(path.join(root, 'components'), { recursive: true })
-      await writeFile(
-        path.join(root, 'package.json'),
-        JSON.stringify({ name: 'fixture', version: '0.1.0' })
-      )
-      await writeFile(
-        path.join(root, 'pnpm-lock.yaml'),
-        JSON.stringify({ version: '0.1.0', packages: { '': { version: '0.1.0' } } })
-      )
-      await initializeFixtureGit(root)
-      const manifest = await read('components/manifest.ts')
-      const entry = JSON.parse(manifest.slice(manifest.indexOf('= [') + 2))[0] as {
-        file: string
-        page: string
-      }
-      const saved = JSON.parse(
-        await readFile(
-          path.join(root, SNAPSHOT, `components/${encodePageFileName(entry.page)}`),
-          'utf8'
-        )
-      )
-      const owned = `${GENERATED}/components/${entry.file}.tsx`
-      await writeRetirements([owned], saved.page.id)
+    describe('and the retirement is incomplete', () => {
+      let entry: { file: string; page: string }
+      let owned: string
+      let outcome: Promise<unknown>
 
-      await expect(
-        runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
-      ).rejects.toThrow('inconsistent')
-      expect(await readFile(path.join(root, owned), 'utf8')).toContain('export')
-      expect(await read('components/manifest.ts')).toContain(entry.file)
+      beforeEach(async () => {
+        await mkdir(path.join(root, 'components'), { recursive: true })
+        await writeFile(
+          path.join(root, 'package.json'),
+          JSON.stringify({ name: 'fixture', version: '0.1.0' })
+        )
+        await writeFile(
+          path.join(root, 'pnpm-lock.yaml'),
+          JSON.stringify({ version: '0.1.0', packages: { '': { version: '0.1.0' } } })
+        )
+        await initializeFixtureGit(root)
+        const first = await firstManifestEntry()
+        entry = first.entry
+        owned = `${GENERATED}/components/${entry.file}.tsx`
+        await writeRetirements([owned], first.pageId)
+
+        outcome = failingSync({ source: 'snapshot', developer: true, applyRetirements: true })
+      })
+
+      it('should reject it', async () => {
+        await expect(outcome).rejects.toThrow('inconsistent')
+      })
+
+      it('should keep the owned output', async () => {
+        await outcome.catch(() => undefined)
+        expect(await readFile(path.join(root, owned), 'utf8')).toContain('export')
+      })
+
+      it('should keep the manifest entry', async () => {
+        await outcome.catch(() => undefined)
+        expect(await read('components/manifest.ts')).toContain(entry.file)
+      })
     })
   })
 })

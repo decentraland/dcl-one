@@ -444,6 +444,11 @@ export function runGuard({
   for (const target of paths)
     lines.push(`path ${target}: ${scanPath(root, target, key, allowed, report)} files`)
   for (const { check, location } of findings) lines.push(`FAIL ${check} ${location}`)
+  // The privileged scan reads the allowlist from the default branch, so the allowlist entry has to merge first.
+  if (findings.some(({ check }) => check === 'url'))
+    lines.push(
+      'hint: if this is a public Figma URL, it lands in two pull requests: its key-guard-allow.json entry merged to main first, then the URL; a private file URL is removed instead'
+    )
   lines.push(`result: ${findings.length === 0 ? 'PASS' : `FAIL (${findings.length} findings)`}`)
   return { findings, lines: lines.map((line) => redact(line, key)) }
 }

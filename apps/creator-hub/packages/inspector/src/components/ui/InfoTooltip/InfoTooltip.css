@@ -1,0 +1,30 @@
+/* The tip renders in a portal on the body: it gets the tokens of the shared tooltip here. */
+.InfoTooltip {
+  --panel: var(--gray-0);
+  --text: var(--title);
+  --shadow-panel: var(--shadow-tooltip);
+}
+
+.InfoTooltip a {
+  color: var(--base-01);
+  text-decoration: underline;
+  font-weight: 700;
+}
+
+.InfoTooltip a:hover {
+  color: var(--base-01);
+  text-decoration: none;
+}
+
+.InfoTooltipTrigger {
+  display: flex;
+  align-items: center;
+}
+
+.InfoTooltipTrigger > svg {
+  color: var(--base-09);
+}
+
+.InfoTooltipTrigger.hovered > svg {
+  color: var(--base-01);
+}

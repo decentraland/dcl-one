@@ -1,5 +1,5 @@
-import { check } from "@ui/validate";
-import { SignProxyOkSchema } from "@ui/data/auth/thirdwebSchema";
+import { check } from "@web-core/validate";
+import { SignProxyOkSchema } from "@web-core/auth/thirdwebSchema";
 
 import { LOGIN_CHAIN_ID } from "./config";
 import {

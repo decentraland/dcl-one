@@ -1,0 +1,131 @@
+import { useId, useState } from 'react';
+
+import Chip from '@ui/atoms/Chip';
+import IconButton from '@ui/atoms/IconButton';
+import { Menu, MenuItem } from '@ui/atoms/Menu';
+
+import { analytics, misc } from '#preload';
+import { useSelector } from '#store';
+import {
+  CONTACT_SUPPORT_URL,
+  CREATOR_FUND_RULES_URL,
+  CREATOR_FUND_TERMS_URL,
+  CREATOR_FUND_URL,
+} from '/@/modules/utils';
+import { t } from '/@/modules/store/translation/utils';
+
+import { CheckmarkIcon, InfoIcon, KebabIcon, SupportIcon, TermsIcon } from '../icons';
+
+import { formatDate } from './format';
+import styles from './EarnHeader.module.css';
+
+/** The More options (⋮) button and menu. Every item opens a page in the browser. */
+export function EarnMenu() {
+  const menuId = useId();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+
+  const open = (url: string, track: () => void) => () => {
+    setAnchor(null);
+    track();
+    void misc.openExternal(url);
+  };
+
+  return (
+    <>
+      <IconButton
+        className={styles.kebab}
+        aria-label={t('earn.joined.more_options')}
+        aria-haspopup="menu"
+        aria-controls={anchor ? menuId : undefined}
+        aria-expanded={anchor ? 'true' : 'false'}
+        onClick={event => {
+          const button = event.currentTarget;
+          setAnchor(current => (current ? null : button));
+        }}
+      >
+        <KebabIcon />
+      </IconButton>
+      <Menu
+        className={styles.kebabMenu}
+        id={menuId}
+        anchor={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        placement="bottom-end"
+        offset={9}
+      >
+        <MenuItem
+          onClick={open(
+            CREATOR_FUND_URL,
+            () => void analytics.track('Creator Fund Program Opened', { source: 'menu' }),
+          )}
+        >
+          <InfoIcon />
+          {t('earn.joined.program')}
+        </MenuItem>
+        <MenuItem
+          onClick={open(
+            CREATOR_FUND_RULES_URL,
+            () => void analytics.track('Creator Fund Program Rules Opened', { source: 'menu' }),
+          )}
+        >
+          <CheckmarkIcon />
+          {t('earn.joined.program_rules')}
+        </MenuItem>
+        <MenuItem
+          onClick={open(
+            CREATOR_FUND_TERMS_URL,
+            () => void analytics.track('Creator Fund Read Terms', { source: 'menu' }),
+          )}
+        >
+          <TermsIcon />
+          {t('earn.joined.read_terms')}
+        </MenuItem>
+        <MenuItem
+          onClick={open(
+            CONTACT_SUPPORT_URL,
+            () => void analytics.track('Creator Fund Contact Support', { source: 'menu' }),
+          )}
+        >
+          <SupportIcon />
+          {t('earn.joined.contact_support')}
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+
+/** The joined page's title, BETA tag, joined date and More options menu. */
+export function EarnHeader() {
+  const locale = useSelector(state => state.translation.locale);
+  const enrollment = useSelector(state => state.creatorFund.enrollment.data);
+  const joinedOn =
+    enrollment && !Number.isNaN(Date.parse(enrollment.enrolled_at))
+      ? formatDate(enrollment.enrolled_at, locale)
+      : null;
+
+  return (
+    <header className={styles.header}>
+      <div className={styles.titleColumn}>
+        <div className={styles.titleRow}>
+          <h1 className={styles.title}>
+            {t('earn.joined.title_prefix')}
+            <span className={styles.titleDot}> · </span>
+            {t('earn.joined.title')}
+          </h1>
+          <Chip
+            className={styles.beta}
+            size="small"
+            label={t('earn.joined.beta')}
+          />
+        </div>
+        {joinedOn && (
+          <span className={styles.joinedLine}>
+            {t('earn.joined.joined_on', { date: joinedOn })}
+          </span>
+        )}
+      </div>
+      <EarnMenu />
+    </header>
+  );
+}

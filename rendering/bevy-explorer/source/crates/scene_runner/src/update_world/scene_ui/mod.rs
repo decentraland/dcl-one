@@ -28,7 +28,8 @@ use ui_pointer::set_ui_pointer_events;
 use ui_text::{check_text_links, retry_ui_text_fonts, set_ui_text, UiText};
 
 use crate::{
-    initialize_scene::{LiveScenes, SuperUserScene},
+    initialize_scene::{LiveScenes, PortableScenes, SuperUserScene},
+    portables::{current_toggle, is_listed},
     renderer_context::RendererSceneContext,
     update_world::scene_ui::ui_pointer::manage_scene_ui_interact,
     ContainerEntity, ContainingScene, InteractableArea, MobileUiEmulation, SceneEntity, SceneSets,
@@ -36,7 +37,7 @@ use crate::{
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
     rpc::{RpcCall, RpcCallEvent, RpcOrigin, RpcUiFocusAction},
-    structs::{AppConfig, PrimaryPlayerRes, PrimaryUser, ZOrder},
+    structs::{AppConfig, PortableExperiencesToggle, PrimaryPlayerRes, PrimaryUser, ZOrder},
     util::{DespawnWith, ModifyComponentExt},
 };
 use dcl_component::{
@@ -209,6 +210,55 @@ pub struct UiTransform {
     border_radius: BorderRadius,
     border_color: BorderColor,
     block_pointer: bool,
+}
+
+impl UiTransform {
+    /// Sets the node's border colour. Bevy paints a background only inside the border, while
+    /// a scene's background also lies under it, so each edge is drawn as its colour over the
+    /// solid background: a transparent or translucent border then shows the background and
+    /// the node keeps its full visible size.
+    fn apply_border_color(
+        &self,
+        cmds: &mut bevy::ecs::system::EntityCommands,
+        background: Option<Color>,
+        opacity: f32,
+    ) {
+        let background = background.filter(|_| self.border != UiRect::ZERO);
+        let over = |edge: Color| -> Color {
+            let mut edge = edge.to_linear();
+            edge.alpha *= opacity;
+            let Some(background) = background else {
+                return edge.into();
+            };
+            let mut back = background.to_linear();
+            back.alpha *= opacity;
+            let alpha = edge.alpha + back.alpha * (1.0 - edge.alpha);
+            if alpha <= 0.0 {
+                return Color::NONE;
+            }
+            let mix =
+                |e: f32, b: f32| (e * edge.alpha + b * back.alpha * (1.0 - edge.alpha)) / alpha;
+            LinearRgba::new(
+                mix(edge.red, back.red),
+                mix(edge.green, back.green),
+                mix(edge.blue, back.blue),
+                alpha,
+            )
+            .into()
+        };
+        let edges = self.border_color;
+        let border_color = BorderColor {
+            top: over(edges.top),
+            right: over(edges.right),
+            bottom: over(edges.bottom),
+            left: over(edges.left),
+        };
+        if border_color.is_fully_transparent() {
+            cmds.remove::<BorderColor>();
+        } else {
+            cmds.try_insert(border_color);
+        }
+    }
 }
 
 impl From<PbUiTransform> for UiTransform {
@@ -571,7 +621,6 @@ fn init_scene_ui_root(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_scene_ui_components(
     changed_entities: Query<(Entity, &SceneEntity), Changed<UiTransform>>,
     mut ui_roots: Query<&mut SceneUiData>,
@@ -631,6 +680,33 @@ pub struct SceneUiRoot {
     canvas: Entity,
 }
 
+/// The scenes whose UI shows: those the player is in, less every listed portable while the
+/// parcel scene the player stands in sets `portableExperiences` to `hideUi` or `disabled`.
+fn ui_scenes(
+    player: Option<Entity>,
+    containing_scene: &ContainingScene,
+    contexts: &Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: &PortableScenes,
+) -> HashSet<Entity> {
+    let Some(player) = player else {
+        return HashSet::default();
+    };
+    let mut scenes = containing_scene.get(player);
+    let toggle = current_toggle(Some(player), containing_scene, |scene| {
+        contexts.get(scene).ok().map(|(ctx, _)| ctx)
+    });
+    if toggle != PortableExperiencesToggle::Enabled {
+        scenes.retain(|scene| {
+            contexts.get(*scene).is_ok_and(|(ctx, is_super)| {
+                portables
+                    .get(&ctx.hash)
+                    .is_none_or(|source| !is_listed(source, is_super))
+            })
+        });
+    }
+    scenes
+}
+
 fn create_ui_roots(
     mut commands: Commands,
     mut scene_uis: Query<(
@@ -642,6 +718,8 @@ fn create_ui_roots(
     )>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
+    contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: Res<PortableScenes>,
     current_uis: Query<(Entity, &SceneUiRoot)>,
     config: Res<AppConfig>,
     canvas_infos: Query<(Entity, &ContainerEntity, Ref<UiCanvas>, Option<&UiLink>)>,
@@ -670,11 +748,12 @@ fn create_ui_roots(
         ..Default::default()
     };
 
-    let current_scenes = player
-        .single()
-        .ok()
-        .map(|p| containing_scene.get(p))
-        .unwrap_or_default();
+    let current_scenes = ui_scenes(
+        player.single().ok(),
+        &containing_scene,
+        &contexts,
+        &portables,
+    );
 
     // remove any non-current uis
     for (ent, ui_root) in &current_uis {
@@ -1012,22 +1091,25 @@ fn update_canvas_material_uvs(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn layout_scene_ui(
     mut commands: Commands,
     mut scene_uis: Query<(Entity, &mut SceneUiData)>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
+    contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+    portables: Res<PortableScenes>,
     ui_nodes: Query<(&SceneEntity, Ref<UiTransform>, &ChildOf)>,
     mut removed_transforms: RemovedComponents<UiTransform>,
     ui_links: Query<&UiLink>,
+    backgrounds: Query<&UiBackground>,
     dui: Res<DuiRegistry>,
 ) {
-    let current_scenes = player
-        .single()
-        .ok()
-        .map(|p| containing_scene.get(p))
-        .unwrap_or_default();
+    let current_scenes = ui_scenes(
+        player.single().ok(),
+        &containing_scene,
+        &contexts,
+        &portables,
+    );
 
     let removed_transforms = removed_transforms.read().collect::<Vec<_>>();
 
@@ -1334,22 +1416,11 @@ fn layout_scene_ui(
                 let mut cmds = commands.entity(link.ui_entity);
                 cmds.try_insert(style);
 
-                if ui_transform.border_color != BorderColor::DEFAULT {
-                    let mut border_color = ui_transform.border_color;
-                    for edge in [
-                        &mut border_color.left,
-                        &mut border_color.top,
-                        &mut border_color.right,
-                        &mut border_color.bottom,
-                    ] {
-                        let mut srgba = edge.to_srgba();
-                        srgba.alpha *= link.opacity.0;
-                        *edge = srgba.into();
-                    }
-                    cmds.try_insert(border_color);
-                } else {
-                    cmds.remove::<BorderColor>();
-                }
+                let background = backgrounds
+                    .get(bevy_entity)
+                    .ok()
+                    .and_then(UiBackground::solid_color);
+                ui_transform.apply_border_color(&mut cmds, background, link.opacity.0);
 
                 if ui_transform.border_radius != BorderRadius::DEFAULT {
                     cmds.try_insert(ui_transform.border_radius);
@@ -1628,6 +1699,145 @@ fn set_ui_focus(
 
                 response.send(Ok(None));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+
+    use super::*;
+    use crate::initialize_scene::{PointerResult, PortableScenes, PortableSource, ScenePointers};
+
+    fn context(
+        hash: &str,
+        is_portable: bool,
+        toggle: PortableExperiencesToggle,
+    ) -> RendererSceneContext {
+        let mut ctx = RendererSceneContext::new(
+            SceneId(Entity::PLACEHOLDER),
+            hash.to_owned(),
+            String::new(),
+            is_portable,
+            0,
+            hash.to_owned(),
+            IVec2::ZERO,
+            HashSet::from_iter([IVec2::ZERO]),
+            vec![],
+            Default::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk_version",
+            false,
+            false,
+        );
+        ctx.portable_experiences = toggle;
+        ctx
+    }
+
+    /// The scenes showing UI with the player standing in a parcel scene with `toggle`, beside
+    /// a scene-spawned portable, a super-user portable and a startup portable.
+    fn shown(toggle: PortableExperiencesToggle) -> (HashSet<Entity>, [Entity; 4]) {
+        let mut world = World::new();
+        world.init_resource::<LiveScenes>();
+        world.init_resource::<PortableScenes>();
+        let mut pointers = ScenePointers::default();
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "parcel".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+
+        let parcel = world.spawn(context("parcel", false, toggle)).id();
+        let portable = world
+            .spawn(context("portable", true, Default::default()))
+            .id();
+        let system = world
+            .spawn((context("system", true, Default::default()), SuperUserScene))
+            .id();
+        let startup = world
+            .spawn(context("startup", true, Default::default()))
+            .id();
+        for (hash, entity) in [
+            ("parcel", parcel),
+            ("portable", portable),
+            ("system", system),
+            ("startup", startup),
+        ] {
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.to_owned(), entity);
+        }
+        let mut portables = world.resource_mut::<PortableScenes>();
+        portables.insert(
+            "portable".to_owned(),
+            PortableSource::new(
+                "portable".to_owned(),
+                Some("parcel".to_owned()),
+                None,
+                false,
+            ),
+        );
+        portables.insert(
+            "system".to_owned(),
+            PortableSource::new("system".to_owned(), None, None, true),
+        );
+        portables.insert(
+            "startup".to_owned(),
+            PortableSource::new("startup".to_owned(), None, None, false),
+        );
+
+        // stand in the middle of parcel (0,0)
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
+        ));
+
+        let scenes = world
+            .run_system_once(
+                |player: Query<Entity, With<PrimaryUser>>,
+                 containing_scene: ContainingScene,
+                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+                 portables: Res<PortableScenes>| {
+                    ui_scenes(
+                        player.single().ok(),
+                        &containing_scene,
+                        &contexts,
+                        &portables,
+                    )
+                },
+            )
+            .unwrap();
+        (scenes, [parcel, portable, system, startup])
+    }
+
+    #[test]
+    fn hide_ui_and_disabled_hide_the_ui_of_listed_portables_only() {
+        for toggle in [
+            PortableExperiencesToggle::HideUi,
+            PortableExperiencesToggle::Disabled,
+        ] {
+            let (scenes, [parcel, portable, system, startup]) = shown(toggle);
+            assert!(scenes.contains(&parcel), "{toggle:?}");
+            assert!(!scenes.contains(&portable), "{toggle:?}");
+            assert!(scenes.contains(&system), "{toggle:?}");
+            assert!(scenes.contains(&startup), "{toggle:?}");
+        }
+    }
+
+    #[test]
+    fn portables_show_their_ui_while_enabled() {
+        let (scenes, entities) = shown(PortableExperiencesToggle::Enabled);
+        for entity in entities {
+            assert!(scenes.contains(&entity));
         }
     }
 }

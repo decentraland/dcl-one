@@ -14,6 +14,8 @@ struct TerrainParams {
     player_offset: vec2<f32>,
     // coast bounds in unity x/z metres (min x, min z, max x, max z); the ground ends at the cliffs
     coast: vec4<f32>,
+    // hills are displaced out to this many metres from the player (terrain.rs `hill_reach`)
+    hill_reach: f32,
 }
 
 @group(2) @binding(101) var<uniform> terrain: TerrainParams;

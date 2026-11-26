@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "target": "esnext",
+    "sourceMap": false,
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "paths": {
+      "#preload": ["../preload/src/index"],
+      "#store": ["./src/modules/store"],
+      "/@/*": ["./src/*"],
+      "/shared/*": ["../shared/*"],
+      "@ui/*": ["../../../../ui3/src/*"],
+      "@dcl/one-ui": ["../../../../../library/ui/components/Tooltip/Tooltip.tsx"]
+    },
+    "lib": ["ESNext", "dom", "dom.iterable"],
+    "jsx": "react-jsx",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "../types/**/*.d.ts"],
+  "exclude": ["**/*.spec.ts", "**/*.test.ts"],
+  "references": [{ "path": "./tsconfig.ui3.json" }]
+}

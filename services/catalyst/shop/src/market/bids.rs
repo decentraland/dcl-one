@@ -1,28 +1,50 @@
 //! `/v1/bids`: off-chain bids from the trades mirror (`type = 'bid'`, open
 //! unless expired or cancelled here; `sold` or `cancelled` by the chain's
-//! verdict once the network's trade-events index is published,
-//! `trade_events::chain_status_sql`) merged with the legacy on-chain `bids`
-//! of the collections subgraph reader (first ≤ 100, 30 s; a window past the
-//! graph's 5,000 skip is read by keyset up to `readers::DEEP_WINDOW`). A
-//! mirror bid's seller is the item's creator when the bid is on an item and
+//! verdict, `trade_events::chain_status_sql`; only while the network's
+//! trade-events index is current, and never a V3 bid whose cancellation
+//! digest could not be established, `trade_events::unverifiable_sql`) merged
+//! with the legacy on-chain bids.
+//! A mirror bid's seller is the item's creator when the bid is on an item and
 //! the nft's current owner (the nft index, or land_authz for LAND and
 //! estates) when it is on an nft; empty while no index holds the token.
+//!
+//! A node that walks the nft and sales indexes serves Polygon's legacy bids
+//! (ERC721BidV2) from `shop.nft_bid` ([`polygon_rows`]) and the mirror's
+//! bids on one read-only snapshot and one instant ([`bids_snapshot`]), on
+//! which the trades mirror is ready, the sales fold published and recent,
+//! the nft index fresh, and every bid in the request's scope has a seller:
+//! the one the fold stored, or the token's latest transfer before the bid
+//! when the nft walk's log reaches the bid's block and holds the token's
+//! whole history. The scope is the catalogue the nft index walks, as the
+//! collections subgraph only kept bids on assets it catalogued. A bid
+//! neither proves fails the read closed rather than being served without
+//! its seller or left out of a `seller` filter. Its statuses are the
+//! subgraph's (`open`, `sold`, `cancelled`); a bid the contract dropped when
+//! another bid on its token was accepted reads `cancelled`, since it can no
+//! longer be accepted.
+//! Ethereum's legacy bids, and every legacy bid on a node that does not walk
+//! the indexes, come from the collections subgraph reader (first ≤ 100,
+//! 30 s; a window past the graph's 5,000 skip is read by keyset up to
+//! `readers::DEEP_WINDOW`), filtered at the same instant as the other legs.
 
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::{PgConnection, Postgres, Row, Transaction};
 
+use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, INDEXER_SALES};
 use super::graph;
+use super::owned_items::{self, Rule};
 use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
 use super::wire::{
     ApiError, ChainId, InvalidParameterError, Network, Params, get_pagination_params,
     get_parameter, network_and_chain,
 };
 use super::{MarketplaceState, SharedState};
+use super::{Source, unavailable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BidSortBy {
@@ -177,8 +199,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<BidFilters, InvalidPa
 /// nft or item bid on, the sent erc20 the price.
 const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_contract_address, t.signer AS bidder, \
         (EXTRACT(EPOCH FROM t.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM t.expires_at) * 1000)::bigint AS expires_at, \
-        upper(t.network) AS network, sent_erc20.amount::text AS price, recv_erc721.token_id, \
-        COALESCE(recv_item.item_id, CASE WHEN recv_erc721.token_id IS NOT NULL THEN div(recv_erc721.token_id::numeric, SHIFT::numeric)::text END) AS item_id, \
+        upper(t.network) AS network, t.chain_id::bigint AS chain_id, sent_erc20.amount::text AS price, recv_erc721.token_id, \
+        COALESCE(recv_item.item_id, div(TOKEN_NUM, SHIFT::numeric)::text) AS item_id, \
         recv.contract_address, COALESCE(recv.extra, '') AS fingerprint, \
         CASE WHEN recv_erc721.token_id IS NOT NULL THEN COALESCE(n.owner, tr.owner, '') ELSE COALESCE(i.creator, '') END AS seller, \
         CASE WHEN EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) THEN 'cancelled' \
@@ -191,31 +213,59 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.trade_assets_erc721 recv_erc721 ON recv_erc721.asset_id = recv.id \
  LEFT JOIN shop.trade_assets_item recv_item ON recv_item.asset_id = recv.id \
  LEFT JOIN shop.items i ON i.contract_address = recv.contract_address AND i.network = lower(t.network) \
-      AND i.item_id = COALESCE(recv_item.item_id::numeric, CASE WHEN recv_erc721.token_id IS NOT NULL THEN div(recv_erc721.token_id::numeric, SHIFT::numeric) END) \
+      AND i.item_id = COALESCE(ITEM_NUM, div(TOKEN_NUM, SHIFT::numeric)) \
+      AND i.chain_id = t.chain_id AND (t.chain_id IN (1, 137) OR i.testnet_verified) \
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
-      AND n.token_id = recv_erc721.token_id::numeric \
- LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = recv_erc721.token_id::numeric \
- WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED";
+      AND n.token_id = TOKEN_NUM \
+ LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
+ WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN AND CHAIN_CURRENT \
+   AND (recv_erc721.asset_id IS NULL OR TOKEN_NUM IS NOT NULL) AND (recv_item.asset_id IS NULL OR ITEM_NUM IS NOT NULL)";
 
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
 #[cfg(test)]
 pub(crate) fn test_trades_bids_sql() -> String {
-    format!("SELECT q.id, q.status FROM ({}) q", trades_bids_sql(""))
+    format!(
+        "SELECT q.id, q.status FROM ({}) q",
+        trades_bids_scope(" ORDER BY b.created_at DESC LIMIT 1000")
+    )
 }
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
-fn trades_bids_sql(extra: &str) -> String {
+fn trades_bids_scope(extra: &str) -> String {
     let sql = TRADES_BIDS_SQL
         .replace("COUNTED", &super::trades::counted_sql("t.", "$2"))
+        .replace("SERVED_CHAIN", &super::catalog::served_chain_sql("t"))
         .replace("SHIFT", super::catalog::ITEM_ID_SHIFT)
+        .replace(
+            "TOKEN_NUM",
+            &super::catalog::uint_or_null("recv_erc721.token_id"),
+        )
+        .replace(
+            "ITEM_NUM",
+            &super::catalog::uint_or_null("recv_item.item_id"),
+        )
         .replace(
             "CHAIN_STATUS",
             &super::trade_events::chain_status_sql("t", "$1"),
+        )
+        .replace(
+            "CHAIN_CURRENT",
+            &format!(
+                "{} AND NOT {}",
+                super::trade_events::verdicts_current_sql("t", "$1"),
+                super::trade_events::unverifiable_sql("t")
+            ),
         );
-    format!("SELECT * FROM ({sql}) b WHERE TRUE{extra} ORDER BY b.created_at DESC LIMIT 1000")
+    format!("SELECT * FROM ({sql}) b WHERE TRUE{extra}")
 }
 
-pub async fn trades_leg(state: &MarketplaceState, f: &BidFilters) -> Result<Vec<Bid>, ApiError> {
+/// The mirror's bids of `f` at `now`, on `conn`.
+pub(super) async fn trades_rows(
+    conn: &mut PgConnection,
+    state: &MarketplaceState,
+    f: &BidFilters,
+    now: DateTime<Utc>,
+) -> Result<Vec<Bid>, Response> {
     if f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
         return Ok(Vec::new());
     }
@@ -228,10 +278,6 @@ pub async fn trades_leg(state: &MarketplaceState, f: &BidFilters) -> Result<Vec<
     if let Some(v) = &f.bidder {
         let p = next(&mut binds, v.to_lowercase());
         extra.push_str(&format!(" AND lower(b.bidder) = {p}"));
-    }
-    if let Some(v) = &f.seller {
-        let p = next(&mut binds, v.to_lowercase());
-        extra.push_str(&format!(" AND lower(b.seller) = {p}"));
     }
     if let Some(v) = &f.contract_address {
         let p = next(&mut binds, v.to_lowercase());
@@ -253,18 +299,71 @@ pub async fn trades_leg(state: &MarketplaceState, f: &BidFilters) -> Result<Vec<
         let placeholders: Vec<String> = nets.iter().map(|n| next(&mut binds, n.clone())).collect();
         extra.push_str(&format!(" AND b.network IN ({})", placeholders.join(", ")));
     }
-    let now = Utc::now().naive_utc();
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(trades_bids_sql(&extra)))
-        .bind(now)
-        .bind(super::trades::mirrored_since(&state.settings, now));
-    for b in &binds {
-        q = q.bind(b);
+    let cutoff = now.naive_utc();
+    let query = |sql: String, binds: &[String]| {
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(cutoff)
+            .bind(super::trades::mirrored_since(&state.settings, cutoff));
+        for b in binds {
+            q = q.bind(b.clone());
+        }
+        q
+    };
+    if owned_items::walks_here(state) {
+        for net in ChainNet::ALL {
+            let network = match net {
+                ChainNet::Ethereum => Network::Ethereum,
+                ChainNet::Matic => Network::Matic,
+            };
+            if f.network.is_some_and(|asked| asked != network) {
+                continue;
+            }
+            let chain = state.settings.catalogue().chain_id(net);
+            let fresh = chain_walk::published_block(&mut *conn, INDEXER_NFT, net, chain, now)
+                .await
+                .map_err(read_error)?
+                .is_some();
+            if fresh
+                && chain_walk::rows_published_on(&mut *conn, INDEXER_NFT, net, &["nft"])
+                    .await
+                    .map_err(read_error)?
+            {
+                continue;
+            }
+            // Test the full scope before seller and pagination. An unpublished
+            // owner can otherwise make a bid disappear from the seller's count.
+            let scope = trades_bids_scope(&format!(
+                "{extra} AND lower(b.network) = '{}' AND b.token_id IS NOT NULL",
+                net.db_name()
+            ));
+            let affected = query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(read_error)?
+                .get("affected");
+            if affected {
+                return Err(owned_items::not_ready(&format!(
+                    "the {} bids in this read need an up-to-date nft ownership publication on chain {chain}",
+                    net.db_name()
+                )));
+            }
+        }
     }
-    let rows = q.fetch_all(&state.pool).await?;
+    if let Some(v) = &f.seller {
+        let p = next(&mut binds, v.to_lowercase());
+        extra.push_str(&format!(" AND lower(b.seller) = {p}"));
+    }
+    extra.push_str(" ORDER BY b.created_at DESC LIMIT 1000");
+    let rows = query(trades_bids_scope(&extra), &binds)
+        .fetch_all(conn)
+        .await
+        .map_err(read_error)?;
     Ok(rows
         .iter()
         .map(|r| {
-            let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
+            let (network, _) = network_and_chain(&r.get::<String, _>("network"));
+            // The trade's own chain, which the leg keeps to the served one.
+            let chain_id = wire_chain(r.get("chain_id"), network);
             let created_at: i64 = r.get("created_at");
             Bid {
                 id: r.get("id"),
@@ -322,7 +421,8 @@ fn legacy_order(sort_by: Option<BidSortBy>) -> (&'static str, &'static str) {
     }
 }
 
-pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
+/// Convert a legacy Graph row with the chain selected for that leg.
+fn bid_from_graph(b: &Value, network: Network, chain_id: ChainId) -> Bid {
     let ms = |key: &str| {
         let raw = readers::int_of(b, key);
         if raw != 0 && raw < 100_000_000_000 {
@@ -341,7 +441,7 @@ pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
         status: readers::opt_str_of(b, "status").unwrap_or_else(|| "open".to_string()),
         seller: readers::str_of(b, "seller"),
         network,
-        chain_id: network.chain_id(),
+        chain_id,
         contract_address: readers::str_of(b, "nftAddress"),
         expires_at: ms("expiresAt"),
         token_id: readers::opt_str_of(b, "tokenId"),
@@ -354,19 +454,41 @@ pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
     }
 }
 
-pub async fn legacy_leg(
+async fn legacy_leg(
     state: &MarketplaceState,
     f: &BidFilters,
     window: i64,
+    now_ms: i64,
 ) -> Result<(Vec<Bid>, i64), Response> {
-    if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
-        return Ok((Vec::new(), 0));
-    }
     let networks = match f.network {
         Some(n) => vec![n.graph()],
         None => vec![graph::Network::Ethereum, graph::Network::Matic],
     };
-    let where_ = legacy_where(f, readers::now_ms());
+    graph_leg(state, f, window, networks, now_ms, false).await
+}
+
+/// Native legacy bids refer to NFTs, and the unsupported networks have
+/// no bid rows on either legacy source.
+fn legacy_bids_possible(f: &BidFilters) -> bool {
+    f.item_id.is_none() && !f.network_db_filter.as_ref().is_some_and(|n| n.is_empty())
+}
+
+/// The subgraph reader's legacy bids of `networks` unexpired at `now_ms`
+/// over the merged window and their capped total. `served` labels each row
+/// with the chain the node serves on its network (a walking node's
+/// catalogue), else with the network's configured chain.
+async fn graph_leg(
+    state: &MarketplaceState,
+    f: &BidFilters,
+    window: i64,
+    networks: Vec<graph::Network>,
+    now_ms: i64,
+    served: bool,
+) -> Result<(Vec<Bid>, i64), Response> {
+    if !legacy_bids_possible(f) {
+        return Ok((Vec::new(), 0));
+    }
+    let where_ = legacy_where(f, now_ms);
     let (order_by, direction) = legacy_order(f.sort_by);
     let mut rows = Vec::new();
     let mut total = 0;
@@ -398,12 +520,405 @@ pub async fn legacy_leg(
         )
         .await
         .map_err(|e| readers::upstream_failed("/v1/bids", &e))?;
-        rows.extend(
-            got.iter()
-                .map(|b| bid_from_graph(b, Network::from(network))),
-        );
+        let wire = Network::from(network);
+        let chain_id = if served {
+            let net = match wire {
+                Network::Ethereum => ChainNet::Ethereum,
+                Network::Matic => ChainNet::Matic,
+            };
+            wire_chain(state.settings.catalogue().chain_id(net), wire)
+        } else {
+            wire.chain_id()
+        };
+        rows.extend(got.iter().map(|b| bid_from_graph(b, wire, chain_id)));
     }
     Ok((rows, total))
+}
+
+/// Whether this node serves Polygon's legacy bids from the sales index: it
+/// walks the nft index (whose transfers name a bid's seller) on its
+/// catalogue, mainnet or the Sepolia/Amoy pair (`owned_items::walks_here`),
+/// and the sales index (`MARKETPLACE_SALES_INDEX_ENABLED`).
+pub fn polygon_book_here(state: &MarketplaceState) -> bool {
+    owned_items::walks_here(state) && state.settings.market.indexes.sales_enabled
+}
+
+/// Whether the Polygon sales cursor has a fresh published fold on the
+/// served chain. A forward walk can advance without changing that fold.
+fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
+    c.indexer == INDEXER_SALES && chain_walk::fresh_fold_on(c, chain_id, now).is_some()
+}
+
+/// Bid-book reads refused while the sales fold's writes await publication.
+const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_bid_book_unpublished_fold_reads_total",
+    "Bid-book reads refused because the sales index has not published the fold, by network.",
+    Some(dcl_metrics::Unit::Count),
+    &["network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
+
+/// What a bid's seller is read against on a [`bids_snapshot`].
+pub(super) struct SellerBounds {
+    /// The last block of the nft walk's log: a seller can be read from the
+    /// transfers of a bid at or below it.
+    nft_last: i64,
+    /// The lowest point of an nft rewind the sales fold has not rechecked
+    /// yet (`shop.bid_seller_recheck`): a seller the fold inferred for a bid
+    /// created past it may name an owner the rewind took away.
+    recheck_from: Option<i64>,
+}
+
+/// The bids' read-only snapshot and request instant, taken after the
+/// snapshot is established,
+/// so a fold the snapshot sees was published before it, and shared by the
+/// checks, the reads and the subgraph's Ethereum filter. The trades mirror
+/// and its verdicts must be ready on it; with `polygon`, the Polygon bid
+/// book too, and what a seller is read against comes back. The sales and nft
+/// cursors must carry the chain the node serves on Polygon. `Err` is the
+/// unavailable envelope naming the index that is not ready, or a 500.
+pub(super) async fn bids_snapshot(
+    state: &MarketplaceState,
+    polygon: bool,
+) -> Result<
+    (
+        Transaction<'static, Postgres>,
+        Option<SellerBounds>,
+        DateTime<Utc>,
+    ),
+    Response,
+> {
+    let mut tx = state.pool.begin().await.map_err(read_error)?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(read_error)?;
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!(
+            "{}ms",
+            super::nft_reads::READ_STATEMENT_TIMEOUT.as_millis()
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(read_error)?;
+    // The statement above established the snapshot.
+    let now = Utc::now();
+    super::trades::ready_on(state, &mut tx, now).await?;
+    if !polygon {
+        return Ok((tx, None, now));
+    }
+    // The node's catalogue: the chain `walks_here` keeps the index settings on.
+    let chain = state.settings.catalogue().chain_id(ChainNet::Matic);
+    let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
+        .await
+        .map_err(read_error)?;
+    if !sales
+        .as_ref()
+        .is_some_and(|c| sales_published(c, chain, now))
+    {
+        return Err(unavailable(
+            Source::SalesIndex,
+            "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
+        ));
+    }
+    if !chain_walk::rows_published_on(&mut tx, INDEXER_SALES, ChainNet::Matic, &["nft_bid"])
+        .await
+        .map_err(read_error)?
+    {
+        UNPUBLISHED_FOLD_READS
+            .handle([ChainNet::Matic.db_name()])
+            .increment(1);
+        return Err(unavailable(
+            Source::SalesIndex,
+            "the matic bid book holds a fold the sales index has not published yet",
+        ));
+    }
+    owned_items::check(
+        &mut tx,
+        state.settings.catalogue(),
+        &[ChainNet::Matic],
+        Rule::Fresh,
+        false,
+        now,
+    )
+    .await
+    .map_err(nft_source_error)?;
+    super::catalogue::require_collections_on(&mut tx, state, ChainNet::Matic, now)
+        .await
+        .map_err(nft_source_error)?;
+    let nft = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
+        .await
+        .map_err(read_error)?
+        .ok_or_else(|| owned_items::not_ready("the matic nft index has no cursor"))?;
+    let recheck_from: Option<i64> = sqlx::query_scalar(
+        "SELECT min(from_block) FROM shop.bid_seller_recheck WHERE network = 'matic'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(read_error)?;
+    Ok((
+        tx,
+        Some(SellerBounds {
+            nft_last: nft.last_block,
+            recheck_from,
+        }),
+        now,
+    ))
+}
+
+/// Whether `s` is a decimal `uint256`, as the index stores token ids.
+fn is_uint(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 78 && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The stored statuses a wire status names: the subgraph's `sold` is an
+/// acceptance, its `cancelled` a cancellation or a bid another acceptance
+/// dropped.
+fn stored_statuses(status: &str) -> &'static [&'static str] {
+    match status {
+        "open" => &["open"],
+        "sold" => &["accepted"],
+        "cancelled" => &["cancelled", "invalidated"],
+        _ => &[],
+    }
+}
+
+/// `b` is a bid on the catalogue the nft index walks on Polygon's served
+/// chain `chain`: a collection row of that chain and, on a testnet, verified
+/// there (`NftIndex::load`'s address set). The bid contract takes any
+/// ERC721, and the collections subgraph kept no bid on an asset it had not
+/// catalogued; the nft walk never reads such a token's transfers.
+///
+/// `probe` keeps it one primary-key lookup per bid (`OFFSET 0` stops the
+/// planner turning it into a join), for the unresolved-seller check: as a
+/// join the planner takes the few bids that check reads for one row and
+/// compares each with the whole catalogue. A page and a total join it.
+fn catalogued(chain: i64, probe: bool) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM shop.collections c WHERE c.network = 'matic' AND c.contract_address = b.contract_address \
+           AND c.chain_id = {chain}{}{})",
+        if chain == ChainNet::Matic.chain_id() {
+            ""
+        } else {
+            " AND c.testnet_verified"
+        },
+        if probe { " OFFSET 0" } else { "" }
+    )
+}
+
+/// The filters of `f` but its seller over `shop.nft_bid b` at `now_ms`, from
+/// `$4` (`$1` is the cutoff in seconds, `$2` and `$3` the [`SellerBounds`]); `None` when
+/// no bid can match (a token id that is not a decimal). Each read adds the
+/// catalogue ([`catalogued`]).
+fn polygon_scope(f: &BidFilters, now_ms: i64, binds: &mut Vec<String>) -> Option<String> {
+    binds.clear();
+    binds.push(now_ms.div_euclid(1000).to_string());
+    let mut sql = String::from("b.network = 'matic' AND b.expires_at > $1::bigint");
+    let next = |binds: &mut Vec<String>, v: String| {
+        binds.push(v);
+        format!("${}", binds.len() + 2)
+    };
+    if let Some(v) = &f.bidder {
+        let p = next(binds, v.to_lowercase());
+        sql.push_str(&format!(" AND b.bidder = {p}"));
+    }
+    if let Some(v) = &f.contract_address {
+        let p = next(binds, v.to_lowercase());
+        sql.push_str(&format!(" AND b.contract_address = {p}"));
+    }
+    if let Some(v) = &f.token_id {
+        if !is_uint(v) {
+            return None;
+        }
+        let p = next(binds, v.clone());
+        sql.push_str(&format!(" AND b.token_id = {p}::numeric"));
+    }
+    if let Some(v) = &f.status {
+        let list: Vec<String> = stored_statuses(v)
+            .iter()
+            .map(|s| next(binds, s.to_string()))
+            .collect();
+        if list.is_empty() {
+            return None;
+        }
+        sql.push_str(&format!(" AND b.status IN ({})", list.join(", ")));
+    }
+    Some(sql)
+}
+
+/// Whether the stored seller of a bid stands: the fold inferred it from a
+/// transfer before any nft rewind it has not rechecked (`$3`), or an
+/// acceptance named it.
+const STORED_SELLER_STANDS: &str =
+    "($3::bigint IS NULL OR b.created_block <= $3::bigint OR b.status = 'accepted')";
+
+/// A bid's seller now: the one the fold stored while it stands
+/// ([`STORED_SELLER_STANDS`]), or the token's latest transfer before the bid
+/// in the nft walk's log when the log reaches the bid's block (`$2`) and
+/// holds the contract's whole history: no backfill of the contract below
+/// its walk is owed (`FOLD_BIDS_SQL`'s rule), since a transfer the backfill
+/// has yet to add may be the latest. NULL when neither proves one.
+fn seller_now() -> String {
+    format!(
+        "COALESCE(CASE WHEN {STORED_SELLER_STANDS} THEN b.seller END, \
+         (SELECT n.to_address FROM shop.nft_event n \
+          WHERE n.network = 'matic' AND n.contract_address = b.contract_address AND n.token_id = b.token_id AND n.kind = 'transfer' \
+            AND (n.block_number, n.log_index) < (b.created_block, b.created_log_index) AND b.created_block <= $2::bigint \
+            AND NOT EXISTS ( \
+              SELECT 1 FROM shop.nft_contract k \
+              WHERE k.network = 'matic' AND k.contract_address = b.contract_address AND k.backfill_from_block IS NOT NULL \
+                AND COALESCE(k.backfilled_to_block, k.backfill_from_block - 1) < k.walked_from_block - 1) \
+          ORDER BY n.block_number DESC, n.log_index DESC LIMIT 1))"
+    )
+}
+
+/// The bid book's order for `sort_by`, ties by id as [`sort_bids`] (bytes).
+fn polygon_order_by(sort_by: Option<BidSortBy>) -> &'static str {
+    match sort_by {
+        Some(BidSortBy::RecentlyUpdated) => "x.updated_at DESC, x.id COLLATE \"C\" ASC",
+        Some(BidSortBy::MostExpensive) => "x.price DESC, x.id COLLATE \"C\" ASC",
+        _ => "x.created_at DESC, x.id COLLATE \"C\" ASC",
+    }
+}
+
+/// Polygon's legacy bids of `f` over the merged `window` from
+/// `shop.nft_bid`, and their total capped as the reader's, on a
+/// [`bids_snapshot`] at `now_ms`. Before reading them it checks every bid in
+/// the request's scope (its filters but the seller's) for a seller, and
+/// answers `None` when one has none: the nft walk has not reached its block
+/// or the contract's history yet, so the bid could neither show its seller
+/// nor be matched by one.
+async fn polygon_rows(
+    conn: &mut PgConnection,
+    state: &MarketplaceState,
+    f: &BidFilters,
+    window: i64,
+    bounds: &SellerBounds,
+    now_ms: i64,
+) -> Result<Option<(Vec<Bid>, i64)>, sqlx::Error> {
+    let chain = state.settings.catalogue().chain_id(ChainNet::Matic);
+    // The bid contract the sales walk reads on that chain.
+    let bid_contract = super::sales_index::SalesIndex::for_chain(chain)
+        .map_or(super::sales_index::BID_V2_MATIC, |i| i.bid_contract());
+    let mut binds = Vec::new();
+    let Some(scope) = polygon_scope(f, now_ms, &mut binds) else {
+        return Ok(Some((Vec::new(), 0)));
+    };
+    let bind_all = |sql: String, binds: &[String]| {
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(binds[0].clone())
+            .bind(bounds.nft_last.to_string())
+            .bind(bounds.recheck_from.map(|b| b.to_string()));
+        for b in &binds[1..] {
+            q = q.bind(b.clone());
+        }
+        q
+    };
+    // Only a bid the fold left without a seller (`nft_bid_seller_unknown_idx`)
+    // or whose stored seller a pending recheck sets aside can lack one now.
+    let unknown = format!(
+        "SELECT EXISTS (SELECT 1 FROM shop.nft_bid b WHERE {scope} AND {} \
+           AND (b.seller IS NULL OR NOT {STORED_SELLER_STANDS}) AND {} IS NULL) AS unknown",
+        catalogued(chain, true),
+        seller_now()
+    );
+    let unknown: bool = bind_all(unknown, &binds)
+        .fetch_one(&mut *conn)
+        .await?
+        .get("unknown");
+    if unknown {
+        return Ok(None);
+    }
+    let seller = match &f.seller {
+        Some(v) => {
+            binds.push(v.to_lowercase());
+            format!(" WHERE x.seller = ${}", binds.len() + 2)
+        }
+        None => String::new(),
+    };
+    let book = format!(
+        "SELECT b.contract_address || '-' || b.token_id::text || '-' || b.bidder AS id, b.bidder, b.price, \
+                b.created_at, b.updated_at, b.status, {} AS seller, b.contract_address, b.expires_at, \
+                b.token_id::text AS token_id, b.bid_id, b.updated_block \
+         FROM shop.nft_bid b WHERE {scope} AND {}",
+        seller_now(),
+        catalogued(chain, false)
+    );
+    let rows = bind_all(
+        format!(
+            "SELECT x.id, x.bidder, x.price::text AS price, x.created_at, x.updated_at, x.status, x.seller, x.contract_address, \
+                    x.expires_at, x.token_id, x.bid_id, x.updated_block \
+             FROM ({book}) x{seller} ORDER BY {} LIMIT {}",
+            polygon_order_by(f.sort_by),
+            window.max(0)
+        ),
+        &binds,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let total: i64 = bind_all(
+        format!(
+            "SELECT count(*) AS n FROM (SELECT 1 FROM ({book}) x{seller} LIMIT {}) c",
+            readers::count_cap(0, window)
+        ),
+        &binds,
+    )
+    .fetch_one(&mut *conn)
+    .await?
+    .get("n");
+    let bids = rows
+        .iter()
+        .map(|r| {
+            let status: String = r.get("status");
+            Bid {
+                id: r.get("id"),
+                bidder: r.get("bidder"),
+                price: r.get("price"),
+                created_at: seconds_to_ms(r.get("created_at")),
+                updated_at: seconds_to_ms(r.get("updated_at")),
+                fingerprint: String::new(),
+                status: match status.as_str() {
+                    "accepted" => "sold",
+                    "invalidated" => "cancelled",
+                    s => s,
+                }
+                .to_string(),
+                seller: r.get("seller"),
+                network: Network::Matic,
+                chain_id: wire_chain(chain, Network::Matic),
+                contract_address: r.get("contract_address"),
+                expires_at: seconds_to_ms(r.get("expires_at")),
+                token_id: Some(r.get("token_id")),
+                item_id: None,
+                trade_id: None,
+                trade_contract_address: None,
+                bid_address: Some(bid_contract.to_string()),
+                blockchain_id: Some(r.get("bid_id")),
+                block_number: Some(r.get::<i64, _>("updated_block").to_string()),
+            }
+        })
+        .collect();
+    Ok(Some((bids, total)))
+}
+
+/// A statement of the bid book failed: one Postgres cancelled at the
+/// statement bound is the 503 of `nft_reads::timed_out`, anything else a 500.
+fn read_error(e: sqlx::Error) -> Response {
+    let cancelled = e
+        .as_database_error()
+        .is_some_and(|d| d.code().as_deref() == Some("57014"));
+    if cancelled {
+        super::nft_reads::timed_out()
+    } else {
+        ApiError::from(e).into_response()
+    }
+}
+
+fn nft_source_error(e: owned_items::ReadError) -> Response {
+    match e {
+        owned_items::ReadError::Db(e) => read_error(e),
+        owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
 }
 
 pub fn sort_bids(rows: &mut [Bid], sort_by: Option<BidSortBy>) {
@@ -411,15 +926,24 @@ pub fn sort_bids(rows: &mut [Bid], sort_by: Option<BidSortBy>) {
         let id = a.id.cmp(&b.id);
         match sort_by {
             Some(BidSortBy::RecentlyUpdated) => b.updated_at.cmp(&a.updated_at).then(id),
-            Some(BidSortBy::MostExpensive) => b
-                .price
-                .parse::<u128>()
-                .unwrap_or(0)
-                .cmp(&a.price.parse::<u128>().unwrap_or(0))
-                .then(id),
+            Some(BidSortBy::MostExpensive) => {
+                let price = |bid: &Bid| {
+                    alloy_primitives::U256::from_str_radix(&bid.price, 10).unwrap_or_default()
+                };
+                price(b).cmp(&price(a)).then(id)
+            }
             _ => b.created_at.cmp(&a.created_at).then(id),
         }
     });
+}
+
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
 }
 
 pub async fn list_bids(
@@ -428,12 +952,59 @@ pub async fn list_bids(
 ) -> Result<(Vec<Bid>, i64), Response> {
     let limit = f.limit.clamp(0, readers::READER_MAX_FIRST);
     readers::check_window(limit, f.offset)?;
-    readers::require_networks(state, f.network.map(|n| n.graph()))?;
-    super::trades::require_ready(state).await?;
-    let (mut merged, legacy_total) = legacy_leg(state, f, f.offset + limit).await?;
-    let trades = trades_leg(state, f)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    let window = f.offset + limit;
+    let (mut merged, legacy_total, trades) = if polygon_book_here(state) {
+        let legacy = legacy_bids_possible(f);
+        let ethereum = legacy && f.network != Some(Network::Matic);
+        if ethereum {
+            readers::require_networks(state, Some(graph::Network::Ethereum))?;
+        }
+        let polygon = legacy && f.network != Some(Network::Ethereum);
+        let (mut tx, bounds, now) = bids_snapshot(state, polygon).await?;
+        let now_ms = now.timestamp_millis();
+        let read = async {
+            let book = match &bounds {
+                Some(bounds) => polygon_rows(&mut tx, state, f, window, bounds, now_ms)
+                    .await
+                    .map_err(read_error)?,
+                None => Some((Vec::new(), 0)),
+            };
+            let trades = trades_rows(&mut tx, state, f, now).await?;
+            Ok::<_, Response>((book, trades))
+        }
+        .await;
+        tx.rollback().await.ok();
+        let (book, trades) = read?;
+        let (mut rows, mut total) = book.ok_or_else(|| {
+            owned_items::not_ready(
+                "the matic nft index has not reached the block or the history of a bid in this read: its seller is not known yet",
+            )
+        })?;
+        if ethereum {
+            let (more, more_total) = graph_leg(
+                state,
+                f,
+                window,
+                vec![graph::Network::Ethereum],
+                now_ms,
+                true,
+            )
+            .await?;
+            rows.extend(more);
+            total += more_total;
+        }
+        (rows, total, trades)
+    } else {
+        readers::require_networks(state, f.network.map(|n| n.graph()))?;
+        // The trades readiness and rows on one short snapshot, released
+        // before the subgraph is awaited, whose filter takes its instant.
+        let (mut tx, _, now) = bids_snapshot(state, false).await?;
+        let trades = trades_rows(&mut tx, state, f, now).await;
+        tx.rollback().await.ok();
+        let trades = trades?;
+        let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
+        (rows, total, trades)
+    };
     let total = legacy_total + trades.len() as i64;
     merged.extend(trades);
     sort_bids(&mut merged, f.sort_by);
@@ -539,6 +1110,71 @@ mod tests {
     }
 
     #[test]
+    fn the_bid_book_trusts_a_published_recent_polygon_sales_fold_mid_pass_too() {
+        let now = Utc::now();
+        let published = Cursor {
+            indexer: INDEXER_SALES.to_string(),
+            network: "matic".to_string(),
+            start_block: 1,
+            last_block: 120,
+            last_block_hash: None,
+            last_block_time: None,
+            fold_through: Some(100),
+            folded_block: Some(100),
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(1)),
+            full_history: true,
+            reorg_rewinds: 0,
+            updated_at: now.naive_utc(),
+            chain_id: Some(137),
+            owner_generation: 1,
+            quarantined_at: None,
+            quarantine_reason: None,
+            rebuild_requested_at: None,
+            diverged_at: None,
+        };
+        assert!(
+            sales_published(&published, 137, now),
+            "a pass that advanced last_block past the fold it has not folded yet"
+        );
+        let not = |c: Cursor| !sales_published(&c, 137, now);
+        assert!(not(Cursor {
+            folded_block: None,
+            ..published.clone()
+        }));
+        assert!(not(Cursor {
+            full_history: false,
+            ..published.clone()
+        }));
+        assert!(not(Cursor {
+            chain_id: Some(80002),
+            ..published.clone()
+        }));
+        let amoy = Cursor {
+            chain_id: Some(80002),
+            ..published.clone()
+        };
+        assert!(
+            sales_published(&amoy, 80002, now),
+            "a node serving Amoy takes Amoy's fold"
+        );
+        assert!(not(Cursor {
+            quarantined_at: Some(now.naive_utc()),
+            ..published.clone()
+        }));
+        assert!(not(Cursor {
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(31)),
+            ..published.clone()
+        }));
+        assert!(not(Cursor {
+            indexer: INDEXER_NFT.to_string(),
+            ..published.clone()
+        }));
+        assert_eq!(stored_statuses("cancelled"), &["cancelled", "invalidated"]);
+        assert_eq!(stored_statuses("sold"), &["accepted"]);
+        assert!(stored_statuses("transferred").is_empty());
+    }
+
+    #[test]
     fn wire_identity_bids_envelope() {
         let new = BidsEnvelope {
             ok: true,
@@ -579,7 +1215,8 @@ mod tests {
 
     #[test]
     fn the_mirror_leg_reads_bid_trades_and_the_legacy_where_binds_the_graph_fields() {
-        let sql = trades_bids_sql(" AND lower(b.bidder) = $3");
+        let sql =
+            trades_bids_scope(" AND lower(b.bidder) = $3 ORDER BY b.created_at DESC LIMIT 1000");
         assert!(
             sql.contains("t.type = 'bid'")
                 && sql.contains("trade_cancellations")
@@ -608,5 +1245,29 @@ mod tests {
         let mut rows = vec![minimal_bid(), full_bid()];
         sort_bids(&mut rows, f.sort_by);
         assert_eq!(rows[0].id, full_bid().id);
+    }
+
+    /// The bid book's scope is the catalogue the nft index walks on the
+    /// served Polygon chain, verified there on a testnet, and its rows carry
+    /// that chain.
+    #[test]
+    fn the_bid_scope_is_the_walked_catalogue_of_the_served_chain() {
+        let mainnet = catalogued(137, false);
+        assert!(
+            mainnet.contains("c.chain_id = 137") && !mainnet.contains("testnet_verified"),
+            "{mainnet}"
+        );
+        let amoy = catalogued(80_002, true);
+        assert!(
+            amoy.contains("c.chain_id = 80002 AND c.testnet_verified OFFSET 0)"),
+            "{amoy}"
+        );
+        assert_eq!(wire_chain(80_002, Network::Matic), ChainId::MaticAmoy);
+        assert_eq!(wire_chain(137, Network::Matic), ChainId::MaticMainnet);
+        assert_eq!(
+            super::super::sales_index::SalesIndex::for_chain(80_002).map(|i| i.bid_contract()),
+            Some("0x4b66eab79cc03a96fb6275cfcdf23c0db431606d"),
+            "an Amoy bid names Amoy's bid contract"
+        );
     }
 }

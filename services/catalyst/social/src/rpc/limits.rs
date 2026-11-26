@@ -7,6 +7,7 @@
 //! [`Admission`] holds the per-address socket limits the RPC socket and
 //! `/v1/stream` share (upstream #503).
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -142,13 +143,13 @@ impl FriendshipMutationLimiter {
                 tracing::error!(
                     "friendship rate limiter expiration is not representable; allowing first increment"
                 );
-                metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
+                dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
                 true
             }
             Ok((count, _)) => (count as f64) <= limit,
             Err(error) => {
                 tracing::error!(%error, "friendship rate limiter unavailable; allowing action");
-                metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
+                dcl_metrics::counter!("friendship_rate_limiter_unavailable").increment(1);
                 true
             }
         }
@@ -283,7 +284,7 @@ impl Admission {
             if let Some((oldest, protocol)) = state.sockets.pop_front() {
                 let (code, reason) = REPLACED;
                 oldest.end(code, reason);
-                metrics::counter!("ws_admission_evictions", "protocol" => protocol.label())
+                dcl_metrics::counter!("ws_admission_evictions", "protocol" => protocol.label())
                     .increment(1);
                 displaced = true;
             }
@@ -302,7 +303,7 @@ impl Admission {
         };
         state.budget.replenish(&limits, now);
         if state.budget.tokens < 1.0 {
-            metrics::counter!(
+            dcl_metrics::counter!(
                 "ws_admission_rejections",
                 "protocol" => Protocol::Stream.label(),
                 "reason" => "subscriptions"
@@ -330,14 +331,16 @@ impl Admission {
         let now = Instant::now();
         let mut inner = self.inner.lock();
         let limits = inner.limits;
-        let Some(state) = inner.connected.get_mut(&address) else {
+        let Entry::Occupied(mut slot) = inner.connected.entry(address) else {
             return;
         };
+        let state = slot.get_mut();
         state.sockets.retain(|(s, _)| !Arc::ptr_eq(s, handle));
         if !state.sockets.is_empty() {
             return;
         }
-        let mut budget = inner.connected.remove(&address).map(|s| s.budget).unwrap();
+        let (address, state) = slot.remove_entry();
+        let mut budget = state.budget;
         budget.replenish(&limits, now);
         if budget.tokens >= limits.subscription_burst as f64 {
             return;
@@ -431,12 +434,10 @@ mod tests {
             subscription_burst: 2,
             ..AdmissionLimits::default()
         });
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
         let first = Arc::new(SocketClose::default());
-        metrics::with_local_recorder(&recorder, || {
+        dcl_metrics::with_local_recorder(&recorder, || {
             assert!(!admission.claim("0xa", first.clone(), Protocol::Rpc));
             assert!(admission.claim("0xa", Arc::new(SocketClose::default()), Protocol::Stream));
             assert!(admission.admit_subscription("0xa"));

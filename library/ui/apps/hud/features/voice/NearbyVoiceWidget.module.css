@@ -1,0 +1,108 @@
+/* Laid out on the 1920×1080 canvas and scaled with the HUD; it hangs above the point the widget
+   sets (9px under the button's bottom, 14px right of it), 1px left and 2px up of that point: the
+   design's panel starts 13px from the button and ends 7px under it. */
+.panel {
+  position: fixed;
+  z-index: calc(var(--z-hud) + 1);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 272px;
+  padding: 16px 0;
+  box-sizing: border-box;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-rail-panel);
+  color: var(--text);
+  transform: translateY(-100%) scale(var(--ui-scale));
+  transform-origin: left bottom;
+  translate: calc(-1px * var(--ui-scale)) calc(-2px * var(--ui-scale));
+  animation: fade-in 300ms linear both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+/* A margin the pointer can rest in: it belongs to the popover, so the chat that lies under it does
+   not answer the pointer and a click that just misses a control does not close the popover. It
+   reaches the navigation buttons on the left and stops there, so they stay free. */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: -16px -16px -16px -14px;
+  z-index: -1;
+}
+/* the title keeps the slot of the divider the design leaves undrawn: one more 16px gap under it */
+.title {
+  height: 22px;
+  margin-bottom: 16px;
+  padding: 0 16px;
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  line-height: 22px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 16px;
+}
+/* the switch follows the label at the row's gap */
+.label {
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+}
+.slider {
+  flex: 1;
+  display: flex;
+}
+.speak {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  margin: 0 16px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--fill-4);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.speak:hover:not(:disabled) {
+  background: var(--voice-fill-hover);
+}
+.speak:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.speakOn {
+  background: var(--voice-speaking);
+}
+.speakOn:hover:not(:disabled) {
+  background: var(--voice-speaking-hover);
+}
+.speakLive,
+.speakLive:hover:not(:disabled) {
+  background: var(--voice-speaking-fill);
+  transition: background-color 80ms linear;
+}
+.speakingText {
+  color: var(--voice-green);
+}
+.hint {
+  height: 15px;
+  color: var(--ink-muted);
+  font-size: var(--type-12);
+  line-height: 15px;
+  text-align: center;
+  white-space: nowrap;
+}
+.key {
+  color: var(--offline);
+}

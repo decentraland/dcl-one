@@ -20,7 +20,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::db::{BlobVerdict, Database, NewImage, Page, WITHHELD_DELETED, WITHHELD_REJECTED};
-use super::dto::{Image, Metadata, User};
+use super::dto::{Image, Metadata, ScreenRect, User};
 use super::handlers::images::{RankingSchedule, RankingSweep};
 use super::http::{ApiError, ForbiddenError, ForbiddenReason};
 use super::{Settings, SharedState, State, router};
@@ -31,6 +31,10 @@ use crate::shared::signed_fetch::{
 };
 use crate::storage::Storage;
 use tokio::time::{Duration, Instant};
+
+mod captures;
+mod import;
+mod signed_fetch;
 
 const API_URL: &str = "http://127.0.0.1:5149/camera-reel-service";
 const PREFIX: &str = "/camera-reel-service";
@@ -160,7 +164,15 @@ struct Scratch {
 }
 
 async fn scratch(settings: Settings) -> Option<Scratch> {
-    let pool = catalyst_db::scratch::pool(4).await?;
+    Some(scratch_on(catalyst_db::scratch::pool(4).await?, settings).await)
+}
+
+/// [`scratch`] over a database of its own.
+async fn isolated_scratch(settings: Settings) -> Option<Scratch> {
+    Some(scratch_on(catalyst_db::scratch::isolated_pool(4).await?, settings).await)
+}
+
+async fn scratch_on(pool: sqlx::PgPool, settings: Settings) -> Scratch {
     let dir =
         std::env::temp_dir().join(format!("catalyst-camera-reel-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(
@@ -169,12 +181,12 @@ async fn scratch(settings: Settings) -> Option<Scratch> {
             .expect("a scratch blob store"),
     );
     let state = Arc::new(State::new(pool, storage, settings, None));
-    Some(Scratch {
+    Scratch {
         state,
         owners: Vec::new(),
         hashes: Vec::new(),
         dir,
-    })
+    }
 }
 
 impl Scratch {
@@ -222,6 +234,11 @@ impl Scratch {
 
     async fn done(self) {
         sqlx::query("DELETE FROM camera_reel.images WHERE user_address = ANY($1)")
+            .bind(&self.owners)
+            .execute(self.db().pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM camera_reel.photo_events WHERE user_address = ANY($1)")
             .bind(&self.owners)
             .execute(self.db().pool())
             .await
@@ -287,7 +304,7 @@ async fn signed_headers(w: &Wallet, method: &str, path: &str, v6: bool) -> Vec<(
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", w.signer.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,
@@ -1269,6 +1286,55 @@ async fn the_insert_itself_enforces_the_per_user_limit() {
 }
 
 #[tokio::test]
+async fn a_rejection_withholds_bytes_another_domain_names() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let a = s.owner(&random_address());
+    let t = tag();
+    let (h, th) = (s.hash(&format!("h-{t}")), s.hash(&format!("t-{t}")));
+    let entity = format!("profile-{t}");
+    sqlx::query(
+        "INSERT INTO social.profile_images (entity_id, kind, blob_cid, byte_size, source, stored_at) \
+         VALUES ($1, 'face', $2, 1, 'render', timezone('UTC', now()))",
+    )
+    .bind(&entity)
+    .bind(&h)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    let img = image(&a, &h, &th, true, "");
+    let twin = image(&a, &h, &th, true, "");
+    s.db().insert_image(&img).await.unwrap();
+    s.db().insert_image(&twin).await.unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let review = |id: Uuid, status: &'static str| {
+        let db = s.db();
+        async move {
+            db.update_image_review_status(&id.to_string(), status, now)
+                .await
+                .unwrap()
+                .unwrap()
+        }
+    };
+
+    let verdict = review(img.id, WITHHELD_REJECTED).await;
+    assert_eq!(
+        verdict.withheld,
+        vec![h.clone(), th.clone()],
+        "neither the profile image nor the twin row keeps rejected bytes served"
+    );
+    assert_eq!(s.withheld(&h).await.as_deref(), Some(WITHHELD_REJECTED));
+
+    sqlx::query("DELETE FROM social.profile_images WHERE entity_id = $1")
+        .bind(&entity)
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    s.done().await;
+}
+
+#[tokio::test]
 async fn owner_delete_reports_ownership_and_remaining() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;
@@ -1799,13 +1865,8 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
         Some((body.clone(), &ct)),
     )
     .await;
-    assert_eq!(
-        (status, json_of(&resp)),
-        (
-            StatusCode::UNAUTHORIZED,
-            json!({ "message": "Unauthorized" })
-        )
-    );
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(resp, b"Unathorized");
     let (other, other_ct) = multipart(
         &bytes,
         "image/png",
@@ -1838,21 +1899,25 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     assert_eq!(uploaded["currentImages"], 1);
     assert_eq!(uploaded["maxImages"], 500);
     let image_hash = hash_bytes_v1(&bytes);
+    let image_id = uploaded["image"]["id"].as_str().unwrap().to_string();
     assert_eq!(
         uploaded["image"]["url"],
-        format!("{API_URL}/api/images/{image_hash}")
+        format!("{API_URL}/api/images/{image_id}-shot.png")
     );
     assert_eq!(uploaded["image"]["isPublic"], false);
     assert_eq!(uploaded["image"]["metadata"]["placeId"], place);
-    let image_id = uploaded["image"]["id"].as_str().unwrap().to_string();
     let thumbnail_url = uploaded["image"]["thumbnailUrl"].as_str().unwrap();
-    let thumbnail_hash = thumbnail_url.rsplit('/').next().unwrap().to_string();
+    assert_eq!(
+        thumbnail_url,
+        format!("{API_URL}/api/images/{image_id}-thumbnail-shot.png")
+    );
+    let thumbnail_hash = s.db().get_image(&image_id).await.unwrap().thumbnail_hash;
 
     // the blobs, from the ONE store, typed by their bytes
     let (status, headers, served) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{image_hash}"),
+        &format!("{PREFIX}/api/files/{image_hash}"),
         vec![],
         None,
     )
@@ -1863,7 +1928,7 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     let (status, _, thumb) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{thumbnail_hash}"),
+        &format!("{PREFIX}/api/files/{thumbnail_hash}"),
         vec![],
         None,
     )
@@ -1998,7 +2063,7 @@ async fn upload_over_signed_fetch_is_served_back_and_owned() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{image_hash}"),
+        &format!("{PREFIX}/api/files/{image_hash}"),
         vec![],
         None,
     )
@@ -2131,7 +2196,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, served) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2166,7 +2231,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2212,7 +2277,7 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
     let (status, _, _) = send(
         s.app(),
         "GET",
-        &format!("{PREFIX}/api/images/{hash}"),
+        &format!("{PREFIX}/api/files/{hash}"),
         vec![],
         None,
     )
@@ -2285,7 +2350,7 @@ async fn node_around(s: &Scratch) -> Router {
 async fn bytes_everywhere(app: &Router, hash: &str) -> [(StatusCode, bool); 3] {
     let mut out = [(StatusCode::IM_A_TEAPOT, false); 3];
     for (i, path) in [
-        format!("{PREFIX}/api/images/{hash}"),
+        format!("{PREFIX}/api/files/{hash}"),
         format!("/contents/{hash}"),
         format!("/builder-api/contents/{hash}"),
     ]
@@ -2325,14 +2390,8 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     let uploaded = json_of(&resp);
     let id = uploaded["image"]["id"].as_str().unwrap().to_string();
     let image_hash = s.hash(&hash_bytes_v1(&bytes));
-    let thumb_hash = s.hash(
-        uploaded["image"]["thumbnailUrl"]
-            .as_str()
-            .unwrap()
-            .rsplit('/')
-            .next()
-            .unwrap(),
-    );
+    let stored_thumbnail = s.db().get_image(&id).await.unwrap().thumbnail_hash;
+    let thumb_hash = s.hash(&stored_thumbnail);
     assert_ne!(image_hash, thumb_hash);
     let served = [(StatusCode::OK, true); 3];
     let withheld = [(StatusCode::NOT_FOUND, false); 3];
@@ -2402,7 +2461,7 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     assert_eq!(bytes_everywhere(&app, &thumb_hash).await, served);
     assert_eq!(s.withheld(&image_hash).await, None);
 
-    // the same bytes accepted as a builder upload: a rejection withholds only the thumbnail
+    // the same bytes accepted as a builder upload: a rejection still withholds both
     sqlx::query(
         "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3)",
     )
@@ -2423,12 +2482,8 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         bytes_everywhere(&app, &image_hash).await,
-        [
-            (StatusCode::NOT_FOUND, false),
-            (StatusCode::OK, true),
-            (StatusCode::OK, true)
-        ],
-        "a deployed file of the same bytes stays served by the content routes"
+        withheld,
+        "another reference does not keep rejected bytes served"
     );
     assert_eq!(bytes_everywhere(&app, &thumb_hash).await, withheld);
     sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
@@ -2494,7 +2549,9 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
     let place = Uuid::new_v4().to_string();
     let hidden = Uuid::new_v4().to_string();
     let pool = s.db().pool().clone();
-    for (id, disabled) in [(&place, false), (&hidden, true)] {
+    // The world's catalogue row (`id = lower(world_name)`) is not one of its places.
+    let catalogue = world.clone();
+    for (id, disabled) in [(&place, false), (&hidden, true), (&catalogue, false)] {
         sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', $2, $3)")
             .bind(id)
             .bind(disabled)
@@ -2523,6 +2580,16 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
         ))
         .await
         .unwrap();
+    s.db()
+        .insert_image(&image(
+            &owner,
+            &format!("w3-{t}"),
+            &format!("wt3-{t}"),
+            true,
+            &catalogue,
+        ))
+        .await
+        .unwrap();
 
     let (status, _, resp) = send(
         s.app(),
@@ -2536,7 +2603,7 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
     let page = json_of(&resp);
     assert_eq!(
         page["maxImages"], 1,
-        "the disabled place's photo is not in the world gallery"
+        "neither the disabled place's photo nor one named by the catalogue row is in the world gallery"
     );
     assert_eq!(
         page["images"][0]["url"],
@@ -2572,10 +2639,331 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
     );
 
     sqlx::query("DELETE FROM explore.place WHERE id = ANY($1)")
-        .bind(vec![place, hidden])
+        .bind(vec![place, hidden, catalogue])
         .execute(&pool)
         .await
         .unwrap();
+    s.done().await;
+}
+
+// Match the catalogue writer: the local row names the world, while a scene's
+// photo place ID is its durable identity bound to the current deployment.
+async fn local_world_gallery_place(pool: &sqlx::PgPool, world: &str, listed: bool) -> String {
+    let identity = Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds.worlds (name, show_in_places) VALUES ($1, $2)")
+        .bind(world)
+        .bind(listed)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'gallery-scene', '[]', $2, '0xaa', ARRAY['0,0'], 1)")
+        .bind(world)
+        .bind(json!({ "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } }))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'gallery-scene', ARRAY['0,0'])")
+        .bind(world)
+        .bind(identity)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO explore.place_world_local (id, base_position, world, world_name, raw) VALUES ($1, '0,0', true, $2, $3)")
+        .bind(world)
+        .bind(world.to_uppercase())
+        .bind(json!({ "world": true, "world_name": world.to_uppercase(), "show_in_places": listed }))
+        .execute(pool)
+        .await
+        .unwrap();
+    identity.to_string()
+}
+
+async fn delete_local_world_gallery(pool: &sqlx::PgPool, world: &str) {
+    sqlx::query("DELETE FROM explore.place_moderation WHERE place_id = $1 OR place_id IN (SELECT identity::text FROM explore.world_scene_place WHERE world_name = $1)")
+        .bind(world)
+        .execute(pool)
+        .await
+        .unwrap();
+    for sql in [
+        "DELETE FROM explore.place_world_local WHERE id = $1",
+        "DELETE FROM explore.place WHERE lower(world_name) = $1",
+        "DELETE FROM explore.world_scene_place WHERE world_name = $1",
+        "DELETE FROM worlds.worlds WHERE name = $1",
+    ] {
+        sqlx::query(sql).bind(world).execute(pool).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn world_galleries_include_public_photos_from_hidden_mirrored_and_local_scenes() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    for source in [
+        "mirrored-hidden",
+        "local-hidden",
+        "local-listed",
+        "canonical-mirrored",
+    ] {
+        let t = tag();
+        let world = format!("hidden-{t}.dcl.eth");
+        let place;
+        let raw = json!({
+            "world": true,
+            "world_name": world.to_uppercase(),
+            "show_in_places": false
+        });
+        if source == "mirrored-hidden" {
+            place = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', false, $2)")
+                .bind(&place)
+                .bind(&raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+        } else {
+            place = local_world_gallery_place(&pool, &world, source == "local-listed").await;
+        }
+
+        let mut public_ids = Vec::new();
+        for (label, is_public, review_status) in [
+            ("public", true, "ok"),
+            ("private", false, "ok"),
+            ("rejected", true, "rejected"),
+            ("deleted", true, "ok"),
+        ] {
+            let photo = image(
+                &owner,
+                &format!("{label}-{t}"),
+                &format!("{label}-thumb-{t}"),
+                is_public,
+                &place,
+            );
+            s.db().insert_image(&photo).await.unwrap();
+            if label == "public" {
+                public_ids.push(photo.id.to_string());
+            }
+            sqlx::query("UPDATE camera_reel.images SET review_status = $1 WHERE id = $2")
+                .bind(review_status)
+                .bind(photo.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            if label == "deleted" {
+                s.db().delete_image(photo.id).await.unwrap();
+            }
+        }
+
+        if source != "mirrored-hidden" {
+            let second = Uuid::new_v4();
+            sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'second-scene', '[]', '{}', '0xaa', ARRAY['1,0'], 1)")
+                .bind(&world).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'second-scene', ARRAY['1,0'])")
+                .bind(&world).bind(second).execute(&pool).await.unwrap();
+            let photo = image(&owner, &tag(), &tag(), true, &second.to_string());
+            s.db().insert_image(&photo).await.unwrap();
+            public_ids.push(photo.id.to_string());
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &world))
+                .await
+                .unwrap();
+            // A disabled sibling must not hide the world's enabled scenes.
+            let disabled = Uuid::new_v4();
+            sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'disabled-scene', '[]', '{}', '0xaa', ARRAY['2,0'], 1)")
+                .bind(&world).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'disabled-scene', ARRAY['2,0'])")
+                .bind(&world).bind(disabled).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '2,0', true, $2)")
+                .bind(disabled.to_string()).bind(&raw).execute(&pool).await.unwrap();
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &disabled.to_string()))
+                .await
+                .unwrap();
+
+            if source == "canonical-mirrored" {
+                for sql in [
+                    "UPDATE worlds.worlds SET mirror_source = 'https://worlds.example' WHERE name = $1",
+                    "UPDATE worlds.world_scenes SET mirror_source = 'https://worlds.example' WHERE world_name = $1",
+                    "INSERT INTO explore.place (id, base_position, raw) SELECT id, base_position, raw FROM explore.place_world_local WHERE id = $1",
+                    "DELETE FROM explore.place_world_local WHERE id = $1",
+                ] {
+                    sqlx::query(sql).bind(&world).execute(&pool).await.unwrap();
+                }
+                // Catalogue and photo metadata retain the original spelling.
+                for catalogue_id in [place.to_uppercase(), format!("urn:uuid:{place}")] {
+                    sqlx::query(
+                        "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
+                    )
+                    .bind(&catalogue_id)
+                    .bind(&raw)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                    let photo = image(&owner, &tag(), &tag(), true, &catalogue_id);
+                    s.db().insert_image(&photo).await.unwrap();
+                    public_ids.push(photo.id.to_string());
+                }
+            }
+        }
+        public_ids.sort();
+
+        let requested_world = format!("{}.eth", world.strip_suffix(".eth").unwrap().to_uppercase());
+        let batch = json!({ "placesIds": [requested_world] })
+            .to_string()
+            .into_bytes();
+        for (method, path, body) in [
+            (
+                "GET",
+                format!("{PREFIX}/api/places/{requested_world}/images"),
+                None,
+            ),
+            (
+                "POST",
+                format!("{PREFIX}/api/places/images"),
+                Some((batch, "application/json")),
+            ),
+        ] {
+            let (status, _, resp) = send(s.app(), method, &path, vec![], body).await;
+            assert_eq!(status, StatusCode::OK);
+            let page = json_of(&resp);
+            assert_eq!(
+                page["maxImages"],
+                public_ids.len(),
+                "{method} gallery from {source}"
+            );
+            let mut actual_ids: Vec<&str> = page["images"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|photo| photo["id"].as_str().unwrap())
+                .collect();
+            actual_ids.sort();
+            assert_eq!(actual_ids, public_ids);
+        }
+
+        if source == "mirrored-hidden" {
+            sqlx::query("DELETE FROM explore.place WHERE id = $1")
+                .bind(&place)
+                .execute(&pool)
+                .await
+                .unwrap();
+        } else {
+            delete_local_world_gallery(&pool, &world).await;
+        }
+    }
+    s.done().await;
+}
+
+#[tokio::test]
+async fn local_world_galleries_exclude_unavailable_scenes() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    let other_world = format!("other-{}.dcl.eth", tag());
+    let other_place = local_world_gallery_place(&pool, &other_world, false).await;
+    s.db()
+        .insert_image(&image(&owner, &tag(), &tag(), true, &other_place))
+        .await
+        .unwrap();
+
+    for (case, mutation) in [
+        (
+            "retired",
+            "UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE world_name = $1",
+        ),
+        (
+            "missing-deployment",
+            "DELETE FROM worlds.world_scenes WHERE world_name = $1",
+        ),
+        (
+            "disabled-scene",
+            "INSERT INTO explore.place_moderation (place_id, disabled, set_by) SELECT identity::text, true, 'test' FROM explore.world_scene_place WHERE world_name = $1",
+        ),
+        (
+            "disabled-world",
+            "INSERT INTO explore.place_moderation (place_id, disabled, set_by) VALUES ($1, true, 'test')",
+        ),
+        (
+            "disabled-catalogue",
+            "UPDATE explore.place_world_local SET disabled = true WHERE id = $1",
+        ),
+        (
+            "blocked-world",
+            "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1",
+        ),
+        (
+            "disabled-alias",
+            "UPDATE explore.place SET disabled = true WHERE world_name = $1 AND id LIKE 'urn:uuid:%'",
+        ),
+    ] {
+        let world = format!("{case}-{}.dcl.eth", tag());
+        let place = local_world_gallery_place(&pool, &world, false).await;
+        for id in [&place, &world] {
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, id))
+                .await
+                .unwrap();
+        }
+        // Every spelling must obey the identity's lifecycle and moderation.
+        for catalogue_id in [
+            place.clone(),
+            place.to_uppercase(),
+            format!("urn:uuid:{place}"),
+        ] {
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
+            )
+            .bind(&catalogue_id)
+            .bind(json!({ "world": true, "world_name": world, "show_in_places": false }))
+            .execute(&pool)
+            .await
+            .unwrap();
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &catalogue_id))
+                .await
+                .unwrap();
+        }
+        sqlx::query(mutation)
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let requested_world = format!("{}.eth", world.strip_suffix(".eth").unwrap().to_uppercase());
+        let batch = json!({ "placesIds": [requested_world] })
+            .to_string()
+            .into_bytes();
+        for (method, path, body) in [
+            (
+                "GET",
+                format!("{PREFIX}/api/places/{requested_world}/images"),
+                None,
+            ),
+            (
+                "POST",
+                format!("{PREFIX}/api/places/images"),
+                Some((batch, "application/json")),
+            ),
+        ] {
+            let (status, _, resp) = send(s.app(), method, &path, vec![], body).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                json_of(&resp),
+                json!({ "images": [], "maxImages": 0 }),
+                "{method} {case}"
+            );
+        }
+        sqlx::query("DELETE FROM explore.place WHERE world_name = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        delete_local_world_gallery(&pool, &world).await;
+    }
+    delete_local_world_gallery(&pool, &other_world).await;
     s.done().await;
 }
 
@@ -2825,4 +3213,929 @@ async fn the_wearable_gallery_is_the_public_photos_of_an_item_whoever_asks() {
         json!(["images", "maxImages"])
     );
     s.done().await;
+}
+
+#[path = "storage_parity_tests.rs"]
+mod storage_parity_tests;
+// ---- parity with camera-reel-service 3e8bd0b: screen rects, CORS, extractor
+// rejections, routing fallbacks, upload checks ----
+
+/// The router over a pool that never connects: every answer these tests
+/// read is decided before a query (or is the lookup failure itself).
+async fn offline_app(settings: Settings) -> (Router, std::path::PathBuf) {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://catalyst@127.0.0.1:1/none")
+        .unwrap();
+    let dir =
+        std::env::temp_dir().join(format!("catalyst-camera-reel-{}", Uuid::new_v4().simple()));
+    let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+    let state = Arc::new(State::new(pool, storage, settings, None));
+    (Router::new().nest(PREFIX, router(state)), dir)
+}
+
+fn capture(name: &str) -> Value {
+    let path = format!(
+        "{}/services/catalyst/tests/fixtures/conformance/social/camera-reel/{name}",
+        env!("DCL_ONE_ROOT")
+    );
+    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap()
+}
+
+#[test]
+fn a_visible_persons_screen_rect_round_trips_and_is_omitted_when_absent() {
+    let with = json!({"userName":"a","userAddress":"0xa","wearables":[],"isGuest":false,"isEmoting":null,
+                      "screenRect":{"x":0.25,"y":0.5,"width":0.25,"height":0.5}});
+    let user: User = serde_json::from_value(with.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&user).unwrap(), with);
+    let without =
+        json!({"userName":"a","userAddress":"0xa","wearables":[],"isGuest":false,"isEmoting":null});
+    let user: User = serde_json::from_value(without.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&user).unwrap(), without);
+}
+
+#[test]
+fn screen_rect_validity_is_upstreams() {
+    let rect = |x, y, width, height| ScreenRect {
+        x,
+        y,
+        width,
+        height,
+    };
+    assert!(rect(0.25, 0.1, 0.2, 0.6).is_valid());
+    assert!(rect(0.0, 0.0, 1.0, 1.0).is_valid());
+    assert!(
+        rect(0.5, 0.5, 0.50005, 0.50005).is_valid(),
+        "within the edge tolerance"
+    );
+    assert!(!rect(0.9, 0.1, 0.2, 0.6).is_valid(), "past the right edge");
+    assert!(!rect(0.1, 0.9, 0.2, 0.2).is_valid(), "past the bottom edge");
+    assert!(!rect(-0.1, 0.0, 0.2, 0.2).is_valid());
+    assert!(!rect(f32::INFINITY, 0.0, 0.2, 0.2).is_valid());
+    assert!(!rect(f32::NAN, 0.0, 0.2, 0.2).is_valid());
+    let too_big: User =
+        serde_json::from_value(json!({"userName":"a","userAddress":"0xa","wearables":[],
+        "screenRect":{"x":1e39,"y":0.1,"width":0.2,"height":0.6}}))
+        .unwrap();
+    assert!(
+        !too_big.screen_rect.unwrap().is_valid(),
+        "a number past f32 parses as infinity"
+    );
+}
+
+#[tokio::test]
+async fn the_production_preflight_replays_byte_for_byte() {
+    let (app, dir) = offline_app(Settings::new(API_URL)).await;
+    let captured = capture("preflight-user.json");
+    let request = &captured["request"];
+    let headers = request["headers"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_string()))
+        .collect();
+    let path = format!("{PREFIX}{}", request["path"].as_str().unwrap());
+    let (status, got, body) = send(
+        app,
+        request["method"].as_str().unwrap(),
+        &path,
+        headers,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status.as_u16() as u64,
+        captured["response"]["status"].as_u64().unwrap()
+    );
+    assert!(body.is_empty());
+    for (name, value) in captured["response"]["headers"].as_object().unwrap() {
+        if name == "content-length" {
+            continue;
+        }
+        assert_eq!(got.get(name).unwrap(), value.as_str().unwrap(), "{name}");
+    }
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn cors_wraps_api_writes_refusals_and_health_as_upstream() {
+    let (app, dir) = offline_app(Settings::new(API_URL)).await;
+    let origin = ("origin".to_string(), "https://decentraland.org".to_string());
+    let vary = "Origin, Access-Control-Request-Method, Access-Control-Request-Headers";
+    let preflight = |method: &str, requested: &str| {
+        vec![
+            origin.clone(),
+            (
+                "access-control-request-method".to_string(),
+                method.to_string(),
+            ),
+            (
+                "access-control-request-headers".to_string(),
+                requested.to_string(),
+            ),
+        ]
+    };
+
+    // A signed upload's preflight: never 405, never the writes 503.
+    let (status, h, body) = send(
+        app.clone(),
+        "OPTIONS",
+        &format!("{PREFIX}/api/images"),
+        preflight("POST", "x-identity-auth-chain-0, x-identity-timestamp"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.is_empty());
+    assert_eq!(h["access-control-allow-origin"], "https://decentraland.org");
+    assert_eq!(
+        h["access-control-allow-methods"],
+        "DELETE, GET, POST, PATCH"
+    );
+    assert_eq!(
+        h["access-control-allow-headers"],
+        "x-identity-auth-chain-0, x-identity-timestamp"
+    );
+    assert_eq!(h["access-control-max-age"], "300");
+    assert_eq!(h["vary"], vary);
+    let (status, _, body) = send(
+        app.clone(),
+        "OPTIONS",
+        &format!("{PREFIX}/api/images"),
+        preflight("PUT", "content-type"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, body.as_slice()),
+        (
+            StatusCode::BAD_REQUEST,
+            &b"Requested method is not allowed"[..]
+        )
+    );
+
+    // The writes 503 carries the headers, so a browser can read it.
+    let (status, h, _) = send(
+        app.clone(),
+        "DELETE",
+        &format!("{PREFIX}/api/images/{}", Uuid::new_v4()),
+        vec![origin.clone()],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(h["access-control-allow-origin"], "https://decentraland.org");
+    assert_eq!(h["vary"], vary);
+    let mut exposed: Vec<&str> = h["access-control-expose-headers"]
+        .to_str()
+        .unwrap()
+        .split(", ")
+        .collect();
+    exposed.sort();
+    assert_eq!(
+        exposed,
+        vec!["access-control-allow-origin", "content-type", "retry-after"],
+        "actix-cors lists the answer's headers after adding the allow-origin"
+    );
+
+    // Without an Origin: Vary and the expose list, no allow-origin (the capture's GET).
+    let (status, h, _) = send(
+        app.clone(),
+        "GET",
+        &format!("{PREFIX}/api/wearables/not-an-item/images"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(h["vary"], vary);
+    assert_eq!(h["access-control-expose-headers"], "content-type");
+    assert!(h.get("access-control-allow-origin").is_none());
+
+    // /health: GET and OPTIONS, max-age 3600, nothing exposed.
+    let (status, h, _) = send(
+        app.clone(),
+        "OPTIONS",
+        &format!("{PREFIX}/health/live"),
+        preflight("GET", "content-type"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(h["access-control-allow-methods"], "GET, OPTIONS");
+    assert_eq!(h["access-control-max-age"], "3600");
+    assert_eq!(h["access-control-allow-origin"], "https://decentraland.org");
+    let (status, h, body) = send(
+        app.clone(),
+        "GET",
+        &format!("{PREFIX}/health/live"),
+        vec![origin.clone()],
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, body.as_slice()),
+        (StatusCode::OK, &b"\"alive\""[..])
+    );
+    assert_eq!(h["vary"], vary);
+    assert_eq!(h["access-control-allow-origin"], "https://decentraland.org");
+    assert!(h.get("access-control-expose-headers").is_none());
+
+    // The docs carry none, as upstream registers them outside the /api scope.
+    let (status, h, _) = send(
+        app,
+        "GET",
+        &format!("{PREFIX}/api/docs/openapi.json"),
+        vec![origin],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(h.get("vary").is_none());
+    assert!(h.get("access-control-allow-origin").is_none());
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn unknown_paths_and_methods_are_an_empty_404_inside_any_host_app() {
+    let (inner, dir) = offline_app(Settings::new(API_URL)).await;
+    let app = inner.fallback(|| async { (StatusCode::IM_A_TEAPOT, "outer") });
+    for (method, path) in [
+        ("GET", "/api/does-not-exist"),
+        ("GET", "/api/images"),
+        ("GET", "/api/places/images"),
+        ("POST", "/health/live"),
+        ("PUT", "/api/users/0xabc"),
+        ("DELETE", "/api/users/0xabc/images"),
+        ("PATCH", "/api/images/x"),
+        ("OPTIONS", "/api/users/0xabc"),
+    ] {
+        let (status, h, body) = send(
+            app.clone(),
+            method,
+            &format!("{PREFIX}{path}"),
+            vec![],
+            None,
+        )
+        .await;
+        assert_eq!(
+            (status, body.len()),
+            (StatusCode::NOT_FOUND, 0),
+            "{method} {path}: neither 405 nor the writes 503 ({status})"
+        );
+        assert!(h.get(header::ALLOW).is_none(), "{method} {path}");
+    }
+    let (_, h, _) = send(
+        app.clone(),
+        "GET",
+        &format!("{PREFIX}/api/does-not-exist"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(
+        h["vary"], "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+        "the capture's 404 carries the /api Vary"
+    );
+    let (status, h, _) = send(app, "GET", &format!("{PREFIX}/api/docs/ui/"), vec![], None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the Swagger page upstream documents"
+    );
+    assert!(
+        h[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn query_and_body_rejections_are_upstreams_plain_text_400() {
+    let (app, dir) = offline_app(Settings::new(API_URL)).await;
+    let captured = capture("user-images-bad-limit.raw.json");
+    let url = captured["url"].as_str().unwrap();
+    let path = &url[url.find("/api/").unwrap()..];
+    let expected = std::fs::read(format!(
+        "{}/services/catalyst/tests/fixtures/conformance/social/camera-reel/user-images-bad-limit.raw.body",
+        env!("DCL_ONE_ROOT")
+    ))
+    .unwrap();
+    let (status, h, body) =
+        send(app.clone(), "GET", &format!("{PREFIX}{path}"), vec![], None).await;
+    assert_eq!(status.as_u16() as u64, captured["status"].as_u64().unwrap());
+    assert_eq!(h[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(body, expected);
+
+    for path in [
+        "/api/users/0xabc?limit=abc",
+        "/api/users/0xabc?compact=1",
+        "/api/places/x/images?offset=-1",
+        "/api/wearables/0x0bf152a83a6fc55066c2b664b164ca2916ad38f5-2/images?limit=abc",
+    ] {
+        let (status, h, body) =
+            send(app.clone(), "GET", &format!("{PREFIX}{path}"), vec![], None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(h[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+        assert!(
+            String::from_utf8(body)
+                .unwrap()
+                .starts_with("Query deserialize error: "),
+            "{path}"
+        );
+    }
+
+    let batch = format!("{PREFIX}/api/places/images");
+    let (status, _, body) = send(
+        app.clone(),
+        "POST",
+        &batch,
+        vec![],
+        Some((b"{}".to_vec(), "application/json")),
+    )
+    .await;
+    assert_eq!(
+        (status, String::from_utf8(body).unwrap()),
+        (
+            StatusCode::BAD_REQUEST,
+            "Json deserialize error: missing field `placesIds` at line 1 column 2".to_string()
+        )
+    );
+    let ids = json!({ "placesIds": ["x"] }).to_string().into_bytes();
+    let (status, _, body) = send(
+        app.clone(),
+        "POST",
+        &batch,
+        vec![],
+        Some((ids, "text/plain")),
+    )
+    .await;
+    assert_eq!(
+        (status, body.as_slice()),
+        (StatusCode::BAD_REQUEST, &b"Content type error"[..])
+    );
+    let big = vec![b' '; (2 * 1024 * 1024) + 1];
+    let (status, _, _) = send(
+        app.clone(),
+        "POST",
+        &batch,
+        vec![],
+        Some((big, "application/json")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "actix's 2 MiB JSON cap"
+    );
+
+    // Visibility: the signature decides before the body; then the body is a 400.
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    let (app, dir2) = offline_app(settings).await;
+    let vis = format!("{PREFIX}/api/images/{}/visibility", Uuid::new_v4());
+    let camel = json!({ "isPublic": true }).to_string().into_bytes();
+    let (status, _, _) = send(
+        app.clone(),
+        "PATCH",
+        &vis,
+        vec![],
+        Some((camel.clone(), "application/json")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let w = wallet();
+    let headers = signed_headers(&w, "patch", &vis, true).await;
+    let (status, h, body) = send(
+        app.clone(),
+        "PATCH",
+        &vis,
+        headers,
+        Some((camel, "application/json")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(h[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "Json deserialize error: missing field `is_public` at line 1 column 17"
+    );
+    let headers = signed_headers(&w, "patch", &vis, true).await;
+    let flip = json!({ "is_public": true }).to_string().into_bytes();
+    let (status, _, body) = send(app, "PATCH", &vis, headers, Some((flip, "text/plain"))).await;
+    assert_eq!(
+        (status, body.as_slice()),
+        (StatusCode::BAD_REQUEST, &b"Content type error"[..])
+    );
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    let _ = tokio::fs::remove_dir_all(&dir2).await;
+}
+
+#[tokio::test]
+async fn a_failed_world_lookup_is_a_502_without_the_database_error() {
+    let (app, dir) = offline_app(Settings::new(API_URL)).await;
+    let (status, _, body) = send(
+        app.clone(),
+        "GET",
+        &format!("{PREFIX}/api/places/somebody.dcl.eth/images"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "message": "failed to resolve world name: request failed: place lookup unavailable" })
+        )
+    );
+    let batch = json!({ "placesIds": ["somebody.dcl.eth"] })
+        .to_string()
+        .into_bytes();
+    let (status, _, body) = send(
+        app,
+        "POST",
+        &format!("{PREFIX}/api/places/images"),
+        vec![],
+        Some((batch, "application/json")),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "message": "failed to resolve world name: request failed: place lookup unavailable" })
+        )
+    );
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+fn metadata_with_rect(address: &str, rect: Value) -> Value {
+    let mut metadata = metadata_json(address, "");
+    metadata["visiblePeople"] = json!([{
+        "userName": "someone",
+        "userAddress": "0x7949f9f239d1a0816ce5eb364a1f588ae9cc1bf5",
+        "wearables": [],
+        "isGuest": false,
+        "isEmoting": false,
+        "screenRect": rect
+    }]);
+    metadata
+}
+
+/// A multipart upload with the image part named `file_name` and a raw
+/// `is_public` part.
+fn multipart_raw(
+    image: &[u8],
+    file_name: &str,
+    metadata: &Value,
+    is_public: &str,
+) -> (Vec<u8>, String) {
+    let boundary = format!("----catalyst{}", tag());
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{file_name}\"\r\nContent-Type: image/png\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(image);
+    body.extend_from_slice(
+        format!(
+            "\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{metadata}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"is_public\"\r\n\r\n{is_public}\r\n--{boundary}--\r\n"
+        )
+        .as_bytes(),
+    );
+    (body, format!("multipart/form-data; boundary={boundary}"))
+}
+
+#[tokio::test]
+async fn an_uploaded_screen_rect_is_validated_and_read_back_everywhere() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let path = format!("{PREFIX}/api/images");
+    for rect in [
+        json!({ "x": 0.9, "y": 0.1, "width": 1000.0, "height": 0.6 }),
+        json!({ "x": 1e39, "y": 0.1, "width": 0.2, "height": 0.6 }),
+        json!({ "x": 0.9, "y": 0.0, "width": 0.2, "height": 0.5 }),
+    ] {
+        let (body, ct) = multipart(
+            &png(8, 8, 2),
+            "image/png",
+            &metadata_with_rect(&owner, rect.clone()),
+            Some(true),
+        );
+        let headers = signed_headers(&w, "post", &path, true).await;
+        let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+        assert_eq!(
+            (status, json_of(&resp)),
+            (
+                StatusCode::BAD_REQUEST,
+                json!({ "message": "invalid metadata" })
+            ),
+            "{rect}"
+        );
+    }
+    assert_eq!(s.count(&owner).await, 0);
+
+    let rect = json!({ "x": 0.25, "y": 0.5, "width": 0.25, "height": 0.5 });
+    let (body, ct) = multipart(
+        &png(8, 8, 3),
+        "image/png",
+        &metadata_with_rect(&owner, rect.clone()),
+        Some(true),
+    );
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&resp));
+    let uploaded = json_of(&resp);
+    assert_eq!(
+        uploaded["image"]["metadata"]["visiblePeople"][0]["screenRect"],
+        rect
+    );
+    let id = uploaded["image"]["id"].as_str().unwrap().to_string();
+    let (_, _, resp) = send(
+        s.app(),
+        "GET",
+        &format!("{PREFIX}/api/images/{id}/metadata"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(
+        json_of(&resp)["metadata"]["visiblePeople"][0]["screenRect"],
+        rect
+    );
+    let (_, _, resp) = send(
+        s.app(),
+        "GET",
+        &format!("{PREFIX}/api/users/{owner}/images"),
+        vec![],
+        None,
+    )
+    .await;
+    assert_eq!(
+        json_of(&resp)["images"][0]["metadata"]["visiblePeople"][0]["screenRect"],
+        rect
+    );
+    s.done().await;
+}
+
+#[tokio::test]
+async fn upload_checks_form_types_then_cap_then_metadata_as_upstream() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    settings.max_images_per_user = 1;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let path = format!("{PREFIX}/api/images");
+    let image = png(8, 8, 4);
+    let metadata = metadata_json(&owner, "");
+    let upload =
+        |file_name: &str, is_public: &str| multipart_raw(&image, file_name, &metadata, is_public);
+
+    for (file_name, is_public, message) in [
+        ("any/image.png", "true", "invalid file name"),
+        ("any\\image.png", "true", "invalid file name"),
+        ("image.png", "yes", "invalid is_public field"),
+        ("image.png", " true", "invalid is_public field"),
+    ] {
+        let (body, ct) = upload(file_name, is_public);
+        let headers = signed_headers(&w, "post", &path, true).await;
+        let (status, headers, resp) =
+            send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{file_name:?} {is_public:?}"
+        );
+        if message == "invalid is_public field" {
+            assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+            assert_eq!(
+                String::from_utf8(resp).unwrap(),
+                "An error occurred processing field `is_public`: Plain text deserialize error: cannot parse boolean: provided string was not `true` or `false`"
+            );
+        } else {
+            assert_eq!(json_of(&resp), json!({ "message": message }));
+        }
+    }
+    assert_eq!(s.count(&owner).await, 0);
+
+    let (body, ct) = upload("image.png", "false");
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&resp));
+    assert_eq!(json_of(&resp)["image"]["isPublic"], false);
+
+    // MultipartForm<Upload> parses Text<bool> before the source handler runs,
+    // so a malformed boolean still fails before the quota check at the cap.
+    let (body, ct) = multipart_raw(b"not an image", "a/b.png", &json!("not metadata"), "maybe");
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, headers, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&resp)
+    );
+    assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(
+        String::from_utf8(resp).unwrap(),
+        "An error occurred processing field `is_public`: Plain text deserialize error: cannot parse boolean: provided string was not `true` or `false`"
+    );
+
+    // Once form types parse, the cap precedes metadata, image and filename checks.
+    let (body, ct) = multipart_raw(b"not an image", "a/b.png", &json!("not metadata"), "true");
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        String::from_utf8_lossy(&resp)
+    );
+    assert_eq!(
+        json_of(&resp),
+        json!({ "reason": "maxLimitReached", "message": "you have reached the limit of 1 max images" })
+    );
+    assert_eq!(s.count(&owner).await, 1);
+    s.done().await;
+}
+
+async fn events_of(s: &Scratch, owner: &str) -> Vec<crate::events::PhotoEvent> {
+    crate::events::read_after(s.db().pool(), 0, i64::MAX)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.user_address == owner.to_lowercase())
+        .collect()
+}
+
+#[tokio::test]
+async fn uploads_and_visibility_changes_record_the_upstream_photo_events() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let place = Uuid::new_v4().to_string();
+    let path = format!("{PREFIX}/api/images");
+
+    // A refused upload records nothing.
+    let (body, ct) = multipart(
+        &png(8, 8, 5),
+        "image/png",
+        &metadata_with_rect(
+            &owner,
+            json!({ "x": 2.0, "y": 0.0, "width": 0.1, "height": 0.1 }),
+        ),
+        Some(false),
+    );
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, _) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(events_of(&s, &owner).await.is_empty());
+
+    // A private upload: photo-taken, as upstream publishes it for any photo.
+    let mut metadata = metadata_with_rect(
+        &owner,
+        json!({ "x": 0.25, "y": 0.5, "width": 0.25, "height": 0.5 }),
+    );
+    metadata["placeId"] = json!(place);
+    metadata["visiblePeople"][0]["isEmoting"] = Value::Null;
+    let (body, ct) = multipart(&png(8, 8, 6), "image/png", &metadata, Some(false));
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(s.app(), "POST", &path, headers, Some((body, &ct))).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&resp));
+    let id = json_of(&resp)["image"]["id"].as_str().unwrap().to_string();
+    let events = events_of(&s, &owner).await;
+    assert_eq!(events.len(), 1);
+    let taken = &events[0];
+    assert_eq!(taken.kind, "photo-taken");
+    assert_eq!(taken.photo_id.to_string(), id);
+    let timestamp = taken.payload["timestamp"].as_i64().unwrap();
+    assert!((chrono::Utc::now().timestamp() - timestamp).abs() < 60);
+    assert_eq!(
+        taken.payload,
+        json!({
+            "type": "camera",
+            "subType": "photo-taken",
+            "key": id,
+            "timestamp": timestamp,
+            "metadata": {
+                "sceneId": "Genesis Plaza",
+                "realm": "main",
+                "userAddress": owner.to_lowercase(),
+                "isPublic": false,
+                "photoId": id,
+                "placeId": place,
+                "users": [{ "address": "0x7949f9f239d1a0816ce5eb364a1f588ae9cc1bf5", "isEmoting": false }]
+            }
+        })
+    );
+
+    // Visibility: a change records photo-privacy-changed; a no-op and a stranger's request do not.
+    let vis = format!("{PREFIX}/api/images/{id}/visibility");
+    let flip = |public: bool| json!({ "is_public": public }).to_string().into_bytes();
+    for (who, public, expected) in [
+        (&w, true, StatusCode::OK),
+        (&w, true, StatusCode::OK),
+        (&wallet(), false, StatusCode::FORBIDDEN),
+    ] {
+        let headers = signed_headers(who, "patch", &vis, true).await;
+        let (status, _, _) = send(
+            s.app(),
+            "PATCH",
+            &vis,
+            headers,
+            Some((flip(public), "application/json")),
+        )
+        .await;
+        assert_eq!(status, expected);
+    }
+    let events = events_of(&s, &owner).await;
+    assert_eq!(events.len(), 2, "{events:?}");
+    let changed = &events[1];
+    assert!(changed.id > taken.id);
+    assert_eq!(changed.kind, "photo-privacy-changed");
+    let timestamp = changed.payload["timestamp"].as_i64().unwrap();
+    assert_eq!(
+        changed.payload,
+        json!({
+            "type": "camera",
+            "subType": "photo-privacy-changed",
+            "key": id,
+            "timestamp": timestamp,
+            "metadata": { "photoId": id, "userAddress": owner.to_lowercase(), "isPublic": true }
+        })
+    );
+    let after = crate::events::read_after(s.db().pool(), taken.id, 1)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1, "the limit holds");
+    assert!(after[0].id > taken.id, "strictly after the cursor");
+    s.done().await;
+}
+
+#[tokio::test]
+async fn retention_deletes_only_events_past_thirty_days() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let payload = json!({ "type": "camera" });
+    let mut ids = Vec::new();
+    for days in [45, 31, 29, 0] {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO camera_reel.photo_events (kind, photo_id, user_address, payload, created_at) \
+             VALUES ('photo-taken', $1, $2, $3, now() - make_interval(days => $4)) RETURNING id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(owner.to_lowercase())
+        .bind(&payload)
+        .bind(days)
+        .fetch_one(s.db().pool())
+        .await
+        .unwrap();
+        ids.push((days, id));
+    }
+    let deleted =
+        crate::events::delete_expired(s.db().pool(), chrono::Utc::now() - crate::events::RETENTION)
+            .await
+            .unwrap();
+    assert!(deleted >= 2);
+    let left: Vec<i64> = events_of(&s, &owner)
+        .await
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(
+        left,
+        ids.iter()
+            .filter(|(days, _)| *days < 30)
+            .map(|(_, id)| *id)
+            .collect::<Vec<_>>()
+    );
+    s.done().await;
+}
+
+#[test]
+fn thumbnails_decode_only_the_declared_format_within_the_size_limits() {
+    use crate::handlers::images::{MAX_IMAGE_DIMENSION, thumbnail_of};
+    let ok = png(32, 18, 1);
+    assert!(thumbnail_of(&ok, image::ImageFormat::Png).is_ok());
+    let err = thumbnail_of(&ok, image::ImageFormat::Jpeg).unwrap_err();
+    assert!(
+        matches!(err, ApiError::BadRequest(_)),
+        "a PNG declared as JPEG"
+    );
+    let wide = png(MAX_IMAGE_DIMENSION + 1, 1, 1);
+    let err = thumbnail_of(&wide, image::ImageFormat::Png).unwrap_err();
+    assert!(
+        matches!(err, ApiError::BadRequest(_)),
+        "over the dimension limit"
+    );
+    assert!(thumbnail_of(&png(MAX_IMAGE_DIMENSION, 1, 1), image::ImageFormat::Png).is_ok());
+}
+
+#[tokio::test]
+async fn a_full_account_is_refused_before_the_image_is_decoded() {
+    let mut settings = Settings::new(API_URL);
+    settings.writes_enabled = true;
+    settings.max_images_per_user = 1;
+    let Some(mut s) = scratch(settings).await else {
+        return;
+    };
+    let w = wallet();
+    let owner = s.owner(&w.address);
+    let path = format!("{PREFIX}/api/images-json");
+    let upload = |image: Vec<u8>| {
+        use base64::Engine as _;
+        json!({
+            "image": base64::engine::general_purpose::STANDARD.encode(image),
+            "content_type": "image/png",
+            "metadata": metadata_json(&owner, ""),
+        })
+        .to_string()
+        .into_bytes()
+    };
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(b"not an image".to_vec()), "application/json")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&resp)
+    );
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, _) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(png(16, 9, 5)), "application/json")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let headers = signed_headers(&w, "post", &path, true).await;
+    let (status, _, resp) = send(
+        s.app(),
+        "POST",
+        &path,
+        headers,
+        Some((upload(b"not an image".to_vec()), "application/json")),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&resp)["reason"].clone()),
+        (StatusCode::FORBIDDEN, json!("maxLimitReached")),
+        "the quota answers before the decoder runs"
+    );
+    s.done().await;
+}
+
+#[tokio::test]
+async fn a_dropped_upload_keeps_its_decode_permit_until_the_decode_ends() {
+    static PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let task = tokio::spawn(crate::handlers::images::decode_with(&PERMITS, move || {
+        let _ = wait.recv();
+    }));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while PERMITS.available_permits() != 0 {
+        assert!(Instant::now() < deadline, "the decode never started");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    task.abort();
+    let _ = task.await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        PERMITS.available_permits(),
+        0,
+        "the running decode still holds its permit"
+    );
+    release.send(()).unwrap();
+    while PERMITS.available_permits() != 1 {
+        assert!(Instant::now() < deadline, "the permit came back");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
 }

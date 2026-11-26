@@ -1,12 +1,98 @@
 use super::*;
-use crate::sync_test_support::{signed_chain, signed_chain_behind_contract, test_pool, unique};
+use crate::sync_test_support::{
+    signed_chain, signed_chain_behind_contract, temp_storage, test_pool, unique,
+};
 use crate::sync_types::AuthLinkType;
+use futures::FutureExt;
 
 const ENTITY_BODY: &[u8] = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[]}"#;
+
+#[test]
+fn ordered_projection_keeps_local_and_sync_structural_parsing_distinct() {
+    let ignored = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[],"metadata":{"z":1,"a":2},"unused":1e400}"#;
+    assert!(serde_json::from_slice::<crate::entity::Entity>(ignored).is_ok());
+    assert!(parse_entity_for_deploy(ignored, "authoritative", &vec![]).is_err());
+    let positional = br#"["","scene",["0,0"],1,[],"v3",{"z":1,"a":2}]"#;
+    assert!(
+        serde_json::from_slice::<crate::entity::Entity>(positional)
+            .unwrap()
+            .metadata
+            .is_some()
+    );
+    let parsed = parse_entity_for_deploy(positional, "authoritative", &vec![]).unwrap();
+    assert!(parsed.entity_metadata.is_null());
+    assert!(parsed.entity_pointers.is_empty());
+    assert_eq!(parsed.entity_type, "unknown");
+    assert_eq!(parsed.entity_timestamp, 0.);
+    let repeated = br#"{"type":"profile","pointers":["p"],"timestamp":1,"metadata":{"z":1},"meta\u0064ata":{"z":2,"a":3}}"#;
+    assert!(
+        serde_json::from_slice::<crate::entity::Entity>(repeated)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate field")
+    );
+    let parsed = parse_entity_for_deploy(repeated, "authoritative", &vec![]).unwrap();
+    assert_eq!(
+        serde_json::to_string(&parsed.entity_metadata).unwrap(),
+        r#"{"v":{"z":2,"a":3}}"#
+    );
+    let final_null=br#"{"type":"profile","pointers":["p"],"timestamp":1,"metadata":{"z":1},"meta\u0064ata":null}"#;
+    assert!(
+        parse_entity_for_deploy(final_null, "authoritative", &vec![])
+            .unwrap()
+            .entity_metadata
+            .is_null()
+    );
+    let raw=br#"{"type":"profile","pointers":["FIRST"],"pointers":["LAST"],"timestamp":1,"metadata":{"z":1,"a":2}}"#;
+    assert!(
+        serde_json::from_slice::<crate::entity::Entity>(raw)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate field")
+    );
+    let parsed = parse_entity_for_deploy(raw, "authoritative", &vec![]).unwrap();
+    assert_eq!(parsed.entity_pointers, vec!["last"]);
+    assert_eq!(parsed.entity_id, "authoritative");
+    assert_eq!(
+        serde_json::to_string(&parsed.entity_metadata).unwrap(),
+        r#"{"v":{"z":1,"a":2}}"#
+    );
+}
+
+#[tokio::test]
+async fn flushed_batches_preserve_metadata_order_and_scalars() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let prefix = unique();
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 1, SyncValidation::AuthChainOnly);
+    // Binder fixtures: scalar metadata is not a schema-valid scene.
+    for (i, metadata) in [r#"{"z":9007199254740993,"a":{"z":18446744073709551615,"a":"é\\\""},"10":1,"2":2,"a":{"z":-9223372036854775808,"a":true}}"#, "null", "false", "0", r#""""#].iter().enumerate() {
+        let id = format!("{prefix}-{i}");
+        let raw = format!(r#"{{"type":"profile","pointers":["{id}"],"timestamp":1,"metadata":{metadata}}}"#);
+        deployer.deploy_entity(raw.as_bytes(), &id, &signed_chain(&id).await, DeploymentContext::Synced, None, None).await.unwrap();
+    }
+    deployer.flush().await.unwrap();
+    let texts: Vec<String> = sqlx::query_scalar("SELECT entity_metadata::text FROM content.deployments WHERE entity_id LIKE $1 ORDER BY entity_id")
+        .bind(format!("{prefix}%")).fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        texts,
+        [
+            r#"{"v":{"2":2,"10":1,"z":9007199254740993,"a":{"z":-9223372036854775808,"a":true}}}"#,
+            "null",
+            r#"{"v":false}"#,
+            r#"{"v":0}"#,
+            r#"{"v":""}"#
+        ]
+    );
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
 
 fn lazy_deployer() -> LiveSyncDeployer {
     LiveSyncDeployer {
         pool: sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+        storage: None,
         batch: Arc::new(Mutex::new(Vec::new())),
         flush_sem: Arc::new(Semaphore::new(1)),
         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -20,6 +106,392 @@ fn lazy_deployer() -> LiveSyncDeployer {
         validations: Arc::new(Semaphore::new(1)),
         access_passed: Arc::default(),
     }
+}
+
+#[tokio::test]
+async fn metadata_guard_rejects_nul_even_on_conflict_and_rolls_back_mixed_batches() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let prefix = unique();
+    let raw = |metadata: &str| {
+        format!(r#"{{"type":"profile","pointers":[],"timestamp":1,"metadata":{metadata}}}"#)
+    };
+    let existing = format!("{prefix}-existing");
+    let new_id = format!("{prefix}-new");
+    let parse = |id: &str, metadata: &str| {
+        parse_entity_for_deploy(raw(metadata).as_bytes(), id, &vec![]).unwrap()
+    };
+    flush_batch(&pool, None, &[parse(&existing, r#"{"z":1,"a":2}"#)])
+        .await
+        .unwrap();
+    // Model an already-normalized historical row. Replay must never repair it.
+    sqlx::query("UPDATE content.deployments SET entity_metadata=entity_metadata::jsonb::json WHERE entity_id=$1").bind(&existing).execute(&pool).await.unwrap();
+    let before: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&existing)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for nul in [r#"{"z":"a\u0000b","a":2}"#, r#"{"z\u0000":1,"a":2}"#] {
+        // Both old array cast and staged guard evaluate before ON CONFLICT can skip a row.
+        let old = sqlx::query_scalar::<_, Value>("SELECT unnest($1::text[]::jsonb[])")
+            .bind(vec![nul])
+            .fetch_one(&pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            old.as_database_error().unwrap().code().as_deref(),
+            Some("22P05")
+        );
+        let guarded = sqlx::query_scalar::<_, String>("SELECT (CASE WHEN em::jsonb IS NOT NULL THEN em::json ELSE NULL END)::text FROM unnest($1::text[]) AS t(em)").bind(vec![nul]).fetch_one(&pool).await.unwrap_err();
+        assert_eq!(
+            guarded.as_database_error().unwrap().code().as_deref(),
+            Some("22P05")
+        );
+        for ids in [
+            vec![existing.clone()],
+            vec![new_id.clone(), existing.clone()],
+        ] {
+            let mut metadata = vec![serde_json::json!({"v":{"z":3,"a":4}}); ids.len()];
+            *metadata.last_mut().unwrap() =
+                serde_json::json!({"v":serde_json::from_str::<Value>(nul).unwrap()});
+            let old_insert=sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) SELECT 'fixture','v3','profile',ei,em::json,to_timestamp(1),ARRAY[]::text[],now(),'[]' FROM unnest($1::text[],$2::jsonb[]) AS t(ei,em) ON CONFLICT(entity_id) DO NOTHING")
+                .bind(ids).bind(metadata).execute(&pool).await.unwrap_err();
+            assert_eq!(
+                old_insert.as_database_error().unwrap().code().as_deref(),
+                Some("22P05")
+            );
+        }
+        for batch in [
+            vec![parse(&existing, nul)],
+            vec![parse(&new_id, r#"{"z":3,"a":4}"#), parse(&existing, nul)],
+        ] {
+            assert!(flush_batch(&pool, None, &batch).await.is_err());
+            let count: i64 =
+                sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id=$1")
+                    .bind(&new_id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+    flush_batch(
+        &pool,
+        None,
+        &[
+            parse(&existing, r#"{"z":7,"a":8}"#),
+            parse(&new_id, "null"),
+            parse(&new_id, "false"),
+        ],
+    )
+    .await
+    .unwrap();
+    let after: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&existing)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after, before);
+    let null: (bool, String) = sqlx::query_as("SELECT entity_metadata IS NULL,entity_metadata::text FROM content.deployments WHERE entity_id=$1").bind(&new_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(null, (false, "null".into()));
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn metadata_unicode_refusals_distinguish_json_input_from_scene_index() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let prefix = unique();
+    let successor = format!("{prefix}-successor");
+    let successor_body = br#"{"type":"scene","pointers":[],"timestamp":2,"metadata":{}}"#;
+    flush_batch(
+        &pool,
+        None,
+        &[parse_entity_for_deploy(successor_body, &successor, &vec![]).unwrap()],
+    )
+    .await
+    .unwrap();
+    let successor_id: i32 =
+        sqlx::query_scalar("SELECT id FROM content.deployments WHERE entity_id=$1")
+            .bind(&successor)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for (i, input) in [
+        r#"{"v":{"value":"a\u0000b"}}"#,
+        r#"{"v":{"key\u0000":1}}"#,
+        r#"{"logsPermissions":["a\u0000b"],"v":{}}"#,
+        r#"{"v":{"logsPermissions":["a\u0000b"]}}"#,
+        r#"{"v":{"value":"\ud800"}}"#,
+        r#"{"v":{"value":"\udfff"}}"#,
+    ]
+    .iter()
+    .enumerate()
+    {
+        let sqlstate = if i < 4 { "22P05" } else { "22P02" };
+        let text: String = sqlx::query_scalar("SELECT $1::text::json::text")
+            .bind(input)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(text, *input);
+        let extraction = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT ($1::text::json -> 'logsPermissions')::text",
+        )
+        .bind(input)
+        .fetch_one(&pool)
+        .await
+        .unwrap_err();
+        assert_eq!(
+            extraction.as_database_error().unwrap().code().as_deref(),
+            Some(sqlstate)
+        );
+        for (entity_type, deleter) in [
+            ("scene", None),
+            ("scene", Some(successor_id)),
+            ("profile", None),
+        ] {
+            let mut tx = pool.begin().await.unwrap();
+            let id = format!("{prefix}-{i}-{entity_type}-{deleter:?}");
+            let result=sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain,deleter_deployment) VALUES ('fixture','v3',$1,$2,$3::text::json,to_timestamp(1),ARRAY[]::text[],now(),'[]',$4)").bind(entity_type).bind(&id).bind(input).bind(deleter).execute(&mut *tx).await;
+            if entity_type == "scene" && deleter.is_none() {
+                assert_eq!(
+                    result
+                        .unwrap_err()
+                        .as_database_error()
+                        .unwrap()
+                        .code()
+                        .as_deref(),
+                    Some(sqlstate)
+                );
+            } else {
+                result.unwrap();
+                let present: String = sqlx::query_scalar(
+                    "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+                )
+                .bind(&id)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+                assert_eq!(present, *input);
+                let transition=sqlx::query("UPDATE content.deployments SET entity_type='scene',deleter_deployment=NULL WHERE entity_id=$1").bind(&id).execute(&mut *tx).await.unwrap_err();
+                assert_eq!(
+                    transition.as_database_error().unwrap().code().as_deref(),
+                    Some(sqlstate)
+                );
+            }
+            tx.rollback().await.unwrap();
+        }
+    }
+    let permissions: Vec<String> = sqlx::query_scalar("SELECT worlds.logs_permissions_decoded($1)")
+        .bind(r#"["a\u0000b"]"#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(permissions.is_empty());
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn stalled_flush_backlog_retains_order_with_bounded_batches() {
+    let Some(pool) = test_pool(11).await else {
+        return;
+    };
+    let prefix = unique();
+    let deployer = LiveSyncDeployer::without_store(
+        pool.clone(),
+        DEFAULT_FLUSH_CONCURRENCY,
+        SyncValidation::AuthChainOnly,
+    );
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE content.deployments IN SHARE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let began = std::time::Instant::now();
+    let metadata = r#"{"z":9007199254740993,"a":{"z":1,"a":2}}"#;
+    for i in 0..DEFAULT_FLUSH_BACKLOG_MAX {
+        let id = format!("{prefix}-{i}");
+        let body =
+            format!(r#"{{"type":"profile","pointers":[],"timestamp":1,"metadata":{metadata}}}"#);
+        deployer
+            .deploy_entity(
+                body.as_bytes(),
+                &id,
+                &signed_chain(&id).await,
+                DeploymentContext::Synced,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(deployer.backlog.available_permits(), 0);
+    assert_eq!(deployer.batch.lock().await.len(), 96);
+    let queued_us = began.elapsed().as_micros();
+    let id = format!("{prefix}-overflow");
+    let chain = signed_chain(&id).await;
+    let body = format!(r#"{{"type":"profile","pointers":[],"timestamp":1,"metadata":{metadata}}}"#);
+    let mut waiting = std::pin::pin!(deployer.deploy_entity(
+        body.as_bytes(),
+        &id,
+        &chain,
+        DeploymentContext::Synced,
+        None,
+        None
+    ));
+    assert!(futures::poll!(&mut waiting).is_pending());
+    blocker.rollback().await.unwrap();
+    let drain = std::time::Instant::now();
+    waiting.await.unwrap();
+    deployer.flush().await.unwrap();
+    let rows:i64=sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id LIKE $1 AND entity_metadata::text=$2").bind(format!("{prefix}%")).bind(format!(r#"{{"v":{metadata}}}"#)).fetch_one(&pool).await.unwrap();
+    assert_eq!(rows, 4097);
+    assert_eq!(
+        deployer.backlog.available_permits(),
+        DEFAULT_FLUSH_BACKLOG_MAX
+    );
+    assert_eq!(deployer.lost_count(), 0);
+    eprintln!(
+        "backlog_entities=4096 batch=500 flush_concurrency=8 raw_metadata_bytes={} queued_us={queued_us} drain_us={}",
+        metadata.len(),
+        drain.elapsed().as_micros()
+    );
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn cancelling_a_flush_after_insert_keeps_retry_and_ordered_replay() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let prefix = unique();
+    let raw = format!(
+        r#"{{"type":"profile","pointers":["{prefix}"],"timestamp":1,"metadata":{{"z":9007199254740993,"a":2}},"content":[{{"file":"file","hash":"hash"}}]}}"#
+    );
+    sqlx::query("INSERT INTO content.failed_deployments (entity_id,entity_type,failure_time,reason,auth_chain,error_description,snapshot_hash,retry_count,next_retry_at) VALUES ($1,'profile',now(),'Deployment error','[]','fixture','',4,now())").bind(&prefix).execute(&pool).await.unwrap();
+    let mut blocker = pool.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    sqlx::query("LOCK TABLE content.content_files IN SHARE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let task = tokio::spawn({
+        let pool = pool.clone();
+        let raw = raw.clone();
+        let prefix = prefix.clone();
+        async move {
+            flush_batch(
+                &pool,
+                None,
+                &[parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap()],
+            )
+            .await
+        }
+    });
+    assert!(crate::shared::test_wait::until(async || {
+        sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%INSERT INTO content.content_files%')")
+            .bind(blocker_pid).fetch_one(&pool).await.unwrap()
+    }).await, "flush must reach the content insertion after deployment insertion");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    blocker.rollback().await.unwrap();
+    let counts:(i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM content.deployments WHERE entity_id=$1),(SELECT count(*) FROM content.failed_deployments WHERE entity_id=$1 AND retry_count=4)").bind(&prefix).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 1));
+    let cancelled_us = started.elapsed().as_micros();
+    let replay = std::time::Instant::now();
+    flush_batch(
+        &pool,
+        None,
+        &[parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap()],
+    )
+    .await
+    .unwrap();
+    eprintln!(
+        "cancelled_flush_us={cancelled_us} replay_flush_us={}",
+        replay.elapsed().as_micros()
+    );
+    let stored: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&prefix)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, r#"{"v":{"z":9007199254740993,"a":2}}"#);
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn metadata_and_retry_cleanup_roll_back_when_content_insert_fails() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let prefix = unique();
+    let raw = format!(
+        r#"{{"type":"profile","pointers":["{prefix}"],"timestamp":1,"metadata":{{"z":1,"a":2}},"content":[{{"file":"duplicate","hash":"a"}},{{"file":"duplicate","hash":"b"}}]}}"#
+    );
+    // Deliberate database fault after deployment insertion, bypassing admission.
+    let parsed = parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap();
+    sqlx::query("INSERT INTO content.failed_deployments (entity_id,entity_type,failure_time,reason,auth_chain,error_description,snapshot_hash,retry_count,next_retry_at) VALUES ($1,'profile',now(),'Deployment error','[]','fixture','',4,now())").bind(&prefix).execute(&pool).await.unwrap();
+    assert!(
+        flush_batch(&pool, None, &[parsed])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("content_files_uniq_deployment_key")
+    );
+    let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM content.deployments WHERE entity_id=$1),(SELECT count(*) FROM content.active_pointers WHERE pointer=$1),(SELECT count(*) FROM content.failed_deployments WHERE entity_id=$1 AND retry_count=4)").bind(&prefix).fetch_one(&pool).await.unwrap();
+    assert_eq!(counts, (0, 0, 1));
+    let mut retry = parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap();
+    retry.content.pop();
+    flush_batch(&pool, None, &[retry]).await.unwrap();
+    let stored: String = sqlx::query_scalar(
+        "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+    )
+    .bind(&prefix)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, r#"{"v":{"z":1,"a":2}}"#);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.failed_deployments WHERE entity_id=$1")
+            .bind(&prefix)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0);
+    cleanup(&pool, &prefix).await;
+    pool.close().await;
+}
+
+#[test]
+fn a_synced_entity_stores_the_canonical_type() {
+    for raw in ["scene", "Scene", " scenes ", "SCENES"] {
+        let body = format!(r#"{{"type":"{raw}","pointers":["0,0"],"timestamp":1,"content":[]}}"#);
+        let entity = parse_entity_for_deploy(body.as_bytes(), "bafytype", &Vec::new()).unwrap();
+        assert_eq!(entity.entity_type, "scene", "{raw:?}");
+    }
+    let body = br#"{"type":"bogus","pointers":["0,0"],"timestamp":1,"content":[]}"#;
+    let entity = parse_entity_for_deploy(body, "bafytype", &Vec::new()).unwrap();
+    assert_eq!(
+        entity.entity_type, "bogus",
+        "an unknown type is left to the validator"
+    );
 }
 
 #[test]
@@ -311,24 +783,6 @@ async fn a_synced_expiration_the_peer_accepted_is_not_a_rejection() {
 
 use crate::sync_types::AuthLink;
 
-#[test]
-fn a_failure_reason_survives_the_column_round_trip() {
-    for reason in [
-        FailureReason::DeploymentError,
-        FailureReason::NoEntity,
-        FailureReason::ValidationUndecided,
-        FailureReason::Rejected,
-    ] {
-        let label = reason_label(&reason);
-        assert_eq!(reason_from_label(label), reason);
-    }
-    assert_eq!(reason_label(&FailureReason::NoEntity), "No entity");
-    assert_eq!(
-        reason_label(&FailureReason::DeploymentError),
-        "Deployment error"
-    );
-}
-
 async fn cleanup(pool: &PgPool, prefix: &str) {
     let like = format!("{prefix}%");
     for sql in [
@@ -354,7 +808,7 @@ async fn the_batch_ticker_is_a_job_of_the_shared_lifecycle() {
         return;
     };
     let jobs = std::sync::Arc::new(crate::jobs::Jobs::new());
-    let deployer = LiveSyncDeployer::new(pool, 1, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool, 1, SyncValidation::AuthChainOnly);
     let parent = jobs.spawn("sync", {
         let jobs = jobs.clone();
         move |ctx| async move {
@@ -396,7 +850,7 @@ async fn flushed_batches_write_rows_and_resolve_pointer_succession() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let p = |n: &str| format!("{prefix}:{n}");
     let (older, newer) = (format!("{prefix}-older"), format!("{prefix}-newer"));
 
@@ -557,7 +1011,7 @@ async fn an_equal_timestamp_pair_settles_on_the_lowercase_winner_in_any_batching
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let batchings: [&[&[&str]]; 4] = [
         &[&["Z", "a"]],
@@ -597,7 +1051,7 @@ async fn the_deleter_is_the_nearest_successor_in_any_arrival_order() {
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let orders = [
         ["A", "B", "C"],
@@ -642,7 +1096,7 @@ async fn a_peer_scene_arriving_after_an_unpublish_is_superseded_by_the_tombstone
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let pointer = format!("{prefix}:0,0");
     let (local, peer) = (format!("{prefix}-local"), format!("{prefix}-peer"));
@@ -688,7 +1142,7 @@ async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
     let Some(pool) = test_pool(4).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::without_store(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let (first, second) = (format!("{prefix}:0,-2"), format!("{prefix}:0,10"));
     assert!(first < second, "byte order");
@@ -854,4 +1308,262 @@ async fn failed_deployments_round_trip_and_never_rewind_retry_state() {
 
     cleanup(&pool, &prefix).await;
     pool.close().await;
+}
+
+/// A profile entity on a pointer of its own, its content file and the entity file stored: the
+/// entity id, its content hash and the raw entity.
+async fn stored_profile(storage: &Storage, tag: &str) -> (String, String, String) {
+    let content = format!("sync-store-lock-content-{tag}");
+    let content_hash = crate::auth::hash_bytes_v1(content.as_bytes());
+    storage
+        .store(&content_hash, bytes::Bytes::from(content))
+        .await
+        .unwrap();
+    let raw = format!(
+        r#"{{"type":"profile","pointers":["{tag}"],"timestamp":1,"content":[{{"file":"a.png","hash":"{content_hash}"}}],"metadata":{{}}}}"#
+    );
+    let id = crate::auth::hash_bytes_v1(raw.as_bytes());
+    storage
+        .store(&id, bytes::Bytes::from(raw.clone()))
+        .await
+        .unwrap();
+    (id, content_hash, raw)
+}
+
+async fn delete_entity_rows(pool: &PgPool, ids: &[&str]) {
+    for sql in [
+        "DELETE FROM content.content_files WHERE deployment IN (SELECT id FROM content.deployments WHERE entity_id = ANY($1))",
+        "DELETE FROM content.active_pointers WHERE entity_id = ANY($1)",
+        "DELETE FROM content.deployments WHERE entity_id = ANY($1)",
+        "DELETE FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    ] {
+        sqlx::query(sql).bind(ids).execute(pool).await.unwrap();
+    }
+}
+
+/// A file unlinked between sync's download and its flush: the flush, checking under the shared
+/// store lock, leaves that entity out (no row names the missing file) and records it for the
+/// retry worker; the rest of the batch commits.
+#[tokio::test]
+async fn a_flush_leaves_out_an_entity_whose_file_left_the_store() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock").await;
+    let prefix = unique();
+    let (lost_id, lost_hash, lost_raw) = stored_profile(&storage, &format!("{prefix}-lost")).await;
+    let (kept_id, kept_hash, kept_raw) = stored_profile(&storage, &format!("{prefix}-kept")).await;
+    let deployer = LiveSyncDeployer::new(
+        pool.clone(),
+        storage.clone(),
+        1,
+        SyncValidation::AuthChainOnly,
+    );
+    for (id, raw) in [(&lost_id, &lost_raw), (&kept_id, &kept_raw)] {
+        deployer
+            .deploy_entity(
+                raw.as_bytes(),
+                id,
+                &signed_chain(id).await,
+                DeploymentContext::Synced,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    storage.delete_strict(&lost_hash).await.unwrap();
+    deployer.flush().await.unwrap();
+
+    let named: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.content_files WHERE content_hash = $1")
+            .bind(&lost_hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(named, 0, "no row names the missing file");
+    assert!(!is_entity_deployed(&pool, &lost_id, 0).await.unwrap());
+    let reason: String = sqlx::query_scalar(
+        "SELECT error_description FROM content.failed_deployments WHERE entity_id = $1",
+    )
+    .bind(&lost_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(reason.contains(&lost_hash), "{reason}");
+    assert_eq!(deployer.lost_count(), 0);
+    assert!(is_entity_deployed(&pool, &kept_id, 0).await.unwrap());
+    let kept: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.content_files WHERE content_hash = $1")
+            .bind(&kept_hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, 1);
+
+    delete_entity_rows(&pool, &[&lost_id, &kept_id]).await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A flush waits while an unlink batch holds the store lock's exclusive side, and commits once
+/// it is released.
+#[tokio::test]
+async fn a_flush_waits_for_the_exclusive_store_lock() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock-wait").await;
+    let (id, _, raw) = stored_profile(&storage, &format!("{}-wait", unique())).await;
+    let parsed = parse_entity_for_deploy(raw.as_bytes(), &id, &signed_chain(&id).await).unwrap();
+    let unlinking = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let mut flush = std::pin::pin!(flush_batch(
+        &pool,
+        Some(&storage),
+        std::slice::from_ref(&parsed)
+    ));
+    let mut queued = false;
+    for _ in 0..100 {
+        if let Ok(done) =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut flush).await
+        {
+            panic!("the flush did not wait for the unlink batch: {done:?}");
+        }
+        if !crate::tests::support::store_lock_waiters(&pool, "ShareLock")
+            .await
+            .is_empty()
+        {
+            queued = true;
+            break;
+        }
+    }
+    assert!(queued, "the flush never queued on the store lock");
+    assert!(!is_entity_deployed(&pool, &id, 0).await.unwrap());
+    unlinking.commit().await.unwrap();
+    let dropped = flush.await.unwrap();
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert!(is_entity_deployed(&pool, &id, 0).await.unwrap());
+
+    delete_entity_rows(&pool, &[&id]).await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A flush task that unwinds still counts its flush done and wakes `flush`.
+#[test]
+fn a_dropped_flush_guard_counts_the_flush_done_and_wakes_the_waiter() {
+    let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let idle_notify = Arc::new(tokio::sync::Notify::new());
+    let flushing = FlushInFlight::start(in_flight.clone(), idle_notify.clone());
+    assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let woken = idle_notify.notified();
+    tokio::pin!(woken);
+    woken.as_mut().enable();
+
+    drop(flushing);
+
+    assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(woken.now_or_never().is_some(), "flush woken");
+}
+
+/// Sleeps first, so `flush` is already waiting when it panics.
+async fn exploding_flush() -> Flushed {
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    panic!("flush exploded")
+}
+
+/// A batch flush that panics still lets `flush` return, and its entities are recorded for retry.
+#[tokio::test]
+async fn a_flush_that_panics_lets_flush_return_and_records_its_entities_for_retry() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let prefix = unique();
+    let ids = [format!("{prefix}-a"), format!("{prefix}-b")];
+    let deployer = LiveSyncDeployer {
+        pool: pool.clone(),
+        ..lazy_deployer()
+    };
+    let entities = ids
+        .iter()
+        .map(|id| parse_entity_for_deploy(ENTITY_BODY, id, &Vec::new()).unwrap())
+        .collect();
+
+    spawn_flush_with(
+        pool.clone(),
+        None,
+        deployer.flush_sem.clone(),
+        deployer.in_flight.clone(),
+        deployer.idle_notify.clone(),
+        deployer.lost.clone(),
+        entities,
+        |_, _, _| Box::pin(exploding_flush()),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(30), deployer.flush())
+        .await
+        .expect("flush returned")
+        .unwrap();
+
+    let descriptions: Vec<String> = sqlx::query_scalar(
+        "SELECT error_description FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    )
+    .bind(&ids[..])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(descriptions.len(), 2);
+    for description in &descriptions {
+        assert!(
+            description.contains("the batch flush panicked: flush exploded"),
+            "{description}"
+        );
+    }
+    assert_eq!(deployer.lost_count(), 0);
+    delete_entity_rows(&pool, &[&ids[0], &ids[1]]).await;
+}
+
+/// A panic while recording a failed flush counts lost only the entities named for recording
+/// that were not yet recorded, each id once.
+#[tokio::test]
+async fn a_panic_while_recording_counts_only_the_unrecorded_entities_lost() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let prefix = unique();
+    let [committed, recorded, panics, unreached] =
+        ["committed", "recorded", "panics", "unreached"].map(|n| format!("{prefix}-{n}"));
+    let entities: Vec<ParsedEntity> = [&committed, &recorded, &panics, &unreached, &unreached]
+        .into_iter()
+        .map(|id| {
+            let mut entity = parse_entity_for_deploy(ENTITY_BODY, id, &Vec::new()).unwrap();
+            entity.report = Some(Arc::new(DeploymentReport::default()));
+            entity
+        })
+        .collect();
+    let lost = std::sync::atomic::AtomicU64::new(0);
+    let panicked = std::sync::atomic::AtomicBool::new(false);
+
+    record_flush_failures_or_count_lost(&pool, &lost, &entities, |id| {
+        if id == panics && !panicked.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            panic!("recording exploded");
+        }
+        (id != committed).then(|| "left out".to_string())
+    })
+    .await;
+
+    assert_eq!(lost.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let reported: Vec<u64> = entities
+        .iter()
+        .map(|e| e.report.as_ref().unwrap().lost())
+        .collect();
+    assert_eq!(reported, [0, 0, 1, 1, 0], "each id once, on its first copy");
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    )
+    .bind([&committed, &recorded, &panics, &unreached])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, std::slice::from_ref(&recorded));
+    delete_entity_rows(&pool, &[&recorded]).await;
 }

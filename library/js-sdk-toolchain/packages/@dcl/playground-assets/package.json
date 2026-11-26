@@ -4,8 +4,8 @@
   "version": "7.0.0",
   "author": "Decentraland",
   "dependencies": {
-    "@dcl/js-runtime": "file:../js-runtime",
-    "@dcl/sdk": "file:../sdk"
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk": "workspace:*"
   },
   "devDependencies": {
     "@microsoft/api-extractor": "^7.33.8"
@@ -19,12 +19,13 @@
   "main": "./dist/index.js",
   "minCliVersion": "3.12.3",
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/playground-assets"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/playground-assets"
   },
   "scripts": {
-    "build": "npm run build-playground && node_modules/.bin/api-extractor run",
-    "build-local": "npm run build-playground && node_modules/.bin/api-extractor run --local --verbose --diagnostics",
+    "build": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run",
+    "build-local": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint && api-extractor run --local --verbose --diagnostics",
     "build-playground": "./../sdk-commands/dist/index.js build --production --emitDeclaration --customEntryPoint"
   },
   "tsdoc": {

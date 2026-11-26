@@ -3,12 +3,17 @@ use bevy::{
     prelude::*,
     render::render_resource::Extent3d,
 };
+#[cfg(target_arch = "wasm32")]
+use common::structs::AudioSettings;
 use common::{debug_panic, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
-    AudioTransmitterVolume, TransmissionImageResized, TransmitterKind,
+    AudioTransmitterVolume, AutomaticVideoShown, SelectedVideoTransmitter,
+    TransmissionImageResized, TransmitterKind, VideoTrackSource,
 };
+#[cfg(target_arch = "wasm32")]
+use media::VideoData;
 #[cfg(not(target_arch = "wasm32"))]
 use {
     bevy::ecs::world::OnDespawn,
@@ -19,8 +24,6 @@ use {
     },
     tokio::sync::{mpsc, oneshot},
 };
-#[cfg(target_arch = "wasm32")]
-use {common::structs::AudioSettings, media::VideoData};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::livekit::{
@@ -31,9 +34,13 @@ use crate::livekit::{
 };
 #[cfg(target_arch = "wasm32")]
 use crate::livekit::{
-    track::HtmlMediaEntity,
+    track::{HtmlMediaEntity, SelectedHtmlMediaEntity, StartVideoOutputs},
     web::{RemoteTrack, TrackKind, TrackSource},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::voice_chat::VoiceRoom;
+#[cfg(target_arch = "wasm32")]
+use crate::voice_chat::VoiceRoomTrack;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -74,9 +81,16 @@ impl Plugin for LivekitTrackPlugin {
         }
         #[cfg(not(target_arch = "wasm32"))]
         app.add_observer(audio_track_unpublished);
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_observer(audio_track_unsubscribed);
         app.add_observer(video_track_is_now_subscribed);
-        #[cfg(target_arch = "wasm32")]
         app.add_observer(video_track_is_now_unsubscribed);
+        #[cfg(target_arch = "wasm32")]
+        app.add_observer(start_video_outputs);
+        app.add_observer(video_output_demanded::<SelectedVideoTransmitter>);
+        app.add_observer(selected_transmitter_removed);
+        app.add_observer(video_output_demanded::<AutomaticVideoShown>);
+        app.add_observer(automatic_video_hidden);
 
         app.add_observer(active_transmitter_added);
         app.add_observer(active_transmitter_removed);
@@ -104,6 +118,7 @@ fn track_published(
     trigger: Trigger<TrackPublished>,
     mut commands: Commands,
     participants: Query<(Entity, &LivekitParticipant, &HostedBy, Has<ActiveSpeaker>)>,
+    scene_rooms: Query<&crate::SceneRoom>,
     transport_senders: crate::global_crdt::TransportSenders,
     mut player_update_tasks: PlayerUpdateTasksMut,
     livekit_runtime: LivekitRuntimeRes,
@@ -143,6 +158,13 @@ fn track_published(
         }
         TrackKind::Video => {
             entity_cmd.try_insert(Video);
+            if let Ok(scene_room) = scene_rooms.get(room_entity) {
+                entity_cmd.try_insert(VideoTrackSource {
+                    scene_hash: scene_room.0.to_string(),
+                    identity: identity_str.to_owned(),
+                    track_sid: track.sid().to_string(),
+                });
+            }
         }
     }
     match track.source() {
@@ -197,6 +219,10 @@ fn track_published(
         let Some(sender) = transport_senders.get(room_entity) else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        if track.source() == TrackSource::Microphone {
+            entity_cmd.try_insert(ProximityMicrophone);
+        }
         let task = livekit_runtime.spawn(async move {
             sender
                 .send(
@@ -349,7 +375,9 @@ fn track_unsubscribed(
 fn subscribe_to_audio_track(
     mut trigger: Trigger<SubscribeToAudioTrack>,
     mut commands: Commands,
-    tracks: Query<&LivekitTrack, With<Audio>>,
+    tracks: Query<(&LivekitTrack, &PublishedBy), With<Audio>>,
+    participants: Query<&HostedBy>,
+    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -364,13 +392,19 @@ fn subscribe_to_audio_track(
         );
         return;
     }
-    let Ok(track) = tracks.get(entity) else {
+    let Ok((track, publisher)) = tracks.get(entity) else {
         error!(
             "Can't subscribe to audio track {} because it is not a track.",
             entity
         );
         return;
     };
+    if participants
+        .get(publisher.get())
+        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
 
     debug!("Subscribing to audio track {}", track.sid());
     let track = track.clone();
@@ -396,7 +430,9 @@ fn subscribe_to_audio_track(
 fn subscribe_to_track(
     trigger: Trigger<SubscribeToTrack>,
     mut commands: Commands,
-    tracks: Query<(&LivekitTrack, AnyOf<(&Audio, &Video)>)>,
+    tracks: Query<(&LivekitTrack, &PublishedBy, AnyOf<(&Audio, &Video)>)>,
+    participants: Query<&HostedBy>,
+    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -405,10 +441,16 @@ fn subscribe_to_track(
         error!("SubscribeToTrack is an entity event. Call it with 'Commands::trigger_targets'.");
         return;
     }
-    let Ok((track, audio_or_video)) = tracks.get(entity) else {
+    let Ok((track, publisher, audio_or_video)) = tracks.get(entity) else {
         error!("Can't subscribe to {} because it is not a track.", entity);
         return;
     };
+    if participants
+        .get(publisher.get())
+        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
 
     let track = track.clone();
 
@@ -452,7 +494,6 @@ fn unsubscribe_to_track(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribed_audio_track_with_open_sender(
     mut commands: Commands,
     mut tracks: Populated<
@@ -481,7 +522,6 @@ fn subscribed_audio_track_with_open_sender(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn audio_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
@@ -491,13 +531,17 @@ fn audio_track_is_now_subscribed(
             Has<Audio>,
             Has<AudioStreamingHandle>,
             Has<OpenAudioSender>,
+            Option<&AudioTransmitterVolume>,
         ),
         With<Subscribed>,
     >,
+    published_by: Query<&PublishedBy>,
+    participants: Query<&HostedBy>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
 ) {
     let entity = trigger.target();
-    let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender)) =
+    let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender, multiplier)) =
         tracks.get(entity)
     else {
         debug_panic!("Subscribed track did not have LivekitTrack.");
@@ -522,7 +566,21 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    let Ok(handle) = livekit_audio_manager.play(StreamingSoundData::from_decoder(decoder)) else {
+    // a call's voices follow the voice chat volume, casts and streams the scene's
+    let in_voice_room = published_by
+        .get(entity)
+        .ok()
+        .and_then(|published_by| participants.get(published_by.get()).ok())
+        .is_some_and(|hosted_by| voice_rooms.contains(hosted_by.get()));
+    let destination: kira::OutputDestination = if in_voice_room {
+        (&livekit_audio_manager.voice_track).into()
+    } else {
+        (&livekit_audio_manager.scene_track).into()
+    };
+    let sound = StreamingSoundData::from_decoder(decoder)
+        .output_destination(destination)
+        .volume(super::transmitter_volume(multiplier.map(|volume| **volume)) as f64);
+    let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
     };
@@ -530,6 +588,20 @@ fn audio_track_is_now_subscribed(
     commands
         .entity(entity)
         .try_insert(AudioStreamingHandle { handle });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn audio_track_unsubscribed(
+    trigger: Trigger<OnRemove, Subscribed>,
+    mut commands: Commands,
+    mut tracks: Query<&mut AudioStreamingHandle>,
+) {
+    if let Ok(mut handle) = tracks.get_mut(trigger.target()) {
+        handle.stop(Default::default());
+        commands
+            .entity(trigger.target())
+            .try_remove::<AudioStreamingHandle>();
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -589,92 +661,145 @@ fn video_track_is_now_subscribed(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
-fn video_track_is_now_subscribed(
-    trigger: Trigger<OnAdd, Subscribed>,
-    mut commands: Commands,
-    tracks: Query<(&LivekitTrack, Has<Video>, Option<&ActiveTransmitter>), With<Subscribed>>,
-) {
-    let entity = trigger.target();
-    let Ok((track, is_video, maybe_active_transmitter)) = tracks.get(entity) else {
-        debug_panic!("Subscribed track did not have LivekitTrack.");
-    };
-    if !is_video {
-        trace!("Subscribed track was not a video track.");
-        return;
-    }
-    let Some(active_transmitter) = maybe_active_transmitter else {
-        debug!("Video subscribbed to without being active transmitter.");
-        return;
-    };
-
-    let Some(RemoteTrack::Video(video)) = track.track() else {
-        debug_panic!("A subscribed video track did not have a video RemoteTrack.");
-    };
-
-    let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    let image = active_transmitter.image.clone();
-    // the page attaches the track's video element to the media host under this id
-    let media_id = media::adopt_video(
-        command_receiver,
-        video_sender,
-        active_transmitter.state.clone(),
-        &image,
-    );
-    video.attach(media_id);
-    commands.entity(entity).try_insert(HtmlMediaEntity {
-        _commands: command_sender,
-        video: video_receiver,
-        image,
-    });
+fn video_track_is_now_subscribed(trigger: Trigger<OnAdd, Subscribed>, mut commands: Commands) {
+    commands.entity(trigger.target()).trigger(StartVideoOutputs);
 }
 
 #[cfg(target_arch = "wasm32")]
-fn video_track_is_now_unsubscribed(
-    trigger: Trigger<OnReplace, Subscribed>,
+fn start_video_outputs(
+    trigger: Trigger<StartVideoOutputs>,
     mut commands: Commands,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            Option<&ActiveTransmitter>,
+            Has<AutomaticVideoShown>,
+            Option<&SelectedVideoTransmitter>,
+            Has<HtmlMediaEntity>,
+            Has<SelectedHtmlMediaEntity>,
+        ),
+        (With<Subscribed>, With<Video>),
+    >,
 ) {
     let entity = trigger.target();
-    commands.entity(entity).try_remove::<HtmlMediaEntity>();
+    let Ok((track, automatic, shown, selected, has_automatic, has_selected)) = tracks.get(entity)
+    else {
+        return;
+    };
+    let Some(RemoteTrack::Video(video)) = track.track() else {
+        return;
+    };
+    let adopt = |output: &ActiveTransmitter| {
+        let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
+        let media_id = media::adopt_video(
+            command_receiver,
+            video_sender,
+            output.state.clone(),
+            &output.image,
+        );
+        video.attach(media_id);
+        HtmlMediaEntity {
+            _commands: command_sender,
+            video: video_receiver,
+            image: output.image.clone(),
+        }
+    };
+    if let Some(output) = automatic.filter(|_| shown && !has_automatic) {
+        commands.entity(entity).try_insert(adopt(output));
+    }
+    if let Some(output) = selected.filter(|_| !has_selected) {
+        commands
+            .entity(entity)
+            .try_insert(SelectedHtmlMediaEntity(adopt(&output.0)));
+    }
+}
+
+fn video_track_is_now_unsubscribed(
+    trigger: Trigger<OnRemove, Subscribed>,
+    mut commands: Commands,
+    video_tracks: Query<(), With<Video>>,
+) {
+    if !video_tracks.contains(trigger.target()) {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    commands
+        .entity(trigger.target())
+        .try_remove::<(HtmlMediaEntity, SelectedHtmlMediaEntity)>();
+    #[cfg(not(target_arch = "wasm32"))]
+    commands
+        .entity(trigger.target())
+        .try_remove::<(VideoFrameReceiver, LivekitTrackTask)>();
 }
 
 #[cfg(target_arch = "wasm32")]
 fn queue_frame_copy(
-    mut video_tracks: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
+    mut automatic: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
+    mut selected: Query<&mut SelectedHtmlMediaEntity, (With<Video>, With<Subscribed>)>,
     mut images: ResMut<Assets<Image>>,
-    mut transmission_image_resized: EventWriter<TransmissionImageResized>,
+    mut resized: EventWriter<TransmissionImageResized>,
 ) {
-    for mut html_media_entity in video_tracks.iter_mut() {
-        while let Ok(data) = html_media_entity.video.try_recv() {
-            // the render world copies the frames into the image itself; only its size is
-            // followed here
+    let mut update = |output: &mut HtmlMediaEntity| {
+        while let Ok(data) = output.video.try_recv() {
             let VideoData::Info(info) = data else {
                 continue;
             };
-            let Some(image) = images.get_mut(html_media_entity.image.id()) else {
+            let Some(image) = images.get_mut(output.image.id()) else {
                 continue;
             };
-            debug!("Resizing active transmitter image.");
             image.data = None;
             image.texture_descriptor.size = Extent3d {
                 width: info.width,
                 height: info.height,
                 depth_or_array_layers: 1,
             };
-            transmission_image_resized.write(TransmissionImageResized);
+            resized.write(TransmissionImageResized);
         }
+    };
+    for mut output in &mut automatic {
+        update(&mut output);
+    }
+    for mut output in &mut selected {
+        update(&mut output.0);
+    }
+}
+
+fn video_output_demanded<T: Component>(
+    trigger: Trigger<OnAdd, T>,
+    mut commands: Commands,
+    tracks: Query<Has<Subscribed>>,
+) {
+    if tracks.get(trigger.target()).unwrap_or(false) {
+        #[cfg(target_arch = "wasm32")]
+        commands.entity(trigger.target()).trigger(StartVideoOutputs);
+    } else {
+        commands.entity(trigger.target()).trigger(SubscribeToTrack);
+    }
+}
+
+fn selected_transmitter_removed(
+    trigger: Trigger<OnRemove, SelectedVideoTransmitter>,
+    mut commands: Commands,
+    tracks: Query<Has<AutomaticVideoShown>>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    commands
+        .entity(trigger.target())
+        .try_remove::<SelectedHtmlMediaEntity>();
+    if !tracks.get(trigger.target()).unwrap_or(false) {
+        commands.entity(trigger.target()).queue_handled(
+            entity_command::trigger(UnsubscribeToTrack),
+            bevy::ecs::error::debug,
+        );
     }
 }
 
 fn active_transmitter_added(
     trigger: Trigger<OnAdd, ActiveTransmitter>,
-    mut commands: Commands,
     active_transmitters: Query<&ActiveTransmitter>,
 ) {
     let entity = trigger.target();
-    commands.entity(entity).trigger(SubscribeToTrack);
-
     let Ok(active_transmitter) = active_transmitters.get(entity) else {
         unreachable!("Infallible query.");
     };
@@ -683,19 +808,29 @@ fn active_transmitter_added(
 
 fn active_transmitter_removed(
     trigger: Trigger<OnRemove, ActiveTransmitter>,
-    mut commands: Commands,
     active_transmitters: Query<&ActiveTransmitter>,
 ) {
     let entity = trigger.target();
-    commands.entity(entity).queue_handled(
-        entity_command::trigger(UnsubscribeToTrack),
-        bevy::ecs::error::debug,
-    );
-
     let Ok(active_transmitter) = active_transmitters.get(entity) else {
         unreachable!("Infallible query.");
     };
     active_transmitter.send_if_modified(VideoState::VsLoading);
+}
+
+fn automatic_video_hidden(
+    trigger: Trigger<OnRemove, AutomaticVideoShown>,
+    mut commands: Commands,
+    tracks: Query<Has<SelectedVideoTransmitter>>,
+) {
+    let entity = trigger.target();
+    #[cfg(target_arch = "wasm32")]
+    commands.entity(entity).try_remove::<HtmlMediaEntity>();
+    if !tracks.get(entity).unwrap_or(false) {
+        commands.entity(entity).queue_handled(
+            entity_command::trigger(UnsubscribeToTrack),
+            bevy::ecs::error::debug,
+        );
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -703,60 +838,68 @@ const BUFFER_THRESHOLD: f64 = 1.;
 #[cfg(not(target_arch = "wasm32"))]
 fn copy_frame(
     mut commands: Commands,
-    active_transmitter: Single<(Entity, &ActiveTransmitter, &mut VideoFrameReceiver)>,
+    mut tracks: Query<(
+        Entity,
+        Option<&ActiveTransmitter>,
+        Has<AutomaticVideoShown>,
+        Option<&SelectedVideoTransmitter>,
+        &mut VideoFrameReceiver,
+    )>,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
 ) {
-    let (entity, active_transmitter, mut video_frame_receiver): (
-        Entity,
-        &ActiveTransmitter,
-        Mut<VideoFrameReceiver>,
-    ) = active_transmitter.into_inner();
-
-    let Some(image) = images.get_mut(active_transmitter.image.id()) else {
-        debug_panic!("ActiveTransmitter image handle is invalid");
-    };
-
-    let mut frame = None;
-    loop {
-        match video_frame_receiver.receiver.try_recv() {
-            Ok(new_frame) => {
-                frame = Some(new_frame);
-                video_frame_receiver.last_received = time.elapsed_secs_f64();
-            }
-            Err(mpsc::error::TryRecvError::Empty) => {
-                let elapsed = time.elapsed_secs_f64();
-                if elapsed > video_frame_receiver.last_received + BUFFER_THRESHOLD {
-                    active_transmitter.send_if_modified(VideoState::VsBuffering);
-                    video_frame_receiver.last_received = elapsed;
+    for (entity, automatic, shown, selected, mut receiver) in &mut tracks {
+        let outputs = [automatic.filter(|_| shown), selected.map(|s| &s.0)];
+        if outputs.iter().all(Option::is_none) {
+            continue;
+        }
+        let mut frame = None;
+        loop {
+            match receiver.receiver.try_recv() {
+                Ok(new_frame) => {
+                    frame = Some(new_frame);
+                    receiver.last_received = time.elapsed_secs_f64();
                 }
-                break;
-            }
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                error!("VideoFrameReceiver has disconnected.");
-                active_transmitter.send_if_modified(VideoState::VsError);
-                commands.entity(entity).try_remove::<VideoFrameReceiver>();
-                break;
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    if time.elapsed_secs_f64() > receiver.last_received + BUFFER_THRESHOLD {
+                        for output in outputs.into_iter().flatten() {
+                            output.send_if_modified(VideoState::VsBuffering);
+                        }
+                        receiver.last_received = time.elapsed_secs_f64();
+                    }
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    for output in outputs.into_iter().flatten() {
+                        output.send_if_modified(VideoState::VsError);
+                    }
+                    commands.entity(entity).try_remove::<VideoFrameReceiver>();
+                    break;
+                }
             }
         }
-    }
-    if let Some(frame) = frame {
-        active_transmitter.send_if_modified(VideoState::VsPlaying);
-        if image.width() != frame.width() || image.height() != frame.height() {
-            debug!("Resizing active transmitter image.");
-            image.resize(Extent3d {
-                width: frame.width(),
-                height: frame.height(),
-                depth_or_array_layers: 1,
-            });
-            commands.send_event(TransmissionImageResized);
-        }
-        if let Some(data) = &mut image.data {
-            // TODO verify this transfer priority
-            image.transfer_priority = bevy::asset::RenderAssetTransferPriority::Priority(-2);
-            frame.rgba_data_into_slice(data.as_mut_slice());
-        } else {
-            image.data = Some(frame.rgba_data());
+        if let Some(frame) = frame {
+            for output in outputs.into_iter().flatten() {
+                let Some(image) = images.get_mut(output.image.id()) else {
+                    continue;
+                };
+                output.send_if_modified(VideoState::VsPlaying);
+                if image.width() != frame.width() || image.height() != frame.height() {
+                    image.resize(Extent3d {
+                        width: frame.width(),
+                        height: frame.height(),
+                        depth_or_array_layers: 1,
+                    });
+                    commands.send_event(TransmissionImageResized);
+                }
+                if let Some(data) = &mut image.data {
+                    image.transfer_priority =
+                        bevy::asset::RenderAssetTransferPriority::Priority(-2);
+                    frame.rgba_data_into_slice(data.as_mut_slice());
+                } else {
+                    image.data = Some(frame.rgba_data());
+                }
+            }
         }
     }
 }
@@ -791,25 +934,135 @@ fn on_active_audio_transmitter_remove(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn update_track_volume(tracks: Populated<(&mut AudioStreamingHandle, &AudioTransmitterVolume)>) {
+fn update_track_volume(
+    tracks: Populated<(
+        &mut AudioStreamingHandle,
+        Option<&AudioTransmitterVolume>,
+        Has<Subscribed>,
+    )>,
+) {
     use kira::tween::Tween;
-    for (mut audio_streaming_handle, audio_transmitter_volume) in tracks.into_inner() {
+    for (mut audio_streaming_handle, multiplier, subscribed) in tracks.into_inner() {
+        let volume = if subscribed {
+            super::transmitter_volume(multiplier.map(|volume| **volume))
+        } else {
+            0.0
+        };
         audio_streaming_handle
             .handle
-            .set_volume(**audio_transmitter_volume as f64, Tween::default());
+            .set_volume(volume as f64, Tween::default());
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
+#[derive(Component)]
+pub(in crate::livekit) struct ProximityMicrophone;
+
+#[cfg(target_arch = "wasm32")]
 fn update_track_volume(
-    tracks: Populated<(&LivekitTrack, &AudioTransmitterVolume), (With<Audio>, With<Subscribed>)>,
+    tracks: Populated<
+        (
+            &LivekitTrack,
+            Option<&AudioTransmitterVolume>,
+            Has<ProximityMicrophone>,
+            Has<VoiceRoomTrack>,
+        ),
+        (With<Audio>, With<Subscribed>),
+    >,
     audio_settings: Res<AudioSettings>,
 ) {
-    for (livekit_track, audio_transmitter_volume) in tracks.into_inner() {
+    for (livekit_track, multiplier, proximity_microphone, voice_room) in tracks.into_inner() {
+        let Some(volume) = scene_track_volume(
+            proximity_microphone,
+            voice_room,
+            multiplier.map(|volume| **volume),
+            audio_settings.scene(),
+        ) else {
+            continue;
+        };
         let Some(RemoteTrack::Audio(audio)) = livekit_track.track() else {
             debug_panic!("A subscribed audio track did not have an audio RemoteTrack.");
         };
-        audio.set_volume(**audio_transmitter_volume * audio_settings.scene());
+        audio.set_volume(volume);
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn scene_track_volume(
+    proximity_microphone: bool,
+    voice_room: bool,
+    multiplier: Option<f32>,
+    scene_volume: f32,
+) -> Option<f32> {
+    // Nearby and call microphone gains are owned by their respective panning systems.
+    if proximity_microphone || voice_room {
+        return None;
+    }
+    Some(super::finite_gain(
+        super::transmitter_volume(multiplier) * scene_volume,
+    ))
+}
+
+#[cfg(test)]
+mod browser_volume_tests {
+    use super::*;
+
+    #[test]
+    fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(true, false, None, 0.5), None);
+        assert_eq!(scene_track_volume(true, false, Some(0.25), 0.5), None);
+        assert_eq!(
+            scene_track_volume(false, false, Some(0.25), 0.5),
+            Some(0.125)
+        );
+    }
+
+    #[test]
+    fn scene_volume_is_finite_and_within_unit_range() {
+        assert_eq!(scene_track_volume(false, false, Some(4.0), 0.5), Some(0.5));
+        assert_eq!(scene_track_volume(false, false, Some(-1.0), 0.5), Some(0.0));
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::NAN), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::INFINITY), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(scene_track_volume(false, false, None, f32::NAN), Some(0.0));
+        assert_eq!(scene_track_volume(false, false, None, 2.0), Some(1.0));
+    }
+
+    #[test]
+    fn call_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(false, true, None, 0.5), None);
+        assert_eq!(scene_track_volume(false, true, Some(0.25), 0.0), None);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod selected_video_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_subscription_keeps_frames_until_actual_unsubscribe() {
+        let mut app = App::new();
+        app.add_observer(video_track_is_now_unsubscribed);
+        let (_sender, receiver) = mpsc::channel(1);
+        let track = app
+            .world_mut()
+            .spawn((
+                Video,
+                Subscribed,
+                VideoFrameReceiver {
+                    receiver,
+                    last_received: 0.,
+                },
+            ))
+            .id();
+        app.world_mut().entity_mut(track).insert(Subscribed);
+        assert!(app.world().get::<VideoFrameReceiver>(track).is_some());
+        app.world_mut().entity_mut(track).remove::<Subscribed>();
+        assert!(app.world().get::<VideoFrameReceiver>(track).is_none());
     }
 }

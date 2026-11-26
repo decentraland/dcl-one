@@ -1,0 +1,94 @@
+.MetricDisplay {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.MetricDisplay .MetricLabel {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+}
+
+.MetricDisplay .MetricLabel .Label {
+  color: var(--dcl-silver);
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+}
+
+.MetricDisplay .MetricInfo.MetricInfo {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 100px;
+  color: var(--dcl-silver);
+}
+
+.MetricDisplay .MetricInfo.MetricInfo:hover {
+  background: var(--palette-whiteTransparent-subtle);
+}
+
+.MetricDisplay .MetricInfo.MetricInfo:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.MetricDisplay .MetricInfo svg {
+  font-size: 18px;
+}
+
+.MetricDisplay .MetricValue.MetricValue {
+  font-size: var(--type-h1-semi-size);
+  font-weight: var(--type-h1-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h1-semi-letter-spacing);
+  font-variant-numeric: tabular-nums;
+}
+
+.MetricDisplay .MetricUnit {
+  font-weight: var(--type-h6-regular-weight);
+}
+
+/* The tip sits 14px from the button; the atom places it at 12px. */
+.tt__tip.MetricTooltip {
+  display: block;
+  margin-top: -2px;
+  padding: 16px 20px;
+  border-radius: var(--shape-borderRadiusLarge);
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-tooltip);
+  color: var(--palette-neutral-softWhite);
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  text-align: left;
+}
+
+.tt__tip.MetricTooltip.tt__tip--bottom {
+  margin-top: 2px;
+}
+
+/* The arrow is a 22px by 15.62px box turned about the corner on the tip edge. */
+.tt__tip.MetricTooltip.tt__tip--arrow::before {
+  left: calc(50% - 11px);
+  width: 22px;
+  height: 15.62px;
+}
+
+.tt__tip.MetricTooltip.tt__tip--top::before {
+  top: 100%;
+  bottom: auto;
+  transform-origin: 100% 0;
+}
+
+.tt__tip.MetricTooltip.tt__tip--bottom::before {
+  top: auto;
+  bottom: 100%;
+  transform-origin: 0 100%;
+}

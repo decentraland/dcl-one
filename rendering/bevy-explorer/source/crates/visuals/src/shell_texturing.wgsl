@@ -1,5 +1,10 @@
 #ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
     #import bevy_pbr::prepass_io::{VertexOutput, FragmentOutput};
+#else
+    // a depth-only pass (a depth prepass without a normal prepass, a shadow map) has no output
+    #import bevy_pbr::prepass_io::VertexOutput;
+#endif
 #else
     #import bevy_pbr::forward_io::{VertexOutput, FragmentOutput};
     #import bevy_pbr::pbr_fragment::pbr_input_from_vertex_output;
@@ -19,22 +24,28 @@
 // same softened sun shadows as scene materials (see bound_material.wgsl)
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
-    // far bound of the last cascade = the shadow distance for this light
+    // the far bound of the last cascade is the shadow distance for this light
     let light = &lights.directional_lights[light_id];
     let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
-    return soften_directional_shadow(base, far, view_z);
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
 }
 
 #ifdef ENVIRONMENT_MAP
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
-// (see sky_envmap_lookup.wgsl)
+// the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
+// levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);
     let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
     return sky_envmap_level(radiances, input, upper, lights.ambient_color);
+}
+
+// the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
+override fn environment_map::environment_map_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
+    return sky_envmap_light(input, clusterable_object_index_ranges, found_diffuse_indirect);
 }
 
 override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
@@ -74,13 +85,22 @@ fn cell_hash2(cell: vec2<i32>) -> vec2<f32> {
 
 
 @fragment
+#ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#else
+// depth only: the shells still discard, so the depth has the same holes as the colour
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) {
+#endif
+#else
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+#endif
     // metres of ground per pixel, taken before any discard so the derivatives stay uniform
     let footprint = max(fwidth(in.world_position.x), fwidth(in.world_position.z));
 
     // shells are double sided so the inside of a hill shows; dither them out between the camera
     // and the player like scene materials
-    discard_dither(in.position.xy, in.world_position.xyz, view.user_value, true, 0.0, vec3(0.0), false);
+    discard_dither(in.position.xy, in.world_position.xyz, view.user_value, 0.0, vec3(0.0), false);
     if beyond_coast(in.world_position.xz, terrain.coast) {
         discard;
     }
@@ -136,9 +156,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         discard;
     }
 
+#ifdef PREPASS_PIPELINE
+#ifdef PREPASS_FRAGMENT
     var out: FragmentOutput;
 
-#ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS
     let normal = select(-in.world_normal, in.world_normal, is_front);
     out.normal = vec4(normal * 0.5 + vec3(0.5), 1.0);
@@ -147,18 +168,21 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
     out.frag_depth = in.unclipped_depth;
 #endif // UNCLIPPED_DEPTH_ORTHO_EMULATION
-#endif // PREPASS_PIPELINE
 
-#ifndef PREPASS_PIPELINE
+    return out;
+#endif // PREPASS_FRAGMENT
+#else // PREPASS_PIPELINE
+    var out: FragmentOutput;
+
     var pbr_input = pbr_input_from_vertex_output(in, is_front, true);
     pbr_input.material.reflectance = vec3(0.125);
     pbr_input.material.base_color = mix(shell.root_color, shell.tip_color, color_factor);
 
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif // PREPASS_PIPELINE
 
     return out;
+#endif // PREPASS_PIPELINE
 }
 
 fn color_attenuation(layers: f32) -> f32 {

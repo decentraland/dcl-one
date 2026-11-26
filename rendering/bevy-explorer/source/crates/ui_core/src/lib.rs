@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod bound_node;
 pub mod button;
 pub mod color_picker;
@@ -54,6 +56,12 @@ pub static BODY_TEXT_STYLE: OnceCell<TextStyle> = OnceCell::new();
 pub static HOVER_TEXT_STYLE: OnceCell<[TextStyle; 10]> = OnceCell::new();
 
 pub static FONTS: OnceCell<HashMap<(FontName, WeightName), Handle<Font>>> = OnceCell::new();
+
+/// The colour emoji font every text falls back to, for text that is emoji alone: laid out in
+/// another font, an emoji whose base character that font has (©, ™, ‼) is drawn from it, in
+/// one colour. It is made at startup.
+#[derive(Resource)]
+pub struct EmojiFont(pub Handle<Font>);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 pub enum FontName {
@@ -168,8 +176,8 @@ impl Plugin for UiCorePlugin {
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn setup(
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut tracker: ResMut<StateTracker<State>>,
     mut dui: ResMut<DuiRegistry>,
@@ -177,9 +185,11 @@ fn setup(
     mut fonts: ResMut<Assets<Font>>,
 ) {
     // Load emoji font as fallback for all text rendering
+    let emoji = Arc::new(include_bytes!("NotoColorEmoji.ttf").to_vec());
     font_system
         .db_mut()
-        .load_font_data(include_bytes!("NotoColorEmoji.ttf").to_vec());
+        .load_font_source(Source::Binary(emoji.clone()));
+    commands.insert_resource(EmojiFont(fonts.add(Font { data: emoji })));
 
     // tracker.load_asset(asset_server.load_folder("ui"));
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/avatar.dui"));

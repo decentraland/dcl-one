@@ -18,10 +18,8 @@ use sqlx::PgPool;
 
 use catalyst::content::sync::{LiveDeploymentRepository, SyncStatus, resume_point};
 
-#[path = "support/auth.rs"]
-mod auth;
-#[path = "support/db.rs"]
-mod db;
+use crate::auth;
+use crate::db;
 #[path = "support/phased_bootstrap.rs"]
 mod phased_bootstrap;
 
@@ -100,16 +98,16 @@ async fn each_server_resumes_from_its_own_cursor_after_restart() {
     let cursor_c = repo.get_server_sync_cursor(server_c).await.unwrap();
 
     assert_eq!(
-        resume_point(cursor_a, frontier),
+        resume_point(cursor_a),
         1_000_000,
         "the stalled server must resume from its own cursor, not ride the global frontier \
          past its undeployed entities"
     );
-    assert_eq!(resume_point(cursor_b, frontier), 9_000_000);
+    assert_eq!(resume_point(cursor_b), 9_000_000);
     assert_eq!(
-        (cursor_c, resume_point(cursor_c, frontier)),
-        (None, 9_000_000),
-        "a server never seen before falls back to the global frontier"
+        (cursor_c, resume_point(cursor_c)),
+        (None, 0),
+        "a server never seen before starts from its own snapshots, not the global frontier"
     );
     assert_eq!(
         frontier, 9_000_000,

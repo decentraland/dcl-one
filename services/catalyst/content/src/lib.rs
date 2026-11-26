@@ -30,15 +30,22 @@ pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
 
 pub use crate::shared::cache;
+pub mod collections_v1;
 mod connection;
 pub use crate::shared::{cors, nul_guard, query_params};
 pub mod entity;
 pub mod errors;
 pub mod formatters;
+pub mod metrics;
 pub mod queries;
+pub mod series;
 pub mod sync_types;
 pub mod validation;
 pub mod validator;
+
+/// JSON preserving decoded property insertion order, with JavaScript index-key enumeration.
+/// Literal user objects are never interpreted as serializer number markers.
+pub type OrderedJson = validator::jsjson::JsValue<false>;
 pub mod wire_types;
 
 // The write path peer sync drives: remote entity fetch + hash proof, auth-chain
@@ -54,6 +61,7 @@ pub mod write_deployer;
 // the upstream forwarding of local deploys (CONTENT_FORWARD_UPSTREAM_URL).
 pub mod create_entity;
 pub mod denylist;
+pub mod failed_deployments_store;
 pub mod forward;
 pub mod land_publish;
 pub mod partial_deployments;
@@ -74,9 +82,13 @@ pub mod time_range;
 // (READ_THROUGH_ENABLED).
 pub mod read_through;
 
-// A sync-only node's history prune: the superseded deployments, their
+// The history prune: superseded deployments (local scenes excepted), their
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
+
+// Profile avatar renders named only in metadata: their content_files rows, and the one-off
+// repair of profiles stored without them (`catalyst content repair-profile-snapshots`).
+pub mod profile_snapshots;
 
 mod about;
 pub mod about_comms;
@@ -87,6 +99,7 @@ pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
+mod file_type;
 mod fixed_windows;
 pub mod get_content;
 mod pointer_changes;
@@ -157,8 +170,24 @@ pub struct Settings {
     /// `MAX_UPLOAD_FIELD_COUNT`, `MAX_UPLOAD_FIELD_SIZE`: the non-file fields of a deploy form.
     pub max_upload_field_count: usize,
     pub max_upload_field_bytes: usize,
-    /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`, at least one maximum-size deployment.
+    /// `MAX_UPLOAD_FILE_COUNT`, `MAX_UPLOAD_FILE_SIZE`: the files of a deploy form.
+    pub max_upload_file_count: usize,
+    pub max_upload_file_bytes: usize,
+    /// `MAX_UPLOAD_TOTAL_SIZE`: the bytes of every file and field value of a deploy form.
+    pub max_upload_total_bytes: usize,
+    /// `READ_ONLY`: the write routes answer the router's not-found, whatever
+    /// the console's toggle says.
+    pub read_only: bool,
+    /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`: what `POST /entities` requests
+    /// buffer at once (their fields, entity files and the files their
+    /// validation reads), never below one request's most
+    /// ([`create_entity::max_heap_share`]).
     pub max_in_memory_deployment_bytes: u64,
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES` (read by worlds too): the disk the
+    /// `POST /entities` spool may take at once, never below one maximal form.
+    pub max_in_flight_upload_bytes: u64,
+    /// `UPLOAD_SPOOL_FOLDER`; unset, `<STORAGE_ROOT_FOLDER>/tmp/content-uploads`.
+    pub upload_spool_folder: Option<std::path::PathBuf>,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
     /// `POST_ENTITIES_RATE_LIMIT_MAX` per `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`; 0 is off.
@@ -267,7 +296,13 @@ impl Settings {
             admin_token: AdminToken::new(config.writes.catalyrst_content_admin_token.clone()),
             max_upload_field_count: config.content.max_upload_field_count,
             max_upload_field_bytes: config.content.max_upload_field_size,
+            max_upload_file_count: config.content.max_upload_file_count,
+            max_upload_file_bytes: config.content.max_upload_file_size,
+            max_upload_total_bytes: config.content.max_upload_total_size,
+            read_only: config.writes.read_only,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
+            max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
+            upload_spool_folder: config.content.upload_spool_folder.clone(),
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
             post_entities_rate_limit_max: config.content.post_entities_rate_limit_max,
             post_entities_rate_limit_window: Duration::from_secs(
@@ -293,7 +328,7 @@ impl Settings {
             max_in_flight_upload_bytes_per_source: config
                 .content
                 .max_in_flight_upload_bytes_per_source
-                .unwrap_or(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+                .unwrap_or(config.content.max_upload_total_size as u64),
             multipart_upload_timeout: Duration::from_millis(
                 config.worlds.multipart_upload_timeout_ms.max(1),
             ),
@@ -331,14 +366,20 @@ impl Settings {
             admin_token: AdminToken::default(),
             max_upload_field_count: 2 + 3 * 10,
             max_upload_field_bytes: 32 * 1024,
+            max_upload_file_count: 3000,
+            max_upload_file_bytes: 100 * 1024 * 1024,
+            max_upload_total_bytes: 2 * 1024 * 1024 * 1024,
+            read_only: false,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
+            max_in_flight_upload_bytes: 4 * 1024 * 1024 * 1024,
+            upload_spool_folder: None,
             post_entities_daily_quota_max: 300,
             post_entities_rate_limit_max: 200,
             post_entities_rate_limit_window: Duration::from_secs(60),
             content_get_limit: content_get_limit::Config::default(),
             partial_uploads: partial_deployments::Limits::default(),
             max_concurrent_uploads_per_source: 4,
-            max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
+            max_in_flight_upload_bytes_per_source: 2 * 1024 * 1024 * 1024,
             multipart_upload_timeout: Duration::from_secs(300),
             deployment_processing_timeout: Duration::from_secs(300),
             deploy_limits: write_deployer::DeployLimits::default(),
@@ -436,6 +477,7 @@ impl SyncStatus {
     }
 
     pub fn set_state(&self, state: SyncState) {
+        sync::metrics::sync_state(&state);
         *self.state.write() = state;
     }
 
@@ -446,6 +488,11 @@ impl SyncStatus {
             SyncState::PartiallySynced { .. } | SyncState::Syncing => "Syncing",
             SyncState::Failed => "Failed",
         }
+    }
+
+    /// Whether the sync state can serve content according to the realm's /about.
+    pub fn is_ready(&self) -> bool {
+        about::content_is_healthy(self.state_name())
     }
 
     /// Set when the process serves unsynced while `SYNC_SOURCE` names a peer
@@ -460,18 +507,20 @@ impl SyncStatus {
         *self.copy_deploy_types.write() = types;
     }
 
-    /// False while a deploy has to wait: the node is bootstrapping, or it
-    /// serves an unsynced copy of a peer.
+    /// Whether a deploy of any type is taken: only once every type
+    /// bootstrapped (`Syncing`), and never on an unsynced copy of a peer. A
+    /// node still bootstrapping, partially synced or `Failed` refuses.
     pub fn takes_deploys(&self) -> bool {
-        self.state_name() != "Bootstrapping" && !self.unsynced_copy.load(Ordering::Relaxed)
+        self.state() == SyncState::Syncing && !self.is_unsynced_copy()
     }
 
-    /// Whether a deploy of `entity_type` is taken: any while
-    /// [`Self::takes_deploys`], and on an unsynced copy the types it names.
+    /// Whether a deploy of `entity_type` is taken: once that type
+    /// bootstrapped ([`Self::is_type_ready`]), and on an unsynced copy only
+    /// the types it names.
     pub fn takes_deploys_of(&self, entity_type: &str) -> bool {
-        self.takes_deploys()
-            || (self.state_name() != "Bootstrapping"
-                && self
+        self.is_type_ready(entity_type)
+            && (!self.is_unsynced_copy()
+                || self
                     .copy_deploy_types
                     .read()
                     .iter()
@@ -480,8 +529,16 @@ impl SyncStatus {
 
     /// Whether some deploy may be taken: the gate before the form is read.
     pub fn takes_some_deploys(&self) -> bool {
-        self.takes_deploys()
-            || (self.state_name() != "Bootstrapping" && !self.copy_deploy_types.read().is_empty())
+        let some_ready = match &*self.state.read() {
+            SyncState::Syncing => true,
+            SyncState::PartiallySynced { ready_types } => !ready_types.is_empty(),
+            SyncState::Bootstrapping | SyncState::Failed => false,
+        };
+        some_ready && (!self.is_unsynced_copy() || !self.copy_deploy_types.read().is_empty())
+    }
+
+    fn is_unsynced_copy(&self) -> bool {
+        self.unsynced_copy.load(Ordering::Relaxed)
     }
 
     pub fn is_type_ready(&self, entity_type: &str) -> bool {
@@ -538,9 +595,9 @@ pub struct ContentState {
     /// and the snapshot list; cleared when a deployment lands or a local
     /// scene is unpublished.
     pub deployments_cache: TtlMap<String, Bytes>,
-    /// The console's read-only toggle (process state, off at start as the
-    /// old `READ_ONLY` default was): while set, `POST /entities` and
-    /// `DELETE /scenes/{coord}` answer the router's not-found.
+    /// The console's read-only toggle (process state, off at start): while
+    /// it or `READ_ONLY` ([`Settings::read_only`]) is set, `POST /entities`
+    /// and `DELETE /scenes/{coord}` answer the router's not-found.
     pub read_only: AtomicBool,
     /// The console's accepting-users toggle (process state, on at start):
     /// `/about` reports `acceptingUsers` while the node is healthy and this
@@ -556,25 +613,50 @@ pub struct ContentState {
     read_through: OnceLock<Arc<read_through::ReadThrough>>,
     /// Whether the explorer's tile grid is loaded (the minimap draws from it).
     parcel_grid: OnceLock<GridReady>,
-    /// The memory `POST /entities` bodies may hold at once.
+    /// The memory `POST /entities` requests may buffer at once: a fixed
+    /// share per request (fields, parsing) plus its entity file and the
+    /// largest file its validation reads.
     pub upload_budget: upload_admission::UploadBudget,
+    /// The disk the `POST /entities` spool may take at once: each request
+    /// admitted when its declared payload fits, holding its directory's
+    /// charge grown with its spooled bytes (plus a per-file charge).
+    pub spool_budget: upload_admission::UploadBudget,
+    /// Where each `POST /entities` request spools its files
+    /// ([`Settings::upload_spool_folder`]).
+    pub spool_root: std::path::PathBuf,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
     /// `POST /entities` requests per client address and burst window.
     pub deploy_burst: upload_admission::DailyQuota,
-    /// `POST /entities` bodies and bytes in flight per client address.
+    /// `POST /entities` bodies and received bytes in flight per client address.
     pub source_uploads: upload_admission::SourceUploads,
     /// The `/contents/{hash}` burst and quotas per client, this process's.
     pub content_get_limit: content_get_limit::ContentGetLimit,
     /// The `/challenge` text: one bare UUID per process, as upstream's
     /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
     challenge: RwLock<String>,
+    /// The worlds mount's sniffed Content-Type per (content key, ranged window): a sniff can read
+    /// up to 10 MiB of a file, and content does not change under its key.
+    pub(crate) worlds_sniffed: parking_lot::Mutex<hashlink::LruCache<(String, bool), &'static str>>,
+    /// The content server's sniffed Content-Type per content key, for the whole file: a sniff can
+    /// fetch up to 16 MiB of a file, and content does not change under its key.
+    pub(crate) sniffed: parking_lot::Mutex<hashlink::LruCache<String, &'static str>>,
+    /// The content server's sniffed Content-Type per (content key, window start, window end), for
+    /// a range. Clients choose the ranges, so they are kept apart from [`Self::sniffed`].
+    pub(crate) sniffed_ranges:
+        parking_lot::Mutex<hashlink::LruCache<(String, u64, u64), &'static str>>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
 pub type GridReady = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub type SharedState = Arc<ContentState>;
+
+/// The sniffed Content-Types each cache keeps ([`ContentState::worlds_sniffed`],
+/// [`ContentState::sniffed`]).
+pub(crate) const SNIFFED_ENTRIES: usize = 16_384;
+/// The range answers [`ContentState::sniffed_ranges`] keeps.
+pub(crate) const SNIFFED_RANGES: usize = 4_096;
 
 impl ContentState {
     pub fn new(pool: PgPool, settings: Settings, storage: Arc<Storage>) -> Self {
@@ -590,10 +672,21 @@ impl ContentState {
     ) -> Self {
         let denylist = storage.denylist().clone();
         let upload_budget = upload_admission::UploadBudget::new(
+            "memory",
             settings
                 .max_in_memory_deployment_bytes
-                .max(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+                .max(create_entity::max_heap_share(&settings)),
         );
+        let spool_budget = upload_admission::UploadBudget::new(
+            "disk",
+            settings
+                .max_in_flight_upload_bytes
+                .max(create_entity::max_spool_footprint(&settings)),
+        );
+        let spool_root = settings
+            .upload_spool_folder
+            .clone()
+            .unwrap_or_else(|| create_entity::default_spool_root(&storage));
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
         let deploy_burst = upload_admission::DailyQuota::with_window(
@@ -606,6 +699,12 @@ impl ContentState {
         );
         let content_get_limit =
             content_get_limit::ContentGetLimit::new(&settings.content_get_limit);
+        series::build_info(
+            &settings.version,
+            settings.commit_hash.as_deref(),
+            &settings.eth_network,
+        );
+        series::partial_capacity(settings.partial_uploads.global_bytes);
         Self {
             pool,
             settings,
@@ -623,11 +722,16 @@ impl ContentState {
             read_through: OnceLock::new(),
             parcel_grid: OnceLock::new(),
             upload_budget,
+            spool_budget,
+            spool_root,
             deploy_quota,
             deploy_burst,
             source_uploads,
             challenge: RwLock::new(challenge_text()),
             content_get_limit,
+            worlds_sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
+            sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
+            sniffed_ranges: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_RANGES)),
         }
     }
 
@@ -643,13 +747,14 @@ impl ContentState {
     }
 
     pub fn is_read_only(&self) -> bool {
-        self.read_only.load(Ordering::Relaxed)
+        self.settings.read_only || self.read_only.load(Ordering::Relaxed)
     }
 
-    /// Answers the value now in force.
+    /// Sets the console's toggle and answers the value now in force, which
+    /// `READ_ONLY` keeps on.
     pub fn set_read_only(&self, read_only: bool) -> bool {
         self.read_only.store(read_only, Ordering::Relaxed);
-        read_only
+        self.is_read_only()
     }
 
     pub fn is_accepting_users(&self) -> bool {
@@ -820,8 +925,7 @@ fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedS
 /// them (the reverse proxy strips nothing).
 pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
-    let max_deploy_body =
-        create_entity::max_deployment_body_bytes(state.settings.max_upload_field_count);
+    let max_deploy_body = create_entity::max_deployment_body_bytes(&state.settings);
     let mut app = Router::new()
         .route("/about", get(about::get_about))
         // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).
@@ -948,5 +1052,31 @@ mod sync_status_tests {
         assert!(!sync.is_type_ready("scene"));
         sync.set_state(SyncState::Syncing);
         assert!(sync.is_type_ready("scene"));
+    }
+
+    #[test]
+    fn deploys_wait_for_their_type_and_a_failed_sync_takes_none() {
+        let sync = SyncStatus::default();
+        let gates = |sync: &SyncStatus| {
+            (
+                sync.takes_some_deploys(),
+                sync.takes_deploys(),
+                sync.takes_deploys_of("scene"),
+                sync.takes_deploys_of("profile"),
+            )
+        };
+        assert_eq!(gates(&sync), (false, false, false, false), "bootstrapping");
+        sync.set_state(SyncState::PartiallySynced {
+            ready_types: vec!["scene".into()],
+        });
+        assert_eq!(
+            gates(&sync),
+            (true, false, true, false),
+            "profiles still bootstrapping"
+        );
+        sync.set_state(SyncState::Failed);
+        assert_eq!(gates(&sync), (false, false, false, false), "failed");
+        sync.set_state(SyncState::Syncing);
+        assert_eq!(gates(&sync), (true, true, true, true), "synced");
     }
 }

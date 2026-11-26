@@ -3,7 +3,7 @@
 // or second login session. The host supplies its active identity and wallet provider; the runtime
 // navigates inside the Explorer's own route.
 
-import type { AuthIdentity } from "../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import type { Eip1193Provider } from "../data/auth/wallet";
 
 export type ShopHost = {

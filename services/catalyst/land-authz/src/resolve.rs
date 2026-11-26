@@ -157,6 +157,12 @@ type ParcelRightsRow = (
 );
 
 /// The reads over `land_authz.*` for one network's two registries.
+///
+/// A read that depends on the index being published runs on the
+/// connection of a ready snapshot (the `*_on` forms, see
+/// [`crate::indexer::ready_snapshot`]), so its check and its reads see one
+/// state. The forms that read from the pool see no such state; the ones
+/// with an `_on` twin are for tests only.
 #[derive(Clone)]
 pub struct Store {
     pool: PgPool,
@@ -315,9 +321,8 @@ impl Store {
         .await
     }
 
-    /// Subject plus both grant legs per parcel in one round trip,
-    /// positional; `None` = not indexed. The grant legs list operators in
-    /// lamb2's order ([`GRANTED_SINCE`]).
+    /// [`Self::rights_batch_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn rights_batch(
         &self,
         parcels: &[(i32, i32)],
@@ -326,7 +331,10 @@ impl Store {
         self.rights_batch_on(&mut conn, parcels).await
     }
 
-    /// [`Self::rights_batch`] on the caller's connection (a ready snapshot).
+    /// Subject plus both grant legs per parcel in one round trip,
+    /// positional; `None` = not indexed. The grant legs list operators in
+    /// lamb2's order ([`GRANTED_SINCE`]). On the caller's connection (a
+    /// ready snapshot).
     pub async fn rights_batch_on(
         &self,
         conn: &mut PgConnection,
@@ -336,10 +344,8 @@ impl Store {
             .await
     }
 
-    /// [`Self::rights_batch`] for the deploy check, which reads only whether
-    /// the actor is among the grant legs: the operators come in address
-    /// order, without the two history lookups per operator that lamb2's
-    /// order costs.
+    /// [`Self::deploy_rights_batch_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn deploy_rights_batch(
         &self,
         parcels: &[(i32, i32)],
@@ -348,8 +354,10 @@ impl Store {
         self.deploy_rights_batch_on(&mut conn, parcels).await
     }
 
-    /// [`Self::deploy_rights_batch`] on the caller's connection (a ready
-    /// snapshot).
+    /// [`Self::rights_batch_on`] for the deploy check, which reads only
+    /// whether the actor is among the grant legs: the operators come in
+    /// address order, without the two history lookups per operator that
+    /// lamb2's order costs.
     pub async fn deploy_rights_batch_on(
         &self,
         conn: &mut PgConnection,
@@ -439,11 +447,14 @@ impl Store {
         Ok(out)
     }
 
+    /// [`Self::rights_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn rights(&self, x: i32, y: i32) -> Result<Option<ParcelRights>, sqlx::Error> {
         Ok(self.rights_batch(&[(x, y)]).await?.pop().flatten())
     }
 
-    /// [`Self::rights`] on the caller's connection (a ready snapshot).
+    /// One parcel's [`Self::rights_batch_on`], on the caller's connection (a
+    /// ready snapshot).
     pub async fn rights_on(
         &self,
         conn: &mut PgConnection,
@@ -453,16 +464,12 @@ impl Store {
         Ok(self.rights_batch_on(conn, &[(x, y)]).await?.pop().flatten())
     }
 
-    pub async fn operators(&self, x: i32, y: i32) -> Result<Option<LandOperators>, sqlx::Error> {
-        Ok(self.rights(x, y).await?.map(|r| r.operators))
-    }
-
     pub async fn parcel_owner(&self, x: i32, y: i32) -> Result<Option<String>, sqlx::Error> {
         Ok(self.parcel_subject(x, y).await?.map(|s| s.owner))
     }
 
-    /// Whether `owner` holds any parcel at `coords`, directly or through the
-    /// estate it sits in (the LAND leg of `worlds::policy::is_admin`).
+    /// [`Self::owns_land_at_on`] on a pool connection, for tests.
+    #[cfg(test)]
     pub async fn owns_land_at(
         &self,
         owner: &str,
@@ -472,7 +479,9 @@ impl Store {
         self.owns_land_at_on(&mut conn, owner, coords).await
     }
 
-    /// [`Self::owns_land_at`] on the caller's connection (a ready snapshot).
+    /// Whether `owner` holds any parcel at `coords`, directly or through the
+    /// estate it sits in (the LAND leg of `worlds::policy::is_admin`). On the
+    /// caller's connection (a ready snapshot).
     pub async fn owns_land_at_on(
         &self,
         conn: &mut PgConnection,
@@ -530,11 +539,9 @@ impl Store {
         Ok(rows.into_iter().map(updatable).collect())
     }
 
-    /// One page of the direct reverse lookup with its total (`count(*) OVER
-    /// ()`, a bare COUNT when the page is past the end), keyed and ordered
-    /// as the land-manager subgraph's `Parcel.id`: the token id as
-    /// lower-case `0x` hex without leading zeros, sorted as a string
-    /// ([`PARCEL_SUBGRAPH_ID`]).
+    /// [`Self::parcels_with_update_operator_page_on`] on a pool connection,
+    /// for tests.
+    #[cfg(test)]
     pub async fn parcels_with_update_operator_page(
         &self,
         address: &str,
@@ -546,8 +553,12 @@ impl Store {
             .await
     }
 
-    /// [`Self::parcels_with_update_operator_page`] on the caller's connection
-    /// (a ready snapshot).
+    /// One page of the direct reverse lookup with its total (`count(*) OVER
+    /// ()`, a bare COUNT when the page is past the end), keyed and ordered
+    /// as the land-manager subgraph's `Parcel.id`: the token id as
+    /// lower-case `0x` hex without leading zeros, sorted as a string
+    /// ([`PARCEL_SUBGRAPH_ID`]). On the caller's connection (a ready
+    /// snapshot).
     pub async fn parcels_with_update_operator_page_on(
         &self,
         conn: &mut PgConnection,

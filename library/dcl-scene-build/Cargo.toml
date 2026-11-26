@@ -15,9 +15,9 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 dcl-scene-authoring.workspace = true
 # Pinned to dcl-scene-cli's bundler: tests/parity.rs holds both builds to the same bytes.
-rolldown = "=1.2.14"
-rolldown_common = "=1.2.14"
-rolldown_utils = "=1.2.14"
+rolldown = "=1.3.2"
+rolldown_common = "=1.3.2"
+rolldown_utils = "=1.3.2"
 serde_json = { workspace = true }
 # rolldown awaits tokio tasks; wasm32-wasip1 has the current-thread runtime only.
 tokio = { version = "1", default-features = false, features = ["rt"] }

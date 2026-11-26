@@ -28,6 +28,7 @@ alloy-primitives.workspace = true
 reqwest.workspace = true
 url.workspace = true
 alloy-sol-types.workspace = true
+dcl-metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
@@ -39,7 +40,10 @@ catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints]
+workspace = true

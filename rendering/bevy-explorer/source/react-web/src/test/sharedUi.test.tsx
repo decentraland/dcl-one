@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { ShopCart, theme } from '@dcl/one-ui'
+import { ShopCart, theme } from '@dcl/one-ui/foundations'
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { INTER_FILES, SHARED_ALIASES, SHARED_FONTS, SHARED_TREES } from '../../vite.shared'
@@ -24,7 +24,7 @@ function sources(path: string): string[] {
 }
 
 describe('the shared UI foundations in the HUD', () => {
-  it('compile from the public entry and render with this app’s React', () => {
+  it('compile from the public foundations entry and render with this app’s React', () => {
     expect(theme.palette.primary.primary).toBe('var(--dcl-primary-primary)')
     const { getByRole } = render(<ShopCart role="img" aria-label="Cart" size={24} />)
     expect(getByRole('img', { name: 'Cart' }).getAttribute('width')).toBe('24')
@@ -53,8 +53,8 @@ describe('the shared UI foundations in the HUD', () => {
 
   it('redirect no other source: inter.css is the only one naming those files', () => {
     const anywhere = new RegExp(find.source.replace(/^\^|\$$/g, ''))
-    const naming = [resolve(__dirname, '..'), ...SHARED_TREES]
-      .flatMap(sources)
+    // SHARED_TREES holds the shared files and their folders, so a file can be reached twice.
+    const naming = [...new Set([resolve(__dirname, '..'), ...SHARED_TREES].flatMap(sources))]
       .filter((path) => /\.(css|tsx?)$/.test(path) && path !== __filename)
       .filter((path) => anywhere.test(readFileSync(path, 'utf8')))
     expect(naming).toEqual([join(typography, 'inter.css')])

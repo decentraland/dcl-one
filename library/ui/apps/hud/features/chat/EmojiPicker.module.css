@@ -1,0 +1,135 @@
+/* Emoji panel: 340×474 solid surface, toggles, light search, one scroll of sections. */
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  height: 474px;
+  background: var(--panel);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+/* the search glass at 19px, 9px from the field's edge */
+.searchRow > * {
+  gap: 7px;
+  padding-left: 9px;
+}
+.searchRow > * > :first-child {
+  width: 19px;
+  height: 19px;
+}
+
+/* The scroll area and its own scrollbar: an outlined thumb at the right edge.
+   It is an element moved by transform, not a ::-webkit-scrollbar (painted on the main
+   thread, which the engine keeps busy). */
+.scroll {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 10px;
+}
+.thumb {
+  position: absolute;
+  top: 10px;
+  right: 6px;
+  width: 8px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--white);
+  border-radius: 4px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 33px;
+  margin-top: 10px;
+  padding: 4px 21px 4px 17px;
+  box-sizing: border-box;
+  flex: none;
+}
+.tab {
+  display: flex;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--emoji-tab);
+  cursor: pointer;
+}
+.tab:hover,
+.tabActive {
+  color: var(--accent);
+}
+
+.searchRow {
+  --search-light-bg: var(--emoji-search);
+  padding: 10px 20px 0;
+  flex: none;
+}
+
+.body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 8px;
+  scrollbar-width: none;
+  mask-image: linear-gradient(transparent, #000 20px, #000 calc(100% - 20px), transparent);
+}
+
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  font-size: var(--type-13);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(8, 36px);
+  gap: 2px 1.5px;
+}
+.body > .grid {
+  padding: 2px 0;
+}
+.emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-button);
+  background: transparent;
+  /* The colour emoji face by name: through the HUD's text stack, Chromium and WebKit on Linux take a
+     monochrome glyph from the system's sans (DejaVu has the smileys) before they reach it. */
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoji:hover {
+  background: var(--emoji-hover);
+}
+
+.noResults {
+  padding: 28px;
+  text-align: center;
+  font-size: var(--type-13);
+  font-weight: var(--fw-semibold);
+  color: var(--ink-45);
+}

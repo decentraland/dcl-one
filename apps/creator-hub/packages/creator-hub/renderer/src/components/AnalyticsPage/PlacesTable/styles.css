@@ -1,0 +1,103 @@
+/*
+ * Fixed layout so column widths come from the header alone. With the default
+ * auto layout the browser measures the rendered cells, so filtering the list
+ * down to fewer rows silently re-sizes every column.
+ */
+.PlacesTable {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.PlacesTable tr {
+  color: inherit;
+  vertical-align: middle;
+  outline: 0;
+}
+
+.PlacesTable th,
+.PlacesTable td {
+  border-bottom: 1px solid var(--dark-gray);
+  padding: 12px 16px;
+  color: var(--text-tone-primary);
+  font-family: var(--text-font, inherit);
+  letter-spacing: 0.01071em;
+  text-align: left;
+  vertical-align: inherit;
+}
+
+.PlacesTable thead th:nth-child(1) {
+  width: 32%;
+}
+
+.PlacesTable thead th:nth-child(2),
+.PlacesTable thead th:nth-child(3),
+.PlacesTable thead th:nth-child(4),
+.PlacesTable thead th:nth-child(5),
+.PlacesTable thead th:nth-child(6) {
+  width: 12.5%;
+}
+
+.PlacesTable thead th {
+  color: var(--secondary-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5rem;
+}
+
+.PlacesTable tbody td {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.43;
+}
+
+.PlacesTable tbody tr {
+  cursor: pointer;
+}
+
+.PlacesTable tbody tr:hover {
+  background-color: var(--card);
+}
+
+.PlacesTable .PlaceCell {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Fixed columns can't grow for a long name, so truncate it instead. */
+.PlacesTable .PlaceCell .PlaceName {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.PlacesTable .Thumbnail {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.PlacesTable .PinnedIcon {
+  flex-shrink: 0;
+  color: var(--secondary-text);
+}
+
+.PlacesTable .ActionsCell {
+  width: 64px;
+  text-align: right;
+}
+
+.PlacesTable .ActionsCell button[aria-haspopup="menu"] {
+  opacity: 0;
+}
+
+.PlacesTable tr:hover .ActionsCell button[aria-haspopup="menu"],
+.PlacesTable .ActionsCell button[aria-haspopup="menu"]:focus-visible,
+.PlacesTable .ActionsCell button[aria-haspopup="menu"][aria-expanded="true"] {
+  opacity: 1;
+}

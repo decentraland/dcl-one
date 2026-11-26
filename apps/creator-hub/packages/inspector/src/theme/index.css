@@ -1,0 +1,38 @@
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/Inter-Regular.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Chrome, Safari, Edge, Opera */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: none;
+}
+
+input::selection,
+textarea::selection {
+  color: var(--ui-designer-text);
+  background: var(--palette-system-blueDark2);
+}
+
+@keyframes u-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Make context menu submenus scrollable when they have many items */
+.contexify_submenu {
+  max-height: calc(30vh);
+  overflow-y: auto;
+}

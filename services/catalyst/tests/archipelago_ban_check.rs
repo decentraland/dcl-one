@@ -16,16 +16,14 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use catalyst::comms::archipelago::config::ClusterConfig;
-use catalyst::comms::archipelago::peers::PeerDirectory;
+use catalyst::comms::archipelago::enforcement::Enforcement;
 use catalyst::comms::archipelago::registry::{PeersRegistry, SocketEvent};
 use catalyst::comms::deny_list::DenyList;
 use catalyst::http::Outbound;
 use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
+use crate::archipelago;
+use crate::db;
 
 const BANNED: &str = "0x00000000000000000000000000000000000bad01";
 const CLEAN: &str = "0x00000000000000000000000000000000000c1ea0";
@@ -104,11 +102,10 @@ async fn ban_checker_flags_blocked_wallets_and_allows_others() {
 async fn ban_checker_fails_open_when_the_store_is_unreachable() {
     let checker = archipelago::ban_checker(policy(archipelago::lazy_pool()));
     assert!(!checker.is_banned(BANNED).await);
-    assert!(!checker.is_banned_fresh(BANNED).await);
 }
 
 #[tokio::test]
-async fn ban_checker_memoizes_verdicts_and_a_fresh_check_refreshes_them() {
+async fn ban_checker_sees_a_ban_issued_after_a_clean_check() {
     let Some(scratch) = db::scratch_database().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return;
@@ -117,16 +114,30 @@ async fn ban_checker_memoizes_verdicts_and_a_fresh_check_refreshes_them() {
     assert!(!checker.is_banned(BANNED).await);
     block(&scratch.pool, BANNED).await;
     assert!(
-        !checker.is_banned(BANNED).await,
-        "the second check is served from the memo"
+        checker.is_banned(BANNED).await,
+        "the next handshake reads the ban just written"
     );
-    assert!(
-        checker.is_banned_fresh(BANNED).await,
-        "the sweep always asks"
-    );
+    scratch.teardown().await;
+}
+
+#[tokio::test]
+async fn ban_checker_sees_a_platform_ban_issued_after_a_clean_check() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let checker = archipelago::ban_checker(policy(scratch.pool.clone()));
+    assert!(!checker.is_banned(BANNED).await);
+    sqlx::query(
+        "INSERT INTO social.user_bans (banned_address, banned_by, reason) VALUES ($1, 'test', 'test')",
+    )
+    .bind(BANNED)
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
     assert!(
         checker.is_banned(BANNED).await,
-        "the fresh verdict refreshed the memo"
+        "the next handshake reads the platform ban just written"
     );
     scratch.teardown().await;
 }
@@ -215,7 +226,7 @@ async fn the_ban_sweep_evicts_the_banned_peer_and_leaves_the_clean_one() {
     block(&scratch.pool, BANNED).await;
     let ban = archipelago::ban_checker(policy(scratch.pool.clone()));
     let registry = PeersRegistry::new();
-    let peers = PeerDirectory::new(
+    let peers = Enforcement::new(
         ClusterConfig::default(),
         armed_gatekeeper(),
         ban,
@@ -224,14 +235,13 @@ async fn the_ban_sweep_evicts_the_banned_peer_and_leaves_the_clean_one() {
     let (_banned_link, mut banned_events, _) = registry.on_peer_connected(BANNED, "0xs1");
     let (_clean_link, mut clean_events, _) = registry.on_peer_connected(CLEAN, "0xs2");
 
-    peers.upsert_peer(BANNED.into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
-    peers.upsert_peer(CLEAN.into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    peers.set_island(BANNED, "island-test");
+    peers.set_island(CLEAN, "island-test");
 
     peers.ban_sweep_once().await;
 
-    assert!(peers.peer(BANNED).is_none(), "banned peer evicted");
-    assert_eq!(peers.peers_count(), 1);
-    assert!(peers.peer(CLEAN).is_some(), "clean peer survives");
+    assert!(peers.island_of(BANNED).is_none(), "banned peer evicted");
+    assert!(peers.island_of(CLEAN).is_some(), "clean peer survives");
     assert!(matches!(banned_events.try_recv(), Ok(SocketEvent::Kicked)));
     assert!(
         clean_events.try_recv().is_err(),
@@ -243,16 +253,12 @@ async fn the_ban_sweep_evicts_the_banned_peer_and_leaves_the_clean_one() {
 #[tokio::test]
 async fn the_ban_sweep_with_a_permissive_policy_keeps_everyone() {
     let ban = archipelago::allow_ban_checker();
-    let peers = PeerDirectory::new(
-        ClusterConfig::default(),
-        armed_gatekeeper(),
-        ban,
-        PeersRegistry::new(),
-    );
-    peers.upsert_peer(BANNED.into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    let registry = PeersRegistry::new();
+    let (_link, _events, _) = registry.on_peer_connected(BANNED, "session");
+    let peers = Enforcement::new(ClusterConfig::default(), armed_gatekeeper(), ban, registry);
+    peers.set_island(BANNED, "island-test");
     peers.ban_sweep_once().await;
-    assert!(peers.peer(BANNED).is_some());
-    assert_eq!(peers.peers_count(), 1);
+    assert!(peers.island_of(BANNED).is_some());
 }
 
 mod ws_deny {

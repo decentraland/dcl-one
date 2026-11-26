@@ -4,120 +4,127 @@ use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::util::AsH160;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use livestream_manager::{AutomaticVideoShown, SelectedVideoTransmitter};
 use serde_json::json;
 
 use super::{
-    control::{client_can_control, room_control_block, RoomConnections, RoomKind, RoomPaused},
-    ConnectFailed, Connected, Disconnected, LivekitRoom, Reconnecting,
+    control::{client_can_control, room_control_block, RoomConnections, RoomKind},
+    LivekitRoom,
 };
 use crate::{
-    automation::RoomState,
     global_crdt::ForeignPlayer,
     livekit::{
         participant::{ConnectionQuality, HostedBy, LivekitParticipant, Local, ParticipantIndex},
+        track::{LivekitTrack, PublishedBy, Subscribed, Subscribing, Unsubscribing, Video},
         ConnectionAvailability, LivekitTransport,
     },
     private_chat::PrivateChatRoom,
-    SceneRoom, Transport, TransportType,
+    room_connection::{RoomState, RoomStatus},
+    SceneRoom, Transport,
 };
 use bevy::ecs::relationship::Relationship;
 
-pub(in crate::livekit) fn register(app: &mut App) {
-    app.add_console_command::<RoomDiagnostics, _>(room_diagnostics);
-    let client = client_can_control(
-        app.world()
-            .contains_resource::<common::structs::NoRenderApp>(),
-    );
-    if client {
-        app.add_console_command::<RoomConnectionCommand, _>(room_connection);
-    }
-    for (title, scope) in [
-        ("Island room", "island"),
-        ("Scene room", "scene"),
-        ("Private chat room", "chat"),
-    ] {
-        let mut fields = vec![
-            ("Connection policy", "policy"),
-            ("Room", "room.name"),
-            ("Connection state", "room.state"),
-            #[cfg(not(target_arch = "wasm32"))]
-            ("Room SID", "room.sid"),
-            ("Dial attempts", "room.attempts"),
-            ("Self SID", "room.selfSid"),
-            ("Local connection quality", "room.quality"),
-            ("Remote participants", "room.remoteCount"),
-        ];
-        if scope == "scene" {
-            fields.extend([
-                ("Scene ID", "room.scene"),
-                ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
-            ]);
+pub(in crate::livekit) struct RoomDiagnosticsPlugin;
+
+impl Plugin for RoomDiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<RoomDiagnostics, _>(room_diagnostics);
+        let client = client_can_control(
+            app.world()
+                .contains_resource::<common::structs::NoRenderApp>(),
+        );
+        if client {
+            app.add_console_command::<RoomConnectionCommand, _>(room_connection);
         }
-        let command = format!("/room_connection {scope} {{value}}");
-        let inputs = [DebugInput {
-            label: "Connection",
-            field: "room.connectionEnabled",
-            command: &command,
-            kind: DebugInputKind::ActionButton {
-                enable: ("Connect", "connect"),
-                disable: ("Disconnect", "disconnect"),
-            },
-        }];
+        for (title, scope) in [
+            ("Island room", "island"),
+            ("Scene room", "scene"),
+            ("Private chat room", "chat"),
+        ] {
+            let mut fields = vec![
+                ("Connection policy", "policy"),
+                ("Room", "room.name"),
+                ("Connection state", "room.state"),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("Room SID", "room.sid"),
+                ("Dial attempts", "room.attempts"),
+                ("Self SID", "room.selfSid"),
+                ("Local connection quality", "room.quality"),
+                ("Remote participants", "room.remoteCount"),
+            ];
+            if scope == "scene" {
+                fields.extend([
+                    ("Scene ID", "room.scene"),
+                    ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
+                    ("Video tracks (first 32)", "room.videoTracks"),
+                ]);
+            }
+            let command = format!("/room_connection {scope} {{value}}");
+            let inputs = [DebugInput {
+                label: "Connection",
+                field: "room.connectionEnabled",
+                command: &command,
+                kind: DebugInputKind::ActionButton {
+                    enable: ("Connect", "connect"),
+                    disable: ("Disconnect", "disconnect"),
+                },
+            }];
+            app.add_debug_section(DebugSection {
+                title,
+                query: &format!("/room_diagnostics {scope}"),
+                fields: &fields,
+                actions: &[],
+                inputs: if client { &inputs } else { &[] },
+            });
+        }
+        let indicators = app.is_plugin_added::<bevy::gizmos::GizmoPlugin>()
+            && !app
+                .world()
+                .contains_resource::<common::structs::NoRenderApp>();
+        if indicators {
+            app.init_resource::<RoomIndicators>()
+                .add_console_command::<RoomIndicatorsCommand, _>(room_indicators)
+                .add_systems(
+                    PostUpdate,
+                    draw_room_indicators.run_if(|enabled: Res<RoomIndicators>| enabled.0),
+                );
+        }
         app.add_debug_section(DebugSection {
-            title,
-            query: &format!("/room_diagnostics {scope}"),
-            fields: &fields,
+            title: "Room info",
+            query: "/room_diagnostics info",
+            fields: &[
+                ("Active remote players", "players"),
+                ("Players on LiveKit", "onLivekit"),
+                ("Players off LiveKit", "offLivekit"),
+                ("Participants without players", "unmatched"),
+            ],
             actions: &[],
-            inputs: if client { &inputs } else { &[] },
+            inputs: if indicators {
+                &[DebugInput {
+                    label: "Show room markers (gold Pulse, green island, blue scene)",
+                    field: "indicators",
+                    command: "/room_indicators {value}",
+                    kind: DebugInputKind::Toggle,
+                }]
+            } else {
+                &[]
+            },
+        })
+        .add_debug_section(DebugSection {
+            title: "Room throughput",
+            query: "/room_diagnostics throughput",
+            fields: &[
+                ("Island received (payload B/s)", "island.received"),
+                ("Island published (payload B/s)", "island.sent"),
+                ("Island participant quality (first 32)", "island.peers"),
+                ("Scene received (payload B/s)", "scene.received"),
+                ("Scene published (payload B/s)", "scene.sent"),
+                ("Scene participant quality (first 32)", "scene.peers"),
+            ],
+            actions: &[],
+            inputs: &[],
         });
     }
-    let indicators = app.is_plugin_added::<bevy::gizmos::GizmoPlugin>()
-        && !app
-            .world()
-            .contains_resource::<common::structs::NoRenderApp>();
-    if indicators {
-        app.init_resource::<RoomIndicators>()
-            .add_console_command::<RoomIndicatorsCommand, _>(room_indicators)
-            .add_systems(
-                PostUpdate,
-                draw_room_indicators.run_if(|enabled: Res<RoomIndicators>| enabled.0),
-            );
-    }
-    app.add_debug_section(DebugSection {
-        title: "Room info",
-        query: "/room_diagnostics info",
-        fields: &[
-            ("Active remote players", "players"),
-            ("Players on LiveKit", "onLivekit"),
-            ("Players off LiveKit", "offLivekit"),
-            ("Participants without players", "unmatched"),
-        ],
-        actions: &[],
-        inputs: if indicators {
-            &[DebugInput {
-                label: "Show room markers (gold Pulse, green island, blue scene)",
-                field: "indicators",
-                command: "/room_indicators {value}",
-                kind: DebugInputKind::Toggle,
-            }]
-        } else {
-            &[]
-        },
-    })
-    .add_debug_section(DebugSection {
-        title: "Room throughput",
-        query: "/room_diagnostics throughput",
-        fields: &[
-            ("Island received (payload B/s)", "island.received"),
-            ("Island published (payload B/s)", "island.sent"),
-            ("Island participant quality (first 32)", "island.peers"),
-            ("Scene received (payload B/s)", "scene.received"),
-            ("Scene published (payload B/s)", "scene.sent"),
-            ("Scene participant quality (first 32)", "scene.peers"),
-        ],
-        actions: &[],
-        inputs: &[],
-    });
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +154,6 @@ struct RoomDiagnostics {
     scope: Scope,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn room_diagnostics(
     mut input: ConsoleCommand<RoomDiagnostics>,
     policy: Res<State<ConnectionAvailability>>,
@@ -159,12 +165,7 @@ fn room_diagnostics(
             Has<PrivateChatRoom>,
             Has<Transport>,
             Option<&LivekitRoom>,
-            Has<Connected>,
-            Has<Reconnecting>,
-            Has<Disconnected>,
-            Has<ConnectFailed>,
-            Has<RoomPaused>,
-            &LivekitTransport,
+            RoomStatus,
         ),
         With<LivekitTransport>,
     >,
@@ -174,6 +175,7 @@ fn room_diagnostics(
         Has<Local>,
         Option<&ConnectionQuality>,
     )>,
+    video_tracks: VideoTracks,
     players: Query<&ForeignPlayer>,
     indicators: Option<Res<RoomIndicators>>,
     definitions: Option<Res<Assets<ipfs::EntityDefinition>>>,
@@ -211,20 +213,11 @@ fn room_diagnostics(
     };
     let mut result =
         json!({"policy": format!("{:?}", policy.get()), "room": null, "unavailable": unavailable});
-    for (
-        entity,
-        scene,
-        private,
-        transport,
-        room,
-        connected,
-        reconnecting,
-        disconnected,
-        failed,
-        paused,
-        livekit,
-    ) in &rooms
-    {
+    for (entity, scene, private, transport, room, status) in &rooms {
+        let state = status.state();
+        let connected = state == RoomState::Connected;
+        let paused = status.suspended;
+        let failed = status.recovery.failure.is_some();
         let Some(kind) = RoomKind::for_room(scene.is_some(), private, transport) else {
             continue;
         };
@@ -301,10 +294,18 @@ fn room_diagnostics(
                 let (x, y) = base.split_once(',')?;
                 Some([x.trim().parse::<i32>().ok()?, y.trim().parse::<i32>().ok()?])
             });
-            result["room"] = json!({"state": if paused { "paused" } else { RoomState::from_markers(connected, reconnecting, disconnected, failed).name() },
+            result["room"] = json!({"state": state.name(),
                 "name": room.map(|r| r.name().to_string()), "sid": sid, "scene": scene.map(|s| s.0.as_str()),
-                "baseParcel": base, "baseParcelPosition": base_position, "attempts": livekit.retries,
+                "baseParcel": base, "baseParcelPosition": base_position, "attempts": status.recovery.retry.attempts,
                 "remoteCount": remote_count, "selfSid": local_sid, "quality": local_quality});
+            if kind == RoomKind::Scene {
+                let in_room = |participant: Entity| {
+                    participants
+                        .get(participant)
+                        .is_ok_and(|(_, hosted, ..)| hosted.get() == entity)
+                };
+                result["room"]["videoTracks"] = json!(video_track_rows(in_room, &video_tracks));
+            }
             result["unavailable"] = if connected {
                 json!({"room.quality": "Waiting for LiveKit to report connection quality",
                     "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates",
@@ -321,6 +322,51 @@ fn room_diagnostics(
         }
     }
     input.reply_ok(result.to_string());
+}
+
+/// The video tracks [`video_track_rows`] reads, as `room_diagnostics` queries them.
+type VideoTracks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LivekitTrack,
+        &'static PublishedBy,
+        Has<Subscribed>,
+        Has<Subscribing>,
+        Has<Unsubscribing>,
+        Has<AutomaticVideoShown>,
+        Has<SelectedVideoTransmitter>,
+    ),
+    With<Video>,
+>;
+
+/// Each video track published by a participant `in_room`: its subscription and the outputs
+/// that want it.
+fn video_track_rows(in_room: impl Fn(Entity) -> bool, tracks: &VideoTracks) -> BTreeSet<String> {
+    let mut rows = BTreeSet::new();
+    for (track, publisher, subscribed, subscribing, unsubscribing, automatic, selected) in tracks {
+        if in_room(publisher.get()) {
+            let state = match (subscribed, subscribing, unsubscribing) {
+                (true, ..) => "subscribed",
+                (_, true, _) => "subscribing",
+                (.., true) => "unsubscribing",
+                _ => "unsubscribed",
+            };
+            let outputs: Vec<_> = [(automatic, "automatic"), (selected, "selected")]
+                .into_iter()
+                .filter_map(|(wanted, name)| wanted.then_some(name))
+                .collect();
+            rows.insert(if outputs.is_empty() {
+                format!("{}: {state}", track.sid())
+            } else {
+                format!("{}: {state}, {}", track.sid(), outputs.join(", "))
+            });
+            if rows.len() > 32 {
+                rows.pop_last();
+            }
+        }
+    }
+    rows
 }
 
 #[derive(clap::ValueEnum, Clone, Copy)]
@@ -387,11 +433,7 @@ fn draw_room_indicators(
                 }
             }
         }
-        let pulse = player.transports.iter().any(|t| {
-            transports
-                .get(*t)
-                .is_ok_and(|t| t.transport_type == TransportType::Pulse)
-        });
+        let pulse = player.has_pulse_transport(&transports);
         let top = transform.translation() + Vec3::Y * 2.35;
         for (i, (present, color)) in [
             (pulse, Color::srgb(1.0, 0.75, 0.0)),
@@ -415,8 +457,13 @@ fn draw_room_indicators(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::livekit::room::Connecting;
+    use crate::{
+        livekit::room::Connecting,
+        room_connection::{FailureKind, RoomRecovery, RoomSuspended},
+        TransportType,
+    };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -441,16 +488,72 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 
     fn island_diagnostics(app: &mut App) -> serde_json::Value {
         serde_json::from_str(&invoke(app, "/room_diagnostics", &["island"]).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn room_and_voice_diagnostics_share_admission_pause_and_connection_states() {
+        let mut app = App::new();
+        app.add_plugins((
+            console::ConsolePlugin {
+                add_bevy_console: false,
+            },
+            crate::automation::CommsAutomationPlugin,
+        ))
+        .init_resource::<common::structs::MicState>()
+        .init_resource::<common::structs::AudioSettings>()
+        .insert_resource(common::structs::ClientWindowFocus::Focused)
+        .init_resource::<wallet::Wallet>()
+        .add_event::<crate::global_crdt::ChatEvent>()
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .add_console_command::<RoomDiagnostics, _>(room_diagnostics);
+        let room = spawn_island(&mut app);
+        let assert_state = |app: &mut App, expected: &str| {
+            assert_eq!(island_diagnostics(app)["room"]["state"], expected);
+            let voice: serde_json::Value =
+                serde_json::from_str(&invoke(app, "/voice_state", &[]).unwrap()).unwrap();
+            assert_eq!(voice["rooms"][0]["state"], expected);
+        };
+        assert_state(&mut app, "connecting");
+        app.world_mut().get_mut::<RoomRecovery>(room).unwrap().fail(
+            0.0,
+            crate::room_connection::AdmissionError::new(FailureKind::Transient),
+        );
+        assert_state(&mut app, "failed");
+        assert_eq!(island_diagnostics(&mut app)["room"]["attempts"], 1);
+        for (failure, name) in [
+            (FailureKind::Denied, "denied"),
+            (FailureKind::Invalid, "invalid"),
+            (FailureKind::IdentityConflict, "identity_conflict"),
+            (FailureKind::CredentialsRequired, "credentials_required"),
+        ] {
+            app.world_mut()
+                .get_mut::<RoomRecovery>(room)
+                .unwrap()
+                .failure = Some(failure);
+            assert_state(&mut app, name);
+        }
+        app.world_mut().entity_mut(room).insert(RoomSuspended);
+        assert_state(&mut app, "paused");
+        app.world_mut().entity_mut(room).remove::<RoomSuspended>();
+        app.world_mut()
+            .get_mut::<RoomRecovery>(room)
+            .unwrap()
+            .failure = None;
+        assert_state(&mut app, "reconnecting");
+        let health = crate::room_connection::ConnectionHealth::default();
+        health.connected();
+        app.world_mut().entity_mut(room).insert(health);
+        assert_state(&mut app, "connected");
     }
 
     #[test]
@@ -473,15 +576,18 @@ mod tests {
             island_diagnostics(&mut app)["room"]["connectionEnabled"],
             true
         );
-        app.world_mut().entity_mut(room).insert(RoomPaused);
+        app.world_mut().entity_mut(room).insert(RoomSuspended);
         assert_eq!(
             island_diagnostics(&mut app)["room"]["connectionEnabled"],
             false
         );
         app.world_mut()
             .entity_mut(room)
-            .remove::<RoomPaused>()
-            .insert(ConnectFailed);
+            .remove::<RoomSuspended>()
+            .insert(RoomRecovery {
+                failure: Some(FailureKind::Transient),
+                ..Default::default()
+            });
         assert_eq!(
             island_diagnostics(&mut app)["room"]["connectionEnabled"],
             false
@@ -515,11 +621,11 @@ mod tests {
         ))
         .insert_resource(State::new(ConnectionAvailability::Available))
         .add_console_command::<RoomConnectionCommand, _>(room_connection);
-        super::super::control::register(&mut app);
+        app.add_plugins(super::super::control::RoomControlPlugin);
         let room = spawn_island(&mut app);
         app.update();
         invoke(&mut app, "/room_connection", &["island", "disconnect"]).unwrap();
-        assert!(app.world().get::<RoomPaused>(room).is_some());
+        assert!(app.world().get::<RoomSuspended>(room).is_some());
 
         let sender = app.world().get::<Transport>(room).unwrap().sender.clone();
         let enqueue = || {
@@ -545,18 +651,18 @@ mod tests {
             invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap_err(),
             "Room connections are controlled by session policy",
         );
-        assert!(app.world().get::<RoomPaused>(room).is_some());
+        assert!(app.world().get::<RoomSuspended>(room).is_some());
         app.insert_resource(State::new(ConnectionAvailability::Available));
         app.insert_resource(common::structs::NoRenderApp);
         assert_eq!(
             invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap_err(),
             "Only a graphical player client can control room connections",
         );
-        assert!(app.world().get::<RoomPaused>(room).is_some());
+        assert!(app.world().get::<RoomSuspended>(room).is_some());
         // A producer may enqueue after the last Update drain. The marker removal itself
         // must retire that message before a resumed room is allowed to publish.
         enqueue();
-        app.world_mut().entity_mut(room).remove::<RoomPaused>();
+        app.world_mut().entity_mut(room).remove::<RoomSuspended>();
         assert!(app
             .world()
             .get::<crate::livekit::LivekitNetworkMessage>(room)
@@ -566,25 +672,62 @@ mod tests {
 
     #[test]
     fn reconnect_restarts_a_refused_dial_once() {
+        #[derive(Resource, Default)]
+        struct Attempts(usize);
         let mut app = App::new();
         app.add_plugins(console::ConsolePlugin {
             add_bevy_console: false,
         })
         .insert_resource(State::new(ConnectionAvailability::Available))
         .add_console_command::<RoomConnectionCommand, _>(room_connection)
+        .init_resource::<Attempts>()
         .add_observer(
-            |trigger: Trigger<OnAdd, Connecting>, mut rooms: Query<&mut LivekitTransport>| {
-                rooms.get_mut(trigger.target()).unwrap().retries += 1;
+            |_: Trigger<OnAdd, Connecting>, mut attempts: ResMut<Attempts>| {
+                attempts.0 += 1;
             },
         );
         let room = spawn_island(&mut app);
         app.world_mut().entity_mut(room).insert(Connecting);
         app.update();
-        app.world_mut().entity_mut(room).insert(ConnectFailed);
+        app.world_mut().entity_mut(room).insert(RoomRecovery {
+            failure: Some(FailureKind::Transient),
+            ..Default::default()
+        });
         invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap();
-        assert_eq!(
-            app.world().get::<LivekitTransport>(room).unwrap().retries,
-            2
-        );
+        assert_eq!(app.world().resource::<Attempts>().0, 2);
+    }
+
+    #[test]
+    fn reconnect_refreshes_credentials_and_cannot_override_a_denial() {
+        use crate::room_connection::{CredentialRequest, FailureKind, NeedsAdapter, RoomRecovery};
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .add_console_command::<RoomConnectionCommand, _>(room_connection);
+        let room = spawn_island(&mut app);
+        app.world_mut().entity_mut(room).insert((
+            RoomRecovery {
+                failure: Some(FailureKind::Transient),
+                ..Default::default()
+            },
+            CredentialRequest {
+                method: "POST",
+                url: "https://admission.example/".into(),
+                metadata: "{}".into(),
+            },
+        ));
+        invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap();
+        assert!(app.world().get::<NeedsAdapter>(room).is_some());
+        assert!(app.world().get::<Connecting>(room).is_none());
+        app.world_mut().entity_mut(room).remove::<NeedsAdapter>();
+        app.world_mut()
+            .get_mut::<RoomRecovery>(room)
+            .unwrap()
+            .failure = Some(FailureKind::Denied);
+        assert!(invoke(&mut app, "/room_connection", &["island", "connect"]).is_err());
+        assert!(app.world().get::<NeedsAdapter>(room).is_none());
+        assert!(app.world().get::<Connecting>(room).is_none());
     }
 }

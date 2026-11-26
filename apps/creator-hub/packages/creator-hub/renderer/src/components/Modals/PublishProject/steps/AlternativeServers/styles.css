@@ -1,0 +1,89 @@
+/* AlternativeServers Modal */
+[role="dialog"] .AlternativeServers {
+  display: flex;
+  flex-direction: column;
+}
+
+[role="dialog"] .AlternativeServers .select {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+[role="dialog"] .AlternativeServers .box {
+  border: 2px solid var(--light-gray);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+[role="dialog"] .AlternativeServers .box .selection {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+[role="dialog"] .AlternativeServers .box .selection h3 {
+  margin-top: 0;
+}
+
+[role="dialog"] .AlternativeServers .box .selection > div {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .thumbnail {
+  width: 318px;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .server_name {
+  border-radius: 4px;
+  border: 1px solid var(--white);
+  padding: 5px 15px;
+  width: 250px;
+  box-sizing: border-box;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .custom_input {
+  display: flex;
+  flex-direction: column;
+  margin: 10px 0;
+  font-size: 11px;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .custom_input .title {
+  margin-bottom: 5px;
+  display: flex;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .custom_input input {
+  border: none;
+  background-color: var(--dark-gray);
+  width: 230px;
+  padding: 3px 10px;
+  color: var(--white);
+  border-radius: 4px;
+  margin-bottom: 5px;
+}
+
+[role="dialog"] .AlternativeServers .box .selection .custom_input .error {
+  color: var(--error);
+}
+
+[role="dialog"] .AlternativeServers .box .actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: end;
+  align-items: center;
+}
+
+[role="dialog"] .AlternativeServers .box .actions button {
+  height: 40px;
+}
+
+[role="dialog"] .AlternativeServers .box .actions .learn-more {
+  text-transform: uppercase;
+  text-decoration: underline;
+  margin-right: 40px;
+  cursor: pointer;
+  font-weight: bold;
+}

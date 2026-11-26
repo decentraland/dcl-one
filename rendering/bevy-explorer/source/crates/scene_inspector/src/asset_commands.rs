@@ -33,11 +33,15 @@ pub struct CatalogAsset {
 #[derive(Resource, Clone, Default)]
 pub struct AssetCatalog(pub Arc<AsyncRwLock<Vec<CatalogAsset>>>);
 
-pub fn add_asset_commands(app: &mut App) {
-    app.init_resource::<AssetCatalog>();
-    app.add_console_command::<AssetCatalogCommand, _>(asset_catalog_cmd);
-    app.add_console_command::<InitAssetCommand, _>(init_asset_cmd);
-    app.add_console_command::<SceneContentCommand, _>(scene_content_cmd);
+pub struct AssetCommandsPlugin;
+
+impl Plugin for AssetCommandsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<AssetCatalog>();
+        app.add_console_command::<AssetCatalogCommand, _>(asset_catalog_cmd);
+        app.add_console_command::<InitAssetCommand, _>(init_asset_cmd);
+        app.add_console_command::<SceneContentCommand, _>(scene_content_cmd);
+    }
 }
 
 // --- /scene_content ---
@@ -259,10 +263,9 @@ fn init_asset_cmd(
                     let target = scene_target_json(&io, &scene_hash).await;
                     for (path, hash) in &asset.contents {
                         let rel = format!("{base_dir}/{path}");
-                        // Fetch the bytes (the service worker serves them from cache on web) so we
-                        // can both seed the native live-render cache AND write the file into the
-                        // scene folder right now — the immediate push, so the asset renders without
-                        // waiting for a save (and the dev server can serve it on the live merge).
+                        // Fetch the bytes to seed the native live-render cache and write the file to
+                        // the scene folder immediately. The asset renders before a save, and the dev
+                        // server can serve it on the live merge.
                         let url = format!("{CONTENTS_BASE}{hash}");
                         let fetched = match client
                             .get(&url)

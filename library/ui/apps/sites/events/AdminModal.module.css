@@ -1,0 +1,194 @@
+/* The administration dialogs' content: decentraland.org's dark violet admin modal, 24px padding,
+   white text, a footer of two equal buttons. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  min-height: 100%;
+  padding: var(--dcl-space-24);
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--dcl-brand-purple-dark) 60%, var(--dcl-neutrals-black));
+  color: var(--dcl-text-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-2);
+  font-weight: 500;
+  line-height: 1.334;
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reason {
+  padding: 6px var(--dcl-space-16);
+}
+
+.reason strong {
+  font-weight: 600;
+}
+
+.notes {
+  display: grid;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-8);
+}
+
+.notesLabel {
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-xs);
+}
+
+.notesCount {
+  margin: 0;
+  text-align: end;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-xs);
+}
+
+.notesCount[data-over] {
+  color: var(--dcl-feedback-error);
+}
+
+.textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.textarea:hover:not(:disabled) {
+  border-color: var(--dcl-transparencies-white-40);
+}
+
+.textarea:focus-visible {
+  border-color: var(--dcl-neutrals-snow);
+  outline: none;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding-bottom: var(--dcl-space-24);
+  border-bottom: 1px solid var(--dcl-transparencies-white-10);
+}
+
+.avatar {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-10);
+  object-fit: cover;
+}
+
+.identityText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.identityName {
+  font-size: var(--dcl-font-size-heading-5);
+  font-weight: 600;
+}
+
+.identityAddress {
+  overflow: hidden;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-16) 0;
+  border-bottom: 1px solid var(--dcl-transparencies-white-10);
+}
+
+.permission:last-child {
+  border-bottom: 0;
+}
+
+.permissionText {
+  flex: 1;
+  min-width: 0;
+}
+
+.permissionTitle {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+}
+
+.permissionDescription {
+  margin: 0;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.footer {
+  display: flex;
+  gap: var(--dcl-space-16);
+  margin-top: auto;
+  padding-top: var(--dcl-space-24);
+  border-top: 1px solid var(--dcl-transparencies-white-10);
+}
+
+.footer > * {
+  flex: 1;
+}

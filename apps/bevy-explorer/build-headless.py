@@ -15,11 +15,22 @@ def run(*args):
     subprocess.run(args, cwd=SOURCE, check=True)
 
 
+def cargo_build(*args):
+    messages = os.environ.get('CARGO_MESSAGES')
+    if not messages:
+        run('cargo', 'build', *args)
+        return
+    Path(messages).parent.mkdir(parents=True, exist_ok=True)
+    with open(messages, 'a', encoding='utf-8') as output:
+        subprocess.run(('cargo', 'build', *args, '--message-format=json-render-diagnostics'),
+                       cwd=SOURCE, check=True, stdout=output)
+
+
 def headless(target=None):
     flags = ['--target', target] if target else []
-    run('cargo', 'build', '--release', '--locked', *flags, '-p', 'dcl_deno_ipc')
-    run('cargo', 'build', '--release', '--locked', *flags, '--bin', 'headless',
-        '--no-default-features', '--features', 'headless,livekit')
+    cargo_build('--release', '--locked', *flags, '-p', 'dcl_deno_ipc')
+    cargo_build('--release', '--locked', *flags, '--bin', 'headless',
+                '--no-default-features', '--features', 'headless,livekit')
     directory = SOURCE / 'target' / (target or '') / 'release'
     output = APP / 'dist/headless' / (target or 'native')
     output.mkdir(parents=True, exist_ok=True)

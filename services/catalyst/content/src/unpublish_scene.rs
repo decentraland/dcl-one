@@ -5,7 +5,7 @@
 //! request's own path (the 6.x payload, then the pre-6.0 folded one behind
 //! the canonical `signer` metadata key, which ui3 and dcl-scene-cli still
 //! mint; a scene runtime's `decentraland-kernel-scene` signer refused), a
-//! 5-minute window, and a deploy-granting leg for the signer on every parcel
+//! 60-second window, and a deploy-granting leg for the signer on every parcel
 //! of the scene the request takes down, not just the requested one
 //! (`land_authz::can_deploy_batch`, the rule `POST /entities` applies to the
 //! scene itself). Only a locally published scene can go ([`land_publish`]);
@@ -40,6 +40,7 @@ fn map_auth_error(e: SignedFetchError) -> AppError {
     let (status, message) = e.http_status_and_message();
     match status {
         400 => AppError::InvalidRequest(message),
+        429 => AppError::TooManyRequests(message),
         503 => AppError::ServiceUnavailable(message),
         _ => AppError::Unauthorized(message),
     }
@@ -202,7 +203,7 @@ mod tests {
             status(SignedFetchError::Expired {
                 signed_at: 0,
                 now: 1,
-                window_secs: 300
+                window_secs: 60
             }),
             StatusCode::UNAUTHORIZED
         );

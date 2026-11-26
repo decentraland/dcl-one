@@ -3,14 +3,12 @@
 //! subscriber by call, so what crosses the broker for them is the subscriber's lookup of each
 //! announced session (`peer.{wallet}.cluster_lookup`): an observer subscribed to it stands in
 //! for Pulse.
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 #[path = "support/db.rs"]
 mod db;
 #[path = "support/gate.rs"]
 mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::nats_broker;
 #[path = "support/pulse_tracker.rs"]
 mod pulse_tracker;
 use alloy::signers::{SignerSync, local::PrivateKeySigner};
@@ -440,6 +438,12 @@ struct CompletionFaultBus {
 
 #[async_trait::async_trait]
 impl NatsBus for CompletionFaultBus {
+    async fn statistics_control(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, catalyst::comms::gatekeeper::bus::RequestError> {
+        self.inner.statistics_control(payload).await
+    }
     fn is_enabled(&self) -> bool {
         self.inner.is_enabled()
     }
@@ -564,7 +568,7 @@ async fn real_state(
     let state = Arc::try_unwrap(state)
         .ok()
         .unwrap()
-        .with_cluster(
+        .with_cluster_for_test(
             catalyst::comms::gatekeeper::admission::cluster::ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 self_hosted_token_quarantine: false,
@@ -600,7 +604,7 @@ async fn real_lookup(
     .ok()
 }
 
-async fn actual_island(ws: &mut WsStream) -> IslandChangedMessage {
+async fn actual_island(ws: &mut WsStream, stage: &str) -> IslandChangedMessage {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let frame = ws.next().await.expect("current socket open").unwrap();
@@ -613,7 +617,11 @@ async fn actual_island(ws: &mut WsStream) -> IslandChangedMessage {
         }
     })
     .await
-    .expect("real tracker/feed -> NATS -> production gatekeeper -> signed WS assignment")
+    .unwrap_or_else(|_| {
+        panic!(
+            "real tracker/feed -> NATS -> production gatekeeper -> signed WS assignment: {stage}"
+        )
+    })
 }
 
 fn jwt_payload(island: &IslandChangedMessage, session: &str) -> serde_json::Value {
@@ -700,13 +708,13 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
         }
     });
     state.gatekeeper.start_island_feed(&jobs, state.clone());
-    let first = actual_island(&mut a).await;
+    let first = actual_island(&mut a, "initial native recovery after lost hint").await;
     jwt_payload(&first, &session_a);
     let issued_at = chrono::Utc::now().timestamp();
     // Registration refresh in the same room must deliver the complete new credential.
     wait_for(|| chrono::Utc::now().timestamp() > issued_at).await;
     world.lock().unwrap().place(0, &address, &session_a);
-    let refreshed = actual_island(&mut a).await;
+    let refreshed = actual_island(&mut a, "same-room native registration refresh").await;
     assert_eq!(first.island_id, refreshed.island_id);
     assert_ne!(first.conn_str, refreshed.conn_str);
     jwt_payload(&refreshed, &session_a);
@@ -719,7 +727,7 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
         world.place(0, &address, &session_c);
         world.pass();
     }
-    let successor = actual_island(&mut c).await;
+    let successor = actual_island(&mut c, "retained cleanup successor C").await;
     let claims = jwt_payload(&successor, &session_c);
     assert_eq!(
         livekit.count(),
@@ -768,7 +776,10 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
     world.lock().unwrap().place(0, &address, &session_d);
     world.lock().unwrap().pass();
     state.gatekeeper.start_island_feed(&jobs, state.clone());
-    jwt_payload(&actual_island(&mut d).await, &session_d);
+    jwt_payload(
+        &actual_island(&mut d, "settled gatekeeper restart successor D").await,
+        &session_d,
+    );
     assert_eq!(livekit.count(), 2);
     no_island(&mut c).await;
     ticks.abort();
@@ -915,13 +926,47 @@ async fn real_pulse_configured_legacy_owner_completes_durable_fenced_takeover() 
         }
     });
     state.gatekeeper.start_island_feed(&jobs, state.clone());
-    jwt_payload(&actual_island(&mut a).await, &session_a);
-    // An unstamped retained row cannot authorize credentials; stationary reconciliation
-    // repopulates it from the actual Pulse plan even while the old token is still fresh.
+    jwt_payload(
+        &actual_island(&mut a, "configured initial selected assignment").await,
+        &session_a,
+    );
+    // External revision/JSON interference ends exact local ownership. The fresh
+    // same-session row is read-only, including when its admission stamp is missing.
     sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_json = assignment_json - 'pulseAdmission', assignment_revision = assignment_revision + 1 WHERE deployment_audience = $1 AND owner_address = $2 AND lane_key = 'realm'")
         .bind("retained-test").bind(&address).execute(&db.pool).await.unwrap();
     state.gatekeeper.announce_session(&address, &session_a);
-    jwt_payload(&actual_island(&mut a).await, &session_a);
+    let interfered: serde_json::Value = sqlx::query_scalar("SELECT to_jsonb(a) FROM social.archipelago_v4_assignments a WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind("retained-test").bind(&address).fetch_one(&db.pool).await.unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
+    no_island(&mut a).await;
+    let still_foreign: serde_json::Value = sqlx::query_scalar("SELECT to_jsonb(a) FROM social.archipelago_v4_assignments a WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind("retained-test").bind(&address).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(
+        still_foreign, interfered,
+        "fresh external same-session interference cannot be renewed or repopulated"
+    );
+    sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=timezone('UTC',clock_timestamp())-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind("retained-test").bind(&address).execute(&db.pool).await.unwrap();
+    // The actual started periodic replay can now acquire the safely lapsed row;
+    // no replacement Pulse hint, manual second claim or socket reconnect drives it.
+    jwt_payload(
+        &actual_island(
+            &mut a,
+            "configured automatic recovery after external lease lapse",
+        )
+        .await,
+        &session_a,
+    );
     let restored: serde_json::Value = sqlx::query_scalar("SELECT assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience = $1 AND owner_address = $2 AND lane_key = 'realm'")
         .bind("retained-test").bind(&address).fetch_one(&db.pool).await.unwrap();
     assert!(
@@ -932,7 +977,7 @@ async fn real_pulse_configured_legacy_owner_completes_durable_fenced_takeover() 
     );
     let (mut b, session_b) = assigned_socket(port, &wallet).await;
     world.lock().unwrap().place(0, &address, &session_b);
-    let next = actual_island(&mut b).await;
+    let next = actual_island(&mut b, "configured durable takeover successor").await;
     let claims = jwt_payload(&next, &session_b);
     assert_eq!(
         livekit.count(),
@@ -1042,7 +1087,7 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         }
     });
     primary.gatekeeper.start_island_feed(&jobs, primary.clone());
-    actual_island(&mut a).await;
+    actual_island(&mut a, "replica fixture initial selected assignment").await;
     // A separately constructed serve state starts no connector or destructive
     // subscriber. It uses the production read-only verifier and shared pool.
     let replica = real_gatekeeper(db.pool.clone(), &livekit);
@@ -1051,7 +1096,7 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         Arc::try_unwrap(replica)
             .ok()
             .unwrap()
-            .with_cluster(ClusterConfig {
+            .with_cluster_for_test(ClusterConfig {
                 nats_url: Some("nats://fixture".into()),
                 control_v4_audience: Some("replica-test".into()),
                 island_token_ttl_seconds: 1,
@@ -1129,7 +1174,11 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         .unwrap()
         .place(1, &other_address, &other_session);
     world.lock().unwrap().pass();
-    actual_island(&mut unrelated).await;
+    actual_island(
+        &mut unrelated,
+        "unrelated wallet selected assignment after ban lift",
+    )
+    .await;
     let subscriber = restarted.gatekeeper.island_subscriber().upgrade().unwrap();
     for _ in 0..2 {
         restarted.gatekeeper.announce_session(&address, &session_c);
@@ -1143,7 +1192,7 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         "restart/lift/new owner cannot repeat an unknown dispatch"
     );
     assert!(
-        SafetyStore::new(db.pool.clone())
+        SafetyStore::unfenced_test(db.pool.clone())
             .snapshot(&address)
             .await
             .is_err()

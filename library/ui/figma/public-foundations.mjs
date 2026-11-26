@@ -1,9 +1,56 @@
+import { createHash } from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { inspectPublicOutput } from './public-output.mjs'
 
 const ROOT = 'library/ui/foundations'
 const FONT = { package: '@fontsource-variable/inter', version: '5.3.0', license: 'OFL-1.1' }
+
+const CAPTURE = 'https://github.com/decentraland/figma-design-system'
+const REPOSITORY = 'https://github.com/decentraland/dcl-one'
+
+/**
+ * The public foundation table the staged manifests imply, for lock-digests --write. `files` lists the staged paths
+ * under library/ui/foundations (relative to it) and `readStaged` returns a non-LFS path's staged bytes. Generated
+ * files take the digest source.json emitted and the pinned capture revision, the Inter fonts and license take the
+ * digests font-source.json pins and the npm origin, and every other staged file is dcl-one source pinned at its
+ * staged bytes, except a file `previous` pinned as generated or npm, which keeps that pin. publicFoundationProblems still checks the materialized bytes against this table.
+ */
+export function publicFoundationTable(lock, files, readStaged, previous) {
+  const json = (file) => JSON.parse(readStaged(ROOT + '/' + file).toString('utf8'))
+  const generated = json('source.json').output
+  const fontSource = json('typography/font-source.json')
+  if (!Array.isArray(generated) || !fontSource || typeof fontSource.files !== 'object')
+    throw new Error('foundation manifests are malformed')
+  const revision = lock.sources?.find((entry) => entry.repository === CAPTURE)?.snapshot?.revision
+  const npm = (origin) => ({ kind: 'npm', ...FONT, path: origin })
+  const table = new Map()
+  for (const { path: file, sha256 } of generated)
+    table.set(file, { sha256, origin: { kind: 'generated', revision } })
+  for (const [name, sha256] of Object.entries(fontSource.files))
+    table.set('typography/fonts/' + name, { sha256, origin: npm('files/' + name) })
+  table.set('typography/' + fontSource.licenseFile, {
+    sha256: fontSource.licenseSha256,
+    origin: npm('LICENSE')
+  })
+  for (const file of files) {
+    if (table.has(file)) continue
+    // A file the manifests no longer list keeps a generated or npm pin, so the check reports it instead of the
+    // table quietly calling it dcl-one source.
+    const kind = previous?.[file]?.origin?.kind
+    if (kind === 'generated' || kind === 'npm') {
+      table.set(file, previous[file])
+      continue
+    }
+    table.set(file, {
+      sha256: createHash('sha256')
+        .update(readStaged(ROOT + '/' + file))
+        .digest('hex'),
+      origin: { kind: 'source', repository: REPOSITORY }
+    })
+  }
+  return Object.fromEntries([...table].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+}
 
 /** Checks materialized public bytes, their index identities and declared origins without installing dependencies. */
 export function publicFoundationProblems(root, lock) {

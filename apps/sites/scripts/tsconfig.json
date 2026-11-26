@@ -1,6 +1,6 @@
 {
   "extends": "../tsconfig.json",
-  "include": ["**/*.mts"],
+  "include": ["**/*.mts", "../../../library/ui/css-modules.d.ts"],
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "types": ["node"]

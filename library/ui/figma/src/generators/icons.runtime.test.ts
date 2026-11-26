@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import ts from 'typescript'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { IconSpec } from '../ir/schemas.js'
 import { generateIcons } from './icons.js'
 
@@ -87,10 +87,15 @@ function referencesOf(root: Element): string[] {
 
 describe('generated icon ids', () => {
   describe('when the same icon renders twice', () => {
-    const { files } = generateIcons([icon({ svg: WITH_IDS })], context)
+    let files: { path: string; content: string }[]
+    let components: Record<string, Component>
+
+    beforeEach(() => {
+      files = generateIcons([icon({ svg: WITH_IDS })], context).files
+      components = loadCategory(contentOf(files, 'icons/general.tsx')).components
+    })
 
     it('should give each instance disjoint ids', () => {
-      const { components } = loadCategory(contentOf(files, 'icons/general.tsx'))
       const first = idsOf(components.GeneralLike!({}))
       const second = idsOf(components.GeneralLike!({}))
 
@@ -99,7 +104,6 @@ describe('generated icon ids', () => {
     })
 
     it('should resolve every url(#), href and xlink:href reference inside its own instance', () => {
-      const { components } = loadCategory(contentOf(files, 'icons/general.tsx'))
       for (const root of [components.GeneralLike!({}), components.GeneralLike!({})]) {
         const ids = idsOf(root)
         const references = referencesOf(root)
@@ -110,7 +114,6 @@ describe('generated icon ids', () => {
     })
 
     it('should strip the useId separators so every id is a plain fragment identifier', () => {
-      const { components } = loadCategory(contentOf(files, 'icons/general.tsx'))
       const ids = idsOf(components.GeneralLike!({}))
 
       expect(ids.every((id) => /^GeneralLike-r0-[\w-]+$/.test(id))).toBe(true)
@@ -125,34 +128,48 @@ describe('generated icon ids', () => {
   })
 
   describe('when an icon declares no ids', () => {
-    it('should not call useId nor import it', () => {
-      const { files } = generateIcons([icon({})], context)
-      const source = contentOf(files, 'icons/general.tsx')
-      const { components, calls } = loadCategory(source)
+    let source: string
+    let calls: { useId: number }
 
-      components.GeneralLike!({})
+    beforeEach(() => {
+      const { files } = generateIcons([icon({})], context)
+      source = contentOf(files, 'icons/general.tsx')
+      const loaded = loadCategory(source)
+      calls = loaded.calls
+
+      loaded.components.GeneralLike!({})
+    })
+
+    it('should not import useId', () => {
       expect(source).not.toContain('useId')
+    })
+
+    it('should not call useId', () => {
       expect(calls.useId).toBe(0)
     })
   })
 
   describe('when an active-state icon declares ids', () => {
-    const variants = [
-      icon({ name: 'navbar/wallet', category: 'navbar', variant: 'active=false', svg: WITH_IDS }),
-      icon({
-        name: 'navbar/wallet',
-        category: 'navbar',
-        variant: 'active=true',
-        nodeId: '1:2',
-        svg: WITH_IDS.replaceAll('#fff', '#FF2D55')
-      })
-    ]
+    let loaded: ReturnType<typeof loadCategory>
+
+    beforeEach(() => {
+      const variants = [
+        icon({ name: 'navbar/wallet', category: 'navbar', variant: 'active=false', svg: WITH_IDS }),
+        icon({
+          name: 'navbar/wallet',
+          category: 'navbar',
+          variant: 'active=true',
+          nodeId: '1:2',
+          svg: WITH_IDS.replaceAll('#fff', '#FF2D55')
+        })
+      ]
+      const { files } = generateIcons(variants, context)
+      loaded = loadCategory(contentOf(files, 'icons/navbar.tsx'))
+    })
 
     it('should scope both branches with the ids of the rendering instance', () => {
-      const { files } = generateIcons(variants, context)
-      const { components } = loadCategory(contentOf(files, 'icons/navbar.tsx'))
-      const active = components.NavbarWallet!({ active: true })
-      const idle = components.NavbarWallet!({ active: false })
+      const active = loaded.components.NavbarWallet!({ active: true })
+      const idle = loaded.components.NavbarWallet!({ active: false })
 
       expect(JSON.stringify(active)).toContain('#ff2d55')
       expect(JSON.stringify(idle)).not.toContain('#ff2d55')
@@ -163,12 +180,9 @@ describe('generated icon ids', () => {
     })
 
     it('should call useId once per instance whichever branch renders', () => {
-      const { files } = generateIcons(variants, context)
-      const { components, calls } = loadCategory(contentOf(files, 'icons/navbar.tsx'))
-
-      components.NavbarWallet!({ active: true })
-      components.NavbarWallet!({})
-      expect(calls.useId).toBe(2)
+      loaded.components.NavbarWallet!({ active: true })
+      loaded.components.NavbarWallet!({})
+      expect(loaded.calls.useId).toBe(2)
     })
   })
 })
@@ -229,8 +243,11 @@ describe('generated icon registry typing', () => {
 import { activeIconComponents, iconComponents, iconMeta, isActiveIconComponentName, isIconComponentName, type IconComponentName, type IconProps } from './icons/index'
 `
 
-  it('should accept known keys, active on an active icon and lookups that are never undefined', async () => {
-    const diagnostics = await typecheck(`${IMPORTS}
+  let diagnostics: string[]
+
+  describe('when a consumer uses known keys, active on an active icon and guarded lookups', () => {
+    beforeEach(async () => {
+      diagnostics = await typecheck(`${IMPORTS}
 export const like = <iconComponents.GeneralLike size={24} />
 export const wallet = <iconComponents.NavbarWallet active />
 export const activeWallet = <activeIconComponents.NavbarWallet active={false} />
@@ -239,12 +256,16 @@ export const fromMeta: ComponentType<IconProps>[] = iconMeta.map((meta) => iconC
 export const byString = (name: string) =>
   isActiveIconComponentName(name) ? activeIconComponents[name] : isIconComponentName(name) ? iconComponents[name] : null
 `)
+    })
 
-    expect(diagnostics).toEqual([])
+    it('should accept them with lookups that are never undefined', () => {
+      expect(diagnostics).toEqual([])
+    })
   })
 
-  it('should reject an unknown key and active on a non-active icon', async () => {
-    const diagnostics = await typecheck(`${IMPORTS}
+  describe('when a consumer expects an error for an unknown key and active on a non-active icon', () => {
+    beforeEach(async () => {
+      diagnostics = await typecheck(`${IMPORTS}
 // @ts-expect-error GeneralUnknown is not a generated icon
 export const unknown = iconComponents.GeneralUnknown
 // @ts-expect-error GeneralLike has no active state
@@ -254,18 +275,31 @@ export const notActive = activeIconComponents.GeneralLike
 // @ts-expect-error a plain string is not a registry key without the guard
 export const unchecked = (name: string) => iconComponents[name]
 `)
+    })
 
-    expect(diagnostics).toEqual([])
+    it('should reject them', () => {
+      expect(diagnostics).toEqual([])
+    })
   })
 
-  it('should report the errors when they are not expected, so the check above is not vacuous', async () => {
-    const diagnostics = await typecheck(`${IMPORTS}
+  describe('when a consumer uses an unknown key and active on a non-active icon without expecting errors', () => {
+    beforeEach(async () => {
+      diagnostics = await typecheck(`${IMPORTS}
 export const unknown = iconComponents.GeneralUnknown
 export const inactive = <iconComponents.GeneralLike active />
 `)
+    })
 
-    expect(diagnostics).toHaveLength(2)
-    expect(diagnostics[0]).toContain('GeneralUnknown')
-    expect(diagnostics[1]).toContain('active')
+    it('should report both errors, so the check above is not vacuous', () => {
+      expect(diagnostics).toHaveLength(2)
+    })
+
+    it('should name the unknown key in the first error', () => {
+      expect(diagnostics[0]).toContain('GeneralUnknown')
+    })
+
+    it('should name the active prop in the second error', () => {
+      expect(diagnostics[1]).toContain('active')
+    })
   })
 })

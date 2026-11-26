@@ -35,6 +35,9 @@
 //!   recorded in `explore.event_moderation` and projected onto the row, which
 //!   the events mirror re-applies; a patch of its name or description answers
 //!   409 naming the upstream, whose fields every pass writes back.
+//! - Events moderators (`events/{moderators-list,moderator-add,
+//!   moderator-remove}`): the `explore.moderators` rows the events admin
+//!   gate reads (`explore::events::moderators`), `added_by` the operator.
 //!
 //! The overrides are local authority an operator owns, so the writes are
 //! behind `OPS_WRITES_ENABLED` (the console's own switch); the listings and
@@ -45,8 +48,6 @@
 //! are module calls too; like the relay's allowlist edits they change no
 //! user-authoritative row, so they are audited and not gated by
 //! `OPS_WRITES_ENABLED`.
-
-#![allow(clippy::result_large_err)]
 
 use axum::Json;
 use axum::extract::State;
@@ -63,6 +64,7 @@ use super::console::{
 };
 use crate::explore::api::{denylist, feature_flags, lists};
 use crate::explore::events::moderation::{self as event_moderation, CreateEvent};
+use crate::explore::events::moderators as event_moderators;
 use crate::explore::places::moderation::{self as place_moderation, Decision, Target};
 use crate::explore::places::reports::{self, ReportPatch, ReportQuery};
 
@@ -227,9 +229,12 @@ fn flag_name(body: &Value) -> Result<String, Response> {
 }
 
 async fn reload_flags(api: &crate::explore::api::Shared) -> sqlx::Result<()> {
-    api.flags
-        .reload(&api.pool, &api.settings.feature_flags_app)
-        .await
+    crate::explore::api::feature_flags::reload(
+        &api.flags,
+        &api.pool,
+        &api.settings.feature_flags_app,
+    )
+    .await
 }
 
 /// `POST /admin/api/explorer-api/flags-toggle` `{name, value?}` (`value`,
@@ -824,6 +829,87 @@ pub async fn event_create(
     finish(&state, call, answer).await
 }
 
+/// `POST /admin/api/events/moderators-list`: the events moderators (a read:
+/// open with writes off).
+pub async fn event_moderators_list(
+    session: AdminSession,
+    State(state): State<SharedState>,
+) -> Response {
+    let Some(explore) = state.domains.explore.clone() else {
+        return not_configured("explore");
+    };
+    let answer = match event_moderators::list(&explore.pool).await {
+        Ok(rows) => Json(json!({ "ok": true, "data": rows })).into_response(),
+        Err(e) => internal(e),
+    };
+    finish(
+        &state,
+        Call::new(&session, DOMAIN, "events.moderators.list"),
+        answer,
+    )
+    .await
+}
+
+async fn set_event_moderator(
+    state: &SharedState,
+    session: &AdminSession,
+    action: &'static str,
+    body: &Value,
+    present: bool,
+) -> Response {
+    let address = match address_field(body, "address", "address") {
+        Ok(a) => a,
+        Err(resp) => return resp,
+    };
+    let explore = match explore_for(state) {
+        Ok(e) => e,
+        Err(resp) => return resp,
+    };
+    let one = std::slice::from_ref(&address);
+    let changed = if present {
+        event_moderators::add(&explore.pool, one, session.address()).await
+    } else {
+        event_moderators::remove(&explore.pool, one).await
+    };
+    let (answer, detail) = match changed {
+        Ok(rows) => {
+            let key = if present { "added" } else { "removed" };
+            let mut answer = json!({ "ok": true, "address": address });
+            answer[key] = json!(!rows.is_empty());
+            let detail = json!({ "address": address, "changed": !rows.is_empty() });
+            (Json(answer).into_response(), detail)
+        }
+        Err(e) => (internal(e), json!({ "address": address })),
+    };
+    finish(
+        state,
+        Call::new(session, DOMAIN, action)
+            .target(address.clone())
+            .detail(detail),
+        answer,
+    )
+    .await
+}
+
+/// `POST /admin/api/events/moderator-add` `{address}`: an events moderator
+/// from the next request on.
+pub async fn event_moderator_add(
+    session: AdminSession,
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> Response {
+    set_event_moderator(&state, &session, "events.moderator.add", &body, true).await
+}
+
+/// `POST /admin/api/events/moderator-remove` `{address}`.
+pub async fn event_moderator_remove(
+    session: AdminSession,
+    State(state): State<SharedState>,
+    Json(body): Json<Value>,
+) -> Response {
+    set_event_moderator(&state, &session, "events.moderator.remove", &body, false).await
+}
+
 fn id_field(body: &Value) -> Result<String, Response> {
     str_field(body, "id")
         .filter(|id| !id.is_empty() && id.len() <= 64)
@@ -851,7 +937,7 @@ pub async fn challenges_list(session: AdminSession, State(state): State<SharedSt
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let answer = Json(crate::explore::api::auth_api::admin_list_challenges(&api)).into_response();
+    let answer = with_status(crate::explore::api::auth_api::admin_list_challenges(&api).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenges.list"),
@@ -870,9 +956,7 @@ pub async fn challenge_get(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_get_challenge(
-        &api, &id,
-    ));
+    let answer = with_status(crate::explore::api::auth_api::admin_get_challenge(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenge.get")
@@ -893,9 +977,8 @@ pub async fn challenge_revoke(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_revoke_challenge(
-        &api, &id,
-    ));
+    let answer =
+        with_status(crate::explore::api::auth_api::admin_revoke_challenge(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.challenge.revoke")
@@ -912,7 +995,7 @@ pub async fn identities_list(session: AdminSession, State(state): State<SharedSt
         Ok(a) => a,
         Err(resp) => return resp,
     };
-    let answer = Json(crate::explore::api::auth_api::admin_list_identities(&api)).into_response();
+    let answer = with_status(crate::explore::api::auth_api::admin_list_identities(&api).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.identities.list"),
@@ -931,9 +1014,7 @@ pub async fn identity_revoke(
         (Ok(a), Ok(id)) => (a, id),
         (Err(resp), _) | (_, Err(resp)) => return resp,
     };
-    let answer = with_status(crate::explore::api::auth_api::admin_revoke_identity(
-        &api, &id,
-    ));
+    let answer = with_status(crate::explore::api::auth_api::admin_revoke_identity(&api, &id).await);
     finish(
         &state,
         Call::new(&session, DOMAIN, "explorer-api.identity.revoke")

@@ -5,7 +5,7 @@
 // DMs themselves ride the chat stream (chat.ts) with the partner wallet as the channel.
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
-import type { DmUserState } from '../../../src/engine/protocol'
+import type { DmUserState } from '@explorer-core/engine/protocol'
 
 const STATES = new Set<DmUserState>([
   'notConnected',

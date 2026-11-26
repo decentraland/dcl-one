@@ -1,6 +1,6 @@
 .social-web .cs__body { padding: 0; }
 .social-web .soc, .social-web .soc * { box-sizing: border-box; }
-.social-web .soc { height: calc(100dvh - 72px); min-height: 480px; }
+.social-web .soc { height: calc(100dvh - var(--native-site-header-h, 72px)); min-height: 480px; }
 .social-web .soc--site { grid-template-columns: 248px minmax(0, 1fr); }
 .social-web .soc__side--site { gap: 0; padding: 24px 16px; background: var(--site-nav-bg); border-right-color: var(--site-nav-line); }
 .social-web .soc__side--site .side-nav-item small { margin-left: auto; font-size: 11px; }

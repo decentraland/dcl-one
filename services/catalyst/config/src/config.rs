@@ -1,3 +1,4 @@
+use catalyst_shared::network::ChainPair;
 use clap::Args;
 
 use crate::posture::Posture::Mirror;
@@ -12,7 +13,7 @@ pub use crate::{
     presence::PresenceConfig,
     price::PriceConfig,
     shop::{EconomyConfig, MarketUpstreamsConfig, MarketplaceConfig, ShopConfig},
-    social::{RoomAuthorityConfig, SocialConfig},
+    social::{MessageRouterConfig, RoomAuthorityConfig, SocialConfig, presence_badges},
     worlds::{WorldsConfig, WorldsContentConfig, WorldsFedConfig},
 };
 
@@ -28,14 +29,14 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// The L1 and L2 RPCs a node reads unless the operator names others
 /// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
 /// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+/// `project=dcl-one` tells these calls apart from other catalysts' in
+/// rpc.decentraland.org's request logs. It names no node: an operator that
+/// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
-    let (l1, l2) = if eth_network.trim() == "mainnet" {
-        ("mainnet", "polygon")
-    } else {
-        ("sepolia", "amoy")
-    };
-    let url =
-        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    let (l1, l2) = ChainPair::from_eth_network(eth_network)
+        .unwrap_or(ChainPair::Testnet)
+        .names();
+    let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
 
@@ -92,6 +93,8 @@ pub struct Config {
     #[command(flatten)]
     pub room_authority: RoomAuthorityConfig,
     #[command(flatten)]
+    pub message_router: MessageRouterConfig,
+    #[command(flatten)]
     pub worlds_fed: WorldsFedConfig,
     #[command(flatten)]
     pub ops: OpsConfig,
@@ -118,6 +121,10 @@ impl Config {
             let from_file = std::env::var_os(format!("{name}_FILE")).is_some_and(|p| !p.is_empty());
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
+            Self::refuse_short_operator_secret(name, slot.as_deref())?;
+        }
+        if let Some(pair) = ChainPair::from_eth_network(&self.node.eth_network) {
+            self.node.eth_network = pair.names().0.into();
         }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
@@ -163,9 +170,14 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || ChainPair::from_eth_network(&self.node.eth_network) != Some(ChainPair::Mainnet)
         {
             return;
         }
@@ -179,6 +191,60 @@ impl Config {
         if !entries.is_empty() {
             self.marketplace.trade_rpc_urls = Some(entries.join(","));
         }
+    }
+
+    /// The fewest bytes an operator secret (an admin bearer, `SESSION_SECRET`) may have.
+    pub const MIN_OPERATOR_SECRET_BYTES: usize = 32;
+
+    /// The operator-chosen secrets that guard this node's own routes (admin
+    /// bearers, service tokens, the console's session key): a short one is
+    /// guessable or brute-forced offline, so startup refuses it. Bearers this
+    /// node sends elsewhere keep their issuer's length.
+    pub const OPERATOR_SECRETS: [&'static str; 27] = [
+        "SESSION_SECRET",
+        "CATALYRST_CONTENT_ADMIN_TOKEN",
+        "COMMUNITIES_ADMIN_TOKEN",
+        "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
+        "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN",
+        "CATALYRST_BADGES_ADMIN_TOKEN",
+        "CATALYRST_EVENTS_ADMIN_TOKEN",
+        "CATALYRST_BUILDER_ADMIN_TOKEN",
+        "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
+        "CATALYRST_WORLDS_ADMIN_TOKEN",
+        "SCENE_HOST_ADMIN_TOKEN",
+        "MARKET_ADMIN_TOKEN",
+        "HISTORICAL_ADMIN_TOKEN",
+        "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+        "PRICE_ADMIN_TOKEN",
+        "CATALYRST_ECONOMY_ADMIN_TOKEN",
+        "CATALYRST_CREDITS_ADMIN_TOKEN",
+        "CATALYRST_RPC_ADMIN_TOKEN",
+        "PLACES_ADMIN_AUTH_TOKEN",
+        "MODERATOR_TOKEN",
+        "COMMS_GATEKEEPER_AUTH_TOKEN",
+        "SCENE_HOST_DEBUGGING_SECRET",
+        "NOTIFICATION_SERVICE_TOKEN",
+        "NOTIFICATIONS_GOVERNANCE_TOKEN",
+        "NOTIFICATIONS_REWARDS_TOKEN",
+        "ONBOARDING_API_KEY",
+        "DATA_TEAM_AUTH_TOKEN",
+    ];
+
+    pub fn is_operator_secret(name: &str) -> bool {
+        Self::OPERATOR_SECRETS.contains(&name)
+    }
+
+    fn refuse_short_operator_secret(name: &str, value: Option<&str>) -> anyhow::Result<()> {
+        let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(());
+        };
+        if Self::is_operator_secret(name) && value.len() < Self::MIN_OPERATOR_SECRET_BYTES {
+            anyhow::bail!(
+                "{name} is shorter than {} bytes; set a random value (for example `openssl rand -hex 32`)",
+                Self::MIN_OPERATOR_SECRET_BYTES
+            );
+        }
+        Ok(())
     }
 
     fn refuse_plain_signing_key(
@@ -217,7 +283,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 78] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 90] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -243,10 +309,6 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
-            ),
-            (
-                "WKC_METRICS_BEARER_TOKEN",
-                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -321,6 +383,10 @@ impl Config {
                 &mut self.explore.catalyrst_events_admin_token,
             ),
             (
+                "EVENTS_FEATURE_FLAGS_USER_ID",
+                &mut self.explore.events_feature_flags_user_id,
+            ),
+            (
                 "CATALYRST_BUILDER_ADMIN_TOKEN",
                 &mut self.create.catalyrst_builder_admin_token,
             ),
@@ -366,8 +432,31 @@ impl Config {
                 &mut self.room_authority.pulse_room_authority_key,
             ),
             (
+                "MESSAGE_ROUTER_KEY",
+                &mut self.message_router.message_router_key,
+            ),
+            (
                 "MARKET_ADMIN_TOKEN",
                 &mut self.marketplace.market_admin_token,
+            ),
+            (
+                "HISTORICAL_ADMIN_TOKEN",
+                &mut self.marketplace.historical_admin_token,
+            ),
+            ("WERT_PRIVATE_KEY", &mut self.marketplace.wert_private_key),
+            (
+                "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+                &mut self.marketplace.wert_publication_fees_private_key,
+            ),
+            ("WERT_API_KEY", &mut self.marketplace.wert_api_key),
+            ("TRANSAK_API_KEY", &mut self.marketplace.transak_api_key),
+            (
+                "TRANSAK_API_SECRET",
+                &mut self.marketplace.transak_api_secret,
+            ),
+            (
+                "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+                &mut self.marketplace.transak_refresh_access_token_auth,
             ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
@@ -382,12 +471,20 @@ impl Config {
             ),
             ("TRADE_RPC_URLS", &mut self.marketplace.trade_rpc_urls),
             (
+                "CHAIN_LOGS_PORTAL_API_KEY",
+                &mut self.marketplace.chain_logs_portal_api_key,
+            ),
+            (
                 "CATALYRST_CREDITS_ADMIN_TOKEN",
                 &mut self.shop.catalyrst_credits_admin_token,
             ),
             (
                 "CREDITS_CAPTCHA_SECRET",
                 &mut self.shop.credits_captcha_secret,
+            ),
+            (
+                "CREDITS_ALERTS_SLACK_WEBHOOK",
+                &mut self.shop.credits_alerts_slack_webhook,
             ),
             ("STRIPE_SECRET_KEY", &mut self.shop.stripe_secret_key),
             (
@@ -396,6 +493,7 @@ impl Config {
             ),
             ("CREDITS_SIGNER_KEY", &mut self.shop.credits_signer_key),
             ("CREDITS_REVOKER_KEY", &mut self.shop.credits_revoker_key),
+            ("CREDITS_TRIAL_BUYERS", &mut self.shop.credits_trial_buyers),
             (
                 "CATALYRST_RPC_ADMIN_TOKEN",
                 &mut self.rpc.catalyrst_rpc_admin_token,
@@ -433,6 +531,7 @@ impl Config {
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
+            ("MAGIC_SECRET_KEY", &mut self.node.magic_secret_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
                 &mut self.explore.places_admin_auth_token,
@@ -445,21 +544,31 @@ impl Config {
     }
 
     /// The signing keys: each signs value on this node's behalf (treasury
-    /// credit claims, relayed transactions), so each is
+    /// credit claims, relayed transactions, Wert card purchases), so each is
     /// read from `<NAME>_FILE` alone (a `LoadCredential` or agenix file). A
     /// plain environment variable would sit in `/proc/<pid>/environ`,
     /// `systemctl show` and, set through a unit's `environment`, the unit
     /// file in the world-readable nix store.
-    pub const FILE_ONLY_SECRETS: [&'static str; 3] = [
+    pub const FILE_ONLY_SECRETS: [&'static str; 5] = [
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
         "RELAYER_PRIVATE_KEY",
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
     ];
 
     /// Secrets that fall back to a network default when unset
     /// ([`Config::default_rpc_urls`]), so an empty `_FILE` is refused.
     pub const NETWORK_DEFAULTED_SECRETS: [&'static str; 2] =
         ["ETH_RPC_URL", "RPC_ENDPOINT_POLYGON"];
+
+    /// One secret outside a parsed config: `<NAME>`, else `<NAME>_FILE`'s trimmed contents,
+    /// with the same refusals as [`Config::resolve_secret_files`].
+    pub fn secret_from_env(name: &str) -> anyhow::Result<Option<String>> {
+        let mut slot = std::env::var(name).ok().filter(|v| !v.is_empty());
+        Self::read_secret_file(name, &mut slot)?;
+        Ok(slot)
+    }
 
     fn read_secret_file(name: &str, slot: &mut Option<String>) -> anyhow::Result<()> {
         let file_var = format!("{name}_FILE");
@@ -490,55 +599,6 @@ impl Config {
         Ok(())
     }
 
-    /// The write switches that are on, by their `WRITES=` names (local.sh),
-    /// in that list's order.
-    pub fn write_switches_on(&self) -> Vec<&'static str> {
-        [
-            ("content", self.writes.content_writes_enabled),
-            ("create", self.create.create_writes_enabled),
-            ("data", self.writes.data_writes_enabled),
-            ("social", self.writes.social_writes_enabled),
-            ("worlds", self.worlds.worlds_writes_enabled),
-            ("ops", self.ops.ops_writes_enabled),
-        ]
-        .into_iter()
-        .filter_map(|(name, on)| on.then_some(name))
-        .collect()
-    }
-
-    /// `WRITES_RESTORE_STAMP_DIR`, trimmed; blank is unset.
-    pub fn restore_stamp_dir(&self) -> Option<&str> {
-        self.writes
-            .writes_restore_stamp_dir
-            .as_deref()
-            .map(str::trim)
-            .filter(|d| !d.is_empty())
-    }
-
-    /// For a preset that requires the restore stamps (mirror, island): with
-    /// any write switch on, `WRITES_RESTORE_STAMP_DIR` must be set and both
-    /// budgets positive, or startup fails naming the switches. A node with
-    /// every switch off has nothing to vouch for.
-    pub fn require_restore_stamps(&self) -> anyhow::Result<()> {
-        let on = self.write_switches_on();
-        if on.is_empty() {
-            return Ok(());
-        }
-        if self.restore_stamp_dir().is_none() {
-            anyhow::bail!(
-                "write switches are on ({}) but WRITES_RESTORE_STAMP_DIR is unset: this preset lets a write through only while a backup stamp is under WRITES_BACKUP_MAX_AGE_HOURS and a restore-drill stamp under WRITES_DRILL_MAX_AGE_DAYS",
-                on.join(",")
-            );
-        }
-        if self.writes.writes_backup_max_age_hours == 0 {
-            anyhow::bail!("WRITES_BACKUP_MAX_AGE_HOURS=0 would hold every write");
-        }
-        if self.writes.writes_drill_max_age_days == 0 {
-            anyhow::bail!("WRITES_DRILL_MAX_AGE_DAYS=0 would hold every write");
-        }
-        Ok(())
-    }
-
     /// The warning for a price staleness budget a healthy poll cannot meet:
     /// the snapshot's age reaches one poll interval plus the upstream's own
     /// lag (`PRICE_UPSTREAM_LAG_SECS`) before the next poll lands.
@@ -550,6 +610,19 @@ impl Config {
                 self.shop.mana_price_max_staleness_secs,
                 self.price.price_poll_interval_secs,
                 Self::PRICE_UPSTREAM_LAG_SECS
+            )
+        })
+    }
+
+    /// The warning for escrow-lease opt-ins set apart: a node that accepts
+    /// a deploy wearing a leased item without listing that item in the
+    /// explorer backpack (or the reverse) shows its user two answers.
+    pub fn escrow_lease_flags_warning(&self) -> Option<String> {
+        let ownership = self.validator.content_escrow_lease_ownership_enabled;
+        let backpack = self.market_upstreams.explorer_escrow_grants_enabled;
+        (ownership != backpack).then(|| {
+            format!(
+                "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED={ownership} but EXPLORER_ESCROW_GRANTS_ENABLED={backpack}: set both, or neither, so that leased items are both wearable and listed in the explorer backpack"
             )
         })
     }
@@ -731,6 +804,117 @@ mod tests {
     /// one hidden non-slot: a required peer-auth DSN `schema apply` and the
     /// tests pass on the command line.
     #[test]
+    fn short_operator_secrets_are_refused() {
+        let long = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES);
+        let short = "a".repeat(Config::MIN_OPERATOR_SECRET_BYTES - 1);
+        for name in Config::OPERATOR_SECRETS {
+            let error = Config::refuse_short_operator_secret(name, Some(&short))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(name) && !error.contains(&short), "{error}");
+            assert!(Config::refuse_short_operator_secret(name, Some(&long)).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, None).is_ok());
+            assert!(Config::refuse_short_operator_secret(name, Some(" ")).is_ok());
+        }
+        for other in OTHER_SECRETS {
+            assert!(Config::refuse_short_operator_secret(other, Some("x")).is_ok());
+        }
+    }
+
+    /// Secret slots that are not this node's own inbound operator secrets: credentials it
+    /// sends elsewhere, keys and URLs whose shape another party sets.
+    const OTHER_SECRETS: &[&str] = &[
+        // Inbound HMAC key, but Segment issues it: its length is Segment's.
+        "SEGMENT_SIGNING_KEY",
+        "ETH_RPC_URL",
+        // Outbound flag targeting id the flags service defines.
+        "EVENTS_FEATURE_FLAGS_USER_ID",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "SLACK_BOT_TOKEN",
+        "ANALYTICS_API_TOKEN",
+        "OPEN_AI_API_KEY",
+        "SENDGRID_API_KEY",
+        "MAGIC_SECRET_KEY",
+        // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
+        "SIGNING_KEY",
+        "SLACK_WEBHOOK",
+        "PLACES_MODERATION_WEBHOOK",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        "TURNSTILE_SECRET_KEY",
+        "NEWSLETTER_SERVICE_API_KEY",
+        "BUILDER_POLYGON_RPC_URL",
+        "ENCRYPTION_KEY",
+        "SCENE_HOST_AUTHORITATIVE_KEY",
+        "SCENE_HOST_DELEGATION_MINTER_TOKEN",
+        "SCENE_HOST_STORAGE_DELEGATION",
+        "PULSE_ROOM_AUTHORITY_KEY",
+        // Its shape is the parser's: 32 base64url bytes (`shared::message_router::parse_key`).
+        "MESSAGE_ROUTER_KEY",
+        "RELAYER_PRIVATE_KEY",
+        "OZ_RELAYER_API_KEY",
+        "RPC_ENDPOINT_POLYGON",
+        "TRADE_RPC_URLS",
+        "CHAIN_LOGS_PORTAL_API_KEY",
+        "CREDITS_CAPTCHA_SECRET",
+        "CREDITS_ALERTS_SLACK_WEBHOOK",
+        // Wert's partner keys and API key: their shape is Wert's.
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        "WERT_API_KEY",
+        // Transak's partner credentials: their shape is Transak's.
+        "TRANSAK_API_KEY",
+        "TRANSAK_API_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "CREDITS_SIGNER_KEY",
+        "CREDITS_REVOKER_KEY",
+        "CREDITS_TRIAL_BUYERS",
+        "RPC_UPSTREAM_MAINNET",
+        "RPC_UPSTREAM_ETHEREUM",
+        "RPC_UPSTREAM_SEPOLIA",
+        "RPC_UPSTREAM_POLYGON",
+        "RPC_UPSTREAM_MATIC",
+        "RPC_UPSTREAM_AMOY",
+        "RPC_UPSTREAM_MUMBAI",
+        "RPC_UPSTREAM_ARBITRUM",
+        "RPC_UPSTREAM_OPTIMISM",
+        "RPC_UPSTREAM_AVALANCHE",
+        "RPC_UPSTREAM_BINANCE",
+        "RPC_UPSTREAM_FANTOM",
+        "AB_REGISTRY_ADMIN_TOKEN",
+        "TRANSLATE_BACKEND_API_KEY",
+        "TRANSLATE_LLM_API_KEY",
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+    ];
+
+    /// A new secret slot is classified here: an inbound operator secret is length-checked.
+    #[test]
+    fn every_secret_slot_is_classified_once() {
+        let (mut config, _) =
+            Config::parse_with_matches_for_tests(&["catalyst", "--database-url", "postgres://x/y"])
+                .unwrap();
+        let slots: Vec<&str> = config.secret_slots().into_iter().map(|(n, _)| n).collect();
+        for slot in &slots {
+            let operator = Config::OPERATOR_SECRETS.contains(slot);
+            assert!(
+                operator != OTHER_SECRETS.contains(slot),
+                "{slot}: list it in exactly one of OPERATOR_SECRETS and OTHER_SECRETS"
+            );
+        }
+        for name in Config::OPERATOR_SECRETS.iter().chain(OTHER_SECRETS) {
+            assert!(slots.contains(name), "{name} is a secret slot");
+        }
+    }
+
+    #[test]
     fn analytics_token_file_resolves_without_exposing_the_secret() {
         const CHILD: &str = "CATALYST_TEST_ANALYTICS_FILE_CHILD";
         if std::env::var_os(CHILD).is_some() {
@@ -848,6 +1032,31 @@ mod tests {
     }
 
     #[test]
+    fn escrow_lease_opt_ins_set_apart_warn() {
+        let with = |flags: &[&str]| {
+            let mut args = vec!["catalyst", "--database-url", "postgres://x/y"];
+            args.extend_from_slice(flags);
+            parse(&args).unwrap().escrow_lease_flags_warning()
+        };
+        assert!(with(&[]).is_none());
+        let both = [
+            "--content-escrow-lease-ownership-enabled",
+            "true",
+            "--explorer-escrow-grants-enabled",
+            "true",
+        ];
+        assert!(with(&both).is_none());
+        for one in [&both[..2], &both[2..]] {
+            let warning = with(one).expect("one opt-in without the other");
+            assert!(
+                warning.contains("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED")
+                    && warning.contains("EXPLORER_ESCROW_GRANTS_ENABLED"),
+                "{warning}"
+            );
+        }
+    }
+
+    #[test]
     fn a_signing_key_is_read_from_its_file_alone() {
         for key in Config::FILE_ONLY_SECRETS {
             let err = Config::refuse_plain_signing_key(key, Some("0xfeedface"), false)
@@ -952,21 +1161,12 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
-            "--badges-presence-enabled",
-            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
-                && cli.social.badges_presence_enabled
-        );
-        assert!(
-            !parse(&["x", "--database-url", "postgres:///catalyst"])
-                .unwrap()
-                .social
-                .badges_presence_enabled
         );
     }
 
@@ -1086,6 +1286,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test writes <NAME>_FILE into the process environment"
+    )]
     fn secrets_are_hidden_from_help_and_read_from_files() {
         let help = match parse(&["x", "--help"]) {
             Err(e) => e.to_string(),
@@ -1102,6 +1306,7 @@ mod tests {
             "--encryption-key",
             "--scene-host-authoritative-key",
             "--pulse-room-authority-key",
+            "--message-router-key",
             "--market-admin-token",
             "--price-admin-token",
             "--relayer-private-key",
@@ -1133,16 +1338,25 @@ mod tests {
             !help.contains("[env: ENCRYPTION_KEY=")
                 && !help.contains("[env: SCENE_HOST_AUTHORITATIVE_KEY=")
                 && !help.contains("[env: PULSE_ROOM_AUTHORITY_KEY=")
+                && !help.contains("[env: MESSAGE_ROUTER_KEY=")
         );
         for var in [
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
+            "HISTORICAL_ADMIN_TOKEN",
+            "WERT_PRIVATE_KEY",
+            "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+            "WERT_API_KEY",
+            "TRANSAK_API_KEY",
+            "TRANSAK_API_SECRET",
+            "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
             "CATALYRST_ECONOMY_ADMIN_TOKEN",
             "RPC_ENDPOINT_POLYGON",
             "TRADE_RPC_URLS",
+            "CHAIN_LOGS_PORTAL_API_KEY",
             "CATALYRST_CREDITS_ADMIN_TOKEN",
             "CREDITS_CAPTCHA_SECRET",
             "STRIPE_SECRET_KEY",
@@ -1173,6 +1387,7 @@ mod tests {
             "CATALYST_TEST_SECRET_{}",
             uuid::Uuid::new_v4().simple().to_string().to_uppercase()
         );
+        // SAFETY: the name is unique to this test, and this crate reads the environment only through std, which locks it.
         unsafe { std::env::set_var(format!("{name}_FILE"), &file) };
         Config::read_secret_file(&name, &mut slot).unwrap();
         assert_eq!(slot.as_deref(), Some("s3cr3t"));
@@ -1183,6 +1398,7 @@ mod tests {
             .to_string();
         assert!(err.contains("both set"), "{err}");
 
+        // SAFETY: as above.
         unsafe { std::env::set_var(format!("{name}_FILE"), dir.join("missing")) };
         let mut missing = None;
         let err = Config::read_secret_file(&name, &mut missing)
@@ -1192,6 +1408,7 @@ mod tests {
             err.contains(&format!("{name}_FILE")) && !err.contains("s3cr3t"),
             "{err}"
         );
+        // SAFETY: as above.
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
         let _ = std::fs::remove_dir_all(&dir);
     }

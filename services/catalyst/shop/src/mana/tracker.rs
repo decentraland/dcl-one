@@ -73,6 +73,63 @@ fn word_u256(word: &[u8]) -> Option<U256> {
     (word.len() == 32).then(|| U256::from_be_slice(word))
 }
 
+/// The settlement key marking a row whose transaction another wallet sent;
+/// the sender's own report may claim the row again.
+pub const SENDER_MISMATCH: &str = "senderMismatch";
+
+/// Whether `actor` sent the transaction: directly, or as the signer of the
+/// meta-transaction it carries.
+pub fn sent_by(actor: Address, from: Address, input: &[u8]) -> bool {
+    from == actor
+        || crate::evm::abi::decode_meta_tx_full(input).is_some_and(|m| m.user_address == actor)
+}
+
+/// `Approval(address,address,uint256)`.
+const TOPIC_APPROVAL: &str = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+
+/// Whether the receipt carries an event from the row's own MANA token or
+/// token contract that names `actor`: MANA sent by it, a MANA approval it
+/// owns (`approve_mana`), or the row's token moving from or to it. Logs from
+/// any other contract never count.
+pub fn names_actor(row: &ExecutionRow, receipt: &Receipt, actor: Address) -> bool {
+    // A cancellation emits no event naming the canceller's wallet.
+    if matches!(
+        row.kind.as_str(),
+        "cancel_trade" | "cancel_order" | "cancel_rental"
+    ) {
+        return false;
+    }
+    let proof = proof_of(row, receipt, actor);
+    if !proof.mana_out.is_zero()
+        || proof
+            .token_moves
+            .iter()
+            .any(|(f, t)| *f == actor || *t == actor)
+    {
+        return true;
+    }
+    let mana: Option<Address> = row.mana_token.as_deref().and_then(|m| m.parse().ok());
+    row.kind == "approve_mana"
+        && mana.is_some()
+        && receipt.logs.iter().any(|log| {
+            Some(log.address) == mana
+                && log.topics.len() == 3
+                && log.topics.first().map(topic_hex).as_deref() == Some(TOPIC_APPROVAL)
+                && topic_address(&log.topics[1]) == actor
+        })
+}
+
+/// A transaction another key sent counts for `actor` only when `actor` is a
+/// contract (an EOA cannot delegate) and a trusted event names it.
+pub fn contract_wallet_settles(
+    actor_has_code: bool,
+    row: &ExecutionRow,
+    receipt: &Receipt,
+    actor: Address,
+) -> bool {
+    actor_has_code && names_actor(row, receipt, actor)
+}
+
 /// What a receipt's logs prove about a settlement.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Proof {
@@ -170,8 +227,10 @@ pub async fn index_confirms(
         return Ok(None);
     };
     let now = Utc::now();
+    // Every index this book reads is published on the book's own chain.
+    let chain_id = chain.chain_id.0 as i64;
     let ready = |indexer: &'static str| async move {
-        chain_walk::ready_cursor(pool, indexer, net, now)
+        chain_walk::ready_cursor_on(pool, indexer, net, chain_id, now)
             .await
             .filter(|c| c.folded_block.is_some_and(|f| f >= block))
     };
@@ -222,10 +281,13 @@ pub async fn index_confirms(
                 "claim_rental" => "claimed",
                 _ => "asset_index_updated",
             };
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.rental_event WHERE network = $1 AND tx_hash = $2 AND kind = $3)")
+            // The receipt block bounds this lookup to the (network, block_number)
+            // prefix of the event primary key.
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.rental_event WHERE network = $1 AND tx_hash = $2 AND kind = $3 AND block_number = $4)")
                 .bind(net.db_name())
                 .bind(&row.tx_hash)
                 .bind(kind)
+                .bind(block)
                 .fetch_one(pool)
                 .await?
         }
@@ -245,7 +307,11 @@ pub async fn index_confirms(
                     .unwrap_or(Address::ZERO),
             );
             if land {
-                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool).await else {
+                let Some(net) = chain.land_network() else {
+                    return Ok(Some(false));
+                };
+                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool, net).await
+                else {
                     return Ok(Some(false));
                 };
                 sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM land_authz.token_right WHERE token_address = $1 AND token_id = $2::numeric AND owner = $3 AND updated_block >= $4)")
@@ -593,7 +659,64 @@ pub async fn step(
         .await?;
         return Ok("reverted");
     }
-    let payer: Address = row.actor.parse().unwrap_or(receipt.from);
+    let actor: Address = row.actor.parse().unwrap_or(receipt.from);
+    if receipt.from != actor {
+        let input = match reader.transaction_input(&row.tx_hash).await {
+            Ok(Some(input)) => input,
+            Ok(None) | Err(_) => {
+                advance(
+                    &state.pool,
+                    row.id,
+                    &row.status,
+                    &stay(Some("the transaction could not be read".into()), "mined"),
+                    now,
+                )
+                .await?;
+                return Ok("rpc-error");
+            }
+        };
+        let accepted = if sent_by(actor, receipt.from, &input) {
+            true
+        } else {
+            // A contract wallet's owner sends for it; only trusted events naming it count.
+            match reader.has_code(actor).await {
+                Ok(has_code) => contract_wallet_settles(has_code, row, &receipt, actor),
+                Err(_) => {
+                    advance(
+                        &state.pool,
+                        row.id,
+                        &row.status,
+                        &stay(Some("the actor's code could not be read".into()), "mined"),
+                        now,
+                    )
+                    .await?;
+                    return Ok("rpc-error");
+                }
+            }
+        };
+        if !accepted {
+            advance(
+                &state.pool,
+                row.id,
+                &row.status,
+                &Advance {
+                    status: "mismatch",
+                    block_number: Some(receipt.block_number as i64),
+                    confirmed_by: Some("receipt"),
+                    settlement: Some(json!({
+                        (SENDER_MISMATCH): true,
+                        "mismatches": ["the transaction was not sent by the reporting wallet"],
+                    })),
+                    error: None,
+                    next_check_at: now,
+                },
+                now,
+            )
+            .await?;
+            return Ok("mismatch");
+        }
+    }
+    let payer = actor;
     let proof = proof_of(row, &receipt, payer);
     let block = receipt.block_number as i64;
     let (confirmed, by) = match index_confirms(&state.pool, &chain, row, block).await? {
@@ -774,6 +897,26 @@ pub type Shared = SharedState;
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_the_sender_or_its_meta_transaction_signer_reported_the_hash() {
+        use alloy_sol_types::SolCall;
+        let (actor, relayer) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xee));
+        assert!(sent_by(actor, actor, &[]));
+        assert!(!sent_by(actor, relayer, &[]));
+        let meta = |user: Address| {
+            crate::evm::abi::executeMetaTransactionCall {
+                userAddress: user,
+                functionSignature: vec![0u8; 4].into(),
+                sigR: Default::default(),
+                sigS: Default::default(),
+                sigV: 27,
+            }
+            .abi_encode()
+        };
+        assert!(sent_by(actor, relayer, &meta(actor)));
+        assert!(!sent_by(actor, relayer, &meta(relayer)));
+    }
+
     fn row(kind: &str, price: Option<&str>) -> ExecutionRow {
         let now = Utc::now().naive_utc();
         ExecutionRow {
@@ -800,6 +943,98 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[tokio::test]
+    async fn rental_confirmation_uses_receipt_block_hash_kind_and_published_chain() {
+        let Some(db) = crate::test_db::OwnDatabase::create("rental_receipt").await else {
+            return;
+        };
+        let book = super::super::venues::Book::production(|_| None);
+        let chain = book.chain(crate::types::ChainId(1)).unwrap();
+        let mut execution = row("claim_rental", None);
+        execution.chain_id = 1;
+        let receipt_block = 100_i64;
+        sqlx::query("INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, tx_hash) VALUES ('ethereum', $1, 0, 1, $2, 'claimed', $3, 7, $4)")
+            .bind(receipt_block).bind(&execution.venue).bind(&execution.contract_address).bind(&execution.tx_hash)
+            .execute(&db.pool).await.unwrap();
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) VALUES ('rentals', 'ethereum', 0, 200, 200, timezone('UTC', now()), true, 1)")
+            .execute(&db.pool).await.unwrap();
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        // A receipt re-mined at another height cannot use the old indexed logs.
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block + 1)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        let wrong_hash = ExecutionRow {
+            tx_hash: "0xmissing".into(),
+            ..execution.clone()
+        };
+        assert_eq!(
+            index_confirms(&db.pool, chain, &wrong_hash, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        for (action, event_kind) in [
+            ("accept_rental", "rented"),
+            ("cancel_rental", "asset_index_updated"),
+        ] {
+            execution.kind = action.into();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(false)
+            );
+            sqlx::query("UPDATE shop.rental_event SET kind = $1, signature = CASE WHEN $1 = 'rented' THEN '0xsignature' END, tenant = CASE WHEN $1 = 'rented' THEN rentals_address END, rental_days = CASE WHEN $1 = 'rented' THEN 1 END, price_per_day = CASE WHEN $1 = 'rented' THEN 1 END, new_index = CASE WHEN $1 = 'asset_index_updated' THEN 1 END WHERE network = 'ethereum' AND block_number = $2 AND log_index = 0")
+                .bind(event_kind).bind(receipt_block).execute(&db.pool).await.unwrap();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(true)
+            );
+        }
+        for (chain_id, folded_block, stale, quarantine) in [
+            (137_i64, 200_i64, false, false),
+            (1, 99, false, false),
+            (1, 200, true, false),
+            (1, 200, false, true),
+        ] {
+            sqlx::query("UPDATE shop.chain_cursor SET chain_id = $1, last_block = $2, folded_block = $2, folded_at = timezone('UTC', now()) - CASE WHEN $3 THEN interval '1 hour' ELSE interval '0' END, quarantined_at = CASE WHEN $4 THEN timezone('UTC', now()) END, quarantine_reason = CASE WHEN $4 THEN 'test' END WHERE indexer = 'rentals'")
+                .bind(chain_id).bind(folded_block).bind(stale).bind(quarantine).execute(&db.pool).await.unwrap();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(false)
+            );
+        }
+        sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) VALUES ('rentals', 'matic', 0, 200, 200, timezone('UTC', now()), true, 1)")
+            .execute(&db.pool).await.unwrap();
+        let mut other_network = chain.clone();
+        other_network.net = Some(ChainNet::Matic);
+        assert_eq!(
+            index_confirms(&db.pool, &other_network, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        db.drop().await;
     }
 
     #[test]
@@ -848,6 +1083,79 @@ mod tests {
         assert_eq!(backoff(1), Duration::from_secs(10));
         assert_eq!(backoff(3), Duration::from_secs(40));
         assert_eq!(backoff(9), Duration::from_secs(60));
+    }
+
+    fn receipt_from(sender: Address, logs: Vec<ReceiptLog>) -> Receipt {
+        Receipt {
+            tx_hash: format!("0x{}", "11".repeat(32)),
+            status: Some(true),
+            block_number: 100,
+            from: sender,
+            to: Some(Address::repeat_byte(0xee)),
+            gas_used: None,
+            logs,
+        }
+    }
+
+    #[test]
+    fn a_contract_wallet_settles_only_on_a_trusted_event_naming_it() {
+        let r = row("accept_trade", Some("1000"));
+        let wallet = Address::repeat_byte(0xb0);
+        let owner = Address::repeat_byte(0x01);
+        let seller = Address::repeat_byte(0x5e);
+        let mana_from = |emitter: Address| {
+            log(
+                emitter,
+                vec![TOPIC_TRANSFER.into(), topic_of(wallet), topic_of(seller)],
+                U256::from(1000u32).to_be_bytes_vec(),
+            )
+        };
+        // A Safe-like wallet: its owner sends, the MANA token moves the wallet's MANA.
+        let paid = receipt_from(owner, vec![mana_from(Address::repeat_byte(0xaa))]);
+        assert!(contract_wallet_settles(true, &r, &paid, wallet));
+        // The same event from any other contract proves nothing.
+        let forged = receipt_from(owner, vec![mana_from(Address::repeat_byte(0x99))]);
+        assert!(!contract_wallet_settles(true, &r, &forged, wallet));
+        // An EOA actor never delegates to another sender.
+        assert!(!contract_wallet_settles(false, &r, &paid, wallet));
+        // A contract actor the receipt never names stays a mismatch.
+        let silent = receipt_from(owner, vec![]);
+        assert!(!contract_wallet_settles(true, &r, &silent, wallet));
+        assert!(
+            !contract_wallet_settles(true, &row("cancel_trade", None), &paid, wallet),
+            "a kind with no event naming the actor fails closed"
+        );
+
+        let approve = row("approve_mana", None);
+        let approval = |emitter: Address| {
+            receipt_from(
+                owner,
+                vec![log(
+                    emitter,
+                    vec![TOPIC_APPROVAL.into(), topic_of(wallet), topic_of(seller)],
+                    U256::from(5u32).to_be_bytes_vec(),
+                )],
+            )
+        };
+        assert!(contract_wallet_settles(
+            true,
+            &approve,
+            &approval(Address::repeat_byte(0xaa)),
+            wallet
+        ));
+        assert!(!contract_wallet_settles(
+            true,
+            &approve,
+            &approval(Address::repeat_byte(0x99)),
+            wallet
+        ));
+        assert_eq!(
+            TOPIC_APPROVAL,
+            format!(
+                "{:#x}",
+                alloy_primitives::keccak256("Approval(address,address,uint256)")
+            )
+        );
     }
 
     #[test]

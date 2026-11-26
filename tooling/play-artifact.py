@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -12,30 +13,31 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = 'rendering/bevy-explorer/upstream.lock.json'
 SOURCE = 'rendering/bevy-explorer/source/'
-# The vendored Bevy the engine compiles (rendering/bevy-explorer/docs/guidelines/bevy-fork.md).
-BEVY = 'rendering/bevy-explorer/bevy/'
+# The crates the engine compiles from tracked bytes. Bevy and the forked crates are git
+# dependencies: Cargo.lock, under SOURCE, names their revisions.
+VENDOR = 'rendering/bevy-explorer/vendor/'
 PROTO = 'library/protocol/proto/'
+# The avatar preview: its own workspace, compiled from the engine's crates (tools/package.py lays
+# it out under content-hashed names). Its modules depend on the engine's inputs and its crate; the
+# page and its packaging change only the assembled artifact. Its build outputs are never inputs.
+PREVIEW = 'rendering/avatar-preview/'
+PREVIEW_PAGE = (PREVIEW + 'web/', PREVIEW + 'tools/')
+PREVIEW_OUTPUTS = (PREVIEW + 'target/', PREVIEW + 'web/pkg/', PREVIEW + 'web/pkg-gl/')
+# What the bridge scene's install takes from outside SOURCE: the hashing library its SDK commands
+# load, and Creator Hub's zip-extract, which its pnpm-workspace.yaml puts in place of extract-zip.
+BRIDGE_INPUTS = ('library/hashing/', 'apps/creator-hub/packages/zip-extract/')
 HUD = SOURCE + 'react-web/src/'
-# Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
-# matching tsconfig.json paths). A trailing slash names a tree, anything else one file. They build into
-# the HUD, never the engine. They are not part of the Sites HUD review (`hud_inputs`) either: they are
-# shared code, with no adaptation of them to review. tooling/bevy-ci.py reads them from here;
-# infra/packages/play.nix lists them too, and tests keep it, the HUD's aliases and library/ui's import
-# graph together with this.
-HUD_SHARED = ('library/shop/', 'library/catalyst-api/', 'library/ui/index.ts', 'library/ui/foundations/')
-# Inside those, what the HUD never reads, so no input: library/ui's Inter files. They are Git LFS objects,
-# which a checkout without LFS holds as pointers and a `git+file:.?lfs=1` Nix source as their bytes, so
-# hashing them would key one tree two ways. The HUD takes the same faces from its own
-# @fontsource-variable/inter (react-web/vite.shared.ts).
-HUD_UNREAD = ('library/ui/foundations/typography/fonts/',)
+# The ts-rs bindings both HUD hosts compile (scripts/gen-ts-bindings.sh writes them; tracked).
+BINDINGS = 'library/explorer-core/engine/generated'
+# Shared inputs come from the checked compiler/resolver graph, never a directory allowlist.
+_SPEC = importlib.util.spec_from_file_location('hud_shared_inputs', Path(__file__).with_name('hud_shared_inputs.py'))
+shared_inputs = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(shared_inputs)
 
 
-def hud_shared(path):
-    return any(path.startswith(entry) if entry.endswith('/') else path == entry for entry in HUD_SHARED)
 MANIFEST = 'sites-play.json'
-PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
+PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js', 'avatar-preview')
 # Source is maintained here. Hash its tracked files directly, alongside the build tools and
 # configuration (the flake lock and package set pin the protoc and wasm-pack the web job
 # builds with); generated outputs and local overrides are excluded.
@@ -43,7 +45,7 @@ INPUTS = ('apps/bevy-explorer/build-web.py',
           'apps/bevy-explorer/install-web-tools.py',
           'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-tools.sh',
           '.github/actions/bevy-explorer-tools/action.yml', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix',
-          'tooling/play-artifact.py',
+          'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
           '.github/workflows/bevy-explorer-ci.yml')
 TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
 # Compiled into the engine (option_env!): a value change must miss the engine cache like a source
@@ -52,16 +54,21 @@ BUILD_ENV = ('BEVY_SEGMENT_WRITE_KEY', 'BEVY_ANALYTICS_DEV')
 REQUIRED = ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg/webgpu_build.js',
             'engine/pkg/manifest.json', 'engine/pkg-scene/dcl_scene_wasm_bg.wasm',
             'engine/headless.html', 'bridge-scene/static/BevyExplorerUI/about',
-            'service_worker.js', 'preview_realm.js')
+            'service_worker.js', 'preview_realm.js', 'avatar-preview/index.html')
 ENGINE_PARTS = {
     'pkg': SOURCE + 'deploy/web/engine/pkg',
     'pkg-scene': SOURCE + 'deploy/web/engine/pkg-scene',
-    'bindings': HUD + 'engine/generated',
+    'bindings': BINDINGS,
 }
 ENGINE_REQUIRED = ('pkg/webgpu_build_bg.wasm', 'pkg/webgpu_build.js',
                    'pkg/manifest.json', 'pkg-scene/dcl_scene_wasm_bg.wasm',
                    'pkg-scene/dcl_scene_wasm.js')
 ENGINE_MANIFEST = 'engine-cache.json'
+# The compiled preview modules, one per browser backend, as build.sh lays them out.
+PREVIEW_PARTS = {'pkg': PREVIEW + 'web/pkg', 'pkg-gl': PREVIEW + 'web/pkg-gl'}
+PREVIEW_REQUIRED = tuple(f'{part}/{name}' for part in PREVIEW_PARTS for name in (
+    'dcl_avatar_preview_bg.wasm', 'dcl_avatar_preview.js', 'content_cache.js'))
+PREVIEW_MANIFEST = 'preview-cache.json'
 # Written by fetch-play.py beside an imported main build that a non-engine change takes:
 # the producer commit it was validated against and the tree inputs it was validated for.
 PRODUCER_VALIDATION = 'producer-validated.json'
@@ -75,18 +82,27 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
+def input_files(root=ROOT, revision=None, engine_only=False, preview=False):
+    shared = shared_inputs.input_hashes(root, revision) if not engine_only else {}
     def selected(path):
-        if hud_only:
-            return path.startswith(HUD)
-        # Native npm packaging is not consumed by the web builder or WASM.
-        if path.startswith((SOURCE + 'deploy/headless/', *HUD_UNREAD)):
+        # Native npm packaging is not consumed by the web builder or WASM. The tracked bindings are not
+        # either: the build regenerates them from crates/system_api_types, and verify() compares the
+        # tracked copy with the ones it built.
+        if path.startswith((SOURCE + 'deploy/headless/', BINDINGS + '/')):
             return False
-        if engine_only and (path.startswith(SOURCE + 'react-web/') or hud_shared(path) or path in (
+        if engine_only and (path.startswith(SOURCE + 'react-web/') or path in (
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
-        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or hud_shared(path) or path in INPUTS
+        if path.startswith(PREVIEW):
+            # The engine never reads the preview; markdown selects no lane in bevy-ci.py.
+            if (engine_only and not preview) or path.endswith('.md') or path.startswith(PREVIEW_OUTPUTS):
+                return False
+            return not (engine_only and path.startswith(PREVIEW_PAGE))
+        return (path.startswith((SOURCE, VENDOR, PROTO, '.cargo/')) or path in shared or path in INPUTS
+                # bevy-ci.py selects the web lane for these paths and drops markdown.
+                or (not engine_only and ((path.startswith(BRIDGE_INPUTS) and not path.endswith('.md'))
+                                        or path == 'tooling/check-local-hashing.mjs'))
                 or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
@@ -101,7 +117,7 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
                     raise ValueError(f'Unsupported Explorer source input: {path}')
                 entries.append((path, oid))
         names = {path for path, _ in entries}
-        if not hud_only and not set(INPUTS).issubset(names):
+        if not set(INPUTS).issubset(names):
             # Historical runs before this contract cannot supply an artifact;
             # reject them before loading the full Explorer source.
             raise ValueError('Incomplete Explorer source inputs')
@@ -123,10 +139,17 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
-            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo', *HUD_SHARED)
+            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, VENDOR, PROTO, '.cargo')
                        for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
                        if p.is_file()]
-            tracked += list(INPUTS)
+            tracked += list(INPUTS) + list(shared)
+            if not engine_only or preview:
+                tracked += [p.relative_to(root).as_posix() for p in (root / PREVIEW).rglob('*') if p.is_file()]
+            if not engine_only:
+                tracked += [p.relative_to(root).as_posix() for base in BRIDGE_INPUTS
+                            for p in (root / base).rglob('*') if p.is_file()]
+                if (root / 'tooling/check-local-hashing.mjs').is_file():
+                    tracked.append('tooling/check-local-hashing.mjs')
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]
         hashes = {}
         for path in sorted(set(filter(selected, tracked))):
@@ -134,10 +157,10 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             if source.is_symlink() or not source.is_file():
                 raise ValueError(f'Missing or linked Explorer source input: {path}')
             hashes[path] = digest(source.read_bytes())
-    required = () if hud_only else INPUTS
-    if not any(path.startswith(HUD if hud_only else SOURCE) for path in hashes) or any(
-            path not in hashes for path in required):
+    if not any(path.startswith(SOURCE) for path in hashes) or any(
+            path not in hashes for path in INPUTS):
         raise ValueError('Incomplete Explorer source inputs')
+    hashes.update(shared)
     return hashes
 
 
@@ -146,13 +169,14 @@ def inputs(root=ROOT, revision=None):
     return digest(json.dumps(input_files(root, revision), sort_keys=True).encode())
 
 
-def hud_inputs(root=ROOT):
-    return digest(json.dumps(input_files(root, hud_only=True), sort_keys=True).encode())
-
-
 def engine_inputs(root=ROOT, revision=None):
     # Web runtime assets stay included: Rust embeds gpu_cache.js via wasm_bindgen.
     return digest(json.dumps(input_files(root, revision, engine_only=True), sort_keys=True).encode())
+
+
+def preview_inputs(root=ROOT, revision=None):
+    """The compiled preview modules' key: the engine's inputs and the preview's crate."""
+    return digest(json.dumps(input_files(root, revision, engine_only=True, preview=True), sort_keys=True).encode())
 
 
 def build_env():
@@ -238,8 +262,58 @@ def restore_engine(directory, root=ROOT, allow_unoptimized=True):
     return info
 
 
+def verify_preview_info(info, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
+    if not isinstance(info, dict) or not (
+            trust_inputs or info.get('inputs') == preview_inputs(root, producer)):
+        raise ValueError('Compiled avatar preview inputs differ; rebuild the preview')
+    if not re.fullmatch(r'(?:[0-9a-f]{40}|local)', str(info.get('revision', ''))):
+        raise ValueError('Missing or invalid compiled avatar preview revision')
+    if info.get('optimized') is not True and not (allow_unoptimized and info.get('optimized') is False):
+        raise ValueError('Production requires the optimized avatar preview')
+    return info
+
+
+def verify_preview(directory, root=ROOT, allow_unoptimized=True):
+    if directory.is_symlink() or (directory / PREVIEW_MANIFEST).is_symlink():
+        raise ValueError('Linked compiled avatar preview cache or manifest')
+    meta = read_json(directory / PREVIEW_MANIFEST)
+    if meta.get('format') != 1:
+        raise ValueError('Unsupported compiled avatar preview cache format')
+    verify_preview_info(meta, root, allow_unoptimized)
+    if meta.get('files') != files(directory, PREVIEW_PARTS, PREVIEW_REQUIRED):
+        raise ValueError('Compiled avatar preview checksum or file inventory mismatch')
+    return {k: meta[k] for k in ('inputs', 'revision', 'optimized')}
+
+
+def pack_preview(directory, root=ROOT, optimized=True, revision='local'):
+    """As pack_engine: one disposable output slot."""
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=directory.parent) as temporary:
+        staged = Path(temporary) / 'preview'
+        for part, source in PREVIEW_PARTS.items():
+            shutil.copytree(root / source, staged / part, symlinks=True)
+        meta = {'format': 1, 'inputs': preview_inputs(root), 'revision': revision,
+                'optimized': optimized, 'files': files(staged, PREVIEW_PARTS, PREVIEW_REQUIRED)}
+        (staged / PREVIEW_MANIFEST).write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n')
+        info = verify_preview(staged, root)
+        if directory.exists():
+            shutil.rmtree(directory)
+        staged.rename(directory)
+    return info
+
+
+def restore_preview(directory, root=ROOT, allow_unoptimized=True):
+    info = verify_preview(directory, root, allow_unoptimized)
+    for part, target in PREVIEW_PARTS.items():
+        target = root / target
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(directory / part, target)
+    return info
+
+
 def verify_build(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
-    """Validate producer bytes independently of the Sites HUD adaptation.
+    """Validate producer bytes independently of the Sites bindings check.
 
     The build's inputs must be the tree's, or, for a change that touches no engine
     input, those of `producer` (the main commit that built it). `trust_inputs` also
@@ -256,13 +330,15 @@ def verify_build(directory, root=ROOT, allow_unoptimized=True, producer=None, tr
             record = {}
         validated = (record.get('tree_inputs') == inputs(root) and record.get('producer') == meta.get('build_revision')
                      and re.fullmatch('[0-9a-f]{40}', str(record.get('producer', ''))) is not None)
-    if meta.get('format') != 3 or not (validated or meta.get('inputs') == inputs(root, producer)):
+    if meta.get('format') != 4 or not (validated or meta.get('inputs') == inputs(root, producer)):
         raise ValueError('Explorer build inputs differ; rebuild Bevy or import a matching CI artifact')
     if meta.get('optimized') is not True and not (allow_unoptimized and meta.get('optimized') is False):
         raise ValueError('Production requires the optimized Explorer build')
     engine = verify_engine_info(meta.get('engine'), root, allow_unoptimized, producer, validated)
-    if engine['optimized'] is not meta['optimized']:
-        raise ValueError('Explorer optimization flag differs from the compiled engine')
+    preview = verify_preview_info(meta.get('preview'), root, allow_unoptimized, producer, validated)
+    # Optimized means every compiled part is: a PR may restore main's engine and compile its preview.
+    if (engine['optimized'] and preview['optimized']) is not meta['optimized']:
+        raise ValueError('Explorer optimization flag differs from the compiled engine and avatar preview')
     if meta.get('files') != files(directory):
         raise ValueError('Explorer artifact checksum or file inventory mismatch')
     return meta
@@ -275,29 +351,27 @@ def record_producer_validation(directory, producer, root=ROOT):
 
 
 def verify(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
-    """Sites additionally requires its reviewed HUD and bindings to match the tree, whatever built the engine."""
+    """Sites additionally requires the build's bindings to match the tracked ones, whatever built the engine."""
     meta = verify_build(directory, root, allow_unoptimized, producer, trust_inputs)
-    lock = read_json(root / LOCK)
-    if lock.get('hud_source_sha256') != hud_inputs(root):
-        raise ValueError('Sites HUD adaptation must be reviewed against the current Explorer HUD source')
-    bindings = root / 'apps/ui3/src/play/engine/generated'
+    bindings = root / BINDINGS
     expected = {p.relative_to(bindings).as_posix(): digest(p.read_bytes())
                 for p in bindings.rglob('*.ts')}
     actual = {p.removeprefix('bindings/'): h for p, h in meta['files'].items() if p.startswith('bindings/')}
     if not expected or expected != actual:
-        raise ValueError('Sites engine bindings differ from this build; regenerate with tooling/play-bindings.sh')
+        raise ValueError('Sites engine bindings differ from this build; regenerate with rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh')
     return meta
 
 
 def pack(directory, root=ROOT, optimized=True):
     info = read_json(directory / 'build-info.json')
-    source = root / 'rendering/bevy-explorer/source/react-web/src/engine/generated'
+    source = root / BINDINGS
     target = directory / 'bindings'
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(source, target)
-    meta = {'format': 3, 'inputs': inputs(root), 'optimized': optimized,
+    meta = {'format': 4, 'inputs': inputs(root), 'optimized': optimized,
             'engine': info.get('engine'),
+            'preview': info.get('preview'),
             'build_revision': info['revision'],
             'files': files(directory)}
     (directory / MANIFEST).write_text(json.dumps(meta, sort_keys=True, indent=2) + '\n')
@@ -307,8 +381,8 @@ def pack(directory, root=ROOT, optimized=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('pack', 'verify', 'inputs', 'hud-inputs',
-                                           'engine-inputs', 'engine-cache-key', 'verify-engine'))
+    parser.add_argument('command', choices=('pack', 'verify', 'inputs', 'engine-inputs', 'engine-cache-key',
+                                           'verify-engine', 'preview-inputs', 'verify-preview'))
     parser.add_argument('directory', type=Path, nargs='?')
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--unoptimized', action='store_true')
@@ -320,12 +394,14 @@ def main():
         parser.error('--trust-inputs is never allowed with --production')
     if args.command == 'inputs':
         print(inputs(args.root))
-    elif args.command == 'hud-inputs':
-        print(hud_inputs(args.root))
     elif args.command == 'engine-inputs':
         print(engine_inputs(args.root))
     elif args.command == 'engine-cache-key':
         print(engine_cache_key(args.root))
+    elif args.command == 'preview-inputs':
+        print(preview_inputs(args.root))
+    elif args.command == 'verify-preview':
+        print(json.dumps(verify_preview(args.directory, args.root, not args.production)))
     elif args.command == 'verify-engine':
         print(json.dumps(verify_engine(args.directory, args.root, not args.production)))
     elif args.command == 'pack':

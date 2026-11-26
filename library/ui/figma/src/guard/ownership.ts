@@ -271,19 +271,6 @@ async function buildOwnership(root: string): Promise<Ownership> {
       for (const symbol of statement.symbols)
         ownership.artifactIdentity.set(`${LIBRARY_INDEX}#${symbol.key}`, JSON.stringify(owner))
   }
-  const promoted = (await readJson(path.join(root, LIBRARY_PROMOTION))) as
-    { files?: Record<string, string> } | undefined
-  const runtimePrefix = 'figma/review/src/components/'
-  for (const file of Object.keys(promoted?.files ?? {})) {
-    if (!file.startsWith(runtimePrefix)) continue
-    const relative = file.slice(runtimePrefix.length)
-    if (!relative || relative.includes('/') || relative.includes('\\')) continue
-    ownership.artifactIdentity.set(
-      // The promoted runtime lives in components/runtime here (our promote.ts), not beside the components.
-      `components/runtime/${relative}`,
-      JSON.stringify({ aggregate: 'runtime' })
-    )
-  }
   for (const [directory, source] of [
     [`${GENERATED}/components/assets`, 'figma/review/src'],
     [`${LIBRARY_GENERATED}assets`, 'components']

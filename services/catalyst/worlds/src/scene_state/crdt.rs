@@ -119,8 +119,17 @@ impl CrdtMessage {
 
 #[inline]
 fn read_u32(buf: &[u8], off: usize) -> Option<u32> {
-    let bytes = buf.get(off..off + 4)?;
-    Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    let bytes = buf.get(off..)?.first_chunk::<4>()?;
+    Some(u32::from_le_bytes(*bytes))
+}
+
+/// The first `N` little-endian words of `buf`.
+fn read_u32s<const N: usize>(buf: &[u8]) -> Option<[u32; N]> {
+    let mut words = [0u32; N];
+    for (i, word) in words.iter_mut().enumerate() {
+        *word = read_u32(buf, i * 4)?;
+    }
+    Some(words)
 }
 
 #[inline]
@@ -152,49 +161,50 @@ pub fn decode_batch(buf: &[u8]) -> Vec<CrdtMessage> {
         }
         let body = &buf[off + HEADER_LEN..off + len];
         match ty {
-            msg_type::PUT_COMPONENT | msg_type::APPEND_VALUE if body.len() >= 16 => {
-                let entity = read_u32(body, 0).unwrap();
-                let component_id = read_u32(body, 4).unwrap();
-                let timestamp = read_u32(body, 8).unwrap();
-                let data_len = read_u32(body, 12).unwrap() as usize;
-                if 16 + data_len != body.len() {
-                    tracing::warn!(
-                        offset = off,
-                        declared_data_len = data_len,
-                        body_len = body.len(),
-                        "CRDT framing error: record does not carry exactly the payload \
-                         it declares; dropping the record"
-                    );
-                } else {
-                    let data = body[16..16 + data_len].to_vec();
-                    out.push(if ty == msg_type::PUT_COMPONENT {
-                        CrdtMessage::Put {
-                            entity,
-                            component_id,
-                            timestamp,
-                            data,
-                        }
+            msg_type::PUT_COMPONENT | msg_type::APPEND_VALUE => {
+                if let Some([entity, component_id, timestamp, data_len]) = read_u32s(body) {
+                    let data_len = data_len as usize;
+                    if 16 + data_len != body.len() {
+                        tracing::warn!(
+                            offset = off,
+                            declared_data_len = data_len,
+                            body_len = body.len(),
+                            "CRDT framing error: record does not carry exactly the payload \
+                             it declares; dropping the record"
+                        );
                     } else {
-                        CrdtMessage::Append {
-                            entity,
-                            component_id,
-                            timestamp,
-                            data,
-                        }
+                        let data = body[16..16 + data_len].to_vec();
+                        out.push(if ty == msg_type::PUT_COMPONENT {
+                            CrdtMessage::Put {
+                                entity,
+                                component_id,
+                                timestamp,
+                                data,
+                            }
+                        } else {
+                            CrdtMessage::Append {
+                                entity,
+                                component_id,
+                                timestamp,
+                                data,
+                            }
+                        });
+                    }
+                }
+            }
+            msg_type::DELETE_COMPONENT => {
+                if let Some([entity, component_id, timestamp]) = read_u32s(body) {
+                    out.push(CrdtMessage::DeleteComponent {
+                        entity,
+                        component_id,
+                        timestamp,
                     });
                 }
             }
-            msg_type::DELETE_COMPONENT if body.len() >= 12 => {
-                out.push(CrdtMessage::DeleteComponent {
-                    entity: read_u32(body, 0).unwrap(),
-                    component_id: read_u32(body, 4).unwrap(),
-                    timestamp: read_u32(body, 8).unwrap(),
-                });
-            }
-            msg_type::DELETE_ENTITY if body.len() >= 4 => {
-                out.push(CrdtMessage::DeleteEntity {
-                    entity: read_u32(body, 0).unwrap(),
-                });
+            msg_type::DELETE_ENTITY => {
+                if let Some(entity) = read_u32(body, 0) {
+                    out.push(CrdtMessage::DeleteEntity { entity });
+                }
             }
             _ => {}
         }
@@ -330,6 +340,14 @@ pub struct CrdtEngine {
     max_components: usize,
 
     max_append_channels: usize,
+
+    /// Largest single component payload accepted.
+    max_value_bytes: usize,
+
+    /// Payload bytes retained across `lww` and `appends`.
+    max_bytes: usize,
+
+    bytes: usize,
 }
 
 impl Default for CrdtEngine {
@@ -340,8 +358,15 @@ impl Default for CrdtEngine {
             deleted: BTreeMap::new(),
             max_components: usize::MAX,
             max_append_channels: usize::MAX,
+            max_value_bytes: usize::MAX,
+            max_bytes: usize::MAX,
+            bytes: 0,
         }
     }
+}
+
+fn cell_bytes(cell: &LwwCell) -> usize {
+    cell.data.as_ref().map_or(0, Vec::len)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -368,6 +393,22 @@ impl CrdtEngine {
             max_append_channels: (max_components / MAX_APPEND_VALUES_PER_CHANNEL).max(1),
             ..Self::default()
         }
+    }
+
+    /// [`Self::with_cap`] plus byte budgets: a payload over `max_value_bytes`
+    /// is ignored, and a write that would retain more than `max_bytes` of
+    /// payload in total is ignored (an append over budget is still relayed).
+    pub fn with_limits(max_components: usize, max_value_bytes: usize, max_bytes: usize) -> Self {
+        Self {
+            max_value_bytes,
+            max_bytes,
+            ..Self::with_cap(max_components)
+        }
+    }
+
+    /// Payload bytes currently retained.
+    pub fn payload_bytes(&self) -> usize {
+        self.bytes
     }
 
     /// `getEntityState(entity) == Removed` -- the entity number has a recorded
@@ -439,11 +480,15 @@ impl CrdtEngine {
         let hi: CellKey = (number, generation, u32::MAX);
         let dead: Vec<CellKey> = self.lww.range(lo..=hi).map(|(k, _)| *k).collect();
         for k in dead {
-            self.lww.remove(&k);
+            if let Some(cell) = self.lww.remove(&k) {
+                self.bytes -= cell_bytes(&cell);
+            }
         }
         let dead: Vec<CellKey> = self.appends.range(lo..=hi).map(|(k, _)| *k).collect();
         for k in dead {
-            self.appends.remove(&k);
+            if let Some(channel) = self.appends.remove(&k) {
+                self.bytes -= channel.iter().map(Vec::len).sum::<usize>();
+            }
         }
     }
 
@@ -459,7 +504,9 @@ impl CrdtEngine {
             Some(k) => *k,
             None => return true,
         };
-        self.lww.remove(&largest);
+        if let Some(cell) = self.lww.remove(&largest) {
+            self.bytes -= cell_bytes(&cell);
+        }
         largest != inserted
     }
 
@@ -472,8 +519,16 @@ impl CrdtEngine {
     ) -> ApplyResult {
         use std::cmp::Ordering;
         let key = cell_key(entity, component_id);
+        let len = data.as_ref().map_or(0, Vec::len);
+        if len > self.max_value_bytes {
+            return ApplyResult::Ignored;
+        }
         match self.lww.get(&key) {
             None => {
+                if self.bytes.saturating_add(len) > self.max_bytes {
+                    return ApplyResult::Ignored;
+                }
+                self.bytes += len;
                 self.lww.insert(key, LwwCell { timestamp, data });
                 if self.enforce_cell_cap(key) {
                     ApplyResult::Applied
@@ -489,7 +544,9 @@ impl CrdtEngine {
                         data_compare(data.as_deref(), cur.data.as_deref()) == Ordering::Greater
                     }
                 };
-                if accept {
+                let after = (self.bytes - cell_bytes(cur)).saturating_add(len);
+                if accept && after <= self.max_bytes {
+                    self.bytes = after;
                     self.lww.insert(key, LwwCell { timestamp, data });
                     ApplyResult::Applied
                 } else {
@@ -505,20 +562,38 @@ impl CrdtEngine {
     /// Acceptance is unconditional (the caller relays whatever is `Applied`),
     /// retention is best-effort and bounded.
     fn append(&mut self, entity: u32, component_id: u32, data: &[u8]) -> ApplyResult {
+        if data.len() > self.max_value_bytes {
+            return ApplyResult::Ignored;
+        }
         let key = cell_key(entity, component_id);
+        // Over the byte budget the append is still relayed, just not retained.
+        let freed = match self.appends.get(&key) {
+            Some(channel) if channel.len() >= MAX_APPEND_VALUES_PER_CHANNEL => {
+                channel.front().map_or(0, Vec::len)
+            }
+            _ => 0,
+        };
+        if (self.bytes - freed).saturating_add(data.len()) > self.max_bytes {
+            return ApplyResult::Applied;
+        }
         if !self.appends.contains_key(&key) && self.appends.len() >= self.max_append_channels {
             match self.appends.keys().next_back() {
                 Some(&largest) if largest > key => {
-                    self.appends.remove(&largest);
+                    if let Some(evicted) = self.appends.remove(&largest) {
+                        self.bytes -= evicted.iter().map(Vec::len).sum::<usize>();
+                    }
                 }
                 Some(_) => return ApplyResult::Applied,
                 None => {}
             }
         }
         let channel = self.appends.entry(key).or_default();
-        if channel.len() >= MAX_APPEND_VALUES_PER_CHANNEL {
-            channel.pop_front();
+        if channel.len() >= MAX_APPEND_VALUES_PER_CHANNEL
+            && let Some(oldest) = channel.pop_front()
+        {
+            self.bytes -= oldest.len();
         }
+        self.bytes += data.len();
         channel.push_back(data.to_vec());
         ApplyResult::Applied
     }
@@ -869,6 +944,28 @@ mod tests {
         assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")]);
     }
 
+    #[test]
+    fn short_bodies_in_well_framed_records_are_ignored() {
+        for (ty, body_len) in [
+            (msg_type::PUT_COMPONENT, 12),
+            (msg_type::APPEND_VALUE, 12),
+            (msg_type::DELETE_COMPONENT, 8),
+            (msg_type::DELETE_ENTITY, 0),
+            (msg_type::PUT_COMPONENT, 15),
+            (msg_type::APPEND_VALUE, 15),
+            (msg_type::DELETE_COMPONENT, 11),
+            (msg_type::DELETE_ENTITY, 3),
+        ] {
+            let mut batch = Vec::new();
+            write_u32(&mut batch, (HEADER_LEN + body_len) as u32);
+            write_u32(&mut batch, ty);
+            batch.resize(HEADER_LEN + body_len, 0);
+            // The next record still decodes, so the short one is not a framing error.
+            encode_message(&put(1, 1, 1, b"ok"), &mut batch);
+            assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")], "type {ty}");
+        }
+    }
+
     fn apply_all(ops: &[CrdtMessage]) -> Vec<u8> {
         let mut e = CrdtEngine::new();
         for m in ops {
@@ -1111,5 +1208,36 @@ mod tests {
         assert_eq!(e.apply(&put(1, 3, 1, b"c")), ApplyResult::Ignored);
         assert_eq!(e.apply(&put(1, 1, 2, b"a2")), ApplyResult::Applied);
         assert_eq!(e.component_count(), 2);
+    }
+
+    #[test]
+    fn a_payload_over_the_value_cap_is_ignored() {
+        let mut e = CrdtEngine::with_limits(100, 4, 1024);
+        assert_eq!(e.apply(&put(1, 1, 1, &[0; 5])), ApplyResult::Ignored);
+        assert_eq!(e.apply(&append(1, 2, &[0; 5])), ApplyResult::Ignored);
+        assert_eq!(e.apply(&put(1, 1, 1, &[0; 4])), ApplyResult::Applied);
+        assert_eq!(e.payload_bytes(), 4);
+    }
+
+    #[test]
+    fn retained_payload_stays_within_the_byte_budget() {
+        let mut e = CrdtEngine::with_limits(100, 8, 10);
+        assert_eq!(e.apply(&put(1, 1, 1, &[0; 6])), ApplyResult::Applied);
+        assert_eq!(e.apply(&put(2, 1, 1, &[0; 6])), ApplyResult::Ignored);
+        assert_eq!(e.apply(&put(1, 1, 2, &[0; 8])), ApplyResult::Applied);
+        assert_eq!(e.apply(&put(2, 1, 1, &[0; 6])), ApplyResult::Ignored);
+        assert_eq!(e.apply(&put(1, 1, 3, &[0; 4])), ApplyResult::Applied);
+        assert_eq!(e.apply(&put(2, 1, 1, &[0; 6])), ApplyResult::Applied);
+        assert_eq!(e.payload_bytes(), 10);
+        // An append over budget is relayed but not retained.
+        assert_eq!(e.apply(&append(3, 2, &[1])), ApplyResult::Applied);
+        assert!(e.appended(3, 2).is_empty());
+
+        // Deleting frees the budget.
+        e.apply(&CrdtMessage::DeleteEntity { entity: 1 });
+        assert_eq!(e.payload_bytes(), 6);
+        assert_eq!(e.apply(&append(3, 2, &[1])), ApplyResult::Applied);
+        assert_eq!(e.appended(3, 2), vec![vec![1]]);
+        assert_eq!(e.payload_bytes(), 7);
     }
 }

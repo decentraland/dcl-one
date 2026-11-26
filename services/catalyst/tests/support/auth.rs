@@ -19,7 +19,7 @@ pub async fn signed_chain(entity_id: &str) -> AuthChain {
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", key.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

@@ -1,7 +1,19 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App } from './app.js'
 import { verifyFdsCache } from './sources/fds-source.js'
@@ -127,6 +139,31 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     vi.restoreAllMocks()
     await rm(root, { recursive: true, force: true })
   })
+
+  it('should install through the CLI in its own process with the same result and exit code', async () => {
+    const cli = async () =>
+      JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [
+              '--import',
+              import.meta.resolve('tsx'),
+              path.join(import.meta.dirname, 'cli.ts'),
+              'install',
+              'foundations'
+            ],
+            { cwd: figma }
+          )
+        ).stdout
+      ) as Awaited<ReturnType<typeof runInstall>>
+    const first = await cli()
+    const second = await cli()
+    expect(first.changed).toBe(true)
+    expect(second.changed).toBe(false)
+    expect(second.files).toEqual(first.files)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+  }, 60_000)
 
   it('should preserve maintained files and give identical bytes on a second install', async () => {
     const first = await runInstall(app, { target: 'foundations' })
@@ -277,11 +314,16 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe('keep')
   })
 
-  it('should refuse a missing marker even through the synthetic bypass App', async () => {
-    await rm(path.join(figma, 'figma-snapshot/.fds-source.json'))
-    app = await createApp(figma, undefined, { unverifiedSnapshot: true })
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('not materialized')
-    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+  describe('and the cache marker is missing', () => {
+    beforeEach(async () => {
+      await rm(path.join(figma, 'figma-snapshot/.fds-source.json'))
+      app = await createApp(figma, undefined, { unverifiedSnapshot: true })
+    })
+
+    it('should refuse it even through the synthetic bypass App', async () => {
+      await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('not materialized')
+      expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+    })
   })
 
   it('should bind the lock before the first verification and reject replacement immediately', async () => {
@@ -309,9 +351,9 @@ describe('when foundations are installed from a verified synthetic cache', () =>
         target: 'foundations',
         outDir: '../.agent-work/figma-install/rejected/foundations'
       })
-    ).rejects.toThrow()
+    ).rejects.toThrow('the capture does not match upstream.lock.json')
     expect(read).not.toHaveBeenCalled()
-    await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
+    await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow(/^ENOENT/)
     expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
   })
 
@@ -326,7 +368,9 @@ describe('when foundations are installed from a verified synthetic cache', () =>
 
   it('should refuse an altered cache', async () => {
     await writeFile(path.join(figma, 'figma-snapshot/variables.json'), '{}')
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow()
+    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow(
+      'the capture does not match upstream.lock.json'
+    )
     expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
   })
 
@@ -367,38 +411,48 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     )
   })
 
-  it('should restore the previous directory if publication fails', async () => {
-    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-    vi.mocked(rename)
-      .mockImplementationOnce(actual.rename)
-      .mockRejectedValueOnce(new Error('publication failed'))
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('publication failed')
-    expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
-    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
-    expect(
-      (await readdir(root)).filter((file) => file.startsWith('.foundations-install-'))
-    ).toEqual([])
-    expect((await runInstall(app, { target: 'foundations' })).changed).toBe(true)
+  describe('and publication fails', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      vi.mocked(rename)
+        .mockImplementationOnce(actual.rename)
+        .mockRejectedValueOnce(new Error('publication failed'))
+    })
+
+    it('should restore the previous directory', async () => {
+      await expect(runInstall(app, { target: 'foundations' })).rejects.toThrow('publication failed')
+      expect(await readdir(path.join(root, 'foundations'))).toEqual(baseline)
+      expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+      expect(
+        (await readdir(root)).filter((file) => file.startsWith('.foundations-install-'))
+      ).toEqual([])
+      expect((await runInstall(app, { target: 'foundations' })).changed).toBe(true)
+    })
   })
 
-  it('should retain the previous directory if rollback also fails', async () => {
-    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
-    vi.mocked(rename)
-      .mockImplementationOnce(actual.rename)
-      .mockRejectedValueOnce(new Error('publication failed'))
-      .mockRejectedValueOnce(new Error('rollback failed'))
-    await expect(runInstall(app, { target: 'foundations' })).rejects.toMatchObject({
-      name: 'AggregateError',
-      message: expect.stringContaining('previous tree retained at'),
-      errors: [
-        expect.objectContaining({ message: 'publication failed' }),
-        expect.objectContaining({ message: 'rollback failed' })
-      ]
+  describe('and publication and its rollback both fail', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      vi.mocked(rename)
+        .mockImplementationOnce(actual.rename)
+        .mockRejectedValueOnce(new Error('publication failed'))
+        .mockRejectedValueOnce(new Error('rollback failed'))
     })
-    const backups = (await readdir(root)).filter((file) => file.endsWith('-previous'))
-    expect(backups).toHaveLength(1)
-    expect(await readFile(path.join(root, backups[0]!, 'foundations.css'), 'utf8')).toBe(entry)
-    expect(await readdir(root)).not.toContain('foundations.install-lock')
+
+    it('should retain the previous directory', async () => {
+      await expect(runInstall(app, { target: 'foundations' })).rejects.toMatchObject({
+        name: 'AggregateError',
+        message: expect.stringContaining('previous tree retained at'),
+        errors: [
+          expect.objectContaining({ message: 'publication failed' }),
+          expect.objectContaining({ message: 'rollback failed' })
+        ]
+      })
+      const backups = (await readdir(root)).filter((file) => file.endsWith('-previous'))
+      expect(backups).toHaveLength(1)
+      expect(await readFile(path.join(root, backups[0]!, 'foundations.css'), 'utf8')).toBe(entry)
+      expect(await readdir(root)).not.toContain('foundations.install-lock')
+    })
   })
 
   it('should refuse a lock that changes during generation', async () => {
@@ -548,6 +602,36 @@ describe('when component installation owns its verified input read-set and trans
     )
   })
 
+  it('should refuse a registry with limits on an internal name and leave the installed output byte-identical', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    const snapshot = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          (await readdir(path.join(root, 'components'), { recursive: true }))
+            .filter((file) => file !== 'promotion.json')
+            .sort()
+            .map(async (file) => {
+              const full = path.join(root, 'components', file)
+              return [file, (await lstat(full)).isFile() ? hash(await readFile(full)) : 'dir']
+            })
+        )
+      )
+    const before = await snapshot()
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        components: [],
+        internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }]
+      })
+    )
+    await fixtureCommit(repository)
+
+    await expect(runInstall(app, options)).rejects.toThrow('names only, without limits')
+
+    expect(await snapshot()).toEqual(before)
+  })
+
   it('should retire the last component through the same canonical transaction and then no-op', async () => {
     await runInstall(app, options)
     await fixtureCommit(repository)
@@ -564,6 +648,283 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(path.join(root, 'index.ts'), 'utf8')).toBe(
       'export const foundationsOnly = true\n'
     )
+  })
+
+  describe('and the target holds a hand-written component', () => {
+    const template = [
+      'Component.tsx',
+      'Component.module.css',
+      'Component.test.tsx',
+      'Component.figma.ts'
+    ]
+    let handWritten: Record<string, Buffer>
+    const handWrittenOnDisk = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.keys(handWritten).map(async (file) => [
+            file,
+            await readFile(path.join(root, 'components', file))
+          ])
+        )
+      )
+    beforeEach(async () => {
+      await runInstall(app, options)
+      handWritten = {}
+      for (const file of template) {
+        const bytes = (await readFile(path.resolve('templates/component', file)))
+          .toString('utf8')
+          .replaceAll('Component', 'Badge')
+        handWritten['Badge/' + file.replace('Component', 'Badge')] = Buffer.from(bytes)
+      }
+      for (const [file, bytes] of Object.entries(handWritten)) {
+        await mkdir(path.dirname(path.join(root, 'components', file)), { recursive: true })
+        await writeFile(path.join(root, 'components', file), bytes)
+      }
+      await fixtureCommit(repository)
+    })
+
+    it('should keep it byte for byte, leave it out of the install output and no-op on repeat', async () => {
+      const result = await runInstall(app, options)
+      expect(result.changed).toBe(false)
+      expect(result.files.map((file) => file.path).some((file) => file.startsWith('Badge/'))).toBe(
+        false
+      )
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+      const record = JSON.parse(
+        await readFile(path.join(root, 'components/generation.json'), 'utf8')
+      )
+      expect(
+        (record.output as { path: string }[]).some((entry) => entry.path.startsWith('Badge/'))
+      ).toBe(false)
+    })
+
+    describe('and the registry empties', () => {
+      beforeEach(async () => {
+        await writeFile(registryPath, '{"components":[]}')
+        await fixtureCommit(repository)
+      })
+
+      it('should keep it while the generated output is retired', async () => {
+        const retired = await runInstall(app, options)
+        expect(retired.changed).toBe(true)
+        expect(retired.files.map((file) => file.path)).toEqual([
+          'generation.json',
+          'promotion.json'
+        ])
+        expect(await readdir(path.join(root, 'components'))).toEqual([
+          'Badge',
+          'generation.json',
+          'promotion.json'
+        ])
+        expect(await handWrittenOnDisk()).toEqual(handWritten)
+        expect((await runInstall(app, options)).changed).toBe(false)
+      })
+    })
+
+    it('should not copy it into a private stage', async () => {
+      options.outDir = stage
+      const staged = await runInstall(app, options)
+      expect(await readdir(staged.outDir)).not.toContain('Badge')
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse a plan that writes into it and leave the target unchanged', async () => {
+      const before = await readdir(path.join(root, 'components'), { recursive: true })
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        plan.files.set('badge/badge.tsx', Buffer.from('export const badge = 1\n'))
+        return plan
+      })
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would write a generated component next to a file it does not own: Badge/Badge.figma.ts'
+      )
+      expect(await readdir(path.join(root, 'components'), { recursive: true })).toEqual(before)
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse an uncommitted edit to it instead of publishing over it', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const edited = Buffer.from('export const Badge = () => null\n')
+      await writeFile(path.join(root, 'components/Badge/Badge.tsx'), edited)
+      await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
+      expect(await readFile(path.join(root, 'components/Badge/Badge.tsx'))).toEqual(edited)
+    })
+  })
+
+  describe('and a generated component directory holds a file its record does not list', () => {
+    const testFile = 'DemoNav/DemoNav.test.tsx'
+    const testBytes = Buffer.from("import { it } from 'vitest'\n\nit('renders', () => {})\n")
+    const componentFiles = async () =>
+      (await readdir(path.join(root, 'components'), { recursive: true })).sort()
+    beforeEach(async () => {
+      await runInstall(app, options)
+      await writeFile(path.join(root, 'components', testFile), testBytes)
+      await fixtureCommit(repository)
+    })
+
+    describe('and the registry empties', () => {
+      let generated: string[]
+
+      beforeEach(async () => {
+        const record = JSON.parse(
+          await readFile(path.join(root, 'components/generation.json'), 'utf8')
+        )
+        generated = (record.output as { path: string }[])
+          .map((entry) => entry.path)
+          .filter((file) => file.startsWith('DemoNav/'))
+        await writeFile(registryPath, '{"components":[]}')
+        await fixtureCommit(repository)
+      })
+
+      it('should keep the hand-written file and remove the listed generated files', async () => {
+        expect(generated).toContain('DemoNav/DemoNav.tsx')
+
+        const retired = await runInstall(app, options)
+
+        expect(retired.changed).toBe(true)
+        expect(retired.files.map((file) => file.path)).toEqual([
+          'generation.json',
+          'promotion.json'
+        ])
+        expect(await componentFiles()).toEqual([
+          'DemoNav',
+          testFile,
+          'generation.json',
+          'promotion.json'
+        ])
+        expect(await readFile(path.join(root, 'components', testFile))).toEqual(testBytes)
+        expect((await runInstall(app, options)).changed).toBe(false)
+      })
+    })
+
+    describe('and the lock table pins an output at its bytes that the record does not list', () => {
+      beforeEach(async () => {
+        const stale = 'export const Stale = 1\n'
+        await writeFile(path.join(root, 'components/DemoNav/Stale.tsx'), stale)
+        const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+        lock.publicComponents = { files: { 'DemoNav/Stale.tsx': { sha256: hash(stale) } } }
+        await writeFile(lockPath, JSON.stringify(lock))
+        await writeFile(registryPath, '{"components":[]}')
+        await fixtureCommit(repository)
+      })
+
+      it('should remove that output', async () => {
+        await runInstall(app, options)
+
+        expect(await componentFiles()).toEqual([
+          'DemoNav',
+          testFile,
+          'generation.json',
+          'promotion.json'
+        ])
+      })
+    })
+
+    it('should refuse to keep generating the component next to it and leave the target unchanged', async () => {
+      const before = await componentFiles()
+      await writeFile(registryPath, '{"components":[],"internal":["DemoNav"]}')
+      await fixtureCommit(repository)
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would write a generated component next to a file it does not own: ' +
+          testFile
+      )
+      expect(await componentFiles()).toEqual(before)
+      expect(await readFile(path.join(root, 'components', testFile))).toEqual(testBytes)
+    })
+
+    it('should refuse a plan that would overwrite the file and leave it unchanged', async () => {
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        plan.files.set('readme.md', Buffer.from('generated\n'))
+        return plan
+      })
+      await writeFile(path.join(root, 'components/README.md'), 'maintained\n')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would overwrite a file it does not own: README.md'
+      )
+      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+    })
+
+    it('should refuse an unowned top-level file and leave it unchanged', async () => {
+      await writeFile(path.join(root, 'components/README.md'), 'maintained\n')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const before = await componentFiles()
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install target holds a top-level file it does not own: README.md'
+      )
+      expect(await componentFiles()).toEqual(before)
+      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+    })
+
+    describe('and a committed edit covers a listed file as the registry empties', () => {
+      let edited: Buffer
+
+      beforeEach(async () => {
+        edited = Buffer.from('export const DemoNav = () => null\n')
+        await writeFile(path.join(root, 'components/DemoNav/DemoNav.tsx'), edited)
+        await writeFile(registryPath, '{"components":[]}')
+        await fixtureCommit(repository)
+      })
+
+      it('should keep the committed edit', async () => {
+        await runInstall(app, options)
+
+        expect(await componentFiles()).toEqual([
+          'DemoNav',
+          testFile,
+          'DemoNav/DemoNav.tsx',
+          'generation.json',
+          'promotion.json'
+        ])
+        expect(await readFile(path.join(root, 'components/DemoNav/DemoNav.tsx'))).toEqual(edited)
+      })
+    })
+
+    describe('and the record is unreadable and the lock table pins no output', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(root, 'components/generation.json'), 'not json')
+        await writeFile(registryPath, '{"components":[]}')
+        await fixtureCommit(repository)
+      })
+
+      it('should keep the files the record listed', async () => {
+        await runInstall(app, options)
+
+        expect(await componentFiles()).toEqual(
+          expect.arrayContaining(['DemoNav/DemoNav.tsx', testFile, 'runtime'])
+        )
+      })
+    })
+
+    it('should refuse an uncommitted edit to the file instead of publishing it', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const edited = Buffer.from("import { it } from 'vitest'\n")
+      await writeFile(path.join(root, 'components', testFile), edited)
+
+      await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
+      expect(await readFile(path.join(root, 'components', testFile))).toEqual(edited)
+      expect(await componentFiles()).toContain('DemoNav/DemoNav.tsx')
+    })
+  })
+
+  it('should refuse to regenerate over a committed edit to a listed file and leave it unchanged', async () => {
+    await runInstall(app, options)
+    const edited = Buffer.from('export const DemoNav = () => null\n')
+    await writeFile(path.join(root, 'components/DemoNav/DemoNav.tsx'), edited)
+    await fixtureCommit(repository)
+
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component install would overwrite a file it does not own: DemoNav/DemoNav.tsx'
+    )
+    expect(await readFile(path.join(root, 'components/DemoNav/DemoNav.tsx'))).toEqual(edited)
   })
 
   it('should reproduce empty retirement in a fresh immutable private stage and no-op', async () => {
@@ -594,30 +955,35 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath, 'utf8')).toBe('{"components":[]}')
   })
 
-  it('should restore old component and runtime output when empty publication fails', async () => {
-    await runInstall(app, options)
-    await fixtureCommit(repository)
-    await writeFile(registryPath, '{"components":[]}')
-    await fixtureCommit(repository)
-    vi.mocked(rename)
-      .mockImplementationOnce(actualRename)
-      .mockRejectedValueOnce(new Error('empty publication failed'))
-    await expect(runInstall(app, options)).rejects.toThrow('empty publication failed')
-    expect(await readdir(path.join(root, 'components'))).toEqual([
-      'DemoNav',
-      'generation.json',
-      'promotion.json',
-      'runtime'
-    ])
-    expect(await readFile(registryPath, 'utf8')).toBe('{"components":[]}')
-    expect((await runInstall(app, options)).files.map((file) => file.path)).toEqual([
-      'generation.json',
-      'promotion.json'
-    ])
-    expect(await readdir(path.join(root, 'components'))).toEqual([
-      'generation.json',
-      'promotion.json'
-    ])
+  describe('and an empty publication fails', () => {
+    beforeEach(async () => {
+      await runInstall(app, options)
+      await fixtureCommit(repository)
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      vi.mocked(rename)
+        .mockImplementationOnce(actualRename)
+        .mockRejectedValueOnce(new Error('empty publication failed'))
+    })
+
+    it('should restore old component and runtime output', async () => {
+      await expect(runInstall(app, options)).rejects.toThrow('empty publication failed')
+      expect(await readdir(path.join(root, 'components'))).toEqual([
+        'DemoNav',
+        'generation.json',
+        'promotion.json',
+        'runtime'
+      ])
+      expect(await readFile(registryPath, 'utf8')).toBe('{"components":[]}')
+      expect((await runInstall(app, options)).files.map((file) => file.path)).toEqual([
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(await readdir(path.join(root, 'components'))).toEqual([
+        'generation.json',
+        'promotion.json'
+      ])
+    })
   })
 
   it('should clone producer buffers before passing through provenance and publication', async () => {
@@ -680,16 +1046,21 @@ describe('when component installation owns its verified input read-set and trans
     expect(planComponents).not.toHaveBeenCalled()
   })
 
-  it('should recheck config after source readiness even when the source has its own verifier', async () => {
-    const source = app.createSource('snapshot')
-    const ready = source.ready!.bind(source)
-    source.ready = async () => {
-      await ready()
-      app.config.imageFills = 'assets'
-    }
-    app.createSource = () => source
-    await expect(runInstall(app, options)).rejects.toThrow('configuration changed')
-    expect(planComponents).not.toHaveBeenCalled()
+  describe('and the source has its own verifier', () => {
+    beforeEach(() => {
+      const source = app.createSource('snapshot')
+      const ready = source.ready!.bind(source)
+      source.ready = async () => {
+        await ready()
+        app.config.imageFills = 'assets'
+      }
+      app.createSource = () => source
+    })
+
+    it('should still recheck config after source readiness', async () => {
+      await expect(runInstall(app, options)).rejects.toThrow('configuration changed')
+      expect(planComponents).not.toHaveBeenCalled()
+    })
   })
 
   it('should reject retirement-ledger drift before planning', async () => {
@@ -727,7 +1098,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'src/specs.ts'), 'export const transitive = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -741,7 +1112,7 @@ describe('when component installation owns its verified input read-set and trans
       return plan
     })
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
@@ -760,7 +1131,7 @@ describe('when component installation owns its verified input read-set and trans
       )
       expect(planComponents).not.toHaveBeenCalled()
       expect(createComponentGeneration).not.toHaveBeenCalled()
-      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
+      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow(/^ENOENT/)
       expect(await readFile(registryPath)).toEqual(originalRegistry)
     }
   )
@@ -802,7 +1173,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'extra-helper.mts'), 'export const tracked = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -825,7 +1196,7 @@ describe('when component installation owns its verified input read-set and trans
       await expect(runInstall(app, options)).rejects.toThrow('Unexpected component resolver scope')
       expect(planComponents).not.toHaveBeenCalled()
       expect(await readFile(registryPath)).toEqual(originalRegistry)
-      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
+      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow(/^ENOENT/)
     }
   )
 
@@ -925,11 +1296,29 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
+  it('should install with a locked tooling module that is outside the read-set', async () => {
+    const tool = 'library/ui/figma/src/unrelated-tool.ts'
+    await writeFile(path.join(repository, tool), 'export const tool = true\n')
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock.sources[0].files[tool] = { sha256: hash('export const tool = true\n') }
+    await writeFile(lockPath, JSON.stringify(lock))
+    await fixtureCommit(repository)
+    const result = await runInstall(app, options)
+    expect(result.changed).toBe(true)
+    expect(
+      vi
+        .mocked(createComponentGeneration)
+        .mock.calls[0]![0].modules.map((module: { path: string }) => module.path)
+    ).not.toContain(tool)
+  })
+
   it('should reject a missing module pin before planning', async () => {
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     delete lock.sources[0].files[modulePath]
     await writeFile(lockPath, JSON.stringify(lock))
-    await expect(runInstall(app, options)).rejects.toThrow('Missing locked component input')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component implementation is absent from the source lock'
+    )
     expect(planComponents).not.toHaveBeenCalled()
   })
 
@@ -949,7 +1338,7 @@ describe('when component installation owns its verified input read-set and trans
     })
     await expect(runInstall(app, options)).rejects.toThrow('component registry changed')
     expect(await readFile(registryPath, 'utf8')).toBe('{}')
-    await expect(readdir(path.join(root, 'components/DemoNav'))).rejects.toThrow()
+    await expect(readdir(path.join(root, 'components/DemoNav'))).rejects.toThrow(/^ENOENT/)
   })
 
   it('should reject runtime drift after a pure producer returns', async () => {
@@ -971,7 +1360,9 @@ describe('when component installation owns its verified input read-set and trans
       await writeFile(path.join(figma, 'figma-snapshot/variables.json'), '[]')
       return plan
     })
-    await expect(runInstall(app, options)).rejects.toThrow()
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'the capture does not match upstream.lock.json'
+    )
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
@@ -1033,11 +1424,14 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
-  it.each(['', '{}'])(
+  it.each([
+    ['', 'Unexpected end of JSON input'],
+    ['{}', 'Invalid component registry: Invalid component visibility registry']
+  ])(
     'should propagate invalid registry %j without creating component output',
-    async (registry) => {
+    async (registry, message) => {
       await writeFile(registryPath, registry)
-      await expect(runInstall(app, options)).rejects.toThrow()
+      await expect(runInstall(app, options)).rejects.toThrow(message)
       expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
       expect(await readFile(registryPath, 'utf8')).toBe(registry)
     }

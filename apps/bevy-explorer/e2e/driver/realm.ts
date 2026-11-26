@@ -2,7 +2,9 @@
 // realm (`/about` with `scenesUrn`, the entity and its files under `/content/contents/<hash>`),
 // served to the web client on another loopback origin, so with CORS and a cross-origin resource
 // policy. Content is addressed by its bytes, so an unchanged file keeps its hash across runs and
-// the engine's cache stays valid.
+// the engine's cache stays valid. A realm may also preview smart wearables (`/preview-wearables`,
+// the creator preview path): their files are served by hash like a scene's, but they are no
+// scene of the realm, so neither `/about` nor `/content/entities/active` lists them.
 import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -52,9 +54,11 @@ async function walk(dir: string, prefix: string): Promise<string[]> {
 /** The entity of a built SDK7 scene folder: `scene.json` as metadata, its `main` bundle and every
  *  other file in `main`'s folder (dcl-scene-cli's split bundle: `bin/sdk-runtime.js` and
  *  `bin/scene.js` beside `bin/index.js`), `main.crdt` when present, and everything under
- *  `assets/`. */
-export async function buildScene(sceneDir: string): Promise<BuiltScene> {
-  const metadata = JSON.parse(await readFile(path.join(sceneDir, 'scene.json'), 'utf8')) as Record<string, unknown>
+ *  `assets/`. `rewrite` replaces `scene.json` as read, to serve one project as another scene (a
+ *  host at other parcels, with other feature toggles). */
+export async function buildScene(sceneDir: string, rewrite?: (metadata: Record<string, unknown>) => Record<string, unknown>): Promise<BuiltScene> {
+  const read = JSON.parse(await readFile(path.join(sceneDir, 'scene.json'), 'utf8')) as Record<string, unknown>
+  const metadata = rewrite ? rewrite(read) : read
   const main = typeof metadata.main === 'string' ? metadata.main : 'bin/index.js'
   const scene = metadata.scene as { base?: string; parcels?: string[] } | undefined
   const pointers = scene?.parcels ?? (scene?.base ? [scene.base] : [])
@@ -82,15 +86,122 @@ export async function buildScene(sceneDir: string): Promise<BuiltScene> {
   return { entity: { id, ...body }, files }
 }
 
+/** The urn the e2e realm previews the smart-wearable fixture under. */
+export const PREVIEW_WEARABLE_URN = 'urn:decentraland:off-chain:e2e:smart-wearable'
+
+export const BODY_SHAPES = ['urn:decentraland:off-chain:base-avatars:BaseMale', 'urn:decentraland:off-chain:base-avatars:BaseFemale'] as const
+
+/** The body-shape prefixes a smart wearable's files are listed under. */
+const BODY_SHAPE_PREFIXES = ['male', 'female'] as const
+
+export interface PreviewWearable {
+  urn: string
+  /** `wearable.json`. */
+  metadata: Record<string, unknown>
+  /** The project's files, unprefixed (`scene.json`, `bin/index.js`, `model.glb`, ...). */
+  content: ContentFile[]
+  /** Local path by content hash. */
+  files: Map<string, string>
+}
+
+/** A built smart-wearable project for `/preview-wearables`: `scene.json`, `wearable.json`, the
+ *  scene's `main` bundle and every file beside it (dcl-scene-cli's `bin/index.js` is a loader that
+ *  reads the chunks next to it), `main.crdt` when present, every file the representations name,
+ *  and everything under `assets/`. */
+export async function buildPreviewWearable(projectDir: string, urn: string = PREVIEW_WEARABLE_URN): Promise<PreviewWearable> {
+  const scene = JSON.parse(await readFile(path.join(projectDir, 'scene.json'), 'utf8')) as Record<string, unknown>
+  if (scene.isPortableExperience !== true) throw new Error(`${projectDir}: scene.json is not a portable experience`)
+  const metadata = JSON.parse(await readFile(path.join(projectDir, 'wearable.json'), 'utf8')) as Record<string, unknown>
+  const main = typeof scene.main === 'string' ? scene.main : 'bin/index.js'
+  const representations = ((metadata.data as { representations?: { mainFile?: string; contents?: string[] }[] } | undefined)?.representations ?? [])
+  const modelFiles = representations.flatMap((representation) => [...(representation.contents ?? []), ...(representation.mainFile ? [representation.mainFile] : [])])
+  const mainDir = path.posix.dirname(main)
+  const bundle = mainDir === '.' ? [] : await walk(path.join(projectDir, mainDir), mainDir)
+  const wanted = [...new Set(['scene.json', 'wearable.json', main, ...bundle, 'main.crdt', ...modelFiles, ...(await walk(path.join(projectDir, 'assets'), 'assets'))])]
+  const content: ContentFile[] = []
+  const files = new Map<string, string>()
+  for (const file of wanted) {
+    const full = path.join(projectDir, file)
+    let bytes: Buffer
+    try {
+      bytes = await readFile(full)
+    } catch {
+      if (file === main) throw new Error(`${projectDir}: the bundle ${main} is missing; build the scene first`)
+      if (file === 'main.crdt') continue
+      throw new Error(`${projectDir}: ${file}, named by wearable.json, is missing`)
+    }
+    const hash = contentHash(bytes)
+    content.push({ file, hash })
+    files.set(hash, full)
+  }
+  return { urn, metadata, content, files }
+}
+
+/** `/preview-wearables`: each wearable's `wearable.json` with its id the urn and one
+ *  representation for both body shapes that lists every file under `male/` and `female/`. */
+export function previewWearablesDocument(origin: string, wearables: PreviewWearable[]): { ok: true; data: Record<string, unknown>[] } {
+  const base = `${origin}/content/contents`
+  return {
+    ok: true,
+    data: wearables.map((wearable) => {
+      const data = (wearable.metadata.data ?? {}) as Record<string, unknown>
+      const firstMain = (data.representations as { mainFile?: string }[] | undefined)?.[0]?.mainFile
+      return {
+        ...wearable.metadata,
+        id: wearable.urn,
+        data: {
+          ...data,
+          representations: [
+            {
+              bodyShapes: [...BODY_SHAPES],
+              ...(firstMain ? { mainFile: `male/${firstMain}` } : {}),
+              overrideHides: [],
+              overrideReplaces: [],
+              contents: BODY_SHAPE_PREFIXES.flatMap((prefix) =>
+                wearable.content.map(({ file, hash }) => ({ key: `${prefix}/${file}`, url: `${base}/${hash}`, hash }))
+              )
+            }
+          ]
+        }
+      }
+    })
+  }
+}
+
 export interface RealmOptions {
   scenes: BuiltScene[]
   port: number
   realmName?: string
+  /** Smart wearables to list on `/preview-wearables`; without them the route answers 404, as a
+   *  production catalyst does. */
+  previewWearables?: PreviewWearable[]
+  /** Content files whose first GETs answer 503, by hash: how many (`Infinity`: every one). */
+  contentFailures?: Map<string, number>
+}
+
+/** One request the realm received. */
+export interface RealmRequest {
+  /** When it arrived, ISO 8601. */
+  at: string
+  method: string
+  path: string
+  /** The entity file a content hash names (`bin/index.js`, `assets/recover.webm`, ...). */
+  file?: string
+  /** The answer's status; absent while the connection is open, or when no answer was sent. */
+  status?: number
+  /** From arrival to the connection's close; absent while it is open. */
+  ms?: number
+  /** False when the connection closed before the whole answer went out. */
+  finished?: boolean
 }
 
 export interface RealmServer extends StaticServer {
   /** The realm for `?realm=` and `--realm`: the origin, no trailing slash. */
   readonly realm: string
+  /** The GETs of each content file so far, by hash. */
+  readonly contentGets: Map<string, number>
+  /** Every request so far, in arrival order; an open one has no `ms`. */
+  readonly requests: readonly RealmRequest[]
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -101,6 +212,11 @@ const CORS_HEADERS: Record<string, string> = {
   'cache-control': 'no-store'
 }
 
+/** The parcels an empty realm spans: the client resolves pointers only inside a realm's advertised
+ *  bounds (its listed scenes, else its map), so a realm with neither would hold the player out of
+ *  the world forever. One parcel each way around the spawn, as a tiny Genesis-like map. */
+export const EMPTY_REALM_MAP = { minimapEnabled: false, sizes: [{ left: -1, right: 1, top: 1, bottom: -1 }] }
+
 export function aboutDocument(origin: string, scenes: BuiltScene[], realmName: string): Record<string, unknown> {
   return {
     healthy: true,
@@ -109,7 +225,8 @@ export function aboutDocument(origin: string, scenes: BuiltScene[], realmName: s
       networkId: 0,
       globalScenesUrn: [],
       scenesUrn: scenes.map((scene) => `urn:decentraland:entity:${scene.entity.id}?=&baseUrl=${origin}/content/contents/`),
-      realmName
+      realmName,
+      ...(scenes.length === 0 ? { map: EMPTY_REALM_MAP } : {})
     },
     content: { healthy: true, publicUrl: `${origin}/content` },
     lambdas: { healthy: true, publicUrl: `${origin}/lambdas` },
@@ -130,10 +247,16 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 export function serveRealm(options: RealmOptions): Promise<RealmServer> {
-  const { scenes, port, realmName = 'e2e-visual' } = options
+  const { scenes, port, realmName = 'e2e-visual', previewWearables, contentFailures } = options
+  const contentGets = new Map<string, number>()
   const byId = new Map(scenes.map((scene) => [scene.entity.id, scene]))
   const byHash = new Map<string, string>()
   for (const scene of scenes) for (const [hash, file] of scene.files) byHash.set(hash, file)
+  for (const wearable of previewWearables ?? []) for (const [hash, file] of wearable.files) byHash.set(hash, file)
+  const fileNames = new Map<string, string>()
+  for (const scene of scenes) for (const { file, hash } of scene.entity.content) fileNames.set(hash, file)
+  for (const wearable of previewWearables ?? []) for (const { file, hash } of wearable.content) fileNames.set(hash, file)
+  const requests: RealmRequest[] = []
   let origin = `http://127.0.0.1:${port}`
 
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -145,6 +268,10 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
     }
     if (url.pathname === '/about' && (request.method === 'GET' || request.method === 'HEAD')) {
       json(response, 200, aboutDocument(origin, scenes, realmName))
+      return
+    }
+    if (url.pathname === '/preview-wearables' && previewWearables && (request.method === 'GET' || request.method === 'HEAD')) {
+      json(response, 200, previewWearablesDocument(origin, previewWearables))
       return
     }
     if (url.pathname === '/scenes') {
@@ -170,6 +297,14 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
         return
       }
       const file = byHash.get(hash)
+      if (file && request.method === 'GET') {
+        const gets = (contentGets.get(hash) ?? 0) + 1
+        contentGets.set(hash, gets)
+        if (gets <= (contentFailures?.get(hash) ?? 0)) {
+          response.writeHead(503).end()
+          return
+        }
+      }
       if (file) {
         const bytes = await readFile(file)
         response.writeHead(200, { 'content-type': contentType(file), 'content-length': bytes.length })
@@ -181,6 +316,18 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
   }
 
   const server = createServer((request, response) => {
+    const start = performance.now()
+    const pathname = new URL(request.url ?? '/', origin).pathname
+    const hash = /^\/content\/contents\/([A-Za-z0-9]+)$/.exec(pathname)?.[1]
+    const entry: RealmRequest = { at: new Date().toISOString(), method: request.method ?? '', path: pathname }
+    const file = hash === undefined ? undefined : fileNames.get(hash)
+    if (file !== undefined) entry.file = file
+    requests.push(entry)
+    response.on('close', () => {
+      if (response.headersSent) entry.status = response.statusCode
+      entry.ms = Math.round(performance.now() - start)
+      entry.finished = response.writableFinished
+    })
     handle(request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500)
       response.end()
@@ -188,6 +335,6 @@ export function serveRealm(options: RealmOptions): Promise<RealmServer> {
   })
   return listen(server, port).then((bound) => {
     origin = `http://127.0.0.1:${bound.port}`
-    return { ...bound, realm: origin }
+    return { ...bound, realm: origin, contentGets, requests }
   })
 }

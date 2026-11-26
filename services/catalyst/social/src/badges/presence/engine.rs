@@ -59,6 +59,8 @@ pub struct BadgeConfig {
     pub window: Interval,
     pub stay: bool,
     pub required_seconds: i64,
+    /// Why the catalog row is not one presence may write, if it is not.
+    pub invalid: Option<&'static str>,
 }
 
 type ConfigRow = (
@@ -70,31 +72,83 @@ type ConfigRow = (
     NaiveDateTime,
     String,
     i32,
+    bool,
+    Option<i32>,
 );
 
 const SELECT_BADGES: &str = "SELECT p.badge_id, p.location_kind, p.parcel, p.world_name, \
-       p.window_start, p.window_end, p.mode, p.required_seconds \
+       p.window_start, p.window_end, p.mode, p.required_seconds, d.is_tier, d.criteria_steps \
      FROM social.presence_badges p \
      JOIN social.badge_definitions d ON d.id = p.badge_id \
       AND d.published_at IS NOT NULL AND d.archived_at IS NULL";
 
+/// Upstream's catalog rule (`badge-catalog.ts`): presence writes the whole
+/// progress of a single badge whose steps are its rule's (the seconds of a
+/// stay, 1 for a visit), never one an evaluator or an import of its own writes.
+fn invalid_reason(
+    badge_id: &str,
+    is_tier: bool,
+    criteria_steps: Option<i32>,
+    stay: bool,
+    required_seconds: i32,
+) -> Option<&'static str> {
+    use crate::badges::backfill::{Kind, kind};
+    // Unlike "can be granted at all", a one-time import is not an owner: presence replaces it.
+    let owned = crate::badges::evaluators::EVALUATED.contains(&badge_id)
+        || kind(badge_id).is_some_and(|k| !matches!(k, Kind::OneTime | Kind::Unsupported));
+    if owned {
+        Some("evaluated elsewhere")
+    } else if is_tier {
+        Some("tiered")
+    } else if criteria_steps.unwrap_or(1) != if stay { required_seconds } else { 1 } {
+        Some("steps differ from its rule")
+    } else {
+        None
+    }
+}
+
 fn config(
-    (badge_id, kind, parcel, world, start, end, mode, seconds): ConfigRow,
+    (badge_id, kind, parcel, world, start, end, mode, seconds, is_tier, criteria_steps): ConfigRow,
 ) -> Option<BadgeConfig> {
     let location = match kind.as_str() {
         "scene" => Location::Scene(parcel?.trim().to_lowercase()),
         _ => Location::World(world?.to_lowercase()),
     };
+    let stay = mode == "stay";
     Some(BadgeConfig {
+        invalid: invalid_reason(&badge_id, is_tier, criteria_steps, stay, seconds),
         badge_id,
         location,
         window: (
             start.and_utc().timestamp_millis(),
             end.and_utc().timestamp_millis(),
         ),
-        stay: mode == "stay",
+        stay,
         required_seconds: i64::from(seconds),
     })
+}
+
+/// The invalid badges already logged, with the reason logged.
+static WARNED_INVALID: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// False, and counted, for a badge whose catalog row presence may not write;
+/// logged once per badge and reason.
+fn writable(badge: &BadgeConfig, out: &mut EventOutcome) -> bool {
+    let mut warned = WARNED_INVALID.lock();
+    let Some(reason) = badge.invalid else {
+        warned.remove(&badge.badge_id);
+        return true;
+    };
+    if warned.insert(badge.badge_id.clone(), reason) != Some(reason) {
+        tracing::warn!(
+            badge_id = badge.badge_id,
+            reason,
+            "presence badge has an invalid catalog row; not counted"
+        );
+    }
+    out.outcomes.push("badge_invalid");
+    false
 }
 
 /// The awardable badges whose window contains `at`, or starts within
@@ -169,6 +223,39 @@ fn split(connections: &[(i64, String)]) -> (Vec<i64>, Vec<String>) {
     connections.iter().cloned().unzip()
 }
 
+/// Persists ordered remaining pairs on the caller's locked connection.
+pub(super) async fn persist_remaining_connections(
+    conn: &mut PgConnection,
+    visit: &Visit,
+    remaining: &[(i64, String)],
+) -> sqlx::Result<()> {
+    if remaining.is_empty() {
+        sqlx::query(
+            "DELETE FROM social.presence_visits WHERE badge_id = $1 AND wallet = $2 AND room = $3",
+        )
+        .bind(&visit.badge_id)
+        .bind(&visit.wallet)
+        .bind(&visit.room)
+        .execute(&mut *conn)
+        .await?;
+    } else {
+        let (joins, sessions) = split(remaining);
+        sqlx::query(
+            "UPDATE social.presence_visits SET joins = $4, sessions = $5, opened_at = $6 \
+         WHERE badge_id = $1 AND wallet = $2 AND room = $3",
+        )
+        .bind(&visit.badge_id)
+        .bind(&visit.wallet)
+        .bind(&visit.room)
+        .bind(&joins)
+        .bind(&sessions)
+        .bind(joins[0])
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// The room of a visit: scene and world rooms only, keyed as upstream.
 pub fn room_key(event: &PresenceEvent) -> Option<String> {
     let realm = &event.realm_name;
@@ -201,19 +288,40 @@ fn event_key(kind: &str, badge_id: &str, event: &PresenceEvent, room: &str) -> S
     )
 }
 
+/// A scene badge met a scene entity this node has not synced yet: the
+/// event waits for the sync instead of matching no parcel.
+#[derive(Debug)]
+pub struct SceneNotSynced(pub String);
+
+impl std::fmt::Display for SceneNotSynced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "scene {} is not synced yet", self.0)
+    }
+}
+
+impl std::error::Error for SceneNotSynced {}
+
+/// Whether `error` is [`SceneNotSynced`] (carried as a decode error).
+pub fn is_scene_not_synced(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Decode(e) if e.is::<SceneNotSynced>())
+}
+
 /// What a scene badge needs of the event: the deployed scene's parcels,
 /// read from `content.deployments` once per event and only when needed. An
-/// entity this node does not hold matches no parcel.
+/// entity this node does not hold is [`SceneNotSynced`] while the flow
+/// waits for scenes, else it matches no parcel.
 struct Place<'a> {
     event: &'a PresenceEvent,
     pointers: Option<Vec<String>>,
+    wait_for_scenes: bool,
 }
 
 impl<'a> Place<'a> {
-    fn new(event: &'a PresenceEvent) -> Self {
+    fn new(event: &'a PresenceEvent, wait_for_scenes: bool) -> Self {
         Self {
             event,
             pointers: None,
+            wait_for_scenes,
         }
     }
 
@@ -237,6 +345,11 @@ impl<'a> Place<'a> {
                     .bind(scene)
                     .fetch_optional(&mut *conn)
                     .await?;
+                    if pointers.is_none() && self.wait_for_scenes {
+                        return Err(sqlx::Error::Decode(Box::new(SceneNotSynced(
+                            scene.to_string(),
+                        ))));
+                    }
                     self.pointers = Some(
                         pointers
                             .unwrap_or_default()
@@ -265,6 +378,8 @@ pub struct Flow<'a> {
     pub now: i64,
     /// The badge art base of the `badge_granted` notifications.
     pub asset_base: &'a str,
+    /// An unsynced scene entity is [`SceneNotSynced`] instead of no match.
+    pub wait_for_scenes: bool,
 }
 
 impl Flow<'_> {
@@ -295,10 +410,10 @@ impl Flow<'_> {
             return Ok(());
         };
         let at = event.event_time_ms;
-        let mut place = Place::new(event);
+        let mut place = Place::new(event, self.wait_for_scenes);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at, self.settings.lookahead_ms).await? {
-            if place.matches(conn, &badge).await? {
+            if place.matches(conn, &badge).await? && writable(&badge, out) {
                 matching.push(badge);
             }
         }
@@ -476,10 +591,10 @@ impl Flow<'_> {
         // A leave pairs with a delayed join only where a configured badge
         // could have counted it: windows a bounded connection can cross.
         let max_age = self.settings.max_age_ms;
-        let mut place = Place::new(event);
+        let mut place = Place::new(event, self.wait_for_scenes);
         let mut matching = Vec::new();
         for badge in active_badges(conn, at - max_age, max_age).await? {
-            if place.matches(conn, &badge).await? {
+            if place.matches(conn, &badge).await? && writable(&badge, out) {
                 matching.push(badge);
             }
         }
@@ -575,8 +690,8 @@ impl Flow<'_> {
         let badges = badges_by_id(conn, &ids).await?;
         let mut ended = false;
         for visit in visits {
-            let Some(badge) = badges.get(&visit.badge_id) else {
-                // archived or unpublished while the visit was open: nothing to count it for
+            let Some(badge) = badges.get(&visit.badge_id).filter(|b| writable(b, out)) else {
+                // archived, unpublished or made invalid while the visit was open
                 drop_visit(conn, self, &visit).await?;
                 continue;
             };
@@ -650,30 +765,7 @@ impl Flow<'_> {
             .into_iter()
             .filter(|(_, s)| *s != event.session_id)
             .collect();
-        if remaining.is_empty() {
-            sqlx::query(
-                "DELETE FROM social.presence_visits WHERE badge_id = $1 AND wallet = $2 AND room = $3",
-            )
-            .bind(&visit.badge_id)
-            .bind(&visit.wallet)
-            .bind(&visit.room)
-            .execute(&mut *conn)
-            .await?;
-        } else {
-            let (joins, sessions) = split(&remaining);
-            sqlx::query(
-                "UPDATE social.presence_visits SET joins = $4, sessions = $5, opened_at = $6 \
-                 WHERE badge_id = $1 AND wallet = $2 AND room = $3",
-            )
-            .bind(&visit.badge_id)
-            .bind(&visit.wallet)
-            .bind(&visit.room)
-            .bind(&joins)
-            .bind(&sessions)
-            .bind(joins[0])
-            .execute(&mut *conn)
-            .await?;
-        }
+        persist_remaining_connections(conn, visit, &remaining).await?;
         self.remember_ended(
             conn,
             &visit.badge_id,
@@ -786,7 +878,7 @@ impl Flow<'_> {
             badge_id,
             &ApplyOptions {
                 at: naive(at),
-                notify: Some(self.asset_base),
+                notify: self.settings.grant_notifications.then_some(self.asset_base),
                 granted_by: None,
             },
             update,
@@ -794,7 +886,7 @@ impl Flow<'_> {
         .await?;
         let granted = matches!(&applied, Applied::Written(change) if change.completed);
         if granted {
-            metrics::counter!("badges_presence_grants_total").increment(1);
+            dcl_metrics::counter!("badges_presence_grants_total").increment(1);
             tracing::info!(
                 badge_id,
                 wallet = address.as_str(),

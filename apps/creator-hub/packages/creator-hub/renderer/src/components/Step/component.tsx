@@ -1,0 +1,42 @@
+import { useMemo } from 'react';
+import { cx } from '/@/lib/cx';
+import { CheckIcon, CloseIcon } from '@ui/atoms/icons-material';
+
+import type { Step as StepProps } from './types';
+
+import './styles.css';
+
+export function Step({ bulletText, name, description, state = 'idle', testId }: StepProps) {
+  const bullet = useMemo(() => {
+    if (state === 'complete') return <CheckIcon />;
+    if (state === 'failed') return <CloseIcon />;
+    return bulletText;
+  }, [state, bulletText]);
+
+  return (
+    <div
+      className={cx('Step', state)}
+      data-testid={testId}
+      data-state={state}
+    >
+      <div className="bullet">{bullet}</div>
+      <div className="body">
+        <h4>{name}</h4>
+        <span>{description}</span>
+      </div>
+    </div>
+  );
+}
+
+export function ConnectedSteps({ steps }: { steps: StepProps[] }) {
+  return (
+    <div className="ConnectedSteps">
+      {steps.map(($, idx) => (
+        <Step
+          {...$}
+          key={idx}
+        />
+      ))}
+    </div>
+  );
+}

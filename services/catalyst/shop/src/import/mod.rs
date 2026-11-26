@@ -26,18 +26,19 @@
 //! whole-credit rounding up (`types::UsdCents::credits_ceil`); the rate is
 //! the `economy.price_snapshots` decimal text read exactly, no float.
 
+use crate::shared::routing::post;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgPool, Row};
 
+use super::market::catalogue::{self, Access, Purpose};
 use super::market::listings::offchain_marketplace_v3;
-use super::market::mirrors::{Mirror, require_ready};
+use super::market::mirrors::Mirror;
 use super::market::signed::{require_not_scene_signer, require_signer};
 use super::market::wire::ApiError;
 use super::market::{MarketplaceState, SharedState, is_valid_eth_address};
@@ -250,7 +251,7 @@ pub struct MirrorFacts {
 }
 
 pub async fn mirror_facts(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     chain_id: ChainId,
     contract: EvmAddress,
     item_id: Option<alloy_primitives::U256>,
@@ -259,7 +260,7 @@ pub async fn mirror_facts(
     let collection = sqlx::query("SELECT creator, minters, managers FROM shop.collections WHERE contract_address = $1 ORDER BY (chain_id = $2) DESC LIMIT 1")
         .bind(&contract_text)
         .bind(chain_id.0 as i32)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?;
     let mut sellers = Vec::new();
     let role = match &collection {
@@ -281,7 +282,7 @@ pub async fn mirror_facts(
                 .bind(&contract_text)
                 .bind(item_id.to_string())
                 .bind(chain_id.0 as i32)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await?;
             match row {
                 Some(r) => {
@@ -443,11 +444,9 @@ pub async fn current_rate(pool: &PgPool) -> Result<Option<(ManaUsdRate, i64)>, A
             .ok()
             .map(|shop| (shop.rate, shop.updated_at.timestamp())));
     }
-    let row: Option<(String, chrono::NaiveDateTime)> =
-        sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1").fetch_optional(pool).await?;
+    let row = crate::mana::quote::newest_spot(pool).await?;
     Ok(row.and_then(|(text, taken_at)| {
-        ManaUsdRate::parse_usd_per_mana(text.trim())
-            .map(|rate| (rate, taken_at.and_utc().timestamp()))
+        ManaUsdRate::parse_usd_per_mana(&text).map(|rate| (rate, taken_at))
     }))
 }
 
@@ -484,13 +483,16 @@ async fn check_inner(
     body: ImportCheckBody,
 ) -> Result<Response, Response> {
     require_not_scene_signer(headers).map_err(IntoResponse::into_response)?;
-    let signer_text = require_signer(headers, "post", CHECK_PATH)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    let signer_text = require_signer(
+        super::market::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        CHECK_PATH,
+    )
+    .await
+    .map_err(IntoResponse::into_response)?;
     let signer =
         EvmAddress::parse(&signer_text).map_err(|_| bad("the signer is not an address"))?;
-    require_ready(state, Mirror::Collections).await?;
-    require_ready(state, Mirror::Items).await?;
     let listing = match &body.old_trade_id {
         Some(id) => {
             let listing = stored_listing(&state.pool, id)
@@ -543,9 +545,22 @@ async fn check_inner(
         return Err(bad("the listing sends no asset"));
     };
     let item_id = (first.asset_type == TradeAssetType::CollectionItem).then_some(first.value);
-    let facts = mirror_facts(&state.pool, chain_id, first.contract, item_id)
-        .await
-        .map_err(IntoResponse::into_response)?;
+    // Eligibility authorizes a listing: the catalogue's authorize read, whose
+    // snapshot the facts are read in. It opens after the listing's own read
+    // and closes before the rate's, so no pool work waits on its connection.
+    let facts = {
+        let mut read = catalogue::begin(
+            state,
+            Purpose::Authorize,
+            &[Mirror::Collections, Mirror::Items],
+            None,
+            Access::ReadOnly,
+        )
+        .await?;
+        mirror_facts(&mut read.tx, chain_id, first.contract, item_id)
+            .await
+            .map_err(IntoResponse::into_response)?
+    };
     let Some(trade) = proposed_trade(chain_id, signer, sent) else {
         return Err(bad(format!(
             "no off-chain marketplace is deployed on chain {}",

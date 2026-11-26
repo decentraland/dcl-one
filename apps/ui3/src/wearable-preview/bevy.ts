@@ -44,7 +44,7 @@ export function createAvatarScene(container: HTMLElement, options: AvatarSceneOp
   };
   const setOutfit = async (next: AvatarOutfitOptions) => {
     outfit = next;
-    if (!session) return;
+    if (!session || next.outfitPending) return;
     const revision = ++generation;
     options.onStatus?.("loading");
     try {

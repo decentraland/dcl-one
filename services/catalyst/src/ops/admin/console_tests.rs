@@ -14,11 +14,10 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use super::console::{CONSOLE_ROUTES, Domains};
-use super::tests::{SECRET, audit_rows, cleanup, lazy_pool, send, session_cookie, wallet};
-use super::{RawSettings, Settings, State, router};
+use super::router;
+use super::tests::{admin_state, audit_rows, cleanup, lazy_pool, send, session_cookie, wallet};
 use crate::content::{ContentState, Settings as ContentSettings};
 use crate::http::Outbound;
-use crate::jobs::Jobs;
 use crate::storage::Storage;
 
 const TOKEN: &str = "console-test-bearer";
@@ -33,21 +32,10 @@ async fn storage() -> Arc<Storage> {
 }
 
 async fn app(pool: PgPool, ops_writes: bool, domains: Domains, admin: &str) -> Router {
-    let content = Arc::new(ContentState::new(
-        pool.clone(),
-        ContentSettings::for_tests(),
-        storage().await,
-    ));
-    let settings = Settings::parse(RawSettings {
-        session_secret: Some(SECRET.to_string()),
-        admin_addresses: admin.to_string(),
-        session_ttl_secs: 0,
-        cookie_insecure: true,
-        eth_network: "mainnet".to_string(),
-        writes_enabled: ops_writes,
-    });
-    router(Arc::new(
-        State::new(pool, settings, content, Arc::new(Jobs::new()), None).with_domains(domains),
+    router(super::SharedState::from(
+        admin_state(pool, ops_writes, admin, None)
+            .await
+            .with_domains(domains),
     ))
 }
 
@@ -102,7 +90,7 @@ fn assert_refused(status: StatusCode, body: &Value, switch: &str) {
 async fn every_console_route_is_403_without_a_session_and_502_without_its_module() {
     let admin = PrivateKeySigner::random();
     let app = app(lazy_pool(), true, Domains::default(), &wallet(&admin)).await;
-    assert_eq!(CONSOLE_ROUTES.len(), 81);
+    assert_eq!(CONSOLE_ROUTES.len(), 84);
     for path in CONSOLE_ROUTES {
         let (status, _, body) = send(&app, "POST", path, &[], Some(json!({}))).await;
         assert_eq!(
@@ -2099,4 +2087,137 @@ async fn place_reports_are_listed_and_settled_behind_the_console_switch() {
         (Some("resolved"), Some("removed")),
         "{body}"
     );
+}
+
+#[tokio::test]
+async fn events_moderators_are_added_and_removed_by_the_operator() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let explore = Arc::new(crate::explore::ExploreState::new(
+        pool.clone(),
+        crate::explore::Settings::for_tests(),
+        None,
+    ));
+    let target = random_address();
+    let is_moderator = |address: String| {
+        let pool = pool.clone();
+        async move {
+            crate::explore::events::profiles::is_moderator(&pool, &address)
+                .await
+                .unwrap()
+        }
+    };
+    let domains = || Domains {
+        explore: Some(explore.clone()),
+        ..Default::default()
+    };
+
+    let (app, actor, cookie) = console(&pool, false, domains()).await;
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-add",
+        json!({ "address": target }),
+    )
+    .await;
+    assert_refused(status, &body, "OPS_WRITES_ENABLED");
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-remove",
+        json!({ "address": target }),
+    )
+    .await;
+    assert_refused(status, &body, "OPS_WRITES_ENABLED");
+    let (status, _) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderators-list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a read is open");
+    assert!(!is_moderator(target.clone()).await);
+    cleanup(&pool, &actor).await;
+
+    let (app, actor, cookie) = console(&pool, true, domains()).await;
+    let (status, _) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-add",
+        json!({ "address": "admin" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-add",
+        json!({ "address": target.to_uppercase().replacen("0X", "0x", 1) }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["added"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "{body}"
+    );
+    assert!(is_moderator(target.clone()).await);
+    let (_, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderators-list",
+        json!({}),
+    )
+    .await;
+    let row = body["body"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["address"] == target.as_str())
+        .cloned()
+        .unwrap_or_else(|| panic!("{body}"));
+    assert_eq!(row["added_by"], actor.to_lowercase().as_str());
+    let (_, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-add",
+        json!({ "address": target }),
+    )
+    .await;
+    assert_eq!(body["body"]["added"].as_bool(), Some(false), "{body}");
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-remove",
+        json!({ "address": target }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["removed"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "{body}"
+    );
+    assert!(!is_moderator(target.clone()).await);
+
+    let rows = console_rows(&pool, &actor).await;
+    assert_eq!(
+        rows.iter()
+            .map(|r| (r.1.as_str(), r.2.as_deref(), r.3.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("events.moderator.remove", Some(target.as_str()), "ok"),
+            ("events.moderator.add", Some(target.as_str()), "ok"),
+            ("events.moderators.list", None, "ok"),
+            ("events.moderator.add", Some(target.as_str()), "ok"),
+        ]
+    );
+    let changed: Vec<Value> = super::tests::audit_rows(&pool, &actor)
+        .await
+        .into_iter()
+        .filter(|r| r.action != "events.moderators.list")
+        .map(|r| r.detail["changed"].clone())
+        .collect();
+    assert_eq!(changed, vec![json!(true), json!(false), json!(true)]);
+    cleanup(&pool, &actor).await;
 }

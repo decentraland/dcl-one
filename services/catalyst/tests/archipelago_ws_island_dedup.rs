@@ -1,11 +1,9 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/ws_island_dedup.rs
-#[path = "support/gate.rs"]
-mod gate;
+use crate::gate;
 #[path = "support/nats_broker.rs"]
 mod nats_broker;
+use crate::archipelago;
 use alloy::signers::{SignerSync, local::PrivateKeySigner};
-#[path = "support/archipelago.rs"]
-mod archipelago;
 use catalyst::comms::archipelago::AppState;
 use catalyst::comms::archipelago::config::Settings;
 use catalyst::comms::archipelago::feed::{Routed, route_island};
@@ -27,7 +25,7 @@ type WsStream =
 
 fn test_config(island_changed_dedup_ms: u64) -> Settings {
     let mut settings = archipelago::settings();
-    settings.server.island_changed_dedup_ms = island_changed_dedup_ms;
+    settings.server.island_changed_dedup_ms = island_changed_dedup_ms as f64;
     settings
 }
 
@@ -165,7 +163,7 @@ async fn begin_handshake(port: u16, wallet: &PrivateKeySigner) -> (WsStream, Str
         other => panic!("expected ChallengeResponse, got {other:?}"),
     };
     assert!(challenge.starts_with("dcl-"));
-    assert_eq!(challenge.len(), 52);
+    assert_eq!(challenge.len(), 68);
     (ws, challenge)
 }
 
@@ -251,7 +249,7 @@ async fn concurrent_same_wallet_challenges_both_welcome_and_route_independently(
 }
 
 #[tokio::test]
-async fn a_delayed_older_handshake_cannot_take_a_newer_sessions_socket() {
+async fn a_later_authentication_completion_replaces_the_same_sessions_socket() {
     let (port, state, _publisher) = start_server(0).await;
     let wallet = PrivateKeySigner::random();
     let address = format!("{:#x}", wallet.address());
@@ -260,41 +258,56 @@ async fn a_delayed_older_handshake_cannot_take_a_newer_sessions_socket() {
     let (mut newer, newer_challenge) = begin_handshake(port, &wallet).await;
 
     finish_handshake(&mut newer, &wallet, &device, &newer_challenge).await;
-    let current = state
+    let previous = state
         .registry
         .peer_link(&address, &device.session())
         .expect("newer handshake was admitted");
-    older
-        .send(WsMessage::Binary(signed_challenge(
-            &wallet,
-            &device,
-            &older_challenge,
-        )))
-        .await
-        .unwrap();
-    assert!(matches!(
-        recv_msg(&mut older, Duration::from_secs(3)).await,
-        Some(server_packet::Message::Kicked(_))
-    ));
+    finish_handshake(&mut older, &wallet, &device, &older_challenge).await;
+    let replacement = state
+        .registry
+        .peer_link(&address, &device.session())
+        .expect("last successful authentication was admitted");
+    assert_ne!(replacement.id, previous.id);
+    assert!(previous.is_closed());
+    match recv_msg(&mut newer, Duration::from_secs(3)).await {
+        Some(server_packet::Message::Kicked(_)) => {}
+        other => panic!("expected the replaced socket to be Kicked, got {other:?}"),
+    }
+    let _ = newer.close(None).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while state.handlers.available_permits() != state.settings.server.max_sockets as usize - 1 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the replaced socket handler did not finish");
+    // A delayed disconnect still carries the exact link that originally registered it.
+    state
+        .registry
+        .on_peer_disconnected(&address, &device.session(), previous.id);
     assert_eq!(
         state
             .registry
             .peer_link(&address, &device.session())
             .map(|link| link.id),
-        Some(current.id)
+        Some(replacement.id)
     );
+    assert_eq!(state.registry.sessions_of(&address).len(), 1);
 
-    route_island(
-        &state,
-        &address,
-        &device.session(),
-        &island("newer-still-owns"),
+    assert_eq!(
+        route_island(
+            &state,
+            &address,
+            &device.session(),
+            &island("last-completion-owns"),
+        ),
+        Routed::Delivered
     );
     assert_eq!(
-        recv_island(&mut newer, Duration::from_secs(3))
+        recv_island(&mut older, Duration::from_secs(3))
             .await
             .as_deref(),
-        Some("newer-still-owns")
+        Some("last-completion-owns")
     );
 }
 
@@ -362,7 +375,7 @@ async fn the_feed_delivers_a_room_only_to_the_session_it_names() {
         "the other device of the same wallet is not told about this assignment"
     );
     assert_eq!(
-        state.peers.island_of(&address).as_deref(),
+        state.enforcement.island_of(&address).as_deref(),
         Some("island-A"),
         "the assignment is recorded even though no heartbeat has arrived yet"
     );
@@ -499,9 +512,9 @@ async fn the_welcome_announces_the_session() {
     assert!(bus.published().is_empty(), "the announce crosses no broker");
 }
 
-/// Closing a socket tells the broker nothing: `peer.*.disconnect` had no consumer and is gone.
+/// Closing every authenticated socket emits an independent statistical disconnect.
 #[tokio::test]
-async fn a_closed_socket_publishes_nothing() {
+async fn a_closed_socket_publishes_only_its_statistics_disconnect() {
     let (port, state, bus, lookups) = start_announcing_server(10_000).await;
     let wallet = PrivateKeySigner::random();
     let address = format!("{:#x}", wallet.address());
@@ -528,10 +541,24 @@ async fn a_closed_socket_publishes_nothing() {
     )
     .await
     .unwrap();
-    assert!(
-        bus.published().is_empty(),
-        "no peer.*.disconnect: {:?}",
-        bus.published()
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while bus.published().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let published = bus.published();
+    assert_eq!(published.len(), 1);
+    assert_eq!(
+        published[0].0,
+        catalyst::comms::protocol::bus::statistics::OBSERVATIONS_SUBJECT
+    );
+    let observation =
+        catalyst::comms::protocol::bus::statistics::Observation::decode(&published[0].1).unwrap();
+    assert_eq!(
+        observation.event,
+        catalyst::comms::protocol::bus::statistics::Event::Disconnect { address }
     );
     assert_eq!(state.outbox.dropped(), 0);
 }
@@ -592,7 +619,7 @@ async fn a_re_announce_pass_announces_every_live_session() {
 }
 
 #[tokio::test]
-async fn a_live_socket_retains_its_assignment_until_teardown_after_heartbeat_expiry() {
+async fn a_live_socket_retains_its_assignment_until_teardown_without_heartbeat_expiry() {
     let (port, state, _) = start_server(10_000).await;
     let wallet = PrivateKeySigner::random();
     let address = format!("{:#x}", wallet.address());
@@ -606,18 +633,27 @@ async fn a_live_socket_retains_its_assignment_until_teardown_after_heartbeat_exp
         recv_island(&mut ws, Duration::from_secs(3)).await,
         Some("island-kept".into())
     );
-    state.peers.upsert_peer_at(
-        address.clone(),
-        [0.0; 3],
-        [0, 0],
-        "realm".into(),
-        chrono::Utc::now() - chrono::Duration::days(1),
+    archipelago::snapshot(&state, |snapshot| {
+        snapshot
+            .peers
+            .push(catalyst::comms::protocol::bus::statistics::Peer {
+                address: address.clone(),
+                position: [0.; 3],
+                time: chrono::Utc::now().timestamp_millis() - 86_400_000,
+            })
+    })
+    .await;
+    assert!(
+        archipelago::peer(&state, &address).is_some(),
+        "statistics have no peer TTL"
     );
-    assert_eq!(state.peers.expire_stale_once(), 1);
-    assert_eq!(state.peers.island_of(&address), Some("island-kept".into()));
+    assert_eq!(
+        state.enforcement.island_of(&address),
+        Some("island-kept".into())
+    );
     ws.close(None).await.unwrap();
     tokio::time::timeout(Duration::from_secs(3), async {
-        while state.registry.has_peer(&address) || state.peers.island_of(&address).is_some() {
+        while state.registry.has_peer(&address) || state.enforcement.island_of(&address).is_some() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -653,29 +689,53 @@ async fn an_oversized_assignment_is_counted_without_breaking_the_live_socket() {
 }
 
 #[tokio::test]
-async fn an_assignment_backlog_keeps_only_the_latest_pending_room() {
-    let (port, state, _) = start_server(0).await;
+async fn an_assignment_backlog_preserves_every_accepted_room_in_order() {
+    let (port, state, _) = start_server(10_000).await;
     let wallet = PrivateKeySigner::random();
     let address = format!("{:#x}", wallet.address());
     let device = Device::new();
     let mut ws = handshake(port, &wallet, &device).await;
     let session = device.session();
-    for index in 0..1_024 {
-        route_island(
-            &state,
-            &address,
-            &session,
-            &island(&format!("island-{index}")),
+    for index in 0..64 {
+        assert_eq!(
+            route_island(
+                &state,
+                &address,
+                &session,
+                &island(&format!("island-{index}"))
+            ),
+            Routed::Delivered
         );
     }
     assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Full
+    );
+    assert_eq!(state.feed.assignment_full_count(), 1);
+    for index in 0..64 {
+        assert_eq!(
+            recv_island(&mut ws, Duration::from_secs(3)).await,
+            Some(format!("island-{index}"))
+        );
+    }
+    assert_eq!(recv_island(&mut ws, Duration::from_millis(100)).await, None);
+    assert_eq!(state.feed.coalesced_count(), 0);
+    assert_eq!(state.feed.socket_assignments_written_count(), 64);
+    // Exhaustion rejected this item before dedup acceptance; it can be sent after release.
+    assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Delivered
+    );
+    assert_eq!(
         recv_island(&mut ws, Duration::from_secs(3)).await,
-        Some("island-1023".into()),
-        "a paused consumer must not replay an unbounded history of old rooms"
+        Some("overflow".into())
+    );
+    assert_eq!(
+        route_island(&state, &address, &session, &island("overflow")),
+        Routed::Delivered
     );
     assert_eq!(recv_island(&mut ws, Duration::from_millis(100)).await, None);
-    assert_eq!(state.feed.coalesced_count(), 1_023);
-    assert_eq!(state.feed.socket_assignments_written_count(), 1);
+    assert_eq!(state.feed.deduplicated_count(), 1);
 }
 
 #[tokio::test]
@@ -838,7 +898,7 @@ async fn a_non_reading_socket_is_retired_on_write_timeout_or_kick() {
         .await
         .expect("a non-reading socket held its registration after retirement");
         assert!(link.is_closed());
-        assert!(state.peers.island_of(&address).is_none());
+        assert!(state.enforcement.island_of(&address).is_none());
         assert_eq!(state.feed.socket_write_timeout_count(), u64::from(!kick));
         drop(ws);
     }
@@ -891,7 +951,13 @@ async fn an_assigned_socket_recovers_a_lost_move_and_reannounces_after_broker_re
     wait_until(|| bus.is_ready()).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let app = catalyst::comms::archipelago::mounts(state.clone(), true).stats;
+    let app = catalyst::comms::archipelago::mounts(
+        state.clone(),
+        true,
+        Default::default(),
+        std::sync::Arc::new(catalyst::content::Denylist::default()),
+    )
+    .stats;
     let _server = Task(tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     }));
@@ -1054,9 +1120,9 @@ async fn an_expired_window_delivers_the_identical_assignment_again() {
             Some(server_packet::Message::IslandChanged(assignment.clone()))
         );
         if attempt == 0 {
-            tokio::time::pause();
-            tokio::time::advance(Duration::from_millis(75)).await;
-            tokio::time::resume();
+            // Deduplication follows wall time; advancing Tokio's monotonic test clock
+            // does not advance that contract. Exact clock jumps have unit coverage.
+            tokio::time::sleep(Duration::from_millis(75)).await;
         }
     }
 }
@@ -1098,4 +1164,497 @@ async fn replacement_socket_has_no_predecessor_delivery_state_or_delayed_predece
         Some(server_packet::Message::IslandChanged(assignment))
     );
     assert_eq!(state.feed.socket_assignments_written_count(), 2);
+}
+
+#[tokio::test]
+async fn each_device_disconnect_removes_statistics_but_only_last_socket_clears_enforcement() {
+    use catalyst::comms::protocol::archipelago::{Position, archipelago::Heartbeat};
+    use catalyst::comms::protocol::bus::statistics::{
+        OBSERVATIONS_SUBJECT, Observation, ProducerReply, ProducerRequest,
+    };
+    let (port, state, bus) = start_server(0).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let first = Device::new();
+    let second = Device::new();
+    let mut a = handshake(port, &wallet, &first).await;
+    let mut b = handshake(port, &wallet, &second).await;
+    assert_eq!(state.registry.authenticated_count(), 2);
+    assert_eq!(
+        route_island(
+            &state,
+            &address,
+            &first.session(),
+            &island("island-retained")
+        ),
+        Routed::Delivered
+    );
+    let beat = |x| {
+        WsMessage::Binary(
+            ClientPacket {
+                request_sequence: 0,
+                message: Some(client_packet::Message::Heartbeat(Heartbeat {
+                    position: Some(Position { x, y: 2., z: 3. }),
+                    desired_room: Some("invalid\ncontrol-realm".into()),
+                    sample_sequence: None,
+                })),
+            }
+            .encode_to_vec()
+            .into(),
+        )
+    };
+    let events = || {
+        bus.published()
+            .iter()
+            .filter(|(subject, _)| subject == OBSERVATIONS_SUBJECT)
+            .map(|(_, bytes)| Observation::decode(bytes).expect("valid statistical observation"))
+            .collect::<Vec<_>>()
+    };
+    let settle = |count| {
+        let bus = bus.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while bus
+                    .published()
+                    .iter()
+                    .filter(|(subject, _)| subject == OBSERVATIONS_SUBJECT)
+                    .count()
+                    < count
+                {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+    };
+    a.send(beat(1.)).await.unwrap();
+    settle(1).await;
+    b.send(beat(2.)).await.unwrap();
+    settle(2).await;
+    let observed = events()[0].clone();
+    let begin = ProducerRequest::Begin {
+        incarnation: observed.incarnation,
+        producer: observed.producer,
+    };
+    let response = bus
+        .statistics_control(begin.encode().unwrap())
+        .await
+        .unwrap();
+    let Some(ProducerReply::Active(active)) = ProducerReply::decode(&response) else {
+        panic!("connector producer must already be registered")
+    };
+    assert_eq!(active.incarnation, observed.incarnation);
+    assert_eq!(active.producer, observed.producer);
+    assert_eq!(active.generation, observed.generation);
+    // Replay the wire events through an independently registered Pulse projection.
+    let mut pulse =
+        catalyst::comms::pulse::statistics::Statistics::with_incarnation(active.incarnation);
+    let ProducerReply::Grant(grant) = pulse.control(begin) else {
+        panic!("replay producer candidate")
+    };
+    assert_eq!(grant.incarnation, active.incarnation);
+    assert_eq!(grant.producer, active.producer);
+    assert_eq!(grant.generation, active.generation);
+    assert_eq!(
+        pulse.control(ProducerRequest::Confirm(grant.clone())),
+        ProducerReply::Active(grant)
+    );
+    let mut replayed = 0;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 100));
+        replayed += 1;
+    }
+    assert_eq!(pulse.snapshot().peers.len(), 1);
+    assert_eq!(pulse.snapshot().peers[0].position[0], 2.);
+    a.close(None).await.unwrap();
+    settle(3).await;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 200));
+        replayed += 1;
+    }
+    assert!(pulse.snapshot().peers.is_empty());
+    assert_eq!(state.registry.authenticated_count(), 1);
+    assert_eq!(
+        state.enforcement.island_of(&address).as_deref(),
+        Some("island-retained")
+    );
+    b.send(beat(f32::INFINITY)).await.unwrap();
+    settle(4).await;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 300));
+        replayed += 1;
+    }
+    assert_eq!(pulse.snapshot().peers[0].position[0], f64::INFINITY);
+    let mut replacement = handshake(port, &wallet, &second).await;
+    settle(5).await;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 400));
+        replayed += 1;
+    }
+    assert!(
+        pulse.snapshot().peers.is_empty(),
+        "replaced socket disconnect is still a statistical deletion"
+    );
+    assert_eq!(state.registry.authenticated_count(), 1);
+    assert_eq!(
+        state.enforcement.island_of(&address).as_deref(),
+        Some("island-retained")
+    );
+    replacement.send(beat(4.)).await.unwrap();
+    settle(6).await;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 500));
+        replayed += 1;
+    }
+    assert_eq!(pulse.snapshot().peers[0].time, 500);
+    replacement.close(None).await.unwrap();
+    settle(7).await;
+    for event in events().into_iter().skip(replayed) {
+        assert!(pulse.observe(event, 600));
+        replayed += 1;
+    }
+    assert_eq!(replayed, 7);
+    assert!(pulse.snapshot().peers.is_empty());
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while state.enforcement.island_of(&address).is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn source_contract_dedup_compares_received_assignment_bytes() {
+    let (port, state, _publisher) = start_server(10_000).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let device = Device::new();
+    let mut socket = handshake(port, &wallet, &device).await;
+    let link = state
+        .registry
+        .peer_link(&address, &device.session())
+        .unwrap();
+    let mut bytes = island("same-fields").encode_to_vec();
+    link.send(
+        catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
+    );
+    let expected = ServerPacket {
+        request_sequence: 0,
+        message: Some(server_packet::Message::IslandChanged(island("same-fields"))),
+    }
+    .encode_to_vec();
+    let first = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(first, WsMessage::Binary(expected.clone().into()));
+    // Distinct received bytes remain eligible even when their decoded output is equal.
+    bytes.extend_from_slice(&[0x98, 0x06, 0x01]);
+    link.send(
+        catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
+    );
+    let frame = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let WsMessage::Binary(wire) = frame else {
+        panic!("binary assignment expected")
+    };
+    assert_eq!(
+        wire.as_ref(),
+        expected.as_slice(),
+        "output removes unknown fields through decoded ServerPacket serialization"
+    );
+    link.send(
+        catalyst::comms::archipelago::registry::SocketEvent::IslandChanged(bytes.clone(), None),
+    );
+    assert!(
+        recv_island(&mut socket, Duration::from_millis(100))
+            .await
+            .is_none()
+    );
+    assert_eq!(state.feed.socket_assignments_written_count(), 2);
+    assert_eq!(state.feed.deduplicated_count(), 1);
+}
+
+#[tokio::test]
+async fn assignment_fifo_crosses_mailbox_validation_and_physical_writer_in_order() {
+    use axum::extract::ws::Message;
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+    let payloads: Vec<_> = ["A", "B", "C"]
+        .into_iter()
+        .map(|name| island(name).encode_to_vec())
+        .collect();
+    for payload in &payloads {
+        assert!(writer.send(payload));
+    }
+    writer.take_for_validation().await;
+    assert_eq!(writer.available(), 61);
+    assert!(writer.admit().await);
+    writer.step().await;
+    assert!(
+        writer.frames().is_empty(),
+        "physical readiness is still held"
+    );
+    assert!(writer.admit().await);
+    // A is in the physical writer, B in its queue, C in the mailbox.
+    assert_eq!(writer.available(), 61);
+    writer.readiness(true, true);
+    writer.step().await;
+    assert!(writer.admit().await);
+    writer.step().await;
+    let frames = writer.frames();
+    assert_eq!(frames.len(), 3);
+    for (frame, payload) in frames.iter().zip(&payloads) {
+        let Message::Binary(bytes) = frame else {
+            panic!("assignment frame")
+        };
+        assert_eq!(
+            ServerPacket::decode(bytes.clone()).unwrap().message,
+            Some(server_packet::Message::IslandChanged(
+                IslandChangedMessage::decode(payload.as_slice()).unwrap()
+            ))
+        );
+    }
+    assert_eq!(writer.available(), 64);
+    writer.finish().await;
+}
+
+#[tokio::test]
+async fn assignment_capacity_stays_charged_through_validation_and_physical_flush() {
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+    for value in 0..64 {
+        assert!(writer.send(&island(&value.to_string()).encode_to_vec()));
+    }
+    let rejected = island("exact-rejected-bytes").encode_to_vec();
+    writer.take_for_validation().await;
+    assert!(!writer.send(&rejected));
+    assert!(writer.admit().await);
+    writer.step().await;
+    assert!(!writer.send(&rejected));
+    writer.readiness(true, false);
+    writer.step().await;
+    assert_eq!(writer.frames().len(), 1);
+    assert!(
+        !writer.send(&rejected),
+        "start_send does not release the flush credit"
+    );
+    writer.readiness(true, true);
+    writer.step().await;
+    assert_eq!(writer.available(), 1);
+    assert!(writer.send(&rejected));
+    assert_eq!(writer.available(), 0);
+    writer.take_for_validation().await;
+    writer.reject_validation();
+    assert_eq!(writer.available(), 1);
+    writer.finish().await;
+    assert_eq!(
+        writer.available(),
+        64,
+        "retirement clears the mailbox and writer"
+    );
+}
+
+#[tokio::test]
+async fn full_assignment_budget_keeps_terminal_kick_and_releases_cancelled_work() {
+    use axum::extract::ws::Message;
+    use catalyst::comms::archipelago::registry::SocketEvent;
+    use catalyst::comms::archipelago::ws::assignment_test_support::AssignmentWriter;
+    for partial in [false, true] {
+        let mut writer = AssignmentWriter::new(archipelago::state(test_config(0)).await).await;
+        for value in 0..64 {
+            assert!(writer.send(&island(&value.to_string()).encode_to_vec()));
+        }
+        assert!(writer.admit().await);
+        writer.readiness(partial, false);
+        writer.step().await;
+        if !partial {
+            assert!(writer.owner.send(SocketEvent::Kicked));
+        }
+        writer.finish().await;
+        assert_eq!(writer.available(), 64);
+        let frames = writer.frames();
+        if partial {
+            assert_eq!(
+                frames.len(),
+                1,
+                "a cancelled partial frame cannot drain more output"
+            );
+        } else {
+            assert_eq!(frames.len(), 2);
+            let Message::Binary(bytes) = &frames[0] else {
+                panic!("terminal kick")
+            };
+            assert!(matches!(
+                ServerPacket::decode(bytes.clone()).unwrap().message,
+                Some(server_packet::Message::Kicked(_))
+            ));
+            assert!(matches!(frames[1], Message::Close(None)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_suppressed_repeat_does_not_extend_the_original_acceptance_window() {
+    let (port, state, _) = start_server(2_000).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let device = Device::new();
+    let mut socket = handshake(port, &wallet, &device).await;
+    let assignment = island("original-window");
+    route_island(&state, &address, &device.session(), &assignment);
+    assert_eq!(
+        recv_island(&mut socket, Duration::from_secs(3)).await,
+        Some("original-window".into())
+    );
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    route_island(&state, &address, &device.session(), &assignment);
+    assert!(
+        recv_msg(&mut socket, Duration::from_millis(50))
+            .await
+            .is_none()
+    );
+    assert_eq!(state.feed.deduplicated_count(), 1);
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    route_island(&state, &address, &device.session(), &assignment);
+    assert_eq!(
+        recv_island(&mut socket, Duration::from_secs(3)).await,
+        Some("original-window".into())
+    );
+    assert_eq!(state.feed.deduplicated_count(), 1);
+}
+
+async fn ping_with_full_mailbox() -> (WsStream, AppState, String) {
+    let (port, state, _) = start_server(10_000).await;
+    let wallet = PrivateKeySigner::random();
+    let address = format!("{:#x}", wallet.address());
+    let device = Device::new();
+    let mut socket = handshake(port, &wallet, &device).await;
+    state.ws_ping_gate.arm();
+    socket
+        .send(WsMessage::Ping(b"full-mailbox".as_slice().into()))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), state.ws_ping_gate.entered())
+        .await
+        .unwrap();
+    assert_eq!(
+        state.ws_ping_gate.available(),
+        64,
+        "Welcome must have flushed"
+    );
+    assert_eq!(state.ws_ping_gate.writer_pending(), 0);
+    for index in 0..64 {
+        assert_eq!(
+            route_island(
+                &state,
+                &address,
+                &device.session(),
+                &island(&format!("queued-{index}"))
+            ),
+            Routed::Delivered
+        );
+    }
+    assert_eq!(state.ws_ping_gate.available(), 0);
+    assert_eq!(
+        state.ws_ping_gate.writer_pending(),
+        0,
+        "all credits are in the real mailbox"
+    );
+    assert_eq!(state.feed.socket_assignments_written_count(), 0);
+    assert_eq!(
+        route_island(&state, &address, &device.session(), &island("overflow")),
+        Routed::Full
+    );
+    (socket, state, address)
+}
+
+#[tokio::test]
+async fn production_ping_at_full_mailbox_delivers_pong_and_every_accepted_assignment() {
+    let (mut socket, state, address) = ping_with_full_mailbox().await;
+    state.ws_ping_gate.release();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        let mut pong = false;
+        let mut assignments = 0;
+        while !pong || assignments < 64 {
+            match socket.next().await.unwrap().unwrap() {
+                WsMessage::Pong(payload) => {
+                    assert_eq!(payload.as_ref(), b"full-mailbox");
+                    pong = true;
+                }
+                WsMessage::Binary(bytes) => {
+                    let packet = ServerPacket::decode(bytes).unwrap();
+                    let Some(server_packet::Message::IslandChanged(assignment)) = packet.message
+                    else {
+                        panic!("unexpected packet")
+                    };
+                    assert_eq!(assignment, island(&format!("queued-{assignments}")));
+                    assignments += 1;
+                }
+                frame => panic!("healthy writer must not retire: {frame:?}"),
+            }
+        }
+        while state.ws_ping_gate.available() != 64 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the actual Ping handler must drain its mailbox while Pong waits for capacity");
+    assert!(state.registry.has_peer(&address));
+    assert_eq!(state.feed.socket_assignments_written_count(), 64);
+    assert_eq!(state.feed.dropped_close_count(), 0);
+    socket.close(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn production_full_mailbox_ping_preserves_kick_restart_and_retirement() {
+    for terminal in ["kick", "restart", "retire"] {
+        let (mut socket, state, address) = ping_with_full_mailbox().await;
+        match terminal {
+            "kick" => {
+                assert_eq!(state.registry.kick(&address), 1);
+            }
+            "restart" => state.restart.cancel(),
+            "retire" => state.registry.sessions_of(&address)[0].close(),
+            _ => unreachable!(),
+        }
+        state.ws_ping_gate.release();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut kicked = false;
+            loop {
+                match socket.next().await.unwrap().unwrap() {
+                    WsMessage::Pong(_) => {}
+                    WsMessage::Binary(bytes) => {
+                        assert_eq!(terminal, "kick");
+                        assert!(matches!(
+                            ServerPacket::decode(bytes).unwrap().message,
+                            Some(server_packet::Message::Kicked(_))
+                        ));
+                        kicked = true;
+                    }
+                    WsMessage::Close(frame) => {
+                        if terminal == "restart" {
+                            assert_eq!(u16::from(frame.unwrap().code), 1012);
+                        }
+                        assert_eq!(kicked, terminal == "kick");
+                        break;
+                    }
+                    frame => panic!("unexpected terminal frame: {frame:?}"),
+                }
+            }
+            while state.registry.has_peer(&address) || state.ws_ping_gate.available() != 64 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("terminal handling must preempt the full mailbox/Pong wait");
+        assert_eq!(state.feed.socket_assignments_written_count(), 0);
+        assert_eq!(state.feed.dropped_close_count(), 0);
+    }
 }

@@ -1,4 +1,9 @@
 use super::*;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
 use crate::protocol::room_authority::PROOF_DOMAIN;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
@@ -48,7 +53,7 @@ impl RelayPolicy for Policy {
 
 fn authority() -> (Arc<RelayAuthority>, Arc<Policy>) {
     let policy = Arc::new(Policy::default());
-    let authority = RelayAuthority::new(
+    let authority = RelayAuthority::unfenced_test(
         policy.clone(),
         "livekit-key".into(),
         LIVEKIT_SECRET.to_vec(),
@@ -279,25 +284,25 @@ async fn authentication_binds_raw_body_method_path_timestamp_and_canonical_heade
 async fn replay_registry_is_bounded_and_does_not_evict_live_nonces() {
     let (authority, _) = authority();
     let now = Instant::now();
-    {
-        let mut entries = authority.replays.lock().unwrap();
-        for id in 0..MAX_REPLAYS {
-            entries.insert((id as u128).to_be_bytes(), now + REPLAY_TTL);
-        }
+    for id in 0..MAX_REPLAYS {
+        authority
+            .replays
+            .admit((id as u128).to_be_bytes(), now)
+            .unwrap();
     }
     let headers = signed_headers(&[], "100", [0xff; 16], "POST", AUTHORITY_PATH);
     assert_eq!(
         authority.authenticate(&headers, &[], 100, now),
         Err(DenialReason::Capacity)
     );
-    assert_eq!(authority.replays.lock().unwrap().len(), MAX_REPLAYS);
+    assert_eq!(authority.replays.len(), MAX_REPLAYS);
     tokio::time::advance(REPLAY_TTL).await;
     assert!(
         authority
             .authenticate(&headers, &[], 100, Instant::now())
             .is_ok()
     );
-    assert_eq!(authority.replays.lock().unwrap().len(), 1);
+    assert_eq!(authority.replays.len(), 1);
 }
 
 #[tokio::test]
@@ -396,7 +401,14 @@ async fn live_lease_can_outlive_jwt_but_expired_lease_and_rejoin_cannot() {
         execute(&authority, Operation::Renew(renewal(&first)), 104).await,
         DenialReason::Expired,
     );
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -458,7 +470,15 @@ async fn incarnation_instance_and_generation_bind_renewal_and_release() {
             execute(&authority, Operation::Release(release(&changed)), 100).await,
             Reply::Denied(_)
         ));
-        assert_eq!(authority.leases.lock().unwrap().entries.len(), 1);
+        assert_eq!(
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .len(),
+            1
+        );
     }
     assert!(matches!(
         execute(
@@ -469,7 +489,14 @@ async fn incarnation_instance_and_generation_bind_renewal_and_release() {
         .await,
         Reply::Released(_)
     ));
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -505,7 +532,14 @@ async fn delayed_renewal_cannot_revive_expiry_or_release() {
         }
         policy.release.notify_one();
         assert_denied(task.await.unwrap(), DenialReason::Expired);
-        assert!(authority.leases.lock().unwrap().entries.is_empty());
+        assert!(
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .is_empty()
+        );
     }
 }
 
@@ -557,7 +591,14 @@ async fn policy_timeout_and_check_pressure_deny_and_delete_renewal() {
         DenialReason::Unavailable,
     );
     assert_eq!(started.elapsed(), CHECK_TIMEOUT);
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
     policy.mode.store(0, Ordering::SeqCst);
     let first = lease(
         execute(
@@ -585,7 +626,14 @@ async fn policy_timeout_and_check_pressure_deny_and_delete_renewal() {
         .await,
         DenialReason::Capacity,
     );
-    assert!(authority.leases.lock().unwrap().entries.is_empty());
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty()
+    );
     drop(permits);
 }
 
@@ -601,7 +649,7 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         .await,
     );
     {
-        let mut leases = authority.leases.lock().unwrap();
+        let mut leases = authority.leases.lock().expect("leases lock poisoned");
         let stored = leases
             .entries
             .get(&fixed::<16>(&first.lease_id).unwrap())
@@ -630,7 +678,15 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         .await,
         DenialReason::Capacity,
     );
-    assert_eq!(authority.leases.lock().unwrap().entries.len(), MAX_LEASES);
+    assert_eq!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .len(),
+        MAX_LEASES
+    );
     tokio::time::advance(LEASE_TTL).await;
     lease(
         execute(
@@ -640,13 +696,21 @@ async fn lease_pressure_denies_without_evicting_live_entries() {
         )
         .await,
     );
-    assert_eq!(authority.leases.lock().unwrap().entries.len(), 1);
+    assert_eq!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .len(),
+        1
+    );
 }
 
 #[test]
 fn service_key_must_be_dedicated() {
     assert!(
-        RelayAuthority::new(
+        RelayAuthority::unfenced_test(
             Arc::new(Policy::default()),
             "key".into(),
             LIVEKIT_SECRET.to_vec(),
@@ -667,7 +731,7 @@ async fn request_pressure_is_rejected_before_body_authentication_or_policy() {
     let response = authority.handle(http_request(vec![0xff], [1; 16])).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_denied(reply(response).await, DenialReason::Capacity);
-    assert!(authority.replays.lock().unwrap().is_empty());
+    assert!(authority.replays.is_empty());
     assert_eq!(policy.calls.load(Ordering::SeqCst), 0);
     drop(permits);
 }
@@ -699,12 +763,24 @@ async fn lease_ttl_is_anchored_before_policy_and_jwt_is_rechecked_after_policy()
         let result = task.await.unwrap();
         if expires_during_check {
             assert_denied(result, DenialReason::Expired);
-            assert!(authority.leases.lock().unwrap().entries.is_empty());
+            assert!(
+                authority
+                    .leases
+                    .lock()
+                    .expect("leases lock poisoned")
+                    .entries
+                    .is_empty()
+            );
         } else {
             let granted = lease(result);
             let id = fixed::<16>(&granted.lease_id).unwrap();
             assert_eq!(
-                authority.leases.lock().unwrap().entries[&id].expires,
+                authority
+                    .leases
+                    .lock()
+                    .expect("leases lock poisoned")
+                    .entries[&id]
+                    .expires,
                 started + LEASE_TTL
             );
             tokio::time::advance(Duration::from_millis(1800)).await;
@@ -763,7 +839,8 @@ async fn composed_http_outage_and_old_connection_completion_cannot_install_membe
             .unwrap();
     });
     let mut relay = ApplicationRelay::new(Arc::new(
-        HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true).unwrap(),
+        HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true)
+            .unwrap(),
     ));
     let authenticate = |relay: &mut ApplicationRelay, nonce| {
         relay.authenticated(
@@ -804,7 +881,8 @@ async fn composed_http_outage_and_old_connection_completion_cannot_install_membe
     );
     drop(unavailable);
     let mut relay = ApplicationRelay::new(Arc::new(
-        HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true).unwrap(),
+        HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode(SERVICE_KEY), true)
+            .unwrap(),
     ));
     authenticate(&mut relay, [3; 32]);
     relay.join(1, join, 0);
@@ -869,5 +947,125 @@ async fn exact_proof_material_and_signed_alg_time_grants_are_authority_checks() 
     assert_denied(
         execute(&authority, Operation::Join(base), 99).await,
         DenialReason::NotAuthorized,
+    );
+}
+
+#[tokio::test]
+async fn failed_generation_check_clears_only_the_matching_renewal_without_extending_its_lease() {
+    let (mut authority, policy) = authority();
+    let original = lease(
+        execute(
+            &authority,
+            Operation::Join(join_with_claims(claims(1000))),
+            100,
+        )
+        .await,
+    );
+    let context = renewal(&original);
+    let id = fixed::<16>(&original.lease_id).unwrap();
+    let expires = authority
+        .leases
+        .lock()
+        .expect("leases lock poisoned")
+        .entries[&id]
+        .expires;
+    // A closed lazy pool deterministically faults the real generation-check branch without I/O.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgresql://fixture:fixture@127.0.0.1/fixture")
+        .unwrap();
+    pool.close().await;
+    let unavailable = pool.clone();
+    Arc::get_mut(&mut authority).unwrap().generation = Some((pool, "generation-retry".into()));
+    let source = Uuid::new_v4().to_string();
+    let failed = authority
+        .execute_with_source(
+            request(Operation::Renew(context.clone())),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_denied(failed, DenialReason::Unavailable);
+    {
+        let leases = authority.leases.lock().expect("leases lock poisoned");
+        let retained = &leases.entries[&id];
+        assert_eq!(retained.expires, expires);
+        assert!(!retained.checking);
+        assert!(
+            authority
+                .binding(
+                    &context.pulse_instance,
+                    &context.connection_generation,
+                    &context.lease_id,
+                    &context.authority_incarnation
+                )
+                .unwrap()
+                .matches(retained)
+        );
+    }
+    // Restore this explicit fixture's original policy to model a recovered dependency.
+    Arc::get_mut(&mut authority).unwrap().generation = None;
+    let retried = lease(execute(&authority, Operation::Renew(context), 100).await);
+    assert_eq!(retried.lease_id, original.lease_id);
+    Arc::get_mut(&mut authority).unwrap().generation =
+        Some((unavailable.clone(), "generation-retry".into()));
+    policy.mode.store(3, Ordering::SeqCst);
+    let context = renewal(&retried);
+    {
+        let pending = authority.execute_with_source(
+            request(Operation::Renew(context.clone())),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        );
+        tokio::pin!(pending);
+        assert!(futures::poll!(&mut pending).is_pending());
+        assert!(matches!(authority.release(context), Ok(Reply::Released(_))));
+        policy.release.notify_one();
+        assert_denied(pending.await.result.unwrap(), DenialReason::Expired);
+        assert!(
+            authority
+                .leases
+                .lock()
+                .expect("leases lock poisoned")
+                .entries
+                .is_empty(),
+            "a released exact lease is never recreated by the generation-error cleanup"
+        );
+    }
+    Arc::get_mut(&mut authority).unwrap().generation = None;
+    policy.mode.store(0, Ordering::SeqCst);
+    let denied_original = lease(
+        execute(
+            &authority,
+            Operation::Join(join_with_claims(claims(1000))),
+            100,
+        )
+        .await,
+    );
+    policy.mode.store(1, Ordering::SeqCst);
+    Arc::get_mut(&mut authority).unwrap().generation =
+        Some((unavailable, "generation-retry".into()));
+    let denied = authority
+        .execute_with_source(
+            request(Operation::Renew(renewal(&denied_original))),
+            Duration::from_secs(100),
+            Instant::now(),
+            Some(&source),
+        )
+        .await
+        .result
+        .unwrap();
+    assert_denied(denied, DenialReason::NotAuthorized);
+    assert!(
+        authority
+            .leases
+            .lock()
+            .expect("leases lock poisoned")
+            .entries
+            .is_empty(),
+        "confirmed policy denial removes the lease even when the generation check also fails"
     );
 }

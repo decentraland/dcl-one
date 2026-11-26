@@ -7,7 +7,8 @@
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found). A content file is stored once it hashes to its name, a profile's
-//! avatar renders included; a `/contents/{hash}` miss is filled the same way, so a file this
+//! avatar renders included (those its metadata names outside `content[]` when a source has
+//! them, as sync stores them); a `/contents/{hash}` miss is filled the same way, so a file this
 //! node lists but lost (or synced before it stored renders) is fetched on its first read.
 //!
 //! [`Fills`] bounds it: one fill per key at a time (a second reader waits on the first), a
@@ -26,18 +27,19 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError, watch};
+#[cfg(any(test, feature = "test-support"))]
+use tokio::sync::Notify;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError, watch};
 use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
-    BufferSink, ByteBudget, ByteReservation, ContentSource, RemoteDeployment,
-    deploy_entity_streaming, fetch_verified, stream_body,
+    BufferSink, ByteBudget, ByteReservation, ContentSource, DownloadPeers, RemoteDeployment,
+    Requester, deploy_entity_streaming, fetch_verified, stream_body,
 };
+use super::failed_deployments_store::LiveFailedDeploymentsStore;
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::{
-    LiveFailedDeploymentsStore, LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed,
-};
+use super::sync_deployer::{LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed};
 use super::sync_types::{AuthChain, DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
@@ -90,12 +92,14 @@ struct FillsInner {
     wait: Duration,
     negative_ttl: Duration,
     counters: Counters,
+    #[cfg(any(test, feature = "test-support"))]
     changed: Notify,
 }
 
 impl FillsInner {
     fn bump(&self, counter: &AtomicU64) {
         counter.fetch_add(1, Ordering::SeqCst);
+        #[cfg(any(test, feature = "test-support"))]
         self.changed.notify_waiters();
     }
 }
@@ -165,6 +169,7 @@ impl Fills {
                 wait,
                 negative_ttl,
                 counters: Counters::default(),
+                #[cfg(any(test, feature = "test-support"))]
                 changed: Notify::new(),
             }),
         }
@@ -181,6 +186,7 @@ impl Fills {
     }
 
     /// Resolves once `done` holds for the counts; tests wait on fills with it.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn until(&self, done: impl Fn(FillCounts) -> bool) {
         loop {
             let changed = self.inner.changed.notified();
@@ -290,6 +296,7 @@ pub struct Downloads {
     files: Arc<Semaphore>,
     bytes: Arc<ByteBudget>,
     waited: Arc<AtomicU64>,
+    #[cfg(any(test, feature = "test-support"))]
     changed: Arc<Notify>,
 }
 
@@ -306,6 +313,7 @@ impl Downloads {
             files: Arc::new(Semaphore::new(files.max(1))),
             bytes,
             waited: Arc::new(AtomicU64::new(0)),
+            #[cfg(any(test, feature = "test-support"))]
             changed: Arc::new(Notify::new()),
         }
     }
@@ -316,6 +324,7 @@ impl Downloads {
             Ok(file) => file,
             Err(TryAcquireError::NoPermits) => {
                 self.waited.fetch_add(1, Ordering::SeqCst);
+                #[cfg(any(test, feature = "test-support"))]
                 self.changed.notify_waiters();
                 self.files
                     .clone()
@@ -337,6 +346,7 @@ impl Downloads {
         self.waited.load(Ordering::SeqCst)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn until_waited(&self, n: u64) {
         loop {
             let changed = self.changed.notified();
@@ -365,7 +375,7 @@ impl DownloadSlot {
 struct Upstream {
     pool: PgPool,
     storage: Arc<Storage>,
-    client: reqwest::Client,
+    client: crate::http::CheckedRedirectClient,
     sources: Vec<String>,
     /// Asked for a content file only, after `sources`: the worlds content server the worlds
     /// read-through mirrors from (`WORLDS_CONTENT_MIRROR_SOURCE`), whose scene files a world's
@@ -392,13 +402,14 @@ impl ReadThrough {
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         sources: Vec<String>,
         entity_types: Option<HashSet<String>>,
         fills: Fills,
         validation: SyncValidation,
     ) -> Self {
-        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY, validation);
+        let deployer =
+            LiveSyncDeployer::new(pool.clone(), storage.clone(), FLUSH_CONCURRENCY, validation);
         let downloads = Downloads::new(MAX_CONCURRENT_DOWNLOADS, deployer.inflight_bytes().clone());
         Self {
             upstream: Arc::new(Upstream {
@@ -423,7 +434,7 @@ impl ReadThrough {
         own_urls: &[String],
         pool: PgPool,
         storage: Arc<Storage>,
-        client: reqwest::Client,
+        client: crate::http::CheckedRedirectClient,
         validator: Arc<Sources>,
     ) -> anyhow::Result<Option<Self>> {
         if !config.content.read_through_enabled {
@@ -726,6 +737,7 @@ impl Upstream {
             .send()
             .await?
             .error_for_status()?;
+        let resp = crate::sync_types::refuse_redirect(resp, "/entities/active")?;
         match read_json(resp).await? {
             Value::Array(docs) => Ok(docs),
             _ => Err(SyncError::Other(
@@ -748,10 +760,12 @@ impl Upstream {
                 .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
+                .map_err(SyncError::from)
+                .and_then(|resp| crate::sync_types::refuse_redirect(resp, "/audit"))
             {
                 Ok(resp) => resp,
                 Err(e) => {
-                    last = e.into();
+                    last = e;
                     continue;
                 }
             };
@@ -796,7 +810,15 @@ impl Upstream {
         let budget = self.deployer.inflight_bytes().as_ref();
         let mut fetched = Err(SyncError::NoServers);
         for server in &servers {
-            fetched = fetch_verified(&self.client, id, server, 0, Some(budget)).await;
+            fetched = fetch_verified(
+                &self.client,
+                id,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await;
             if fetched.is_ok() {
                 break;
             }
@@ -815,16 +837,18 @@ impl Upstream {
             ContentSource {
                 client: &self.client,
                 storage: self.storage.clone(),
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: self.downloads.files.clone(),
             },
             &self.deployer,
             RemoteDeployment {
                 entity_id: id,
+                entity_type: &entity_type,
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await;
@@ -910,7 +934,16 @@ impl Upstream {
         };
         let budget = self.deployer.inflight_bytes().as_ref();
         for server in self.sources.iter().chain(&self.file_sources) {
-            match fetch_verified(&self.client, hash, server, 0, Some(budget)).await {
+            match fetch_verified(
+                &self.client,
+                hash,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await
+            {
                 Ok((bytes, hold)) => {
                     if let Err(e) = self.storage.store(hash, bytes.into()).await {
                         tracing::warn!(hash, error = %e, "read-through: storing a content file failed");
@@ -922,6 +955,25 @@ impl Upstream {
             }
         }
     }
+}
+
+/// The active entities for `values` (ids, or pointers) through `read_through` when one is
+/// configured, else as this node holds them; without those `denylist` lists, when given.
+pub async fn active_entity_docs(
+    pool: &PgPool,
+    read_through: Option<&ReadThrough>,
+    use_ids: bool,
+    values: &[String],
+    denylist: Option<&Denylist>,
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    let mut docs = match read_through {
+        Some(read_through) => read_through.active_docs(use_ids, values).await?,
+        None => local_docs(pool, use_ids, values).await?,
+    };
+    if let Some(denylist) = denylist {
+        queries::retain_non_denylisted(&mut docs, denylist);
+    }
+    Ok(docs)
 }
 
 #[cfg(test)]

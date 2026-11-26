@@ -1,10 +1,12 @@
 // explorer-automation `CommunitiesTests` (4): the Communities section's content, invites view,
 // search and community detail. The Bevy page is read-only here: no scenario creates, joins or
-// leaves a community. Its titles ("My Communities", "Browse Communities (N)", "Results for '…'"),
-// its Invites & Requests label and its empty messages are text without a role, so the HUD commands
-// cannot read them. A card is a button named by its whole text, `[initial] <name> [owner] [the
-// friends in it] [description] (Public|Private) · <n> Members (Join|View|Request to Join|Cancel join
-// request)`, so a community's name is read as a part of the card's name. The grid holds 20 cards a
+// leaves a community. Its titles ("My Communities", "Browse Communities (N)", "Results for '…'")
+// and its empty messages are text without a role, so the HUD commands cannot read them. Invites &
+// Requests is a button named "Invites & Requests", followed by ", <n> pending" when something waits
+// on the user; it opens the user's invites and requests in place of the grid, with Back. A card is a
+// button named by its whole text, `[initial] <name> [owner] [the friends in it] [description]
+// (Public|Private) · <n> Members (Join|View|Request to Join|Cancel join request|Accept invite Reject
+// invite)`, so a community's name is read as a part of the card's name. The grid holds 20 cards a
 // page and reads the next as its end scrolls into view; a search runs on the server a second after
 // typing stops. The initial stands in for a cover image that did not load, which shows
 // only once the image fails, so the scenarios drop it from the names they read and find a card by
@@ -12,8 +14,8 @@
 // Join button.
 //
 // | Unity test                    | Here                                                                 | Class   |
-// | TestCommunitiesPanelContent   | CREATE A COMMUNITY, the search field and a card; not the Invites & Requests entry, the two titles or the count | Partial |
-// | TestOpenInvitesAndRequests    | Invites & Requests is a label, and there is no such view             | Gap     |
+// | TestCommunitiesPanelContent   | CREATE A COMMUNITY, Invites & Requests, the search field and a card; not the two titles or the count | Partial |
+// | TestOpenInvitesAndRequests    | the view replaces the grid and Back returns to it; its titles are read only when the account has invites or requests | Partial |
 // | TestSearchCommunities         | the query is a word of the first card read, not "Decentraland"; a query nothing matches empties the grid; Back returns to every community; no readable results title or count | Partial |
 // | TestOpenCommunityDetail       | the detail's name is part of the card's name, not equal to it; the ANNOUNCEMENTS tab stands for the sections and there is no private notice | Partial |
 import assert from 'node:assert/strict'
@@ -29,8 +31,9 @@ const SEARCH = { name: 'Search', role: 'textbox' } as const
 const CREATE = { name: '+ CREATE A COMMUNITY', role: 'button' } as const
 const DETAIL = { name: 'Community sections', role: 'tablist' } as const
 const ANNOUNCEMENTS = { name: 'ANNOUNCEMENTS', role: 'tab' } as const
-const CARD_TAIL = /\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+(?:Join|View|Request to Join|Cancel join request)$/
+const CARD_TAIL = /\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+(?:Join|View|Request to Join|Cancel join request|Accept invite\s+Reject invite)$/
 const BACK = { name: 'Back to Browse Communities', role: 'button' } as const
+const INVITES = { name: 'Invites & Requests', role: 'button', exact: false } as const
 /** A card without its privacy, member count and button, which can change between two reads. */
 const cardKey = (card: string): string => card.replace(CARD_TAIL, '')
 /** Unity tries up to five cards until one opens. */
@@ -69,13 +72,25 @@ scenario('the Communities page shows its create button, search and community car
   await openWithKey(explorer, 'communities')
   assert.ok(await explorer.hud.isVisible(CREATE), 'Left column should offer the CREATE A COMMUNITY button')
   assert.ok(await explorer.hud.isVisible(SEARCH), 'The page should offer the community search')
+  assert.ok(await explorer.hud.isVisible(INVITES), 'Left column should offer Invites & Requests')
   const cards = await waitForCards(explorer)
   assert.ok(cards[0]!.replace(CARD_TAIL, '').trim().length > 0, 'The browse grid should contain community cards with a name')
   await closePage(explorer, 'communities')
 })
 
-scenario('the Invites & Requests view opens and Back returns to the grid', async () => {}, {
-  todo: 'Invites & Requests is a label in the left column of the Bevy Communities page, not a control, and the HUD has no invites or requests view'
+scenario('the Invites & Requests view opens and Back returns to the grid', async ({ explorer }) => {
+  await openWithKey(explorer, 'communities')
+  const first = cardKey((await waitForCards(explorer))[0]!)
+  await explorer.hud.click(INVITES)
+  await explorer.hud.wait(BACK, { timeoutMs: CONTROL_TIMEOUT_MS })
+  // its titles show only when something is pending; with nothing, it shows one line of text
+  const headings = (await explorer.hud.list('heading')).map((h) => h.name)
+  const titled = headings.some((name) => /^Invites \(\d+\)$/.test(name))
+  if (titled) assert.ok(headings.some((name) => /^Requests Sent \(\d+\)$/.test(name)), `the view should title Requests Sent: ${headings.join(', ')}`)
+  await explorer.hud.click(BACK)
+  await until(() => communityCards(explorer), (cards) => cards.some((card) => cardKey(card) === first), { timeoutMs: TEXT_TIMEOUT_MS, what: 'the browse grid to return after Back' })
+  assert.equal(await explorer.hud.isVisible(BACK), false, 'Browsing every community should offer no Back')
+  await closePage(explorer, 'communities')
 })
 
 scenario('searching communities filters the cards and emptying the search restores them', async ({ explorer }) => {

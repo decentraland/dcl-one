@@ -1,0 +1,103 @@
+name: Cast presenter LiveKit tests
+# The Cast presenter (comms::cast_presenter) and its cast-bot against a real livekit-server: the
+# node-to-bot stdio protocol and the bot's track and data channel. A workflow of its own, filtered
+# to their paths, because cast-bot links libwebrtc, which no other Rust job builds. It also lints
+# cast-bot, which the Development workflow's workspace clippy does not cover.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'services/catalyst/comms/src/cast_presenter/**'
+      - 'services/catalyst/cast-bot/**'
+      - 'infra/packages/cast-bot.nix'
+      - 'infra/packages/patched-source.nix'
+      - 'rendering/bevy-explorer/patches/client-sdk-rust/**'
+      - 'flake.*'
+      - 'services/catalyst/rust-toolchain.toml'
+      - '.github/workflows/cast-presenter.yml'
+  pull_request:
+    paths:
+      - 'services/catalyst/comms/src/cast_presenter/**'
+      - 'services/catalyst/cast-bot/**'
+      - 'infra/packages/cast-bot.nix'
+      - 'infra/packages/patched-source.nix'
+      - 'rendering/bevy-explorer/patches/client-sdk-rust/**'
+      - 'flake.*'
+      - 'services/catalyst/rust-toolchain.toml'
+      - '.github/workflows/cast-presenter.yml'
+permissions:
+  contents: read
+concurrency:
+  group: cast-presenter-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  livekit:
+    name: Presenter and cast-bot against LiveKit
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 100
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      # Keep this single-module build out of the full foundation target/cache.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-cast-presenter
+    steps:
+      - name: Reserve disk space for the builds
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: |
+          # libwebrtc, the Nix store and the Rust build can fill the disk of a hosted runner.
+          # The delete takes time, so it runs only when 25 GB or less is free.
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc 0-9)
+          if [ "${avail:-0}" -le 25 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: false
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop .#ci --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Build cast-bot, its tests and livekit-server
+        run: |
+          # The package the APIs image carries, its test executables and the flake's livekit-server.
+          nix build .#cast-bot -o .cache/cast-bot -L
+          nix build .#cast-bot.tests -o .cache/cast-bot-tests -L
+          # cast-bot is a workspace of its own, so the Development workflow's clippy never sees it.
+          nix build .#cast-bot.clippy --no-link -L
+          nix build --inputs-from . nixpkgs#livekit -o .cache/livekit
+          echo "CAST_BOT_BIN=$PWD/.cache/cast-bot/bin/cast-bot" >> "$GITHUB_ENV"
+          echo "LIVEKIT_SERVER_BIN=$PWD/.cache/livekit/bin/livekit-server" >> "$GITHUB_ENV"
+      - name: Run cast-bot's tests against livekit-server
+        # CI=true: a test without LIVEKIT_SERVER_BIN fails instead of skipping.
+        run: |
+          .cache/cast-bot-tests/bin/test-cast-bot
+          .cache/cast-bot-tests/bin/test-livekit --nocapture
+      - name: Put the Nix Rust toolchain on PATH for the cache action
+        run: |
+          toolchain=$(dirname "$(nix develop .#ci --no-update-lock-file --command bash -c 'command -v cargo')")
+          test -x "$toolchain/rustc"
+          echo "$toolchain" >> "$GITHUB_PATH"
+      - name: Restore the Rust dependency cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          # Only the Nix rustc enters the key; see development.yml.
+          RUSTUP_HOME: /dev/null
+        with:
+          workspaces: services/catalyst -> target-cast-presenter
+          shared-key: cast-presenter-${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          cache-on-failure: true
+      - name: Run the presenter's tests with the real cast-bot and livekit-server
+        # --include-ignored runs the LiveKit test the Development workflow's shards leave out.
+        run: |
+          nix develop .#ci --no-update-lock-file --command \
+            cargo test --manifest-path services/catalyst/Cargo.toml --locked -p catalyst-comms --lib cast_presenter:: \
+            -- --include-ignored --nocapture

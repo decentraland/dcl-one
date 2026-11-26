@@ -7,11 +7,10 @@
 // components/PageLayout/PageLayout.tsx (the announcement strip, the slim footer) for the pages only
 // upstream Marketplace has.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 
-import ChromeShell from "../../../components/ChromeShell";
-import DclTopBar from "../../../web/frames/DclTopBar";
+import { ShopChrome, ShopNavigation, type ShopNavTab, type ShopNavSet, type ShopSection, type TabsBarLinkProps } from "@dcl/one-ui";
 import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
 import CartDrawer from "../../checkout/components/CartDrawer";
@@ -26,16 +25,10 @@ import { t } from "@shop/discovery/intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
 import { useMarketplace } from "../../market/access";
-import ShopCreditsChip, { ShopHeldCredits } from "./ShopCreditsChip";
+import { ShopHeldCredits } from "./ShopCreditsChip";
 import ShopFooter from "./ShopFooter";
 import "./shoptheme.css";
 import "./shopchrome.css";
-
-export type ShopSection = "overview" | "event" | "collectibles" | "names" | "lands" | "my-items" | "activity";
-
-export type ShopNavSet = "shop" | "marketplace";
-
-type Tab = { id: ShopSection; label: string; href: string; mobileOnly?: boolean };
 
 const COLLECTIBLES = /^\/shop\/(items|item|token|collection|names)(\/|$)/;
 const TOKEN_ACTION = /^\/shop\/(token|item)\/[^/]+\/[^/]+\/(transfer|bid|bids|sell|cancel|manage|rent)\/?$/;
@@ -70,10 +63,11 @@ export function sectionFor(pathname: string, signedIn = true): ShopSection | und
   return undefined;
 }
 
-export function shopTabs({ iap, eventLabel, set = "shop" }: { iap: boolean; eventLabel: string | null; set?: ShopNavSet }): Tab[] {
-  const tabs: Tab[] = [];
+export function shopTabs({ iap, eventLabel, set = "shop" }: { iap: boolean; eventLabel: string | null; set?: ShopNavSet }): ShopNavTab[] {
+  const tabs: ShopNavTab[] = [];
   if (set === "shop" || !iap) tabs.push({ id: "overview", label: t("nav.overview"), href: `${SHOP_BASE}/overview` });
-  if (eventLabel && (set === "shop" || !iap)) tabs.push({ id: "event", label: eventLabel, href: `${SHOP_BASE}/event` });
+  const label = eventLabel?.trim();
+  if (label && (set === "shop" || !iap)) tabs.push({ id: "event", label, accent: "campaign", href: `${SHOP_BASE}/event` });
   tabs.push({ id: "collectibles", label: t("nav.collectibles"), href: `${SHOP_BASE}/items` });
   if (set === "marketplace") {
     if (!iap) {
@@ -90,42 +84,27 @@ export function shopTabs({ iap, eventLabel, set = "shop" }: { iap: boolean; even
   return tabs;
 }
 
-function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active: ShopSection | undefined; iap: boolean; signedIn: boolean; set: ShopNavSet }) {
+function RouteLink({ href, ...props }: TabsBarLinkProps) {
+  return <Link to={href} {...props} />;
+}
+
+function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: ShopNavTab[]; active: ShopSection | undefined; iap: boolean; signedIn: boolean; set: ShopNavSet }) {
   const count = useCart((s) => s.lines.reduce((n, l) => n + l.quantity, 0));
   const { pathname } = useLocation();
   const hidesSearch = /^\/shop\/my-items(\/|$)/.test(pathname);
   const favActive = /^\/shop\/my-favorites(\/|$)/.test(pathname);
   const market = set === "marketplace";
   const creditsCta = !iap && !market && !isLandPath(pathname);
-  const tabsRef = useRef<HTMLElement>(null);
-  const scrolled = useScrolled();
-  useEffect(() => {
-    const nav = tabsRef.current;
-    const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
-    const left = current.offsetLeft - nav.offsetLeft;
-    if (left < nav.scrollLeft || left + current.offsetWidth > nav.scrollLeft + nav.clientWidth) {
-      nav.scrollLeft = Math.max(0, left - (nav.clientWidth - current.offsetWidth) / 2);
-    }
-  }, [active, tabs]);
   return (
-    <div className="shop-subnav" data-testid="subnav" data-iap={iap || undefined} data-set={set} data-scrolled={scrolled || undefined}>
-      <nav ref={tabsRef} className="shop-subnav__tabs" aria-label={t("nav.sections")} data-testid="subnav-tabs">
-        {tabs.map((tab) => (
-          <Link
-            key={tab.id}
-            to={tab.href}
-            className={tab.id === active ? "active" : undefined}
-            aria-current={tab.id === active ? "page" : undefined}
-            data-event={tab.id === "event" || undefined}
-            data-mobile-only={tab.mobileOnly || undefined}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </nav>
-      <hr className="shop-subnav__divider" aria-hidden="true" />
-      {hidesSearch || market ? null : <SearchDropdown />}
+    <ShopNavigation
+      tabs={tabs}
+      active={active}
+      iap={iap}
+      set={set}
+      label={t("nav.sections")}
+      Link={RouteLink}
+      search={hidesSearch || market ? null : <SearchDropdown />}
+    >
       {signedIn ? <ShopHeldCredits /> : null}
       {!creditsCta ? null : (
         <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`}>
@@ -163,43 +142,16 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
       )}
       {/* Mounted for every nav set: a card adds to the cart (and opens it) on a marketplace page too. */}
       <CartDrawer />
-    </div>
+    </ShopNavigation>
   );
 }
 
-const SCROLL_ENTER = 24;
-const SCROLL_EXIT = 4;
-
-// The bars deepen once the page scrolls, with hysteresis so a page resting near the threshold does not flicker.
-function useScrolled(): boolean {
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    let on = false;
-    const apply = (next: boolean) => {
-      on = next;
-      setScrolled(next);
-      document.body.toggleAttribute("data-shop-scrolled", next);
-    };
-    const onScroll = () => {
-      const next = on ? window.scrollY > SCROLL_EXIT : window.scrollY > SCROLL_ENTER;
-      if (next !== on) apply(next);
-    };
-    apply(window.scrollY > SCROLL_ENTER);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      document.body.removeAttribute("data-shop-scrolled");
-    };
-  }, []);
-  return scrolled;
-}
-
-export default function ShopChrome({ children, topbar, footer }: { children?: ReactNode; topbar?: ReactNode; footer?: ReactNode | false }) {
+export default function ShopChromeHost({ children, topbar, footer }: { children?: ReactNode; topbar?: ReactNode; footer?: ReactNode | false }) {
   const { pathname } = useLocation();
   const wallet = useShopWallet();
   const iap = isIapMode();
   const { campaign } = useCampaign();
-  const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en")) ?? campaign.name ?? null) : null;
+  const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en"))?.trim() || campaign.name?.trim() || null) : null;
   // The Marketplace's tabs (LAND, ...) only for a visitor who has it (market/access.tsx): anyone else stays on the
   // Shop's, and its pages send them to the overview anyway.
   const marketplace = useMarketplace();
@@ -208,12 +160,9 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
   const signedIn = wallet.session.kind !== "signedOut";
 
   return (
-    <ChromeShell
-      className="shop-chrome"
-      ariaLabel="Shop"
-      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} balances={<ShopCreditsChip />} />}
-      subnav={false}
-      right={
+    <ShopChrome
+      topbar={topbar}
+      tools={
         <>
           {set === "marketplace" && !iap ? <MarketAnnouncementBar /> : null}
           <ShopSubnav tabs={tabs} active={sectionFor(pathname, signedIn)} iap={iap} signedIn={signedIn} set={set} />
@@ -222,6 +171,6 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
       footer={footer === undefined ? set === "marketplace" ? <MarketFooter /> : <ShopFooter /> : footer}
     >
       {children}
-    </ChromeShell>
+    </ShopChrome>
   );
 }

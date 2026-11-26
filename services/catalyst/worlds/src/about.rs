@@ -9,6 +9,7 @@ use super::SharedState;
 use super::queries::{self, WorldScene};
 use crate::core::http::ApiError;
 use crate::core::settings_policy::js_truthy;
+use crate::index::content_file_hash;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +154,28 @@ pub async fn get_about(
             .quota_blocked_since(&name)
             .await
             .map_err(|e| ApiError::internal(format!("quota block: {e}")))?;
+    }
+    // An override that names another world held here is not handed out: the
+    // client would sign it and the gatekeeper would seat this world's
+    // visitors in that world's room. The world falls back to its own name,
+    // also for an override saved before that world was deployed here.
+    if let Some(world) = about.world.as_mut()
+        && let Some(name) = world.realm_name_override.clone()
+        && queries::override_names_another_world(
+            &state.pool,
+            &world.name,
+            &name,
+            &state.settings.realm_name,
+        )
+        .await
+        .map_err(read)?
+    {
+        tracing::warn!(
+            world = %world.name,
+            realm_name_override = %name,
+            "realm name override names another world here, not advertised"
+        );
+        world.realm_name_override = None;
     }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
@@ -303,7 +326,10 @@ fn is_locally_published(scenes: &[WorldScene]) -> bool {
 
 fn strip_ens_suffix(name: &str) -> &str {
     let cut = name.len().saturating_sub(ENS_WORLD_SUFFIX.len());
-    match name[cut..].eq_ignore_ascii_case(ENS_WORLD_SUFFIX) && cut > 0 {
+    let has_suffix = name
+        .get(cut..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(ENS_WORLD_SUFFIX));
+    match has_suffix && cut > 0 {
         true => &name[..cut],
         false => name,
     }
@@ -384,14 +410,8 @@ impl RuntimeMeta {
             .and_then(Value::as_number)
             .cloned();
 
-        let content = scene.entity.get("content").and_then(Value::as_array);
         let resolve = |filename: &str| -> Option<String> {
-            content.and_then(|arr| {
-                arr.iter()
-                    .find(|c| c.get("file").and_then(Value::as_str) == Some(filename))
-                    .and_then(|c| c.get("hash").and_then(Value::as_str))
-                    .map(str::to_string)
-            })
+            content_file_hash(&scene.entity, filename).map(str::to_string)
         };
         let minimap_data_image = mini_map
             .and_then(|m| m.get("dataImage"))
@@ -489,6 +509,14 @@ mod tests {
             "swiss-cube"
         );
         assert_eq!(resolve_realm_name(".dcl.eth", None, true, true), ".dcl.eth");
+    }
+
+    #[test]
+    fn stripping_respects_non_ascii_names() {
+        // The suffix-length cut lands inside the three-byte euro sign.
+        assert_eq!(strip_ens_suffix("€abcdefg"), "€abcdefg");
+        assert_eq!(strip_ens_suffix("café.dcl.eth"), "café");
+        assert_eq!(strip_ens_suffix("名前.DCL.ETH"), "名前");
     }
 
     #[test]

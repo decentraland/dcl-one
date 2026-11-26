@@ -1,4 +1,3 @@
-#![recursion_limit = "256"]
 //! The explore parity suite: every entry of `tests/fixtures/explore_parity/*.fixture.json`
 //! (what the old places and events services answer, derived from their pinned source)
 //! is sent to the explore router over a seeded scratch database and compared per its
@@ -26,8 +25,7 @@ use catalyst::explore::places::mirror as places_mirror;
 use catalyst::explore::places::voting_power::MIN_USER_ACTIVITY;
 use catalyst::explore::{ExploreState, Settings, router};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const PLACES_ADMIN_TOKEN: &str = "harness-places-admin-token";
 const DATA_TEAM_TOKEN: &str = "harness-data-team-token";
@@ -691,7 +689,7 @@ const RESET_TABLES: &[&str] = &[
 /// A profile deployment this node holds for `address`, as the content
 /// deployers store it: a `profile` entity whose pointer is the lowercase
 /// address, read back by `/lambdas/profiles` and gatsby's `withAuthProfile()`
-/// port (`explore/src/events/profiles.rs::local_profile`). The seed deletes
+/// port (`explore/src/events/profiles.rs::profile`). The seed deletes
 /// every profile deployment first, so the entity id may be random.
 async fn deploy_profile(pool: &PgPool, address: &str) {
     let address = address.to_ascii_lowercase();
@@ -2020,7 +2018,7 @@ fn is_skipped(id: &str) -> bool {
 /// code `RP` upstream's PUT schema refuses, and `GET /api/status` with the
 /// node's mirror state). They are checked like every
 /// other entry but are never a known gap: a failure is a regression.
-const ACCEPTED_ENTRIES: [&str; 14] = [
+const ACCEPTED_ENTRIES: [&str; 11] = [
     "places.status.shape",
     "events.status.envelope",
     "events.sitemap.events_page_negative",
@@ -2030,9 +2028,6 @@ const ACCEPTED_ENTRIES: [&str; 14] = [
     "events.create.x_decimal",
     "events.patch.duration_decimal",
     "events.schedules.post_image_not_http",
-    "events.profiles.list_edit_any_profile",
-    "events.profiles.get_by_id_edit_any_profile",
-    "events.profiles.patch_by_id_edit_any_profile",
     "places.put_rating.rp_accepted",
     "worlds.put_rating.rp_accepted",
 ];
@@ -2467,6 +2462,7 @@ async fn explore_route_timings() {
     }
     let db = match std::env::var("EXPLORE_PARITY_TIMING_DB") {
         Ok(name) => db::existing_database(&name).await,
+        Err(_) if flag("EXPLORE_PARITY_KEEP_DB") => db::kept_database().await,
         Err(_) => db::scratch_database().await,
     };
     let Some(db) = db else {

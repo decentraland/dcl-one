@@ -1,0 +1,182 @@
+.AnalyticsDetailPage .Container {
+  flex-flow: column;
+  gap: 24px;
+  padding-bottom: 32px;
+}
+
+.AnalyticsDetailPage .DetailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.AnalyticsDetailPage .DetailHeader .Title {
+  margin: 0;
+}
+
+.AnalyticsDetailPage .DetailHeader .ExportAction {
+  display: flex;
+  align-items: center;
+  height: 48px;
+}
+
+/* The export button: an outlined button with the disabled ink and a 20px start icon. */
+.AnalyticsDetailPage .DetailHeader .ExportAction .btn {
+  --btn-icon-margin: 0 0 0 -4px;
+
+  min-width: 64px;
+  letter-spacing: 0.4px;
+}
+
+.AnalyticsDetailPage .DetailHeader .ExportAction .btn[aria-disabled="true"] {
+  padding: 5px 15px;
+  border: 1px solid var(--fill-5);
+  box-shadow: none;
+  color: var(--ctl-disabled-ink);
+}
+
+.AnalyticsDetailPage .DetailHeader .ExportAction .btn svg {
+  font-size: 20px;
+}
+
+.AnalyticsDetailPage .HeaderTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.AnalyticsDetailPage .ExportedAt.ExportedAt {
+  color: var(--dcl-silver);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.AnalyticsDetailPage .Content {
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+}
+
+.AnalyticsDetailPage .Metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.AnalyticsDetailPage .TabsBar {
+  display: flex;
+  flex-wrap: wrap-reverse;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--palette-whiteTransparent-soft);
+}
+
+.AnalyticsDetailPage .TabsBar .Tabs {
+  gap: 40px;
+  min-height: 40px;
+  align-self: flex-end;
+  border-bottom: none;
+}
+
+.AnalyticsDetailPage .TabsBar .Tab {
+  min-width: 0;
+  min-height: 40px;
+  padding: 10px 4px;
+  color: var(--dcl-silver);
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--type-h6-semi-caps-size);
+  font-weight: var(--type-h6-semi-caps-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-caps-letter-spacing);
+  text-transform: uppercase;
+}
+
+.AnalyticsDetailPage .TabsBar .Tab:hover {
+  background: var(--palette-whiteTransparent-subtle);
+}
+
+.AnalyticsDetailPage .TabsBar .Tab[aria-selected="true"] {
+  color: var(--palette-neutral-softWhite);
+}
+
+.AnalyticsDetailPage .TabsBar .Tab:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: -2px;
+}
+
+.AnalyticsDetailPage .TabsBar .Tab[aria-selected="true"]::after {
+  height: 2px;
+  background: var(--palette-neutral-softWhite);
+}
+
+.AnalyticsDetailPage .DateRange {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.AnalyticsDetailPage .DateRange > .DateRangeLabel {
+  color: var(--dcl-silver);
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+  white-space: nowrap;
+}
+
+.AnalyticsDetailPage .DateRange .Select {
+  padding: 10px;
+  border-radius: var(--shape-borderRadius);
+}
+
+.AnalyticsDetailPage .DateRange .Select [role="combobox"] {
+  color: var(--palette-neutral-softWhite);
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+}
+
+.AnalyticsDetailPage .DateRange .Select [role="combobox"]:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.AnalyticsDetailPage .DateRange .Select svg {
+  color: var(--dcl-silver);
+  font-size: 16px;
+}
+
+.AnalyticsDetailPage .ErrorContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  height: 50vh;
+  text-align: center;
+}
+
+/* The tip has its own type and sits 14px from its anchor; the atom places it at 12px. */
+.tt__tip.AnalyticsTip {
+  display: block;
+  font-family: Roboto, Helvetica, Arial, sans-serif;
+  line-height: 16.5px;
+}
+
+.tt__tip.AnalyticsTip.tt__tip--bottom {
+  margin-top: 2px;
+}
+
+.tt__tip.AnalyticsTip.tt__tip--top {
+  margin-top: -2px;
+}

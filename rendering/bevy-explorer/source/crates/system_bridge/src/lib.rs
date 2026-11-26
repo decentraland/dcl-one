@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod agent_commands;
 pub mod settings;
 pub mod world_access;
@@ -14,8 +16,9 @@ use bevy::{
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder};
 use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
+    profile::SerializedProfile,
     rpc::{RpcResultSender, RpcStreamSender},
-    structs::{AppConfig, CurrentRealm, MicState, PermissionUsed},
+    structs::{CurrentRealm, MicState, PermissionUsed},
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingBridgePlugin;
@@ -34,7 +37,6 @@ impl Plugin for SystemBridgePlugin {
             Update,
             (
                 post_events,
-                handle_home_scene,
                 handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
@@ -65,9 +67,25 @@ pub struct NewAccountPick {
     pub look: Option<u32>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetAvatarError {
+    pub message: String,
+    #[serde(default, rename = "accountChanged")]
+    pub account_changed: bool,
+    /// Last confirmed profile for the account that submitted the edit.
+    pub profile: Option<Box<SerializedProfile>>,
+}
+
+pub type SetAvatarResult = Result<u32, SetAvatarError>;
+
+// SetAvatar is a rare call, and boxing it only moves the lint to the enums that hold a SystemApi
+#[allow(clippy::large_enum_variant)]
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
     ConsoleCommand(String, Vec<String>, RpcResultSender<Result<String, String>>),
+    /// A whole console line from outside the process (the page's console RPC, the loopback
+    /// server, the CEF HUD's page), split by `console::line::split`.
+    ConsoleLine(String, RpcResultSender<Result<String, String>>),
     CheckForUpdate(RpcResultSender<Option<(String, String)>>),
     MOTD(RpcResultSender<String>),
     GetPreviousLogin(RpcResultSender<Option<String>>),
@@ -101,6 +119,9 @@ pub enum SystemApi {
     LoginLocalGuest(RpcResultSender<Result<(), String>>),
     LoginCancel,
     Logout,
+    /// Drop the stored login, so the next start opens on sign-in: a person signing out. A guest
+    /// account stays reachable through the wallet session the bridge scene keeps.
+    ForgetLogin,
     GetSettings(RpcResultSender<Vec<SettingInfo>>),
     SetSetting(String, f32),
     /// Sign a request with the engine wallet, with caller-supplied metadata. Scene-originated
@@ -111,7 +132,16 @@ pub enum SystemApi {
         meta: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
-    SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Full system-scene view. The local player is read at the last confirmed version.
+    GetUserProfile {
+        address: String,
+        response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The address belongs to the player the system scene observed when it submitted the edit.
+    SetAvatar(String, SetAvatarData, RpcResultSender<SetAvatarResult>),
+    /// Signs and deploys the local player's `outfits` entity. The address is the account the
+    /// caller expects; the engine refuses when another one is signed in.
+    DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),
     GetNativeInput(RpcResultSender<InputIdentifier>),
     GetBindings(RpcResultSender<BindingsData>),
     SetBindings(BindingsData, RpcResultSender<()>),
@@ -137,20 +167,37 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    ClearHomeScene,
+    /// None takes the lobby stage down.
+    SetLobbyStage(Option<LobbyStage>),
+    /// Whether the local user may enter the named world (`name.dcl.eth`).
+    GetWorldAccess(String, RpcResultSender<WorldAccessVerdict>),
     /// Credential-free resolved service endpoints.
     GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
+    /// The official wallets the nametags mark, lowercase `0x` addresses.
+    GetOfficialWallets(RpcResultSender<Vec<String>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
+    /// A satellite map tile as base64-encoded JPEG bytes. The path is relative to the abgen
+    /// CDN's `SatelliteMaps/` (`sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2`);
+    /// `image_processing` validates it, fetches the tile and converts it.
+    GetSatelliteTile(String, RpcResultSender<Result<String, String>>),
     GetSystemActionStream(RpcStreamSender<SystemActionEvent>),
     GetChatStream(RpcStreamSender<ChatMessage>),
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
+    SetNearbyMuted(String, bool, RpcResultSender<Result<(), String>>),
+    /// The wallets whose nearby voice is muted: the list now, then again on every change.
+    GetNearbyMuteStream(RpcStreamSender<Vec<String>>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
     GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
+    /// The preview server's texture import status for the previewed scene, as the preview socket
+    /// delivers it (`comms::preview`); nothing outside preview mode.
+    GetTextureOptimizationStream(RpcStreamSender<TextureOptimizationStatus>),
     // Native-only transport for the super-user bridge scene's BroadcastChannel: the scene posts page
     // -bound Envelopes via BridgeToPage, and subscribes to page->scene Envelopes via GetBridgeStream.
     // (In web the browser provides BroadcastChannel directly; native has no cross-process equivalent.)
@@ -165,22 +212,39 @@ pub enum SystemApi {
         remove: bool,
     },
     GetChatReactionStream(RpcStreamSender<ChatReactionData>),
+    /// The local user reacts with an emoji, shown over their avatar.
+    SendReaction(String),
+    /// Situational reactions as they play, the local user's included.
+    GetReactionStream(RpcStreamSender<ReactionData>),
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),
+    /// Scene requests to open the item purchase confirmation, sent as they are accepted.
+    GetItemPurchaseRequestStream(RpcStreamSender<ItemPurchaseRequest>),
+    SetItemPurchaseState(SetItemPurchaseState),
     SetPermanentPermission(SetPermanentPermission),
     GetPermissionUsedStream(RpcStreamSender<PermissionUsed>),
     GetPermanentPermissions(
         PermissionLevel,
         RpcResultSender<Vec<PermanentPermissionItem>>,
     ),
+    /// The portables the player can see and stop, sent on subscribe and on every change.
+    GetPortablesStream(RpcStreamSender<Vec<PortableInfo>>),
+    /// The map pins of portable-experience scenes, sent on subscribe and on every change.
+    GetMapPinsStream(RpcStreamSender<Vec<MapPinInfo>>),
     /// Prompts for the password of a world being entered (see `ipfs::world_access`).
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.
     SetWorldPassword(Option<world_access::WorldPassword>),
+    /// The signed-in wallet's platform ban: now, then again on every change.
+    GetPlatformBanStream(RpcStreamSender<PlatformBanNotice>),
     SetInteractableArea(Vec4),
     GetMicState(RpcResultSender<MicState>),
     SetMicEnabled(bool),
+    /// Trusted HUD recovery request; terminal access decisions remain unchanged.
+    RetryConnectivity,
+    /// The current safe snapshot, followed by changes until the consumer closes.
+    GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
     GetAvatarModifiers(RpcResultSender<Vec<AvatarModifierState>>),
     // Social / Friends
     GetFriends(RpcResultSender<Vec<FriendData>>),
@@ -212,9 +276,22 @@ pub enum SystemApi {
     // Social / Communities
     /// A community member came online or went offline, until dropped.
     GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
-    /// The community channels the local user listens to (member of, chat not closed), as
-    /// community ids; replaces the previous set.
-    SetCommunityChannels(Vec<String>),
+    /// The communities whose chat channels the local user listens to (member of, chat not
+    /// closed); replaces the previous set.
+    SetCommunityChannels(Vec<ListenedCommunity>),
+    /// Replaces the text of the chat bubble still showing the message `message_id`: its
+    /// translation, or the original back. A message no bubble shows is ignored.
+    SetChatBubbleText {
+        message_id: String,
+        message: String,
+    },
+    // Voice chat (private calls and community streams)
+    /// Emits the voice chat state now and whenever it changes, until dropped.
+    GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),
+    /// Emits every community voice chat started / ended broadcast, until dropped.
+    GetCommunityVoiceUpdateStream(RpcStreamSender<CommunityVoiceUpdate>),
+    /// A voice chat command from the HUD; its outcome shows on the state stream.
+    VoiceChatAction(VoiceChatAction),
 }
 
 #[derive(Resource)]
@@ -237,10 +314,22 @@ pub fn post_events(
     console_config: Res<ConsoleConfiguration>,
 ) {
     while let Ok(ev) = bridge.receiver.try_recv() {
-        let SystemApi::ConsoleCommand(cmd, args, sender) = ev else {
-            debug!("system bridge: {ev:?}");
-            writer.write(ev);
-            continue;
+        let (cmd, args, sender) = match ev {
+            SystemApi::ConsoleCommand(cmd, args, sender) => (cmd, args, sender),
+            SystemApi::ConsoleLine(line, sender) => {
+                match console::line::split(&line, &console_config) {
+                    Ok((cmd, args)) => (cmd, args, sender),
+                    Err(e) => {
+                        sender.send(Err(e));
+                        continue;
+                    }
+                }
+            }
+            ev => {
+                debug!("system bridge: {ev:?}");
+                writer.write(ev);
+                continue;
+            }
         };
 
         debug!("system bridge (cc): {cmd} {args:?}");
@@ -275,23 +364,6 @@ fn handle_satellite_view(mut ev: EventReader<SystemApi>, realm: Res<CurrentRealm
                     .as_ref()
                     .and_then(|map| map.satellite_view.clone()),
             );
-        }
-    }
-}
-
-fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfig>) {
-    for ev in ev.read() {
-        match ev {
-            SystemApi::GetHomeScene(rpc_result_sender) => rpc_result_sender.send(HomeScene {
-                realm: config.home_realm(),
-                parcel: config.home_location().as_vec2().into(),
-            }),
-            SystemApi::SetHomeScene(home_scene) => {
-                config.home_realm = Some(home_scene.realm.clone());
-                config.home_location = Some(bevy::math::Vec2::from(&home_scene.parcel).as_ivec2());
-                platform::write_config_file(&*config);
-            }
-            _ => (),
         }
     }
 }

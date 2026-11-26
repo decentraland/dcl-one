@@ -244,6 +244,10 @@ pub enum RpcCall {
         to: Option<IVec2>,
         /// The realm `to` belongs to: a realm change (a full reconnect, as for `ChangeRealm`) happens first.
         realm: Option<String>,
+        /// The name of the spawn point of the scene landed in to use, compared in lowercase. The
+        /// scene's default spawn points are used without it, and when the scene has none of that
+        /// name.
+        spawn_point: Option<String>,
         response: RpcResultSender<Result<(), String>>,
     },
     MoveCamera {
@@ -259,6 +263,10 @@ pub enum RpcCall {
     },
     ListPortables {
         response: RpcResultSender<Vec<SpawnResponse>>,
+    },
+    /// The calling scene, if it is a portable experience, asks to be unloaded.
+    ExitPortable {
+        response: RpcResultSender<bool>,
     },
     GetUserData {
         user: Option<String>,
@@ -283,6 +291,10 @@ pub enum RpcCall {
     OpenExplorerUi {
         /// raw `decentraland.sdk.components.common.ExplorerUi` value
         ui: i32,
+        /// `OpenExplorerUiRequest.request_id`, echoed on the result events; 0: none
+        request_id: u32,
+        /// `OpenExplorerUiRequest.item_purchase.urn`
+        item_urn: Option<String>,
         response: RpcResultSender<OpenExplorerUiResult>,
     },
     SubscribePlayerConnected {
@@ -320,6 +332,14 @@ pub enum RpcCall {
         sender: RpcEventSender,
     },
     SubscribeBinaryBus {
+        sender: RpcStreamSender<(String, Vec<u8>)>,
+    },
+    /// A `CommsApi` topic message, already framed (type byte first), for the scene's room.
+    PublishSceneTopic {
+        data: Vec<u8>,
+    },
+    /// Topic messages addressed to the scene: (sender address, payload after the type byte).
+    SubscribeSceneTopics {
         sender: RpcStreamSender<(String, Vec<u8>)>,
     },
     TestPlan {

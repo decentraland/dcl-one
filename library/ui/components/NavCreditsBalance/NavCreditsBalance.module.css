@@ -1,0 +1,69 @@
+/* sites@17b3535a LandingNavbar.styled.ts CreditsChip: the bar's 14px text, the mark at 16px.
+   Font weight and line-height have no token; the text styles do not match (line-height 1.5, not 1). */
+@layer dcl.components {
+  .root {
+    all: unset;
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    flex-shrink: 0;
+    color: var(--dcl-neutrals-white);
+    font-size: var(--dcl-font-size-body-sm);
+    font-weight: 600;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+  }
+
+  .root:hover {
+    opacity: 0.8;
+  }
+
+  .root:focus-visible {
+    outline: 2px solid var(--dcl-primary-primary);
+    outline-offset: 2px;
+  }
+
+  .root svg {
+    flex-shrink: 0;
+  }
+
+  .shop {
+    box-sizing: border-box;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    padding: var(--dcl-space-8);
+    line-height: normal;
+    color: var(--dcl-text-primary);
+    font-family: Inter, Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    font-size: var(--dcl-font-size-body-md);
+    letter-spacing: -0.8px;
+  }
+
+  span.shop {
+    cursor: default;
+  }
+
+  span.shop:hover {
+    opacity: 1;
+  }
+
+  .shop svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  @media (max-width: 991px) {
+    .shop {
+      font-size: var(--dcl-font-size-body-xs);
+      letter-spacing: -0.6px;
+    }
+
+    .shop svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+}

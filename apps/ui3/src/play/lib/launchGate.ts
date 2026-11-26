@@ -3,18 +3,15 @@
 // it is decided here, because trust is a property of the host: the editor app trusts its editor
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
-import { SERVICES, type ServiceDef } from '../engine/generated'
-import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl } from './baseDomain'
+import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
+import { BASE_DOMAIN, derivedServiceUrl, entryServiceUrl, hostBaseDomain, isTrustedBaseDomain } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
-import { webParam } from './webParams'
+import { webParam } from '@explorer-core/lib/webParams'
+import type { UntrustedParam } from '@explorer-core/hostContract'
 
-export interface UntrustedParam {
-  name: string
-  value: string
-  /** what the param would let the link do — the gate's copy */
-  warning: string
-}
+export type { UntrustedParam }
+
 
 interface Gate {
   warning: string
@@ -49,6 +46,17 @@ const GATES: Record<string, Gate> = {
       'Fetches every scene and asset from this server instead of the realm’s own. Whoever runs it decides what you see and what runs.',
     read: () => new URLSearchParams(location.search).get('contentServer'),
     isTrusted: isTrustedContentServer
+  },
+  // Swaps the textures and models of scenes, wearables and emotes for the ones this server
+  // lists. They are trusted by their path on this server and rejected only when they fail to
+  // decode: nothing checks them against the original files, so the server decides what scenes
+  // and avatars look like. Same rule as the content server.
+  bevyVariants: {
+    warning:
+      'Replaces the textures and models of the scenes you visit and the avatars you see with versions from this server. Whoever runs it decides what they look like.',
+    read: () => new URLSearchParams(location.search).get('bevyVariants'),
+    // `off` only turns the default (the asset-bundle generator's CDN) off
+    isTrusted: (url) => url.trim().toLowerCase() === 'off' || isTrustedContentServer(url)
   }
 }
 
@@ -72,12 +80,15 @@ function isTrustedServiceUrl(s: ServiceDef, value: string): boolean {
 // Every per-service override: worse than ?baseDomain= in that it can poison ONE service —
 // sign-in, profiles, comms — while everything else looks normal. Same rule as the content server,
 // and native is exempt the same way as the base domain (the shell injects the user's own flags).
-// Read normalised, like the base domain: a value the HUD discards is never put to the user.
+// Read normalised, like the base domain: a value the HUD discards is never put to the user. A value
+// equal to what this deployment derives by itself is no override at all: the engine writes its
+// effective options into the address bar, so every reload of a dcl-one deployment outside
+// Decentraland's own domains would otherwise stop here on its own urls.
 for (const s of SERVICES) {
   GATES[s.name] = {
     warning: `Points the Explorer's "${s.name}" backend service at this server, with everything else looking normal. Whoever runs it would see the requests and choose the answers.`,
-    read: (native) => (native ? null : normaliseServiceUrl(s, new URLSearchParams(location.search).get(s.name))),
-    isTrusted: (value) => isTrustedServiceUrl(s, value)
+    read: (native) => (native ? null : entryServiceUrl(s)),
+    isTrusted: (value) => value === derivedServiceUrl(s.name) || isTrustedServiceUrl(s, value)
   }
 }
 for (const name of Object.keys(GATES)) webParam(name)

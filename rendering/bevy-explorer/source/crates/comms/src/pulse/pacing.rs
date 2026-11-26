@@ -17,7 +17,7 @@
 
 use std::collections::VecDeque;
 
-use common::util::dcl_assert;
+use common::{token_bucket::TokenBucket, util::dcl_assert};
 
 use super::transport::{FrameKind, PulseFrame};
 
@@ -30,15 +30,19 @@ pub const PACED_EVENTS_BURST: f64 = 8.0;
 /// A bucket that lets teleports and emotes out at [`PACED_EVENTS_PER_SECOND`], holding the latest of
 /// each kind while it is empty. The default is a full bucket with nothing waiting, which is what a
 /// new connection starts from: the servers count each peer's budget from full.
-#[derive(Default)]
 pub struct DiscreteEventPacer {
-    /// How far below full the bucket was at `refilled_at`, in events, so the zero default is a
-    /// full bucket.
-    spent: f64,
-    /// The time `spent` is as of.
-    refilled_at: f64,
+    bucket: TokenBucket,
     /// The frames that wait, in the order of their latest offer: at most one of each kind.
     waiting: VecDeque<PulseFrame>,
+}
+
+impl Default for DiscreteEventPacer {
+    fn default() -> Self {
+        Self {
+            bucket: TokenBucket::new(PACED_EVENTS_PER_SECOND, PACED_EVENTS_BURST),
+            waiting: VecDeque::new(),
+        }
+    }
 }
 
 impl DiscreteEventPacer {
@@ -65,18 +69,10 @@ impl DiscreteEventPacer {
 
     /// The waiting frames the bucket allows now, in the order of their latest offer.
     pub fn release(&mut self, now: f64) -> Vec<PulseFrame> {
-        let elapsed = (now - self.refilled_at).max(0.0);
-        self.spent = (self.spent - elapsed * PACED_EVENTS_PER_SECOND).max(0.0);
-        self.refilled_at = now;
-
         let mut released = Vec::new();
         // A whole token pays for a frame; the part of one that has returned is kept.
-        while PACED_EVENTS_BURST - self.spent >= 1.0 {
-            let Some(frame) = self.waiting.pop_front() else {
-                break;
-            };
-            self.spent += 1.0;
-            released.push(frame);
+        while !self.waiting.is_empty() && self.bucket.try_spend(now) {
+            released.extend(self.waiting.pop_front());
         }
         released
     }

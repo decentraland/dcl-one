@@ -1,0 +1,15 @@
+.cover {
+  position: relative;
+  overflow: hidden;
+}
+
+.img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gradient {
+  background: linear-gradient(90deg, hsl(var(--blog-hue, 268) 65% 50%) 15%, var(--dcl-bg-page) 85%);
+}

@@ -1,0 +1,54 @@
+/*
+ * decentraland.org's jump pages over
+ * decentraland-ui2's AnimatedBackground in its "fixed" variant: the whole viewport, under the page. The site
+ * nav overlays the top of the page, which the padding clears (ui2 breakpoints: xs 768, md 1024).
+ */
+.root {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-96) 0 var(--dcl-space-64);
+  color: var(--dcl-text-primary);
+}
+
+.backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.invalid {
+  padding: var(--dcl-space-96) var(--dcl-space-24) var(--dcl-space-48);
+  color: var(--dcl-neutrals-white);
+  text-align: center;
+}
+
+@media (max-width: 1023.98px) {
+  .root {
+    align-items: stretch;
+    padding: var(--dcl-space-64) 0 0;
+  }
+
+  .invalid {
+    align-items: center;
+    padding: var(--dcl-space-64) var(--dcl-space-16) 120px;
+  }
+}

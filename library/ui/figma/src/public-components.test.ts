@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   existsSync,
@@ -31,7 +31,7 @@ type Table = Record<string, { sha256: string; origin: Record<string, unknown> }>
 type Manifest = {
   source: { codeRevision: string; snapshotRevision: string; digestTableHash: string }
   transform: { id: string }
-  modules: { sha256: string; indexBlobSha: string }[]
+  modules: { path: string; sha256: string; indexBlobSha: string }[]
   output: { path: string; sha256: string }[]
   inputs: { dependencies: { indexBlobSha: string }[]; config: { indexBlobSha: string } }
 }
@@ -64,6 +64,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
       indexBlobSha: git('hash-object', file).toString().trim()
     }
   }
+  const read = (file: string) => readFileSync(path.join(root, file))
   const reseal = (file: string, bytes: Buffer | string) => {
     put(scope + file, bytes)
     lock.publicComponents.files[file]!.sha256 = hash(bytes)
@@ -86,8 +87,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
     }
     for (const file of [
       'component-generation.mjs',
+      'module-graph.mjs',
       'source-identity.mjs',
       'tsconfig.json',
+      'src/install-main.ts',
       'src/install.ts',
       'src/install-components.ts',
       'src/generators/components.ts',
@@ -106,7 +109,9 @@ describe('when the offline component guard checks a staged internal plan', () =>
           ? '{"imageFills":"placeholder"}\n'
           : file === 'ledger/retirements.json'
             ? '{"schema":1,"retired":[]}\n'
-            : '// synthetic input: ' + file + '\n'
+            : file === 'tsconfig.json'
+              ? '{"compilerOptions":{}}\n'
+              : '// synthetic input: ' + file + '\n'
       put(full, bytes)
       source.files[full] = { sha256: hash(bytes) }
     }
@@ -135,9 +140,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
     ])
     metadata = createComponentGeneration({
       source,
+      read,
       files,
       config: identity(componentConfigPath),
-      modules: componentModulePaths(source).map(identity),
+      modules: componentModulePaths(source, read).map(identity),
       dependencies: componentDependencyPaths.map(identity)
     })
     files.set('generation.json', metadata)
@@ -168,7 +174,9 @@ describe('when the offline component guard checks a staged internal plan', () =>
         'public-foundations.mjs',
         'public-output.mjs',
         'public-components-policy.mjs',
+        'key-guard.mjs',
         'component-generation.mjs',
+        'module-graph.mjs',
         'source-identity.mjs'
       ]) {
         const file = 'library/ui/figma/' + name
@@ -177,8 +185,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         source.files[file] = { sha256: hash(bytes) }
       }
       Object.assign(source, {
-        changes: ['Synthetic dependency-free checker fixture.'],
-        deviationCodes: { fixture: 0 }
+        deviationCodes: { fixture: 'Synthetic dependency-free checker fixture.' }
       })
       for (const entry of Object.values(source.files))
         Object.assign(entry, { fds: null, deviation: 'fixture' })
@@ -198,9 +205,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       lock.publicFoundations = { files: foundationTable }
       metadata = createComponentGeneration({
         source,
+        read,
         files: new Map([...files].filter(([file]) => file !== 'generation.json')),
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -234,28 +242,391 @@ describe('when the offline component guard checks a staged internal plan', () =>
       expect(existsSync(path.join(root, 'library/ui/node_modules'))).toBe(false)
       expect(existsSync(path.join(root, 'node_modules'))).toBe(false)
     })
-    it('should still refuse a package self-reference in the real checker with no dependencies installed', () => {
-      put(
-        'library/ui/figma/package.json',
-        '{"name":"postcss","exports":{".":"./audit-dependency/postcss.mjs"}}'
-      )
-      put('library/ui/figma/audit-dependency/postcss.mjs', 'throw new Error("must not evaluate")')
-      expect(publicComponentsProblems(root, lock)).toEqual([
-        'unexpected component resolver control: library/ui/figma/package.json'
-      ])
-      expect(() =>
-        execFileSync(process.execPath, ['library/ui/figma/lock-digests.mjs'], {
-          cwd: root,
-          encoding: 'utf8'
+    describe('and a package self-reference is planted', () => {
+      beforeEach(() => {
+        put(
+          'library/ui/figma/package.json',
+          '{"name":"postcss","exports":{".":"./audit-dependency/postcss.mjs"}}'
+        )
+        put('library/ui/figma/audit-dependency/postcss.mjs', 'throw new Error("must not evaluate")')
+      })
+
+      it('should refuse it in the inspector', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          'unexpected component resolver control: library/ui/figma/package.json'
+        ])
+      })
+
+      it('should still refuse it in the real checker with no dependencies installed', () => {
+        expect(() =>
+          execFileSync(process.execPath, ['library/ui/figma/lock-digests.mjs'], {
+            cwd: root,
+            encoding: 'utf8'
+          })
+        ).toThrow(
+          expect.objectContaining({
+            status: 1,
+            stdout: expect.stringContaining(
+              'PUBLIC unexpected component resolver control: library/ui/figma/package.json'
+            )
+          })
+        )
+      })
+    })
+
+    describe('and a hand-written component is copied from the template', () => {
+      const lockFile = 'library/ui/upstream.lock.json'
+      const run = (...args: string[]) => {
+        const { status, stdout, stderr } = spawnSync(
+          process.execPath,
+          ['library/ui/figma/lock-digests.mjs', ...args],
+          { cwd: root, encoding: 'utf8' }
+        )
+        return { status, stdout, stderr }
+      }
+      const writtenLock = () => JSON.parse(readFileSync(path.join(root, lockFile), 'utf8'))
+      beforeEach(() => {
+        for (const file of [
+          'Component.tsx',
+          'Component.module.css',
+          'Component.test.tsx',
+          'Component.figma.ts'
+        ])
+          put(
+            scope + 'Badge/' + file.replace('Component', 'Badge'),
+            readFileSync(path.resolve('templates/component', file), 'utf8').replaceAll(
+              'Component',
+              'Badge'
+            )
+          )
+        git(
+          'add',
+          '--',
+          'library/ui/components',
+          'library/ui/figma',
+          lockFile,
+          'library/ui/foundations/index.ts'
+        )
+      })
+
+      it('should pass the inspector and the lock check with no lock entry for it', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([])
+        expect(run()).toMatchObject({ status: 0 })
+        expect(
+          Object.keys(lock.publicComponents.files).some((file) => file.startsWith('Badge/'))
+        ).toBe(false)
+      })
+
+      describe('and its mapping follows the mapping contract', () => {
+        beforeEach(() => {
+          put(
+            scope + 'Badge/Badge.figma.ts',
+            [
+              '// url=<DCL_FIGMA_FILE>?node-id=1-2',
+              '// source=components/Badge/Badge.tsx',
+              '// component=Badge',
+              '// contract=1',
+              '',
+              "import figma from 'figma'",
+              'export default {',
+              '  example: figma.tsx`<Badge>Example</Badge>`,',
+              '  imports: ["import { Badge } from \'@dcl/one-ui\'"],',
+              "  id: 'Badge',",
+              '  metadata: { nestable: true }',
+              '}',
+              ''
+            ].join('\n')
+          )
+          git('add', '--', 'library/ui/components')
         })
-      ).toThrow(
-        expect.objectContaining({
-          status: 1,
-          stdout: expect.stringContaining(
-            'PUBLIC unexpected component resolver control: library/ui/figma/package.json'
+
+        it('should accept the hand-written mapping', () => {
+          expect(publicComponentsProblems(root, lock)).toEqual([])
+          expect(run()).toMatchObject({ status: 0 })
+        })
+      })
+
+      describe.each([
+        [
+          'a Figma-key-shaped value',
+          'Badge/Badge.tsx',
+          "export const node = 'Ab3dEf6hIj9kLm2nOp5qRs'\n",
+          'Figma file key or URL in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'a Figma file URL',
+          'Badge/Badge.figma.ts',
+          '// url=https://www.figma' + '.com/design/abc123/Library?node-id=1-2\nexport {}\n',
+          'Figma file key or URL in hand-written component file: Badge/Badge.figma.ts'
+        ],
+        [
+          'the generator header',
+          'Badge/Badge.tsx',
+          '// Generated by dcl-figma from the Figma design system snapshot. Do not edit.\nexport {}\n',
+          'generated or captured output in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'the generated runtime',
+          'Badge/Badge.tsx',
+          "import { FigmaView } from '../runtime/figma-module-runtime'\nexport { FigmaView }\n",
+          'generated or captured output in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'a captured Figma node identity',
+          'Badge/Badge.tsx',
+          '// Figma: Badge / Badge (15599:30721)\nexport {}\n',
+          'generated or captured output in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'a nested import of the generated runtime',
+          'Badge/parts/Inner.tsx',
+          "import { FigmaView } from '../../runtime/figma-module-runtime'\nexport { FigmaView }\n",
+          'generated or captured output in hand-written component file: Badge/parts/Inner.tsx'
+        ],
+        [
+          'an import of the generated runtime directory',
+          'Badge/Badge.tsx',
+          "import * as runtime from './../runtime'\nexport { runtime }\n",
+          'generated or captured output in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'a capture file',
+          'Badge/capture.json',
+          '{"nodes":[]}\n',
+          'unsupported hand-written component file: Badge/capture.json'
+        ]
+      ])('and a hand-written file holds %s', (_, file, content, problem) => {
+        beforeEach(() => {
+          put(scope + file, content)
+          git(
+            'add',
+            '--',
+            'library/ui/components',
+            'library/ui/figma',
+            lockFile,
+            'library/ui/foundations/index.ts'
           )
         })
-      )
+
+        it('should refuse the file in the inspector and the lock check', () => {
+          expect(publicComponentsProblems(root, lock)).toEqual([problem])
+          expect(run()).toMatchObject({
+            status: 1,
+            stdout: expect.stringContaining('PUBLIC ' + problem)
+          })
+        })
+      })
+
+      describe('and a hand-written file is committed as an LFS pointer', () => {
+        beforeEach(() => {
+          const bytes = readFileSync(path.join(root, scope + 'Badge/Badge.module.css'))
+          const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${hash(bytes)}\nsize ${bytes.length}\n`
+          const oid = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+            input: pointer
+          })
+            .toString()
+            .trim()
+          git('update-index', '--cacheinfo', `100644,${oid},${scope}Badge/Badge.module.css`)
+        })
+
+        it('should refuse the pointer', () => {
+          expect(publicComponentsProblems(root, lock)).toEqual([
+            'LFS pointer in hand-written component file: Badge/Badge.module.css'
+          ])
+        })
+      })
+
+      describe('and the lock claims a generated origin for one of its files', () => {
+        beforeEach(() => {
+          const file = 'Badge/Badge.tsx'
+          lock.publicComponents.files[file] = {
+            sha256: hash(readFileSync(path.join(root, scope + file))),
+            origin: { ...lock.publicComponents.files['NavBar/NavBar.tsx']!.origin }
+          }
+        })
+
+        it('should check the whole directory as installer output', () => {
+          const problems = publicComponentsProblems(root, lock)
+          // Pinning one file hands the directory to the installer, so its other files are extra outputs.
+          expect(problems).toContain('extra public file: Badge/Badge.module.css')
+          expect(problems).not.toEqual([])
+        })
+      })
+
+      describe('and the lock claims a generated origin for a one-file hand-written directory', () => {
+        beforeEach(() => {
+          put(scope + 'Tag/Tag.tsx', 'export const Tag = () => null\n')
+          git('add', '--', 'library/ui/components')
+          lock.publicComponents.files['Tag/Tag.tsx'] = {
+            sha256: hash(readFileSync(path.join(root, scope + 'Tag/Tag.tsx'))),
+            origin: { ...lock.publicComponents.files['NavBar/NavBar.tsx']!.origin }
+          }
+        })
+
+        it('should refuse the lock entry', () => {
+          expect(publicComponentsProblems(root, lock)).toContain(
+            'unexpected public component: Tag/Tag.tsx'
+          )
+        })
+      })
+
+      describe('and a hand-written file is untracked', () => {
+        beforeEach(() => {
+          put(scope + 'Badge/Badge.extra.ts', 'export const extra = true\n')
+        })
+
+        it('should refuse the untracked file', () => {
+          expect(publicComponentsProblems(root, lock)).toEqual([
+            'untracked hand-written component file: Badge/Badge.extra.ts'
+          ])
+        })
+      })
+
+      describe('and a directory differs from an installed component only by case', () => {
+        beforeEach(() => {
+          // Index only: a case-insensitive file system would write it over NavBar/NavBar.tsx.
+          const oid = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+            input: 'export const NAVBAR = () => null\n'
+          })
+            .toString()
+            .trim()
+          git('update-index', '--add', '--cacheinfo', `100644,${oid},${scope}NAVBAR/NAVBAR.tsx`)
+        })
+
+        it('should refuse the colliding directory', () => {
+          expect(publicComponentsProblems(root, lock)).toContain(
+            'hand-written component collides with an installed component: NAVBAR'
+          )
+        })
+      })
+
+      describe('and a hand-written directory is not a component name', () => {
+        beforeEach(() => {
+          put(scope + 'badge-v2/Badge.tsx', 'export const Badge = () => null\n')
+          git(
+            'add',
+            '--',
+            'library/ui/components',
+            'library/ui/figma',
+            lockFile,
+            'library/ui/foundations/index.ts'
+          )
+        })
+
+        it('should refuse the directory', () => {
+          expect(publicComponentsProblems(root, lock)).toEqual([
+            'unsafe hand-written component directory: badge-v2'
+          ])
+        })
+      })
+
+      describe('and lock-digests --write reseals the lock', () => {
+        describe('and the public tables are stale', () => {
+          beforeEach(() => {
+            const stale = writtenLock()
+            stale.publicComponents.files['generation.json'].sha256 = 'f'.repeat(64)
+            delete stale.publicFoundations
+            put(lockFile, JSON.stringify(stale))
+            git(
+              'add',
+              '--',
+              'library/ui/components',
+              'library/ui/figma',
+              lockFile,
+              'library/ui/foundations/index.ts'
+            )
+          })
+
+          it('should rewrite them into a lock the check accepts, without pinning it', () => {
+            expect(run()).toMatchObject({
+              status: 1,
+              stdout: expect.stringContaining('PUBLIC changed public file: generation.json')
+            })
+            expect(run('--write')).toMatchObject({ status: 0, stderr: '' })
+            const written = writtenLock()
+            expect(written.publicComponents.files).toEqual(lock.publicComponents.files)
+            expect(written.publicFoundations.files).toEqual(foundationTable)
+            expect(run()).toMatchObject({ status: 0 })
+          })
+        })
+
+        describe('and a foundation source file changed', () => {
+          let edited: string
+
+          beforeEach(() => {
+            edited = '// edited foundation entrypoint\n'
+            put('library/ui/foundations/index.ts', edited)
+            git(
+              'add',
+              '--',
+              'library/ui/components',
+              'library/ui/figma',
+              lockFile,
+              'library/ui/foundations/index.ts'
+            )
+          })
+
+          it('should pin it at its staged bytes', () => {
+            expect(run()).toMatchObject({ status: 1 })
+            expect(run('--write')).toMatchObject({ status: 0 })
+            expect(writtenLock().publicFoundations.files['index.ts']).toEqual({
+              sha256: hash(edited),
+              origin: { kind: 'source', repository: 'https://github.com/decentraland/dcl-one' }
+            })
+            expect(run()).toMatchObject({ status: 0 })
+          })
+        })
+
+        describe('and the manifest no longer lists a generated foundation', () => {
+          beforeEach(() => {
+            const sourceJson = JSON.parse(
+              readFileSync(path.join(root, 'library/ui/foundations/source.json'), 'utf8')
+            )
+            sourceJson.output = sourceJson.output.filter(
+              (entry: { path: string }) => entry.path !== 'theme.ts'
+            )
+            put('library/ui/foundations/source.json', JSON.stringify(sourceJson, null, 2) + '\n')
+            git('add', '--', 'library/ui/foundations/source.json')
+          })
+
+          it('should keep its pin, so the check still fails', () => {
+            expect(run('--write')).toMatchObject({ status: 0 })
+            expect(writtenLock().publicFoundations.files['theme.ts']).toEqual(
+              foundationTable['theme.ts']
+            )
+            expect(run()).toMatchObject({
+              status: 1,
+              stdout: expect.stringContaining(
+                'PUBLIC generated origin classification differs: theme.ts'
+              )
+            })
+          })
+        })
+
+        describe('and the generation record is stale', () => {
+          beforeEach(() => {
+            put('library/ui/figma/src/install.ts', '// a changed installer\n')
+            git(
+              'add',
+              '--',
+              'library/ui/components',
+              'library/ui/figma',
+              lockFile,
+              'library/ui/foundations/index.ts'
+            )
+          })
+
+          it('should keep the component table, exit 1 and fail the check', () => {
+            const written = run('--write')
+            expect(written.status).toBe(1)
+            expect(written.stderr).toContain(
+              'kept the publicComponents table: Component module differs from source lock: library/ui/figma/src/install.ts'
+            )
+            expect(writtenLock().publicComponents.files).toEqual(lock.publicComponents.files)
+            expect(run()).toMatchObject({ status: 1 })
+          })
+        })
+      })
     })
   })
 
@@ -270,9 +641,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.set('NavBar/NavBar.figma.ts', Buffer.from('export const mapping = true\n'))
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -321,9 +693,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.set('promotion.json', Buffer.from('{"components":[],"internal":[]}\n'))
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -341,13 +714,18 @@ describe('when the offline component guard checks a staged internal plan', () =>
       ])
       expect(publicComponentsProblems(root, lock)).toEqual([])
     })
-    it('should reject a stale runtime even when its previous origin and bytes are pinned', () => {
-      put(scope + 'runtime/figma-view-state.ts', 'export const state = true\n')
-      lock.publicComponents.files['runtime/figma-view-state.ts'] = previousRuntime
-      git('add', '.')
-      expect(publicComponentsProblems(root, lock)).toEqual([
-        'unexpected public component: runtime/figma-view-state.ts'
-      ])
+    describe('and a stale runtime is restored with its previous origin and bytes pinned', () => {
+      beforeEach(() => {
+        put(scope + 'runtime/figma-view-state.ts', 'export const state = true\n')
+        lock.publicComponents.files['runtime/figma-view-state.ts'] = previousRuntime
+        git('add', '.')
+      })
+
+      it('should reject the stale runtime', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          'unexpected public component: runtime/figma-view-state.ts'
+        ])
+      })
     })
   })
 
@@ -445,6 +823,131 @@ describe('when the offline component guard checks a staged internal plan', () =>
       ])
     })
   })
+  describe('and the module map is pinned once by the generation record', () => {
+    it('should emit origins without a per-output module map', () => {
+      for (const entry of Object.values(lock.publicComponents.files))
+        expect(Object.hasOwn(entry.origin, 'modules')).toBe(false)
+    })
+    describe('and a table still repeats the module map in an output origin', () => {
+      beforeEach(() => {
+        const modules = Object.fromEntries(
+          (JSON.parse(metadata.toString()) as Manifest).modules.map((m) => [m.path, m.sha256])
+        )
+        const entry = lock.publicComponents.files['NavBar/NavBar.tsx']!
+        entry.origin = { ...entry.origin, modules }
+      })
+
+      it('should reject the table', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          'component origin differs: NavBar/NavBar.tsx'
+        ])
+      })
+    })
+
+    describe('and generation metadata is tampered without the table pinning its digest', () => {
+      beforeEach(() => {
+        const value = JSON.parse(metadata.toString()) as Manifest
+        value.modules[0]!.sha256 = 'd'.repeat(64)
+        put(scope + 'generation.json', JSON.stringify(value, null, 2) + '\n')
+        git('add', '--', scope + 'generation.json')
+      })
+
+      it('should reject the tampered metadata', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          'changed public file: generation.json'
+        ])
+      })
+    })
+
+    // Stops at the table digest, like the tamper case above: a real module change still needs the table resealed.
+    describe('and a module change regenerates a generation.json the table does not pin', () => {
+      beforeEach(() => {
+        put(installer, '// changed implementation\n')
+        source.files[installer] = { sha256: hash('// changed implementation\n') }
+        git('add', '--', installer)
+        const value = JSON.parse(metadata.toString()) as Manifest
+        const module = value.modules.find((entry) => entry.path === installer)!
+        Object.assign(module, identity(installer))
+        put(scope + 'generation.json', JSON.stringify(value, null, 2) + '\n')
+        git('add', '--', scope + 'generation.json')
+      })
+
+      it('should refuse the module change', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          'changed public file: generation.json'
+        ])
+      })
+    })
+
+    describe('and metadata drops a module despite an outer reseal', () => {
+      beforeEach(() => {
+        editMetadata((value) => {
+          value.modules = value.modules.filter((entry) => entry.path !== installer)
+        })
+      })
+
+      it('should reject the metadata', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual([
+          expect.stringMatching(/^invalid component generation metadata: /)
+        ])
+      })
+    })
+
+    describe('and the source lock and metadata agree on a module digest the file does not have', () => {
+      beforeEach(() => {
+        const forged = 'd'.repeat(64)
+        source.files[installer] = { sha256: forged }
+        editMetadata((value) => {
+          value.modules.find((entry) => entry.path === installer)!.sha256 = forged
+        })
+      })
+
+      it('should reject the module digest', () => {
+        expect(publicComponentsProblems(root, lock)).toEqual(['changed public input: ' + installer])
+      })
+    })
+  })
+  describe('and a locked tooling module outside the read-set is edited and resealed', () => {
+    const tool = 'library/ui/figma/src/extra-generator.ts'
+    beforeEach(() => {
+      put(tool, '// edited tooling\n')
+      source.files[tool] = { sha256: hash('// edited tooling\n') }
+      git('add', '--', tool)
+    })
+    it('should accept the unchanged generation record', () => {
+      expect(
+        JSON.parse(metadata.toString()).modules.map((entry: { path: string }) => entry.path)
+      ).not.toContain(tool)
+      expect(publicComponentsProblems(root, lock)).toEqual([])
+    })
+  })
+  describe('and a bound module gains an import of a locked tooling module', () => {
+    beforeEach(() => {
+      const bytes = "import './extra-generator.js'\n"
+      put(installer, bytes)
+      source.files[installer] = { sha256: hash(bytes) }
+      git('add', '--', installer)
+    })
+    it('should refuse the record until the newly reached module is bound', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'invalid component generation metadata: Incomplete component module identities'
+      ])
+    })
+  })
+  describe('and a bound module loads code the closure cannot follow', () => {
+    beforeEach(() => {
+      const bytes = 'export const load = (name) => import(name)\n'
+      put(installer, bytes)
+      source.files[installer] = { sha256: hash(bytes) }
+      git('add', '--', installer)
+    })
+    it('should fail closed', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'invalid component generation metadata: A dynamic import needs one string literal in ' +
+          installer
+      ])
+    })
+  })
   describe('and a mandatory module is omitted from the source lock', () => {
     beforeEach(() => {
       delete source.files[installer]
@@ -480,9 +983,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.delete('generation.json')
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       lock.publicComponents.files = Object.fromEntries(
@@ -608,7 +1112,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'a'.repeat(64) + '\nsize 1\n'
       )
     })
-    it('should reject the pointer even when it is staged and pinned', () => {
+    it('should reject the pointer although it is staged and pinned', () => {
       expect(publicComponentsProblems(root, lock)).toEqual([
         'unmaterialized public file: NavBar/NavBar.tsx'
       ])

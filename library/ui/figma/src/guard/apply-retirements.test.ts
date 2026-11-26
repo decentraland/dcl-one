@@ -151,6 +151,23 @@ describe('apply retirements', () => {
       ).toEqual(['Button'])
     })
 
+    it('should remove a promotion entry that carries accepted limits', async () => {
+      const limits = [{ id: 'pending-contracts', text: 'Contracts remain follow-ups.' }]
+      const promotion = path.join(root, 'components/promotion.json')
+      const registry = JSON.parse(await readFile(promotion, 'utf8'))
+      await writeFile(
+        promotion,
+        JSON.stringify({ ...registry, components: ['Button', { name: 'PlaceCard', limits }] })
+      )
+
+      await applyRetirements(root, records(['components/promotion.json#component:PlaceCard']))
+
+      expect(JSON.parse(await readFile(promotion, 'utf8')).components).toEqual(['Button'])
+      expect(
+        await pendingRetirements(root, records(['components/promotion.json#component:PlaceCard']))
+      ).toEqual([])
+    })
+
     it('should reject an unverified export and preserve its shared statement', async () => {
       const file = path.join(root, 'index.ts')
       await writeFile(file, "export { PlaceCard, Other } from './x'\n")

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Runs the web explorer's benchmark in Chrome on a fleet machine and writes its report"
 
+[lints]
+workspace = true
+
 [dependencies]
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
@@ -26,7 +29,8 @@ tokio = { workspace = true, features = [
 ] }
 tokio-util = { workspace = true }
 urlencoding = { workspace = true }
-zip06 = { workspace = true }
+# a web app build comes as a deflated zip
+zip = { workspace = true, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

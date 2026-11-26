@@ -1,0 +1,33 @@
+.shell {
+  --blog-header-height: var(--site-header-h, 0px);
+  --blog-glow-height: 506px;
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  padding-bottom: var(--dcl-space-64);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+
+.shell::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--blog-header-height)) 0 auto;
+  height: calc(var(--blog-header-height) + var(--blog-glow-height));
+  /* Extend the purple behind the header and keep the fade anchored to the page. */
+  background: linear-gradient(
+    180deg,
+    var(--dcl-brand-purple) var(--blog-header-height),
+    transparent
+  );
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .shell {
+    --blog-glow-height: 404px;
+  }
+}

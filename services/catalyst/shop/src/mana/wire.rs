@@ -7,9 +7,9 @@
 //! exact: cents as integers, MANA as decimal wei strings (`ManaWei`).
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::policy::{Eligibility, MissingFact, Quote, Refusal};
+use crate::policy::{Eligibility, MissingFact, Quote};
 use crate::types::{
     AssetId, AssetKind, ChainId, EvmAddress, ManaWei, PaymentMethod, SaleKind, SettlementGroupKey,
 };
@@ -213,6 +213,12 @@ pub struct PurchaseOffer {
     pub coupon: Option<OfferCoupon>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<ManaExecution>,
+    /// The credits node authorizes a Credits part for this line, the rest paid
+    /// in MANA in the same call (`policy::split_price`): a store mint or a
+    /// listing paid in the chain's MANA, which the session may pay both ways.
+    /// Sent only when true; absent, the line has no split.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub splittable: bool,
 }
 
 /// The identity and economics of the coupon an offer was priced with.
@@ -255,73 +261,9 @@ pub struct OffersResponse {
 /// The `error` code of a rule refusal (the same the guards spell).
 pub const PAYMENT_RULE_REFUSED: &str = "payment_rule_refused";
 
-/// A refusal's variant as a camelCase code with its fields.
-pub fn refusal_json(refusal: &Refusal) -> Value {
-    match refusal {
-        Refusal::Incomplete { missing } => json!({ "code": "incomplete", "missing": missing }),
-        Refusal::UnknownItem { asset } => json!({ "code": "unknownItem", "asset": asset }),
-        Refusal::RecordMismatch { asset } => json!({ "code": "recordMismatch", "asset": asset }),
-        Refusal::NotMintable { asset } => json!({ "code": "notMintable", "asset": asset }),
-        Refusal::UnsupportedTrade { detail } => {
-            json!({ "code": "unsupportedTrade", "detail": detail })
-        }
-        Refusal::NameTaken { asset } => json!({ "code": "nameTaken", "asset": asset }),
-        Refusal::NotARegistrar { asset } => json!({ "code": "notARegistrar", "asset": asset }),
-        Refusal::MethodNotAllowed {
-            asset,
-            method,
-            allowed,
-        } => {
-            json!({ "code": "methodNotAllowed", "asset": asset, "method": method, "allowed": allowed })
-        }
-        Refusal::NonPositiveQuote { asset } => {
-            json!({ "code": "nonPositiveQuote", "asset": asset })
-        }
-        Refusal::AmountOverflow { asset } => json!({ "code": "amountOverflow", "asset": asset }),
-        Refusal::NotSignedIn => json!({ "code": "notSignedIn" }),
-        Refusal::CreditsNotAllowed { asset, sale, kind } => {
-            json!({ "code": "creditsNotAllowed", "asset": asset, "sale": sale, "kind": kind })
-        }
-        Refusal::SecondaryCreditSpend { asset } => {
-            json!({ "code": "secondaryCreditSpend", "asset": asset })
-        }
-        Refusal::UndecodedCustomCall { target, selector } => {
-            json!({ "code": "undecodedCustomCall", "target": target, "selector": format!("0x{}", hex::encode(selector)) })
-        }
-        Refusal::ForwardedCustomCall { target, selector } => {
-            json!({ "code": "forwardedCustomCall", "target": target, "selector": format!("0x{}", hex::encode(selector)) })
-        }
-        Refusal::ManaRemainderNotAllowed { asset } => {
-            json!({ "code": "manaRemainderNotAllowed", "asset": asset })
-        }
-        Refusal::AssetNotInGroup { asset } => json!({ "code": "assetNotInGroup", "asset": asset }),
-        Refusal::LineNotSettled { asset } => json!({ "code": "lineNotSettled", "asset": asset }),
-        Refusal::WrongCall { asset } => json!({ "code": "wrongCall", "asset": asset }),
-        Refusal::MixedGroup => json!({ "code": "mixedGroup" }),
-        Refusal::CreditsChainUnsupported { chain_id } => {
-            json!({ "code": "creditsChainUnsupported", "chainId": chain_id })
-        }
-        Refusal::WrongChain { expected, got } => {
-            json!({ "code": "wrongChain", "expected": expected, "got": got })
-        }
-        Refusal::GroupTooLarge { lines, max } => {
-            json!({ "code": "groupTooLarge", "lines": lines, "max": max })
-        }
-        Refusal::EmptyGroup => json!({ "code": "emptyGroup" }),
-        Refusal::NegativeDebit { debit } => json!({ "code": "negativeDebit", "debit": debit }),
-        Refusal::CreditValueTooLarge { value, cap } => {
-            json!({ "code": "creditValueTooLarge", "value": value, "cap": cap })
-        }
-        Refusal::SettlementNeedAboveReference { need, reference } => {
-            json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
-        }
-        Refusal::UnlistedMarketplace { venue } => {
-            json!({ "code": "unlistedMarketplace", "chainId": venue.chain_id, "contract": venue.contract })
-        }
-    }
-}
+pub(crate) use crate::guards::base_refusal_json as refusal_json;
 
-/// The source label a `Refusal::Incomplete` names.
+/// The source label an incomplete policy refusal names.
 pub fn missing_source(missing: MissingFact) -> &'static str {
     match missing {
         MissingFact::ContractRegistry => "shop-contract-registry",
@@ -459,6 +401,43 @@ pub struct ExecutionDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::Refusal;
+    use serde_json::json;
+
+    #[test]
+    fn an_offer_says_it_is_splittable_only_when_it_is() {
+        let offer = |splittable| PurchaseOffer {
+            asset: crate::types::AssetId::item(
+                crate::types::ChainId::POLYGON,
+                EvmAddress::parse("0x00000000000000000000000000000000000000cc").unwrap(),
+                alloy_primitives::U256::from(7u8),
+            ),
+            kind: crate::types::AssetKind::Wearable,
+            sale: crate::types::SaleKind::PrimaryMint,
+            bundle: false,
+            eligibility: Eligibility {
+                allowed: vec![],
+                default: None,
+                reasons: vec![],
+                guidance: None,
+            },
+            quotes: vec![],
+            unavailable: vec![],
+            settlement: vec![],
+            available: None,
+            quoted_at: 1,
+            coupon: None,
+            mana: None,
+            splittable,
+        };
+        let split = serde_json::to_value(offer(true)).unwrap();
+        assert_eq!(split["splittable"], json!(true));
+        let whole = serde_json::to_value(offer(false)).unwrap();
+        assert!(
+            whole.get("splittable").is_none(),
+            "an offer without a split keeps its earlier shape: {whole}"
+        );
+    }
 
     #[test]
     fn a_line_request_reads_the_uis_listing_ref_and_defaults_the_quantity() {

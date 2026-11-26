@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 
-import MpLaunchForm from "@ui/creatorhub/mp/MpLaunchForm";
-import MpLiveRunView from "@ui/creatorhub/mp/MpLiveRunView";
-import MpReportView, { type MpPerfSeries } from "@ui/creatorhub/mp/MpReportView";
-import MpReplayDialog from "@ui/creatorhub/mp/MpReplayDialog";
-import MpUnpaired from "@ui/creatorhub/mp/MpUnpaired";
-import type { MpLane, MpLaunchRequest } from "@ui/creatorhub/mp/rules";
+import { MpLaunchForm, MpLiveRunView, type MpPerfSeries, MpReplayDialog, MpReportView, MpUnpaired } from "@dcl/one-ui";
+import type { MpLane, MpLaunchRequest } from "@web-core/multiplayer-test/rules";
 import {
   MpSidecar,
   readPairing,
   type MpConnState,
   type MpPairing,
-} from "@ui/creatorhub/mp/sidecar";
+} from "@web-core/multiplayer-test/sidecar";
 import {
   normalizeBot,
   normalizeReport,
@@ -25,7 +21,7 @@ import {
   type MpRunSummary,
   type MpTimelineEntry,
   type MpVerdict,
-} from "@ui/creatorhub/mp/types";
+} from "@web-core/multiplayer-test/types";
 
 import { isDesktopShell } from "@/data/lib/auth/native-shell";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
@@ -53,8 +49,8 @@ const SHOT_CAP = 12;
 
 const mpTrack = track as unknown as MpTrackFn;
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, assignment, wrap } = await pageLoader(request,  FALLBACK);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, assignment, wrap } = await pageLoader(request, context,  FALLBACK);
   return wrap({
     sid,
     variant: assignment.variant,

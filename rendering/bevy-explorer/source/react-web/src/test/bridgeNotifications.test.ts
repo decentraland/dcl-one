@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
@@ -75,12 +75,19 @@ describe('bridge notifications poll', () => {
     expect(news(h.sent)).toHaveLength(1)
   })
 
-  it('does not poll for a guest or after logout', async () => {
+  it('polls for a guest, as unity-explorer does: a guest account has notifications', async () => {
     const h = fakeCtx()
     signed.mockResolvedValue({ notifications: [] })
     await h.req({ kind: 'getNotifications' })
     player = { userId: '0xg', isGuest: true }
     await h.tick(POLL_INTERVAL_S)
+    expect(polls()).toHaveLength(1)
+  })
+
+  it('does not poll after logout', async () => {
+    const h = fakeCtx()
+    signed.mockResolvedValue({ notifications: [] })
+    await h.req({ kind: 'getNotifications' })
     player = null
     await h.tick(POLL_INTERVAL_S)
     expect(polls()).toHaveLength(0)

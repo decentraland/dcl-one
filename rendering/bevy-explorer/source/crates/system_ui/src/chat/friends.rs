@@ -6,7 +6,7 @@ use common::{
     util::{format_address, TryPushChildrenEx},
 };
 use comms::profile::ProfileManager;
-use social::{DirectChatEvent, DirectChatMessage, FriendshipEvent, SocialClient};
+use social::{DirectChatMessage, FriendshipEvent, SocialClient};
 use tokio::sync::mpsc::Receiver;
 use ui_core::{
     button::{DuiButton, TabManager, TabSelection},
@@ -96,7 +96,6 @@ pub fn update_profile_images(
 #[derive(Event, Clone)]
 pub struct ShowConversationEvent(pub Address);
 
-#[allow(clippy::too_many_arguments)]
 pub fn show_conversation(
     mut show_events: EventReader<ShowConversationEvent>,
     mut pending_event: Local<Option<Address>>,
@@ -227,7 +226,6 @@ pub fn show_conversation(
     tab_manager.set_selected_entity(tab, new_tab);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_friends(
     mut commands: Commands,
     client: Res<SocialClient>,
@@ -377,7 +375,6 @@ pub fn update_friends(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_conversations(
     mut client: ResMut<SocialClient>,
     tab: Query<&TabSelection, With<ChatTab>>,
@@ -385,24 +382,12 @@ pub fn update_conversations(
     mut private_chats: Query<&mut PrivateChat>,
     mut last_chat: Local<Option<Address>>,
     mut text_entry: Query<&mut TextEntry, With<ChatInput>>,
-    mut new_chats: EventReader<DirectChatEvent>,
     mut new_chats_outbound: EventReader<PrivateChatEntered>,
     mut conversation: ConversationManager,
 ) {
     let (Ok(tab), Ok(chatbox)) = (tab.single(), chatbox.single()) else {
         return;
     };
-
-    let new_chats = new_chats.read().collect::<Vec<_>>();
-
-    if !new_chats.is_empty() {
-        for mut private_chat in private_chats.iter_mut() {
-            let address = private_chat.address;
-            for chat in new_chats.iter().filter(|c| c.0.partner == address) {
-                private_chat.messages.push(chat.0.clone());
-            }
-        }
-    }
 
     let Some(private_chat_ent) = tab.selected_entity() else {
         *last_chat = None;
@@ -423,7 +408,12 @@ pub fn update_conversations(
         *last_chat = Some(private_chat.address);
 
         conversation.clear(chatbox);
-        text_entry.single_mut().unwrap().enabled = true;
+        #[allow(
+            clippy::unwrap_used,
+            reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+        )]
+        let mut text_entry = text_entry.single_mut().unwrap();
+        text_entry.enabled = true;
 
         if private_chat.wants_history_count == 0
             && !(private_chat.history_receiver.is_closed()
@@ -450,30 +440,6 @@ pub fn update_conversations(
                     Some(message.partner),
                     Color::srgb(0.8, 1.0, 0.8),
                     &message.message,
-                    false,
-                );
-            }
-        }
-    } else {
-        // check for new chats
-        for new_message in new_chats
-            .iter()
-            .filter(|c| c.0.partner == private_chat.address)
-        {
-            if new_message.0.me_speaking {
-                conversation.add_message(
-                    chatbox,
-                    None,
-                    Color::srgb(0.8, 0.8, 1.0),
-                    &new_message.0.message,
-                    false,
-                );
-            } else {
-                conversation.add_message(
-                    chatbox,
-                    Some(new_message.0.partner),
-                    Color::srgb(0.8, 1.0, 0.8),
-                    &new_message.0.message,
                     false,
                 );
             }

@@ -168,6 +168,21 @@ pub struct PointerTargetInfo {
     pub ty: PointerTargetType,
 }
 
+impl PointerTargetInfo {
+    /// Whether the cursor reaches `entry` on this target: the target is in a scene and `entry` is
+    /// a cursor entry within its distance limits. The hover CRDT, the hover stream's `enabled`
+    /// and the hover glow's colour all use this one gate.
+    pub fn cursor_reaches(&self, entry: &Entry) -> bool {
+        self.in_scene
+            && ActionCandidateMode::Cursor.matches_entry(entry)
+            && passes_distance_check(
+                entry.event_info.as_ref(),
+                self.camera_distance.0,
+                self.distance.0,
+            )
+    }
+}
+
 /// Returns true if the pointer-event entry's distance restrictions are satisfied.
 ///
 /// Per protocol:
@@ -283,7 +298,7 @@ impl UiPointerTargetValue {
 
     pub fn set_label(&mut self, label: Option<String>) {
         match self {
-            UiPointerTargetValue::None => todo!(),
+            UiPointerTargetValue::None => {}
             UiPointerTargetValue::Primary(_, ref mut l)
             | UiPointerTargetValue::World(_, ref mut l) => *l = label,
         }
@@ -323,7 +338,6 @@ pub struct ProximityCandidate {
     pub entity_position: Vec3,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_pointer_target(
     camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -392,7 +406,8 @@ fn update_pointer_target(
         .fold(
             None,
             |maybe_prior_nearest, (scene_entity, _, mut collider_data)| {
-                let maybe_nearest = collider_data.cast_ray_nearest(
+                collider_data.update_bvh();
+                let maybe_nearest = collider_data.cast_ray_nearest_in_scene_flushed(
                     ray.origin,
                     ray.direction.into(),
                     f32::MAX,
@@ -991,7 +1006,6 @@ fn debug_pointer(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn send_hover_events(
     new_target: Res<PointerTarget>,
     pointer_requests: Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
@@ -1205,7 +1219,6 @@ fn filtered_events<'a>(
 }
 
 /// Build and send a `PbPointerEventsResult` CRDT for a single matched entry.
-#[allow(clippy::too_many_arguments)]
 fn write_pointer_result(
     context: &mut RendererSceneContext,
     scene_transform: &GlobalTransform,
@@ -1268,7 +1281,6 @@ fn resolve_scene_entity_id(
 /// Walks all pointer-event entries on the target. Returns the first in-range
 /// configured button (used by the caller to reserve scene input priorities),
 /// and emits a hover CRDT for each entry whose `event_type` matches `ev_type`.
-#[allow(clippy::too_many_arguments)]
 fn send_hover_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>,
@@ -1286,18 +1298,8 @@ fn send_hover_event(
     };
 
     for (scene, ev) in pe.iter_with_scene(maybe_scene_entity.map(|se| se.root)) {
-        if !info.in_scene {
-            continue;
-        }
-        // Hover is cursor-domain — skip entries flagged as proximity.
-        if !ActionCandidateMode::Cursor.matches_entry(ev) {
-            continue;
-        }
-        if !passes_distance_check(
-            ev.event_info.as_ref(),
-            info.camera_distance.0,
-            info.distance.0,
-        ) {
+        // Hover is cursor-domain: proximity entries never pass.
+        if !info.cursor_reaches(ev) {
             continue;
         }
         action = Some(
@@ -1337,7 +1339,6 @@ fn send_hover_event(
 /// `interaction_type`, emitting a CRDT for each whose distance check passes.
 /// Returns the last-written scene as the "consuming" scene, which the caller uses
 /// to skip duplicate root-entity events.
-#[allow(clippy::too_many_arguments)]
 fn send_action_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(Entity, &mut RendererSceneContext, &GlobalTransform)>,
@@ -1886,9 +1887,9 @@ fn handle_hover_stream(
                 // entity's proximity tooltips don't double-fire on the cursor
                 // stream when the player happens to be aiming at it.
                 cursor_entries(t, pe)
-                    .map(|(event, in_reach)| HoverAction {
+                    .map(|(event, reaches)| HoverAction {
                         event: event.clone(),
-                        enabled: t.in_scene && in_reach,
+                        enabled: reaches,
                     })
                     .collect()
             })
@@ -2092,5 +2093,129 @@ mod distance_tests {
         assert!(!check(info(Some(0.0), None, None)));
         // camera distance plays no part in proximity
         assert!(!check(info(Some(2.4), None, Some(100.0))));
+    }
+}
+
+#[cfg(test)]
+mod pointer_target_tests {
+    use super::*;
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        update_scene::synthetic_pointer::{Anchor, Hold, SyntheticAim},
+        update_world::mesh_collider::regions_of_parcels,
+    };
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+    use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+    use scene_material::SceneBounds;
+
+    #[test]
+    fn the_pointer_passes_a_scenes_collider_over_another_scenes_parcel() {
+        // A scene around a notch: parcels (0, 0) and (2, 0), joined by the row (0, 1), (1, 1),
+        // (2, 1). The notch at (1, 0), which is not the scene's, spans world x 16 to 32 and z
+        // -16 to 0; the scene's row behind it spans z -32 to -16.
+        let parcels = [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1)];
+        let regions = regions_of_parcels(&parcels);
+        let parcels = parcels.map(|(x, y)| IVec2::new(x, y));
+
+        let mut world = World::new();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "scene".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            parcels.into_iter().collect(),
+            regions.clone(),
+            SceneBounds::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        let mut colliders = SceneColliderData::for_regions(&regions, parcels.len());
+
+        // two posts of the scene on the line x = 24: one over the notch, one in the row behind
+        let [_in_the_notch, behind_the_notch] = [(1, -8.0), (2, -24.0)].map(|(index, z)| {
+            let entity = world.spawn_empty().id();
+            let scene_entity = SceneEntityId {
+                id: 512 + index,
+                generation: 0,
+            };
+            context.associate_bevy_entity(scene_entity, entity);
+            let id = ColliderId::new(scene_entity, None, 0);
+            let layers = Group::from_bits_truncate(ColliderLayer::ClPointer as u32);
+            let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+                .collision_groups(InteractionGroups::new(
+                    layers,
+                    layers,
+                    InteractionTestMode::And,
+                ))
+                .build();
+            colliders.set_collider(&id, collider, Some(entity));
+            colliders.update_collider_transform(
+                &id,
+                &GlobalTransform::from(
+                    Transform::from_xyz(24.0, 2.0, z).with_scale(Vec3::new(1.0, 4.0, 1.0)),
+                ),
+            );
+            entity
+        });
+        let scene = world.spawn((context, colliders)).id();
+
+        let mut pointers = ScenePointers::default();
+        for parcel in parcels {
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: "scene".to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        let mut live = LiveScenes::default();
+        live.scenes.insert("scene".to_owned(), scene);
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+        world.init_resource::<AvatarColliders>();
+        world.init_resource::<WorldPointerTarget>();
+        world.init_resource::<PointerRay>();
+
+        // the player stands in the notch and aims along -z at the post behind it
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_xyz(24.0, 0.0, -2.0),
+        ));
+        world.spawn((
+            Camera::default(),
+            PrimaryCamera::default(),
+            GlobalTransform::from_xyz(24.0, 2.0, -2.0),
+        ));
+        let target = world
+            .spawn(GlobalTransform::from_xyz(24.0, 2.0, -24.0))
+            .id();
+        world.insert_resource(SyntheticPointer(Some(SyntheticAim {
+            scene,
+            entity: SceneEntityId {
+                id: 514,
+                generation: 0,
+            },
+            target,
+            anchor: Anchor::Origin,
+            hold: Hold::Open,
+            started_frame: 0,
+        })));
+
+        world.run_system_once(update_pointer_target).unwrap();
+
+        let hit = world.resource::<WorldPointerTarget>().0.clone().unwrap();
+        assert_eq!(hit.container, behind_the_notch);
+        assert!((hit.camera_distance.0 - 21.5).abs() < 1e-3);
     }
 }

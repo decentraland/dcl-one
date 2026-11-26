@@ -30,7 +30,7 @@ use super::cluster::subscriber::{ClusterGateway, island_token_not_before};
 use crate::Address;
 use crate::auth::auth_chain::{AuthLink, AuthLinkType, parse_ephemeral_payload};
 use crate::gatekeeper::SharedState;
-use crate::gatekeeper::auth::{device_identifier, verify_signed_fetch};
+use crate::gatekeeper::auth::{device_identifier, verify_wallet_signed_fetch};
 use crate::shared::signed_fetch::SignedPath;
 
 pub const ISLAND_REFRESH_PATH: &str = "/island-refresh";
@@ -99,7 +99,7 @@ async fn refresh_bounded(
 ) -> Result<Response, IslandRefreshError> {
     let chain = crate::shared::signed_fetch::extract_auth_chain(headers)
         .map_err(|_| IslandRefreshError(StatusCode::BAD_REQUEST))?;
-    let signed = verify_signed_fetch(headers, "post", path, &[], state.eip1654())
+    let signed = verify_wallet_signed_fetch(headers, "post", path, state.eip1654())
         .await
         .map_err(|error| {
             IslandRefreshError(
@@ -332,7 +332,301 @@ mod tests {
         );
     }
 
+    struct UnreadAssignments;
+    #[async_trait::async_trait]
+    impl RealmAssignmentReader for UnreadAssignments {
+        async fn current_realm_assignment(
+            &self,
+            _wallet: &str,
+            _session: &str,
+        ) -> Result<RealmAssignmentSnapshot, FenceError> {
+            panic!("a refused request never reads the assignment");
+        }
+    }
+
+    #[tokio::test]
+    async fn scene_signer_is_refused_before_any_assignment_read() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let state: SharedState = Arc::new(CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        ));
+        let owner = Delegate::new();
+        let uri = ISLAND_REFRESH_PATH.parse().unwrap();
+        for metadata in [
+            json!({ "signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "Signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "signer": " decentraland-kernel-scene" }),
+            json!({ "signer": "Decentraland-Kernel-Scene" }),
+            json!({ "signer": 1 }),
+            json!({ "signer": true }),
+            json!({ "signer": {} }),
+        ] {
+            let headers = owner.headers(&metadata.to_string()).await;
+            let refused = refresh_bounded(
+                &state,
+                &UnreadAssignments,
+                &headers,
+                &SignedPath::at(&uri, ISLAND_REFRESH_PATH),
+            )
+            .await
+            .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{metadata}");
+        }
+    }
+
     const AUDIENCE: &str = "island-refresh-test";
+
+    #[tokio::test]
+    async fn selected_u64_domains_refresh_through_real_nats_and_persisted_assignment_documents() {
+        use crate::gatekeeper::admission::cluster::fence::{
+            AssignmentDocument, AssignmentFence, PgAssignmentFence, PulseAdmissionStamp,
+            RealmAssignmentReader,
+        };
+        use crate::gatekeeper::bus::{BrokerBus, NatsBus};
+        use crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+        use futures::StreamExt;
+        use std::io::BufRead;
+        struct Broker(std::process::Child);
+        impl Drop for Broker {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let binary = std::env::var("PULSE_NATS_SERVER_BIN").expect("required NATS executable");
+        let mut broker = Broker(
+            std::process::Command::new(binary)
+                .args(["--addr", "127.0.0.1", "--port", "-1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let stderr = broker.0.stderr.take().unwrap();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        let reader = std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stderr).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                if let Some((_, address)) = line.split_once("Listening for client connections on ")
+                    && let Ok(address) = address.trim().parse::<std::net::SocketAddr>()
+                {
+                    let _ = send.try_send(address.port());
+                }
+            }
+        });
+        let url = format!(
+            "nats://127.0.0.1:{}",
+            receive.recv_timeout(Duration::from_secs(5)).unwrap()
+        );
+        let client = async_nats::connect(url.clone()).await.unwrap();
+        let mut requests = client
+            .subscribe(crate::protocol::bus::cluster::ClusterLookup::SUBJECTS)
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+        let source = Arc::new(parking_lot::Mutex::new(None::<PeerClusterSnapshot>));
+        let current = source.clone();
+        let responder = client.clone();
+        let worker = tokio::spawn(async move {
+            while let Some(request) = requests.next().await {
+                let Ok(lookup) = crate::protocol::bus::cluster::ClusterLookup::decode(
+                    request.subject.as_str(),
+                    &request.payload,
+                ) else {
+                    continue;
+                };
+                let snapshot = current.lock().clone();
+                if let Some(snapshot) = snapshot
+                    && snapshot.wallet == lookup.wallet
+                    && snapshot.session == lookup.session
+                    && let Some(reply) = request.reply
+                {
+                    responder
+                        .publish(reply, snapshot.encode_to_vec().into())
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let pool = crate::db::scratch::pool(4)
+            .await
+            .expect("required disposable PostgreSQL");
+        let owner = Delegate::new();
+        seed(&pool, &owner.wallet(), &owner.session(), "island-C7", false).await;
+        let state = state_with_lookup_hook(pool.clone(), 0, None).await;
+        let bus = Arc::new(BrokerBus::new(Some(url), "selected-refresh"));
+        bus.connect();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !bus.is_ready() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let state = Arc::new(
+            Arc::try_unwrap(state)
+                .ok()
+                .expect("fixture sole state owner")
+                .with_bus(bus),
+        );
+        let app = router(state);
+        let fence = PgAssignmentFence::unfenced_test(pool.clone(), AUDIENCE.into()).unwrap();
+        let safety = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone())
+            .snapshot(&owner.wallet())
+            .await
+            .unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/pulse_selected_recovery.json"
+        )))
+        .unwrap();
+        for vector in vectors["identity_boundary_vectors"].as_array().unwrap() {
+            let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+            let mut snapshot = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
+            snapshot.wallet = owner.wallet();
+            snapshot.session = owner.session();
+            snapshot.cluster_id = "C7".into();
+            snapshot.realm = "realm".into();
+            let Some(mut stamp) = PulseAdmissionStamp::from_snapshot(&snapshot, 0) else {
+                assert_eq!(vector["expected_selection_evidence_valid"], false);
+                continue;
+            };
+            stamp.safety_generation = safety.generation;
+            stamp.safety_token_floor = safety.token_floor;
+            let document = AssignmentDocument {
+                pulse_admission: Some(stamp.clone()),
+                island_id: "island-C7".into(),
+                connection_string: "livekit:expired".into(),
+                from_island_id: None,
+                token_expires_at_unix: Some(1),
+                peers: Default::default(),
+            };
+            fence
+                .lock_realm(&owner.wallet(), &owner.session())
+                .await
+                .unwrap()
+                .commit(document)
+                .await
+                .unwrap();
+            let restored = fence
+                .current_realm_assignment(&owner.wallet(), &owner.session())
+                .await
+                .unwrap()
+                .pulse_admission
+                .unwrap();
+            assert_eq!(restored, stamp, "{}", vector["id"]);
+            *source.lock() = Some(snapshot.clone());
+            let (status, bytes) = call(&app, owner.headers("{}").await, b"").await;
+            assert_eq!(status, StatusCode::OK, "{}", vector["id"]);
+            let response = IslandRefreshResponse::decode(bytes).unwrap();
+            assert!(response.adapter.starts_with("livekit:"));
+            // A current Pulse reply cannot supply the missing provenance of an old SQL stamp.
+            let assignment: serde_json::Value = sqlx::query_scalar("SELECT assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            let mut old_assignment = assignment.clone();
+            let old_stamp = old_assignment["pulseAdmission"].as_object_mut().unwrap();
+            old_stamp.remove("selectedOrigin");
+            old_stamp.remove("selectedIdentity");
+            sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_json=$3 WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).bind(&old_assignment).execute(&pool).await.unwrap();
+            let before: (i64, i64, i64, serde_json::Value) = sqlx::query_as("SELECT owner_epoch,assignment_revision,fencing_token,assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                fence
+                    .current_realm_assignment(&owner.wallet(), &owner.session())
+                    .await,
+                Err(super::super::cluster::fence::FenceError::Invalid)
+            );
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{} old SQL stamp",
+                vector["id"]
+            );
+            assert!(body.is_empty());
+            let after: (i64, i64, i64, serde_json::Value) = sqlx::query_as("SELECT owner_epoch,assignment_revision,fencing_token,assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                after, before,
+                "refused refresh preserves old assignment and fences"
+            );
+            sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_json=$3 WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                .bind(AUDIENCE).bind(owner.wallet()).bind(assignment).execute(&pool).await.unwrap();
+            for (field, mut changed) in [
+                ("origin", snapshot.clone()),
+                ("identity", snapshot.clone()),
+                ("cleanup", snapshot.clone()),
+                ("unknown", snapshot.clone()),
+                ("cluster", snapshot.clone()),
+                ("realm", snapshot.clone()),
+                ("source", snapshot.clone()),
+                ("version", snapshot.clone()),
+                ("pulse-floor", snapshot.clone()),
+            ] {
+                match field {
+                    "origin" => {
+                        changed.selected_origin = if changed.selected_origin == 1 { 2 } else { 1 }
+                    }
+                    "identity" => changed.selected_identity = Some(0),
+                    "cleanup" => changed.assignment_state = 2,
+                    "cluster" => changed.cluster_id.push_str("-changed"),
+                    "realm" => changed.realm.push_str("-changed"),
+                    "source" => changed.source_incarnation.push_str("-changed"),
+                    "version" => changed.assignment_version += 1,
+                    "pulse-floor" => changed.token_not_before = Some(1),
+                    _ => {
+                        changed.selected_identity = None;
+                        changed.selected_origin = 0;
+                    }
+                }
+                *source.lock() = Some(changed);
+                let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+                assert_ne!(status, StatusCode::OK, "{} {field}", vector["id"]);
+                assert!(body.is_empty());
+            }
+            snapshot.pass += 1;
+            *source.lock() = Some(snapshot);
+            assert_eq!(
+                call(&app, owner.headers("{}").await, b"").await.0,
+                StatusCode::OK
+            );
+        }
+        // Pulse has no reply for another wallet or session whatever the vector,
+        // so each case waits out the refresh deadline once, not per vector.
+        let current = source.lock().clone().expect("a valid vector");
+        for field in ["wallet", "session"] {
+            let mut changed = current.clone();
+            match field {
+                "wallet" => changed.wallet = SESSION_A.into(),
+                _ => changed.session = SESSION_A.into(),
+            }
+            *source.lock() = Some(changed);
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_ne!(status, StatusCode::OK, "{field}");
+            assert!(body.is_empty());
+        }
+        *source.lock() = Some(current);
+        assert_eq!(
+            call(&app, owner.headers("{}").await, b"").await.0,
+            StatusCode::OK
+        );
+        worker.abort();
+        let _ = worker.await;
+        pool.close().await;
+        drop(broker);
+        reader.join().unwrap();
+    }
 
     struct Delegate {
         root: PrivateKeySigner,
@@ -394,7 +688,7 @@ mod tests {
     }
 
     async fn seed(pool: &sqlx::PgPool, wallet: &str, session: &str, island: &str, lapsed: bool) {
-        let safety = super::super::cluster::safety::SafetyStore::new(pool.clone())
+        let safety = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone())
             .snapshot(wallet)
             .await
             .unwrap();
@@ -406,7 +700,7 @@ mod tests {
         .bind(AUDIENCE)
         .bind(wallet)
         .bind(session)
-        .bind(json!({ "islandId": island, "connectionString": "livekit:expired", "tokenExpiresAtUnix": 1, "pulseAdmission": { "wallet": wallet, "session": session, "clusterId": island.strip_prefix("island-").unwrap_or(island), "realm": "realm", "sourceIncarnation": "refresh-test", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor } }))
+        .bind(json!({ "islandId": island, "connectionString": "livekit:expired", "tokenExpiresAtUnix": 1, "pulseAdmission": { "selectedOrigin": "native", "selectedIdentity": 1, "wallet": wallet, "session": session, "clusterId": island.strip_prefix("island-").unwrap_or(island), "realm": "realm", "sourceIncarnation": "refresh-test", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0, "safetyGeneration":safety.generation,"safetyTokenFloor":safety.token_floor } }))
         .bind(lapsed)
         .execute(pool)
         .await
@@ -450,7 +744,7 @@ mod tests {
             Arc::new(crate::presence::Presence::new()),
             Arc::new(crate::interfaces::test_support::StubDirectory::default()),
         )
-        .with_cluster(config)
+        .with_cluster_for_test(config)
         .unwrap();
         use crate::gatekeeper::bus::{InProcessBus, NatsBus};
         use crate::protocol::pulse::decentraland::pulse::{PeerClusterSnapshot, PendingTakeover};
@@ -464,6 +758,9 @@ mod tests {
                 hook(n);
             }
             let snapshot = PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: lookup.wallet,
                 session: lookup.session,
                 cluster_id: "C7".into(),
@@ -550,7 +847,10 @@ mod tests {
         for change in [
             "unchanged",
             "owner",
+            "session",
+            "epoch",
             "revision",
+            "fencing-token",
             "ban",
             "generation",
             "floor",
@@ -559,7 +859,7 @@ mod tests {
             let owner = Delegate::new();
             seed(&pool, &owner.wallet(), &owner.session(), "island-C7", false).await;
             let (entered, waiting) = std::sync::mpsc::channel();
-            let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+            let release = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
             let gate = release.clone();
             let hook = Arc::new(move |n| {
                 if n == 1 {
@@ -567,13 +867,12 @@ mod tests {
                     entered.send(()).unwrap();
                     tokio::task::block_in_place(|| {
                         let (lock, ready) = &*gate;
-                        let (guard, timeout) = ready
-                            .wait_timeout_while(
-                                lock.lock().unwrap(),
-                                Duration::from_secs(5),
-                                |released| !*released,
-                            )
-                            .unwrap();
+                        let mut guard = lock.lock();
+                        let timeout = ready.wait_while_for(
+                            &mut guard,
+                            |released| !*released,
+                            Duration::from_secs(5),
+                        );
                         assert!(
                             *guard && !timeout.timed_out(),
                             "test must release paused lookup"
@@ -593,8 +892,17 @@ mod tests {
                 "owner" => {
                     sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_session=$2, owner_epoch=owner_epoch+1, fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).bind(SESSION_A).execute(&pool).await.unwrap();
                 }
+                "session" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_session=$2 WHERE owner_address=$1").bind(owner.wallet()).bind(SESSION_A).execute(&pool).await.unwrap();
+                }
+                "epoch" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET owner_epoch=owner_epoch+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                }
                 "revision" => {
-                    sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1, fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET assignment_revision=assignment_revision+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
+                }
+                "fencing-token" => {
+                    sqlx::query("UPDATE social.archipelago_v4_assignments SET fencing_token=fencing_token+1 WHERE owner_address=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
                 }
                 "ban" => {
                     sqlx::query("INSERT INTO social.user_bans (banned_address,banned_by,reason,banned_at) VALUES ($1,'test','test',timezone('UTC',now()))").bind(owner.wallet()).execute(&pool).await.unwrap();
@@ -606,7 +914,8 @@ mod tests {
                     sqlx::query("UPDATE social.island_admission_fences SET token_floor=floor(extract(epoch FROM clock_timestamp()))::bigint+10 WHERE wallet=$1").bind(owner.wallet()).execute(&pool).await.unwrap();
                 }
                 "hazard" => {
-                    let store = super::super::cluster::safety::SafetyStore::new(pool.clone());
+                    let store =
+                        super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone());
                     let operation = crate::protocol::pulse::decentraland::pulse::PendingTakeover {
                         takeover_id: "final-wait".into(),
                         displaced_session: SESSION_A.into(),
@@ -630,7 +939,7 @@ mod tests {
                 }
                 _ => {}
             }
-            *release.0.lock().unwrap() = true;
+            *release.0.lock() = true;
             release.1.notify_one();
             let (status, body) = work.await.unwrap();
             if status != StatusCode::OK {
@@ -643,7 +952,10 @@ mod tests {
             vec![
                 ("unchanged", StatusCode::OK),
                 ("owner", StatusCode::FORBIDDEN),
+                ("session", StatusCode::FORBIDDEN),
+                ("epoch", StatusCode::FORBIDDEN),
                 ("revision", StatusCode::FORBIDDEN),
+                ("fencing-token", StatusCode::FORBIDDEN),
                 ("ban", StatusCode::FORBIDDEN),
                 ("generation", StatusCode::FORBIDDEN),
                 ("floor", StatusCode::FORBIDDEN),
@@ -772,6 +1084,10 @@ mod tests {
             }
         }).await.expect("final verifier actually awaited the intended SQL lock");
     }
+    /// How long after its ageing the owner-expiry lease lapses: centred in
+    /// the final lock wait's 1.5s timeout, leaving the observed wait time to
+    /// start before it and the release time to follow it.
+    const OWNER_EXPIRY_WINDOW: Duration = Duration::from_millis(700);
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn refresh_final_owner_lock_wait_rechecks_wallet_recorded_and_presented_device_bans() {
         if std::env::var("CATALYST_TEST_DATABASE_URL")
@@ -837,9 +1153,6 @@ mod tests {
                 "{}".into()
             };
             let headers = owner.headers(&metadata).await;
-            if matches!(change, "owner-expiry" | "short-wait") {
-                sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-interval '89 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(owner.wallet()).execute(&pool).await.unwrap();
-            }
             let gate = reader.clone();
             let task = tokio::spawn(async move {
                 let uri = ISLAND_REFRESH_PATH.parse().unwrap();
@@ -860,6 +1173,19 @@ mod tests {
             tokio::time::timeout(ISLAND_REFRESH_DEADLINE, reader.entered.notified())
                 .await
                 .expect("refresh prelude reached the final owner read");
+            // Age the owner once the prelude is done, so its duration does
+            // not consume the lease window, and before the final row lock.
+            // owner-expiry lapses OWNER_EXPIRY_WINDOW later: after the final
+            // wait is observed, before the 1.5s lock timeout gives up.
+            // short-wait stays fresh for seconds past its release.
+            let age = match change {
+                "owner-expiry" => Some(90_000 - OWNER_EXPIRY_WINDOW.as_millis() as i64),
+                "short-wait" => Some(80_000),
+                _ => None,
+            };
+            if let Some(age) = age {
+                sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-$3*interval '1 millisecond' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(owner.wallet()).bind(age).execute(&pool).await.unwrap();
+            }
             let mut held = pool.begin().await.unwrap();
             sqlx::query("SELECT 1 FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm' FOR UPDATE").bind(AUDIENCE).bind(owner.wallet()).fetch_one(&mut *held).await.unwrap();
             reader.release.notify_one();
@@ -873,9 +1199,20 @@ mod tests {
             }
             if change == "owner-expiry" {
                 // No row mutation while blocked: let the existing lease expire
-                // naturally after the SELECT's pre-lock projection. Keep both
-                // the production1.5s lock and2s refresh budgets intact.
-                tokio::time::sleep(Duration::from_millis(1050)).await;
+                // naturally after the SELECT's pre-lock projection, observed
+                // on the database clock. Keep both the production 1.5s lock
+                // and 2s refresh budgets intact.
+                tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        let fresh:bool=sqlx::query_scalar("SELECT updated_at>=clock_timestamp()-interval '90 seconds' FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(owner.wallet()).fetch_one(&pool).await.unwrap();
+                        if !fresh {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .expect("owner lease lapses on the database clock");
             } else if change == "short-wait" {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             } else if change != "unchanged" {
@@ -986,7 +1323,7 @@ mod tests {
             tokio::time::timeout(ISLAND_REFRESH_DEADLINE, reader.entered.notified())
                 .await
                 .expect("refresh prelude reached the final fence read");
-            let store = super::super::cluster::safety::SafetyStore::new(pool.clone());
+            let store = super::super::cluster::safety::SafetyStore::unfenced_test(pool.clone());
             let mut held = store.lock(&owner.wallet()).await.unwrap();
             reader.release.notify_one();
             wait_for_final_sql_lock(&pool, &label, "social.island_admission_fences").await;

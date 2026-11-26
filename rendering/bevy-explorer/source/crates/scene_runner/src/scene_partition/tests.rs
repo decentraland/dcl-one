@@ -384,7 +384,7 @@ fn the_arriving_players_scene_is_active_while_they_are_out_of_world() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(&world)
         .unwrap();
-    world.entity_mut(player).insert(OutOfWorld);
+    world.entity_mut(player).insert(OutOfWorld::default());
     let destination = world.spawn(SceneHash("destination".to_owned())).id();
     player_stands_on(&mut world, "destination", destination);
     let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
@@ -526,6 +526,174 @@ fn an_outfit_change_swaps_the_registered_hashes() {
     );
     assert_eq!(
         ipfs.scene_priority("kept"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+}
+
+#[test]
+fn an_avatars_emotes_register_beside_its_wearables_and_release_when_playback_ends() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["body".to_owned()]),
+            PartitionedEmoteDownloads(vec!["dance".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("dance"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+
+    // the emote ended: its hash goes, the outfit's stay
+    world
+        .entity_mut(avatar)
+        .remove::<PartitionedEmoteDownloads>();
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(ipfs.scene_priority("dance"), None);
+    assert_eq!(
+        ipfs.scene_priority("body"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+}
+
+#[test]
+fn publishes_an_emote_at_the_partition_of_the_avatar_playing_it() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    // an avatar with no outfit filed still gets a partition from its position
+    world.spawn((
+        PartitionedEmoteDownloads(vec!["dance".to_owned()]),
+        GlobalTransform::from_translation(Vec3::new(40.0, 0.0, -8.0)),
+    ));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(update_scene_partitions).unwrap();
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("dance"),
+        Some(LoadPriority {
+            tier: Tier::Avatar,
+            parcel_distance: 2,
+            is_behind: false,
+            sqr_distance: FloatOrd(1024.0),
+        })
+    );
+}
+
+fn player_entity(world: &mut World) -> Entity {
+    world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(world)
+        .unwrap()
+}
+
+#[test]
+fn the_players_own_wearables_and_emotes_rank_ahead_of_the_players_scene() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    let home = world.spawn(SceneHash("home".to_owned())).id();
+    player_stands_on(&mut world, "home", home);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    world.spawn((
+        PartitionedDownloads(vec!["their-hat".to_owned()]),
+        PartitionedEmoteDownloads(vec!["their-dance".to_owned()]),
+        Partition(near),
+    ));
+
+    // filed before the player has a partition: first from the moment they are registered
+    let player = player_entity(&mut world);
+    world.entity_mut(player).insert((
+        PartitionedDownloads(vec!["own-hat".to_owned()]),
+        PartitionedEmoteDownloads(vec!["own-dance".to_owned()]),
+    ));
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(
+        ipfs.scene_priority("own-hat"),
+        Some(LoadPriority::OWN_AVATAR)
+    );
+    assert_eq!(
+        ipfs.scene_priority("own-dance"),
+        Some(LoadPriority::OWN_AVATAR)
+    );
+
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    let ipfs = world.resource::<IpfsResource>();
+    let own_hat = ipfs.scene_priority("own-hat").unwrap();
+    let own_dance = ipfs.scene_priority("own-dance").unwrap();
+    let home = ipfs.scene_priority("home").unwrap();
+    assert_eq!(own_hat, LoadPriority::OWN_AVATAR);
+    assert_eq!(own_dance, LoadPriority::OWN_AVATAR);
+    assert_eq!(home, LoadPriority::TOP);
+    assert!(
+        own_hat < home && own_dance < home,
+        "the player's own avatar downloads before the scene they stand in"
+    );
+    // another avatar's stay in the avatar tier, after the player's scene
+    assert_eq!(
+        ipfs.scene_priority("their-hat"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+    assert_eq!(
+        ipfs.scene_priority("their-dance"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+}
+
+#[test]
+fn a_wearable_the_player_shares_with_another_avatar_ranks_as_the_players_own() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    world.spawn((
+        PartitionedDownloads(vec!["shared".to_owned()]),
+        Partition(near),
+    ));
+    let player = player_entity(&mut world);
+    world
+        .entity_mut(player)
+        .insert(PartitionedDownloads(vec!["shared".to_owned()]));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(publish_download_priorities).unwrap();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("shared"),
+        Some(LoadPriority::OWN_AVATAR)
+    );
+
+    // the player takes it off: it follows the avatar still wearing it
+    world
+        .entity_mut(player)
+        .insert(PartitionedDownloads(Vec::new()));
+    world.run_system_once(publish_download_priorities).unwrap();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("shared"),
         Some(near.load_priority(Tier::Avatar))
     );
 }

@@ -15,7 +15,16 @@ const NATIVE_RECEIVE_POLICY: enet::ReceivePolicy = enet::ReceivePolicy {
     maximum_queued_bytes: 65536,
     maximum_queued_commands: 256,
 };
-pub(crate) const RELAY_TIMEOUT_MS: u32 = 5000;
+const ENET_PEER_TIMEOUT_MS: u32 = 5000;
+/// How often the socket warns about the datagrams errors cost it; the metric counts every one.
+const SOCKET_ERROR_WARNING_INTERVAL: Duration = Duration::from_secs(10);
+/// Receive errors one `receive` call skips before it hands the service loop back.
+const RECEIVE_ERRORS_PER_CALL: usize = 64;
+/// Winsock codes std maps to no `ErrorKind`.
+#[cfg(windows)]
+const WSAEMSGSIZE: i32 = 10040;
+#[cfg(windows)]
+const WSAENETRESET: i32 = 10052;
 
 #[derive(Debug, Clone)]
 pub struct HostConfig {
@@ -37,6 +46,8 @@ pub enum Event {
         /// Source IP, when the transport knows it at connect time (WebTransport). ENet leaves
         /// this `None`; the server resolves it via [`Host::peer_ip`].
         ip: Option<String>,
+        /// Immutable WebTransport connection ID for refusing this connection even after slot reuse.
+        webtransport_connection: Option<u64>,
     },
     Receive {
         peer: PeerId,
@@ -46,11 +57,18 @@ pub enum Event {
     Disconnect {
         peer: PeerId,
     },
-    /// Transport-level malformed input (a stream frame past the cap, or a datagram too short
-    /// to hold its header). Only WebTransport emits this -- ENet frames packets itself. The
-    /// server charges it against the shared corrupted-packet budget, exactly like a protobuf
-    /// decode failure, and disconnects the peer on exhaustion.
+    /// Transport-level malformed input (a stream frame over the cap and up to twice it, whose
+    /// payload is skipped, or a datagram too short to hold its header). Only WebTransport emits
+    /// this -- ENet frames packets itself. The server charges it against the shared
+    /// corrupted-packet budget, exactly like a protobuf decode failure, and disconnects the peer
+    /// on exhaustion.
     Corrupt {
+        peer: PeerId,
+    },
+    /// A WebTransport stream frame declared a payload over twice the message cap, and the
+    /// stream is not read past it. Like an ENet packet over twice its receive buffer, the server
+    /// disconnects the peer at once with `PacketCorrupted`.
+    Oversized {
         peer: PeerId,
     },
 }
@@ -61,20 +79,73 @@ pub struct Host {
     application_peers: HashMap<PeerId, ApplicationBudget>,
 }
 
-struct ReadySocket(UdpSocket);
+struct ReadySocket {
+    socket: UdpSocket,
+    warnings: WarningThrottle,
+    #[cfg(test)]
+    faults: SocketFaults,
+}
+
+impl ReadySocket {
+    fn new(socket: UdpSocket) -> Self {
+        Self {
+            socket,
+            warnings: WarningThrottle::default(),
+            #[cfg(test)]
+            faults: SocketFaults::default(),
+        }
+    }
+
+    /// A datagram the socket could not send or receive. ENet carries on without it: it resends
+    /// what was reliable and times out a peer that stays unreachable.
+    fn lost(&mut self, operation: &'static str, error: &std::io::Error) {
+        crate::pulse::metrics::enet_socket_error(operation, error.kind());
+        if let Some(held_back) = self.warnings.due(std::time::Instant::now()) {
+            tracing::warn!(
+                operation,
+                %error,
+                held_back,
+                "ENet socket error cost one datagram; Pulse keeps serving"
+            );
+        }
+    }
+
+    fn try_send_to(&self, buffer: &[u8], address: SocketAddr) -> std::io::Result<usize> {
+        #[cfg(test)]
+        if let Some(error) = self.faults.take(|queues| &mut queues.send) {
+            return Err(error);
+        }
+        self.socket.try_send_to(buffer, address)
+    }
+
+    fn try_recv_from(&self, buffer: &mut [u8]) -> std::io::Result<(usize, SocketAddr)> {
+        #[cfg(test)]
+        if let Some(error) = self.faults.take(|queues| &mut queues.receive) {
+            return Err(error);
+        }
+        self.socket.try_recv_from(buffer)
+    }
+}
 
 impl enet::Socket for ReadySocket {
     type Address = SocketAddr;
     type Error = std::io::Error;
 
     fn init(&mut self, _: enet::SocketOptions) -> std::io::Result<()> {
-        self.0.set_broadcast(true)
+        self.socket.set_broadcast(true)
     }
 
+    /// Every send error concerns this datagram and its address (no route to it, a route or rule
+    /// that refuses it, no buffer for it now), so it costs that datagram. A socket that is gone
+    /// fails the next receive as well, which stops the server.
     fn send(&mut self, address: SocketAddr, buffer: &[u8]) -> std::io::Result<usize> {
-        match self.0.try_send_to(buffer, address) {
+        match self.try_send_to(buffer, address) {
+            Ok(sent) => Ok(sent),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(0),
-            result => result,
+            Err(error) => {
+                self.lost("send", &error);
+                Ok(0)
+            }
         }
     }
 
@@ -82,11 +153,104 @@ impl enet::Socket for ReadySocket {
         &mut self,
         buffer: &mut [u8; enet::MTU_MAX],
     ) -> std::io::Result<Option<(SocketAddr, enet::PacketReceived)>> {
-        match self.0.try_recv_from(buffer) {
-            Ok((len, address)) => Ok(Some((address, enet::PacketReceived::Complete(len)))),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(error) => Err(error),
+        for _ in 0..RECEIVE_ERRORS_PER_CALL {
+            match self.try_recv_from(buffer) {
+                Ok((len, address)) => {
+                    return Ok(Some((address, enet::PacketReceived::Complete(len))));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                // Interrupted before it read anything: nothing is lost, so read again.
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if reports_one_datagram(&error) => self.lost("receive", &error),
+                Err(error) => {
+                    tracing::error!(%error, "ENet socket failed; Pulse stops");
+                    return Err(error);
+                }
+            }
         }
+        // What is still queued waits for the next service call.
+        Ok(None)
+    }
+}
+
+/// A receive error that reports on one datagram, not on the socket: the ICMP answer to an earlier
+/// datagram (a peer's closed port or unreachable address: Windows reports it by default, Linux
+/// only to a connected socket or one with IP_RECVERR), and on Windows a datagram larger than the
+/// buffer (WSAEMSGSIZE; Linux truncates it instead) or an expired TTL (WSAENETRESET).
+fn reports_one_datagram(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{
+        ConnectionRefused, ConnectionReset, HostUnreachable, NetworkUnreachable,
+    };
+    if matches!(
+        error.kind(),
+        ConnectionReset | ConnectionRefused | HostUnreachable | NetworkUnreachable
+    ) {
+        return true;
+    }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(WSAEMSGSIZE | WSAENETRESET)) {
+        return true;
+    }
+    false
+}
+
+/// One warning per interval about socket errors the server carried on through.
+#[derive(Default)]
+struct WarningThrottle {
+    last: Option<std::time::Instant>,
+    held_back: u64,
+}
+
+impl WarningThrottle {
+    /// Whether a warning is due at `now`, with how many errors went unwarned since the last one.
+    fn due(&mut self, now: std::time::Instant) -> Option<u64> {
+        match self.last {
+            Some(last) if now.saturating_duration_since(last) < SOCKET_ERROR_WARNING_INTERVAL => {
+                self.held_back += 1;
+                None
+            }
+            _ => {
+                self.last = Some(now);
+                Some(std::mem::take(&mut self.held_back))
+            }
+        }
+    }
+}
+
+/// Errors the socket returns in place of its next real calls, one per call and in order: how a
+/// test produces what the operating system reports without making the network misbehave.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct SocketFaults(std::sync::Arc<parking_lot::Mutex<FaultQueues>>);
+
+#[cfg(test)]
+#[derive(Default)]
+struct FaultQueues {
+    send: std::collections::VecDeque<std::io::Error>,
+    receive: std::collections::VecDeque<std::io::Error>,
+}
+
+#[cfg(test)]
+impl SocketFaults {
+    pub(crate) fn fail_next_send(&self, error: std::io::Error) {
+        self.0.lock().send.push_back(error);
+    }
+
+    pub(crate) fn fail_next_receive(&self, error: std::io::Error) {
+        self.0.lock().receive.push_back(error);
+    }
+
+    /// Faults no socket call has returned yet.
+    pub(crate) fn pending(&self) -> usize {
+        let queues = self.0.lock();
+        queues.send.len() + queues.receive.len()
+    }
+
+    fn take(
+        &self,
+        queue: impl FnOnce(&mut FaultQueues) -> &mut std::collections::VecDeque<std::io::Error>,
+    ) -> Option<std::io::Error> {
+        queue(&mut self.0.lock()).pop_front()
     }
 }
 
@@ -150,6 +314,17 @@ impl Host {
         Self::over(socket, &config, Some(Box::new(move || clock.now())))
     }
 
+    /// [`Host::bind`] whose socket returns `faults` in place of its next real calls.
+    #[cfg(test)]
+    pub(crate) async fn bind_with_faults(
+        config: HostConfig,
+        faults: SocketFaults,
+    ) -> std::io::Result<Self> {
+        let mut host = Self::bind(config).await?;
+        host.inner.socket_mut().faults = faults;
+        Ok(host)
+    }
+
     async fn bound(config: &HostConfig) -> std::io::Result<UdpSocket> {
         let socket = UdpSocket::bind(config.bind).await?;
         socket.writable().await?;
@@ -170,7 +345,7 @@ impl Host {
         if let Some(time) = time {
             settings.time = time;
         }
-        let inner = enet::Host::new(ReadySocket(socket), settings)
+        let inner = enet::Host::new(ReadySocket::new(socket), settings)
             .map_err(|e| std::io::Error::other(format!("enet host: {e:?}")))?;
         Ok(Self {
             inner,
@@ -180,7 +355,7 @@ impl Host {
     }
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.inner.socket().0.local_addr()
+        self.inner.socket().socket.local_addr()
     }
 
     pub fn peer_ip(&mut self, peer: PeerId) -> Option<String> {
@@ -198,12 +373,10 @@ impl Host {
         Ok(peer.id().0 as PeerId)
     }
 
+    /// An error is the socket's own: what is left once [`ReadySocket`] has carried on through the
+    /// errors that cost one datagram. It means the socket is gone.
     pub async fn service(&mut self) -> std::io::Result<Option<Event>> {
-        let event = self
-            .inner
-            .service()
-            .map_err(|e| std::io::Error::other(format!("{e:?}")))?
-            .map(|e| e.no_ref());
+        let event = self.inner.service()?.map(|e| e.no_ref());
         match event {
             Some(enet::EventNoRef::ReceiveLimitExceeded {
                 peer,
@@ -215,10 +388,17 @@ impl Host {
                 kind,
             })),
             Some(enet::EventNoRef::Connect { peer, .. }) => {
+                // Apply both bounds on every connect, including when ENet recycles the slot.
+                self.inner.peer_mut(peer).set_timeout(
+                    0,
+                    ENET_PEER_TIMEOUT_MS,
+                    ENET_PEER_TIMEOUT_MS,
+                );
                 self.application_peers.remove(&(peer.0 as PeerId));
                 Ok(Some(Event::Connect {
                     peer: peer.0 as PeerId,
                     ip: None,
+                    webtransport_connection: None,
                 }))
             }
             Some(enet::EventNoRef::Disconnect { peer, .. }) => {
@@ -241,7 +421,7 @@ impl Host {
             }
             None => {
                 tokio::select! {
-                    ready = self.inner.socket().0.readable() => { ready?; }
+                    ready = self.inner.socket().socket.readable() => { ready?; }
                     _ = tokio::time::sleep(SERVICE_POLL) => {}
                 }
                 Ok(None)
@@ -264,6 +444,13 @@ impl Host {
             self.inner.flush();
         }
         Ok(())
+    }
+
+    pub(super) fn disconnect_connected(&mut self, reason: u32) {
+        for peer in self.inner.connected_peers_mut() {
+            // ENet sends this notice immediately, so closing the socket doesn't strand it.
+            peer.disconnect_now(reason);
+        }
     }
 
     pub async fn send(&mut self, peer: PeerId, packet: Packet) -> std::io::Result<()> {
@@ -322,13 +509,6 @@ impl Host {
             .map_err(|error| std::io::Error::other(format!("application send: {error:?}")))
     }
 
-    pub fn set_relay_timeout(&mut self, peer: PeerId, relay: bool) {
-        let bound = if relay { RELAY_TIMEOUT_MS } else { 0 };
-        if let Some(p) = self.inner.get_peer_mut(to_enet_peer(peer)) {
-            p.set_timeout(0, bound, bound);
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn peer_timeout(&mut self, peer: PeerId) -> Option<(u32, u32)> {
         let debug = format!("{:?}", self.inner.get_peer_mut(to_enet_peer(peer))?);
@@ -356,6 +536,67 @@ mod tests {
 
     fn loopback() -> SocketAddr {
         "127.0.0.1:0".parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn enet_timeout_retires_a_silent_peer_on_each_use_of_a_slot() {
+        let config = HostConfig {
+            bind: loopback(),
+            max_peers: 1,
+            channel_limit: 3,
+        };
+        let clock = ManualClock::new();
+        let mut server = Host::bind_with_clock(config.clone(), clock.clone())
+            .await
+            .unwrap();
+        let address = server.local_addr().unwrap();
+
+        for _ in 0..2 {
+            let mut client = Host::bind(config.clone()).await.unwrap();
+            client.connect(address, 3).unwrap();
+            let peer = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Some(Event::Connect { peer, .. }) = server.service().await.unwrap() {
+                        break peer;
+                    }
+                    if let Some(Event::Connect { .. }) = client.service().await.unwrap() {
+                        // A nonzero RTT keeps the default retransmission-count timeout from
+                        // triggering at five seconds and masking a missing flat deadline.
+                        clock.advance(Duration::from_millis(120));
+                    }
+                }
+            })
+            .await
+            .expect("ENet handshake did not complete");
+            assert_eq!(peer, 0);
+            drop(client);
+
+            // Keep a reliable packet unacknowledged. Native ENet checks the deadline on retransmit.
+            let silent_since = clock.now();
+            server
+                .send(peer, Packet::reliable(0, vec![1]))
+                .await
+                .unwrap();
+            server.flush();
+            loop {
+                clock.advance(Duration::from_millis(50));
+                let elapsed = clock.now() - silent_since;
+                assert!(
+                    elapsed <= Duration::from_secs(8),
+                    "silent ENet peer kept past {elapsed:?}"
+                );
+                if let Some(Event::Disconnect { peer: disconnected }) =
+                    server.service().await.unwrap()
+                {
+                    assert_eq!(disconnected, peer);
+                    assert!(
+                        elapsed >= Duration::from_secs(5),
+                        "peer timed out after {elapsed:?}"
+                    );
+                    break;
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -402,6 +643,47 @@ mod tests {
             HOST_FLUSH_CALLS.with(|c| c.get()),
             1,
             "expected a single coalesced flush for the whole tick, not one per message"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_socket_that_keeps_failing_hands_the_service_loop_back() {
+        let faults = SocketFaults::default();
+        let queued = 1000;
+        for _ in 0..queued {
+            faults.fail_next_receive(std::io::ErrorKind::ConnectionReset.into());
+        }
+        let mut host = Host::bind_with_faults(
+            HostConfig {
+                bind: loopback(),
+                max_peers: 8,
+                channel_limit: 8,
+            },
+            faults.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert!(host.service().await.unwrap().is_none());
+        assert!(
+            faults.pending() > 0,
+            "one service call went through all {queued} errors before returning"
+        );
+    }
+
+    #[test]
+    fn socket_error_warnings_come_once_per_interval_and_count_the_ones_held_back() {
+        let start = std::time::Instant::now();
+        let mut throttle = WarningThrottle::default();
+        let just_before = SOCKET_ERROR_WARNING_INTERVAL - Duration::from_millis(1);
+
+        assert_eq!(throttle.due(start), Some(0));
+        assert_eq!(throttle.due(start + Duration::from_millis(1)), None);
+        assert_eq!(throttle.due(start + just_before), None);
+        assert_eq!(throttle.due(start + SOCKET_ERROR_WARNING_INTERVAL), Some(2));
+        assert_eq!(
+            throttle.due(start + SOCKET_ERROR_WARNING_INTERVAL + Duration::from_millis(1)),
+            None
         );
     }
 }

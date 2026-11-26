@@ -82,10 +82,7 @@ pub(crate) mod support {
                 "catalyst_z_{tag}_{}",
                 &uuid::Uuid::new_v4().simple().to_string()[..12]
             );
-            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-                .execute(&admin)
-                .await
-                .unwrap();
+            crate::db::scratch::create_database_with_schema(&admin, &name).await;
             let mut url = url::Url::parse(&base).unwrap();
             url.set_path(&format!("/{name}"));
             let pool = crate::db::connect_pool(
@@ -97,7 +94,6 @@ pub(crate) mod support {
             )
             .await
             .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             Some(Self { pool, admin, name })
         }
 
@@ -120,23 +116,27 @@ pub(crate) mod support {
     /// rows: a configured reader that truly has nothing.
     pub async fn serve_empty_graph() -> String {
         use axum::routing::post;
-        let app = Router::new().route("/", post(|| async { axum::Json(json!({ "data": {} })) }));
+        let app = Router::new().route(
+            "/",
+            post(|| async { axum::Json(json!({ "data": { "nfts": [] } })) }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         format!("http://{addr}/")
     }
 
-    /// Every reader configured and answering nothing: the state the
+    /// Every reader configured and answering nothing, and the nft walk on
+    /// (what the index holds is the caller's seed): the state the
     /// unknown-address fixtures replay against.
     pub async fn state_with_empty_readers(pool: Option<sqlx::PgPool>) -> SharedState {
         let url = serve_empty_graph().await;
-        let settings = Settings {
+        let settings = super::super::owned_items::test_support::walking(Settings {
             eth_collections_subgraph_url: Some(url.clone()),
             matic_collections_subgraph_url: Some(url.clone()),
             marketplace_subgraph_url: Some(url),
             ..Settings::for_tests()
-        };
+        });
         let state = Arc::new(MarketplaceState::new(
             pool.unwrap_or_else(lazy_pool),
             crate::http::Outbound::for_tests(),
@@ -197,9 +197,9 @@ const DB_FIXTURES: &[&str] = &[
     "profile-alias-200-unknown-address",
 ];
 
-/// Fixtures whose empty page is a configured reader's answer for an unknown
-/// address; without a reader the same routes answer the unavailable
-/// envelope, so these replay against readers that answer nothing.
+/// Fixtures whose empty page is a published nft index's answer for an
+/// unknown address; without it the same routes answer the unavailable
+/// envelope, so these replay against an empty, published index.
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
@@ -339,13 +339,26 @@ async fn lambdas_fixtures_replay_exactly() {
         Some(state) => state,
         None => state_without_db(),
     };
-    let readers = support::state_with_empty_readers(Some(state.pool.clone())).await;
+    // The reader fixtures read an empty, published nft index of their own.
+    let own = support::OwnDb::create("fixtures").await;
+    if let Some(own) = &own {
+        super::owned_items::test_support::publish(
+            &own.pool,
+            &super::chain_walk::ChainNet::ALL,
+            true,
+            std::time::Duration::ZERO,
+        )
+        .await;
+    }
+    let readers = support::state_with_empty_readers(own.as_ref().map(|o| o.pool.clone())).await;
     let has_db = std::env::var("CATALYST_TEST_DATABASE_URL").is_ok();
     let mut failures = Vec::new();
     let mut replayed = 0;
     for path in fixture_files() {
         let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
-        if !has_db && DB_FIXTURES.contains(&stem.as_str()) {
+        if !has_db
+            && (DB_FIXTURES.contains(&stem.as_str()) || READER_FIXTURES.contains(&stem.as_str()))
+        {
             eprintln!("skipping {stem}: CATALYST_TEST_DATABASE_URL not set");
             continue;
         }
@@ -360,6 +373,9 @@ async fn lambdas_fixtures_replay_exactly() {
         if !notes.is_empty() {
             failures.push(format!("{stem}:\n    {}", notes.join("\n    ")));
         }
+    }
+    if let Some(own) = own {
+        own.drop().await;
     }
     assert!(replayed >= 10);
     assert!(
@@ -574,31 +590,28 @@ async fn by_owner_with_a_third_party_collection_validates_the_urn() {
     );
 }
 
-/// The explorer reads these lambdas: without a reader they answer the
-/// envelope, never an empty wardrobe (review finding 8).
+/// The explorer reads these lambdas: without the nft index (or the names
+/// reader) they answer the envelope, never an empty wardrobe (review
+/// finding 8), even with the collections subgraphs configured.
 #[tokio::test]
 async fn the_lambdas_answer_the_envelope_without_a_reader() {
     let state = state_without_db();
     for (uri, source) in [
         (
             "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/wearables",
-            "collections-subgraph:matic",
+            "nft-index",
         ),
         (
             "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/emotes",
-            "collections-subgraph:matic",
-        ),
-        (
-            "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
-            "marketplace-subgraph",
+            "nft-index",
         ),
         (
             "/lambdas/collections/wearables-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-            "collections-subgraph:matic",
+            "nft-index",
         ),
         (
             "/lambdas/collections/emotes-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-            "collections-subgraph:matic",
+            "nft-index",
         ),
     ] {
         let (status, body) = get_json(router(state.clone()), uri).await;
@@ -608,12 +621,32 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
             "{uri}: {body}"
         );
     }
-    let eth_only = support::state_without_db_settings(Settings {
+    // The NAMEs on mainnet read the nft index, which another process may
+    // publish into this database: one that cannot be read is lamb2's 502.
+    // Off mainnet, without the subgraph, there is no NAME source at all.
+    let names = "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names";
+    let (status, body) = get_json(router(state.clone()), names).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    let testnet = support::state_without_db_settings(Settings {
+        eth_network: "sepolia".into(),
+        ..Settings::for_tests()
+    });
+    let (status, body) = get_json(router(testnet), names).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("marketplace-subgraph")
+        ),
+        "{body}"
+    );
+    let subgraphs_only = support::state_without_db_settings(Settings {
         eth_collections_subgraph_url: Some("https://subgraph.example/eth".into()),
+        matic_collections_subgraph_url: Some("https://subgraph.example/matic".into()),
         ..Settings::for_tests()
     });
     let (status, body) = get_json(
-        router(eth_only),
+        router(subgraphs_only),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/wearables",
     )
     .await;
@@ -621,9 +654,9 @@ async fn the_lambdas_answer_the_envelope_without_a_reader() {
         (status, body["configure"].as_str()),
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Some("MATIC_COLLECTIONS_SUBGRAPH_URL")
+            Some("MARKETPLACE_NFT_INDEX_ENABLED")
         ),
-        "one network is not the wardrobe: {body}"
+        "the subgraphs are no ownership source: {body}"
     );
 }
 
@@ -818,6 +851,16 @@ async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(resp, json!({ "error": "Bad request", "message": msg }));
     }
+    let mut ids: Vec<Value> = (0..30_000).map(|i| json!(format!("a{i}"))).collect();
+    ids.push(Value::Null);
+    assert!(json!({"ids": ids}).to_string().len() < 256 * 1024);
+    let (status, _) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({"ids": ids}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, resp) = post_json(
         router(state.clone()),
         "/lambdas/profiles/metadata",
@@ -829,7 +872,7 @@ async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
 }
 
 #[tokio::test]
-async fn profiles_metadata_caps_distinct_ids_and_answers_bad_json_with_a_bare_500() {
+async fn profiles_metadata_takes_any_number_of_ids_and_answers_bad_json_with_a_bare_500() {
     let state = state_without_db();
     let resp = router(state.clone())
         .oneshot(
@@ -855,17 +898,16 @@ async fn profiles_metadata_caps_distinct_ids_and_answers_bad_json_with_a_bare_50
         json!({ "ids": ids }),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        body["message"],
-        "Too many profile ids were specified. Maximum allowed is 1000"
-    );
+    // No cap, as asset-bundle-registry (`AB-3-1001-ids.json`); without a
+    // database nothing is found.
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!([]));
 }
 
-/// Both paths, the per-id cache (50 ids or fewer) and the batch read, turn a
-/// failed database read into the bare 500.
+/// Both paths, the per-id cache (50 ids or fewer) and the batch read, answer
+/// a failed database read with asset-bundle-registry's 200 and what was found.
 #[tokio::test]
-async fn profiles_metadata_answers_a_failed_read_with_a_bare_500_on_both_paths() {
+async fn profiles_metadata_answers_a_failed_read_with_what_was_found_on_both_paths() {
     let state = state_without_db();
     for n in [3, 60] {
         let ids: Vec<String> = (0..n).map(|i| format!("0x{i:040x}")).collect();
@@ -875,8 +917,8 @@ async fn profiles_metadata_answers_a_failed_read_with_a_bare_500_on_both_paths()
             json!({ "ids": ids }),
         )
         .await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{n} ids");
-        assert_eq!(body, json!({ "error": "Internal Server Error" }), "{n} ids");
+        assert_eq!(status, StatusCode::OK, "{n} ids");
+        assert_eq!(body, json!([]), "{n} ids");
     }
 }
 
@@ -1250,7 +1292,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
 
     mark("collections", 300).await.unwrap();
     mark("items", 5).await.unwrap();
-    state.mirror_ready.clear();
     let interval = state.settings.market.mirror_interval.as_secs();
     let (status, body) = get_json(app(), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -1282,7 +1323,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
     }
 
     mark("items", 120).await.unwrap();
-    state.mirror_ready.clear();
     for uri in [
         "/v1/catalog?first=1",
         "/v2/catalog?first=1",
@@ -1313,7 +1353,6 @@ async fn catalog_reads_carry_as_of_and_prices_answer_503_past_their_budget() {
         "the job off, the copy past its budget: {body}"
     );
     mark("items", 5).await.unwrap();
-    frozen.mirror_ready.clear();
     let (status, body) = get_json(super::market_router(frozen), "/v1/catalog?first=1").await;
     assert_eq!(status, StatusCode::OK, "the job off, a fresh copy: {body}");
     assert_eq!(body["as_of"], marker("items").await.as_str());
@@ -1345,7 +1384,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
         .await
         .unwrap();
     let app = || super::market_router(state.clone());
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(
@@ -1367,7 +1405,6 @@ async fn without_a_subgraph_descriptive_reads_serve_the_recorded_copy() {
     .execute(pool)
     .await
     .unwrap();
-    state.mirror_ready.clear();
     for uri in DESCRIPTIVE {
         let (status, body) = get_json(app(), uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
@@ -1443,6 +1480,7 @@ async fn mirrored_rows_never_overwrite_a_local_trade_and_the_routes_serve_them()
             ..Settings::for_tests()
         },
     ));
+    super::trade_events::tests::publish_cursors(pool).await;
     assert_eq!(
         trades::ready(&local_only).await.unwrap(),
         trades::Readiness::LocalAuthority,
@@ -1574,7 +1612,7 @@ async fn a_development_stack_reads_a_partial_order_book_only_when_asked() {
     };
     let state = support::state_without_db_settings(settings);
     assert_eq!(
-        trades::ready(&state).await.unwrap(),
+        trades::readiness(&state).await.unwrap(),
         trades::Readiness::Mirrored
     );
     assert!(
@@ -1596,6 +1634,7 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
     let Some(state) = state_with_db(settings.clone()).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     assert_eq!(
         trades::ready(&state).await.unwrap(),
         trades::Readiness::LocalAuthority
@@ -1656,6 +1695,28 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
         let (status, body) = get_json(router(state.clone()), &format!("/v1/trades/{id}")).await;
         assert_eq!(status, want, "{id}: {body}");
     }
+
+    for id in &ids {
+        crate::test_db::open_trade_verdict(pool, id).await;
+    }
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         SELECT lower(t.network), a.contract_address, n.token_id::numeric, t.signer, 1, 1, 1, 0, 1
+         FROM shop.trades t JOIN shop.trade_assets a ON a.trade_id = t.id
+         JOIN shop.trade_assets_erc721 n ON n.asset_id = a.id
+         WHERE t.id = $1::uuid AND a.direction = 'sent' ON CONFLICT DO NOTHING",
+    )
+    .bind(fresh)
+    .execute(pool)
+    .await
+    .unwrap();
 
     let book = |since: Option<chrono::NaiveDateTime>| {
         let ids = ids.clone();
@@ -2020,7 +2081,7 @@ async fn a_whole_list_upstream_is_walked_every_tick_within_the_detail_budget() {
     assert!(!m.in_progress() && m.completed_at.is_some());
     assert_eq!(mirrored_count(pool, &upstream).await, 205);
     assert!(
-        state.trades_list.lock().unwrap().is_none(),
+        state.trades_list.lock().is_none(),
         "a complete pass holds nothing"
     );
     visible.trades_ready.clear();
@@ -2095,6 +2156,10 @@ mod data_plane_shared_types {
         assert!(
             AssetKey::parse("matic", "0xabc0000000000000000000000000000000000001-x1").is_none()
         );
+        let max_id = alloy_primitives::U256::MAX.to_string();
+        let wire = format!("0xabc0000000000000000000000000000000000001-{max_id}");
+        assert_eq!(AssetKey::parse("matic", &wire).unwrap().id, max_id);
+        assert!(AssetKey::parse("matic", &format!("{wire}0")).is_none());
     }
 
     #[tokio::test]
@@ -2237,4 +2302,60 @@ async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
         sepolia.venue_rpc_url(1).as_deref(),
         Some("https://mainnet.example/")
     );
+}
+
+#[tokio::test]
+async fn polygon_mainnet_walks_use_the_polygon_endpoint_if_no_chain_137_override_exists() {
+    use super::chain_walk::ChainNet;
+    let settings = |network: &str, trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.eth_rpc_url = Some("https://eth.example/".into());
+        s.polygon_rpc_url = Some("https://polygon.example/".into());
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let fallback = settings("mainnet", None);
+    assert_eq!(
+        fallback.polygon_mainnet_rpc_url().as_deref(),
+        Some("https://polygon.example/")
+    );
+    assert_eq!(fallback.chain_rpc_url(ChainNet::Matic), None);
+    let listed = settings("mainnet", Some("137=https://matic.example/"));
+    assert_eq!(
+        listed.polygon_mainnet_rpc_url().as_deref(),
+        Some("https://matic.example/")
+    );
+    let sepolia = settings("sepolia", None);
+    assert_eq!(
+        sepolia.polygon_mainnet_rpc_url(),
+        None,
+        "off mainnet RPC_ENDPOINT_POLYGON is another chain"
+    );
+}
+
+#[tokio::test]
+async fn the_third_party_registry_projection_requires_its_switch_and_polygon_endpoint() {
+    use super::chain_walk::{ChainNet, INDEXER_THIRD_PARTY_REGISTRY};
+    let make_state = |enabled, endpoint| {
+        let mut settings = Settings::for_tests();
+        settings.market.indexes.third_party_registry_enabled = enabled;
+        settings.polygon_rpc_url = endpoint;
+        support::state_without_db_settings(settings)
+    };
+    let rpc = "https://polygon.example/";
+    for (enabled, endpoint) in [(false, Some(rpc.to_owned())), (true, None)] {
+        let state = make_state(enabled, endpoint);
+        assert!(super::chain_jobs::projections(&state, ChainNet::Matic, Some(false)).is_empty());
+    }
+    let state = make_state(true, Some(rpc.to_owned()));
+    assert!(super::chain_jobs::projections(&state, ChainNet::Ethereum, Some(false)).is_empty());
+    let projections = super::chain_jobs::projections(&state, ChainNet::Matic, Some(false));
+    let [projection] = projections.as_slice() else {
+        panic!("expected one Polygon registry projection");
+    };
+    assert_eq!(projection.lease, "third-party-registry-index-matic");
+    assert_eq!(projection.url, rpc);
+    assert_eq!((projection.make)().indexer(), INDEXER_THIRD_PARTY_REGISTRY);
+    assert_eq!((projection.make)().chain_id(), 137);
 }

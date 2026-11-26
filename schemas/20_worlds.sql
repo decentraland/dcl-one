@@ -38,8 +38,10 @@
 -- is `timestamp without time zone` holding UTC (the pool pins TimeZone=UTC);
 -- the current time is a bind parameter, never an index predicate. No FK
 -- crosses a schema: the scene admins and bans a world scene is moderated by
--- are `social.scene_admins`/`social.scene_bans` keyed by the scene entity id
--- (src/worlds/policy.rs reads them; comms owns their writes).
+-- are `social.scene_admins`, keyed by the scene's place (its
+-- explore.world_scene_place identity, kept across a redeploy), and
+-- `social.scene_bans`, keyed by world and base parcel (src/worlds/policy.rs
+-- reads them; comms owns their writes).
 --
 -- The federation listing mirror of 0005/0006 (peers' public /worlds listings,
 -- a different protocol from the upstream /index catalogue) is the
@@ -67,14 +69,32 @@ CREATE SCHEMA worlds;
 -- nft-ownership; an allow-list's wallets are world_permissions rows with
 -- permission = 'access' and its communities world_access_communities rows.
 -- `settings_version` is bumped by every settings-affecting write (deploy
--- refresh, PUT /settings, access edits, mirror ingest) under the row lock so
--- a settings consumer can refuse an out-of-order update.
+-- refresh, PUT /settings, access edits) under the row lock so a settings
+-- consumer can refuse an out-of-order update. A mirrored row takes its
+-- source's counter, or its own plus one when a copied setting changes and the
+-- source's is not ahead, so it never goes back; a copied access change bumps
+-- it too. `access_set_here` is set by the owner's access writes on this node
+-- (POST /permissions/access and the allow-list edits, core::store) and
+-- `settings_set_here` by a PUT /settings that changes a setting the mirror
+-- copies; `*_set_by` is the owner that wrote it. The worlds mirror leaves
+-- either setting as it is while that owner holds the name, as this node's
+-- own owner lookup says (Policy::current_owner, never the source's
+-- /permissions owner, which trails a sale; core::store::mirror_keeps_local,
+-- under the row lock it already takes). It clears the pair and copies the
+-- source's once the name has another holder. A row marked before the setter
+-- was recorded (`*_set_by` NULL) takes the holder of the next pass as its
+-- setter, and an unknown holder keeps every mark.
+-- No index: they are read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,
     access_type text NOT NULL DEFAULT 'unrestricted',
     access_secret_hash text,
     access_nft text,
+    access_set_here boolean NOT NULL DEFAULT false,
+    access_set_by text,
+    settings_set_here boolean NOT NULL DEFAULT false,
+    settings_set_by text,
     blocked_since timestamp without time zone,
     spawn_coordinates text,
     title text,
@@ -115,6 +135,14 @@ CREATE TABLE worlds.worlds (
 -- stage-4 readers' lower(name) expression index went with their predicate,
 -- 2026-09-25).
 
+CREATE TABLE worlds.thumbnail_aliases (
+    legacy_sha256 text PRIMARY KEY CHECK (legacy_sha256 ~ '^[0-9a-f]{64}$'),
+    blob_cid text NOT NULL,
+    mirror_expires_at timestamp with time zone
+);
+
+CREATE INDEX thumbnail_aliases_blob_cid_idx ON worlds.thumbnail_aliases (blob_cid);
+
 CREATE TABLE worlds.world_scenes (
     world_name text NOT NULL,
     entity_id text NOT NULL,
@@ -140,28 +168,31 @@ CREATE TABLE worlds.world_scenes (
 CREATE INDEX world_scenes_world_name_created_idx
     ON worlds.world_scenes (world_name, created_at DESC);
 
--- A scene's storage collaborators: the lowercased string entries of its
--- `metadata.logsPermissions` array, from the raw JSON text (an entry spelled
--- with escapes never matches; no stored json/jsonb value makes it fail, so it can index json
--- columns that may hold `\u0000`). The storage routes' grant
--- (`storage::has_logs_access`) and `GET /collaborator` compare against it.
-CREATE FUNCTION worlds.logs_permissions(text) RETURNS text[]
+-- A scene's storage collaborators: the string entries of its
+-- `metadata.logsPermissions` array as `JSON.parse` reads them (escapes
+-- decoded), lowercased. An entry carrying an escape PostgreSQL cannot decode
+-- (`\u0000`, a surrogate) is left out, as it names no address; so no stored
+-- json/jsonb value makes it fail, and it can index json columns that may hold
+-- `\u0000`. The storage routes' grant (`storage::has_logs_access`) and
+-- `GET /collaborator` compare against it.
+CREATE FUNCTION worlds.logs_permissions_decoded(text) RETURNS text[]
     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     SELECT ARRAY(
-        SELECT lower(btrim(e::text, '"'))
+        SELECT lower(e #>> '{}')
         FROM json_array_elements(CASE WHEN json_typeof($1::json) = 'array' THEN $1::json ELSE '[]'::json END) e
-        WHERE json_typeof(e) = 'string')
+        WHERE json_typeof(e) = 'string' AND e::text !~ '\\u(0000|[dD][89a-fA-F])')
 $$;
 
 -- `GET /collaborator`: the local world scenes listing the signer.
-CREATE INDEX world_scenes_logs_permissions_idx ON worlds.world_scenes
-    USING gin (worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text))
+CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
+    USING gin (worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text))
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
--- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_idx ON content.deployments
-    USING gin (worlds.logs_permissions((entity_metadata -> 'logsPermissions')::text))
+-- the predicate the query repeats; overwritten rows leave the index). Content
+-- stores the metadata as `{"v": metadata}`, so the array is at `v`.
+CREATE INDEX deployments_scene_v_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────
@@ -203,6 +234,44 @@ CREATE TABLE worlds.world_permission_parcels (
     CONSTRAINT fk_world_permission_parcels_grant FOREIGN KEY (world_name, permission, address)
         REFERENCES worlds.world_permissions (world_name, permission, address) ON DELETE CASCADE
 );
+
+-- A write that can take a world's stream key from its holder announces
+-- `world:<name>` on the `world_authority` channel, for the comms gatekeeper's
+-- key check (DATABASE.md "Stream key notifications"): a local scene deployed
+-- or removed, an owner change, a grant removed or narrowed to parcels. The
+-- function reads the one column that holds the name; the payload is cut far
+-- below pg_notify's 8000 bytes, so it never fails the write.
+CREATE FUNCTION worlds.notify_world_authority() RETURNS trigger AS $$
+DECLARE
+    world text;
+BEGIN
+    IF TG_TABLE_NAME = 'worlds' THEN world := NEW.name;
+    ELSIF TG_OP = 'DELETE' THEN world := OLD.world_name;
+    ELSE world := NEW.world_name;
+    END IF;
+    PERFORM pg_notify('world_authority', 'world:' || left(world, 1000));
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER world_scenes_deployed_authority_notify
+    AFTER INSERT ON worlds.world_scenes
+    FOR EACH ROW WHEN (NEW.mirror_source IS NULL)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_scenes_removed_authority_notify
+    AFTER DELETE ON worlds.world_scenes
+    FOR EACH ROW WHEN (OLD.mirror_source IS NULL)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER worlds_owner_authority_notify
+    AFTER UPDATE OF owner ON worlds.worlds
+    FOR EACH ROW WHEN (OLD.owner IS DISTINCT FROM NEW.owner)
+    EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_permissions_authority_notify
+    AFTER DELETE ON worlds.world_permissions
+    FOR EACH ROW EXECUTE FUNCTION worlds.notify_world_authority();
+CREATE TRIGGER world_permission_parcels_authority_notify
+    AFTER INSERT ON worlds.world_permission_parcels
+    FOR EACH ROW EXECUTE FUNCTION worlds.notify_world_authority();
 
 -- The communities an allow-list world admits (the old access.communities).
 -- No FK to social.communities (different lifecycle); reconciled on read.

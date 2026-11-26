@@ -4,10 +4,16 @@
     "/content/entities"
   ];
   internal = [
+    "/internal/message-router"
     "/internal/pulse"
     "/metrics"
   ];
   node = [
+    {
+      path = "/health";
+      probe = "/health";
+      exact = true;
+    }
     {
       path = "/admin/api";
       probe = "/admin/api/jobs";
@@ -99,6 +105,13 @@
       path = "/events-notifier";
       probe = "/events-notifier/forward";
       webhook = true;
+    }
+    # The scene workers' routing map and third-party proxy. A node prefix is final, so a
+    # proxied path that ends in `.data` stays with the node. Bodies keep the server-wide
+    # cap, which is the proxy's own request limit (`REQUEST_BODY_LIMIT`).
+    {
+      path = "/_scene";
+      probe = "/_scene";
     }
   ];
 }

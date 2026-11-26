@@ -1,5 +1,5 @@
 jest.mock(
-  '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events',
+  '@dcl/asset-packs/dist/events',
   () => ({
     getActionEvents: jest.fn((entity) => ({
       emit: jest.fn()
@@ -8,9 +8,10 @@ jest.mock(
   { virtual: true }
 )
 
-import { getActionEvents } from '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events'
+import { getActionEvents } from '@dcl/asset-packs/dist/events'
 import { runScripts } from '../../../packages/@dcl/sdk-commands/src/logic/runtime-script'
-import { IEngine, Entity, EntityState } from '../../../packages/@dcl/ecs/dist'
+import type { IEngine, Entity } from '../../../packages/@dcl/ecs/dist'
+import { EntityState } from '../../../packages/@dcl/ecs/dist'
 
 describe('runtime-script', () => {
   let mockEngine: IEngine
@@ -190,7 +191,10 @@ describe('runtime-script', () => {
 
         class TestScript {
           start = startSpy
-          constructor(public src: string, public entity: Entity) {}
+          constructor(
+            public src: string,
+            public entity: Entity
+          ) {}
         }
 
         ;(mockEngine.getEntityState as jest.Mock).mockReturnValue(EntityState.UsedEntity)
@@ -218,7 +222,10 @@ describe('runtime-script', () => {
 
         class TestScript {
           update = updateSpy
-          constructor(public src: string, public entity: Entity) {}
+          constructor(
+            public src: string,
+            public entity: Entity
+          ) {}
         }
 
         ;(mockEngine.getEntityState as jest.Mock).mockReturnValue(EntityState.UsedEntity)

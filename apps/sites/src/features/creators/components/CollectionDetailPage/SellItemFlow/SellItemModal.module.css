@@ -1,0 +1,537 @@
+/* Hairline under the title bar, matching the footer's. */
+.divider {
+  margin: 0 0 16px;
+  border: 0;
+  border-top: 1px solid var(--color-glass-hover);
+}
+
+/* The mockup is drawn at 2x: 110px thumbnail, 14px item name, 54px fields, 560px dialog. */
+.form {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  width: 560px;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0 2px;
+}
+
+/* Everything but the footer, scrolling on short viewports so the actions stay in reach; while a submit is
+   in flight it goes inert and dims like the publish payment step. */
+.fields {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+  overflow-y: auto;
+
+  /* Scroll, don't squeeze: the card and fields keep their size inside the scrolling column. */
+  & > * {
+    flex: none;
+  }
+
+  &[data-busy] {
+    pointer-events: none;
+    opacity: 0.7;
+  }
+}
+
+.card {
+  display: flex;
+  gap: 20px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  overflow: hidden;
+}
+
+.cardThumb {
+  flex: none;
+  width: 110px;
+  height: 110px;
+
+  & > * {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--dcl-radius-md);
+  }
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 12px 12px 0;
+}
+
+.cardName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--dcl-neutrals-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.availability {
+  font-size: 13px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-chip);
+  background: var(--color-chip-dark);
+  color: var(--dcl-neutrals-white);
+
+  & > span,
+  & > svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--dcl-neutrals-white);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dcl-neutrals-gray);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* The price field's currency when there is nothing to pick. */
+.currencyGlyph {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 54px;
+  padding: 0 16px 0 12px;
+  border: 1.5px solid var(--dcl-neutrals-white);
+  border-radius: var(--dcl-radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--dcl-neutrals-white);
+
+  &:focus-within {
+    box-shadow: 0 0 0 2px var(--color-glass-line);
+  }
+  &[data-invalid] {
+    background: var(--color-err-overlay);
+    border-color: var(--dcl-system-red);
+  }
+  &[data-disabled] {
+    opacity: 0.5;
+  }
+  &[data-variant="compact"] {
+    gap: 4px;
+    min-height: 0;
+    padding: 8px;
+    border: 0;
+    background: var(--dcl-transparencies-black-40);
+  }
+
+  & input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: none;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dcl-neutrals-white);
+    color-scheme: dark;
+
+    &::placeholder {
+      font-weight: 400;
+      color: var(--dcl-neutrals-gray);
+    }
+    &:disabled {
+      color: var(--dcl-neutrals-gray);
+    }
+  }
+
+  & > svg {
+    flex: none;
+    font-size: 18px;
+  }
+
+  /* The currency pill sits flush with the field's padding. */
+  & > [data-testid$="-currency"] {
+    margin-left: -6px;
+  }
+}
+
+/* The react-datepicker field and its calendar, on the dialog's dark surface (shop restyles it the same way, in white). */
+.dateField {
+  & :global(.react-datepicker-wrapper),
+  & :global(.react-datepicker__input-container) {
+    flex: 1;
+    display: flex;
+  }
+
+  & :global(.react-datepicker-popper) {
+    z-index: var(--creators-z-prompt);
+  }
+  & :global(.react-datepicker) {
+    font-family: var(--creators-font);
+    font-size: 13px;
+    color: var(--dcl-neutrals-white);
+    background: var(--dcl-brand-purple-dark);
+    border: 1px solid var(--color-glass-hover);
+    border-radius: var(--dcl-radius-md);
+    box-shadow: 0 12px 32px var(--dcl-transparencies-black-60);
+    overflow: hidden;
+  }
+  & :global(.react-datepicker__header) {
+    background: none;
+    border-bottom: 1px solid var(--color-glass-hover);
+    padding-top: 12px;
+  }
+  & :global(.react-datepicker__current-month) {
+    color: var(--dcl-neutrals-white);
+    font-weight: 600;
+    font-size: 14px;
+  }
+  & :global(.react-datepicker__day-name) {
+    color: var(--dcl-neutrals-gray);
+  }
+  & :global(.react-datepicker__day) {
+    color: var(--dcl-neutrals-white);
+    border-radius: var(--dcl-radius-sm);
+  }
+  & :global(.react-datepicker__day):hover {
+    background: var(--dcl-transparencies-white-10);
+  }
+  & :global(.react-datepicker__day--selected),
+  & :global(.react-datepicker__day--keyboard-selected) {
+    background: var(--dcl-brand-ruby);
+    color: var(--dcl-neutrals-white);
+  }
+  & :global(.react-datepicker__day--today) {
+    font-weight: 700;
+  }
+  & :global(.react-datepicker__day--disabled),
+  & :global(.react-datepicker__day--disabled):hover {
+    color: var(--dcl-neutrals-gray);
+    background: none;
+    opacity: 0.4;
+  }
+  & :global(.react-datepicker__navigation-icon)::before {
+    border-color: var(--dcl-neutrals-white);
+  }
+}
+
+.usd {
+  flex: none;
+  font-size: 13px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.rate {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.errorText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--dcl-system-red);
+}
+
+.note {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dcl-neutrals-gray);
+
+  & > svg {
+    flex: none;
+    font-size: 18px;
+    margin-top: 1px;
+  }
+
+  & p {
+    margin: 0;
+  }
+
+  & b {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--dcl-neutrals-snow);
+    font-weight: 600;
+  }
+
+  & b svg {
+    font-size: 14px;
+  }
+
+  &[data-variant="warning"] {
+    border: 1px solid var(--color-amber);
+    color: var(--dcl-neutrals-snow);
+
+    & > svg {
+      color: var(--color-amber);
+    }
+  }
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-glass-hover);
+
+  & > * {
+    flex: 1;
+    min-width: 0;
+  }
+
+  @media (max-width: 768px) {
+    flex-direction: column-reverse;
+    gap: 12px;
+
+    & > * {
+      flex: none;
+    }
+  }
+}
+
+.combo {
+  position: relative;
+}
+
+.comboToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-right: -10px;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--dcl-transparencies-white-10);
+  }
+  &[data-open] > svg {
+    transform: rotate(180deg);
+  }
+}
+
+.options {
+  position: fixed;
+  z-index: var(--creators-z-tooltip);
+  max-height: 220px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-brand-purple-dark);
+  box-shadow: 0 8px 24px var(--dcl-transparencies-black-60);
+  border: 1px solid var(--color-glass-hover);
+  overflow-y: auto;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 10px;
+  border-radius: var(--radius-chip);
+  font-size: 14px;
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+
+  &:hover,
+  &[data-active] {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  & > span:nth-of-type(1) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.optionNote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.youTag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-chip);
+  background: var(--color-chip-dark);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--dcl-neutrals-white);
+}
+
+.optionAddress {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--color-glass-hover);
+
+  [data-variant="compact"] > & {
+    width: 26px;
+    height: 26px;
+    border: 2px solid var(--color-glass-line);
+  }
+}
+
+.avatarFallback {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--dcl-gradient-amethyst);
+
+  [data-variant="compact"] > & {
+    width: 26px;
+    height: 26px;
+    border: 2px solid var(--color-glass-line);
+  }
+}
+
+.chipName {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dcl-neutrals-white);
+
+  [data-variant="compact"] > & {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.chipAddress {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: var(--dcl-neutrals-white);
+
+  [data-variant="compact"] > & {
+    flex: none;
+    overflow: visible;
+  }
+}
+
+.chipClear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-left: auto;
+  margin-right: -10px;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: none;
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--dcl-transparencies-white-10);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  [data-variant="compact"] > & {
+    width: 32px;
+    height: 32px;
+    margin: -7px -6px -7px auto;
+
+    & > svg {
+      font-size: 14px;
+    }
+  }
+}
