@@ -45,56 +45,141 @@ mod sources;
 mod structured_clone;
 pub mod websocket;
 
-// a smaller heap cap for the runtimes this test thread creates
-#[cfg(test)]
-thread_local! {
-    static TEST_HEAP_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-
-/// Upstream ops scenes do not get: the lock manager and BroadcastChannel are not part of the
-/// scene runtime, `op_compile_function` unwraps its parameters, `op_deserialize` unwraps a
-/// host object's deserializer (nothing loaded calls it or `op_serialize`), and
-/// `op_urlpattern_process_match_input` writes past a short buffer (nothing loaded calls it).
-const DISABLED_OPS: &[&str] = &[
-    "op_compile_function",
-    "op_serialize",
-    "op_deserialize",
-    "op_urlpattern_process_match_input",
-    "op_lock_manager_request",
-    "op_lock_manager_await_lock",
-    "op_lock_manager_await_steal",
-    "op_lock_manager_is_stolen",
-    "op_lock_manager_cancel",
-    "op_lock_manager_release",
-    "op_lock_manager_query",
-    "op_broadcast_subscribe",
-    "op_broadcast_unsubscribe",
-    "op_broadcast_serialize",
-    "op_broadcast_deserialize",
-    "op_broadcast_free",
-    "op_broadcast_send",
-    "op_broadcast_recv",
+/// The upstream ops scenes get: the ones a script the runtime loads calls. Every other upstream
+/// op is disabled, so a call fails. Several of the rest abort the process on scene input
+/// (`op_panic`, `op_compile_function`, `op_deserialize`, `op_urlpattern_process_match_input`,
+/// the leak-tracing ops), and the lock manager and BroadcastChannel are not part of the scene
+/// runtime. An op a new upstream version adds stays disabled until it is listed here.
+const UPSTREAM_OPS: &[&str] = &[
+    "op_abort_wasm_streaming",
+    "op_add_main_module_handler",
+    "op_base64_decode",
+    "op_base64_encode_from_buffer",
+    "op_blob_clone_part",
+    "op_blob_create_object_url",
+    "op_blob_create_part",
+    "op_blob_from_object_url",
+    "op_blob_read_part",
+    "op_blob_remove_part",
+    "op_blob_revoke_object_url",
+    "op_blob_slice_part",
+    "op_cancel_handle",
+    "op_cancel_read",
+    "op_close",
+    "op_console_css_to_ansi",
+    "op_console_format_value",
+    "op_console_get_string_width",
+    "op_console_inspect",
+    "op_console_inspect_args",
+    "op_console_parse_css",
+    "op_console_parse_css_color",
+    "op_console_quote_string",
+    "op_console_strip_vt",
+    "op_decode",
+    "op_defer",
+    "op_destructure_error",
+    "op_dispatch_exception",
+    "op_encode",
+    "op_encode_binary_string",
+    "op_encoding_decode",
+    "op_encoding_decode_single",
+    "op_encoding_decode_utf8",
+    "op_encoding_decode_utf8_ascii_only",
+    "op_encoding_encode_into",
+    "op_encoding_encode_into_fallback",
+    "op_encoding_new_decoder",
+    "op_encoding_normalize_label",
+    "op_eval_context",
+    "op_event_loop_has_more_work",
+    "op_get_ext_import_meta_proto",
+    "op_get_extras_binding_object",
+    "op_get_promise_details",
+    "op_get_proxy_details",
+    "op_immediate_check",
+    "op_is_any_array_buffer",
+    "op_is_arguments_object",
+    "op_is_array_buffer",
+    "op_is_array_buffer_view",
+    "op_is_async_function",
+    "op_is_big_int_object",
+    "op_is_boolean_object",
+    "op_is_boxed_primitive",
+    "op_is_data_view",
+    "op_is_date",
+    "op_is_generator_function",
+    "op_is_generator_object",
+    "op_is_map",
+    "op_is_map_iterator",
+    "op_is_module_namespace_object",
+    "op_is_native_error",
+    "op_is_number_object",
+    "op_is_promise",
+    "op_is_proxy",
+    "op_is_reg_exp",
+    "op_is_set",
+    "op_is_set_iterator",
+    "op_is_shared_array_buffer",
+    "op_is_string_object",
+    "op_is_symbol_object",
+    "op_is_terminal",
+    "op_is_typed_array",
+    "op_is_weak_map",
+    "op_is_weak_set",
+    "op_lazy_load_esm",
+    "op_load_ext_script",
+    "op_memory_usage",
+    "op_message_port_create_entangled",
+    "op_message_port_post_message",
+    "op_message_port_post_message_raw",
+    "op_message_port_recv_message",
+    "op_message_port_recv_message_sync",
+    "op_op_names",
+    "op_pipe",
+    "op_print",
+    "op_read",
+    "op_read_all",
+    "op_read_sync",
+    "op_readable_stream_resource_allocate",
+    "op_readable_stream_resource_allocate_sized",
+    "op_readable_stream_resource_await_close",
+    "op_readable_stream_resource_close",
+    "op_readable_stream_resource_get_sink",
+    "op_readable_stream_resource_write_buf",
+    "op_readable_stream_resource_write_error",
+    "op_readable_stream_resource_write_sync",
+    "op_ref_op",
+    "op_resources",
+    "op_run_microtasks",
+    "op_set_captured_bootstrap",
+    "op_set_handled_promise_rejection_handler",
+    "op_set_promise_hooks",
+    "op_set_wasm_streaming_callback",
+    "op_shutdown",
+    "op_str_byte_length",
+    "op_time_origin",
+    "op_timer_now",
+    "op_timer_schedule",
+    "op_timer_track",
+    "op_timer_untrack",
+    "op_try_close",
+    "op_unref_op",
+    "op_url_get_serialization",
+    "op_url_parse",
+    "op_url_parse_search_params",
+    "op_url_parse_with_base",
+    "op_url_reparse",
+    "op_url_stringify_search_params",
+    "op_wasm_streaming_feed",
+    "op_wasm_streaming_set_url",
+    "op_write",
+    "op_write_all",
+    "op_write_sync",
+    "op_write_type_error",
 ];
 
-pub fn create_runtime(
-    inspect: bool,
-    super_user: bool,
-    storage_root: &str,
-    kill_flag: KillFlag,
-) -> (JsRuntime, Option<InspectorServer>) {
-    #[cfg(test)]
-    crate::test_platform();
-
-    let [webidl, web, fetch_ext] = web_extensions();
-
-    let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
-    let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
-    let storage_folder = project_directories()
-        .unwrap()
-        .data_local_dir()
-        .join("LocalStorage")
-        .join(storage_hash);
-
+/// The runtime's own ops, and the implementations that replace an op of the same name: ours
+/// over deno_fetch's, and the overrides of upstream ops.
+fn scene_ops(super_user: bool) -> (Vec<OpDecl>, HashMap<&'static str, OpDecl>) {
     let mut ops = vec![op_require(), op_log(), op_error()];
 
     let op_sets: [Vec<deno_core::OpDecl>; 16] = [
@@ -134,37 +219,74 @@ pub fn create_runtime(
         op_map.insert(op.name, op);
     }
 
+    (ops, op_map)
+}
+
+/// Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so a cap here
+/// bounds ONE scene's memory and stops a single runaway/hostile scene from OOM-killing the shared
+/// sidecar (and every co-tenant scene with it). The near-limit callback in
+/// [`create_runtime_with_heap_cap`] terminates just that isolate instead of aborting the process.
+const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
+
+pub fn create_runtime(
+    inspect: bool,
+    super_user: bool,
+    storage_root: &str,
+    kill_flag: KillFlag,
+) -> (JsRuntime, Option<InspectorServer>) {
+    create_runtime_with_heap_cap(
+        inspect,
+        super_user,
+        storage_root,
+        kill_flag,
+        MAX_SCENE_HEAP_BYTES,
+    )
+}
+
+fn create_runtime_with_heap_cap(
+    inspect: bool,
+    super_user: bool,
+    storage_root: &str,
+    kill_flag: KillFlag,
+    max_heap: usize,
+) -> (JsRuntime, Option<InspectorServer>) {
+    #[cfg(test)]
+    crate::test_platform();
+
+    let [webidl, web, fetch_ext] = web_extensions();
+
+    let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
+    let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
+    let storage_folder = project_directories()
+        .unwrap()
+        .data_local_dir()
+        .join("LocalStorage")
+        .join(storage_hash);
+
+    let (ops, op_map) = scene_ops(super_user);
+    let own_ops: std::collections::HashSet<&str> = ops.iter().map(|op| op.name).collect();
     let ext = Extension {
         name: "decentraland",
         ops: ops.into(),
         esm_files: sources::own().into(),
         esm_entry_point: Some("ext:BevyExplorer/init.js"),
         middleware_fn: Some(Box::new(move |op: OpDecl| -> OpDecl {
-            if DISABLED_OPS.contains(&op.name) {
-                debug!("disable: {}", op.name);
-                op.disable()
-            } else if let Some(custom_op) = op_map.get(&op.name) {
+            if let Some(custom_op) = op_map.get(&op.name) {
                 debug!("replace: {}", op.name);
                 op.with_implementation_from(custom_op)
-            } else {
+            } else if own_ops.contains(&op.name) || UPSTREAM_OPS.contains(&op.name) {
                 debug!("default: {}", op.name);
                 op
+            } else {
+                debug!("disable: {}", op.name);
+                op.disable()
             }
         })),
         ..Default::default()
     };
 
-    // Per-isolate V8 heap cap. Every scene runs in its own isolate on its own thread, so
-    // a cap here bounds ONE scene's memory and stops a single runaway/hostile scene from
-    // OOM-killing the shared sidecar (and every co-tenant scene with it). The near-limit
-    // callback below terminates just that isolate instead of aborting the process.
-    const MAX_SCENE_HEAP_BYTES: usize = 512 * 1024 * 1024;
     // granted on each near-limit trip while the scene is being terminated
     const HEAP_LIMIT_MARGIN: usize = 128 * 1024 * 1024;
-    #[cfg(not(test))]
-    let max_heap = MAX_SCENE_HEAP_BYTES;
-    #[cfg(test)]
-    let max_heap = TEST_HEAP_LIMIT.get().unwrap_or(MAX_SCENE_HEAP_BYTES);
 
     // create runtime
     #[allow(unused_mut)]
@@ -185,9 +307,9 @@ pub fn create_runtime(
     // termination itself instead of hard-aborting the whole sidecar process.
     {
         let terminate_handle = runtime.v8_isolate().thread_safe_handle();
-        let granted = std::sync::atomic::AtomicBool::new(false);
+        let logged = std::sync::atomic::AtomicBool::new(false);
         runtime.add_near_heap_limit_callback(move |current, _initial| {
-            let first_trip = !granted.swap(true, std::sync::atomic::Ordering::SeqCst);
+            let first_trip = !logged.swap(true, std::sync::atomic::Ordering::SeqCst);
             if first_trip {
                 bevy::prelude::error!(
                     "scene exceeded its {max_heap}-byte heap cap; terminating the scene isolate"
@@ -756,8 +878,23 @@ mod tests {
 
     /// [`run_scene`], optionally as the super-user scene.
     fn run_scene_as(is_server: bool, super_user: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) =
-            create_runtime(false, super_user, "test-scene-realm", Default::default());
+        run_scene_with(is_server, super_user, super::MAX_SCENE_HEAP_BYTES, scene_js)
+    }
+
+    /// [`run_scene_as`] under a heap cap of `max_heap` bytes.
+    fn run_scene_with(
+        is_server: bool,
+        super_user: bool,
+        max_heap: usize,
+        scene_js: &str,
+    ) -> Result<(), String> {
+        let (mut runtime, _) = super::create_runtime_with_heap_cap(
+            false,
+            super_user,
+            "test-scene-realm",
+            Default::default(),
+            max_heap,
+        );
         let (host, _inbox) = tokio::sync::mpsc::unbounded_channel();
         {
             let state = runtime.op_state();
@@ -990,17 +1127,21 @@ mod tests {
     }
 
     fn heap_limit_child() {
-        super::TEST_HEAP_LIMIT.set(Some(64 * 1024 * 1024));
+        const CAP: usize = 64 * 1024 * 1024;
         // under the cap: runs to the end
-        run_scene(
+        run_scene_with(
             false,
+            false,
+            CAP,
             "globalThis.keep = []; for (let i = 0; i < 2; i++) { keep.push(new Array(1e6).fill(1.5)); }",
         )
         .unwrap();
         // 24 MB and 40 MB allocations until the cap: terminated
         for length in ["3e6", "5e6"] {
-            let err = run_scene(
+            let err = run_scene_with(
                 false,
+                false,
+                CAP,
                 &format!("globalThis.keep = []; for (;;) {{ keep.push(new Array({length}).fill(1.5)); }}"),
             )
             .expect_err("the scene ran past its heap limit");
