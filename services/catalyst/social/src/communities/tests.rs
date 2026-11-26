@@ -2616,6 +2616,12 @@ fn settings_fold_restricted_names_and_validate_moderators() {
 
 #[tokio::test]
 async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
+    use crate::db::scratch::{OwnedDatabase, Schema};
+
+    // Other tests hold the database-wide store lock to exercise upload timeouts.
+    let Some(database) = OwnedDatabase::new("thumbnail_redirect", Schema::Full, 6).await else {
+        return;
+    };
     let settings = Settings {
         thumbnail_upstream: super::mirror::thumbnail_source(
             "https://upstream.example.org/assets",
@@ -2625,9 +2631,7 @@ async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
         .unwrap(),
         ..Settings::for_tests()
     };
-    let Some(rig) = Rig::new(settings).await else {
-        return;
-    };
+    let rig = Rig::with_pool(settings, State::explore_for_tests, database.pool.clone()).await;
     let owner = wallet();
     let imported = rig.community(&owner, false).await;
     let native = rig.community(&owner, false).await;
@@ -2753,6 +2757,9 @@ async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(response.headers().get(header::LOCATION).is_none());
     }
+    offline.finish();
+    rig.finish();
+    database.drop().await;
 }
 
 /// The raw thumbnail's caching: long only for the current hash's URL, short
