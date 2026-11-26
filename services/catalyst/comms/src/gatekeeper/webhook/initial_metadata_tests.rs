@@ -236,6 +236,12 @@ impl crate::interfaces::SceneIdentity for ResolvingScenes {
     ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
         Ok(None)
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 async fn resolving_state() -> (SharedState, Arc<ResolvingScenes>) {

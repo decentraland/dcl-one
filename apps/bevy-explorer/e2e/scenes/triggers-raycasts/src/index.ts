@@ -1,6 +1,6 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
   ColliderLayer,
-  Entity,
   InputAction,
   Material,
   MeshCollider,

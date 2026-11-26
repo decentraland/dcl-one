@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Text from '@ui/atoms/Text';
 import { t } from '/@/modules/store/translation/utils';
 

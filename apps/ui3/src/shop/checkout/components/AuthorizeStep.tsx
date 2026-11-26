@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../../components/Modal";
 import { shortAddress } from "@shop/model/address";
 import { chainLabel } from "@shop/model/chain";
@@ -96,10 +96,10 @@ export default function AuthorizeStep({ auth, step, requiredWei, grant, onAuthor
           </p>
         ) : null}
         <div className="shop-authorize__actions">
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+          <Button size="md" variant="outline" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={() => void authorize()} disabled={busy} data-testid="authorize-step-action">
+          <Button size="md" onClick={() => void authorize()} disabled={busy} data-testid="authorize-step-action">
             {busy ? "Confirm in your wallet…" : "Approve"}
           </Button>
         </div>
