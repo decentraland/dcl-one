@@ -10334,11 +10334,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "ee5799605db08b55663865654fffbe4d1c125b8f4e554e979ac3c8657faebd6a"
+      "sha256": "f04acd6ec732421f79e69f73444f0ae83f48b7c01a398b04ad0d64f5d8b9b96f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
-      "sha256": "1784264f3ca7fb2de9cb0936e020a20c947269fd9aec5c5cc11c9ee00a191cfd"
+      "sha256": "c5b215c9f8e2229ce8b80f998aef5a46c09bd1cb9fee75816e30b21135b44271"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vitest.config.ts",
@@ -12903,7 +12903,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "e203e3c8628c0310fe797ff22b6b942ea457790d6725ad8afa0c73574baf07a8"
+      "sha256": "cfa2e110323f15d1fd4f0debf757836293776220ffb88341b4ce6e12f392f804"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -14283,7 +14283,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
-      "sha256": "beef1dfbb9fd13562b64f968d975fd9f38f2b0c9c711b5873b820433a7acaabd"
+      "sha256": "c2ee5a09fcaee43702a3a77e3ee521d9b47f84e3ae277b33392e2c02a771883d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
@@ -14359,7 +14359,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "f7252baae6046996a9f7b9d3995e09fd2187a36d697af40b57a237d96608a374"
+      "sha256": "e96ac43ff6d4756a921ee6353289bcc402f4480a7dfca948e2f4d5e0ad0aecf6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
@@ -14527,7 +14527,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/login.clicks.test.tsx",
-      "sha256": "a15c53f2d270ff36e98dc8ddf3682ecd20280c517f0943a24412db3bd38d2e68"
+      "sha256": "a048f6c8e513b4d9f3639720d2ab6f4094ee42dc93f8859b61e0cc82de0f8b9f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
@@ -14767,7 +14767,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/profile.passportCreations.test.tsx",
-      "sha256": "573e0ea0a984c896cdebf4a46dc237824de967c89c437b9d8cf34866dad5c762"
+      "sha256": "4a3c03ca3a8001605c020ff59c2e21ea0bdbbc3d70999b9ef48fc311277cbccd"
     },
     {
       "path": "library/ui/apps/hud/test/profileCard.test.tsx",
@@ -17007,7 +17007,7 @@
     },
     {
       "path": "library/ui/components/Spinner/Spinner.tsx",
-      "sha256": "bcffc960ea03c3b311207d73761234a135634e9f40d946de60771e9cf802d774"
+      "sha256": "59e4d1f31715cea23ba9a58fe3e74dce2542516c273c528247be5b05142bd184"
     },
     {
       "path": "library/ui/components/SubmitField/SubmitField.module.css",
@@ -17027,11 +17027,11 @@
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
-      "sha256": "f8ff73ff9ce457a087e0107255cc6fd24459c76ada484ae93f2f21b7c2bfefbb"
+      "sha256": "880031146305df990254fb3908d1963ed7f32671ba6063f71a96c8b7090c969d"
     },
     {
       "path": "library/ui/components/Switch/Switch.tsx",
-      "sha256": "6f89d3814653ab39ababe53a87591eca29c9b3eedf3ca79cbbe857bb5af52167"
+      "sha256": "59f5930e273da5501faca8c9a769437165d469865b6f18faeb24ecf21032a6fd"
     },
     {
       "path": "library/ui/components/Tabs/Tabs.module.css",

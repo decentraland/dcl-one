@@ -670,7 +670,7 @@ describe('community create modal', () => {
   it('reads the places as it opens, and waits for them before it can be filled', () => {
     const { communities, setPlaces } = renderCreate(null)
     expect(communities.loadPlaceOptions).toHaveBeenCalledWith(undefined)
-    expect(screen.getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     expect(screen.queryByLabelText(/community name/i)).toBeNull()
     expect(screen.getByRole('button', { name: 'CREATE' })).toBeDisabled()
     act(() => setPlaces(noPlaces({ owned: [land] })))

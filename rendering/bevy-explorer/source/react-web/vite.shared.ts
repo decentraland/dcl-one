@@ -43,7 +43,7 @@ const TEST_PACKAGES = ['@testing-library/react', '@testing-library/user-event', 
 export const SHARED_DEDUPE = ['react', 'react-dom', 'viem', 'zod', '@tanstack/react-query', ...TEST_PACKAGES]
 
 // library/ui registers its Inter faces (foundations/typography/inter.css) from Git LFS copies of
-// @fontsource-variable/inter 5.3.0, and the HUD's builds don't fetch LFS. Those faces take this app's copy of
+// @fontsource-variable/inter 5.3.0. Those faces take this app's copy of
 // the same package instead: the same bytes (src/test/sharedUi.test.tsx compares them with the digests library/ui
 // pins), so the bundle holds one file per face, shared with the 'Inter Variable' faces main.tsx loads. Vite
 // resolves a stylesheet's url() through its aliases only, never a plugin, so this is an alias; inter.css is the

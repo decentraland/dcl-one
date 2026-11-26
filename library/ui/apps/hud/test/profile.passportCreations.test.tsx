@@ -142,7 +142,7 @@ describe('passport creations', () => {
     for (const reply of replies.splice(0, 2)) reply(Response.json({ data: [HAT] }))
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByText('Neon Hat')).toBeNull()
-    expect(screen.getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
   })
 
   it('shows an error with Retry when the catalog fails, and Retry loads again', async () => {

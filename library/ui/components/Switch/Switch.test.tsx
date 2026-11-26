@@ -1,5 +1,5 @@
 import { createRef, type RefObject } from 'react'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { renderToString } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -163,6 +163,38 @@ describe('Switch', () => {
       screen.getByRole('switch', { name: 'Auto' }).focus()
       await userEvent.keyboard('{Enter}')
       expect(onCheckedChange).toHaveBeenCalledWith(true)
+    })
+
+    it('should keep Enter from also submitting a form it sits in, and toggle once', () => {
+      const onCheckedChange = vi.fn()
+      render(
+        <form>
+          <Switch appearance="hud" label="Auto" checked={false} onCheckedChange={onCheckedChange} />
+        </form>
+      )
+      const handled = fireEvent.keyDown(screen.getByRole('switch', { name: 'Auto' }), { key: 'Enter' })
+      expect(handled).toBe(false)
+      expect(onCheckedChange).toHaveBeenCalledTimes(1)
+    })
+
+    it('should do nothing on an Enter a caller already handled', () => {
+      const onCheckedChange = vi.fn()
+      render(
+        <Switch
+          appearance="hud"
+          label="Auto"
+          checked={false}
+          onCheckedChange={onCheckedChange}
+          onKeyDown={(event) => event.preventDefault()}
+        />
+      )
+      fireEvent.keyDown(screen.getByRole('switch', { name: 'Auto' }), { key: 'Enter' })
+      expect(onCheckedChange).not.toHaveBeenCalled()
+    })
+
+    it('should leave Enter to the browser in the default appearance', () => {
+      render(<Switch label="Notifications" checked={false} />)
+      expect(fireEvent.keyDown(screen.getByRole('switch', { name: 'Notifications' }), { key: 'Enter' })).toBe(true)
     })
 
     it('should leave Enter alone in the default appearance', async () => {

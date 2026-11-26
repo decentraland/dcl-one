@@ -182,6 +182,12 @@ describe('the Saved Outfits slots', () => {
     it('should show no saved outfit', () => {
       expect(screen.queryByRole('button', { name: /^Outfit \d+$/ })).toBeNull()
     })
+
+    it("should fill each slot with the HUD's sweeping placeholder", () => {
+      const placeholders = Array.from(document.querySelectorAll('[class*="outfitSkeleton"]'))
+      expect(placeholders.length).toBeGreaterThan(0)
+      for (const placeholder of placeholders) expect(placeholder.className).toMatch(/sweep/)
+    })
   })
 
   describe('when the player presses the delete button of a saved outfit', () => {
@@ -245,7 +251,7 @@ describe('the Saved Outfits slots', () => {
     })
 
     it('should show that slot as being saved', () => {
-      expect(within(screen.getByRole('group', { name: 'Saving outfit 3' })).getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
+      expect(within(screen.getByRole('group', { name: 'Saving outfit 3' })).getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     })
 
     it('should not offer that slot to save into', () => {
@@ -288,7 +294,7 @@ describe('the Saved Outfits slots', () => {
     })
 
     it('should show a spinner in that outfit\'s EQUIP button', () => {
-      expect(within(equipButtonOf(1)).getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
+      expect(within(equipButtonOf(1)).getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     })
 
     it('should mark that EQUIP button busy and not let it be pressed again', () => {

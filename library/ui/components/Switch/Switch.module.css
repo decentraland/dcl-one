@@ -149,7 +149,8 @@
     --d-knob-shadow: none;
   }
 
-  .hud .label {
+  .hud .label,
+  .hud[data-disabled] .label {
     font: inherit;
     letter-spacing: inherit;
     text-transform: inherit;

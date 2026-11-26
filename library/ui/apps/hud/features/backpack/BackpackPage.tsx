@@ -293,7 +293,7 @@ function OutfitSlotCard({
   if (loading) {
     return (
       <div className={`${styles.outfitSlot} ${styles.outfitLocked}`}>
-        <Skeleton className={styles.outfitSkeleton} />
+        <Skeleton tone="sweep" className={styles.outfitSkeleton} />
       </div>
     )
   }

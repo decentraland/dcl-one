@@ -71,7 +71,7 @@ describe('startup screens', () => {
     const f = flow({ status: 'sign-in-or-guest', authPending: true })
     await renderSettled(startup(f))
     expect(screen.getByRole('heading', { name: 'Log in or Sign up' })).toBeInTheDocument()
-    expect(screen.getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /GOOGLE/i })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: /CANCEL/i }))
     expect(vi.mocked(f.cancelLogin)).toHaveBeenCalledTimes(1)

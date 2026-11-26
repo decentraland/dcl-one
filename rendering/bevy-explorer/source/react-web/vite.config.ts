@@ -329,7 +329,6 @@ function showcaseStaysLazy(): Plugin {
   }
 }
 
-// The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
 /**
  * Vite emits an asset when it loads the module that imports it, before tree-shaking, and keeps the file after
  * the module is dropped. The shared entry (@dcl/one-ui) reaches the images and videos of views the HUD never
@@ -373,6 +372,7 @@ export function dropUnusedSharedAssets(): Plugin {
   }
 }
 
+// The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
 function hudBuild(): string {
   const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
   return out.status === 0 ? out.stdout.trim() : ''

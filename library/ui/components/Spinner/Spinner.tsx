@@ -29,7 +29,9 @@ function sized(style: CSSProperties | undefined, size: number | undefined): CSSP
 
 export function Spinner({ variant = 'dark', size, label = 'Loading', className, style, ...rest }: SpinnerProps) {
   const classes = [styles.root, styles[variant], className].filter(Boolean).join(' ')
-  const named = { role: 'progressbar', 'aria-label': label, ...rest, className: classes } as const
+  // The HUD's rings are a live region, announced as they appear; the Figma ring is a progress bar with no value.
+  const role = variant === 'thin' || variant === 'thick' || variant === 'chase' ? 'status' : 'progressbar'
+  const named = { role, 'aria-label': label, ...rest, className: classes } as const
   if (variant === 'thin')
     return (
       <span {...named} style={sized(style, size)}>
