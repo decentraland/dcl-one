@@ -425,17 +425,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
-- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
-  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
-  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
-  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
-  by the other room is told by its stamp and its index together, and the stamps sent only move
-  on: the sender's uptime as a float stops telling two messages of one send apart after a few
-  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
-  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
-  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
-  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
-  messages play twenty a second.
+- **Situational reactions.** An emoji a player reacts with rises over the avatar with
+  unity-explorer's numbers (lifetimes, speeds, sizes, the follow, the sway, the size curve) and
+  travels as its rfc4 `Reaction`, with these differences. The particle fades by alpha, as it is
+  drawn in the blended pass; unity-explorer dithers. It is drawn over blended meshes too, so its
+  place against the nametag does not flip as it sways. As in unity-explorer it is drawn over
+  solid geometry with no depth test, so a player who reacts behind a wall shows where they
+  stand; other players' are drawn within 25 m of the camera and the local player's at any
+  distance. None is drawn over an avatar that is hidden (by a scene, by the avatar limit, by a
+  block or with nametags off): it would show where the avatar stands. Nor is the local player's
+  own in first person, where it would rise from inside the camera and cover the view. A
+  reaction that plays while none would be drawn over its player gets no particle, and so asks
+  nothing of the glyph atlas; it still reaches the HUD. The Chat bubbles and reactions setting
+  at None turns the particles off with the bubbles, those in flight too; unity-explorer's
+  reactions read no setting. The emoji is the engine's colour font's, not unity-explorer's
+  atlas tile, and is laid out in that font: in a text font an emoji whose base character the
+  font has (©, ™, ‼) would come out in one colour.
+  Only the indices that name an emoji are taken (unity-explorer takes any under 4096 and draws
+  the blank tiles), and an emoji with no index is not sent or shown. A message's copy by the
+  other room is told by its stamp and its index together, and the stamps sent only move on: the
+  sender's uptime as a float stops telling two messages of one send apart after a few hours. What
+  a sender may send is counted on the sender's own entity, so a player who leaves or is blocked
+  takes their waiting reactions with them; unity-explorer plays them out. A sender's reactions
+  play 0.2 s apart whichever messages they came in; unity-explorer starts the gap afresh for a
+  message that finds none of theirs waiting, which lets a sender of one-reaction messages play
+  twenty a second.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the

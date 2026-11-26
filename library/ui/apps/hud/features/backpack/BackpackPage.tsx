@@ -4,8 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
+import { Button, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Spinner, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Chip, ColorPicker, HintsButton, KeyCap, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -292,7 +293,7 @@ function OutfitSlotCard({
   if (loading) {
     return (
       <div className={`${styles.outfitSlot} ${styles.outfitLocked}`}>
-        <Skeleton className={styles.outfitSkeleton} />
+        <Skeleton tone="sweep" className={styles.outfitSkeleton} />
       </div>
     )
   }
@@ -305,7 +306,7 @@ function OutfitSlotCard({
         aria-label={`${busy === 'save' ? 'Saving' : 'Deleting'} outfit ${index + 1}`}
         aria-busy="true"
       >
-        <Spinner size={50} />
+        <Spinner variant="thin" size={50} />
       </div>
     )
   }
@@ -345,7 +346,7 @@ function OutfitSlotCard({
         <MaskIcon src={deleteIcon} size={24} />
       </button>
       <button type="button" className={styles.outfitEquipBtn} disabled={equipping || inert} aria-busy={equipping} aria-label="EQUIP" onClick={onEquip}>
-        {equipping ? <Spinner size={20} color="var(--text)" /> : 'EQUIP'}
+        {equipping ? <Spinner variant="thin" size={20} style={{ '--spinner-arc': 'var(--text)' } as React.CSSProperties} /> : 'EQUIP'}
       </button>
     </div>
   )
@@ -649,7 +650,7 @@ export function BackpackPage({
           <h1 className={styles.title}>Backpack</h1>
           <Tabs variant="section" className={styles.tabs} items={BACKPACK_TABS} value={tab} onChange={(t) => { setTab(t); setSelected(null) }} aria-label="Backpack sections" />
           <div className={styles.filterWrap}>
-            <Button variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
+            <Button appearance="hud" variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
               <MaskIcon src={filterIcon} size={20} />
               FILTER &amp; SORT
               <MaskIcon src={arrowDownIcon} size={12} />
@@ -694,7 +695,7 @@ export function BackpackPage({
             {tab === 'wearables' && (
               <div className={styles.contentHead}>
                 <Tabs variant="subtab" className={styles.sectionTabs} items={SECTION_TABS} value={section} onChange={setSection} aria-label="Wearables sections" />
-                <Button variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
+                <Button appearance="hud" variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
                   <MaskIcon src={marketplaceIcon} />
                   SHOP
                 </Button>
@@ -794,7 +795,7 @@ export function BackpackPage({
                   </div>}
                   {backpack.loading ? (
                     <div className={styles.grid} aria-busy="true">
-                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton key={i} className={styles.skeleton} />)}
+                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton tone="sweep" key={i} className={styles.skeleton} />)}
                     </div>
                   ) : pageItems.length === 0 ? (
                     <EmptyResults search={searchDebounced !== ''} />

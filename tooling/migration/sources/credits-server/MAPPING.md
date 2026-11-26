@@ -156,20 +156,30 @@ retried after it is refused as reused, never applied twice.
 After the ledger and studio budget steps, `grant_audit` matches available
 positive USD `grant` and `studio_grant` credits with `on_demand_credits`
 metadata to the imported paid ledger row by wallet and `tx_ref`. It writes
-one `ops.admin_audit` row with domain `credits`, action `grant`, the lowercase
-granter wallet as actor, the recipient as target and the grant timestamp.
-The detail holds the reason, annotation and upstream credit ID. A studio grant
-also carries `studioName` from its budget link when available, with a null
-value when the name is unavailable. The credits report classifies a grant as
-`studio_grant` when a studio budget entry names its ledger row, or when its
-audit is such an upstream record (`upstreamCreditId` with `studioName`). An
-audited Decentraland grant is `grant`, as is an audit with a `studioName`
-alone, which the node's admin route once wrote on grants that spent no budget.
+one `ops.admin_audit` row and links it through `credits.ledger.admin_audit_id`.
+
+| Source | Audit field |
+| --- | --- |
+| `on_demand_credits.granter_address` | `actor`, the lowercased wallet |
+| `user_credits.user_address` and `timestamp` | `target`, the lowercased recipient, and `at`, the grant timestamp in UTC |
+| `on_demand_credits.reason`, `annotation` and `credit_id` | `detail.reason`, `detail.annotation` and `detail.upstreamCreditId` |
+| `studio_grant` and its imported budget link | `detail.studioName`, null when the name is unavailable |
+| Grant audit | `domain = 'credits'`, `action = 'grant'` |
+
+The credits report classifies a grant as `studio_grant` when a studio budget
+entry names its ledger row, or when its audit is such an upstream record
+(`upstreamCreditId` with `studioName`). An audited Decentraland grant is
+`grant`, as is an audit with a `studioName` alone, which the node's admin
+route once wrote on grants that spent no budget. IAP, sale proceeds and other
+USD sources folded into ledger grants keep their `migrated` report source.
 
 The audit insert and the ledger link commit together. A rerun fills missing
-links on previously imported rows and keeps existing links. The money and
-wallet balances stay the same. IAP, sale proceeds and other USD sources
-folded into ledger grants keep their `migrated` report source.
+links and preserves existing node or imported audit links. The money and
+wallet balances stay the same. Each batch reports the number imported,
+skipped because the audit was already linked, and skipped because there was
+no matching ledger row. Each unmatched available grant produces a warning
+with its upstream credit ID. A dry run reports the same categories for its
+rolled-back changes.
 
 ## Not migrated
 

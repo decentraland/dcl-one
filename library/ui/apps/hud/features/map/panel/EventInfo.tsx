@@ -5,11 +5,11 @@ import { setEventAttending } from '@explorer-core/features/map/mapApi'
 import type { EventData } from '@explorer-core/engine/protocol'
 import type { EventView } from '@explorer-core/features/map/navmap'
 import { calendarLink, eventSchedule, eventShareLinks, upcomingDates } from '@explorer-core/features/map/shareLinks'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
 import { ShareMenu } from './ShareMenu'
 import { TextWithLinks } from './TextWithLinks'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function EventInfo({
   view,
