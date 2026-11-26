@@ -170,25 +170,27 @@ for section in automation inworld; do
 done
 pass "on-demand sections appended on update and on create"
 
-# --- 3c. sdk: appended to an explorer comment, alone on a pull request with no explorer build ---
-reset_store
-run_upsert build "BUILD-FIRST" >/dev/null
-run_upsert sdk "SDK-PREVIEW" >/dev/null
-[ "$(count)" = 1 ] || fail "sdk append: expected 1 comment"
-BODY="$(body_of)"
-grep -q 'BUILD-FIRST' <<< "$BODY" || fail "sdk append: build content lost"
-grep -q 'SDK-PREVIEW' <<< "$BODY" || fail "sdk append: content missing"
-reset_store
-OUT="$(run_upsert sdk "SDK-ALONE")"
-grep -q 'updated (attempt 1)' <<< "$OUT" || fail "sdk create: did not settle on attempt 1"
-BODY="$(body_of)"
-grep -q 'SDK-ALONE' <<< "$BODY" || fail "sdk create: content missing"
-grep -q '<!-- ci:build:start -->' <<< "$BODY" && fail "sdk create: seeded explorer sections that will never report"
-run_upsert build "BUILD-LATER" >/dev/null
-BODY="$(body_of)"
-grep -q 'BUILD-LATER' <<< "$BODY" || fail "sdk create: a later build section did not land"
-grep -q 'SDK-ALONE' <<< "$BODY" || fail "sdk create: a later build section wiped the sdk one"
-pass "sdk section appended to an explorer comment, and alone without explorer sections"
+# --- 3c. sdk and protocol: appended to an explorer comment, alone on a pull request with no explorer build ---
+for section in sdk protocol; do
+  reset_store
+  run_upsert build "BUILD-FIRST" >/dev/null
+  run_upsert "$section" "SDK-PREVIEW" >/dev/null
+  [ "$(count)" = 1 ] || fail "$section append: expected 1 comment"
+  BODY="$(body_of)"
+  grep -q 'BUILD-FIRST' <<< "$BODY" || fail "$section append: build content lost"
+  grep -q 'SDK-PREVIEW' <<< "$BODY" || fail "$section append: content missing"
+  reset_store
+  OUT="$(run_upsert "$section" "SDK-ALONE")"
+  grep -q 'updated (attempt 1)' <<< "$OUT" || fail "$section create: did not settle on attempt 1"
+  BODY="$(body_of)"
+  grep -q 'SDK-ALONE' <<< "$BODY" || fail "$section create: content missing"
+  grep -q '<!-- ci:build:start -->' <<< "$BODY" && fail "$section create: seeded explorer sections that will never report"
+  run_upsert build "BUILD-LATER" >/dev/null
+  BODY="$(body_of)"
+  grep -q 'BUILD-LATER' <<< "$BODY" || fail "$section create: a later build section did not land"
+  grep -q 'SDK-ALONE' <<< "$BODY" || fail "$section create: a later build section wiped the sdk one"
+done
+pass "sdk and protocol sections appended to an explorer comment, and alone without explorer sections"
 
 # --- 4. marker-shaped body lines are stripped ------------------------------------------------
 reset_store

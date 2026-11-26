@@ -1,16 +1,24 @@
 name: Protocol / CI
+# The protocol's CI and its PR previews. protocol-release.yml calls the same job for next.
+# A same-repo PR publishes what it packed as @dcl-regenesislabs/protocol under the pr dist-tag, a
+# preview-only package any branch can publish to. @dcl/protocol publishes only from
+# protocol-release.yml, through an environment a PR run cannot use.
 on:
-  push:
-    branches: [main]
-    paths:
-      - library/protocol/**
-      - .github/workflows/protocol.yml
   pull_request:
     paths:
       - library/protocol/**
       - .github/workflows/protocol.yml
+      - .github/workflows/protocol-release.yml
+  workflow_call:
 permissions:
   contents: read
+concurrency:
+  # a newer push supersedes a PR's run; a run called from protocol-release.yml is never cancelled
+  group: protocol-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+env:
+  PREVIEW_NAME: '@dcl-regenesislabs/protocol'
+  PNPM: corepack pnpm@12.21.0
 jobs:
   check:
     name: Lint, build, wire compatibility, generation
@@ -38,3 +46,91 @@ jobs:
         run: make buf-breaking
       - name: Generate out-ts/out-js and run the wire tests
         run: make test
+      - name: Stamp the snapshot version
+        # 1.0.0-<run>.commit-<sha>, as the package's versions on npm are. Fork PRs publish nothing.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./library/protocol
+          deterministic-snapshot: true
+          only-update-versions: true
+        env:
+          # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
+          BRANCH_NAME: ${{ github.head_ref }}
+      - name: Name the PR's package as a preview
+        if: github.event_name == 'pull_request'
+        run: $PNPM pkg set name="$PREVIEW_NAME"
+      - name: Pack
+        run: rm -rf dist && $PNPM pack --pack-destination dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: protocol-package-${{ github.sha }}
+          path: library/protocol/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+  preview:
+    name: Publish the PR preview
+    needs: check
+    # fork PRs publish nothing
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      pull-requests: write
+      id-token: write # npm OIDC trusted publishing — no token secret
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: protocol-package-${{ github.sha }}
+          path: dist
+      - name: Publish
+        id: publish
+        run: |
+          set -euo pipefail
+          tgz=$(ls ./dist/*.tgz)
+          packed=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version')
+          version=${packed##*@}
+          if [ "${packed%@*}" != "$PREVIEW_NAME" ] || ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]]; then
+            echo "a preview is a snapshot version of $PREVIEW_NAME, got $packed" >&2
+            exit 1
+          fi
+          # a rerun repeats the version
+          if [ -n "$($PNPM view "$packed" version 2> /dev/null)" ]; then
+            echo "$packed is already on npm; skipping"
+          else
+            $PNPM publish "$tgz" --provenance --access public --tag pr --no-git-checks --registry https://registry.npmjs.org
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+      - name: Write the install command
+        env:
+          VERSION: ${{ steps.publish.outputs.version }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # an npm alias, so code keeps importing @dcl/protocol; a client's project may install with npm
+          cli=npm
+          {
+            echo '![Protocol](https://img.shields.io/badge/Protocol-Published-brightgreen?logo=npm&logoColor=white&style=for-the-badge)'
+            echo
+            echo "Protocol package for $HEAD_SHA:"
+            echo
+            echo '```'
+            echo "$cli install @dcl/protocol@npm:$PREVIEW_NAME@$VERSION"
+            echo '```'
+            echo
+            echo 'The pr dist-tag points at the last PR preview published, so prefer the exact version.'
+          } > protocol-section.md
+      - name: Add it to the PR's CI status comment
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          section: protocol
+          body-file: protocol-section.md
+          github-token: ${{ github.token }}

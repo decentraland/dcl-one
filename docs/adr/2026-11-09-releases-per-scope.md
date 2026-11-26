@@ -57,9 +57,9 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 
 ## Follow-ups
 
-1. A protocol release workflow publishing `@dcl/protocol` from `library/protocol` under
-   `protocol-v<version>`, for the consumers outside this repository (Godot and Unity take the
-   proto files, TypeScript services take `out-ts`); it needs a version scheme and the package made
-   public.
+1. A versioned protocol release from `.github/workflows/protocol-release.yml`, which publishes
+   `@dcl/protocol@next` from `library/protocol` today, under `protocol-v<version>`, for the
+   consumers outside this repository (Godot and Unity take the proto files, TypeScript services
+   take `out-ts`); it needs a version scheme.
 2. A release-everything dispatcher that starts each scope's release run and creates the one
    release that claims "Latest", listing the scope versions it shipped.

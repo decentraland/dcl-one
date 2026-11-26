@@ -135,7 +135,9 @@
         "@decentraland/apis"
       ],
       "paths": [
-        "/library/protocol/"
+        "/library/protocol/",
+        "/.github/workflows/protocol.yml",
+        "/.github/workflows/protocol-release.yml"
       ]
     },
     {

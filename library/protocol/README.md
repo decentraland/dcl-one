@@ -20,8 +20,21 @@ The Rust comms server
 signed challenges. Application-relay message types support a dormant internal implementation;
 public admission cannot negotiate that capability. `WsPeerUpdate.recipients` (rfc5) is the
 scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update-recipients`
-(decentraland/protocol #505). The package is marked
-`private` until `@dcl/protocol` publishes from here; until then that repository publishes it.
+(decentraland/protocol #505).
+
+Publishing: a push to `main` that changes `library/protocol` publishes `@dcl/protocol` under the
+`next` dist-tag as `1.0.0-<run>.commit-<sha>` (`.github/workflows/protocol-release.yml`). Its
+publish job uses the `npm-release` environment, which a pull request's run cannot deploy to, and
+the package's npm trusted publisher requires it. A pull request from this repository publishes
+what it packed as `@dcl-regenesislabs/protocol` under the shared `pr` dist-tag
+(`.github/workflows/protocol.yml`) and adds the install command to the PR's CI status comment:
+
+```bash
+npm install @dcl/protocol@npm:@dcl-regenesislabs/protocol@<version>
+```
+
+Install the exact version; the tag moves to the last PR published. That package is a preview
+only: any branch of this repository can publish to it. Fork pull requests publish nothing.
 
 Checks: `make install` (dependencies and the `google/` well-known types), `make buf-lint`,
 `make buf-build`, `make buf-breaking` (wire compatibility against this repository's `main`;
@@ -73,10 +86,10 @@ Many repositories depend on this protocol definition and that sometimes implies 
 > The ideal order for introducing breaking changes in the protocol is as follows:
 >
 > 1. Create a PR in the Protocol repository.
-> 2. Use the npm test link from the CI of the protocol PR in the protocol-dependent application for development.
+> 2. Use the preview install command from the protocol PR's CI status comment in the protocol-dependent application for development.
 > 3. Once both the protocol PR and the protocol-dependent application (e.g. unity-renderer) PR are ready for merging, synchronize their merging as follows:
 >    1. Merge the protocol PR.
->    2. Modify protocol-dependent application PR to use the `@dcl/protocol@next` package to stop using the PR npm test link.
+>    2. Modify protocol-dependent application PR to use the `@dcl/protocol@next` package to stop using the PR preview.
 >    3. Merge the protocol-dependent application PR.
 
 Some dev-cases are described here:
