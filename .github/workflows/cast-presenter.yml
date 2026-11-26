@@ -1,7 +1,8 @@
 name: Cast presenter LiveKit tests
 # The Cast presenter (comms::cast_presenter) and its cast-bot against a real livekit-server: the
 # node-to-bot stdio protocol and the bot's track and data channel. A workflow of its own, filtered
-# to their paths, because cast-bot links libwebrtc, which no other Rust job builds.
+# to their paths, because cast-bot links libwebrtc, which no other Rust job builds. It also lints
+# cast-bot, which the Development workflow's workspace clippy does not cover.
 on:
   workflow_dispatch:
   push:
@@ -90,6 +91,11 @@ jobs:
           shared-key: cast-presenter-${{ hashFiles('flake.lock') }}
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: true
+      - name: Clippy over cast-bot
+        # cast-bot is a workspace of its own, so the Development workflow's clippy never sees it.
+        run: |
+          nix develop .#ci --no-update-lock-file --command \
+            cargo clippy --manifest-path services/catalyst/cast-bot/Cargo.toml --locked --all-targets -- -D warnings
       - name: Run the presenter's tests with the real cast-bot and livekit-server
         # --include-ignored runs the LiveKit test the Development workflow's shards leave out.
         run: |
