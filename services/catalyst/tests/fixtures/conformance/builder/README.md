@@ -257,7 +257,11 @@ env, so no `.env` file is read. Then it:
    `SIGTERM`, including one that arrives while the database is being
    created; a second signal waits for the same drop. An uncaught error is
    reported redacted after the same drop. Upstream runs with that URL's credentials, so use a role that
-   can create databases and owns nothing else.
+   can create databases and owns nothing else. The cluster must be on
+   localhost, a loopback address or a Unix socket (a `host=/path`
+   parameter or a URL-encoded path as the host): the script refuses any
+   other host before it installs anything, since the offline guard would
+   refuse the connection.
 2. Runs upstream's migrations, stopping the run if they take more than
    five minutes, and inserts the rows of `seed.json`.
 3. Starts a loopback fake for the collections and third-party subgraphs,

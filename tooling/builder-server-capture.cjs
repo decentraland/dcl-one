@@ -2601,6 +2601,12 @@ function redact(message, databaseUrl) {
   return secrets.reduce((text, secret) => text.split(secret).join('<redacted>'), String(message))
 }
 
+/** The host `pg` connects to for `url`: its `host` parameter, else its host, else `PGHOST`; empty means localhost. */
+function databaseHost(url) {
+  const { hostname, searchParams } = new URL(url)
+  return searchParams.get('host') ?? (decoded(hostname) || process.env.PGHOST || '')
+}
+
 function databaseUrl(base, name) {
   const url = new URL(base)
   url.pathname = '/' + name
@@ -3686,12 +3692,14 @@ async function main() {
   const ledger = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'parity.json'), 'utf8'))
   const planErrors = [...caseOrderErrors(CASES), ...ledgerCaptureErrors(ledger, CASES)]
   if (planErrors.length) fail(planErrors.join('; '))
-  const { refused } = require(GUARD)
+  const { refused, isLoopback } = require(GUARD)
   const { upstream } = assertPinnedSource(root, 'builder')
   if (!output) fail('Usage: node tooling/builder-server-capture.cjs <upstream-checkout> <output-directory>')
   const adminUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
   adminUrlSeen = adminUrl
   try { databaseUrl(adminUrl, 'postgres') } catch { fail('CATALYST_TEST_DATABASE_URL is not a valid URL') }
+  const host = databaseHost(adminUrl)
+  if (!host.startsWith('/') && !isLoopback(host)) fail('CATALYST_TEST_DATABASE_URL must name a loopback host or a Unix socket: the capture is offline')
   installLocked(upstream)
   const capture = sourceCapture(upstream, { kind: 'builder' })
   const seed = readSeed()
