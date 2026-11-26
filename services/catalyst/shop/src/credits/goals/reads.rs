@@ -173,6 +173,16 @@ pub async fn user_credits(
     let mut conn = state.credits.pool.acquire().await?;
     read_credits(&mut conn, address, status, true, super::super::store::now()).await
 }
+
+/// [`user_credits`] on `conn`, for a read within one snapshot.
+pub async fn user_credits_on(
+    conn: &mut PgConnection,
+    address: &str,
+    status: Option<&str>,
+) -> Result<(Vec<UserCreditItem>, f64, u64), ApiError> {
+    read_credits(conn, address, status, true, super::super::store::now()).await
+}
+
 async fn read_credits(
     conn: &mut PgConnection,
     address: &str,

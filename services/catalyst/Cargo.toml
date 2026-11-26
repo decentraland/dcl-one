@@ -55,6 +55,8 @@ unwrap_used = "deny"
 # (dcl-scene-cli and its dcl-* support crates) is also a workspace member, but the node never links:
 # select it with -p, not --workspace beside the node, since dcl-scene-authoring
 # turns on serde_json's preserve_order and would reorder the node's JSON in that build.
+# The comms-e2e tool is a member the node never links as well: select it with -p, since
+# with --workspace its dependency compiles the node with catalyst-comms/test-support.
 members = [
     "builder",
     "camera-reel",
