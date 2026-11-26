@@ -1,7 +1,7 @@
 import { ReactEcs } from '../../react-ecs'
 import { UiEntity } from '../index'
 import { compensateInsetForUiScale, getScreenInsetArea } from '../utils'
-import { UiScreenInsetAreaProps } from './types'
+import type { UiScreenInsetAreaProps } from './types'
 
 /**
  *

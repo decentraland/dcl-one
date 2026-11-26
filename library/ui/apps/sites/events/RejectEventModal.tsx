@@ -1,6 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
 import { CheckboxLabel } from '../../../components/CheckboxLabel/CheckboxLabel'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { adminCopy, REJECT_REASONS, rejectionNoteLimit, type RejectReasonId } from './admin-copy'
 import { Dialog } from './Dialog'
 import { Notice } from './Notice'
@@ -84,10 +84,11 @@ export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEv
         {tooLong ? <Notice tone="error">{adminCopy.reject.noteTooLong(limit)}</Notice> : null}
         {feedback}
         <div className={styles.footer}>
-          <Button variant="secondary" disabled={busy} onClick={close}>
+          <Button size="lg" variant="secondary" disabled={busy} onClick={close}>
             {adminCopy.reject.cancel}
           </Button>
           <Button
+            size="lg"
             disabled={busy || tooLong}
             onClick={() => {
               if (selected.length === 0) {

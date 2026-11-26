@@ -1,5 +1,4 @@
-import {
-  Engine,
+import type {
   IEngine,
   Transform,
   NetworkEntity,
@@ -8,8 +7,11 @@ import {
   EngineInfo,
   GltfContainer,
   CrdtMessage,
-  CrdtMessageType,
   Entity
+} from '../../../packages/@dcl/ecs/dist'
+import {
+  Engine,
+  CrdtMessageType
 } from '../../../packages/@dcl/ecs/dist'
 import * as components from '../../../packages/@dcl/ecs/src/components'
 import { addSyncTransport } from '../../../packages/@dcl/sdk/network/message-bus-sync'

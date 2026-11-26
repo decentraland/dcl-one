@@ -989,6 +989,23 @@ fn worlds_cards(n: &mut usize) -> String {
                 )
             },
             Form {
+                confirm: "Make this wallet an events moderator?",
+                extras: &[
+                    Extra(
+                        "Remove",
+                        "/admin/api/events/moderator-remove",
+                        "address",
+                        "Remove this events moderator?",
+                    ),
+                    Extra("List", "/admin/api/events/moderators-list", "", ""),
+                ],
+                ..form(
+                    "/admin/api/events/moderator-add",
+                    "Events moderator",
+                    &[Field("address", "Wallet", Input::Text("0x\u{2026}"))],
+                )
+            },
+            Form {
                 confirm: "Enable or disable this point of interest?",
                 ..form(
                     "/admin/api/places/poi-update",

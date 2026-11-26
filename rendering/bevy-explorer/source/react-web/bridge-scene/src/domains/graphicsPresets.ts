@@ -18,7 +18,7 @@ const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   VSync: ['Off', DEFAULT, 'On'],
   'Render Resolution': [50, DEFAULT, 100],
   'Anti-aliasing': ['Off', DEFAULT, 'FXAA (High)'],
-  Bloom: ['Low', DEFAULT, 'Low'],
+  Bloom: [DEFAULT, DEFAULT, DEFAULT],
   'Avatar Outline': ['Off', DEFAULT, 'On'],
   // the engine keeps it off by default, so a new install reads as Custom until a preset is picked
   'Jiggle Bones': ['Off', 'On', 'On'],

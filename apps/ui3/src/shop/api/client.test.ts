@@ -33,6 +33,7 @@ const SHOP_UI_ROUTES: readonly [route: string, legacyAliases: string[]][] = [
   ["GET /shop-api/v1/contracts", ["GET /marketplace-api/v1/contracts"]],
   ["GET /shop-api/v1/coupons", ["GET /marketplace-api/v1/coupons"]],
   ["GET /shop-api/v1/coupons/{}", ["GET /marketplace-api/v1/coupons/{}"]],
+  ["GET /shop-api/v1/credit-authorizations/{}", ["GET /credits/credits/authorize/{}"]],
   ["GET /shop-api/v1/credit-program/season", ["GET /credits/season"]],
   ["GET /shop-api/v1/credit-program/seasons", ["GET /credits/seasons"]],
   ["GET /shop-api/v1/credit-topups/mana/balance/{}", ["GET /transactions-api/v1/payments/balance/{}", "GET /v1/payments/balance/{}"]],

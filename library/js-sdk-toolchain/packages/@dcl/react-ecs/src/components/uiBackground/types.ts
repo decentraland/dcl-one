@@ -1,5 +1,5 @@
-import { BorderRect } from '@dcl/ecs'
-import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
+import type { BorderRect, Entity } from '@dcl/ecs'
+import type { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
 
 /**
  * @public
@@ -16,6 +16,8 @@ export interface UiBackgroundProps {
   uvs?: number[]
   /** AvatarTexture for the background */
   avatarTexture?: UiAvatarTexture
+  /** VideoTexture for the background: the frames of a VideoPlayer on another entity. Supported only by the Bevy Explorer; other clients ignore it. */
+  videoTexture?: UiVideoTexture
   /** Texture for the background */
   texture?: UiTexture
 }
@@ -25,6 +27,16 @@ export interface UiBackgroundProps {
  */
 export interface UiAvatarTexture {
   userId: string
+  wrapMode?: TextureWrapType
+  filterMode?: TextureFilterType
+}
+
+/**
+ * Video Texture. Supported only by the Bevy Explorer; other clients ignore it.
+ * @public
+ */
+export interface UiVideoTexture {
+  videoPlayerEntity: Entity
   wrapMode?: TextureWrapType
   filterMode?: TextureFilterType
 }

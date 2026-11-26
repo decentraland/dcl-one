@@ -1,14 +1,14 @@
-import {
+import type {
   ILoggerComponent,
   IMetricsComponent,
   IHttpServerComponent,
   IConfigComponent
 } from '@well-known-components/interfaces'
-import { HTTPProvider } from 'eth-connect'
-import { RoomComponent } from '@dcl/mini-comms/dist/adapters/rooms'
-import { WebSocketComponent } from './server/ws'
-import { CliComponents } from '../../components'
-import { ISignalerComponent } from '../../components/exit-signal'
+import type { HTTPProvider } from 'eth-connect'
+import type { RoomComponent } from '@dcl/mini-comms/dist/adapters/rooms'
+import type { WebSocketComponent } from './server/ws'
+import type { CliComponents } from '../../components'
+import type { ISignalerComponent } from '../../components/exit-signal'
 
 export type PreviewComponents = CliComponents & {
   logs: ILoggerComponent

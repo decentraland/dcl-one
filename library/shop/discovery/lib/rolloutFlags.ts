@@ -43,6 +43,12 @@ export const REMOTE_FLAG = {
    * routes and marks no offer `splittable`, so the flag is turned on only where the node does.
    */
   creditsManaSplit: "shop-credits-mana-split",
+  /**
+   * Not the Shop's own: the Builder and Sites' creators preview read the same `dapps` key. On, the item page asks the
+   * wearable-preview iframe for its Unity renderer (`unity`, `mode=marketplace`) where pickRenderer allows the full
+   * renderer; off, on a lighter device, or when Unity fails to load, the iframe draws with Babylon.
+   */
+  unityWearablePreview: "unity-wearable-preview",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];

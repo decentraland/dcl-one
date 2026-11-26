@@ -220,6 +220,25 @@ describe("LandMap over the atlas image", () => {
   });
 });
 
+describe("LandMap status", () => {
+  it("shows the status it is given over the map, outside the stage that moves", () => {
+    stubBrowser();
+    const { container } = render(<LandMap tiles={landGrid()} initialZoom={10} status={<span>Updated 12 min ago</span>} />);
+    const status = screen.getByText("Updated 12 min ago");
+    expect(status.closest(".shop-landmap__stage")).toBeNull();
+    expect(container.querySelector('[role="region"]')!.contains(status)).toBe(true);
+  });
+
+  it("reads nothing itself and draws no status without one", () => {
+    stubBrowser();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    render(<LandMap tiles={landGrid()} initialZoom={10} />);
+    expect(screen.queryByText(/^Updated /)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("LandMap LAND on sale, on a map of tile data", () => {
   const SALE = KIND_COLORS["--_sale"];
 

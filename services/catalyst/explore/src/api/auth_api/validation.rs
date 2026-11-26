@@ -203,6 +203,9 @@ pub(super) fn refusal(err: AuthError) -> ChainRefusal {
             }
             ChainRefusal::Unavailable
         }
+        // The node-wide budget of the client source (`eip1654_budget`), below
+        // this route's own: refused before the RPC, the same 429.
+        AuthError::Eip1654RateLimited => ChainRefusal::Throttled(Spent::Network),
         e => ChainRefusal::Invalid(e.to_string()),
     }
 }
@@ -835,6 +838,16 @@ mod tests {
                 ChainRefusal::Unavailable
             );
         }
+    }
+
+    /// The node's budget of contract-wallet checks refusing below this
+    /// route's own is the same 429, never an invalid chain.
+    #[test]
+    fn a_rate_limited_contract_check_is_throttled() {
+        assert_eq!(
+            refusal(AuthError::Eip1654RateLimited),
+            ChainRefusal::Throttled(Spent::Network)
+        );
     }
 
     #[tokio::test]

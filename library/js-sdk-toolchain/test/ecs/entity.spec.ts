@@ -1,6 +1,6 @@
+import type { Entity } from '../../packages/@dcl/ecs/src/engine/entity'
 import {
   AMOUNT_VERSION_AVAILABLE,
-  Entity,
   createEntityContainer,
   EntityState,
   MAX_U16,
