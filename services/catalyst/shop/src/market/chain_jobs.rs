@@ -1848,7 +1848,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     {
         tracing::warn!(
             job = "collections-index",
-            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but no collections-v1 walk runs (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint): Ethereum's catalogue stays the mirror's"
+            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but this process runs no collections-v1 walk (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint), so it walks and projects nothing on Ethereum"
         );
     }
     if settings.third_party_registry_enabled
