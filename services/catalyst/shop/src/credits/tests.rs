@@ -321,6 +321,7 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
+    analytics: Option<crate::social::analytics::Analytics>,
 }
 
 impl Default for StateCfg {
@@ -334,12 +335,13 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
+            analytics: None,
         }
     }
 }
 
 fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroker) -> SharedState {
-    let settings = Settings::parse(RawSettings {
+    let mut settings = Settings::parse(RawSettings {
         writes_enabled: cfg.writes_enabled,
         mock_card: cfg.mock_card,
         // The mock card runs only on Amoy (Settings::parse); the HTTP routes under test do not read the chain.
@@ -359,6 +361,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         ..RawSettings::default()
     })
     .unwrap();
+    settings.analytics = cfg.analytics;
     Arc::new(State::with_sources(
         pool,
         Outbound::for_tests(),
@@ -11089,4 +11092,170 @@ async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
         landing("ord_unknown".into()).await,
         "https://shop/credits?order=ord_unknown&canceled=1"
     );
+}
+
+/// A paid pack is reported once, after the webhook's commit, with what the
+/// buyer paid and got (`stripe_credit_granted`, credits-server's payload): a
+/// mismatched charge, a redelivery and the purchase's other settled event
+/// report nothing.
+#[tokio::test]
+async fn a_granted_pack_is_reported_once() {
+    let Some(pool) = pool().await else { return };
+    let mut captured = super::events::capture::analytics().await;
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            analytics: Some(captured.analytics.clone()),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let pack = PackRow {
+        sku: "events-pack".into(),
+        title: "Events".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let (order_id, session, payment_intent) = (unique("ord"), unique("cs"), unique("pi"));
+    state
+        .credits
+        .insert_pending_order(
+            &order_id,
+            &wallet.address,
+            &pack.order(3).unwrap(),
+            &session,
+        )
+        .await
+        .unwrap();
+    let session_event = |id: &str, amount: i64| {
+        json!({ "id": id, "type": "checkout.session.completed", "data": { "object": {
+            "id": session, "payment_status": "paid", "amount_total": amount, "currency": "usd",
+            "payment_intent": payment_intent, "metadata": { "orderId": order_id } } } })
+        .to_string()
+    };
+    let quiet = std::time::Duration::from_millis(400);
+
+    deliver(&app, &session_event(&unique("evt"), 500)).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "a mismatched charge grants and reports nothing"
+    );
+
+    let paid = session_event(&unique("evt"), 1500);
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "processed");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the grant is reported");
+    assert_eq!(posted["event"], "stripe_credit_granted");
+    assert_eq!(posted["context"], "credits-server");
+    let mut body = posted["body"].clone();
+    body.as_object_mut().unwrap().remove("env");
+    assert_eq!(
+        body,
+        json!({ "orderId": order_id, "userAddress": wallet.address, "amount": 150, "chargedCents": 1500,
+                "packId": "events-pack", "quantity": 3, "usdTopUpId": null })
+    );
+
+    let (_, out) = deliver(&app, &paid).await;
+    assert_eq!(out["detail"], "already processed");
+    let intent =
+        json!({ "id": unique("evt"), "type": "payment_intent.succeeded", "data": { "object": {
+        "id": payment_intent, "amount": 1500, "currency": "usd" } } })
+        .to_string();
+    deliver(&app, &intent).await;
+    assert_eq!(
+        captured.next(quiet).await,
+        None,
+        "the purchase is reported once"
+    );
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// A credit's first settlement is reported once, after its commit
+/// (`usd_purchase_settled`, credits-server's payload): the charge, the MANA
+/// that moved, the transaction and whether the backstop recovered a
+/// released credit. A later use of the same credit reports nothing.
+#[tokio::test]
+async fn a_settled_purchase_is_reported_once() {
+    let Some(pool) = pool().await else { return };
+    let mut captured = super::events::capture::analytics().await;
+    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let buyer = scratch_wallet();
+    seed_paid_credits(&pool, &buyer.address, "100").await;
+    let contract = scratch_wallet().address;
+    let (live, released) = (
+        format!("0x{}", super::handlers::random_32_hex()),
+        format!("0x{}", super::handlers::random_32_hex()),
+    );
+    authorization_fixture(&pool, &live, &buyer.address, 700, "authorized", 0, 0).await;
+    authorization_fixture(&pool, &released, &buyer.address, 200, "released", 0, 0).await;
+    let tx_hash = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, salt, wei) in [
+        (1_i64, &live, "1000000000000000000"),
+        (2, &released, "2000000000000000000"),
+        (3, &live, "5"),
+    ] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) \
+             VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&contract)
+        .bind(tx_hash(block as u8))
+        .bind(&buyer.address)
+        .bind(salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let diffs = super::settlement::settle(&credits, 137, &contract, -1, 10)
+        .await
+        .unwrap();
+    assert_eq!(diffs.iter().filter(|d| d.consumed).count(), 3, "{diffs:?}");
+
+    let mut reported = Vec::new();
+    while let Some(posted) = captured.next(std::time::Duration::from_secs(5)).await {
+        assert_eq!(posted["event"], "usd_purchase_settled");
+        let mut body = posted["body"].clone();
+        body.as_object_mut().unwrap().remove("env");
+        reported.push(body);
+        if reported.len() == 2 {
+            break;
+        }
+    }
+    reported.sort_by_key(|b| b["usdCents"].as_i64());
+    assert_eq!(
+        reported,
+        [
+            json!({ "salt": released, "userAddress": buyer.address, "usdCents": 200,
+                    "manaSettledWei": "2000000000000000000", "tradeId": null, "txHash": tx_hash(2), "recovered": true }),
+            json!({ "salt": live, "userAddress": buyer.address, "usdCents": 700,
+                    "manaSettledWei": "1000000000000000000", "tradeId": null, "txHash": tx_hash(1), "recovered": false }),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "a remainder is not a new purchase"
+    );
+    sqlx::query("DELETE FROM credits.usage_settlements WHERE address = $1")
+        .bind(&buyer.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.usages WHERE contract = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &buyer.address).await;
 }

@@ -2224,6 +2224,7 @@ dependencies = [
  "catalyst-land-authz",
  "catalyst-price",
  "catalyst-shared",
+ "catalyst-social",
  "catalyst-storage",
  "chrono",
  "dcl-auth",

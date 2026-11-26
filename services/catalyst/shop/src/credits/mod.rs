@@ -81,6 +81,7 @@ pub mod checkout;
 pub mod digest;
 pub mod dto;
 pub mod errors;
+pub mod events;
 pub mod escrow;
 pub mod feed;
 pub mod fulfillment;
@@ -324,6 +325,9 @@ pub struct Settings {
     pub checkout_cancel_url: String,
     /// Both set or neither (a half-configured pair falls back to the Shop's).
     pub checkout_builder_urls: Option<(String, String)>,
+    /// The analytics client the revenue events go to (`events.rs`), under
+    /// credits-server's context; the node sets it, and none leaves them unsent.
+    pub analytics: Option<crate::social::analytics::Analytics>,
     /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
     /// Stripe sends an abandoning buyer to.
     pub public_url: Option<String>,
@@ -609,6 +613,7 @@ impl Settings {
             credits_onchain_authorize_enabled: raw.credits_onchain_authorize_enabled,
             checkout_success_url: raw.checkout_success_url.trim().to_string(),
             checkout_cancel_url: raw.checkout_cancel_url.trim().to_string(),
+            analytics: None,
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
@@ -781,6 +786,7 @@ impl State {
             settings.marketplace_markup_bps,
         ));
         let mut credits = Credits::new(pool)
+            .with_analytics(settings.analytics.clone())
             .with_shop_base_url(&settings.shop_base_url)
             .with_notifications_cdn_url(&settings.notifications_cdn_url);
         if settings.usage.is_configured() {

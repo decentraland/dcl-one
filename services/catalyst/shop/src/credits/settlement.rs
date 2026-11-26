@@ -38,6 +38,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 
 use super::errors::ApiError;
+use super::events;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
@@ -277,9 +278,10 @@ struct Candidate {
     salt: String,
     sender: String,
     value_wei: String,
+    tx_hash: String,
 }
 
-const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei \
+const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei, u.tx_hash \
      FROM credits.usages u \
      JOIN credits.authorizations a ON a.id = u.salt \
      LEFT JOIN credits.usage_settlements s ON s.chain_id = u.chain_id AND s.block_number = u.block_number AND s.log_index = u.log_index \
@@ -318,6 +320,7 @@ pub async fn settle(
                 salt: r.get("salt"),
                 sender: r.get("sender"),
                 value_wei: r.get("value_wei"),
+                tx_hash: r.get("tx_hash"),
             };
             after_block = candidate.block_number;
             after_log = candidate.log_index;
@@ -366,7 +369,9 @@ impl Credits {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
             "SELECT address, usd_cents, oracle_rate::text AS oracle_rate, oracle_decimals, credit_hash, status, \
-                    (SELECT count(*) FROM credits.usage_settlements s WHERE s.authorization_id = a.id)::bigint AS settled \
+                    (SELECT count(*) FROM credits.usage_settlements s WHERE s.authorization_id = a.id)::bigint AS settled, \
+                    COALESCE(a.trade_id, (SELECT min(l.trade_id) FROM credits.authorization_lines l \
+                                          WHERE l.authorization_id = a.id HAVING count(*) = 1)) AS trade_id \
              FROM credits.authorizations a WHERE id = $1 FOR UPDATE",
         )
         .bind(&c.salt)
@@ -378,6 +383,9 @@ impl Credits {
         let oracle_decimals: Option<i16> = row.get("oracle_decimals");
         let credit_hash: Option<String> = row.get("credit_hash");
         let settled: i64 = row.get("settled");
+        // Released or expired: its hold no longer counted against the balance.
+        let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        let trade_id: Option<String> = row.get("trade_id");
         if c.sender != address {
             tracing::warn!(credit = %c.salt, %address, sender = %c.sender, "credits-settlement: a credit this node signed for one wallet was used by another; debiting the signer's wallet");
         }
@@ -446,6 +454,23 @@ impl Credits {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
         tx.commit().await?;
+        // The settlement row's key makes this the one pass that recorded the
+        // purchase, so the event is reported once, after the commit.
+        if kind == "purchase" {
+            events::fire(
+                self.analytics.as_ref(),
+                events::USD_PURCHASE_SETTLED,
+                events::purchase_settled(&events::PurchaseSettled {
+                    salt: &c.salt,
+                    user_address: &address,
+                    usd_cents,
+                    mana_settled_wei: &c.value_wei,
+                    trade_id: trade_id.as_deref(),
+                    tx_hash: &c.tx_hash,
+                    recovered,
+                }),
+            );
+        }
         Ok(CreditUsageDiff {
             credit_id: c.salt.clone(),
             address,

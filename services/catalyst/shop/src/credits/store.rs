@@ -36,6 +36,8 @@ pub struct Credits {
     pub(crate) shop_base_url: Arc<str>,
     /// The grant notification's icon base (`NOTIFICATIONS_CDN_URL`).
     pub(crate) notifications_cdn_url: Arc<str>,
+    /// Where the revenue events go (`events.rs`); none leaves them unsent.
+    pub(crate) analytics: Option<crate::social::analytics::Analytics>,
 }
 
 /// A wallet's balances in integer US cents at the peg (`floor(credits * 10)`;
@@ -80,7 +82,17 @@ impl Credits {
             usage_chain: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.into(),
             notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.into(),
+            analytics: None,
         }
+    }
+
+    /// Reports the revenue events (`events.rs`) to `analytics`.
+    pub fn with_analytics(
+        mut self,
+        analytics: Option<crate::social::analytics::Analytics>,
+    ) -> Self {
+        self.analytics = analytics;
+        self
     }
 
     pub fn with_shop_base_url(mut self, url: &str) -> Self {

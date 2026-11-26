@@ -34,10 +34,13 @@ pub(super) async fn ops_states(
 ) -> anyhow::Result<OpsStates> {
     let non_empty = Config::non_empty;
 
+    let mut settings = credits_settings(config)?;
+    settings.analytics = analytics_client(config, http_client)?
+        .map(|analytics| analytics.with_context(shop::credits::events::ANALYTICS_CONTEXT));
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http_client.clone(),
-        credits_settings(config)?,
+        settings,
         shop::credits::Sources {
             market: Some(sources.market.clone()),
             price: Some(sources.price.clone()),
@@ -579,6 +582,16 @@ pub(super) fn social_analytics(
             "OPEN_AI_API_KEY unset: community AI compliance runs without its provider and skips classification"
         );
     }
+    analytics_client(config, http_client)
+}
+
+/// The analytics client the `ANALYTICS_*` settings configure; none when they
+/// are unset. Social posts under `ANALYTICS_CONTEXT`, credits under
+/// credits-server's own context (`shop::credits::events`).
+fn analytics_client(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<social::analytics::Analytics>> {
     social::analytics::Analytics::new(
         http_client,
         social::analytics::Settings {
