@@ -3102,6 +3102,10 @@ retried. A row in quarantine is not walked, rewound or published.
 - `folded_at` is within 30 minutes;
 - it is bound to the chain the reader expects and is out of quarantine.
 
+The walk stamps `folded_at` with the database's clock, and readers compare
+it with their own. A `folded_at` up to 10 minutes ahead of the reader's clock
+still counts.
+
 The NFT and trade-events walks use the configured catalogue pair. NFT reader and
 status readiness expect mainnet publications (1/137). The
 Rentals histories have separate mainnet and Sepolia cursors. The other
