@@ -664,7 +664,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 

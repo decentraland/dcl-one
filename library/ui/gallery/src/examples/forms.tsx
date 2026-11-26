@@ -10,7 +10,12 @@ import {
   Switch,
   WebSelect,
   WebTextarea,
-  type InputWebCreatorToolsProps
+  type InputWebCreatorToolsProps,
+  CharCounter,
+  CodeInput,
+  FieldLabel,
+  SubmitField,
+  Slider
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import layout from './layout.module.css'
@@ -28,6 +33,46 @@ function SearchBarDemo({ initial }: { initial: string }) {
         clearLabel="Clear search"
       />
     </div>
+  )
+}
+
+function HudSearchBarDemo({
+  variant,
+  fieldSize,
+  initial
+}: {
+  variant: 'dark' | 'light'
+  fieldSize: 'md' | 'sm'
+  initial: string
+}) {
+  const [value, setValue] = useState(initial)
+  return (
+    <SearchBar
+      appearance="hud"
+      variant={variant}
+      fieldSize={fieldSize}
+      label="Search places"
+      placeholder="Search places"
+      value={value}
+      onValueChange={setValue}
+      onClear={() => setValue('')}
+      clearIcon={
+        <svg viewBox="0 0 10 10" width="10" height="10">
+          <path
+            d="M1.5 1.5l7 7M8.5 1.5l-7 7"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+        </svg>
+      }
+      leading={
+        <svg viewBox="0 0 16 16" width="15" height="15">
+          <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      }
+    />
   )
 }
 
@@ -51,6 +96,20 @@ function SingleDropdownDemo({ initial }: { initial: Network | null }) {
         help="Where the purchase is paid."
       />
     </div>
+  )
+}
+
+function HudDropdownDemo({ variant }: { variant: 'dark' | 'light' }) {
+  const [value, setValue] = useState<string>('ethereum')
+  return (
+    <Dropdown
+      appearance="hud"
+      variant={variant}
+      label="Network"
+      value={value}
+      options={networks}
+      onChange={setValue}
+    />
   )
 }
 
@@ -166,6 +225,10 @@ export const formEntries: GalleryEntry[] = [
                 ))}
               </div>
             ))}
+            <div className={layout.row}>
+              <Checkbox aria-label="hud" appearance="hud" defaultChecked />
+              <Checkbox aria-label="hud off" appearance="hud" />
+            </div>
           </div>
         )
       },
@@ -231,6 +294,22 @@ export const formEntries: GalleryEntry[] = [
             <Switch label="Voice chat" labelHidden defaultChecked />
           </div>
         )
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD appearance: default, small and small on a light panel',
+        render: () => (
+          <div className={layout.row}>
+            <Switch appearance="hud" label="Fullscreen" labelHidden defaultChecked />
+            <Switch appearance="hud" label="Fullscreen off" labelHidden />
+            <Switch appearance="hud" size="sm" label="Hear others" labelHidden defaultChecked />
+            <Switch appearance="hud" size="sm" label="Hear others off" labelHidden />
+            <span style={{ padding: 8, borderRadius: 8, background: '#fcfcfc' }}>
+              <Switch appearance="hud" size="sm" surface="light" label="Map layer" labelHidden />
+            </span>
+            <Switch appearance="hud" label="Unavailable" labelHidden disabled />
+          </div>
+        )
       }
     ]
   },
@@ -239,7 +318,48 @@ export const formEntries: GalleryEntry[] = [
     group: 'Forms',
     summary: 'The text field on the Explorer surface.',
     components: ['InputExplorerNames'],
-    examples: inputExamples(InputExplorerNames)
+    examples: [
+      ...inputExamples(InputExplorerNames),
+      {
+        id: 'hud',
+        title:
+          'Explorer HUD: the dark field, the light field, an invalid value, an action, the large field and a multi-line one',
+        render: () => (
+          <div className={`${layout.stack} ${layout.field}`}>
+            <InputExplorerNames appearance="hud" label="Name" defaultValue="robtfm" />
+            <InputExplorerNames
+              appearance="hud"
+              variant="light"
+              label="Name"
+              placeholder="Your name"
+            />
+            <InputExplorerNames appearance="hud" invalid label="Link" defaultValue="not-a-url" />
+            <InputExplorerNames
+              appearance="hud"
+              label="Name"
+              defaultValue="robtfm"
+              fieldAction={{
+                icon: <GeneralSearch size={18} aria-hidden="true" />,
+                label: 'Search',
+                onClick: () => {}
+              }}
+            />
+            <InputExplorerNames
+              appearance="hud"
+              fieldSize="lg"
+              label="Name"
+              defaultValue="robtfm"
+            />
+            <InputExplorerNames
+              appearance="hud"
+              multiline
+              label="About me"
+              placeholder="Tell people about yourself"
+            />
+          </div>
+        )
+      }
+    ]
   },
   {
     name: 'InputWebCreatorTools',
@@ -326,6 +446,31 @@ export const formEntries: GalleryEntry[] = [
             />
           </div>
         )
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD: the dark field, the light field, a disabled one and the sort list',
+        render: () => (
+          <div className={`${layout.row} ${layout.selectRoom}`}>
+            <HudDropdownDemo variant="dark" />
+            <HudDropdownDemo variant="light" />
+            <Dropdown
+              appearance="hud"
+              label="Network"
+              value="ethereum"
+              options={networks}
+              onChange={() => {}}
+              disabled
+            />
+            <div className={layout.narrow}>
+              <Dropdown
+                appearance="hud"
+                kind="sort"
+                options={['Recently listed', 'Cheapest', 'Newest']}
+              />
+            </div>
+          </div>
+        )
       }
     ]
   },
@@ -340,7 +485,183 @@ export const formEntries: GalleryEntry[] = [
         id: 'value',
         title: 'With a value and the clear button',
         render: () => <SearchBarDemo initial="Genesis" />
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD: the dark pill, the light field and the small field',
+        render: () => (
+          <div className={`${layout.stack} ${layout.field}`}>
+            <HudSearchBarDemo variant="dark" fieldSize="md" initial="Genesis" />
+            <HudSearchBarDemo variant="light" fieldSize="md" initial="Genesis" />
+            <HudSearchBarDemo variant="dark" fieldSize="sm" initial="" />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'FieldLabel',
+    group: 'Forms',
+    summary: 'A field label with an optional notice and helper line.',
+    components: ['FieldLabel'],
+    examples: [
+      {
+        id: 'forms',
+        title: 'Plain, and with a notice and a helper line',
+        render: () => (
+          <div className={layout.stack}>
+            <FieldLabel>Name</FieldLabel>
+            <FieldLabel notice="Optional" sublabel="Shown on your passport">
+              Country
+            </FieldLabel>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CharCounter',
+    group: 'Forms',
+    summary: 'The current/max readout under a text field.',
+    components: ['CharCounter'],
+    examples: [
+      {
+        id: 'formats',
+        title: 'The three formats, and a count above its maximum',
+        render: () => (
+          <div className={layout.narrow}>
+            <CharCounter current={3} max={10} />
+            <CharCounter current={3} max={10} format="spaced" />
+            <CharCounter current={3} max={10} format="words" />
+            <CharCounter current={12} max={10} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CodeInput',
+    group: 'Forms',
+    summary: 'A one-time code typed into a row of slots.',
+    components: ['CodeInput'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Typing, accepted and refused',
+        render: () => <CodeInputExample />
+      }
+    ]
+  },
+  {
+    name: 'Slider',
+    group: 'Forms',
+    summary: 'A range input with a ruby fill, in four tracks, with optional steppers.',
+    components: ['Slider'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Thin, thick with steppers, pin with steppers, rail, and disabled',
+        render: () => <SliderExample />
+      }
+    ]
+  },
+  {
+    name: 'SubmitField',
+    group: 'Forms',
+    summary: 'A light text field with its submit button inside it.',
+    components: ['SubmitField'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Ready, held, busy and with an error',
+        render: () => <SubmitFieldExample />
       }
     ]
   }
 ]
+
+function CodeInputExample() {
+  const [code, setCode] = useState('12')
+  return (
+    <div className={layout.strip}>
+      <div className={layout.stack}>
+        <CodeInput value={code} onChange={setCode} />
+        <CodeInput
+          value="123456"
+          onChange={() => {}}
+          state="success"
+          disabled
+          aria-label="Accepted code"
+        />
+        <CodeInput
+          value="123456"
+          onChange={() => {}}
+          state="error"
+          disabled
+          aria-label="Refused code"
+        />
+      </div>
+    </div>
+  )
+}
+
+function SubmitFieldExample() {
+  const [email, setEmail] = useState('ada@example.com')
+  const noop = () => {}
+  return (
+    <div className={layout.ringRoom}>
+      <SubmitField
+        aria-label="Email"
+        type="email"
+        placeholder="your@email.com"
+        value={email}
+        onChange={setEmail}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit
+      />
+      <SubmitField
+        aria-label="Email, held"
+        value=""
+        placeholder="your@email.com"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit={false}
+      />
+      <SubmitField
+        aria-label="Email, busy"
+        value="ada@example.com"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit
+        busy
+      />
+      <SubmitField
+        aria-label="Email, invalid"
+        value="ada@"
+        onChange={noop}
+        onSubmit={noop}
+        submitLabel="NEXT"
+        canSubmit={false}
+        error="Invalid email"
+      />
+    </div>
+  )
+}
+
+function SliderExample() {
+  const [value, setValue] = useState(40)
+  return (
+    <div className={layout.narrow}>
+      <div className={layout.stack}>
+        <Slider value={value} onChange={setValue} aria-label="Thin" />
+        <Slider variant="thick" arrows value={value} onChange={setValue} aria-label="Thick" />
+        <Slider variant="pin" arrows value={value} onChange={setValue} aria-label="Pin" />
+        <Slider variant="rail" value={value} onChange={setValue} aria-label="Rail" />
+        <Slider value={value} disabled onChange={setValue} aria-label="Disabled" />
+      </div>
+    </div>
+  )
+}
