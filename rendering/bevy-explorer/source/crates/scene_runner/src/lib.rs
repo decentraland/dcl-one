@@ -27,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CameraOverride, CurrentRealm, DebugInfo, EditorMode, NoRenderApp,
-        PhotoMode, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PhotoMode,
+        PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -61,7 +61,8 @@ use crate::{
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
         behind_cap_applies, publish_download_priorities, scene_tick_rate, tick_rate_allows,
-        update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
+        tick_rate_caps_lifted, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+        GLOBAL_UPDATE_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -130,6 +131,8 @@ pub struct SceneUpdates {
     /// Scene-frames a capped scene was due before its band allowed, because of the global
     /// updates it had not read (`GLOBAL_UPDATE_BACKLOG_DUE`).
     pub(crate) released_by_global_updates: u64,
+    /// Whether `/scene_tick_rate_caps false` turned the distance bands off.
+    pub(crate) tick_rate_caps_off: bool,
     /// Named scene entities that must be scheduled every frame (e.g. the
     /// movement controller). These scenes bypass the `scene_threads` limit
     /// but still occupy slots, preventing non-priority scenes from running.
@@ -420,6 +423,7 @@ impl Plugin for SceneRunnerPlugin {
             skipped_already_sent: 0,
             skipped_rate_capped: 0,
             released_by_global_updates: 0,
+            tick_rate_caps_off: false,
         });
 
         app.add_event::<LoadSceneEvent>();
@@ -633,12 +637,11 @@ fn update_scene_priority(
 
     let elapsed = time.elapsed_secs_f64();
     let camera = rendering_camera.single().ok();
-    // the distance bands cap tick rates only where a camera renders around the player: the
-    // headless server ticks every scene it runs, and the photo camera and a scene's cinematic
-    // camera may frame scenes far from the player
-    let rate_capped = camera.is_some_and(|(_, primary, photo_mode)| {
-        !photo_mode && !matches!(primary.scene_override, Some(CameraOverride::Cinematic(_)))
-    });
+    let rate_capped = tick_rate_caps_lifted(
+        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
+        updates.tick_rate_caps_off,
+    )
+    .is_none();
     let behind_capped =
         camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
     let imposter_hash = match &imposter_scene.0 {
@@ -1091,6 +1094,7 @@ impl ContainingScene<'_, '_> {
 mod player_scenes_tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+    use common::structs::CameraOverride;
 
     // parcel (2,2) is x 32..48, z -48..-32; (3,2) is x 48..64
     const HERE: Vec3 = Vec3::new(40.0, 0.0, -40.0);
@@ -1277,6 +1281,7 @@ mod player_scenes_tests {
             skipped_already_sent: 0,
             skipped_rate_capped: 0,
             released_by_global_updates: 0,
+            tick_rate_caps_off: false,
         });
         world.init_resource::<Time>();
         world.init_resource::<CurrentImposterScene>();

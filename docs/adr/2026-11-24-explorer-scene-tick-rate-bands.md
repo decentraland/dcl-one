@@ -42,8 +42,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   script downloads, so it can hold up to 1,024 entries, some of which the capped scene already
   read. It sits behind the scene's unread updates, so an overflow drops the oldest unread
   updates only when the replay holds them again. A unique update is lost only after more than
-  1,024 minus the unread count (at least 774) arrive before the scene ticks, and the scene is
-  due once 250 are unread. Updates sent between a spawn and the forwarder's swap are
+  1,024 minus the unread count (at least 774) arrive before the scene ticks. The scene is due
+  once 250 are unread, but it is then ordered by the queue's key like any other, so under
+  scene-thread pressure it can wait frames while more arrive; the margin holds while it is sent
+  within those 774. Updates sent between a spawn and the forwarder's swap are
   replayed uncounted. Each backend states whether it replays (`REPLAYS_GLOBAL_UPDATES`): the
   native forwarder does, the web relay does not. The slow tick keeps a scene's other channels,
   such as scene comms, moving.
@@ -65,7 +67,10 @@ and main-thread time each frame there is spare time, whether or not the player c
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
   `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
   `released_by_global_updates` those due early on unread global updates; the runtime debug
-  panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows them.
+  panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows them, whether the behind
+  cap applies at the camera's pitch, and why nothing is capped when that is so
+  (`tick_rate_caps_lifted`). `/scene_tick_rate_caps false` lifts every cap, so one build
+  compares frame time with and without them.
 
 ## Consequences
 
@@ -86,7 +91,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   scene that keeps a cinematic camera or camera-mode area active while the player is inside it
   ticks the whole world at the full rate for that time. Measuring the bands from the rendering
   camera while it is away from the player would keep the caps there.
-- Bands and rates are code constants, not settings.
+- A scene's imposter or LOD stand-in goes once it passes tick 5, before the cap starts at
+  `SCENE_LOADED_TICK`. A far scene that builds its content over many ticks shows it built at one
+  tick every two seconds; the measurement checks one such scene.
+- Bands and rates are code constants, not settings; the switch only turns them all off.
 
 ## Rejected
 

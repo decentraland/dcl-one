@@ -5,7 +5,7 @@ use bevy::{
 
 use common::{
     partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
-    structs::{PrimaryCamera, PrimaryUser},
+    structs::{CameraOverride, PrimaryCamera, PrimaryUser},
 };
 use ipfs::IpfsResource;
 
@@ -78,6 +78,27 @@ pub(crate) const BEHIND_SCENE_MAX_FORWARD_Y: f32 = 0.5;
 /// Whether a camera facing `forward` (unit length) applies the behind cap.
 pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
     forward.y.abs() < BEHIND_SCENE_MAX_FORWARD_Y
+}
+
+/// Why every scene ticks at the full rate this frame, or None while the distance bands cap them.
+/// `camera` is the rendering camera and whether it frames a photo; `caps_off` is the
+/// `/scene_tick_rate_caps` switch. The bands are measured from the player, so the photo camera and
+/// a scene's cinematic camera, which can frame scenes far from it, lift every cap.
+pub(crate) fn tick_rate_caps_lifted(
+    camera: Option<(&PrimaryCamera, bool)>,
+    caps_off: bool,
+) -> Option<&'static str> {
+    match camera {
+        _ if caps_off => Some("Turned off"),
+        None => Some("No rendering camera"),
+        Some((_, true)) => Some("Photo mode"),
+        Some((primary, false))
+            if matches!(primary.scene_override, Some(CameraOverride::Cinematic(_))) =>
+        {
+            Some("Cinematic camera")
+        }
+        Some(_) => None,
+    }
 }
 
 /// The most ticks a second of a scene at `partition`: its distance band's rate, or

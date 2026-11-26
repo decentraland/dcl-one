@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_console::ConsoleCommand;
-use common::structs::{PrimaryCamera, PrimaryUser};
+use common::structs::{PhotoMode, PrimaryCamera, PrimaryUser};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_material::SceneMaterial;
 use serde_json::{json, Value};
@@ -13,7 +13,10 @@ use crate::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_partition::{BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE, SCENE_TICK_RATE_BANDS},
+    scene_partition::{
+        behind_cap_applies, tick_rate_caps_lifted, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE,
+        SCENE_TICK_RATE_BANDS,
+    },
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
@@ -49,6 +52,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
             .add_console_command::<TextureState, _>(texture_state)
             .add_console_command::<TickRateState, _>(tick_rate_state)
+            .add_console_command::<TickRateCaps, _>(set_tick_rate_caps)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
                 query: "/current_scene_state",
@@ -182,13 +186,17 @@ impl Plugin for SceneDebugPanelPlugin {
                 fields: &[
                     ("Scenes at the full rate", "full"),
                     (CAPPED_LABEL, "capped"),
+                    ("Behind-camera cap", "behindCap"),
                     ("Scene-frames skipped by the cap", "skipped"),
                     (
                         "Scene-frames due early on unread global updates",
                         "released",
                     ),
                 ],
-                actions: &[],
+                actions: &[
+                    ("Turn the caps off", "/scene_tick_rate_caps false"),
+                    ("Turn the caps on", "/scene_tick_rate_caps true"),
+                ],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -642,28 +650,36 @@ const CAPPED_RATES: [f32; 7] = [
     FAR_SCENE_TICK_RATE,
 ];
 
-/// The running scenes at the full rate and at each distance band's tick rate cap
-/// (`scene_tick_rate`), and the scene-frames the cap has skipped since startup.
+/// The scenes the scene loop schedules at the full rate and at each distance band's tick rate cap
+/// (`scene_tick_rate`), whether the behind-camera cap applies at the camera's pitch, and the
+/// scene-frames the cap has skipped and released since startup. While no scene is capped, the
+/// reason (`tick_rate_caps_lifted`).
 fn tick_rate_state(
     mut input: ConsoleCommand<TickRateState>,
-    // the scenes the scene loop schedules
-    scenes: Query<&RendererSceneContext, Without<SceneLoading>>,
-    rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
+    scenes: Query<(&RendererSceneContext, Has<SuperUserScene>), Without<SceneLoading>>,
+    rendering_camera: Query<(&GlobalTransform, &PrimaryCamera, Has<PhotoMode>), With<Camera>>,
     updates: Res<SceneUpdates>,
 ) {
     if input.take().is_none() {
         return;
     }
-    if rendering_camera.is_empty() {
+    let camera = rendering_camera.single().ok();
+    if let Some(reason) = tick_rate_caps_lifted(
+        camera.map(|(_, primary, photo_mode)| (primary, photo_mode)),
+        updates.tick_rate_caps_off,
+    ) {
         input.reply_ok(
-            json!({"unavailable": {"": "No rendering camera: every scene ticks at the full rate."}})
+            json!({"unavailable": {"": format!("{reason}: every scene ticks at the full rate.")}})
                 .to_string(),
         );
         return;
     }
     let mut full = 0usize;
     let mut capped = [0usize; CAPPED_RATES.len()];
-    for context in scenes.iter().filter(|context| !context.broken()) {
+    // the scenes `update_scene_priority` queues when due
+    for (context, _) in scenes.iter().filter(|(context, is_super)| {
+        !context.broken() && (context.blocked.is_empty() || *is_super)
+    }) {
         match context
             .tick_rate_cap
             .and_then(|rate| CAPPED_RATES.iter().position(|r| *r == rate))
@@ -672,15 +688,37 @@ fn tick_rate_state(
             Some(band) => capped[band] += 1,
         }
     }
+    let behind_cap =
+        camera.is_some_and(|(camera, ..)| behind_cap_applies(camera.forward().as_vec3()));
     input.reply_ok(
         json!({
             "full": full,
             "capped": capped,
+            "behindCap": behind_cap,
             "skipped": updates.skipped_rate_capped,
             "released": updates.released_by_global_updates,
         })
         .to_string(),
     );
+}
+
+/// Turn the distance bands' tick rate caps on or off, to compare frame time with and without them
+/// on one build.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/scene_tick_rate_caps")]
+struct TickRateCaps {
+    #[arg(action = clap::ArgAction::Set)]
+    enabled: bool,
+}
+
+fn set_tick_rate_caps(mut input: ConsoleCommand<TickRateCaps>, mut updates: ResMut<SceneUpdates>) {
+    if let Some(Ok(command)) = input.take() {
+        updates.tick_rate_caps_off = !command.enabled;
+        input.reply_ok(format!(
+            "Scene tick rate caps {}",
+            if command.enabled { "on" } else { "off" }
+        ));
+    }
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

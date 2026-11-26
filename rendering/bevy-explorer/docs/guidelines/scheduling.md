@@ -151,8 +151,8 @@ plus portables and global scenes) are 0; any other scene is its squared distance
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
 `update_scene_partitions`); both are divided by the time since the scene was last sent, so a
 starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
-it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking and yields
-first when frame time runs short. Distance is always from the player; only facing comes from
+it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking, subject to
+the tick rate bands below, and yields first when frame time runs short. Distance is always from the player; only facing comes from
 the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank
 the ipfs request slots (`publish_download_priorities`, on frames with a download waiting; which
 hashes take part is settled by component hooks on `SceneHash` and `PartitionedDownloads`, not by
@@ -160,6 +160,9 @@ a system in this set); see the
 [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
+
+Everything downstream of the loop reads bevy components. A system that needs scene data never
+reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.
 
 ### Tick rate bands
 
@@ -195,13 +198,14 @@ they are out of world, a portable or global scene, a named priority scene, the s
 scene under the inspector or the scene being baked into an imposter, and until it reaches
 `SCENE_LOADED_TICK`, since loading waits on a scene's first ticks. Without a rendering camera
 (headless), or while the photo camera (`PhotoMode`) or a scene's cinematic camera frames the
-view, nothing is capped. The runtime debug panel's "Scene Tick Rates" section
-(`/scene_tick_rate_state`) counts the scenes at each cap, the scene-frames the cap has skipped
-and those due early on unread global updates. See the
+view, nothing is capped. A due scene is ordered by the queue's key like any other, so under
+scene-thread pressure a scene released on unread global updates can wait frames. The runtime
+debug panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes the loop
+schedules at each cap, whether the behind cap applies at the camera's pitch, the scene-frames
+the cap has skipped and those due early on unread global updates, and names the reason while
+nothing is capped; `/scene_tick_rate_caps false` (its "Turn the caps off" action) lifts every
+cap, to compare with and without them on one build. See the
 [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
-
-Everything downstream of the loop reads bevy components. A system that needs scene data never
-reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.
 
 ## PostUpdate
 

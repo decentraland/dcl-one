@@ -1,5 +1,7 @@
 use super::*;
-use crate::scene_partition::{behind_cap_applies, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE};
+use crate::scene_partition::{
+    behind_cap_applies, tick_rate_caps_lifted, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE,
+};
 use common::partition::PartitionData;
 
 const BEHIND_FAR: PartitionData = PartitionData {
@@ -104,4 +106,22 @@ fn the_behind_cap_lifts_while_the_camera_looks_steeply_up_or_down() {
     // a flat behind test misses what is on screen beneath or above the camera
     assert!(!behind_cap_applies(Vec3::new(0.0, -0.8, -0.6)));
     assert!(!behind_cap_applies(Vec3::new(0.0, 0.8, 0.6)));
+}
+
+#[test]
+fn the_caps_apply_only_to_a_rendering_camera_framing_the_player() {
+    let camera = common::structs::PrimaryCamera::default();
+    assert_eq!(tick_rate_caps_lifted(Some((&camera, false)), false), None);
+    assert_eq!(
+        tick_rate_caps_lifted(Some((&camera, false)), true),
+        Some("Turned off")
+    );
+    assert_eq!(
+        tick_rate_caps_lifted(None, false),
+        Some("No rendering camera")
+    );
+    assert_eq!(
+        tick_rate_caps_lifted(Some((&camera, true)), false),
+        Some("Photo mode")
+    );
 }
