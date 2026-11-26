@@ -190,7 +190,12 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
 /// publication: the rows then already hold the next fold, which is not
 /// published yet (the walk publishes only after its head reads, which can
 /// stall). A walk that advanced without folding leaves the book at the
-/// published block, which stays readable.
+/// published block, which stays readable. Also false while `net` has a
+/// refold queued (`shop.legacy_order_refold`): a writer changed an order
+/// event the book has already folded, and an earlier binary can republish
+/// the same height without folding it, so the book is read again only once
+/// a fold of this binary has taken it. Another network's queue does not
+/// withhold this one.
 pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
     let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
@@ -200,6 +205,15 @@ pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<b
     let Some(through) = stands else {
         return Ok(false);
     };
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_refold WHERE network = $1)",
+    )
+    .bind(net.db_name())
+    .fetch_one(&mut *conn)
+    .await?;
+    if queued {
+        return Ok(false);
+    }
     super::chain_walk::holds_published_fold_on(
         conn,
         super::chain_walk::INDEXER_NFT,
@@ -805,6 +819,10 @@ mod tests {
             "the repair alone leaves the book"
         );
         assert_eq!(queued().await, 2);
+        assert!(
+            !stands(&db.pool).await,
+            "a queued refold withholds the book, though the fold is published at its marker"
+        );
         fold_matic(&db.pool, 50).await;
         assert_eq!(
             book(&db.pool).await,
@@ -812,6 +830,7 @@ mod tests {
             "the next fold takes the repaired sales"
         );
         assert_eq!(queued().await, 0, "the fold consumed the queue");
+        assert!(stands(&db.pool).await, "read again once folded");
 
         sqlx::query("UPDATE shop.nft_event SET to_address = NULL WHERE block_number = 30")
             .execute(&db.pool)

@@ -5133,6 +5133,38 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         .execute(&pool)
         .await
         .unwrap();
+    // Nor one with a refold queued on its network: an earlier binary
+    // repaired a sale the book has folded and republished the same height
+    // without folding it. Another network's queue does not withhold it.
+    let queue = |network: &'static str| {
+        let (pool, c) = (pool.clone(), c.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_refold (network, contract_address, token_id) VALUES ($1, $2, 1)",
+            )
+            .bind(network)
+            .bind(c)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    queue("ethereum").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(status, StatusCode::OK, "another network's queue: {body}");
+    queue("matic").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    sqlx::query("DELETE FROM shop.legacy_order_refold")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     // Nor one folded on a branch the walk no longer has: an earlier binary
     // republished block 100 with another hash.
     let republish = |hash: &'static str| {

@@ -5014,7 +5014,10 @@ Invariants:
   marker, and deletes them in its own transaction; a rebuild clears the
   network's. The queue holds a repair window's tokens until the next fold.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
-  order event written; transfers do not fire it.
+  order event written; transfers do not fire it. While a network has a
+  refold queued, its book is not read (`legacy_orders::caught_up`, on the
+  read's snapshot): an earlier binary can republish the same height
+  without folding it. Another network's queue does not withhold it.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries
