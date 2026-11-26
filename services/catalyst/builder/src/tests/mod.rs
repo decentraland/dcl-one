@@ -4,19 +4,13 @@
 
 pub(crate) mod support;
 
-mod cells;
 mod chain_state;
 mod cors;
 mod curation_auth;
 mod curation_auth_fuzz;
-mod curation_routes;
 mod curations;
-mod draft_persistence;
 mod items;
 mod limits;
-mod publication_preparation;
-mod publication_transactions;
-mod review_flow;
 mod upstream_routes;
 mod validator;
 mod wire_contract;
