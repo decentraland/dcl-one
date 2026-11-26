@@ -160,9 +160,11 @@ one `ops.admin_audit` row with domain `credits`, action `grant`, the lowercase
 granter wallet as actor, the recipient as target and the grant timestamp.
 The detail holds the reason, annotation and upstream credit ID. A studio grant
 also carries `studioName` from its budget link when available, with a null
-value when the name is unavailable. The credits report uses that key to
-classify the row as `studio_grant` and classifies an audited Decentraland
-grant as `grant`.
+value when the name is unavailable. The credits report classifies a grant as
+`studio_grant` when a studio budget entry names its ledger row, or when its
+audit is such an upstream record (`upstreamCreditId` with `studioName`). An
+audited Decentraland grant is `grant`, as is an audit with a `studioName`
+alone, which the node's admin route once wrote on grants that spent no budget.
 
 The audit insert and the ledger link commit together. A rerun fills missing
 links on previously imported rows and keeps existing links. The money and
