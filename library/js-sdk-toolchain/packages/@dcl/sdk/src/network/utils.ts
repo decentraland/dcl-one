@@ -2,7 +2,7 @@ import { EngineInfo as _EngineInfo, NetworkEntity as _NetworkEntity } from '@dcl
 import { componentNumberFromName } from '@dcl/ecs/dist/components/component-number'
 
 import type { GetUserDataRequest, GetUserDataResponse } from '~system/UserIdentity'
-import { IProfile } from './message-bus-sync'
+import type { IProfile } from './message-bus-sync'
 
 // Retrieve userId to start sending this info as the networkId
 export function fetchProfile(

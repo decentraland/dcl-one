@@ -97,6 +97,12 @@ describe("the creator storefront", () => {
 });
 
 describe("the event page", () => {
+  it("names the progress indicator while looking up the campaign", async () => {
+    mount("/shop/*", "/shop/event", <Event />);
+    expect(screen.getByRole("progressbar", { name: "Loading the event…" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Loading the event…" })).toBeNull());
+  });
+
   it("with no campaign configured, goes to the ordinary grid", async () => {
     mount("/shop/*", "/shop/event", <Event />);
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/shop/items"));

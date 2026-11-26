@@ -159,18 +159,21 @@ fn upgrade(
         raw.arm();
     }
     let ws = ws.protocols(protocols);
-    ws.read_buffer_size(16 * 1024)
-        .write_buffer_size(0)
-        .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
-        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
-        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
-        .on_upgrade(move |socket| async move {
+    // The signed challenge is verified after the upgrade, in the task it
+    // spawns: it keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(
+        ws.read_buffer_size(16 * 1024)
+            .write_buffer_size(0)
+            .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
+            .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+            .max_frame_size(MAX_CLIENT_MESSAGE_BYTES),
+        move |socket| async move {
             let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit, raw);
             handle_socket(socket, state, pending).await;
             drop(handler);
-        })
-        .into_response()
+        },
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -381,6 +384,7 @@ async fn handle_socket(
                                     Err(_) => break,
                                 };
                                 let Some(issued) = issuance.as_ref() else { break };
+                                crate::shared::eip1654_budget::debug_assert_scoped("the archipelago socket");
                                 let Some(verified) = handshake_operation(
                                     &mut socket, &state, handshake_deadline, &evicted, true,
                                     state.challenges.redeem_and_verify_payload(

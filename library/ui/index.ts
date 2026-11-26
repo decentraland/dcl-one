@@ -1,4 +1,5 @@
 export * from './foundations'
+export * from './apps/shop'
 
 export { NavBar } from './components/NavBar/NavBar'
 export type {

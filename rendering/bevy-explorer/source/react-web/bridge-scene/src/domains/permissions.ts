@@ -1,14 +1,16 @@
 // Permissions: relays a scene's permission prompts (e.g. ChangeRealm) to the React HUD and
 // sends the user's decision back; relays each permission a scene uses (allowed or refused) so the
-// HUD can list them, and rewrites a stored rule when the player revisits one from that list. The
+// HUD can list them, and which of them act on the player now, and rewrites a stored rule when the
+// player revisits one from that list. The
 // engine only runs this RPC path when native UI permissions are off (the react-web build) —
 // otherwise it draws its own Bevy dialog.
 //   from: SystemApi.getPermissionRequestStream / getPermissionUsedStream / setSinglePermission /
 //   setPermanentPermission / getPermanentPermissions / consoleCommand('reset_permissions').
 import { getRealm } from '~system/Runtime'
-import { BevyApi } from '../bevy-api'
+import { BevyApi, type PermissionUsedRaw } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
+import type { PermissionUsedMessage } from '@explorer-core/engine/protocol'
 
 // A scene exercising a permission every frame (Fetch, MovePlayer) reports a use every frame; the
 // HUD keeps one entry per scene + type, so repeated allows within this window are not sent. Every
@@ -76,7 +78,38 @@ export function registerPermissions(ctx: Ctx): void {
   }
 
   const lastSent = new Map<string, number>()
-  relay('permissionsUsed', async () => await BevyApi.getPermissionUsedStream(), async (use) => {
+  // what acts on the player now, by scene + type: sent again to a page that starts late
+  const inForce = new Map<string, PermissionUsedMessage>()
+  ctx.on('hello', () => {
+    for (const msg of inForce.values()) ctx.send(msg)
+  })
+  const openUsed = async (): Promise<AsyncIterable<PermissionUsedRaw>> => {
+    // A stream opened again may have missed an end. The engine sends what is in force to a
+    // stream that attaches, so everything held is ended and the engine's list restores it. Only
+    // once the stream is open: while opening fails, what is held still shows.
+    const stream = await BevyApi.getPermissionUsedStream()
+    for (const msg of inForce.values()) ctx.send({ ...msg, inForce: false })
+    inForce.clear()
+    return stream
+  }
+  relay('permissionsUsed', openUsed, async (use) => {
+    if (use.inForce != null) {
+      // a start or an end, not a use: each one counts, so the repeat window does not apply
+      const key = `${use.scene}|${use.ty}`
+      const msg: PermissionUsedMessage = {
+        kind: 'permissionUsed',
+        ty: use.ty,
+        sceneName: await sceneTitle(use.scene),
+        scene: use.scene,
+        realm: await realmProvider(),
+        allowed: true,
+        inForce: use.inForce
+      }
+      if (use.inForce) inForce.set(key, msg)
+      else inForce.delete(key)
+      ctx.send(msg)
+      return
+    }
     if (use.wasAllowed) {
       const key = `${use.scene}|${use.ty}`
       const now = Date.now()

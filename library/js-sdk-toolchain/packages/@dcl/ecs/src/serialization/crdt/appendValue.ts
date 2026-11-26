@@ -1,7 +1,8 @@
 import { CrdtMessageProtocol } from './crdtMessageProtocol'
-import { Entity } from '../../engine/entity'
-import { ByteBuffer } from '../ByteBuffer'
-import { AppendValueMessage, CrdtMessageType, CRDT_MESSAGE_HEADER_LENGTH } from './types'
+import type { Entity } from '../../engine/entity'
+import type { ByteBuffer } from '../ByteBuffer'
+import type { AppendValueMessage } from './types'
+import { CrdtMessageType, CRDT_MESSAGE_HEADER_LENGTH } from './types'
 
 /**
  * @public

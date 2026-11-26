@@ -1,7 +1,7 @@
 /* istanbul ignore file */
 import * as components from '../components'
-import { Entity } from '../engine'
-import { IEngine } from '../engine/types'
+import type { Entity } from '../engine'
+import type { IEngine } from '../engine/types'
 
 /**
  * It checks all the entities that has a PointerEvent and check if it has a collider.
