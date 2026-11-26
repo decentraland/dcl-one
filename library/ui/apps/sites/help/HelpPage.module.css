@@ -53,7 +53,7 @@
   line-height: 24px;
 }
 
-/* The tabs keep the 12px above them and the 20px below them that the tab list drew before the shared TabsBar. */
+/* The tabs keep the space the old tab list left around them: 16px above (12px on phones) and 20px below. */
 .tabs {
   grid-area: tabs;
   padding: var(--dcl-space-16) 0 calc(var(--dcl-space-12) + var(--dcl-space-8));
