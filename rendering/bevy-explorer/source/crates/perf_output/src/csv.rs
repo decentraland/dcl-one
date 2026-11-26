@@ -198,6 +198,7 @@ fn write_row(
 
 #[cfg(test)]
 mod tests {
+    use common::sync::MutexExt;
     use std::sync::Mutex;
 
     use bevy::{diagnostic::RegisterDiagnostic, time::TimeUpdateStrategy};
@@ -209,7 +210,7 @@ mod tests {
 
     impl Write for Memory {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
+            self.0.lock_ignore_poison().extend_from_slice(bytes);
             Ok(bytes.len())
         }
 
@@ -265,7 +266,7 @@ mod tests {
     }
 
     fn text(bytes: &Arc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(bytes.lock().unwrap().clone()).unwrap()
+        String::from_utf8(bytes.lock_ignore_poison().clone()).unwrap()
     }
 
     fn failed(app: &App) -> bool {

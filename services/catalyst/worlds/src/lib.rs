@@ -24,7 +24,13 @@
 
 // Production routes go through `shared::routing` (worlds/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-#![cfg_attr(test, allow(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -136,10 +142,8 @@ pub fn node_realm_name(config: &Config) -> String {
 
 /// `NETWORK_ID` as the old worlds service read it, derived from `ETH_NETWORK`.
 pub fn network_id_for(eth_network: &str) -> i64 {
-    match eth_network.trim().to_ascii_lowercase().as_str() {
-        "sepolia" => 11_155_111,
-        _ => 1,
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network)
+        .map_or(1, |pair| pair.chain_ids().0)
 }
 
 impl Settings {

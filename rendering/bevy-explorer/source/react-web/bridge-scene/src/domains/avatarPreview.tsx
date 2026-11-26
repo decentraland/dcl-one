@@ -11,6 +11,8 @@
 // The sign-in screens open the same stage (region 'signin') for a new account's starting look, but
 // draw the sign-in background over the whole screen behind it, so the avatar and its podium stand
 // on that background; the page fades its own copy out once told (signinStageReady).
+//
+// The Backpack's page keeps its hole shut until told the avatar is drawn (avatarPreviewReady).
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
@@ -22,6 +24,7 @@ import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
+import { SHOP_FRAMING, SHOP_NAMES_FRAMING, shiftWithin } from './previewView'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -54,9 +57,7 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
 }
 // An outfit's picture: the whole body, centred.
 const THUMBNAIL_FRAMING = { range: 6.25, centerY: 1.85 }
-// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
-// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
-const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The Shop frames the whole body only, as its page draws it: ./previewView's SHOP_FRAMING and SHOP_NAMES_FRAMING.
 // The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
 // about a quarter of the screen wide.
 const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
@@ -145,6 +146,8 @@ let cameraEntity: Entity | null = null
 let podiumEntities: Entity[] = []
 // The Shop's stage image on screen (previewStage), in place of the backdrop bands and the podium.
 let shopStage: Rect | null = null
+// The box the page shows the Backpack's preview in (its modal over the lobby): nothing of it is drawn outside.
+let previewClip: Rect | null = null
 // Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
 let emoteTrigger = 0
 let lastShapeKey = ''
@@ -410,6 +413,16 @@ function pollEmotes(dt: number): void {
   playEmote(FLAVOUR_EMOTES[Math.floor(Math.random() * FLAVOUR_EMOTES.length)])
 }
 
+// The Backpack's avatar, its look loaded and drawn by the camera, is ready for the page to show.
+async function announceAvatarPreview(ctx: Ctx): Promise<void> {
+  const generation = ++stageGeneration
+  const avatar = avatarEntity
+  const current = (): boolean => generation === stageGeneration && stage === 'backpack' && region === 'avatarPreview' && avatar != null && avatarEntity === avatar
+  for (let waited = 0; current() && !shownLoaded && waited < 2 * LOBBY_LOOK_FRAMES; waited += 5) await waitFrames(5)
+  await waitFrames(CAPTURE_FRAMES)
+  if (current()) ctx.send({ kind: 'avatarPreviewReady' })
+}
+
 async function announceSigninStage(ctx: Ctx): Promise<void> {
   const generation = ++stageGeneration
   await waitFrames(SIGNIN_SETTLE_FRAMES)
@@ -429,7 +442,8 @@ function disposePreview(): void {
 // Backpack opens over the lobby, and the lobby takes it back when the Backpack closes.
 type PreviewState = ReturnType<typeof takeState>
 let parkedLobby: PreviewState | null = null
-// Taken off while the Backpack covers the lobby, so the engine stops drawing its stage.
+// Taken off while the Backpack covers the lobby, so the engine stops drawing its stage: the camera's
+// last frame stays on show around the Backpack.
 type TextureCameraValue = NonNullable<Parameters<typeof TextureCamera.create>[1]>
 let parkedCamera: TextureCameraValue | null = null
 
@@ -504,6 +518,7 @@ function clearPreview(): void {
   shownLoaded = false
   zoom = 1
   zoomShift = 0
+  previewClip = null
 }
 
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
@@ -526,9 +541,14 @@ export function syncShape(): void {
     return
   }
   if (stage !== 'lobby' || standbyEntity == null || !AvatarShape.has(avatarEntity)) {
+    const first = !AvatarShape.has(avatarEntity)
     setShape(avatarEntity, shape)
     if (stage === 'lobby') {
       shownKey = key
+      shownLoaded = false
+      showLoad = watchLoad(avatarEntity)
+    } else if (first) {
+      // the page shows the Backpack's preview once its first look has loaded
       shownLoaded = false
       showLoad = watchLoad(avatarEntity)
     }
@@ -677,6 +697,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
     }
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
     if (msg.rect == null && msg.region !== region) return
+    // reopened before its closing stage was dropped: the page waits to be told again
+    const reopened = msg.rect != null && msg.region === region && disposeIn > 0
     if (nextStage !== stage) {
       if (nextStage === 'backpack' && stage === 'lobby' && avatarEntity != null) parkLobby()
       else disposePreview()
@@ -712,6 +734,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
     const same = rect != null && rect.x === msg.rect.x && rect.y === msg.rect.y && rect.width === msg.rect.width && rect.height === msg.rect.height && dpr === (msg.dpr ?? 1)
     rect = msg.rect
     dpr = msg.dpr ?? 1
+    if (stage === 'backpack') previewClip = msg.region === 'avatarPreview' ? (msg.clip ?? null) : null
     if (avatarEntity == null) createPreview()
     else if (!same) fitCamera()
     if (stage === 'backpack') {
@@ -727,6 +750,11 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage === 'lobby') {
       announceLobbyStage(ctx).catch((e) => {
         console.error('[avatarPreview] lobby stage', e)
+      })
+    }
+    if (region === 'avatarPreview' && (opened || reopened)) {
+      announceAvatarPreview(ctx).catch((e) => {
+        console.error('[avatarPreview] preview', e)
       })
     }
     if (region === 'signin' && opened) {
@@ -762,6 +790,12 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage === 'lobby' && avatarEntity != null) {
       pollStage(dt)
       pollEmotes(dt)
+    } else if (stage === 'backpack' && showLoad != null) {
+      pollLoad(showLoad)
+      if (showLoad.done) {
+        showLoad = null
+        shownLoaded = true
+      }
     }
   })
   ctx.push((dt) => {
@@ -776,11 +810,24 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
-  // the floor the image has, so the Backpack's podium steps aside.
+  // the floor the image has, so the Backpack's podium steps aside. The avatar is framed as the page draws it.
   ctx.on('previewStage', (msg) => {
+    const page = msg.framing === 'names' ? SHOP_NAMES_FRAMING : SHOP_FRAMING
+    // The stage staying up (resized, or another page): its place moves, and the camera eases to the page's framing,
+    // from wherever it is, only when that framing changes. A resize midway leaves the ease running.
+    if (shopStage != null && msg.rect != null) {
+      shopStage = msg.rect
+      if (page !== framingTo) {
+        framingFrom = framing
+        framingTo = page
+        framingT = 0
+      }
+      return
+    }
+    // The stage coming up or going: the page's framing at once.
     shopStage = msg.rect
     showPodium(shopStage == null)
-    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framing = framingFrom = framingTo = shopStage != null ? page : FRAMING.body
     framingT = 1
     applyFraming(framing)
   })
@@ -850,12 +897,6 @@ function showPodium(visible: boolean): void {
     const layer = PODIUM_LAYERS[i]
     Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
-}
-
-// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
-function shiftWithin(f: { range: number }, z: number, shift: number): number {
-  const room = (f.range - f.range / z) / 2
-  return Math.max(-room, Math.min(room, shift))
 }
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
@@ -948,13 +989,15 @@ function turnAvatar(degrees: number): void {
   )
 }
 
-function renderLobbyStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
+function renderLobbyStage(r: Rect, camera: Entity, children?: ReactEcs.JSX.Element): ReactEcs.JSX.Element {
   // the engine's stage is opaque over the whole frame, so the camera's image is the lobby's
   return (
     <UiEntity
       uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
       uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
-    />
+    >
+      {children}
+    </UiEntity>
   )
 }
 
@@ -999,6 +1042,11 @@ export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
   const r = rect
   if (stage === 'lobby') return renderLobbyStage(r, cameraEntity)
   if (region === 'signin') return renderSigninStage(r, cameraEntity)
+  // The Backpack over the lobby: the lobby's node, unchanged, keeps its stage's last frame around the preview.
+  const lobby = parkedLobby
+  if (lobby?.rect != null && lobby.cameraEntity != null) {
+    return renderLobbyStage(lobby.rect, lobby.cameraEntity, renderClippedPreview(r, cameraEntity, lobby.rect))
+  }
   return (
     // Full-screen opaque base: the live world can never show through React's transparent
     // avatar cutout, even if the reported rect and the cutout don't line up to the pixel.
@@ -1008,35 +1056,56 @@ export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
       uiTransform={{ positionType: 'absolute', position: { left: 0, top: 0 }, width: '100%', height: '100%' }}
       uiBackground={{ color: BACKDROP_BOTTOM }}
     >
-      {/* Framed two-tone backdrop + avatar, positioned at the React cutout rect. */}
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
-        uiBackground={{ color: BACKDROP_BOTTOM }}
-      >
-        {shopStage != null ? (
-          // The Shop's stage, placed as the page places it: its window into it shows the same pixels.
-          <UiEntity
-            uiTransform={{ positionType: 'absolute', position: { left: shopStage.x - r.x, top: shopStage.y - r.y }, width: shopStage.width, height: shopStage.height }}
-            uiBackground={{ texture: { src: SHOP_STAGE }, textureMode: 'stretch' }}
-          />
-        ) : (
-          // The page's left-column purple, as thin bands so it reads as a smooth gradient.
-          BACKDROP_BANDS.map((color, i) => (
-            <UiEntity
-              key={i}
-              uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
-              uiBackground={{ color }}
-            />
-          ))
-        )}
-        {/* Avatar — camera resolution matches the rect aspect, so a 1:1 fill never distorts.
-            Drag over it to rotate (the engine drag-lock passes through React's transparent cutout). */}
+      {renderClippedPreview(r, cameraEntity, { x: 0, y: 0 })}
+    </UiEntity>
+  )
+}
+
+// The preview window at `r` (screen px) inside a parent at `origin`, cut to the page's clip when it has one.
+// The clip is filled purple: the page's anti-aliased backdrop edges show what is under them.
+function renderClippedPreview(r: Rect, camera: Entity, origin: { x: number; y: number }): ReactEcs.JSX.Element {
+  const c = previewClip
+  if (c == null) return renderPreviewWindow(r, origin, camera)
+  return (
+    <UiEntity
+      uiTransform={{ positionType: 'absolute', position: { left: c.x - origin.x, top: c.y - origin.y }, width: c.width, height: c.height, overflow: 'hidden' }}
+      uiBackground={{ color: BACKDROP_BOTTOM }}
+    >
+      {renderPreviewWindow(r, c, camera)}
+    </UiEntity>
+  )
+}
+
+// The Backpack's framed two-tone backdrop + avatar at `r` (screen px), inside a parent at `origin`.
+function renderPreviewWindow(r: Rect, origin: { x: number; y: number }, camera: Entity): ReactEcs.JSX.Element {
+  return (
+    <UiEntity
+      uiTransform={{ positionType: 'absolute', position: { left: r.x - origin.x, top: r.y - origin.y }, width: r.width, height: r.height, overflow: 'hidden' }}
+      uiBackground={{ color: BACKDROP_BOTTOM }}
+    >
+      {shopStage != null ? (
+        // The Shop's stage, placed as the page places it: its window into it shows the same pixels.
         <UiEntity
-          uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
-          uiBackground={{ videoTexture: { videoPlayerEntity: cameraEntity }, textureMode: 'stretch' }}
-          onMouseDragLocked={rotateAvatar}
+          uiTransform={{ positionType: 'absolute', position: { left: shopStage.x - r.x, top: shopStage.y - r.y }, width: shopStage.width, height: shopStage.height }}
+          uiBackground={{ texture: { src: SHOP_STAGE }, textureMode: 'stretch' }}
         />
-      </UiEntity>
+      ) : (
+        // The page's left-column purple, as thin bands so it reads as a smooth gradient.
+        BACKDROP_BANDS.map((color, i) => (
+          <UiEntity
+            key={i}
+            uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
+            uiBackground={{ color }}
+          />
+        ))
+      )}
+      {/* Avatar — camera resolution matches the rect aspect, so a 1:1 fill never distorts.
+          Drag over it to rotate (the engine drag-lock passes through React's transparent cutout). */}
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
+        uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
+        onMouseDragLocked={rotateAvatar}
+      />
     </UiEntity>
   )
 }

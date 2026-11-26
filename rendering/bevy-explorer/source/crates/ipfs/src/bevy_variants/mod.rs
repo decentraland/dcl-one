@@ -39,10 +39,10 @@
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
 //! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
 //! [`IpfsIo::bevy_lod_descriptor`]), and its far LOD, abgen's one simplified mesh for the scene
-//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter under the
-//! conditions of a manifest request, on a GPU with BC textures only. A far LOD the server has
-//! none for is not asked for again in the session, and far LODs pause while their requests fail
-//! (`far_lod`).
+//! (`{base}/LOD/lods-bevy/lods/{sceneId}_1.glb`, [`IpfsIo::bevy_far_lod`]), the latter on a GPU
+//! with BC textures only, and not turned off with the variants for the session. A far LOD the
+//! server has none for is not asked for again in the session, and far LODs pause while their
+//! requests fail, probing until one is answered (`far_lod`).
 
 mod debug_panel;
 mod far_lod;
@@ -50,6 +50,7 @@ pub mod ktx2;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
+use common::sync::MutexExt;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
@@ -522,15 +523,14 @@ impl BevyVariants {
 
     /// A new pending manifest for `entity`, or None when one was already requested.
     fn begin(&self, entity: &str) -> Option<watch::Sender<ManifestState>> {
-        let mut manifests = self.manifests.lock().unwrap();
+        let mut manifests = self.manifests.lock_ignore_poison();
         if manifests.contains_key(entity) {
             return None;
         }
         let (sender, receiver) = watch::channel(ManifestState::Pending);
         manifests.insert(entity.to_owned(), receiver);
         self.requested_at
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .insert(entity.to_owned(), web_time::Instant::now());
         Some(sender)
     }
@@ -538,8 +538,7 @@ impl BevyVariants {
     /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest.
     fn manifest_wait_left(&self, entity: &str) -> Duration {
         self.requested_at
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .get(entity)
             .map_or(MANIFEST_DEADLINE, |at| {
                 MANIFEST_DEADLINE.saturating_sub(at.elapsed())
@@ -547,19 +546,19 @@ impl BevyVariants {
     }
 
     fn manifest(&self, entity: &str) -> Option<watch::Receiver<ManifestState>> {
-        self.manifests.lock().unwrap().get(entity).cloned()
+        self.manifests.lock_ignore_poison().get(entity).cloned()
     }
 
     fn disabled(&self) -> Option<String> {
-        self.session.lock().unwrap().disabled.clone()
+        self.session.lock_ignore_poison().disabled.clone()
     }
 
     fn transport_ok(&self) {
-        self.session.lock().unwrap().transport_failures = 0;
+        self.session.lock_ignore_poison().transport_failures = 0;
     }
 
     fn transport_failed(&self, reason: &str) {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock_ignore_poison();
         session.transport_failures += 1;
         if session.transport_failures >= BREAKER_FAILURES && session.disabled.is_none() {
             warn!("bevy variants: off for this session, {BREAKER_FAILURES} failed requests ({reason})");
@@ -570,11 +569,11 @@ impl BevyVariants {
     }
 
     fn is_bad(&self, variant: &str) -> bool {
-        self.session.lock().unwrap().bad.contains(variant)
+        self.session.lock_ignore_poison().bad.contains(variant)
     }
 
     fn fail(&self, scene: &str, file: &str, variant: Option<&Variant>, reason: String) {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock_ignore_poison();
         if let Some(variant) = variant {
             session.bad.insert(variant.path.clone());
         }
@@ -582,7 +581,7 @@ impl BevyVariants {
     }
 
     fn served(&self, path: &Path, served: ServedVariant, cached: bool) {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock_ignore_poison();
         if cached {
             session.cached += 1;
         } else {
@@ -597,14 +596,14 @@ impl BevyVariants {
 
     /// Whether the asset at `path` was last read from a variant.
     pub fn is_served(&self, path: &Path) -> bool {
-        self.session.lock().unwrap().served.contains_key(path)
+        self.session.lock_ignore_poison().served.contains_key(path)
     }
 
     /// Whether the model at `path`, which failed to load, will still come back from its
     /// original: it was read from a `glb` variant, whose failure reloads it, or that reload is
     /// under way. A reload stops counting after [`MODEL_RELOAD_WAIT`].
     fn model_reload_pending(&self, path: &Path) -> bool {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock_ignore_poison();
         session
             .reloading
             .retain(|_, since| since.elapsed() < MODEL_RELOAD_WAIT);
@@ -616,21 +615,20 @@ impl BevyVariants {
 
     fn reload_started(&self, path: &Path) {
         self.session
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .reloading
             .insert(path.to_owned(), web_time::Instant::now());
     }
 
     fn reload_finished(&self, path: &Path) {
-        self.session.lock().unwrap().reloading.remove(path);
+        self.session.lock_ignore_poison().reloading.remove(path);
     }
 
     /// Marks the variant served for `path` bad, if there was one of `formats`, and returns the
     /// url of its cached copy: the asset should be reloaded (from its original), and the copy
     /// dropped.
     fn decode_failed(&self, path: &Path, error: &str, formats: &[&str]) -> Option<String> {
-        let mut session = self.session.lock().unwrap();
+        let mut session = self.session.lock_ignore_poison();
         if !session
             .served
             .get(path)
@@ -714,8 +712,9 @@ impl IpfsIo {
     }
 
     /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
-    /// the terms a manifest request has (variants on and not turned off for the session, the
-    /// scene eligible) and only on a GPU with BC textures: the mesh's atlases are BC KTX2 only.
+    /// the variants base (variants on, the scene eligible) and only on a GPU with BC textures:
+    /// the mesh's atlases are BC KTX2 only. It does not depend on the variants client having
+    /// turned itself off for the session: far LODs keep to their own breaker.
     /// Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
     /// smaller, and the server sends it to a browser that accepts `br`.
     ///
@@ -726,9 +725,6 @@ impl IpfsIo {
         let Some(base) = self.bevy_variants.base() else {
             return FarLodSource::Unavailable("bevy variants off".to_owned());
         };
-        if let Some(reason) = self.bevy_variants.disabled() {
-            return FarLodSource::Unavailable(format!("variants off: {reason}"));
-        }
         match self.bevy_variants.bc.get() {
             None => return FarLodSource::NotYet,
             Some(false) => {
@@ -745,7 +741,7 @@ impl IpfsIo {
         }
         let scene = scene.to_lowercase();
         {
-            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
             if health.is_missing(&scene) {
                 return FarLodSource::Unavailable("the server has none for the scene".to_owned());
             }
@@ -767,7 +763,7 @@ impl IpfsIo {
             return;
         };
         let change = {
-            let mut health = self.bevy_variants.far_lods.lock().unwrap();
+            let mut health = self.bevy_variants.far_lods.lock_ignore_poison();
             // only a url this client named is a far LOD: a scene can make up any other
             if !health.is_named(scene) {
                 return;
@@ -793,31 +789,40 @@ impl IpfsIo {
 
     /// Whether a far LOD's download may start now. While far LODs are paused it is false, except
     /// once per cool-down (the probe), which a true answer spends, so call it only right before
-    /// starting a download.
+    /// starting a download. Independent of the variants session switch.
     pub fn far_lod_may_request(&self) -> bool {
-        if self.bevy_variants.disabled().is_some() {
-            return false;
-        }
         self.bevy_variants
             .far_lods
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .may_request(web_time::Instant::now())
+    }
+
+    /// Whether the server answered this session that it has no far LOD for `scene`.
+    pub fn far_lod_missing(&self, scene: &str) -> bool {
+        self.bevy_variants
+            .far_lods
+            .lock_ignore_poison()
+            .is_missing(&scene.to_lowercase())
     }
 
     /// Whether `remote` is a far LOD url this client named ([`IpfsIo::bevy_far_lod`]).
     pub(crate) fn is_named_far_lod(&self, remote: &str) -> bool {
         self.bevy_variants
             .far_lod_scene(remote)
-            .is_some_and(|scene| self.bevy_variants.far_lods.lock().unwrap().is_named(scene))
+            .is_some_and(|scene| {
+                self.bevy_variants
+                    .far_lods
+                    .lock_ignore_poison()
+                    .is_named(scene)
+            })
     }
 
-    /// Whether no far LOD can be offered this session: no variants base, variants turned off,
-    /// a GPU known to have no BC textures, or preview.
+    /// Whether no far LOD can be offered this session: no variants base, a GPU known to have no
+    /// BC textures, or preview. Far LODs are not turned off with the variants client for the
+    /// session: an outage is the far LOD breaker's to handle, and it recovers.
     pub fn far_lods_off(&self) -> bool {
         self.is_preview
             || self.bevy_variants.base().is_none()
-            || self.bevy_variants.disabled().is_some()
             || self.bevy_variants.bc.get() == Some(&false)
     }
 
@@ -825,8 +830,7 @@ impl IpfsIo {
     pub fn far_lod_status(&self) -> FarLodStatus {
         self.bevy_variants
             .far_lods
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .status(web_time::Instant::now())
     }
 

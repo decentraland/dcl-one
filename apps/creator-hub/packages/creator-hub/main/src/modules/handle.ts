@@ -18,6 +18,7 @@ const CONTENT_CHANNELS = new Set<keyof Ipc>([
   'ai.remoteCommand',
   // Its handler writes the error itself; logging the arguments too would repeat it.
   'electron.logRendererError',
+  'electron.fetchAuthIdentity',
 ]);
 
 function shortenDataUrl(value: unknown) {

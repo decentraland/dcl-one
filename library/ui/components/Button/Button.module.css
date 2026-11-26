@@ -33,6 +33,7 @@
     cursor: pointer;
   }
   .root[data-size='lg'] {
+    --button-mobile-height: 52px;
     --button-height: 48px;
     --button-gap: var(--dcl-space-8);
     padding-inline: var(--dcl-space-24);
@@ -40,6 +41,7 @@
     font-size: var(--dcl-font-size-button-lg);
   }
   .root[data-size='md'] {
+    --button-mobile-height: 48px;
     --button-height: 40px;
     --button-gap: var(--dcl-space-8);
     font-size: var(--dcl-font-size-button-md);
@@ -47,26 +49,48 @@
     border-radius: var(--dcl-radius-md);
   }
   .root[data-size='sm'] {
+    --button-mobile-height: 44px;
     --button-height: 32px;
     --button-gap: var(--dcl-space-4);
     font-size: var(--dcl-font-size-button-sm);
     padding-inline: var(--dcl-space-12);
     border-radius: var(--dcl-radius-sm);
   }
-  .root[data-viewport='mobile'][data-size='lg'] {
-    --button-height: 52px;
+  .root[data-viewport='mobile']:not([data-size='xl']) {
+    --button-height: var(--button-mobile-height);
   }
-  .root[data-viewport='mobile'][data-size='md'] {
-    --button-height: 48px;
-  }
-  .root[data-viewport='mobile'][data-size='sm'] {
-    --button-height: 44px;
+  @media (max-width: 767px), (pointer: coarse) {
+    .root[data-viewport='responsive']:not([data-size='xl']) {
+      --button-height: var(--button-mobile-height);
+    }
   }
   .root[data-variant='secondary'] {
     --button-background: var(--dcl-transparencies-white-10);
     --button-color: var(--dcl-neutrals-snow);
     --button-hover: var(--dcl-transparencies-white-20);
     --button-pressed: var(--dcl-transparencies-white-20);
+  }
+  .root[data-variant='secondaryLight'] {
+    --button-background: var(--dcl-transparencies-white-10);
+    --button-color: var(--dcl-text-primary);
+    --button-hover: var(--dcl-transparencies-white-20);
+    /* The secondary-light pressed state in Figma uses 5% white. The shared pressed token is 20%. */
+    --button-pressed: color-mix(in srgb, var(--dcl-neutrals-white) 5%, transparent);
+    --button-icon-size: 24px;
+    --button-spinner-size: 27px;
+    border-width: 0;
+  }
+  .root[data-variant='secondaryLight']:is([data-size='lg'], [data-size='md']),
+  .root[data-variant='primary'][data-viewport='responsive'][data-size='md'] {
+    --button-spinner-size: 23px;
+  }
+  .root[data-variant='secondaryLight'][data-size='md'],
+  .root[data-variant='primary'][data-viewport='responsive'][data-size='md'] {
+    --button-icon-size: 20px;
+  }
+  .root[data-variant='secondaryLight'][data-size='sm'] {
+    --button-icon-size: 16px;
+    --button-spinner-size: 18px;
   }
   .root[data-variant='dark'] {
     --button-background: var(--dcl-transparencies-black-40);
@@ -86,6 +110,17 @@
     --button-color: var(--dcl-neutrals-shadow);
     --button-hover: var(--dcl-neutrals-shadow);
     --button-pressed: var(--dcl-neutrals-shadow);
+  }
+  .root[data-tone='danger'][data-variant='primary'] {
+    --button-background: var(--dcl-system-red-dark-2);
+    --button-hover: color-mix(in srgb, var(--dcl-system-red-dark-2) 85%, var(--dcl-neutrals-black));
+    --button-pressed: var(--dcl-system-red-dark-2);
+  }
+  .root[data-tone='danger'][data-variant='outline'] {
+    --button-color: var(--dcl-feedback-error-subtle);
+    --button-border: currentColor;
+    --button-hover: var(--dcl-transparencies-white-10);
+    box-shadow: none;
   }
   .root[data-variant='text'] {
     --button-background: transparent;
@@ -113,7 +148,7 @@
     ):not([aria-disabled='true']) {
     color: var(--dcl-neutrals-white);
   }
-  .root[data-variant='outline']:is(
+  .root[data-variant='outline']:not([data-tone='danger']):is(
       :hover,
       :active,
       [data-force-state='hover'],
@@ -142,7 +177,7 @@
   .root:disabled {
     opacity: 0.4;
   }
-  .root[data-icon-only='true']:not([data-variant='dark']) {
+  .root[data-icon-only='true']:not([data-variant='dark'], [data-variant='secondaryLight']) {
     --button-background: transparent;
     --button-hover: var(--dcl-bg-hover);
     --button-pressed: var(--dcl-bg-hover);
@@ -154,6 +189,15 @@
     min-width: max(48px, var(--button-height));
     min-height: max(48px, var(--button-height));
     padding-inline: var(--dcl-space-8);
+  }
+  .root[data-icon-only='true'][data-variant='secondaryLight'] {
+    --button-icon-size: 24px;
+    --button-gap: var(--dcl-space-0);
+    padding-inline: var(--dcl-space-0);
+  }
+  .root[data-icon-only='true'][data-variant='secondaryLight'][data-viewport='responsive'][data-size='md'] {
+    min-width: var(--button-height);
+    min-height: var(--button-height);
   }
   .content {
     display: inline-flex;
@@ -186,13 +230,13 @@
     justify-content: center;
   }
   .icon svg {
-    width: 1.25em;
-    height: 1.25em;
+    width: var(--button-icon-size, 1.25em);
+    height: var(--button-icon-size, 1.25em);
   }
   .spinner {
     position: absolute;
-    width: 1.25em;
-    height: 1.25em;
+    width: var(--button-spinner-size, 1.25em);
+    height: var(--button-spinner-size, 1.25em);
     box-sizing: border-box;
     border: 2px solid currentColor;
     border-right-color: transparent;
@@ -209,4 +253,539 @@
       animation: none;
     }
   }
+}
+
+/* Not in Figma: the Explorer HUD's button (`appearance="hud"`). `data-variant` is its fill, `data-size` its
+   box and type, `data-radius` an override of its corners. The HUD's hover and pressed fills, its tints, its
+   rem type sizes and its timings have no token. */
+@layer dcl.components {
+  .hud {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    border-radius: var(--dcl-radius-full);
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--dcl-neutrals-snow);
+    transition:
+      background-color 140ms ease,
+      border-color 140ms ease,
+      opacity 140ms ease,
+      transform 140ms ease;
+  }
+
+  .hud:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .hud:disabled:where(:not([data-size='bare'])),
+  .hud[data-disabled]:where(:not([data-size='bare'])) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* A disabled link: `:disabled` does not match an anchor, so it takes no pointer and none of the states. */
+  .hud[data-disabled] {
+    pointer-events: none;
+  }
+
+  /* sizes */
+  :where(.hud)[data-size='sm'] {
+    font-size: 0.72rem;
+    padding: 7px 16px;
+  }
+  :where(.hud)[data-size='md'] {
+    font-size: 0.82rem;
+    padding: 10px 22px;
+  }
+  :where(.hud)[data-size='lg'] {
+    font-size: 0.92rem;
+    padding: 13px 30px;
+  }
+  /* compact action inside a list row (friend requests, blocked users) */
+  :where(.hud)[data-size='row'] {
+    height: 30px;
+    min-width: 60px;
+    padding: 0 8px;
+    border-radius: var(--dcl-radius-sm);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  /* the JUMP IN on a place card: a fixed-height label + icon */
+  :where(.hud)[data-size='card'] {
+    height: 40px;
+    padding: 0 16px 0 20px;
+    border-radius: var(--dcl-radius-md);
+    font-size: var(--dcl-font-size-button-xl);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  :where(.hud)[data-size='cardSm'] {
+    width: 100%;
+    height: 32px;
+    border-radius: var(--dcl-radius-md);
+    font-size: var(--dcl-font-size-button-md);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  /* icon + label in a menu bar (the Lobby button) */
+  :where(.hud)[data-size='header'] {
+    height: 42px;
+    padding: 0 15px 0 10px;
+    gap: 5px;
+    border-radius: 9.6px;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* a dialog's CTA (the Shop's modals): 46px, semibold caps; the dialog sets its width */
+  :where(.hud)[data-size='modal'] {
+    height: 46px;
+    padding: 2px 29px;
+    border-radius: var(--dcl-radius-md);
+    font-size: var(--dcl-font-size-button-md);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  :where(.hud)[data-size='modal']:is(:disabled, [data-disabled]) {
+    opacity: 0.5;
+  }
+
+  /* a dialog's CTA in the design system's Explorer modal (the Shop's purchase dialog): its button size=lg, 48px, bold
+     caps 0.5px apart, 12px corners, 40% opaque while off; the dialog sets its width */
+  :where(.hud)[data-size='dialog'] {
+    height: 48px;
+    padding: 0 24px;
+    border-radius: var(--dcl-radius-md);
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: 0.5px;
+  }
+  :where(.hud)[data-size='dialog']:is(:disabled, [data-disabled]) {
+    opacity: 0.4;
+  }
+
+  /* a page's CTA beside a field (the Shop's CLAIM NAME): 52px, semibold caps, 24px each side */
+  :where(.hud)[data-size='cta'] {
+    height: 52px;
+    padding: 0 24px;
+    border-radius: var(--dcl-radius-md);
+    font-size: var(--dcl-font-size-button-xl);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  :where(.hud)[data-size='cta']:is(:disabled, [data-disabled]) {
+    opacity: 0.5;
+  }
+
+  /* the sign-in screens' CTA (PLAY AS GUEST, LOGIN OR SIGNUP): 56px, semibold caps */
+  :where(.hud)[data-size='start'] {
+    height: 56px;
+    padding: 0 24px;
+    border-radius: var(--dcl-radius-sm);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  :where(.hud)[data-size='start']:is(:disabled, [data-disabled]) {
+    opacity: 0.5;
+  }
+
+  /* variants */
+  :where(.hud)[data-variant='primary'] {
+    background: var(--dcl-brand-ruby);
+  }
+  :where(.hud)[data-variant='primary']:hover:not(:disabled) {
+    background: #ff4d70;
+  }
+
+  :where(.hud)[data-variant='accent'] {
+    background: var(--dcl-brand-orange);
+  }
+  :where(.hud)[data-variant='accent']:hover:not(:disabled) {
+    background: #ff8a5a;
+  }
+
+  :where(.hud)[data-variant='secondary'] {
+    background: var(--dcl-transparencies-white-10);
+  }
+  :where(.hud)[data-variant='secondary']:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  :where(.hud)[data-variant='ghost'] {
+    background: transparent;
+    border: 1.5px solid var(--dcl-transparencies-white-60);
+    color: rgba(255, 255, 255, 0.85);
+  }
+  :where(.hud)[data-variant='ghost']:hover:not(:disabled) {
+    background: var(--dcl-transparencies-white-10);
+    border-color: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  /* light: off-white control with dark ink (filter / color buttons on menu pages) */
+  :where(.hud)[data-variant='light'] {
+    height: 42px;
+    padding: 0 14px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    font-size: var(--dcl-font-size-button-lg);
+    font-weight: 600;
+    letter-spacing: 0;
+    transition:
+      background-color 100ms linear,
+      transform 83ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+  :where(.hud)[data-variant='light']:hover:not(:disabled) {
+    background: #f5f5f5;
+    transform: scale(1.04);
+  }
+  :where(.hud)[data-variant='light']:active:not(:disabled) {
+    background: #c8c8c8;
+    transform: none;
+    animation: hud-button-press-bounce 583ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  /* dark: a see-through black fill (a dialog's CANCEL) */
+  :where(.hud)[data-variant='dark'] {
+    background: var(--dcl-transparencies-black-40);
+  }
+  :where(.hud)[data-variant='dark']:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  /* tint: a faint white fill on a dark or purple surface (CONTINUE SHOPPING) */
+  :where(.hud)[data-variant='tint'] {
+    background: var(--dcl-transparencies-white-10);
+  }
+  :where(.hud)[data-variant='tint']:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* whisper: a faint grey film (the sign-in screens' body type button) */
+  :where(.hud)[data-variant='whisper'] {
+    background: rgba(150, 160, 180, 0.3);
+  }
+  :where(.hud)[data-variant='whisper']:hover:not(:disabled) {
+    background: rgba(170, 170, 180, 0.5);
+  }
+  /* method: a sign-in method (GOOGLE, METAMASK, the More options row): black 60%, grows a little on hover */
+  :where(.hud)[data-variant='method'] {
+    background: var(--dcl-transparencies-black-60);
+  }
+  :where(.hud)[data-variant='method']:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.7);
+    transform: scale(1.05);
+  }
+  /* darkOutline: the see-through black fill with a white outline (the sign-in screens' LOGIN OR SIGNUP) */
+  :where(.hud)[data-variant='darkOutline'] {
+    background: var(--dcl-transparencies-black-40);
+    box-shadow: inset 0 0 0 2px var(--dcl-neutrals-snow);
+  }
+  :where(.hud)[data-variant='darkOutline']:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.5);
+  }
+  /* outline: thin white outline on dark (e.g. SHOP) */
+  :where(.hud)[data-variant='outline'] {
+    height: 40px;
+    padding: 0 14px;
+    border: 1.6px solid var(--dcl-neutrals-snow);
+    border-radius: var(--dcl-radius-md);
+    background: transparent;
+    color: var(--dcl-neutrals-snow);
+    font-size: var(--dcl-font-size-button-md);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  :where(.hud)[data-variant='outline']:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  /* translucent fills, each with a hover and a pressed fill */
+  :where(.hud)[data-variant='scrim'] {
+    background: rgba(0, 0, 0, 0.22);
+  }
+  :where(.hud)[data-variant='scrim']:hover:not(:disabled),
+  :where(.hud)[data-variant='scrim']:focus-visible {
+    background: rgba(255, 255, 255, 0.128);
+  }
+  :where(.hud)[data-variant='scrim']:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.067);
+  }
+  :where(.hud)[data-variant='faint'] {
+    background: rgba(255, 255, 255, 0.128);
+  }
+  :where(.hud)[data-variant='faint']:hover:not(:disabled),
+  :where(.hud)[data-variant='faint']:focus-visible {
+    background: rgba(255, 255, 255, 0.176);
+  }
+  :where(.hud)[data-variant='faint']:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.128);
+  }
+  :where(.hud)[data-variant='veil'] {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  :where(.hud)[data-variant='veil']:hover:not(:disabled),
+  :where(.hud)[data-variant='veil']:focus-visible {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  :where(.hud)[data-variant='veil']:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  :where(.hud)[data-variant='glass'] {
+    background: rgba(255, 255, 255, 0.095);
+  }
+  :where(.hud)[data-variant='glass']:hover:not(:disabled),
+  :where(.hud)[data-variant='glass']:focus-visible {
+    background: rgba(255, 255, 255, 0.176);
+  }
+  :where(.hud)[data-variant='glass']:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.095);
+  }
+  :where(.hud)[data-variant='shade'] {
+    background: rgba(0, 0, 0, 0.54);
+  }
+  :where(.hud)[data-variant='shade']:hover:not(:disabled),
+  :where(.hud)[data-variant='shade']:focus-visible {
+    background: rgba(0, 0, 0, 0.8);
+  }
+  :where(.hud)[data-variant='shade']:active:not(:disabled) {
+    background: rgba(0, 0, 0, 0.54);
+  }
+  :where(.hud)[data-variant='clear'] {
+    background: transparent;
+  }
+  :where(.hud)[data-variant='clear']:hover:not(:disabled),
+  :where(.hud)[data-variant='clear']:focus-visible {
+    background: rgba(255, 241, 164, 0.275);
+  }
+  :where(.hud)[data-variant='clear']:active:not(:disabled) {
+    background: rgba(255, 241, 164, 0.147);
+  }
+  :where(.hud)[data-variant='navigate'] {
+    background: #ffd1da;
+    color: var(--dcl-brand-ruby);
+  }
+  :where(.hud)[data-variant='navigate']:hover:not(:disabled),
+  :where(.hud)[data-variant='navigate']:focus-visible {
+    background: #ffd7d7;
+  }
+  :where(.hud)[data-variant='navigate']:active:not(:disabled) {
+    background: #fab6b6;
+  }
+  :where(.hud)[data-variant='navigateExit'] {
+    border: 2px solid #ff0000;
+    background: var(--dcl-neutrals-white);
+    color: #ff0000;
+  }
+
+  /* bare: sized by the caller's class. Not dimmed when disabled: the caller shows that state. */
+  :where(.hud)[data-size='bare'] {
+    position: relative;
+    flex: none;
+    padding: 0;
+    border-radius: var(--dcl-radius-md);
+    font-family:
+      'Inter Variable',
+      'Inter',
+      system-ui,
+      -apple-system,
+      sans-serif;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    transition: background 100ms linear;
+  }
+  :where(.hud)[data-size='bare']:active:not(:disabled) {
+    transform: none;
+  }
+  :where(.hud)[data-size='bare']:disabled {
+    cursor: default;
+    pointer-events: none;
+  }
+  :where(.hud)[data-size='bare']:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+  :where(.hud)[data-size='bare'][data-variant='primary']:hover:not(:disabled),
+  :where(.hud)[data-size='bare'][data-variant='primary']:focus-visible {
+    background: #ff4d70;
+  }
+  :where(.hud)[data-size='bare'][data-variant='primary']:active:not(:disabled) {
+    background: #e41e43;
+  }
+
+  :where(.hud)[data-radius='md'] {
+    border-radius: var(--dcl-radius-md);
+  }
+  :where(.hud)[data-radius='button'] {
+    border-radius: 9.6px;
+  }
+  :where(.hud)[data-radius='pill'] {
+    border-radius: var(--dcl-radius-full);
+  }
+
+  @keyframes hud-button-press-bounce {
+    0% {
+      transform: scale(1.04);
+    }
+    14% {
+      transform: scale(0.9);
+    }
+    23% {
+      transform: scale(0.9);
+    }
+    43% {
+      transform: scale(1.04);
+    }
+    72% {
+      transform: scale(0.95);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  :where(.hud)[data-size='row'][data-variant='secondary'] {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  :where(.hud)[data-size='row'][data-variant='secondary']:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.24);
+  }
+  :where(.hud)[data-size='row'][data-variant='primary']:hover:not(:disabled) {
+    background: #f02148;
+  }
+  :where(.hud)[data-size='row'][data-variant='primary']:active:not(:disabled) {
+    background: #e41e43;
+  }
+  :where(.hud)[data-size='row']:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* Not in Figma: the Explorer HUD's icon control (`control="square" | "circle" | "pill"`) and its header
+   button (`control="header" | "headerPill"`). These rules sit outside the layer and each has the
+   specificity of the HUD rule it replaced, so a HUD stylesheet that restyles a control keeps the
+   precedence it had. The HUD's 0.82rem label, its timings, and the chat's and the header's fills have no
+   token. */
+.hudControl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  cursor: pointer;
+  color: var(--dcl-neutrals-snow);
+  font-family: inherit;
+  font-size: 0.82rem; /* = HUD --fs-sm */
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease; /* = HUD --dur-fast */
+}
+.hudControl:disabled,
+.hudControl[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* A disabled link: `:disabled` does not match an anchor, so it takes no pointer. */
+.hudControl[data-disabled] {
+  pointer-events: none;
+}
+
+:where(.hudControl)[data-size='sm'] {
+  width: 26px;
+  height: 26px;
+}
+:where(.hudControl)[data-size='md'] {
+  width: 30px;
+  height: 30px;
+}
+:where(.hudControl)[data-size='lg'] {
+  width: 32px;
+  height: 32px;
+}
+/* a pill grows to fit a label or a count, keeping the size's height */
+.hudControl[data-shape='pill'] {
+  width: auto;
+  padding: 0 10px;
+}
+
+:where(.hudControl)[data-shape='square'] {
+  border-radius: var(--dcl-radius-sm);
+}
+:where(.hudControl)[data-shape='circle'] {
+  border-radius: var(--dcl-radius-full);
+}
+:where(.hudControl)[data-shape='pill'] {
+  border-radius: 10px;
+}
+
+:where(.hudControl)[data-variant='ghost'],
+:where(.hudControl)[data-variant='faint'] {
+  background: transparent;
+}
+:where(.hudControl)[data-variant='solid'],
+:where(.hudControl)[data-variant='dark'] {
+  background: var(--dcl-neutrals-black);
+}
+:where(.hudControl)[data-variant='ghost']:hover:not(:disabled),
+:where(.hudControl)[data-variant='ghost'][data-active],
+:where(.hudControl)[data-variant='solid']:hover:not(:disabled),
+:where(.hudControl)[data-variant='solid'][data-active] {
+  background: var(--dcl-transparencies-white-10);
+}
+:where(.hudControl)[data-variant='dark']:hover:not(:disabled),
+:where(.hudControl)[data-variant='dark'][data-active],
+:where(.hudControl)[data-variant='faint']:hover:not(:disabled),
+:where(.hudControl)[data-variant='faint'][data-active] {
+  background: rgba(255, 255, 255, 0.24); /* = HUD --chat-hover */
+}
+:where(.hudControl)[data-variant='dark']:active:not(:disabled),
+:where(.hudControl)[data-variant='faint']:active:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18); /* = HUD --chat-pressed */
+}
+
+.hudHeader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-neutrals-black);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 100ms linear; /* = HUD --dur-tap */
+}
+.hudHeader:hover {
+  background: rgb(31, 31, 31);
+}
+.hudHeader:focus-visible {
+  outline: 2px solid var(--dcl-brand-orange);
+  outline-offset: 2px;
+}
+:where(.hudHeader)[data-shape='circle'] {
+  width: 40px;
+  height: 40px;
+}
+:where(.hudHeader)[data-shape='pill'] {
+  height: 46px;
+  padding: 0 3px;
 }

@@ -11,9 +11,16 @@
 
 // Production routes go through `shared::routing` (explore/clippy.toml); test routers may use axum's.
 #![cfg_attr(not(test), deny(clippy::disallowed_methods))]
-#![cfg_attr(test, allow(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
 
 // The crates this one builds on, under their module names (AGENTS.md).
+pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
@@ -317,6 +324,8 @@ pub struct ExploreState {
     /// The Snapshot voting-power client the favorite and like writes score
     /// their signer with (`places::voting_power`).
     pub voting_power: places::voting_power::Client,
+    /// The content read-through event profiles fall back to; `None` reads this node's alone.
+    pub read_through: Option<Arc<content::read_through::ReadThrough>>,
 }
 
 pub type SharedState = Arc<ExploreState>;
@@ -362,12 +371,22 @@ impl ExploreState {
             eip1654,
             storage: None,
             cors: Arc::new(cors::Policy::upstream()),
+            read_through: None,
         }
     }
 
     /// The blob store the poster uploads land in.
     pub fn with_storage(mut self, storage: Arc<crate::storage::Storage>) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    /// The content read-through event profiles fall back to.
+    pub fn with_read_through(
+        mut self,
+        read_through: Option<Arc<content::read_through::ReadThrough>>,
+    ) -> Self {
+        self.read_through = read_through;
         self
     }
 
@@ -463,6 +482,7 @@ impl ExploreState {
                 E::CatalystUnavailable(_) => {
                     ApiError::service_unavailable("Signature verification unavailable")
                 }
+                E::RateLimited => ApiError::http(429, e.to_string()),
             }
         })
     }

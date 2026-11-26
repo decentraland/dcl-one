@@ -66,23 +66,23 @@ pub struct HoldingsContracts {
 impl HoldingsContracts {
     /// `ETH_NETWORK`'s contracts: mainnet with Polygon, sepolia with Amoy.
     pub fn for_network(network: &str) -> Option<Self> {
-        match network.trim() {
-            "mainnet" => Some(Self {
+        use crate::shared::network::ChainPair;
+        Some(match ChainPair::from_eth_network(network)? {
+            ChainPair::Mainnet => Self {
                 registrar: address!("2a187453064356c898cae034eaed119e1663acb8"),
                 land: address!("f87e31492faf9a91b02ee0deaad50d51d56d5d4d"),
                 estate: address!("959e104e1a4db6317fa58f8295f586e1a978c297"),
                 l1_mana: address!("0f5d2fb29fb7d3cfee444a200298f468908cc942"),
                 l2_mana: address!("a1c57f48f0deb89f569dfbe6e2b7f46d33606fd4"),
-            }),
-            "sepolia" => Some(Self {
+            },
+            ChainPair::Testnet => Self {
                 registrar: address!("7518456ae93eb98f3e64571b689c626616bb7f30"),
                 land: address!("42f4ba48791e2de32f5fbf553441c2672864bb33"),
                 estate: address!("369a7fbe718c870c79f99fb423882e8dd8b20486"),
                 l1_mana: address!("fa04d2e2ba9aec166c93dfeeba7427b2303befa9"),
                 l2_mana: address!("7ad72b9f944ea9793cf4055d88f81138cc2c63a0"),
-            }),
-            _ => None,
-        }
+            },
+        })
     }
 }
 
@@ -130,21 +130,35 @@ pub struct ChainHoldings {
 /// A failed read; a revert is not retried.
 struct Fault {
     retry: bool,
-    message: String,
+    operation: &'static str,
+    cause: &'static str,
 }
 
 impl Fault {
-    fn of(what: &str, e: RpcError) -> Self {
+    fn of(operation: &'static str, error: RpcError) -> Self {
+        let reverted = error.is_revert();
+        // The provider can echo credentials and request bodies in its errors.
+        // Callers also log the returned error, so retain only a fixed class.
+        let cause = match error {
+            RpcError::Refused(_) => "endpoint refused",
+            RpcError::Transport(_) => "transport error",
+            RpcError::Status(_) => "HTTP status error",
+            RpcError::Malformed(_) => "malformed RPC answer",
+            RpcError::Response { .. } if reverted => "execution reverted",
+            RpcError::Response { .. } => "RPC response error",
+        };
         Self {
-            retry: !e.is_revert(),
-            message: format!("{what}: {e}"),
+            retry: !reverted,
+            operation,
+            cause,
         }
     }
 
-    fn malformed(message: String) -> Self {
+    fn malformed(operation: &'static str, cause: &'static str) -> Self {
         Self {
             retry: true,
-            message,
+            operation,
+            cause,
         }
     }
 }
@@ -202,10 +216,30 @@ impl ChainHoldings {
         loop {
             match self.holdings(owner).await {
                 Ok(bytes) => return Ok(bytes),
-                Err(f) if !f.retry || attempt + 1 >= ATTEMPTS => return Err(f.message),
-                Err(f) => {
+                Err((chain, fault)) if !fault.retry || attempt + 1 >= ATTEMPTS => {
+                    super::metrics::allowance_read_failed();
+                    tracing::error!(
+                        chain,
+                        operation = fault.operation,
+                        cause = fault.cause,
+                        attempts = attempt + 1,
+                        "world storage allowance read failed"
+                    );
+                    return Err(format!(
+                        "holdings: {chain} {}: {}",
+                        fault.operation, fault.cause
+                    ));
+                }
+                Err((chain, fault)) => {
                     let delay = RETRY_BASE_DELAY * 2u32.pow(attempt);
-                    tracing::warn!(error = %f.message, attempt = attempt + 1, ?delay, "holdings read failed, retrying");
+                    tracing::warn!(
+                        chain,
+                        operation = fault.operation,
+                        cause = fault.cause,
+                        attempt = attempt + 1,
+                        ?delay,
+                        "world storage allowance read failed, retrying"
+                    );
                     tokio::time::sleep(delay).await;
                     attempt += 1;
                 }
@@ -214,7 +248,7 @@ impl ChainHoldings {
     }
 
     /// The allowance in bytes from one Ethereum batch and one Polygon call.
-    async fn holdings(&self, owner: EvmAddress) -> Result<i64, Fault> {
+    async fn holdings(&self, owner: EvmAddress) -> Result<i64, (&'static str, Fault)> {
         let c = &self.contracts;
         let balance = BalanceOf::balanceOfCall { owner }.abi_encode();
         let l1_calls: [Call; 4] = [
@@ -231,12 +265,13 @@ impl ChainHoldings {
             self.batch(&self.l1_rpc_url, &l1_calls),
             self.one(&self.l2_rpc_url, &l2_call)
         );
-        let [names, lands, estate_lands, l1_mana] = l1?;
+        let [names, lands, estate_lands, l1_mana] = l1.map_err(|fault| ("ethereum", fault))?;
+        let l2_mana = l2.map_err(|fault| ("polygon", fault))?;
         Ok(allowance_bytes(
             names,
             lands,
             estate_lands,
-            l1_mana.saturating_add(l2?),
+            l1_mana.saturating_add(l2_mana),
         ))
     }
 
@@ -256,7 +291,7 @@ impl ChainHoldings {
             .with_timeout(RPC_TIMEOUT)
             .batch(&requests)
             .await
-            .map_err(|e| Fault::of("holdings batch", e))?;
+            .map_err(|e| Fault::of("eth_call batch", e))?;
         let mut out = [U256::ZERO; N];
         if items.is_empty() {
             for (slot, call) in out.iter_mut().zip(calls) {
@@ -271,7 +306,7 @@ impl ChainHoldings {
         for (i, slot) in out.iter_mut().enumerate() {
             let envelope = by_id
                 .remove(&(i as u64))
-                .ok_or_else(|| Fault::malformed("holdings: no answer in the batch".into()))?;
+                .ok_or_else(|| Fault::malformed("eth_call batch", "missing response item"))?;
             *slot = decode(result_of(envelope).and_then(hex_of))?;
         }
         Ok(out)
@@ -289,14 +324,11 @@ impl ChainHoldings {
 
 /// A `uint256` answer; a revert or an empty answer is a fault.
 fn decode(answer: Result<String, RpcError>) -> Result<U256, Fault> {
-    let hex = answer.map_err(|e| Fault::of("holdings eth_call", e))?;
+    let hex = answer.map_err(|e| Fault::of("eth_call", e))?;
     let bytes = hex::decode(hex.trim_start_matches("0x"))
-        .map_err(|e| Fault::malformed(format!("holdings: bad hex: {e}")))?;
+        .map_err(|_| Fault::malformed("eth_call", "invalid hex result"))?;
     if bytes.len() != 32 {
-        return Err(Fault::malformed(format!(
-            "holdings: a {}-byte answer is not a uint256",
-            bytes.len()
-        )));
+        return Err(Fault::malformed("eth_call", "result is not a uint256"));
     }
     Ok(U256::from_be_slice(&bytes))
 }
@@ -410,7 +442,11 @@ mod tests {
         let data = hex::decode(call["data"].as_str().unwrap().trim_start_matches("0x")).unwrap();
         let selector: [u8; 4] = data[..4].try_into().unwrap();
         if chain.faulty.lock().unwrap().contains(&(to, selector)) {
-            return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "header not found" } });
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32000, "message": "header not found at https://rpc.example/key" }
+            });
         }
         match chain.values.lock().unwrap().get(&(to, selector)) {
             Some(v) => json!({
@@ -520,9 +556,14 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn a_reverted_call_is_an_error_not_a_zero_holding() {
         let (holdings, l1, _) = chains().await;
+        let recorder = crate::core::metrics::metrics_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         l1.values
             .lock()
             .unwrap()
@@ -533,17 +574,35 @@ mod tests {
         // The failure is answered from memory for a while.
         assert!(holdings.allowance_bytes(&wallet()).await.is_err());
         assert_eq!(l1.requests(), 1);
+        assert!(
+            handle
+                .render()
+                .contains("worlds_allowance_read_failures_total 1")
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn an_rpc_fault_on_either_chain_is_retried_then_an_error() {
         let (holdings, _, l2) = chains().await;
+        let recorder = crate::core::metrics::metrics_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         l2.faulty
             .lock()
             .unwrap()
             .push((contracts().l2_mana, BALANCE));
-        assert!(holdings.allowance_bytes(&wallet()).await.is_err());
+        assert_eq!(
+            holdings.allowance_bytes(&wallet()).await.unwrap_err(),
+            "holdings: polygon eth_call: RPC response error"
+        );
         assert_eq!(l2.requests(), ATTEMPTS as usize);
+        assert!(
+            handle
+                .render()
+                .contains("worlds_allowance_read_failures_total 1")
+        );
     }
 
     #[test]
@@ -609,5 +668,6 @@ mod tests {
         assert!(!configured(http(), rpc, rpc, "goerli").is_limited());
         assert!(configured(http(), rpc, rpc, "sepolia").is_limited());
         assert!(configured(http(), rpc, rpc, "mainnet").is_limited());
+        assert!(configured(http(), rpc, rpc, "Ethereum").is_limited());
     }
 }

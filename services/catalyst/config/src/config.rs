@@ -1,3 +1,4 @@
+use catalyst_shared::network::ChainPair;
 use clap::Args;
 
 use crate::posture::Posture::Mirror;
@@ -32,11 +33,9 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// rpc.decentraland.org's request logs. It names no node: an operator that
 /// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
-    let (l1, l2) = if eth_network.trim() == "mainnet" {
-        ("mainnet", "polygon")
-    } else {
-        ("sepolia", "amoy")
-    };
+    let (l1, l2) = ChainPair::from_eth_network(eth_network)
+        .unwrap_or(ChainPair::Testnet)
+        .names();
     let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
@@ -124,6 +123,9 @@ impl Config {
             Self::read_secret_file(name, slot)?;
             Self::refuse_short_operator_secret(name, slot.as_deref())?;
         }
+        if let Some(pair) = ChainPair::from_eth_network(&self.node.eth_network) {
+            self.node.eth_network = pair.names().0.into();
+        }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
@@ -168,9 +170,14 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || ChainPair::from_eth_network(&self.node.eth_network) != Some(ChainPair::Mainnet)
         {
             return;
         }
@@ -203,10 +210,11 @@ impl Config {
         "CATALYRST_EVENTS_ADMIN_TOKEN",
         "CATALYRST_BUILDER_ADMIN_TOKEN",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
-        "CAMERA_REEL_METRICS_BEARER_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
+        "HISTORICAL_ADMIN_TOKEN",
+        "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
         "PRICE_ADMIN_TOKEN",
         "CATALYRST_ECONOMY_ADMIN_TOKEN",
         "CATALYRST_CREDITS_ADMIN_TOKEN",
@@ -220,7 +228,6 @@ impl Config {
         "NOTIFICATIONS_REWARDS_TOKEN",
         "ONBOARDING_API_KEY",
         "DATA_TEAM_AUTH_TOKEN",
-        "WKC_METRICS_BEARER_TOKEN",
     ];
 
     pub fn is_operator_secret(name: &str) -> bool {
@@ -276,7 +283,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 90] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -302,10 +309,6 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
-            ),
-            (
-                "WKC_METRICS_BEARER_TOKEN",
-                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -380,6 +383,10 @@ impl Config {
                 &mut self.explore.catalyrst_events_admin_token,
             ),
             (
+                "EVENTS_FEATURE_FLAGS_USER_ID",
+                &mut self.explore.events_feature_flags_user_id,
+            ),
+            (
                 "CATALYRST_BUILDER_ADMIN_TOKEN",
                 &mut self.create.catalyrst_builder_admin_token,
             ),
@@ -394,10 +401,6 @@ impl Config {
             (
                 "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
                 &mut self.create.catalyrst_camera_reel_admin_token,
-            ),
-            (
-                "CAMERA_REEL_METRICS_BEARER_TOKEN",
-                &mut self.create.camera_reel_metrics_bearer_token,
             ),
             (
                 "CATALYRST_WORLDS_ADMIN_TOKEN",
@@ -436,6 +439,25 @@ impl Config {
                 "MARKET_ADMIN_TOKEN",
                 &mut self.marketplace.market_admin_token,
             ),
+            (
+                "HISTORICAL_ADMIN_TOKEN",
+                &mut self.marketplace.historical_admin_token,
+            ),
+            ("WERT_PRIVATE_KEY", &mut self.marketplace.wert_private_key),
+            (
+                "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+                &mut self.marketplace.wert_publication_fees_private_key,
+            ),
+            ("WERT_API_KEY", &mut self.marketplace.wert_api_key),
+            ("TRANSAK_API_KEY", &mut self.marketplace.transak_api_key),
+            (
+                "TRANSAK_API_SECRET",
+                &mut self.marketplace.transak_api_secret,
+            ),
+            (
+                "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+                &mut self.marketplace.transak_refresh_access_token_auth,
+            ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
             ("OZ_RELAYER_API_KEY", &mut self.economy.oz_relayer_api_key),
@@ -459,6 +481,10 @@ impl Config {
             (
                 "CREDITS_CAPTCHA_SECRET",
                 &mut self.shop.credits_captcha_secret,
+            ),
+            (
+                "CREDITS_ALERTS_SLACK_WEBHOOK",
+                &mut self.shop.credits_alerts_slack_webhook,
             ),
             ("STRIPE_SECRET_KEY", &mut self.shop.stripe_secret_key),
             (
@@ -505,6 +531,7 @@ impl Config {
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
+            ("MAGIC_SECRET_KEY", &mut self.node.magic_secret_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
                 &mut self.explore.places_admin_auth_token,
@@ -517,15 +544,17 @@ impl Config {
     }
 
     /// The signing keys: each signs value on this node's behalf (treasury
-    /// credit claims, relayed transactions), so each is
+    /// credit claims, relayed transactions, Wert card purchases), so each is
     /// read from `<NAME>_FILE` alone (a `LoadCredential` or agenix file). A
     /// plain environment variable would sit in `/proc/<pid>/environ`,
     /// `systemctl show` and, set through a unit's `environment`, the unit
     /// file in the world-readable nix store.
-    pub const FILE_ONLY_SECRETS: [&'static str; 3] = [
+    pub const FILE_ONLY_SECRETS: [&'static str; 5] = [
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
         "RELAYER_PRIVATE_KEY",
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
     ];
 
     /// Secrets that fall back to a network default when unset
@@ -798,12 +827,15 @@ mod tests {
         // Inbound HMAC key, but Segment issues it: its length is Segment's.
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
+        // Outbound flag targeting id the flags service defines.
+        "EVENTS_FEATURE_FLAGS_USER_ID",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
         "SLACK_BOT_TOKEN",
         "ANALYTICS_API_TOKEN",
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
+        "MAGIC_SECRET_KEY",
         // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
@@ -832,6 +864,14 @@ mod tests {
         "TRADE_RPC_URLS",
         "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
+        "CREDITS_ALERTS_SLACK_WEBHOOK",
+        // Wert's partner keys and API key: their shape is Wert's.
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        "WERT_API_KEY",
+        // Transak's partner credentials: their shape is Transak's.
+        "TRANSAK_API_KEY",
+        "TRANSAK_API_SECRET",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
@@ -1246,6 +1286,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test writes <NAME>_FILE into the process environment"
+    )]
     fn secrets_are_hidden_from_help_and_read_from_files() {
         let help = match parse(&["x", "--help"]) {
             Err(e) => e.to_string(),
@@ -1299,6 +1343,13 @@ mod tests {
         for var in [
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
+            "HISTORICAL_ADMIN_TOKEN",
+            "WERT_PRIVATE_KEY",
+            "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+            "WERT_API_KEY",
+            "TRANSAK_API_KEY",
+            "TRANSAK_API_SECRET",
+            "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
@@ -1336,6 +1387,7 @@ mod tests {
             "CATALYST_TEST_SECRET_{}",
             uuid::Uuid::new_v4().simple().to_string().to_uppercase()
         );
+        // SAFETY: the name is unique to this test, and this crate reads the environment only through std, which locks it.
         unsafe { std::env::set_var(format!("{name}_FILE"), &file) };
         Config::read_secret_file(&name, &mut slot).unwrap();
         assert_eq!(slot.as_deref(), Some("s3cr3t"));
@@ -1346,6 +1398,7 @@ mod tests {
             .to_string();
         assert!(err.contains("both set"), "{err}");
 
+        // SAFETY: as above.
         unsafe { std::env::set_var(format!("{name}_FILE"), dir.join("missing")) };
         let mut missing = None;
         let err = Config::read_secret_file(&name, &mut missing)
@@ -1355,6 +1408,7 @@ mod tests {
             err.contains(&format!("{name}_FILE")) && !err.contains("s3cr3t"),
             "{err}"
         );
+        // SAFETY: as above.
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
         let _ = std::fs::remove_dir_all(&dir);
     }

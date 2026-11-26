@@ -291,9 +291,15 @@ async fn rate_limiter_ttl_and_size() {
     small.record(&p("a"));
     small.record(&p("b"));
     small.record(&p("c"));
-    assert!(
-        small.is_limited(&p("unrelated")),
+    assert_eq!(
+        small.limit(&p("unrelated")),
+        Some("max_size"),
         "over max_size trips bucket"
+    );
+    assert_eq!(
+        small.limit(&p("a")),
+        Some("ttl"),
+        "a pointer hit is named first"
     );
 }
 
@@ -303,8 +309,9 @@ fn a_reservation_holds_its_pointers_until_released() {
     let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
 
     let held = rl.reserve("scene", &ptrs, false).unwrap();
-    assert!(
-        rl.reserve("scene", &ptrs[1..2], false).is_none(),
+    assert_eq!(
+        rl.reserve("scene", &ptrs[1..2], false).err(),
+        Some("ttl"),
         "a held pointer refuses a second reservation"
     );
     held.release();
@@ -330,8 +337,9 @@ fn a_reservation_holds_its_pointers_until_released() {
         .unwrap()
         .entries
         .clear();
-    assert!(
-        rl.reserve("profile", &profile, true).is_none(),
+    assert_eq!(
+        rl.reserve("profile", &profile, true).err(),
+        Some("unchanged_ttl"),
         "the unchanged bucket refuses on its own"
     );
     assert!(
@@ -592,6 +600,45 @@ async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp()
     assert_eq!(first, second);
     assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), Some(first));
     assert!(deployer.is_rate_limited("scene", &pointers[0]));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A deploy to a pointer its window still holds is refused and counted by the
+/// window that refused it.
+#[tokio::test]
+async fn a_rate_limited_deploy_is_counted_by_its_window() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let (storage, tmp) = temp_storage("rate-limited-count").await;
+    let deployer =
+        WriteDeployer::with_partial_validation_for_tests(pool, storage, Some(Arc::new(NoEip1654)));
+    let pointers = Scope::new().pointers(&["9,9"]);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms).await;
+    deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms + 1).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, DeployFailure::Rejected(RejectionKind::RateLimited, _)),
+        "{err:?}"
+    );
+    assert_eq!(
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::RATE_LIMITED.descriptor.name,
+            &[("entity_type", "scene"), ("reason", "ttl")]
+        ),
+        Some(1.0)
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -927,7 +974,21 @@ fn is_content_unchanged_metadata_compare() {
 
 #[test]
 fn rate_limiter_per_type_defaults() {
-    let rl = DeployRateLimiter::with_reference_defaults();
+    let recorder = crate::series::test_support::recorder();
+    let rl =
+        dcl_metrics::with_local_recorder(&recorder, DeployRateLimiter::with_reference_defaults);
+    let rendered = recorder.handle().render();
+    for &(etype, _, max) in REFERENCE_RATE_LIMITS.iter() {
+        assert_eq!(
+            crate::series::test_support::sample(
+                &rendered,
+                crate::series::RATE_LIMITER_MAX_SIZE.descriptor.name,
+                &[("entity_type", etype)]
+            ),
+            Some(max as f64),
+            "{etype}"
+        );
+    }
     let ptrs = vec!["0,0".to_string()];
     assert!(!rl.is_rate_limited("scene", &ptrs));
     rl.record("scene", &ptrs);
@@ -1500,13 +1561,12 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
 #[tokio::test]
 async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_accepted() {
     let (storage, tmp) = temp_storage("land-source").await;
-    // The index cannot be read (no cluster) and no marketplace subgraph is
-    // attached: `can_deploy_batch` answers `Unavailable::NoSource`.
+    // The index cannot be read (no cluster), and nothing stands in for it:
+    // `can_deploy_batch` answers `Unavailable::NotReady`.
     let land = Arc::new(LandAuthzState::new(
         lazy_pool(),
         crate::http::Outbound::new(crate::http::HttpClientCfg::default()).unwrap(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let deployer = WriteDeployer::with_partial_validation_for_tests(
         lazy_pool(),
@@ -1850,4 +1910,212 @@ async fn a_plain_deploy_crossing_the_ttl_during_validation_skips_the_current_che
     let published = deployer.deploy_entity(files, &id, chain, "LOCAL").await;
     assert!(published.is_ok(), "got {published:?}");
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A contract wallet that refuses at latest and records the past block it is asked at.
+#[derive(Default)]
+struct SignedInThePast(std::sync::Mutex<Vec<u64>>);
+
+#[async_trait]
+impl Eip1654Validator for SignedInThePast {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        block: u64,
+    ) -> Result<bool, AuthError> {
+        self.0.lock().unwrap().push(block);
+        Ok(true)
+    }
+}
+
+/// A partial upload's signature check on a fully validating deployer asks a contract wallet
+/// refused at latest again at the L1 block strictly before the entity timestamp.
+#[tokio::test]
+async fn the_signature_check_asks_a_contract_wallet_at_the_entity_time_block() {
+    use crate::validator::fake_chain::{self, GENESIS, INTERVAL};
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = crate::sync_test_support::temp_storage("deployer-eip1654").await;
+    let wallet = Arc::new(SignedInThePast::default());
+    let sources = crate::validator::Sources::new(
+        lazy_pool(),
+        storage.clone(),
+        crate::http::Outbound::for_tests(),
+        Some(wallet.clone()),
+        crate::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: Some(chain.url.clone()),
+            ..Default::default()
+        },
+    );
+    let deployer = WriteDeployer::new(
+        lazy_pool(),
+        storage,
+        Some(wallet.clone()),
+        Arc::new(sources),
+    );
+    let id = "bafkreientity";
+    let auth =
+        crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+            .await;
+    // A block is mined at this exact second: the one before it is asked.
+    let entity_s = GENESIS + 2_000 * INTERVAL;
+
+    deployer
+        .check_signature(id, &auth, entity_s * 1000)
+        .await
+        .unwrap();
+    assert_eq!(*wallet.0.lock().unwrap(), [1_999]);
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A fully validating deployer whose contract wallet is `wallet`, its L1 RPC at `l1_rpc_url`.
+fn deployer_with_wallet(
+    storage: &Arc<Storage>,
+    wallet: &Arc<SignedInThePast>,
+    l1_rpc_url: &str,
+) -> WriteDeployer {
+    let sources = crate::validator::Sources::new(
+        lazy_pool(),
+        storage.clone(),
+        crate::http::Outbound::for_tests(),
+        Some(wallet.clone()),
+        crate::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: Some(l1_rpc_url.into()),
+            ignore_blockchain_access: true,
+            ..Default::default()
+        },
+    );
+    let deployer = WriteDeployer::new(
+        lazy_pool(),
+        storage.clone(),
+        Some(wallet.clone()),
+        Arc::new(sources),
+    );
+    deployer.configure(&DeployLimits {
+        request_ttl_backwards_ms: 10 * 60_000,
+        ..Default::default()
+    });
+    deployer
+}
+
+fn is_signature_refusal(failure: &DeployFailure) -> bool {
+    matches!(failure, DeployFailure::Rejected(RejectionKind::Validation, errors)
+        if errors.iter().any(|e| e.starts_with("The signature is invalid.")))
+}
+
+/// A check at now asks a contract wallet at latest only: a wallet refused there is
+/// rejected without an L1 block lookup, which here would fail and leave it undecided.
+#[tokio::test]
+async fn a_signature_check_at_now_asks_a_contract_wallet_at_latest_only() {
+    let (storage, tmp) = crate::sync_test_support::temp_storage("deployer-eip1654-now").await;
+    let wallet = Arc::new(SignedInThePast::default());
+    let deployer = deployer_with_wallet(&storage, &wallet, "http://127.0.0.1:1");
+    let id = "bafkreientity";
+    let auth =
+        crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+            .await;
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let failure = deployer
+        .check_signature_at_latest(id, &auth, now)
+        .await
+        .unwrap_err();
+    assert!(is_signature_refusal(&failure), "got {failure:?}");
+    assert!(wallet.0.lock().unwrap().is_empty());
+    assert!(
+        matches!(
+            deployer.check_signature(id, &auth, now).await,
+            Err(DeployFailure::Unverifiable(_))
+        ),
+        "the entity-time check needs the failing L1 lookup"
+    );
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A partial upload's scene published past `REQUEST_TTL_BACKWARDS` asks its contract wallet
+/// at latest only, so a key removed since signing no longer deploys; within the window the
+/// wallet is still asked at the entity-time block.
+#[tokio::test]
+async fn a_scene_published_past_the_request_ttl_asks_its_contract_wallet_at_latest() {
+    use crate::validator::fake_chain;
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = crate::sync_test_support::temp_storage("deployer-eip1654-ttl").await;
+    let scene_at = |timestamp: i64| {
+        let parcel = "140,140";
+        let bytes = Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "version": "v3",
+                "type": "scene",
+                "pointers": [parcel],
+                "timestamp": timestamp,
+                "content": [],
+                "metadata": {"main": "bin/index.js", "scene": {"base": parcel, "parcels": [parcel]}}
+            }))
+            .unwrap(),
+        );
+        let id = hash_bytes_v1(&bytes);
+        (bytes, id)
+    };
+    let publish = |timestamp: i64, ttl_anchor: Option<i64>| {
+        let (bytes, id) = scene_at(timestamp);
+        let wallet = Arc::new(SignedInThePast::default());
+        let deployer = deployer_with_wallet(&storage, &wallet, &chain.url);
+        async move {
+            let auth = crate::sync_test_support::signed_chain_behind_contract(
+                &id,
+                "2099-01-01T00:00:00.000Z",
+            )
+            .await;
+            let result = deployer
+                .deploy_entity_anchored(
+                    vec![bytes],
+                    &id,
+                    serde_json::to_value(auth).unwrap(),
+                    "LOCAL",
+                    ttl_anchor,
+                )
+                .await;
+            let asked = wallet.0.lock().unwrap().len();
+            (result, asked)
+        }
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let (past, asked) = publish(now - 15 * 60_000, Some(now - 14 * 60_000)).await;
+    assert!(
+        past.as_ref().is_err_and(is_signature_refusal),
+        "got {past:?}"
+    );
+    assert_eq!(asked, 0);
+
+    let (within, asked) = publish(now - 60_000, Some(now - 30_000)).await;
+    assert!(
+        !within.as_ref().is_err_and(is_signature_refusal),
+        "got {within:?}"
+    );
+    assert!(asked > 0, "the wallet is asked at the entity-time block");
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A contract-wallet check the client source's budget refused is undecided
+/// (the retryable 503 with `Retry-After`), never a rejection of the signature.
+#[test]
+fn a_rate_limited_contract_check_is_unverifiable_not_rejected() {
+    assert!(matches!(
+        signature_verdict(Err(AuthError::Eip1654RateLimited)),
+        Err(DeployFailure::Unverifiable(_))
+    ));
+    assert!(matches!(
+        signature_verdict(Err(AuthError::Eip1654Rejected {
+            contract: "0x00000000000000000000000000000000000c0de1".into(),
+        })),
+        Err(DeployFailure::Rejected(RejectionKind::Validation, _))
+    ));
 }

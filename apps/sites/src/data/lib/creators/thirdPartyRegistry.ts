@@ -116,13 +116,14 @@ export function buildReviewThirdPartyCall(chainId: number, thirdPartyId: string,
 export type RegisteredThirdParty = {
   registered: boolean
   maxItems: number
+  consumedSlots: number
   /** The Merkle root of its approved items, empty when none was set. */
   root: string
 }
 
 const EMPTY_ROOT = zeroHash
 
-type ThirdPartyRecord = { registered: bigint; maxItems: bigint; root: string; metadata: string }
+type ThirdPartyRecord = { registered: bigint; maxItems: bigint; consumedSlots: bigint; root: string; metadata: string }
 
 type ThirdPartyOutputs = readonly [
   isApproved: boolean,
@@ -135,12 +136,12 @@ type ThirdPartyOutputs = readonly [
 ]
 
 async function readThirdPartyRecord(chainId: number, thirdPartyId: string): Promise<ThirdPartyRecord> {
-  const [, root, maxItems, , registered, metadata] = await readContract<ThirdPartyOutputs>(
+  const [, root, maxItems, consumedSlots, registered, metadata] = await readContract<ThirdPartyOutputs>(
     getThirdPartyRegistry(chainId),
     'thirdParties',
     [thirdPartyId]
   )
-  return { registered, maxItems, root, metadata }
+  return { registered, maxItems, consumedSlots, root, metadata }
 }
 
 export async function fetchRegisteredThirdParty(chainId: number, thirdPartyId: string): Promise<RegisteredThirdParty> {
@@ -148,6 +149,7 @@ export async function fetchRegisteredThirdParty(chainId: number, thirdPartyId: s
   return {
     registered: record.registered !== 0n,
     maxItems: Number(record.maxItems),
+    consumedSlots: Number(record.consumedSlots),
     root: record.root === EMPTY_ROOT ? '' : record.root
   }
 }

@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("signedFetchHeaders", () => {
-  test("appends a verifiable ECDSA_SIGNED_ENTITY link over the lowercased canonical", async () => {
+  test("appends a verifiable ECDSA_SIGNED_ENTITY link over the crypto-middleware 6.x payload", async () => {
     const { stored, ephemeralAddress } = await makeStoredIdentity();
     const ts = 1_751_500_000_000;
     const headers = await signedFetchHeaders("POST", "/v1/Communities", {
@@ -75,6 +75,21 @@ describe("signedFetchHeaders", () => {
       signature: entity.signature ?? "0x",
     });
     expect(recovered.toLowerCase()).toBe(ephemeralAddress.toLowerCase());
+  });
+
+  test("signs mixed-case metadata verbatim, folding only the method and path", async () => {
+    const { stored } = await makeStoredIdentity();
+    const ts = 1_751_500_000_000;
+    const metadata = '{"realmName":"Boedo.dcl.eth","sceneId":"Bafk"}';
+    const headers = await signedFetchHeaders("PUT", "/Values/High-Score", {
+      identity: stored,
+      metadata,
+      now: () => ts,
+    });
+
+    expect(headers["x-identity-metadata"]).toBe(metadata);
+    const entity = JSON.parse(headers["x-identity-auth-chain-2"] ?? "{}") as { payload?: string };
+    expect(entity.payload).toBe(`put:/values/high-score:${ts}:${metadata}`);
   });
 
   test("no stored identity or an expired one -> 401 CatalystError, and the expired one is dropped at load", async () => {

@@ -1,9 +1,10 @@
 // The shared site top bar over the docs chrome: SUMMARY.md sidebar, the rendered page, its outline, page navigation and the theme switcher.
 import { useEffect, useRef, useState } from "react";
 
-import { useChromeNav } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { useChromeNav } from "@dcl/one-ui";
 import SitesTopBar from "../components/chrome/SitesTopBar";
 import styles from "./DocsPage.module.css";
+import { fetchDocMarkdown } from "@/data/lib/docs/markdown";
 import type { DocsPageView, DocsSpace } from "@/data/lib/docs/types";
 import DocsIcon from "./DocsIcon";
 import { NavList } from "./DocsNav";
@@ -94,9 +95,7 @@ export default function DocsPage({ view }: { view: DocsPageView }) {
   const flash = (what: string) => { setCopied(what); setTimeout(() => setCopied(""), 1400); };
   const copyMarkdown = async (what: string) => {
     try {
-      const response = await fetch(view.mdUrl);
-      if (!response.ok) throw new Error("Markdown unavailable");
-      await copyText(await response.text());
+      await copyText(await fetchDocMarkdown(view.mdUrl));
       flash(what);
     } catch {
       window.prompt("Copy this page:", document.querySelector(".dcl-docs main")?.textContent ?? "");

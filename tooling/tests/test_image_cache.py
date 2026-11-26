@@ -273,6 +273,7 @@ class WorkflowSetupTest(unittest.TestCase):
                     'library/ui/apps/sites/assets/hero_desktop.webp',
                     'library/ui/apps/sites/assets/catch_the_vibe/alan.mp4',
                     'library/ui/apps/sites/assets/video_landing.webm',
+                    'library/ui/assets/logo-pattern.webp',
                     'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2',
                     'apps/ui3/public/assets/invite/referral.webm')
         for path in required:
@@ -300,6 +301,7 @@ class WorkflowSetupTest(unittest.TestCase):
                      'library/ui/components/Button/Button.tsx',
                      'library/ui/components/Button/Button.module.css',
                      'library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx',
+                     'library/ui/assets/logo-pattern.webp',
                      'library/ui/foundations/foundations.css'):
             with self.subTest(path=path):
                 self.assertTrue(included(path), f'Sites archive omits browser input: {path}')
@@ -328,21 +330,24 @@ class WorkflowSetupTest(unittest.TestCase):
             root = Path(directory)
             work = root / 'apps/sites'
             assets = root / 'library/ui/apps/sites/assets'
+            shared = root / 'library/ui/assets'
             fonts = root / 'library/ui/foundations/typography/fonts'
             invite = root / 'apps/ui3/public/assets/invite'
-            for path in (work, assets, fonts, invite):
+            for path in (work, assets, shared, fonts, invite):
                 path.mkdir(parents=True)
             media = assets / 'hero.webp'
+            pattern = shared / 'logo-pattern.webp'
             font = fonts / 'inter.woff2'
             clip = invite / 'referral.webm'
             payload = b'actual\0binary'
             media.write_bytes(payload)
+            pattern.write_bytes(payload)
             font.write_bytes(payload)
             clip.write_bytes(payload)
             result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
                                     cwd=work, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for path in (media, font, clip):
+            for path in (media, pattern, font, clip):
                 with self.subTest(path=path.name):
                     path.write_text('version https://git-lfs.github.com/spec/v1\n'
                                     'oid sha256:' + 'a' * 64 + '\nsize 12\n')
@@ -629,6 +634,109 @@ class ImageRetentionTest(unittest.TestCase):
         self.assertEqual(self.sweep(rows), {1, 2})
         # A later sweep sees the new upload and retains it plus its predecessor.
         self.assertEqual(self.sweep(rows[2:] + [self.entry(5)]), {3})
+
+
+class CacheSweepBudgetTest(unittest.TestCase):
+    """The sweep's rate-budget gates, and PR-state reads that come back partial or refused."""
+
+    WORKFLOW = Path(__file__).parents[2] / '.github/workflows/closed-pr-cache.yml'
+    RATE_LIMITED = 'gh: API rate limit already exceeded for installation ID 1. (HTTP 403)'
+
+    def setUp(self):
+        source = self.WORKFLOW.read_text()
+        self.script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
+        self.reserve = int(re.search(r'^RESERVE = ([0-9]+)$', self.script, re.M)[1])
+        self.listing_cost = int(re.search(r'^LISTING_COST = ([0-9]+)$', self.script, re.M)[1])
+
+    def sweep(self, entries, **api):
+        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
+                                     'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': entries}], **api)) as cli, \
+                patch('builtins.print') as printed:
+            try:
+                exec(compile(self.script, str(self.WORKFLOW), 'exec'), {})
+                code = None
+            except SystemExit as stop:
+                code = stop.code
+        calls = [call.args[0] for call in cli.call_args_list]
+        deleted = [int(call[-1].rsplit('/', 1)[-1]) for call in calls if 'DELETE' in call]
+        output = '\n'.join(str(arg) for call in printed.call_args_list for arg in call.args)
+        return calls, deleted, code, output
+
+    @staticmethod
+    def image(number, scope='main', size=0):
+        ref = 'refs/heads/main' if scope == 'main' else f'refs/pull/{scope[3:]}/merge'
+        return dict(id=number, ref=ref, key=f'images-v2-{scope}-catalyst-amd64-{number:064x}',
+                    created_at=f'2026-11-08T00:{number:02d}:00Z', size_in_bytes=size)
+
+    def test_a_budget_at_the_listing_cost_skips_the_sweep_before_listing(self):
+        rows = [self.image(1, 'pr-93'), self.image(2, 'pr-93')]
+        floor = self.reserve + self.listing_cost
+        calls, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, remaining=(floor,))
+        self.assertEqual((code, deleted), (0, []))
+        self.assertEqual(calls, [['gh', 'api', 'rate_limit']])
+        self.assertIn('below the listing cost', output)
+        _, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED'}, remaining=(floor + 1,))
+        self.assertEqual((code, sorted(deleted)), (None, [1, 2]))
+
+    def test_a_primary_rate_limit_while_listing_ends_the_sweep_without_deleting(self):
+        calls, deleted, code, output = self.sweep([self.image(1, 'pr-93')], states={'93': 'CLOSED'},
+                                                  listing_error=self.RATE_LIMITED)
+        self.assertEqual((code, deleted), (0, []))
+        self.assertFalse(any('graphql' in call for call in calls))
+        self.assertIn('rate limited while listing caches', output)
+
+    def test_the_sweep_stops_at_the_reserve_after_freeing_the_biggest_entries(self):
+        rows = [self.image(i, 'pr-93', size) for i, size in {1: 10, 2: 40, 3: 30, 4: 20}.items()]
+        # The first read lets the listing start. The one before the first deletion leaves two calls above the reserve.
+        _, deleted, code, output = self.sweep(rows, states={'93': 'MERGED'}, remaining=(1000, self.reserve + 2))
+        self.assertEqual((code, deleted), (None, [2, 3]))
+        self.assertIn('stopped with 2 entries left to free', output)
+
+    def test_a_partial_state_answer_frees_the_closed_pr_and_keeps_the_unresolved_one(self):
+        rows = [self.image(1, 'pr-93'), self.image(2, 'pr-94'), self.image(3, 'pr-95')]
+        calls, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED', '94': None})
+        self.assertEqual((code, deleted), (None, [1]))
+        self.assertEqual(sum('graphql' in call for call in calls), 1)
+
+    def test_a_rate_limit_resolving_states_defers_closed_prs_but_still_prunes_main(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        _, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=self.RATE_LIMITED)
+        self.assertEqual((code, deleted), (None, [1]))
+        self.assertIn('closed-PR cleanup deferred', output)
+
+    def test_a_failed_state_lookup_still_prunes_main_and_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        # An empty stderr (a killed gh) must fail the run as well.
+        for error in ('gh: Bad credentials (HTTP 401)', ''):
+            with self.subTest(error=error):
+                calls, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+                self.assertEqual((code, deleted), (1, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 1)
+                self.assertIn('::error::PR states unresolved', output)
+                self.assertNotIn('deferred', output)
+                self.assertNotIn('query=', output)
+
+    def test_a_failed_batch_keeps_the_states_resolved_before_it(self):
+        # 101 PRs make two state queries; only the second fails, so the closed PR of the first is still freed.
+        rows = [self.image(number, f'pr-{number}') for number in range(1, 102)]
+        for error, code, line in (('gh: Bad credentials (HTTP 401)', 1, 'unresolved for 1 of 101'),
+                                  (self.RATE_LIMITED, None, 'deferred to the next sweep for 1 of 101')):
+            with self.subTest(error=error):
+                calls, deleted, exit_code, output = self.sweep(rows, states={'1': 'CLOSED', '101': 'CLOSED'},
+                                                               states_error=error, states_error_from=1)
+                self.assertEqual((exit_code, deleted), (code, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 2)
+                self.assertIn(line, output)
+
+    def test_a_graphql_query_error_is_retried_before_it_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        error = 'gh: Something went wrong while executing your query. Please include `ABCD:1234` when reporting this issue.'
+        with patch('time.sleep') as slept:
+            calls, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+        self.assertEqual(sum('graphql' in call for call in calls), 4)
+        self.assertEqual(slept.call_count, 3)
+        self.assertEqual((code, deleted), (1, [1]))
 
 
 if __name__ == '__main__':

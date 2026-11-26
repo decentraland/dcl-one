@@ -13,7 +13,7 @@ use crate::scene_state::delegation::{
 };
 use crate::scene_state::jsruntime::{self, StorageCtx, parse_origin};
 use crate::scene_state::runtime::RuntimeLimits;
-use crate::shared::signed_fetch::build_legacy_payload;
+use crate::shared::signed_fetch::build_payload_v6;
 use crate::storage::delegation::{StorageDelegationTarget, verify_storage_delegation};
 
 const AUTHORITATIVE_KEY: &str =
@@ -324,7 +324,9 @@ async fn signed_fetch_pipeline_signs_caps_and_confines_requests() {
     assert_eq!(link0["type"], "SIGNER");
     let signer = link0["payload"].as_str().unwrap().to_string();
     assert_eq!(signer.to_lowercase(), ephemeral_address.to_lowercase());
-    let expected_payload = build_legacy_payload("put", "/values/k", &ts, &metadata);
+    let expected_payload = build_payload_v6("PUT", "/values/k", &ts, &metadata);
+    // the mixed-case keys are signed verbatim
+    assert!(expected_payload.ends_with(&format!(":{metadata}")) && metadata.contains("realmName"));
     assert_eq!(link1["payload"].as_str().unwrap(), expected_payload);
     let recovered = crate::auth::recover_address(
         expected_payload.as_bytes(),

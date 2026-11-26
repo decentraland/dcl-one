@@ -1,4 +1,6 @@
 //! Comms-owned durable ban removals; no network call runs in a SQL transaction.
+use crate::metrics::declarations;
+
 use crate::gatekeeper::admission::cluster::safety::{DispatchPhase, DispatchState};
 use std::sync::Arc;
 use std::time::Duration;
@@ -107,7 +109,10 @@ pub(super) async fn scene(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per removal intent column"
+)]
 async fn root(
     tx: &mut PgConnection,
     root_key: &str,
@@ -226,7 +231,9 @@ async fn failed(pool: &PgPool, row: &Intent, error: &anyhow::Error) -> Result<()
         .bind(&row.root_key).bind(&row.target_key).bind(row.generation).bind(row.claim_id).bind(attempt)
         .bind(now_utc() + chrono::Duration::milliseconds(delay as i64)).bind(now_utc()).execute(pool).await?.rows_affected();
     if updated != 0 {
-        metrics::counter!("comms_livekit_removal_failures_total").increment(1);
+        declarations::LIVEKIT_REMOVAL_FAILURES
+            .handle([])
+            .increment(1);
         if attempt >= 10 {
             tracing::error!(attempt, age_seconds=(now_utc()-row.created_at).num_seconds(), cause=%row.cause_kind, error=%error, "LiveKit enforcement still pending; continuing retries");
         } else {
@@ -613,9 +620,9 @@ pub(super) fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
                 passes=passes.wrapping_add(1);
                 if passes%60==1 {
                     let (count,oldest,attempts):(i64,Option<NaiveDateTime>,Option<i32>)=sqlx::query_as("SELECT count(*),min(created_at),max(attempts) FROM social.livekit_removal_intents").fetch_one(&state.pool).await?;
-                    metrics::gauge!("comms_livekit_removal_pending").set(count as f64);
-                    metrics::gauge!("comms_livekit_removal_oldest_seconds").set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
-                    metrics::gauge!("comms_livekit_removal_max_attempts").set(attempts.unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_PENDING.handle([]).set(count as f64);
+                    declarations::LIVEKIT_REMOVAL_OLDEST_SECONDS.handle([]).set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_MAX_ATTEMPTS.handle([]).set(attempts.unwrap_or(0) as f64);
                     ctx.progress(format!("{count} pending removal intents"));
                 }
                 ctx.pass_done();
@@ -855,22 +862,22 @@ mod tests {
         pool: PgPool,
     ) -> (
         CommsState,
-        Arc<std::sync::Mutex<Sfu>>,
+        Arc<parking_lot::Mutex<Sfu>>,
         tokio::task::JoinHandle<()>,
     ) {
         use axum::{Json, extract::State, response::IntoResponse};
-        let fixture = Arc::new(std::sync::Mutex::new(Sfu {
+        let fixture = Arc::new(parking_lot::Mutex::new(Sfu {
             rooms: serde_json::json!({}),
             ..Default::default()
         }));
         let app = axum::Router::new()
             .fallback(axum::routing::post(
-                |State(fixture): State<Arc<std::sync::Mutex<Sfu>>>,
+                |State(fixture): State<Arc<parking_lot::Mutex<Sfu>>>,
                  uri: axum::http::Uri,
                  Json(body): Json<Value>| async move {
                     if uri.path().ends_with("/RemoveParticipant") {
                         let (entered, pause) = {
-                            let mut f = fixture.lock().unwrap();
+                            let mut f = fixture.lock();
                             f.remove_calls += 1;
                             (f.remove_entered.clone(), f.remove_pause.clone())
                         };
@@ -882,11 +889,11 @@ mod tests {
                             if let Some(pause) = pause {
                                 pause.notified().await;
                             }
-                            complete_sfu_removal(&mut fixture.lock().unwrap(), &body)
+                            complete_sfu_removal(&mut fixture.lock(), &body)
                         });
                         return remote.await.expect("accepted test SFU operation completes");
                     }
-                    let mut fixture = fixture.lock().unwrap();
+                    let mut fixture = fixture.lock();
                     fixture.reads += 1;
                     let method = uri.path().rsplit('/').next().unwrap();
                     let room = body["room"].as_str().unwrap_or("");
@@ -982,13 +989,12 @@ mod tests {
         let room = Uuid::new_v4().to_string();
         let root_key = key(&["block", actor.as_str()]);
         operator_block(&pool, &actor).await.unwrap();
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":"unknown"});
+        fixture.lock().rooms = serde_json::json!({"rooms":"unknown"});
         assert_eq!(step(&state, &root_key).await, 1);
         force_due(&pool, &root_key).await;
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"SID"}]});
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"SID"}]});
         fixture
             .lock()
-            .unwrap()
             .rosters
             .insert(room.clone(), serde_json::json!({"participants":false}));
         assert_eq!(step(&state, &root_key).await, 1);
@@ -1008,19 +1014,19 @@ mod tests {
         });
         force_due(&pool, &root_key).await;
         let actual = format!("{}-tab-2", actor.as_str().to_uppercase());
-        fixture.lock().unwrap().rosters.insert(
+        fixture.lock().rosters.insert(
             room.clone(),
             serde_json::json!({"participants":[{"identity":actual}]}),
         );
         assert_eq!(step(&state, &root_key).await, 0);
         // A malformed filtered room lookup must not finish the captured target.
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":null});
+        fixture.lock().rooms = serde_json::json!({"rooms":null});
         assert_eq!(step(&state, &root_key).await, 2);
         force_due(&pool, &root_key).await;
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"SID"}]});
-        fixture.lock().unwrap().failures = 1;
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"SID"}]});
+        fixture.lock().failures = 1;
         assert_eq!(step(&state, &root_key).await, 1);
-        assert!(fixture.lock().unwrap().removed.is_empty());
+        assert!(fixture.lock().removed.is_empty());
         force_due(&pool, &root_key).await;
         let abandoned = claim(&pool, Some(std::slice::from_ref(&root_key)))
             .await
@@ -1039,11 +1045,11 @@ mod tests {
         let mut restarted = restarted;
         restarted.livekit = state.livekit.clone();
         assert_eq!(step(&restarted, &root_key).await, 0);
-        assert_eq!(fixture.lock().unwrap().removed, vec![actual]);
+        assert_eq!(fixture.lock().removed, vec![actual]);
         assert!(!current(&pool, &abandoned).await.unwrap());
         // A confirmed protobuf empty inventory is terminal; unlike malformed data.
         operator_block(&pool, &actor).await.unwrap();
-        fixture.lock().unwrap().rooms = serde_json::json!({});
+        fixture.lock().rooms = serde_json::json!({});
         assert_eq!(step(&restarted, &root_key).await, 0);
         assert!(
             claim(&pool, Some(std::slice::from_ref(&root_key)))
@@ -1068,7 +1074,7 @@ mod tests {
             .map(|i| format!("{}-tab-{i:03}", actor.as_str()))
             .collect();
         {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":"a","sid":"A"},{"name":"b","sid":"B"}]});
             f.rosters.insert("a".into(),serde_json::json!({"participants":identities.iter().map(|identity|serde_json::json!({"identity":identity})).collect::<Vec<_>>()}));
             f.rosters.insert("b".into(),serde_json::json!({"participants":[{"identity":format!("{}-next-room",actor.as_str())}]}));
@@ -1088,12 +1094,12 @@ mod tests {
         for row in page {
             run_one(&state, &row).await.unwrap();
         }
-        assert_eq!(fixture.lock().unwrap().removed.len(), PAGE as usize);
+        assert_eq!(fixture.lock().removed.len(), PAGE as usize);
         for _ in 0..12 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
         {
-            let f = fixture.lock().unwrap();
+            let f = fixture.lock();
             assert_eq!(f.removed.len(), 66);
             for identity in identities {
                 assert!(f.removed.contains(&identity));
@@ -1139,7 +1145,7 @@ mod tests {
         let other_watcher = format!("watch:device-room:{}", Uuid::new_v4());
         let anonymous_watcher = format!("watch:device-room:{}", Uuid::new_v4());
         {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":"device-room","sid":"D"}]});
             f.rosters.insert(
                 "device-room".into(),
@@ -1154,7 +1160,7 @@ mod tests {
         for _ in 0..4 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
-        let mut removed = fixture.lock().unwrap().removed.clone();
+        let mut removed = fixture.lock().removed.clone();
         removed.sort();
         let mut expected = vec![direct, same_device, watcher];
         expected.sort();
@@ -1185,7 +1191,7 @@ mod tests {
         connection(&pool, "b", &other).await.unwrap();
         // Both actor block checks apply; root a can never read its roster.
         {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":"a","sid":"A"},{"name":"b","sid":"B"}]});
             f.rosters
                 .insert("a".into(), serde_json::json!({"participants":"unknown"}));
@@ -1216,14 +1222,8 @@ mod tests {
                 .await;
             force_due(&pool, &bad).await;
         }
-        assert!(
-            fixture
-                .lock()
-                .unwrap()
-                .removed
-                .contains(&other.as_str().to_owned())
-        );
-        assert_eq!(fixture.lock().unwrap().removed.len(), 21);
+        assert!(fixture.lock().removed.contains(&other.as_str().to_owned()));
+        assert_eq!(fixture.lock().removed.len(), 21);
         let outstanding: Vec<(String, String)> = sqlx::query_as(
             "SELECT root_key,target_key FROM social.livekit_removal_intents WHERE root_key=ANY($1)",
         )
@@ -1296,7 +1296,7 @@ mod tests {
         let (ban, row) = platform_island_target(&state, &actor, &room).await;
         let release = Arc::new(tokio::sync::Notify::new());
         let entered = {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
             f.remove_pause = Some(release.clone());
             f.remove_entered.clone()
@@ -1333,7 +1333,7 @@ mod tests {
         release.notify_one();
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
-                if !fixture.lock().unwrap().removed.is_empty() {
+                if !fixture.lock().removed.is_empty() {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -1355,7 +1355,7 @@ mod tests {
         // wallet-wide uncertainty, even though the old intent was deleted.
         let (_, replacement) = platform_island_target(&state, &actor, &room).await;
         assert!(remove(&state, &replacement).await.is_err());
-        assert_eq!(fixture.lock().unwrap().remove_calls, 1);
+        assert_eq!(fixture.lock().remove_calls, 1);
         assert!(restarted.authorize(actor.as_str(), None, 0).await.is_err());
         server.abort();
     }
@@ -1388,7 +1388,7 @@ mod tests {
         let (_, row) = platform_island_target(&state, &actor, &room).await;
         let release = Arc::new(tokio::sync::Notify::new());
         let entered = {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
             f.remove_pause = Some(release.clone());
             f.remove_entered.clone()
@@ -1421,7 +1421,7 @@ mod tests {
             .unwrap();
         assert_eq!(lease.snapshot.token_floor, cutoff as u64);
         lease.commit().await.unwrap();
-        assert_eq!(fixture.lock().unwrap().remove_calls, 1);
+        assert_eq!(fixture.lock().remove_calls, 1);
         server.abort();
     }
 
@@ -1449,8 +1449,7 @@ mod tests {
         state.cluster.island_token_ttl_seconds = 1;
         let actor = wallet();
         let room = format!("island-{}", Uuid::new_v4());
-        fixture.lock().unwrap().rooms =
-            serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
         let (_, row) = platform_island_target(&state, &actor, &room).await;
         assert!(remove(&state, &row).await.is_err());
         let initial:Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='quarantine'").bind(&actor).fetch_one(&pool).await.unwrap();
@@ -1462,7 +1461,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        fixture.lock().unwrap().rejections = 1;
+        fixture.lock().rejections = 1;
         assert!(
             !drive_island_dispatch(&state, &final_attempt, &room, actor.as_str(), false)
                 .await
@@ -1500,7 +1499,7 @@ mod tests {
             bus.published().is_empty(),
             "enforcement never fabricates Pulse completion"
         );
-        assert_eq!(fixture.lock().unwrap().remove_calls, 3);
+        assert_eq!(fixture.lock().remove_calls, 3);
         server.abort();
         other_server.abort();
     }
@@ -1523,7 +1522,7 @@ mod tests {
         let room_a = format!("island-{}", Uuid::new_v4());
         let room_b = format!("island-{}", Uuid::new_v4());
         {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":room_a,"sid":"ISLAND-SID"},{"name":room_b,"sid":"SECOND-SID"}]});
             f.failures = 1;
         }
@@ -1545,7 +1544,7 @@ mod tests {
             .find(|r| r.room_name.as_deref() == Some(room_b.as_str()))
             .unwrap();
         assert!(remove(&state, &first).await.is_err());
-        assert_eq!(fixture.lock().unwrap().remove_calls, 1);
+        assert_eq!(fixture.lock().remove_calls, 1);
         assert!(
             remove(&state, &second).await.is_err(),
             "contention must back off, never finish the undispatched target"
@@ -1565,7 +1564,7 @@ mod tests {
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM social.livekit_removal_intents WHERE root_key=$1 AND target_key=$2").bind(&second.root_key).bind(&second.target_key).fetch_one(&pool).await.unwrap(),1);
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='dispatched'").bind(&actor).fetch_one(&pool).await.unwrap(),1);
         assert_eq!(
-            fixture.lock().unwrap().remove_calls,
+            fixture.lock().remove_calls,
             1,
             "claim retry never retries unknown RPC"
         );
@@ -1598,7 +1597,7 @@ mod tests {
         let room_b = format!("island-{}", Uuid::new_v4());
         let release = Arc::new(tokio::sync::Notify::new());
         let entered = {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":room_a,"sid":"ISLAND-SID"},{"name":room_b,"sid":"SECOND-SID"}]});
             f.remove_pause = Some(release.clone());
             f.remove_entered.clone()
@@ -1626,12 +1625,12 @@ mod tests {
         entered.notified().await;
         assert!(remove(&state, &second).await.is_err());
         assert!(current(&pool, &second).await.unwrap());
-        assert_eq!(fixture.lock().unwrap().remove_calls, 1);
-        fixture.lock().unwrap().remove_pause = None;
+        assert_eq!(fixture.lock().remove_calls, 1);
+        fixture.lock().remove_pause = None;
         release.notify_one();
         first_task.await.unwrap().unwrap();
         remove(&state, &second).await.unwrap();
-        assert_eq!(fixture.lock().unwrap().remove_calls, 2);
+        assert_eq!(fixture.lock().remove_calls, 2);
         assert!(!current(&pool, &second).await.unwrap());
         server.abort();
     }
@@ -1675,7 +1674,7 @@ mod tests {
         let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
         let other = wallet();
         {
-            let mut f = fixture.lock().unwrap();
+            let mut f = fixture.lock();
             f.rooms = serde_json::json!({"rooms":[{"name":island,"sid":"ISLAND-SID"},{"name":voice,"sid":"VOICE-SID"}]});
             f.rosters.insert(
                 voice.clone(),
@@ -1687,7 +1686,7 @@ mod tests {
         let initial:Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='quarantine'").bind(&actor).fetch_one(&pool).await.unwrap();
         sqlx::query("UPDATE social.island_cleanup_dispatches SET quarantine_until=timestamp '1970-01-01' WHERE dispatch_id=$1").bind(initial).execute(&pool).await.unwrap();
         state.island_safety.elapse_quarantine_for_test(initial, 123);
-        fixture.lock().unwrap().failures = 1;
+        fixture.lock().failures = 1;
         connection(&pool, &voice, &other).await.unwrap();
         // Two passes of the primary job. Each must succeed despite the
         // uncertain island RPC (a failed pass fails the whole job).
@@ -1697,16 +1696,12 @@ mod tests {
                 .expect("island RPC uncertainty must not fail the whole job");
         }
         assert!(
-            fixture
-                .lock()
-                .unwrap()
-                .removed
-                .contains(&other.as_str().to_owned()),
+            fixture.lock().removed.contains(&other.as_str().to_owned()),
             "ordinary voice removal still progresses after island RPC uncertainty"
         );
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM social.island_cleanup_dispatches WHERE wallet=$1 AND phase='quarantine_final' AND state='dispatched'").bind(&actor).fetch_one(&pool).await.unwrap(),1);
         assert!(state.island_safety.snapshot(actor.as_str()).await.is_err());
-        assert_eq!(fixture.lock().unwrap().remove_calls, 3);
+        assert_eq!(fixture.lock().remove_calls, 3);
         server.abort();
         drop(state);
         pool.close().await;
@@ -1729,8 +1724,7 @@ mod tests {
             let (state, fixture, server) = sfu_fixture(pool.clone()).await;
             let actor = wallet();
             let room = format!("island-{}", Uuid::new_v4());
-            fixture.lock().unwrap().rooms =
-                serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
+            fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
             let (_, row) = platform_island_target(&state, &actor, &room).await;
             assert!(remove(&state, &row).await.is_err());
             let initial:Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='quarantine'").bind(&actor).fetch_one(&pool).await.unwrap();
@@ -1742,7 +1736,7 @@ mod tests {
                 .await
                 .unwrap();
             {
-                let mut f = fixture.lock().unwrap();
+                let mut f = fixture.lock();
                 f.missing_room = true;
                 f.create_failures = usize::from(create_fails);
             }
@@ -1750,7 +1744,7 @@ mod tests {
             pass(&state).await.unwrap();
             if create_fails {
                 assert!(state.island_safety.snapshot(actor.as_str()).await.is_err());
-                assert_eq!(fixture.lock().unwrap().create_calls, 1);
+                assert_eq!(fixture.lock().create_calls, 1);
                 pass(&state).await.unwrap();
             }
             let (status,phase,root,target,generation,cutoff):(String,String,String,String,Uuid,i64)=sqlx::query_as("SELECT state,phase,intent_root_key,intent_target_key,intent_generation,cutoff FROM social.island_cleanup_dispatches WHERE wallet=$1 ORDER BY fence_generation DESC LIMIT 1").bind(&actor).fetch_one(&pool).await.unwrap();
@@ -1763,16 +1757,16 @@ mod tests {
                 (row.root_key, row.target_key, row.generation)
             );
             assert_eq!(
-                fixture.lock().unwrap().create_calls,
+                fixture.lock().create_calls,
                 if create_fails { 2 } else { 1 }
             );
-            let calls = fixture.lock().unwrap().remove_calls;
+            let calls = fixture.lock().remove_calls;
             assert_eq!(calls, if create_fails { 4 } else { 3 });
             let (mut restart, _, other_server) = sfu_fixture(pool.clone()).await;
             restart.livekit = state.livekit.clone();
             pass(&restart).await.unwrap();
             pass(&restart).await.unwrap();
-            assert_eq!(fixture.lock().unwrap().remove_calls, calls);
+            assert_eq!(fixture.lock().remove_calls, calls);
             let lease = restart
                 .island_safety
                 .authorize(actor.as_str(), None, cutoff as u64)
@@ -1797,8 +1791,7 @@ mod tests {
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let room = format!("island-{}", Uuid::new_v4());
-        fixture.lock().unwrap().rooms =
-            serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
         let (_, row) = platform_island_target(&state, &actor, &room).await;
         assert!(remove(&state, &row).await.is_err());
         let id:Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='quarantine'").bind(&actor).fetch_one(&pool).await.unwrap();
@@ -1811,8 +1804,8 @@ mod tests {
             .unwrap();
         let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
         let other = wallet();
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
-        fixture.lock().unwrap().rosters.insert(
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
+        fixture.lock().rosters.insert(
             voice.clone(),
             serde_json::json!({"participants":[{"identity":other.as_str()}]}),
         );
@@ -1833,11 +1826,7 @@ mod tests {
                 .expect("wallet contention must not fail whole job");
         }
         assert!(
-            fixture
-                .lock()
-                .unwrap()
-                .removed
-                .contains(&other.as_str().to_owned()),
+            fixture.lock().removed.contains(&other.as_str().to_owned()),
             "ordinary voice RPC despite held island wallet"
         );
         assert_eq!(
@@ -1866,21 +1855,20 @@ mod tests {
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let room = format!("island-{}", Uuid::new_v4());
-        fixture.lock().unwrap().rooms =
-            serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
         let (_, row) = platform_island_target(&state, &actor, &room).await;
-        fixture.lock().unwrap().failures = 1;
+        fixture.lock().failures = 1;
         assert!(remove(&state, &row).await.is_err());
         state
             .moderation
             .lift_ban(&actor, "moderator")
             .await
             .unwrap();
-        fixture.lock().unwrap().missing_room = true;
+        fixture.lock().missing_room = true;
         pass(&state).await.unwrap();
         pass(&state).await.unwrap();
         {
-            let f = fixture.lock().unwrap();
+            let f = fixture.lock();
             assert_eq!((f.remove_calls, f.create_calls), (1, 0));
         }
         assert!(state.island_safety.snapshot(actor.as_str()).await.is_err());
@@ -1894,8 +1882,8 @@ mod tests {
         let (mut state, fixture, server) = sfu_fixture(pool.clone()).await;
         let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
         let actor = wallet();
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
-        fixture.lock().unwrap().rosters.insert(
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
+        fixture.lock().rosters.insert(
             voice.clone(),
             serde_json::json!({"participants":[{"identity":actor.as_str()}]}),
         );
@@ -1909,13 +1897,7 @@ mod tests {
             crate::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(unavailable);
         assert!(pass(&state).await.is_err());
         assert!(pass(&state).await.is_err());
-        assert!(
-            fixture
-                .lock()
-                .unwrap()
-                .removed
-                .contains(&actor.as_str().to_owned())
-        );
+        assert!(fixture.lock().removed.contains(&actor.as_str().to_owned()));
         server.abort();
         liveness_drop_pool(&pool, &admin, &name).await;
     }
@@ -1927,8 +1909,7 @@ mod tests {
         state.cluster.self_hosted_token_quarantine = false;
         let actor = wallet();
         let room = format!("island-{}", Uuid::new_v4());
-        fixture.lock().unwrap().rooms =
-            serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":room,"sid":"ISLAND-SID"}]});
         let (_, row) = platform_island_target(&state, &actor, &room).await;
         remove(&state, &row).await.unwrap();
         let id:Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='confirmed'").bind(&actor).fetch_one(&pool).await.unwrap();
@@ -1942,8 +1923,8 @@ mod tests {
         sqlx::query("UPDATE social.island_cleanup_dispatches SET cutoff=100,settled_at=timestamp '1970-01-01' WHERE dispatch_id=$1").bind(id).execute(&pool).await.unwrap();
         let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
         let other = wallet();
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
-        fixture.lock().unwrap().rosters.insert(
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
+        fixture.lock().rosters.insert(
             voice.clone(),
             serde_json::json!({"participants":[{"identity":other.as_str()}]}),
         );
@@ -1961,11 +1942,7 @@ mod tests {
                 .expect("wallet contention must not fail whole job");
         }
         assert!(
-            fixture
-                .lock()
-                .unwrap()
-                .removed
-                .contains(&other.as_str().to_owned()),
+            fixture.lock().removed.contains(&other.as_str().to_owned()),
             "ordinary voice despite contended compaction wallet"
         );
         assert_eq!(
@@ -2009,8 +1986,8 @@ mod tests {
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let voice = crate::rooms::private_voice_chat_room_name(&Uuid::new_v4());
         let target = wallet();
-        fixture.lock().unwrap().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
-        fixture.lock().unwrap().rosters.insert(
+        fixture.lock().rooms = serde_json::json!({"rooms":[{"name":voice,"sid":"VOICE"}]});
+        fixture.lock().rosters.insert(
             voice.clone(),
             serde_json::json!({"participants":[{"identity":target.as_str()}]}),
         );
@@ -2032,11 +2009,7 @@ mod tests {
                     "{:?}",
                     job.last_error
                 );
-                let removed = fixture
-                    .lock()
-                    .unwrap()
-                    .removed
-                    .contains(&target.as_str().to_owned());
+                let removed = fixture.lock().removed.contains(&target.as_str().to_owned());
                 if removed && job.passes >= 2 {
                     assert_eq!(job.state, crate::jobs::JobState::Running);
                     break;
@@ -2346,9 +2319,13 @@ async fn resume_island_quarantines(state: &CommsState) -> Result<()> {
         }
         .await;
         if let Err(error) = result {
-            metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+            declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                .handle([])
+                .increment(1);
             if error.is::<IslandDispatchUncertain>() {
-                metrics::counter!("comms_island_cleanup_uncertain_total").increment(1);
+                declarations::ISLAND_CLEANUP_UNCERTAIN
+                    .handle([])
+                    .increment(1);
             }
             tracing::warn!(dispatch_id=%id,%error,"island cleanup maintenance failed; admission remains closed");
         }

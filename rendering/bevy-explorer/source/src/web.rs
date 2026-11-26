@@ -8,6 +8,7 @@ use bevy::{
     winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
+use common::sync::MutexExt;
 use common::{
     perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
@@ -89,7 +90,7 @@ pub fn engine_set_hud_main_thread_cost(
             style_and_layout_time_sum_ms,
         }),
     };
-    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+    let Some(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock_ignore_poison() else {
         return false;
     };
     match stored.as_mut() {
@@ -105,6 +106,17 @@ pub fn engine_set_hud_main_thread_cost(
 #[wasm_bindgen]
 pub fn engine_set_perf_stream(path: String, csv: bool) {
     let _ = PERF_STREAM.set((path, csv));
+}
+
+/// The page's `?sceneLoop=legacy|relay|deadline|both`: the web scene loop's scheduling mode
+/// (`dcl_wasm::scene_loop_mode`). false for an unknown name, which leaves it as it was.
+#[wasm_bindgen]
+pub fn engine_set_scene_loop_mode(name: String) -> bool {
+    let mode = dcl_wasm::scene_loop_mode::SceneLoopMode::parse(&name);
+    if let Some(mode) = mode {
+        dcl_wasm::scene_loop_mode::set(mode);
+    }
+    mode.is_some()
 }
 
 /// What the engine queued for the benchmark stream and has not handed to the page: `{ csv, log }`,
@@ -627,12 +639,17 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         .ok()
         .and_then(|scope| scope.navigator().user_agent().ok())
         .unwrap_or_default();
-    let text_bindings = if user_agent.contains("Mac") {
+    let macos = user_agent.contains("Mac");
+    let text_bindings = if macos {
         bevy_simple_text_input::TextInputNavigationBindings::macos_default()
     } else {
         bevy_simple_text_input::TextInputNavigationBindings::non_macos_default()
     };
     app.insert_resource(text_bindings);
+    // WebGPU on Metal misreads the GPU frame time (see `GpuFrameTimeUnreliable`)
+    if macos {
+        app.insert_resource(common::gpu_time::GpuFrameTimeUnreliable);
+    }
 
     // The systems that call the page hooks take `JsThread` so the multi-threaded
     // executor keeps them on this thread, off the compute workers (see `JsThread`).
@@ -826,10 +843,7 @@ pub(crate) fn viewport_active() -> bool {
 /// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
 /// arrived.
 pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
-    HUD_MAIN_THREAD_COST_WINDOW
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .take()
+    HUD_MAIN_THREAD_COST_WINDOW.lock_ignore_poison().take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

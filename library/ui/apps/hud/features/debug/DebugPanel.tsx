@@ -1,6 +1,7 @@
+import { Button, Switch } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
-import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
+import { ModalShell, Select, TextInput } from '../../design'
 import { Mark } from '../../design/Glyphs'
 import type { EngineSession } from '../session/useEngineSession'
 import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
@@ -109,7 +110,7 @@ function StructuredReading({ value, label }: { value: object; label: string }) {
   if (count === 0) return <>None</>
   return (
     <>
-      <Button size="sm" variant="ghost" aria-label={label + ' details'} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <Button appearance="hud" size="sm" variant="ghost" aria-label={label + ' details'} aria-expanded={open} onClick={() => setOpen(!open)}>
         {count} {count === 1 ? 'entry' : 'entries'} <Mark name={open ? 'up' : 'down'} />
       </Button>
       {open && <pre className={styles.reply}>{JSON.stringify(value, null, 2)}</pre>}
@@ -184,14 +185,14 @@ function InputWidget({ input, live, reason, busy, submit }: {
     const [caption, argument] = live === true ? kind.options.disable : kind.options.enable
     return <div className={styles.inputRow}>
       <span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
-      <Button size="sm" variant="secondary" disabled={busy || typeof live !== 'boolean'}
+      <Button appearance="hud" size="sm" variant="secondary" disabled={busy || typeof live !== 'boolean'}
         onClick={() => void apply(argument)}>{caption}</Button>
     </div>
   }
   if (kind.type === 'toggle') return (
     <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
-      <Toggle aria-label={input.label} checked={live === true} disabled={busy || unavailable}
-        onChange={(v) => void apply(String(v))} /></div>
+      <Switch appearance="hud" label={input.label} labelHidden checked={live === true} disabled={busy || unavailable}
+        onCheckedChange={(v) => void apply(String(v))} /></div>
   )
   if (kind.type === 'select') return (
     <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
@@ -218,7 +219,7 @@ function InputWidget({ input, live, reason, busy, submit }: {
         <TextInput type={numeric ? 'number' : 'text'} value={value} onChange={setDraft}
           {...(kind.type === 'number' ? kind.options : {})} required disabled={busy} />
       </label>
-      <Button type="submit" size="sm" variant="secondary" aria-label={'Apply ' + input.label}
+      <Button appearance="hud" type="submit" size="sm" variant="secondary" aria-label={'Apply ' + input.label}
         disabled={busy || !value.trim()}>Apply</Button>
     </form>
   )
@@ -251,7 +252,7 @@ function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
       {section.actions.length > 0 && (
         <div className={styles.actions}>
           {section.actions.map(([label, line]) => (
-            <Button key={label} size="sm" variant="secondary" disabled={busy} onClick={() => void invoke(line)}>
+            <Button appearance="hud" key={label} size="sm" variant="secondary" disabled={busy} onClick={() => void invoke(line)}>
               {label}
             </Button>
           ))}
@@ -271,7 +272,7 @@ function SectionRow({ section, run, open, toggle }: {
 }) {
   return (
     <section className={styles.section}>
-      <Button size="sm" variant="ghost" aria-expanded={open} onClick={toggle}>
+      <Button appearance="hud" size="sm" variant="ghost" aria-expanded={open} onClick={toggle}>
         <span aria-hidden="true"><Mark name={open ? 'down' : 'right'} /></span> {section.title}
       </Button>
       {open && <Widgets section={section} run={run} />}

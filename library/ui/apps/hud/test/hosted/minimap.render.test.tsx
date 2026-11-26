@@ -8,6 +8,7 @@ import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
 import { mapPins } from '@explorer-core/features/map/mapPins'
 import { MARKER_ART } from '../../features/map/mapArt'
+import { saveOpen } from '@explorer-core/features/minimap/minimapPrefs'
 
 const placeAt = vi.hoisted(() => ({ place: null as unknown }))
 // The layer data is one store for the page, read the first time a map asks: the live event is there
@@ -119,14 +120,16 @@ describe('minimap menu', () => {
   it('lists the scene options first: Set as Home, Copy Link, Reload Scene', async () => {
     await openMenu(DEFAULT_REALM)
     const menu = screen.getByRole('menu', { name: 'Minimap settings' })
-    const names = [...menu.querySelectorAll('[role^="menuitem"], [role="switch"]')].map((el) => el.getAttribute('aria-label') ?? el.textContent)
+    const names = [...menu.querySelectorAll('[role^="menuitem"], [role="switch"]')].map(
+      (el) => el.getAttribute('aria-label') ?? (el as HTMLInputElement).labels?.[0]?.textContent ?? el.textContent
+    )
     expect(names.slice(0, 3)).toEqual(['Set as Home', 'Copy Link', 'Reload Scene'])
   })
 
   it('Set as Home makes the parcel the player stands on home', async () => {
     const session = await openMenu(DEFAULT_REALM)
     const toggle = screen.getByRole('switch', { name: 'Set as Home' })
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     fireEvent.click(toggle)
     expect(session.map.setHome).toHaveBeenCalledWith(DEFAULT_REALM, { x: 10, y: 20 })
   })
@@ -277,6 +280,34 @@ describe('minimap layers', () => {
     const edge = container.querySelector<HTMLElement>('[data-marker="destination-edge"]')
     await new Promise((r) => setTimeout(r, 50))
     expect(edge?.hidden).toBe(true)
+  })
+})
+
+describe('minimap Camera style', () => {
+  // Outside Genesis City the Camera style is the only one, whatever the preference says.
+  async function renderCamera(cameraReady: boolean): Promise<HTMLElement> {
+    saveOpen(false, true)
+    const session = fakeSession()
+    const { container } = await renderSettled(
+      <Minimap minimap={{ ...session.minimap, satelliteView: null, cameraReady }} map={session.map} sceneTitle="A World" setEngineViewport={vi.fn()} />
+    )
+    return container
+  }
+
+  it("keeps the map covered until the engine is drawing in it, so the player's own view does not show", async () => {
+    const container = await renderCamera(false)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('covered')
+    expect(map.className).not.toContain('cutout')
+    expect(container.firstElementChild?.className).not.toContain('cutoutRoot')
+  })
+
+  it('opens the hole onto the engine once it is', async () => {
+    const container = await renderCamera(true)
+    const map = screen.getByRole('button', { name: 'Open map' })
+    expect(map.className).toContain('cutout')
+    expect(map.className).not.toContain('covered')
+    expect(container.firstElementChild?.className).toContain('cutoutRoot')
   })
 })
 

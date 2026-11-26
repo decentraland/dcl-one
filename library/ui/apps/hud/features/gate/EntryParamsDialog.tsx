@@ -2,9 +2,10 @@
 // layer (nothing is broken, the params were just ignored), listing what was dropped and, so the
 // author can fix the link, everything the entry url does accept (lib/entryParams.ts).
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell } from '../../design'
 import { acceptedEntryParams } from '@hud-host'
 import styles from './EntryParamsDialog.module.css'
+import { Button } from '@dcl/one-ui'
 
 /** Open the dialog; the returned handle closes it (App's effect cleanup). */
 export function openEntryParamsDialog(unrecognised: string[]): () => void {
@@ -17,7 +18,7 @@ export function openEntryParamsDialog(unrecognised: string[]): () => void {
       onClose={close}
       actionsAlign="center"
       actions={
-        <Button variant="primary" onClick={close}>
+        <Button appearance="hud" variant="primary" onClick={close}>
           OK
         </Button>
       }

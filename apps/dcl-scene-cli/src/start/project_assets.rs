@@ -86,16 +86,16 @@ async fn read(
         let mut headers = HeaderMap::new();
         headers.insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static(kind(&query.path).unwrap()),
+            HeaderValue::from_static(
+                kind(&query.path).expect("safe_path_for admitted an asset path"),
+            ),
         );
         headers.insert(
             header::ETAG,
-            format!("\"{}\"", files::revision(&bytes)).parse().unwrap(),
+            HeaderValue::from_str(&format!("\"{}\"", files::revision(&bytes)))
+                .expect("a quoted hex digest is a valid header value"),
         );
-        headers.insert(
-            header::CONTENT_LENGTH,
-            bytes.len().to_string().parse().unwrap(),
-        );
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
         headers.insert(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),

@@ -114,7 +114,7 @@ async fn cors(
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
-            .unwrap();
+            .expect("a constant status always builds a response");
         let h = resp.headers_mut();
         // An unlisted origin is granted no method or header: the gateway adds
         // `*` to an answer without an allow-origin.
@@ -279,6 +279,21 @@ const REGISTRY: HttpServerCors = HttpServerCors {
 /// only when the request carries an `Origin`, and never exposed headers.
 pub async fn registry_cors(req: Request, next: Next) -> Response {
     REGISTRY.run(req, next).await
+}
+
+/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
+/// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
+/// `*` for a request with `Origin`, and the requested headers reflected
+/// with their `Vary` when the request names them.
+const LAMBDAS: HttpServerCors = HttpServerCors {
+    methods: None,
+    max_age: "36000",
+    nosniff: true,
+    preflight_echoes_request: true,
+};
+
+pub async fn lambdas_cors(req: Request, next: Next) -> Response {
+    LAMBDAS.run(req, next).await
 }
 
 #[cfg(test)]

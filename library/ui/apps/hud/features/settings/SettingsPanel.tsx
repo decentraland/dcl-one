@@ -1,10 +1,11 @@
 // React Settings — a page inside the shared MainMenuShell (consistent top bar with
 // Backpack/etc). "Settings" + category sub-tabs and a two-column grid of controls
-// (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
+// (light Select / ruby Switch / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
-import { memo, useEffect, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
+import { Slider, Switch, Tooltip } from '@dcl/one-ui'
+import { memo, useEffect, useId, useMemo, useState } from 'react'
+import { Select, Tabs, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
@@ -106,6 +107,7 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
     { title: 'Physics', match: /jiggle|physics|bones/i }
   ],
   audio: [{ title: 'Volume' }, { title: 'Voice Chat & Streams', match: /microphone|\bmic\b|device|mute|^voice[ _]chat$/i }],
+  performance: [{ title: 'Avatars', match: /avatars/i }, { title: 'General' }],
   controls: [{ title: 'Mouse' }, { title: 'Point At', match: /point|marker/i }]
 }
 function sections(category: string, items: Setting[]): { title: string | null; items: Setting[] }[] {
@@ -163,27 +165,30 @@ function hint(s: Setting): string {
   return first.trim().toLowerCase() === s.name.trim().toLowerCase() ? rest.join('\n').trim() : text
 }
 
-function Control({ s, onSet }: { s: Setting; onSet: (name: string, value: number) => void }): React.JSX.Element {
+function Control({ s, onSet, describedBy }: { s: Setting; onSet: (name: string, value: number) => void; describedBy?: string }): React.JSX.Element {
   // A negative value is the engine saying the setting is not known yet (e.g. a server-owned
-  // one before the service answers): shown, but not editable.
+  // one before the service answers): shown, but not editable. A disabled one shows its value,
+  // greyed out.
   const unset = s.value < 0
+  const locked = unset || s.disabled
   if (isBinary(s)) {
-    return <Toggle checked={s.value >= 1} disabled={unset} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} />
+    return <Switch appearance="hud" checked={s.value >= 1} disabled={locked} onCheckedChange={(c) => onSet(s.name, c ? 1 : 0)} label={s.name} labelHidden aria-describedby={describedBy} />
   }
   if (s.namedVariants.length >= 2) {
     return (
       <Select
         variant="light"
         value={unset ? '' : String(s.value)}
-        disabled={unset}
+        disabled={locked}
         options={s.namedVariants.map((v, i) => ({ value: String(i), label: v.name }))}
         onChange={(v) => onSet(s.name, Number(v))}
         aria-label={s.name}
+        aria-describedby={describedBy}
       />
     )
   }
   return (
-    <Slider arrows variant="pin" value={s.value} min={s.minValue} max={s.maxValue} step={s.stepSize || 1} disabled={unset} onChange={(v) => onSet(s.name, v)} aria-label={s.name} />
+    <Slider arrows variant="pin" value={s.value} min={s.minValue} max={s.maxValue} step={s.stepSize || 1} disabled={locked} onChange={(v) => onSet(s.name, v)} aria-label={s.name} aria-describedby={describedBy} />
   )
 }
 
@@ -192,12 +197,13 @@ function Control({ s, onSet }: { s: Setting; onSet: (name: string, value: number
 const SettingField = memo(
   function SettingField({ s, onSet }: { s: Setting; onSet: (name: string, value: number) => void }): React.JSX.Element {
     const description = hint(s)
+    const reasonId = useId()
     const label = <span className={styles.label}>{rowLabel(s)}</span>
     return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
           {description ? (
-            <Tooltip label={description} side="bottom" multiline className={styles.hint}>
+            <Tooltip appearance="hud" label={description} side="bottom" multiline className={styles.hint}>
               {label}
             </Tooltip>
           ) : (
@@ -206,12 +212,14 @@ const SettingField = memo(
           {isSlider(s) && <span className={styles.value}>{formatValue(s)}{isPercent(s) ? '%' : ''}</span>}
         </div>
         <div className={styles.control}>
-          <Control s={s} onSet={onSet} />
+          <Control s={s} onSet={onSet} describedBy={s.disabled && description ? reasonId : undefined} />
+          {/* a disabled control's description, for screen readers */}
+          {s.disabled && description ? <span id={reasonId} className={styles.srOnly}>{description}</span> : null}
         </div>
       </div>
     )
   },
-  (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.onSet === next.onSet
+  (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.s.disabled === next.s.disabled && prev.onSet === next.onSet
 )
 
 /** The chat settings kept by the HUD rather than the engine: translation (the language is the
@@ -222,7 +230,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
+          <Tooltip appearance="hud" label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>
@@ -246,7 +254,7 @@ function AutoTranslateField(): React.JSX.Element {
           <span className={styles.label}>Auto-Translate New Conversations</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={prefs.autoDefault} onChange={setAutoTranslateDefault} aria-label="Auto-Translate New Conversations" />
+          <Switch appearance="hud" checked={prefs.autoDefault} onCheckedChange={setAutoTranslateDefault} label="Auto-Translate New Conversations" labelHidden />
         </div>
       </div>
   )
@@ -262,7 +270,7 @@ function AskBeforeLeavingField(): React.JSX.Element {
           <span className={styles.label}>Ask Before Leaving the Page</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={ask} onChange={setAskBeforeLeaving} aria-label="Ask Before Leaving the Page" />
+          <Switch appearance="hud" checked={ask} onCheckedChange={setAskBeforeLeaving} label="Ask Before Leaving the Page" labelHidden />
         </div>
       </div>
   )

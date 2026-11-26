@@ -2,7 +2,7 @@
 // help. The bar places it and closes it; the page actions and their keys come in by props, and a
 // row whose action the bar does not pass is not drawn. The help rows open their page in a new tab.
 
-import { Icon, MenuDivider, MenuList, MenuPanel, MenuRow } from '../../../design'
+import { Icon } from '../../../design'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { siteUrl } from '@hud-host'
 import settingsIcon from '../../../assets/sidebar-rail/system-settings.svg?no-inline'
@@ -11,6 +11,7 @@ import faqIcon from '../../../assets/sidebar-rail/system-faq.svg?no-inline'
 import reportBugIcon from '../../../assets/sidebar-rail/system-report-bug.svg?no-inline'
 import supportIcon from '../../../assets/sidebar-rail/system-support.svg?no-inline'
 import discordIcon from '../../../assets/sidebar-rail/system-discord.svg?no-inline'
+import { MenuDivider, MenuList, MenuPanel, MenuRow } from '@dcl/one-ui'
 
 export interface SystemPanelProps {
   /** The key bound to the Settings page, drawn as "[P]" after the label. */

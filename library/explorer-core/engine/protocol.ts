@@ -18,6 +18,7 @@ import type {
   OutfitsData,
   PlatformBanNotice,
   PortableInfo,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   TextureOptimizationStatus,
@@ -107,6 +108,14 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
+/** React with an emoji, shown over the local user's avatar (page → engine via the scene's
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. One that plays comes back
+ *  as a ReactionMessage while the "Chat Reactions" setting is on. */
+export interface SendReactionRequest {
+  kind: 'sendReaction'
+  emoji: string
+}
+
 /** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
  *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
@@ -186,6 +195,7 @@ export type PageToScene =
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
+  | SendReactionRequest
   | ChatBubbleTextRequest
   | ReloadSceneRequest
   | ConsoleCommandRequest
@@ -299,9 +309,11 @@ export type PageToScene =
   | GetPlaceRequest
   | GetWorldAccessRequest
   | WatchMapPlayersRequest
+  | WatchSkyTimeRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
+  | GetGalleryWearablesRequest
   | DeleteGalleryPhotoRequest
   | SetGalleryPhotoPublicRequest
 
@@ -378,6 +390,17 @@ export interface ChatReactionMessage {
   reaction: ChatReaction
 }
 
+/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. The
+ *  engine's own type, so a field it gains is here too. */
+export type SituationalReaction = ReactionData
+
+/** Streamed situational reactions (scene → page): one for each that plays, the local user's
+ *  included, and none while the "Chat Reactions" setting is off. */
+export interface ReactionMessage {
+  kind: 'reaction'
+  reaction: SituationalReaction
+}
+
 /** Streamed incoming chat messages (scene → page). */
 export interface ChatRelayMessage {
   kind: 'chat'
@@ -396,7 +419,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -662,7 +685,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
@@ -884,7 +907,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
-  /** The scene the player stands in turns nearby voice off. */
+  /** Nearby voice is off where the player stands: the scene turns it off with the player's
+   *  `DisableVoice` permission, or its room refused the player as banned. */
   sceneBlocked?: boolean
   /** Counts the mic opens the scene refused. */
   refusals?: number
@@ -1038,6 +1062,17 @@ export interface SigninStageReadyMessage {
   kind: 'signinStageReady'
 }
 
+/** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
+export interface AvatarPreviewReadyMessage {
+  kind: 'avatarPreviewReady'
+}
+
+/** The minimap's Camera style is drawing its top-down view (scene → page), so the page can open the
+ *  map's hole onto it. Sent again for every camera the scene creates. */
+export interface MinimapReadyMessage {
+  kind: 'minimapReady'
+}
+
 export interface SceneInfoMessage {
   kind: 'sceneInfo'
   title: string
@@ -1077,8 +1112,11 @@ export interface TeleportRequest {
    *  a full reconnect, as for changeRealm, even to the realm the player is in. Omitted: a parcel of
    *  the realm the player is in. */
   realm?: string
-  /** Set with `realm`: the scene answers with a `travelResult` carrying this id. */
+  /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** Land on the destination scene's spawn point of this name (compared in lowercase); its default
+   *  spawn without one, or when the scene has none of that name. */
+  spawnPoint?: string
 }
 
 /** Change to a world/realm (page → scene → changeRealm). `realm` is a world name
@@ -1088,10 +1126,13 @@ export interface ChangeRealmRequest {
   realm: string
   /** The scene answers with a `travelResult` carrying this id. */
   travelId?: number
+  /** As for a teleport: the spawn point to land on, by name. */
+  spawnPoint?: string
 }
 
-/** How a realm change the page asked for ended (scene → page). On failure the engine kept the
- *  player in the realm they were in; `message` is the engine's reason. */
+/** How a realm change or a teleport the page asked for ended (scene → page). On failure the engine
+ *  kept the player in the realm they were in; `message` is the engine's reason. `realm` is empty
+ *  for a teleport inside the realm. */
 export interface TravelResultMessage {
   kind: 'travelResult'
   travelId: number
@@ -1153,6 +1194,9 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player, such as a camera the scene holds; `allowed` is then true. */
+  inForce?: boolean
 }
 
 /** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
@@ -1307,6 +1351,9 @@ export interface EngineViewportRequest {
   /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
    *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
   focus?: { x: number; y: number; width: number; height: number }
+  /** Avatar preview region only: the box (same units) the page shows the preview in; the scene draws none
+   *  of the preview outside it. Absent: all of `rect`. */
+  clip?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */
@@ -1937,10 +1984,16 @@ export interface GalleryPerson {
   address: string
   name: string
   isGuest?: boolean
+  /** Urns of the wearables they had on when the photo was taken. */
+  wearables?: string[]
+  /** An official wallet, as the nametags mark it. */
+  official?: boolean
 }
 
 /** Full metadata for one photo (fetched lazily when its detail view opens). */
 export interface GalleryPhotoMeta {
+  /** When it was taken, epoch seconds as a string. */
+  dateTime?: string
   /** Who took the photo. */
   userName?: string
   userAddress?: string
@@ -2033,6 +2086,20 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
+/** Resolve a photo person's wearable urns, with shop links. Answered by a GalleryWearablesMessage. */
+export interface GetGalleryWearablesRequest {
+  kind: 'getGalleryWearables'
+  requestId: number
+  urns: string[]
+}
+
+export interface GalleryWearablesMessage {
+  kind: 'galleryWearables'
+  requestId: number
+  ok: boolean
+  wearables: Wearable[]
+}
+
 /** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
@@ -2047,13 +2114,32 @@ export interface MapPlayer {
   z: number
 }
 
+/** The Skybox menu opens or closes; while it is open the scene reports the time of day, at once
+ *  and then once a second. */
+export interface WatchSkyTimeRequest {
+  kind: 'watchSkyTime'
+  on: boolean
+}
+
+/** The time of day as `~system/Runtime.getWorldTime` reports it. */
+export interface SkyTime {
+  /** The hour the sky shows, 0 to 24. */
+  hours: number
+  /** The scene the player stands in holds the time of day and the player may not change it. */
+  locked: boolean
+  /** The speed of the player's clock; 0 when it is stopped. */
+  speed: number
+  /** The player's clock sets the sky: no scene's time does. */
+  followsClock: boolean
+}
+
 /** The page's map starts or stops showing the other players; while it does the scene reports them. */
 export interface WatchMapPlayersRequest {
   kind: 'watchMapPlayers'
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]
@@ -2242,11 +2328,17 @@ export interface PreviewFocusRequest {
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
  *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
  *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
- *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back.
+ *  `framing` is how the Shop's page draws the avatar in its window: the catalogue's, unless given. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
   rect: { x: number; y: number; width: number; height: number } | null
+  framing?: PreviewStageFraming
 }
+
+/** How the Shop's page draws its avatar: the catalogue's whole body, or Names' (smaller and lower, with room
+ *  over the head for the nametag). */
+export type PreviewStageFraming = 'catalog' | 'names'
 
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */
@@ -2305,6 +2397,15 @@ export interface OutfitSaveFailedMessage {
   slot: number
   action: 'save' | 'delete'
   message: string
+}
+
+/** A save, a delete or an equip of the saved outfit in `slot` runs in the scene from `busy: true` until
+ *  `busy: false`, which follows every outcome (scene → page). */
+export interface OutfitBusyMessage {
+  kind: 'outfitBusy'
+  slot: number
+  action: 'save' | 'delete' | 'equip'
+  busy: boolean
 }
 
 export interface GetOutfitsRequest {
@@ -2550,6 +2651,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** The time of day for the Skybox menu, while the page watches it (`watchSkyTime`). */
+  | { kind: 'skyTime'; state: SkyTime }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
@@ -2569,6 +2672,7 @@ export type SceneToPage =
   | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
+  | ReactionMessage
   | ConsoleReplyMessage
   | ChatVisibilityMessage
   | FocusChatMessage
@@ -2598,6 +2702,7 @@ export type SceneToPage =
   | GiftingPageMessage
   | OutfitsMessage
   | OutfitSaveFailedMessage
+  | OutfitBusyMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage
@@ -2646,9 +2751,12 @@ export type SceneToPage =
   | SceneInfoMessage
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
+  | AvatarPreviewReadyMessage
+  | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
+  | GalleryWearablesMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

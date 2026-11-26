@@ -35,7 +35,9 @@ class DevCiTest(unittest.TestCase):
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js']):
+                        ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js'],
+                        ['.github/workflows/closed-pr-cache.yml'], ['.github/workflows/creator-hub-ci.yml'],
+                        ['.github/workflows/bevy-explorer-benchmark.yml']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
@@ -119,7 +121,7 @@ class DevCiTest(unittest.TestCase):
         self.assertEqual(dev.watched_changes(['docs/development.md', 'README.md'], self.dev), [])
         self.assertEqual(dev.watched_changes(['docs/a.md', 'apps/ui3/src/a.ts'], self.dev), ['apps/ui3/src/a.ts'])
         self.assertTrue(dev.watched_changes(['services/catalyst/db/src/lib.rs'], self.dev))
-        for path in ('.github/workflows/bevy-explorer-benchmark.yml', 'infra/gateway/smoke.py'):
+        for path in ('.github/workflows/bevy-explorer-benchmark.yml', 'infra/gateway/smoke.py', '.github/workflows/closed-pr-cache.yml'):
             with self.subTest(path=path):
                 self.assertEqual(dev.watched_changes([path], self.dev), [path])
         # No change and an unfiltered workflow: nothing to skip on, so everything runs.
@@ -166,7 +168,7 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
 
-    def test_the_gate_always_reports_and_requires_rust_smoke_tooling_and_web(self):
+    def test_the_gate_always_reports_and_requires_rust_clippy_smoke_tooling_and_web(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
         pull_request = on.split('  pull_request:', 1)[1]
@@ -174,17 +176,39 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, smoke, tooling, web]', gate)
-        self.assertIn('for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
+        self.assertIn('needs: [changes, rust, clippy, smoke, tooling, web]', gate)
+        self.assertIn('for result in "$CHANGES" "$RUST" "$CLIPPY" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'tooling', 'web'):
+        for job in ('rust', 'clippy', 'smoke', 'tooling', 'web'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
-                # Only the Rust job reads the Rust answer: the others run on every watched change.
-                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job == 'rust')
+                # Only the Rust jobs read the Rust answer: the others run on every watched change.
+                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job in ('rust', 'clippy'))
         self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
+
+    def test_clippy_lints_the_workspace_with_and_without_the_ts_feature_in_one_target_dir(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        job = workflow.split('\n  clippy:\n', 1)[1].split('\n  smoke:\n', 1)[0] + '\n'
+        target = 'CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy\n'
+        command = 'cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets '
+        self.assertEqual(job.count(target), 2)
+        self.assertIn(command + '-- -D warnings\n', job)
+        self.assertIn(command + '--features catalyst/ts -- -D warnings\n', job)
+        self.assertLess(job.index(command + '-- -D'), job.index(command + '--features catalyst/ts'))
+
+    def test_clippy_then_fails_on_unused_dependencies_with_the_flake_machete(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        job = workflow.split('\n  clippy:\n', 1)[1].split('\n  smoke:\n', 1)[0] + '\n'
+        build = 'nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete\n'
+        run = '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli\n'
+        self.assertIn(build, job)
+        self.assertIn(run, job)
+        self.assertLess(job.index('--features catalyst/ts -- -D warnings'), job.index(build))
+        self.assertLess(job.index(build), job.index(run))
+        # Machete skips gitignored paths: the job's target dir must be one of them.
+        self.assertIn('/target-*/\n', (dev.ROOT / 'services/catalyst/.gitignore').read_text())
 
     def rust(self, *changed):
         return dev.needs_rust(changed, 'HEAD', self.dev)[0]
@@ -207,7 +231,8 @@ class DevCiTest(unittest.TestCase):
                         ['tooling/bevy-ci.py', 'tooling/tests/test_bevy_ci.py', 'library/uix/a.ts'],
                         # A crate the Rust job does not compile, and names the scene CLI gives scene folders.
                         ['apps/ui3/src-native/Cargo.toml', 'apps/ui3/src-native/src/lib.rs'],
-                        ['README.md', 'docs/a.md', '.claude/skills/implement-figma-design/SKILL.md']):
+                        ['README.md', 'docs/a.md', '.claude/skills/implement-figma-design/SKILL.md'],
+                        ['.github/workflows/closed-pr-cache.yml']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.rust(*changed))
 
@@ -483,6 +508,17 @@ class FrontendSelectionTest(unittest.TestCase):
                 self.write(self.backend, name)
                 self.write(name, 'changed')
                 self.assertTrue(self.selected(self.commit(), before))
+
+    def test_sites_only_reason_is_reported_and_shared_changes_are_excluded(self):
+        self.write('apps/sites/src/example.ts', 'changed')
+        head = self.commit()
+        plan = dev.web_plan('pull_request', self.base, head)
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertEqual(plan['reason'], 'Sites source only; both suites still run')
+        self.write('library/catalyst-api/example.ts', 'changed')
+        plan = dev.web_plan('pull_request', self.base, self.commit())
+        self.assertTrue(plan['run-web-unit-tests'])
+        self.assertNotIn('Sites source only', plan['reason'])
 
     def test_empty_and_documentation_only_diffs_skip_units(self):
         self.assertEqual(dev.web_plan('pull_request', self.base, self.base),

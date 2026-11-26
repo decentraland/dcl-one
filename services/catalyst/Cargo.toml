@@ -3,6 +3,7 @@ name = "catalyst"
 version.workspace = true
 edition = "2024"
 description = "Decentraland Catalyst node: one application package"
+publish = false
 # The integration tests link as a few grouped binaries, each listed below: a file under tests/
 # runs only as a module of one of them (tooling/tests/test_dev_regressions.py checks it).
 autotests = false
@@ -43,10 +44,8 @@ path = "tests/sockets_2.rs"
 name = "sockets_3"
 path = "tests/sockets_3.rs"
 
-[[test]]
-name = "stats_metrics_engine"
-path = "tests/stats_metrics_engine.rs"
-required-features = ["test-support"]
+[lints]
+workspace = true
 
 # The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,
 # fed, db (with schema_migrate) and jobs depend on nothing else in the application, so
@@ -57,6 +56,8 @@ required-features = ["test-support"]
 # (dcl-scene-cli and its dcl-* support crates) is also a workspace member, but the node never links:
 # select it with -p, not --workspace beside the node, since dcl-scene-authoring
 # turns on serde_json's preserve_order and would reorder the node's JSON in that build.
+# The comms-e2e tool is a member the node never links as well: select it with -p, since
+# with --workspace its dependency compiles the node with catalyst-comms/test-support.
 members = [
     "builder",
     "camera-reel",
@@ -86,6 +87,20 @@ exclude = ["../../library/vendor/rusty_enet", "cast-bot"]
 
 [workspace.package]
 version = "0.1.0"
+
+# Every member declares `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
 
 [workspace.dependencies]
 # The shared crates in ../../library, named once here so members write
@@ -122,12 +137,15 @@ dashmap = "6"
 moka = { version = "=0.12.10", features = ["future"] }
 hashlink = "0.11"
 dragonbox_ecma = "0.1.12"
+ed25519-dalek = "2.2"
 parking_lot = "0.12"
 hex = "0.4"
 libc = "0.2"
 urlencoding = "2"
 base64 = "0.23"
-alloy-primitives = { version = "1", features = ["k256"] }
+# No `k256` feature here, so dcl-auth stays off crypto-bigint 0.5 (RUSTSEC-2026-0387). Members
+# on alloy-signer or the workspace k256 0.13 still pull it into the node.
+alloy-primitives = "1"
 sha1 = "0.11"
 sha2 = "0.11"
 bs58 = "0.5"
@@ -161,11 +179,13 @@ k256 = { version = "0.13.4", features = ["ecdsa"] }
 aes-gcm = "0.11.1"
 rand = "0.10.3"
 rusty_enet = { path = "../../library/vendor/rusty_enet", version = "0.4.0" }
-web-transport-quinn = "0.13.2"
+web-transport-quinn = "0.14.0"
 rustls = "0.23.46"
+rustls-native-certs = "0.8.5"
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.15.1"
 async-nats = "0.50.0"
+dcl-metrics = { path = "../../library/dcl-metrics" }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", features = ["http-listener"] }
 toml = "1.1.8"
@@ -179,6 +199,8 @@ openmls_rust_crypto = "0.6.0"
 openmls_traits = "0.6.0"
 tls_codec = "0.5.0"
 ts-rs = "12"
+# The auth relay's Socket.IO server (explore).
+socketioxide = { version = "0.18.9", default-features = false }
 # The message router's LiveKit participant: the Explorer's patched client-sdk-rust, the same
 # commit of this repository that rendering/bevy-explorer/source/Cargo.toml names
 # (rendering/bevy-explorer/patches/client-sdk-rust/source.toml `rev`; a test of the router
@@ -190,7 +212,6 @@ tokio-tungstenite = "0.30.0"
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 
 [dependencies]
-v8.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "fed" }
@@ -241,7 +262,7 @@ alloy-sol-types.workspace = true
 getrandom.workspace = true
 web-transport-quinn.workspace = true
 async-nats.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]

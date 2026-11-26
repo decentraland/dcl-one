@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "build script")]
+
 use std::fmt::Write as _;
 use std::io::Result;
 use std::path::{Path, PathBuf};

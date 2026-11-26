@@ -67,12 +67,13 @@ const require = createRequire(import.meta.url);
 const ts: typeof TSNamespace = require("typescript6");
 
 const SITES = fileURLToPath(new URL("..", import.meta.url));
-// ui3 carries a SECOND schema tree (src/data/catalyst/*.ts) that parses the same
-// catalyst payloads. Scanning only sites left it unguarded regardless of syntax.
+// ui3 and library/web-core carry a SECOND schema tree (catalyst/*.ts) that parses the
+// same catalyst payloads. Scanning only sites left it unguarded regardless of syntax.
 const DATA_ROOT = join(SITES, "src", "data");
 const ROOTS = [
   join(DATA_ROOT, "lib"),
   join(SITES, "..", "ui3", "src", "data"),
+  join(SITES, "..", "..", "library", "web-core"),
 ];
 const ALLOWLIST_PATH = join(SITES, "scripts", "schema-honesty-allow.json");
 

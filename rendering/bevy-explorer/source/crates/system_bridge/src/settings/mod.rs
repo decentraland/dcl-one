@@ -25,6 +25,7 @@ use bevy::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
+use chat_reactions::ChatReactionsSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
@@ -42,8 +43,10 @@ use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
+use max_avatars_unlimited::UnlimitedAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
 use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
+use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
 use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
@@ -64,6 +67,7 @@ pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
 pub mod chat_bubble_visibility;
+pub mod chat_reactions;
 pub mod constrain_ui;
 mod debug_quality;
 pub mod dm_privacy;
@@ -75,14 +79,17 @@ pub mod language_setting;
 pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
+pub mod max_avatars_unlimited;
 pub mod max_downloads;
 pub mod max_lods;
+pub mod mute_mic_in_background_setting;
 pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
 pub mod render_scale_setting;
 mod rings;
+mod scene_control_override;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
@@ -237,6 +244,8 @@ impl Plugin for SettingBridgePlugin {
             &config,
         );
         add_int_setting::<SceneThreadsSetting>(app, &mut settings, &mut schedule, &config);
+        // before the slider it overrides, so the panel lists the switch first
+        add_enum_setting::<UnlimitedAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SceneVolumeSetting>(app, &mut settings, &mut schedule, &config);
@@ -244,12 +253,19 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<MuteMicInBackgroundSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
         app.init_resource::<PlayerLanguage>();
         add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<scene_control_override::SceneControlOverrideSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_int_setting::<WalkSpeedSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<JogSpeedSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<RunSpeedSetting>(app, &mut settings, &mut schedule, &config);
@@ -270,6 +286,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<ChatBubbleVisibility>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<ChatReactionsSetting>(app, &mut settings, &mut schedule, &config);
 
         app.insert_resource(settings);
         app.add_plugins(debug_quality::DebugQualityPlugin);
@@ -318,6 +335,10 @@ pub trait AppSetting: Eq + Send + Sync + 'static {
     fn category() -> SettingCategory;
     fn load(config: &AppConfig) -> Self;
     fn save(&self, config: &mut AppConfig);
+    /// True while another setting's value overrides this one.
+    fn is_disabled(_config: &AppConfig) -> bool {
+        false
+    }
     fn apply(
         &self,
         param: SystemParamItem<Self::Param>,
@@ -364,10 +385,11 @@ pub use system_api_types::{NamedVariant, SettingInfo};
 pub struct Setting {
     pub info: SettingInfo,
     apply: Option<
-        Box<dyn Fn(&mut AppConfig, f32) -> Result<f32, anyhow::Error> + Send + Sync + 'static>,
+        Box<dyn Fn(&mut AppConfig, f32) -> Result<(), anyhow::Error> + Send + Sync + 'static>,
     >,
     /// The displayed value for the current config, for settings changed outside `set_value`.
     load: Box<dyn Fn(&AppConfig) -> f32 + Send + Sync + 'static>,
+    is_disabled: fn(&AppConfig) -> bool,
 }
 
 #[derive(Resource)]
@@ -394,7 +416,7 @@ impl Settings {
             .apply
             .take()
             .unwrap();
-        let res = (apply)(config, value)?;
+        let applied = (apply)(config, value);
         let setting = self
             .settings
             .iter_mut()
@@ -402,14 +424,17 @@ impl Settings {
             .unwrap();
 
         setting.apply = Some(apply);
-        setting.info.value = res;
+        applied?;
+        // a value can change any setting's `disabled` flag: re-read them all now
+        self.refresh(config);
         Ok(())
     }
 
-    /// Re-reads every displayed value from `config`.
+    /// Re-reads every displayed value and `disabled` flag from `config`.
     pub fn refresh(&mut self, config: &AppConfig) {
         for setting in self.settings.iter_mut() {
             setting.info.value = (setting.load)(config);
+            setting.info.disabled = (setting.is_disabled)(config);
         }
     }
 
@@ -426,15 +451,16 @@ impl Settings {
                 value: value.value() as f32 * S::scale(),
                 default: S::load(&AppConfig::default()).value() as f32 * S::scale(),
                 step_size: S::scale().abs(),
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
-                |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
-                    let new_value = S::from_int((value / S::scale()).round() as i32);
-                    new_value.save(config);
-                    Ok(new_value.value() as f32 * S::scale())
+                |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
+                    S::from_int((value / S::scale()).round() as i32).save(config);
+                    Ok(())
                 },
             )),
             load: Box::new(|config: &AppConfig| S::load(config).value() as f32 * S::scale()),
+            is_disabled: S::is_disabled,
         });
     }
 
@@ -468,17 +494,19 @@ impl Settings {
                 value: displayed::<S>(config),
                 default: default_index as f32,
                 step_size: 1.0,
+                disabled: S::is_disabled(config),
             },
             apply: Some(Box::new(
-                |config: &mut AppConfig, value: f32| -> Result<f32, anyhow::Error> {
+                |config: &mut AppConfig, value: f32| -> Result<(), anyhow::Error> {
                     S::variants()
                         .get(value as usize)
                         .ok_or(anyhow::anyhow!("invalid variant index"))?
                         .save(config);
-                    Ok(value as usize as f32)
+                    Ok(())
                 },
             )),
             load: Box::new(|config: &AppConfig| displayed::<S>(config)),
+            is_disabled: S::is_disabled,
         });
     }
 }
@@ -594,6 +622,85 @@ fn is_fullscreen_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // MSAA variants exist only on native
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn msaa_disables_depth_of_field() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<AaSetting>(&config);
+        settings.add_enum_setting::<DofSetting>(&config);
+        let index =
+            |names: Vec<String>, name: &str| names.iter().position(|n| n == name).unwrap() as f32;
+        let aa = |name: &str| {
+            index(
+                AaSetting::variants().iter().map(|v| v.name()).collect(),
+                name,
+            )
+        };
+        let high = index(
+            DofSetting::variants().iter().map(|v| v.name()).collect(),
+            "High",
+        );
+        let dof = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == DofSetting::title())
+                .unwrap()
+        };
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        settings
+            .set_value(&mut config, &DofSetting::title(), high)
+            .unwrap();
+        assert!(!dof(&settings).disabled);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("MSAA 4x"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(info.disabled);
+        // the stored value is kept
+        assert_eq!(info.value, high);
+
+        settings
+            .set_value(&mut config, &AaSetting::title(), aa("FXAA (High)"))
+            .unwrap();
+        let info = dof(&settings);
+        assert!(!info.disabled);
+        assert_eq!(info.value, high);
+        assert_eq!(config.graphics.dof, DofSetting::High);
+    }
+
+    #[test]
+    fn chat_reactions_start_off_and_follow_the_setting() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<ChatReactionsSetting>(&config);
+        let title = ChatReactionsSetting::title();
+        let value = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == title)
+                .unwrap()
+                .value
+        };
+        assert_eq!(value(&settings), 0.0);
+        assert!(!config.chat_reactions);
+
+        settings.set_value(&mut config, &title, 1.0).unwrap();
+        assert_eq!(value(&settings), 1.0);
+        assert!(config.chat_reactions);
+    }
 
     #[test]
     fn prepasses_follow_the_avatar_outline() {

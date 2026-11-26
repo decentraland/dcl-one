@@ -1,8 +1,8 @@
-import { PBUiText } from '@dcl/ecs'
+import type { PBUiText } from '@dcl/ecs'
 import { ReactEcs } from '../react-ecs'
-import { UiLabelProps } from './Label/types'
+import type { UiLabelProps } from './Label/types'
 import { getFont, getFontSize, getTextAlign, getTextWrap } from './Label/utils'
-import { EntityPropTypes } from './types'
+import type { EntityPropTypes } from './types'
 import { parseProps } from './utils'
 
 export * from './types'

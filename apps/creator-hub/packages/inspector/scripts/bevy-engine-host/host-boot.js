@@ -19,7 +19,7 @@ const systemScene = params.get('systemScene') ?? undefined;
 // The engine's show-outside-bounds mesh tag is gated on is_preview.
 const preview = params.get('preview') === 'true';
 // Leave `portables` UNDEFINED so the engine loads its default
-// `basiccontroller.dcl.eth` portable — same as bevy-editor. Since the
+// `movecontroller.dcl.eth` portable — same as bevy-editor. Since the
 // react-web engine layout, that PX PROVIDES the player's movement controller,
 // so it's REQUIRED for avatar WASD walking. (We previously forced
 // `portables=''` to skip its content-server fetch on the old engine, where

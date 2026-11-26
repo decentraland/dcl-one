@@ -24,7 +24,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-SLNUX8keBkVq448n5Z6DoK9slEPVfsQCiqwEFfRtwks=";
+    hash = "sha256-uzX9lsgYeFqjqbnKHCrBRVWgg5JyziaNy+n2lOISGNY=";
   };
   pnpmDepsKey = builtins.substring 0 12
     (builtins.hashString "sha256" (fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-sites"; })).drvPath);
@@ -70,6 +70,7 @@ let
       (lib.fileset.maybeMissing (root + /library/ui/package.json))
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
       (root + /library/ui/foundations)
+      (root + /library/ui/assets)
       (root + /library/ui/apps/sites)
       (root + /library/ui/apps/hud) (root + /library/ui/apps/shop) (root + /library/explorer-core)
       (root + /library/ui/text-styles.ts)
@@ -105,7 +106,7 @@ let
       runHook preBuild
       chmod -R u+w ..
       ln -s "$PWD/node_modules" ../node_modules
-      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts ../ui3/public/assets/invite; then
+      if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/assets ../../library/ui/foundations/typography/fonts ../ui3/public/assets/invite; then
         echo "Sites media, the invite clip or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
         exit 1
       else
@@ -147,17 +148,35 @@ in runCommand "foundation-sites${settlementSuffix}-${version}" {
   # Assemble the server from its stable parts. Each stays its own store path, so the
   # image keeps one layer per part and only the changed one is rebuilt and transferred.
   shopt -s dotglob nullglob
-  mkdir -p "$out/bin" "$out/build/client/play" "$out/content"
+  mkdir -p "$out/bin" "$out/build/client/play" "$out/build/client/assets" "$out/content"
   for entry in ${app}/*; do
     [ "''${entry##*/}" = build ] || ln -s "$entry" "$out/"
   done
   ln -s ${app}/build/server "$out/build/server"
   for entry in ${app}/build/client/*; do
-    [ "''${entry##*/}" = play ] || ln -s "$entry" "$out/build/client/"
+    case "''${entry##*/}" in
+      play|assets) ;;
+      *) ln -s "$entry" "$out/build/client/" ;;
+    esac
   done
+  for entry in ${app}/build/client/assets/*; do
+    ln -s "$entry" "$out/build/client/assets/"
+  done
+  # The avatar preview from the same Explorer build: its page at /avatar-preview/, revalidated,
+  # and its content-hashed files among the client's immutable /assets/ (react-router-serve).
+  for path in avatar-preview assets/avatar-preview; do
+    if [ -e "$out/build/client/$path" ]; then
+      echo "/$path exists in both the Sites client and the Explorer build" >&2
+      exit 1
+    fi
+  done
+  mkdir "$out/build/client/avatar-preview"
+  ln -s ${playWeb}/avatar-preview/index.html "$out/build/client/avatar-preview/index.html"
+  ln -s ${playWeb}/avatar-preview/assets "$out/build/client/assets/avatar-preview"
   # /play/ holds the client's own static files (play/assets, play/favicon) next to
   # /play/engine, /play/bridge-scene and /play/service_worker.js from our Bevy build.
   for entry in ${app}/build/client/play/* ${playWeb}/*; do
+    [ "$entry" != ${playWeb}/avatar-preview ] || continue
     if [ -e "$out/build/client/play/''${entry##*/}" ]; then
       echo "/play/''${entry##*/} exists in both the Sites client and the Explorer build" >&2
       exit 1
@@ -181,6 +200,7 @@ in runCommand "foundation-sites${settlementSuffix}-${version}" {
     --chdir "$out"
   test -s "$out/build/server/index.js"
   test -s "$out/build/client/play/sites-play.json"
+  test -s "$out/build/client/avatar-preview/index.html"
   test -s "$out/build/client/ui-gallery/index.html"
   test -s "$out/content/docs/manifest.json"
 ''

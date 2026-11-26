@@ -58,9 +58,9 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::SocialDirectory` | `social::comms_directory::Directory` | privacy, friendships, community roles; notices inserted on the caller's transaction |
 | `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
-| `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink` | every verified join/leave, stored before the webhook answers (503 on failure) |
+| `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink`, root `serve_adapters::CreditsRoomEvents` | verified joins and leaves, durably offered to each enabled consumer before the webhook answers (503 on failure) |
+| `presence::Presence::session_observed_at` | root `serve` passes it to the Shop seasonal goal worker | fresh, complete roster evidence of a specific room, wallet and participant session |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
-| `stats::http::MetricsMatcher` | root `metrics_matcher` | fallible configured route evaluation on the pinned embedded engine; one async permit retained inside each submitted blocking operation |
 
 | Comms offers | Consumers |
 |---|---|
@@ -83,6 +83,32 @@ Scene admin grants (`social.scene_admins`) use the same place: the world scene's
 UUID, or the base parcel of a Genesis scene (`ActiveDeployment::place_key`). A
 redeploy of the same place keeps the admins, their stream key access and their
 presenter control. A scene on a different place starts without them.
+
+Streaming notices retain one normalized recipient snapshot: owner, applicable
+LAND/World permission holders and explicit scene admins. Explore captures the
+Genesis admins, and each World scene admin with its granter, in the catalogue
+removal event before a pre-maintenance re-grant can overwrite grant timing or
+granter; World admins are told only after their saved granter's authority is
+checked; fallback enrichment reads retained grants after safety
+cleanup commits. External lookup outages leave notification resolution pending.
+Each accepted recipient has a durable cursor so bounded retries resume without
+starving later wallets. Credential issuance
+saves the bound `admin_place_key`; Explore freezes exact active/retiring world
+keys into removal events before delayed catalogue cleanup. Scene insertion
+clears catalogue evidence, while queued events and their recipients stay fixed.
+Historical feed seeding performs cleanup without notifying old removals.
+Explore's identity trigger retains displaced exact bindings in
+`explore.world_scene_binding` (`world_name`, `entity_id`, `identity`) without
+Social writes or row locks. Comms reads that evidence after a failed legacy
+binding lookup, even if the scene retires before retry. Saved exact
+credential/context keys take precedence. Original place context is captured
+before binding recovery and checkpointed before further fallible deferred work;
+a saved snapshot survives catalogue deletion and is never replaced by live data.
+SQL failures and timeouts remain pending. A successful missing or ambiguous
+canonical World binding instead records an unresolvable state and completes
+for independently established owner/permission holders and preserved recipients,
+skipping local-admin enrichment. No admin authority is inferred from overlapping
+parcels.
 
 A stream key is checked again at once when PostgreSQL announces a deployment
 or a change of a world's scenes, owner or grants (`streaming::cast::listen`;
@@ -135,6 +161,13 @@ This is a deployment requirement, not an automated restore orchestrator. See the
 [generation fencing decision](../../../../docs/adr/2026-11-16-pulse-generation-fencing.md).
 Runtime admission under complete generation churn and rollout readiness remain
 unverified pending acceptance evidence.
+
+On SIGTERM or SIGINT, `catalyst pulse` sends one ENet disconnect with reason
+`Graceful` (1) to each connected ENet peer, including peers still authenticating.
+If the datagram is lost or the process is killed, the client detects the loss
+on its own timer. While Pulse is running, it sets both ENet timeout bounds to
+five seconds on each connection. ENet measures outstanding reliable traffic,
+including pings, when deciding that a peer is unreachable.
 
 ## Services and how they talk
 
@@ -261,6 +294,19 @@ private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optiona
 Build it with `cargo build -p catalyst-message-router --features livekit`; without the
 feature the crate's library and tests build without libwebrtc.
 
+The APIs image carries it at `/bin/catalyst-message-router` (`nix build .#message-router`,
+`infra/packages/message-router.nix`). `serve` never starts it. A deployment runs one container
+of the APIs digest with that entrypoint and no command, one replica (the Explorer addresses
+replica 0 only), restarted on every exit, after `schema` has run:
+
+- router: `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (serve's private address; a host name
+  other than `localhost` needs https), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`,
+  `MESSAGE_ROUTER_REPLICA=0`, `MESSAGE_ROUTER_LIVEKIT_URL` for the SFU's private address, and
+  `MESSAGE_ROUTER_METRICS_BIND=0.0.0.0:5007` when a probe outside the container reads
+  `/health/ready`;
+- `serve`: the same `MESSAGE_ROUTER_KEY`, and `MESSAGE_ROUTER_IDENTITY_PREFIX`
+  `message-router-prd` on decentraland.org or `message-router-dev` elsewhere.
+
 ## Statistics ownership and runtime
 
 Pulse owns a separate legacy statistics population. Authenticated decoded positions enter a
@@ -296,13 +342,7 @@ encoding is outside it. Overflow or failed publication discards the pending pref
 and checkpoint in favor of a new complete recovery. Sequential encoding awaits do
 not prevent an already-started blocking encode from outliving publisher cancellation.
 
-Stats and connector hosts have separate real request registries, bearer-protected scrapes,
-optional operating-system collectors, and reset after the first successful scrape strictly
-past the previous reset's local midnight plus 24 hours. Histogram maintenance runs
-at each recording boundary, independent of successful scrapes. Readiness reports
-the original `server` check from the actual listener lifecycle;
-NATS and content add no probes. Rust exposes actual available process measurements rather than
-invented Node/V8 series. Node-specific default runtime metrics remain a compatibility gap.
+Stats and connector requests use the shared HTTP metrics on the serve process's private `/metrics` endpoint. Readiness reports the `server` check from the listener lifecycle. Serve samples connector diagnostics every 15 seconds. Pulse registers simulation and cluster metrics in its own process. See the [scrape addresses and recording conventions](../../../../docs/adr/2026-11-24-shared-service-metrics.md).
 
 ## Bus messages
 
@@ -655,4 +695,4 @@ as `authoritative-server`):
 
 Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
 
-Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. `WKC_METRICS_COLLECT_DEFAULT=false` disables these collectors.
+Default process metrics use actual OS data: fractional user/system/total CPU, process start time and resident bytes on Windows and Linux; Linux additionally exposes virtual/data-segment bytes and open/max file descriptors. The Linux CPU source has kernel clock-tick resolution. Unavailable measurements are omitted; Node/V8 runtime measurements are not synthesized. The private process scrape samples the OS once per request.

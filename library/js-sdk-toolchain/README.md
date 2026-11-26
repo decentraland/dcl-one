@@ -1,5 +1,7 @@
 # Decentraland SDK Toolchain
 
+[![SDK](https://img.shields.io/npm/v/@dcl/sdk?label=sdk)](https://www.npmjs.com/package/@dcl/sdk)
+
 This monorepo contains the core packages for Decentraland's SDK and development tools.
 
 ## Packages
@@ -70,9 +72,56 @@ make build
 
 ## Release Process
 
-1. Merge changes to the main branch
-2. Wait for CI workflow completion in GitHub Actions
-3. Create a new Release following the [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/)
+Two workflows publish `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk`;
+`playground-assets` is built and tested but not published. The manifests keep the placeholder
+version `7.0.0`; each run stamps its own.
+
+**PR previews** (`.github/workflows/sdk.yml`). A pull request from this repository publishes what
+it packed as `@dcl-regenesislabs/*` under the shared `pr` dist-tag and adds the install
+command to the PR's CI status comment. The run renames the packages before packing and pins siblings as npm aliases,
+so a scene keeps importing `@dcl/sdk`:
+
+```bash
+npm install \
+  @dcl/ecs@npm:@dcl-regenesislabs/ecs@<version> \
+  @dcl/js-runtime@npm:@dcl-regenesislabs/js-runtime@<version> \
+  @dcl/react-ecs@npm:@dcl-regenesislabs/react-ecs@<version> \
+  @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version> \
+  @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>
+```
+
+Install the exact version; the tag moves to the last PR published. Those packages are previews
+only: any branch of this repository can publish to them. Fork pull requests publish nothing.
+
+**`next`, `auth-server` and releases** (`.github/workflows/sdk-release.yml`) publish the `@dcl/*`
+names. Its publish job uses the `npm-release` environment, which only `main` and `auth-server` may
+deploy to, and the `@dcl` trusted publishers require that environment, so another branch or a pull
+request cannot publish them whatever its workflow says.
+
+A push to `main` that changes `library/js-sdk-toolchain` or `library/protocol` publishes under
+`next` as `<latest patch+1>-<run>.commit-<sha>`. The SDK is generated from the protocol at build
+time, so a protocol change ships in the SDK without a protocol release.
+
+The `auth-server` branch carries the authoritative-server SDK on top of `main`. A push to it that
+changes the same paths publishes under the `auth-server` dist-tag, with the same version scheme;
+install it with `npm install @dcl/sdk@auth-server`. The branch takes changes by pull request only
+and is kept current by merging `main` into it, never by a squash.
+
+A versioned release is a manual run from `main`:
+
+1. Run `SDK / Release` from `main` with the `version` to publish, following the
+   [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
+   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `@dcl/sdk@<version>` tag, a
+   version npm already serves from another build, and a stable version below the current `latest`.
+2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
+   others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
+   prerelease) and creates the `@dcl/sdk@<version>` release with the tarballs, the `library/protocol`
+   commit the packages were generated from, and the SDK and protocol commits since the previous
+   `@dcl/sdk@*` tag. The `notes` input goes at the top of the body.
+
+If a run stops midway (some packages published, or all of them but no release), rerun its failed
+jobs: packages already on npm are skipped and the release is created. A new run with the same
+version from the same commit does the same.
 
 ## Testing Infrastructure
 

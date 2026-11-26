@@ -109,7 +109,8 @@ async fn reseeding_a_world_moves_its_name_to_the_new_owner() {
         Some(crate::chain_index::graph::test_support::index_reading(
             NAMES.clone(),
         )),
-    );
+    )
+    .with_subgraph_names();
     assert!(matches!(
         policy.is_owner(&world, &current).await,
         crate::shared::identity::PermissionDecision::Allowed
@@ -240,13 +241,16 @@ async fn grant(
 }
 
 fn state_with(pool: &PgPool, settings: Settings) -> SharedState {
-    let policy = Arc::new(Policy::new(
-        pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(crate::chain_index::graph::test_support::index_reading(
-            NAMES.clone(),
-        )),
-    ));
+    let policy = Arc::new(
+        Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(crate::chain_index::graph::test_support::index_reading(
+                NAMES.clone(),
+            )),
+        )
+        .with_subgraph_names(),
+    );
     Arc::new(StorageState::new(pool.clone(), policy, settings, None))
 }
 
@@ -2569,7 +2573,7 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(&id)
-    .bind(json!({ "scene": { "base": p2 } }))
+    .bind(json!({ "v": { "scene": { "base": p2 } } }))
     .bind(vec![p1.clone(), p2.clone()])
     .fetch_one(pool)
     .await
@@ -2586,7 +2590,7 @@ async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
 }
 
 async fn remove_genesis_scene(pool: &PgPool, id: &str, dep_id: i32) {
-    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{scene,base}' FROM content.deployments WHERE id = $1)")
+    sqlx::query("DELETE FROM social.scene_admins WHERE place_id = (SELECT entity_metadata #>> '{v,scene,base}' FROM content.deployments WHERE id = $1)")
         .bind(dep_id)
         .execute(pool)
         .await
@@ -2876,7 +2880,6 @@ async fn genesis_storage_admits_estate_owner_and_grants_from_the_land_index() {
         pool.clone(),
         crate::http::Outbound::for_tests(),
         settings,
-        None,
     ));
     let policy = Arc::new(
         Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
@@ -2946,14 +2949,18 @@ async fn genesis_storage_admits_estate_owner_and_grants_from_the_land_index() {
     .unwrap();
 }
 
-/// With only the marketplace LAND reader, a Genesis request is the LAND
-/// owner's of the parcel it names: owning another footprint parcel grants
+/// A Genesis request is the LAND owner's of the parcel it names, read from
+/// the published land-authz index: owning another footprint parcel grants
 /// nothing, nor does a scene admin row.
 #[tokio::test]
 async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
-    use axum::extract::State;
-    let Some(pool) = scratch().await else { return };
-    let (id, p1, p2, dep_id) = seed_genesis_scene(&pool).await;
+    // Readiness is global per network: a database of its own keeps this
+    // fixture from replacing a concurrent test's LAND source (the process
+    // sweep drops it, also after a panic).
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let (id, p1, p2, _) = seed_genesis_scene(&pool).await;
     let (owner_key, admin_key) = (random_key(), random_key());
     sqlx::query(
         "INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, $2, $3)",
@@ -2965,34 +2972,32 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
     .await
     .unwrap();
 
-    // A subgraph where the owner holds p1 only.
-    let x = p1.split_once(',').unwrap().0;
-    let nfts = json!({ "data": { "nfts": [
-        { "searchParcelX": x.to_string(), "searchParcelY": "7", "owner": { "id": address_of(&owner_key) } },
-        { "searchParcelX": x.to_string(), "searchParcelY": "8", "owner": { "id": "0x1111111111111111111111111111111111111111" } },
-    ] } });
-    let subgraph = Router::new()
-        .route(
-            "/subgraph",
-            axum::routing::post(|State(nfts): State<Value>| async move { axum::Json(nfts) }),
-        )
-        .with_state(nfts);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, subgraph).await.unwrap() });
-    let market = crate::chain_index::ChainIndex::new(
-        crate::http::Outbound::for_tests(),
-        crate::chain_index::IndexSettings {
-            marketplace_subgraph_url: Some(format!("http://{addr}/subgraph")),
-            ..crate::chain_index::IndexSettings::for_tests()
-        },
-    );
-    market.allow_loopback_for_tests();
-    let policy = Arc::new(Policy::new(
+    // A published LAND index where the owner holds p1 only.
+    let settings = crate::land_authz::Settings::for_tests();
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+        .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry)
+        .execute(&pool).await.unwrap();
+    for (parcel, owner) in [
+        (&p1, address_of(&owner_key)),
+        (
+            &p2,
+            "0x1111111111111111111111111111111111111111".to_string(),
+        ),
+    ] {
+        let parcel = Parcel::parse(parcel).unwrap();
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, $2::int::numeric * 340282366920938463463374607431768211456 + $3::int::numeric, $2, $3, $4, 1, 0)")
+            .bind(&settings.land_registry).bind(parcel.x).bind(parcel.y).bind(&owner)
+            .execute(&pool).await.unwrap();
+    }
+    let land = Arc::new(crate::land_authz::LandAuthzState::new(
         pool.clone(),
-        PersonalWorldsPolicy::disabled(),
-        Some(Arc::new(market)),
+        crate::http::Outbound::for_tests(),
+        settings,
     ));
+    let policy = Arc::new(
+        Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
+            .with_land_authz(Some(land)),
+    );
     let app = router(Arc::new(StorageState::new(
         pool.clone(),
         policy,
@@ -3019,7 +3024,35 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
         assert_eq!(status, expected, "{who}");
     }
 
-    remove_genesis_scene(&pool, &id, dep_id).await;
+    // Once the index walks an authorization event past its fold it decides
+    // nothing, with no operators URL configured either: a retryable 503,
+    // never a 401.
+    sqlx::query("UPDATE land_authz.index_cursor SET last_block = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (2, 0, 0, $1, 'transfer', 1, $2)")
+        .bind(&crate::land_authz::Settings::for_tests().land_registry)
+        .bind(address_of(&admin_key))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/k",
+            &owner_key,
+            &scene_metadata("main", &p1, &id),
+            None,
+            Some(r#"{"value":2}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
+
 }
 
 /// Nested under `/world-storage`, a signature over the public path verifies
@@ -3729,7 +3762,7 @@ async fn seed_genesis(
          VALUES ('0x0', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]'::json) RETURNING id",
     )
     .bind(id)
-    .bind(json!({ "scene": { "base": pointers[0] }, "display": { "title": "Genesis" }, "logsPermissions": logs }))
+    .bind(json!({ "v": { "scene": { "base": pointers[0] }, "display": { "title": "Genesis" }, "logsPermissions": logs } }))
     .bind(pointers)
     .fetch_one(pool)
     .await
@@ -3786,7 +3819,6 @@ impl CollaboratorLandFixture {
             self.pool.clone(),
             crate::http::Outbound::for_tests(),
             crate::land_authz::Settings::for_tests(),
-            None,
         ));
         let policy = Policy::new(self.pool.clone(), PersonalWorldsPolicy::disabled(), None)
             .with_land_authz(Some(land));
@@ -4051,27 +4083,40 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         );
     }
 
-    // While ordinary LAND readiness falls back during cursor advancement, a
-    // broken fallback is upstream's 401 for everyone: the owner lookup runs
-    // first and its failure answers before logsPermissions is read.
+    // While the attached index is between walking and publishing, it is the
+    // only LAND authority: a configured manager document that would grant is
+    // not read, and the answer is the index's 503 for everyone, before
+    // logsPermissions is consulted.
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101")
         .execute(&pool)
         .await
         .unwrap();
-    let broken_source = fake_land_operators(&pointer, json!(null)).await;
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (101, 0, 0, $1, 'transfer', 1, $2)")
+        .bind(&crate::land_authz::Settings::for_tests().land_registry)
+        .bind(address_of(OUTSIDER_KEY))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let granting_source = fake_land_operators(
+        &pointer,
+        json!({
+            "owner": address_of(&collab_key), "operator": null, "updateOperator": null,
+            "updateManagers": [address_of(OUTSIDER_KEY)], "approvedForAll": []
+        }),
+    )
+    .await;
     let land = Arc::new(crate::land_authz::LandAuthzState::new(
         pool.clone(),
         crate::http::Outbound::for_tests(),
         crate::land_authz::Settings::for_tests(),
-        None,
     ));
     let policy = Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
         .with_land_authz(Some(land))
         .with_land_operators(Some(LandOperatorsReader::new(
             crate::http::Outbound::for_tests().allowing_private_hosts(),
-            &broken_source,
+            &granting_source,
         )));
-    let broken_app = router(Arc::new(StorageState::new(
+    let unready_app = router(Arc::new(StorageState::new(
         pool.clone(),
         Arc::new(policy),
         Settings::for_tests(None),
@@ -4079,14 +4124,18 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
     )));
     for key in [collab_key.as_str(), OUTSIDER_KEY] {
         let (status, body) = send(
-            &broken_app,
+            &unready_app,
             signed_request("get", "/values/g", key, &meta, None, None).await,
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-        assert_eq!(body["message"], super::FAILED_TO_VERIFY_MSG);
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
     }
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 100")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM land_authz.authz_event WHERE block_number = 101")
         .execute(&pool)
         .await
         .unwrap();
@@ -4644,7 +4693,23 @@ async fn genesis_collaboration_requires_redeployment_after_any_parcel_ownership_
         .execute(pool).await.unwrap();
     sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes'")
         .execute(pool).await.unwrap();
-    assert_genesis_collaboration(&app, &key, &pointers[0], &new, false).await;
+    // A stale fold decides nothing for the attached index: the collaborator
+    // gets the index's 503, not a refusal.
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/epoch",
+            &key,
+            &scene_metadata("main", &pointers[0], &new),
+            None,
+            Some(r#"{"value":1}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
     // A stale history index does not prevent the independently configured
     // LAND document source from establishing the current owner's authority.
     let source = fake_land_operators(

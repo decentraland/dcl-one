@@ -17,6 +17,11 @@ pub struct RemovedPlace {
     pub positions: serde_json::Value,
     pub removed_at: NaiveDateTime,
     pub cleaned_at: Option<NaiveDateTime>,
+    pub admin_keys: Vec<String>,
+    pub recipients: Vec<crate::Address>,
+    pub recipients_resolved: bool,
+    pub recipient_cursor: i32,
+    pub notify: bool,
 }
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
 pub struct PlaceContext {
@@ -92,7 +97,7 @@ impl RemovedPlaces {
         }
     }
     pub async fn pending(&self) -> Result<Vec<RemovedPlace>, sqlx::Error> {
-        sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE retry_at <= timezone('UTC', now()) ORDER BY retry_at, event_id LIMIT 100").fetch_all(&self.pool).await
+        sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE retry_at <= timezone('UTC', now()) ORDER BY retry_at, event_id LIMIT 100").fetch_all(&self.pool).await
     }
     pub async fn save_owner(&self, id: Uuid, owner: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE explore.place_removal_pending SET owner_address = $2 WHERE event_id = $1 AND owner_address IS NULL").bind(id).bind(owner).execute(&self.pool).await?;
@@ -109,7 +114,7 @@ impl RemovedPlaces {
     }
     pub async fn acknowledge(&self, id: Uuid) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        let place: Option<String> = sqlx::query_scalar("DELETE FROM explore.place_removal_pending WHERE event_id = $1 AND cleaned_at IS NOT NULL RETURNING place_id").bind(id).fetch_optional(&mut *tx).await?;
+        let place: Option<String> = sqlx::query_scalar("DELETE FROM explore.place_removal_pending WHERE event_id = $1 AND cleaned_at IS NOT NULL AND (NOT notify OR (recipients_resolved AND recipient_cursor = cardinality(recipients))) RETURNING place_id").bind(id).fetch_optional(&mut *tx).await?;
         if let Some(place) = place {
             sqlx::query("DELETE FROM explore.place_removal_state s WHERE place_id = $1 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE id = s.place_id) AND NOT EXISTS (SELECT 1 FROM explore.place_world_local WHERE id = s.place_id) AND NOT EXISTS (SELECT 1 FROM explore.place_removal_pending WHERE place_id = s.place_id)").bind(place).execute(&mut *tx).await?;
         }
@@ -125,7 +130,7 @@ mod tests {
         sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', $2, $3)").bind(id).bind(disabled).bind(json!({"positions":["0,0"],"owner":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","disabled_reason":reason})).execute(pool).await.unwrap();
     }
     async fn events(pool: &PgPool, id: &str) -> Vec<RemovedPlace> {
-        sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1 ORDER BY removed_at, event_id").bind(id).fetch_all(pool).await.unwrap()
+        sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at, admin_keys, recipients, recipients_resolved, recipient_cursor, notify FROM explore.place_removal_pending WHERE place_id = $1 ORDER BY removed_at, event_id").bind(id).fetch_all(pool).await.unwrap()
     }
     #[tokio::test]
     async fn opt_out_is_not_removal_and_delete_preserves_owner_context() {
@@ -225,6 +230,27 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
+        feed.acknowledge(event.event_id).await.unwrap();
+        assert_eq!(
+            events(&pool, &id).await.len(),
+            1,
+            "cleaned removal retains unresolved notification authority"
+        );
+        sqlx::query("UPDATE explore.place_removal_pending SET recipients=ARRAY['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],recipients_resolved=true WHERE event_id=$1")
+            .bind(event.event_id).execute(&pool).await.unwrap();
+        feed.acknowledge(event.event_id).await.unwrap();
+        assert_eq!(
+            events(&pool, &id).await.len(),
+            1,
+            "complete recipient snapshot still requires delivery progress"
+        );
+        sqlx::query(
+            "UPDATE explore.place_removal_pending SET recipient_cursor=1 WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .execute(&pool)
+        .await
+        .unwrap();
         feed.acknowledge(event.event_id).await.unwrap();
         assert!(events(&pool, &id).await.is_empty());
     }

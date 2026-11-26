@@ -184,16 +184,42 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       Your **own** tag shows above your head in third person and is hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **`/goto` and `/goto-local`**: `/goto x,y` teleports inside the realm the player is in, Genesis City or a
+      world, within that realm's bounds; `/goto world` and `world/x,y` travel; `genesis` and `main` are Genesis City, at Genesis Plaza when no parcel is named;
+      `random` and `crowd` are Genesis City places from any realm; `/goto-local x,y` never changes realm. Each answers once in chat when the
+      engine does (`🟢 You teleported to x,y.`, `🟢 Welcome to the … world!`, `🟢 Welcome to Genesis
+      City!`), a failure in chat alone with no travel notice beside it, a parcel out of bounds or a
+      bad destination at once. In a scene preview `/goto x,y` moves inside the preview, and
+      `random` and `crowd` answer the engine's refusal to change realm. A `/goto` typed while a
+      travel is under way is read against the realm travelled to; a travel it replaces answers
+      `🔴 Error: The operation was canceled!`. A place inside the realm travelled to
+      (`/goto world/x,y` on the way to that world, `/goto-local x,y`) is that travel asked for
+      again, so a travel that fails moves nobody. A `/goto crowd` still reading the busiest scene
+      gives way to a `/goto` typed after it. A destination ending in `/name` lands on the scene's
+      spawn point of that name (the debug panel's Teleport section shows the name looked for and
+      whether the scene had it). Tests: `library/ui/apps/hud/test/hosted/chatGoto.test.tsx` (the
+      session), `library/explorer-core/features/chat/chatCommands.test.ts` (the destinations),
+      `src/test/bridgeTravel.test.ts` (the bridge).
 - [ ] **Chat bubbles**: a message opens its author's tag into a bubble with a tail for 5 s (a new
       message restarts it); a long message wraps and is cut at 100 characters with an ellipsis; a message that @-mentions you has a pink-to-purple
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
-      for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
+      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None)
+      picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
       bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
       closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
       to a tag is coloured as chat links it.
+- [ ] **Reactions**: an emoji picked from the chat's Reactions button rises from just over your
+      nametag: it pops in small, rises about a metre while it sways, swells once and is gone within
+      a second, drawn over the nametag and over whatever stands in front of it. Picks made one after
+      another each rise, the bar staying open. Another player's rise over their avatar, a burst of
+      them one every 0.2 s. None shows over an avatar a scene hides, over a blocked player, with
+      nametags off, over your own head in first person, or, for other players, farther than 25 m
+      from the camera; with the Chat bubbles and reactions setting at None none shows over anyone.
+      The debug panel's "Situational reactions" section counts them (those with nothing to show
+      over as "player not shown") and its buttons play one without the HUD.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and
@@ -205,8 +231,16 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       dust and vignette around the live avatar, which waves, plays an idle emote every 8–20 s and
       turns when dragged. Settings → Lobby, in the full page or the lobby's compact Settings, switches
       the look at once (Halloween 2026, Game World).
-      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
-      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      Customize opens the Backpack modal: the lobby around it keeps the stage's last frame, the
+      preview stays the Backpack's purple until the engine reports `avatarPreviewReady`, then shows
+      the avatar on its podium, with nothing of the lobby stage or the world in between and nothing
+      of the preview outside the modal; closing hands the live stage back. Jump In loads the world
+      (the hold is released) and a failed trip returns to the lobby.
+- [ ] **Minimap Camera style** (`bridge-scene/src/domains/minimap.tsx`, map region): picking Camera in
+      Minimap settings, expanding the minimap in that style and entering a World each show the map
+      square black until the engine reports `minimapReady`, then the top-down view, with nothing of
+      the player's own view in the square in between. Switching back to Satellite or Parcel atlas
+      shows the tiles at once.
 - [ ] **Lobby page** (`features/lobby`): the widgets sit on the four corner grids as the stored layout
       says; edit mode (the pencil) frames them, drags them with the others making room, lists the
       ones off the grids in Customize Lobby, and Save keeps the layout across a reload while Cancel,
@@ -225,6 +259,17 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
+- [ ] **Shop NAMEs framing** (`avatarPreview.tsx`, `previewView.ts`): on the Shop's NAMEs pages the
+      avatar is drawn smaller and lower than on the catalogue pages, with room over its head for the
+      nametag, as the design's NAMEs frames draw it. Switching between a catalogue page and NAMEs eases
+      the camera from one framing to the other; resizing the window midway neither snaps nor restarts
+      it. Closing the Shop gives the Backpack its own framing back. Mock has no engine, so nothing moves.
+- [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
+      menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
+      Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages
+      plays no black frame, nor does a first open of Create from another page when its code loads
+      within 0.2 s; a menu closed and reopened within 0.2 s appears with no entrance. With reduced motion
+      on, the page fades in without it.
 
 ---
 
@@ -253,7 +298,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
       widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
       paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
-      `DateField` and `showConfirm`/`showDialog` from `@hud/design`.
+      `ColorPicker` and `showConfirm`/`showDialog` from `@hud/design`, and `DateField` from
+      `@dcl/one-ui`.
 
 ---
 
@@ -319,6 +365,45 @@ shows them and stops or restarts them (`bridge-scene/src/domains/portables.ts`).
 - **Toasts**: entering running, paused, stopped or failed is toasted, from the list the player
   arrived with (no burst at login).
 - Mock: `?mock=1&mockportables=1`. Tests: `library/ui/apps/hud/test/portables.test.tsx`.
+
+## Reactions
+
+A situational reaction is an emoji the player picks from the chat's Reactions button. The engine
+shows it over their avatar and tells the players around them (`crates/avatar/src/reaction`); the
+HUD offers the pick and shows each reaction the engine plays on screen
+(`bridge-scene/src/domains/reactions.ts`). Expectations:
+
+- **Button**: the heart in the chat's strip, named `Reactions`, pressed while its bar is open. It
+  shows while the chat is open and not showing the nearby list, in every conversation, a blocked
+  DM included. It types nothing into the message.
+- **Bar**: the bar a message's React button opens (the fixed emoji, up to three recent ones, `+`
+  for the full picker), named `Reactions`, over the button. A pick sends `sendReaction` and the
+  bar stays for the next. The bar's picks leave the recent emoji alone; the full picker's become
+  recent, and the picker stays open too. A press outside, the button again, another conversation,
+  the nearby list, or the chat closing or giving way to a panel closes it; Cancel closes the
+  picker, then the bar. It and a message's bar are never both open.
+- **Chat Reactions switch**: in the bar, bound to the engine's `Chat Reactions` setting (off until
+  the player turns it on; the Settings page lists it too). Absent on an engine with no such
+  setting.
+- **On screen**: while the setting is on the engine passes each reaction it plays (`reaction`),
+  the player's own included, and each rises from beside the button for about two seconds
+  (`features/chat/ReactionLane.tsx`, its numbers in `reactionMotion.ts`). It starts at the same
+  place while the chat is collapsed and the button is not drawn, at every HUD scale. At most 30
+  fly at once; more are not shown. The lane is part of the chat: while the chat gives way to a
+  panel (Friends) or the HUD is hidden (a full-screen page, the camera, the scene editor, Hide
+  UI) none is shown, the ones in flight go with it and none is shown later. A panel opened over
+  the chat (Notifications) is over its reactions too. An emoji the wire has no index for (a
+  flag) plays nowhere, so the HUD shows none of its own accord. With reduced motion a reaction
+  fades in place.
+- Mock: `?mock=1&mockreactions=1` (the setting on and the nearby players reacting). Tests:
+  `library/ui/apps/hud/test/hosted/chatReactions.test.tsx`, `chatReactions.clicks.test.tsx` and
+  `chatReactionLane.test.tsx`, `library/ui/apps/hud/features/chat/reactionMotion.test.ts`,
+  `src/test/bridgeReactions.test.ts`.
+- No visual baseline yet: the bar (its row of emoji and the `Chat Reactions` row under it) needs
+  a capture of the open chat with the bar up. The lane has none to take: it is motion only, the
+  harness stops animations at capture, and a flight that is over draws nothing. Where a reaction
+  starts and its scale are tier-1 (`chatReactionLane.test.tsx`); its look is checked by eye in
+  the mock above.
 
 ## Analytics
 
@@ -509,7 +594,18 @@ Expectations:
   favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
   events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
   that echoes `request` (a reminder's names its event), and every request is answered, a failed one
-  with `failed`. The points-of-interest list and the connected players are plain fetches.
+  with `failed`. The points-of-interest list, the connected players and the parcel grid's age
+  (`/v2/tiles/info` on `mapApi`) are plain fetches; `?mock=1` answers all three from fixed data
+  (`fixMapPublicReads`) and reads none of them.
+- **Age label:** the Parcels view shows "Updated N min ago" beside the zoom controls when the map
+  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `serverNow`,
+  else its `Date`, which a cross-origin read may not expose); only the map API's own 503 envelope
+  clears it, while any other failed read keeps the last answer;
+  nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
+  shown and every minute (`features/map/useMapGridAge.ts`; the Shop's LAND map reads the same
+  explorer-core `gridAge` through TanStack Query), and drawn in HUD styles matching the Shop LAND
+  map's label, since the HUD keeps its own styles until its move to the shared library (its build
+  admits only the foundations).
 - **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
@@ -527,7 +623,8 @@ Expectations:
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
   pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
   not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
-- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+- Tests: `library/explorer-core/test/{navmap,mapCore,gridAge}.test.ts`, `library/ui/apps/hud/test/mapGridAge.test.tsx`,
+  `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 

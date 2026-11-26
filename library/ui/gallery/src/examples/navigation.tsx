@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button,
   GeneralAudio,
@@ -18,11 +18,81 @@ import {
   TitleBar,
   decentralandPublicNavSections,
   type TitleBarProps,
-  type TitleBarSection
+  type TitleBarSection,
+  Pager,
+  BrowseControl,
+  BrowseLoading,
+  BrowsePanel,
+  BrowseToolbar,
+  MenuDivider,
+  MenuList,
+  MenuPanel,
+  MenuRow,
+  AnchoredMenu,
+  ContextMenu,
+  KebabMenu,
+  Submenu,
+  OptionMenu
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
-import { covers, face, people } from './data'
+import { covers, people, placeholderFace } from './data'
 import layout from './layout.module.css'
+
+function AnchoredMenuExample() {
+  const [opener, setOpener] = useState<HTMLSpanElement | null>(null)
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
+  return (
+    <div style={{ minHeight: 160 }}>
+      <span ref={setOpener} style={{ display: 'inline-block' }}>
+        <Button
+          onClick={(event: MouseEvent<HTMLElement>) =>
+            setAnchor({ x: event.clientX, y: event.clientY })
+          }
+        >
+          Photo options
+        </Button>
+      </span>
+      <AnchoredMenu
+        open={anchor != null}
+        anchor={anchor ?? { x: 0, y: 0 }}
+        aria-label="Photo options"
+        ignore={opener}
+        onClose={() => setAnchor(null)}
+        items={[{ label: 'Share' }, { label: 'Download' }, { label: 'Delete', danger: true }]}
+      />
+    </div>
+  )
+}
+
+function OptionMenuExample() {
+  const [sort, setSort] = useState('newest')
+  const [view, setView] = useState('all')
+  return (
+    <OptionMenu
+      onClose={() => undefined}
+      sections={[
+        {
+          label: 'Sort by',
+          options: [
+            { id: 'newest', label: 'Newest' },
+            { id: 'oldest', label: 'Oldest' }
+          ],
+          value: sort,
+          onChange: setSort
+        },
+        {
+          label: 'View',
+          options: [
+            { id: 'all', label: 'All Items' },
+            { id: 'collectibles', label: 'Collectibles only' }
+          ],
+          value: view,
+          onChange: setView
+        }
+      ]}
+    />
+  )
+}
 
 const publicSections = decentralandPublicNavSections('explore', '/explore', {
   marketplaceEligible: true
@@ -120,6 +190,90 @@ function PanelTabsDemo({ variant }: { variant: 'underline' | 'compact' | 'pill' 
         />
       ))}
     </TabsBar>
+  )
+}
+
+// Selecting runs the tabs' selection motion; a demo link selects in place instead of navigating the canvas.
+function stay(event: MouseEvent) {
+  if ((event.target as Element).closest('a')) event.preventDefault()
+}
+
+function TabsVariantDemo({ variant }: { variant: 'underline' | 'compact' | 'pill' }) {
+  const [selected, setSelected] = useState('wearables')
+  return (
+    <TabsBar label={`${variant} tabs`} variant={variant}>
+      {['wearables', 'emotes'].map((id) => (
+        <Tabs
+          key={id}
+          label={id[0]!.toUpperCase() + id.slice(1)}
+          variant={variant}
+          selected={selected === id}
+          onClick={() => setSelected(id)}
+        />
+      ))}
+    </TabsBar>
+  )
+}
+
+function TabsDeviceDemo({ device }: { device: 'mobile' | 'desktop' }) {
+  const [selected, setSelected] = useState('button')
+  return (
+    <TabsBar label={`${device} tabs`} onClick={stay} scrollable>
+      <Tabs
+        label={`${device} button`}
+        device={device}
+        selected={selected === 'button'}
+        onClick={() => setSelected('button')}
+      />
+      <Tabs
+        label={`${device} link`}
+        device={device}
+        href="#tab"
+        selected={selected === 'link'}
+        onClick={() => setSelected('link')}
+      />
+    </TabsBar>
+  )
+}
+
+function TabsRouteDemo() {
+  const [current, setCurrent] = useState('overview')
+  return (
+    <nav aria-label="Route tabs" className={layout.row} onClick={stay}>
+      {[
+        { id: 'overview', label: 'Overview' },
+        { id: 'collections', label: 'Collections' }
+      ].map(({ id, label }) => (
+        <Tabs
+          key={id}
+          mode="navigation"
+          label={label}
+          href={`#${id}`}
+          selected={current === id}
+          onClick={() => setCurrent(id)}
+        />
+      ))}
+    </nav>
+  )
+}
+
+function RouteTabsBarDemo({
+  initial,
+  shop
+}: {
+  initial: string
+  shop?: { search: ReactNode; actions: ReactNode }
+}) {
+  const [activeId, setActiveId] = useState(initial)
+  const common = { items: routeItems, activeId, onSelect: setActiveId }
+  return (
+    <div onClick={stay}>
+      {shop ? (
+        <TabsBar mode="navigation" page="shop" {...common} {...shop} />
+      ) : (
+        <TabsBar mode="navigation" {...common} />
+      )}
+    </div>
   )
 }
 
@@ -257,8 +411,8 @@ export const navigationEntries: GalleryEntry[] = [
         title: 'Face picture, fallback and name colour',
         render: () => (
           <div className={layout.row}>
-            <NavProfileButton imageUrl={people.ada.picture} fallbackSrc={face('?', 0)} />
-            <NavProfileButton fallbackSrc={face('?', 0)} color={people.grace.color} />
+            <NavProfileButton imageUrl={people.ada.picture} fallbackSrc={placeholderFace} />
+            <NavProfileButton fallbackSrc={placeholderFace} color={people.grace.color} />
           </div>
         )
       }
@@ -273,13 +427,11 @@ export const navigationEntries: GalleryEntry[] = [
       {
         id: 'variants',
         title: 'Underline, compact and pill',
+        note: 'Click or use the arrow keys to select a tab.',
         render: () => (
           <div className={layout.stack}>
             {(['underline', 'compact', 'pill'] as const).map((variant) => (
-              <TabsBar key={variant} label={`${variant} tabs`} variant={variant}>
-                <Tabs label="Selected" variant={variant} selected />
-                <Tabs label="Other" variant={variant} />
-              </TabsBar>
+              <TabsVariantDemo key={variant} variant={variant} />
             ))}
           </div>
         )
@@ -288,12 +440,9 @@ export const navigationEntries: GalleryEntry[] = [
         id: 'devices',
         title: 'Fixed device sizes',
         render: () => (
-          <div className={layout.stack}>
+          <div className={layout.rows}>
             {(['mobile', 'desktop'] as const).map((device) => (
-              <TabsBar key={device} label={`${device} tabs`}>
-                <Tabs label={`${device} selected`} device={device} selected />
-                <Tabs label={`${device} link`} device={device} href="#tab" />
-              </TabsBar>
+              <TabsDeviceDemo key={device} device={device} />
             ))}
           </div>
         )
@@ -301,12 +450,8 @@ export const navigationEntries: GalleryEntry[] = [
       {
         id: 'navigation',
         title: 'Navigation mode',
-        render: () => (
-          <nav aria-label="Route tabs" className={layout.row}>
-            <Tabs mode="navigation" label="Overview" href="#overview" selected />
-            <Tabs mode="navigation" label="Collections" href="#collections" />
-          </nav>
-        )
+        note: 'Clicking a route moves the current page here without navigating.',
+        render: () => <TabsRouteDemo />
       }
     ]
   },
@@ -316,6 +461,34 @@ export const navigationEntries: GalleryEntry[] = [
     summary: 'A tab list (panel mode) or route tabs with caller controls (navigation mode).',
     components: ['TabsBar'],
     examples: [
+      {
+        id: 'hud',
+        title: 'Explorer HUD strips: pill, underline, section, shop, subtab and a filled underline',
+        render: () => (
+          <div className={layout.stack} style={{ minWidth: 0, maxWidth: '100%' }}>
+            {(['pill', 'underline', 'section', 'shop', 'subtab'] as const).map((variant) => (
+              <TabsBar
+                key={variant}
+                appearance="hud"
+                variant={variant}
+                label={`${variant} strip`}
+                scrollable
+                style={{ maxWidth: '100%' }}
+              >
+                <Tabs appearance="hud" label="Wearables" selected />
+                <Tabs appearance="hud" label="Emotes" />
+                <Tabs appearance="hud" label="Unavailable" disabled />
+              </TabsBar>
+            ))}
+            <div style={{ height: 44 }}>
+              <TabsBar appearance="hud" variant="underline" fill label="filled strip">
+                <Tabs appearance="hud" label="Friends" selected />
+                <Tabs appearance="hud" label="Requests" />
+              </TabsBar>
+            </div>
+          </div>
+        )
+      },
       {
         id: 'underline',
         title: 'Panel, underline',
@@ -327,23 +500,22 @@ export const navigationEntries: GalleryEntry[] = [
         id: 'navigation-create',
         title: 'Navigation, create page',
         note: 'The last route is hidden on narrow layouts.',
-        render: () => <TabsBar mode="navigation" items={routeItems} activeId="overview" />
+        render: () => <RouteTabsBarDemo initial="overview" />
       },
       {
         id: 'navigation-shop',
         title: 'Navigation, shop page with search and actions',
         render: () => (
-          <TabsBar
-            mode="navigation"
-            page="shop"
-            items={routeItems}
-            activeId="collections"
-            search={<Search />}
-            actions={
-              <Button size="sm" variant="iconOnly" aria-label="Cart">
-                <ShopCart size={20} aria-hidden="true" />
-              </Button>
-            }
+          <RouteTabsBarDemo
+            initial="collections"
+            shop={{
+              search: <Search />,
+              actions: (
+                <Button size="sm" variant="iconOnly" aria-label="Cart">
+                  <ShopCart size={20} aria-hidden="true" />
+                </Button>
+              )
+            }}
           />
         )
       }
@@ -359,5 +531,182 @@ export const navigationEntries: GalleryEntry[] = [
       title: controls.variant[0]!.toUpperCase() + controls.variant.slice(1),
       render: () => <TitleBarDemo controls={controls} />
     }))
+  },
+  {
+    name: 'BrowsePage',
+    group: 'Navigation',
+    summary: 'The frame of a browse page: a toolbar of tabs and controls over a results panel.',
+    components: ['BrowseToolbar', 'BrowseControl', 'BrowsePanel', 'BrowseLoading'],
+    examples: [
+      {
+        id: 'frame',
+        title: 'A toolbar over a loading panel and a panel with results',
+        render: () => (
+          <div className={layout.strip}>
+            <div style={{ width: 720 }}>
+              <BrowseToolbar tabs={<strong>Wearables</strong>}>
+                <BrowseControl size="search">
+                  <input aria-label="Search the shop" placeholder="Search" />
+                </BrowseControl>
+                <BrowseControl size="select">
+                  <select aria-label="Sort by">
+                    <option>Newest</option>
+                  </select>
+                </BrowseControl>
+              </BrowseToolbar>
+              <div className={layout.stack}>
+                <BrowsePanel label="Results, loading" busy>
+                  <BrowseLoading />
+                </BrowsePanel>
+                <BrowsePanel label="Results">Nothing on sale here.</BrowsePanel>
+              </div>
+            </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'ContextMenu',
+    group: 'Navigation',
+    summary: 'A stacked menu of rows, with the forms that open it from a kebab button or a point.',
+    components: ['ContextMenu', 'Submenu', 'KebabMenu', 'AnchoredMenu'],
+    examples: [
+      {
+        id: 'menu',
+        title: 'A header, items, a switch, exclusive options and a danger row',
+        render: () => (
+          <ContextMenu
+            aria-label="Player options"
+            items={[
+              { kind: 'header', name: 'Aria', tag: '#a3f1', address: '0x1234567890abcdef1234' },
+              { kind: 'separator' },
+              { label: 'View profile' },
+              { kind: 'toggle', label: 'Mute', checked: true },
+              { kind: 'title', label: 'Sort by' },
+              { kind: 'option', label: 'Newest', checked: true },
+              { kind: 'option', label: 'Oldest', checked: false },
+              { kind: 'separator' },
+              { label: 'Block', danger: true }
+            ]}
+          />
+        )
+      },
+      {
+        id: 'sheet',
+        title: 'The flat sheet, with taller rows',
+        render: () => (
+          <ContextMenu
+            variant="sheet"
+            aria-label="Conversation options"
+            items={[
+              { label: 'View profile' },
+              { kind: 'toggle', label: 'Notifications', checked: false },
+              { kind: 'separator' },
+              { label: 'Delete chat history', danger: true }
+            ]}
+          />
+        )
+      },
+      {
+        id: 'submenu',
+        title: 'A row that opens a list beside it, on hover or press',
+        render: () => (
+          <div style={{ width: 240, minHeight: 150 }}>
+            <Submenu label="Invite to Community">
+              <ContextMenu items={[{ label: 'Pixel Builders' }, { label: 'Neon Club' }]} scroll />
+            </Submenu>
+          </div>
+        )
+      },
+      {
+        id: 'kebab',
+        title: 'Opened from a kebab button, in both sizes',
+        render: () => (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, minHeight: 120 }}>
+            <KebabMenu
+              label="Conversation options"
+              items={(close) => [{ label: 'View Community', onClick: close }]}
+            />
+            <KebabMenu
+              size="sm"
+              label="Participant options"
+              items={(close) => [{ label: 'View profile', onClick: close }]}
+            />
+          </div>
+        )
+      },
+      {
+        id: 'anchored',
+        title: 'Opened from the point of a press: press the button',
+        render: () => <AnchoredMenuExample />
+      }
+    ]
+  },
+  {
+    name: 'MenuPanel',
+    group: 'Navigation',
+    summary: 'The panel a navigation button opens, with its rows.',
+    components: ['MenuPanel', 'MenuList', 'MenuRow', 'MenuDivider'],
+    examples: [
+      {
+        id: 'panel',
+        title: 'A titled panel with two groups of rows',
+        render: () => (
+          <MenuPanel label="Discover" title="DISCOVER">
+            <MenuList>
+              <MenuRow label="Events" hint="X" trailing={<strong>3</strong>} />
+              <MenuRow label="Places" hint="C" />
+            </MenuList>
+            <MenuDivider />
+            <MenuList>
+              <MenuRow label="Communities" />
+              <MenuRow label="Unavailable" disabled />
+            </MenuList>
+          </MenuPanel>
+        )
+      }
+    ]
+  },
+  {
+    name: 'OptionMenu',
+    group: 'Navigation',
+    summary:
+      'A light list of single-choice sections, the chosen option of each marked with a check.',
+    components: ['OptionMenu'],
+    examples: [
+      {
+        id: 'sections',
+        title: 'Two sections; choose an option of each',
+        render: () => <OptionMenuExample />
+      }
+    ]
+  },
+  {
+    name: 'Pager',
+    group: 'Navigation',
+    summary: 'Previous and next arrows around a window of page numbers.',
+    components: ['Pager'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'The two variants, on the third of nine pages',
+        render: () => <PagerExample />
+      }
+    ]
   }
 ]
+
+function PagerExample() {
+  const [page, setPage] = useState(2)
+  return (
+    <div className={layout.rows}>
+      <div className={layout.strip}>
+        <Pager page={page} count={9} onChange={setPage} />
+      </div>
+      <div className={layout.strip}>
+        <Pager variant="shop" page={page} count={9} onChange={setPage} />
+      </div>
+    </div>
+  )
+}

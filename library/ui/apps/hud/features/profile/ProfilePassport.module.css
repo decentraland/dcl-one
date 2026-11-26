@@ -1,9 +1,12 @@
-/* The dimmed, DPI-scaled scrim is drawn by the popup layer (openPassport → PopupHost `.dim`); the
-   panel is centered inside it on the 1920x1080 canvas, so every length here is a canvas pixel.
+/* Every length here is a pixel of the 1920x1080 canvas.
    Layout: the avatar (or the selected badge) down the whole left
    side, and on the right the name, the tab row and the scrolling sections. */
+/* the passport's backdrop: the passport scrim colour, unblurred */
+.scrim.scrim {
+  background: var(--passport-scrim);
+  backdrop-filter: none;
+}
 .panel {
-  /* The Photos tab's viewer covers the panel. */
   position: relative;
   width: min(1650px, 100%);
   height: min(926px, 100%);
@@ -221,6 +224,8 @@
   letter-spacing: 0;
   color: rgba(255, 255, 255, 0.62);
 }
+/* The shared strip's rules sit in a cascade layer, so the dimmed colour above would hold on hover. */
+.tabs.tabs [role='tab']:hover:not(:disabled),
 .tabs.tabs [role='tab'][aria-selected='true'] {
   color: #fff;
 }

@@ -53,6 +53,57 @@ describe('when a captured page composition owns route and control placement', ()
     })
   })
 
+  it('renders only the section links when the Shop host owns the controls', () => {
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={items} activeId="overview" />)
+    const nav = screen.getByRole('navigation')
+    expect(nav.querySelector('[data-region="controls"]')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('keeps a narrow-only route and a campaign label separate from the current link marker', () => {
+    const [overview, campaign] = items
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={[
+      { ...overview!, mobileOnly: true }, { ...campaign!, accent: 'campaign' }
+    ]} activeId="campaign" />)
+    expect(screen.getByRole('link', { name: 'Overview' }).closest('li')).toHaveAttribute('data-mobile-only')
+    expect(screen.getByRole('link', { name: 'Campaign' }).closest('li')).toHaveAttribute('data-accent', 'campaign')
+  })
+
+  it('keeps the current mobile-only route visible on desktop', () => {
+    const [overview, campaign] = items
+    render(<TabsBar mode="navigation" page="shop" layout="links" items={[
+      { ...overview!, mobileOnly: true }, campaign!
+    ]} activeId="overview" />)
+    expect(screen.getByRole('link', { current: 'page' }).closest('li')).not.toHaveAttribute('data-mobile-only')
+  })
+
+  describe('and the page is blog', () => {
+    beforeEach(() => {
+      render(
+        <TabsBar
+          mode="navigation"
+          page="blog"
+          label="Blog categories"
+          items={items}
+          activeId="overview"
+          search={<input type="search" aria-label="Search articles" />}
+        />
+      )
+    })
+
+    it('should show the caller search field', () => {
+      expect(screen.getByRole('searchbox', { name: 'Search articles' })).toBeInTheDocument()
+    })
+
+    it('should omit the actions region', () => {
+      expect(
+        screen
+          .getByRole('navigation', { name: 'Blog categories' })
+          .querySelector('[data-region="actions"]')
+      ).toBeNull()
+    })
+  })
+
   describe('and a route is hidden on mobile', () => {
     let rendered: RenderResult
 

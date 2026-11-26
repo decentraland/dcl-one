@@ -13,7 +13,7 @@
 // i.e. on a chunk boundary.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { DclLogo, Kebab, Minus, Plus, showToast } from '../../design'
+import { Kebab, Minus, Plus, showToast } from '../../design'
 import { DEFAULT_REALM } from '@hud-host'
 import { DoubleChevron, PinOutline } from './icons'
 import tipIcon from '../../assets/donate/tip.png'
@@ -21,7 +21,6 @@ import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { MARKER_ART, PANEL_ART } from '../map/mapArt'
-import { MaskIcon } from '../../design/MaskIcon'
 import { useMapLayerData } from '../map/useMapLayerData'
 import { mapLayers } from '@explorer-core/features/map/mapLayersStore'
 import { navigation } from '@explorer-core/features/map/navigation'
@@ -53,6 +52,7 @@ import type { EngineViewportRegion, MinimapStyle } from '@explorer-core/engine/p
 import { hudInsetRef } from '../../lib/hudInset'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Minimap.module.css'
+import { DclLogo, MaskIcon } from '@dcl/one-ui'
 
 /** Side of the square map, before --ui-scale: the panel's inner width (--minimap-map in the module). */
 const MAP_SIZE = 240
@@ -131,7 +131,7 @@ export const Minimap = memo(function Minimap({
     setOpen(loadOpen(inGenesis))
   }, [inGenesis])
 
-  const { pose, setConfig } = minimap
+  const { pose, setConfig, cameraReady } = minimap
 
   // Tell the scene what to render. Only the Camera style needs it; on the DOM styles this is
   // what makes the scene tear its TextureCamera down.
@@ -359,7 +359,8 @@ export const Minimap = memo(function Minimap({
     return null
   }, [effectiveStyle, chunks, parcelTile])
 
-  const cutout = open && effectiveStyle === 'imposters'
+  const cameraStyle = effectiveStyle === 'imposters'
+  const cutout = open && cameraStyle && cameraReady
 
   return (
     <div ref={hudInsetRef} className={cutout ? `${styles.root} ${styles.cutoutRoot}` : styles.root}>
@@ -438,10 +439,11 @@ export const Minimap = memo(function Minimap({
       {open && (
         <div className={styles.surface} ref={surfaceRef}>
           {/* In Camera style the map must be see-through: the engine paints the map behind
-              the page, and an opaque background here would hide it. */}
+              the page, and an opaque background here would hide it. Until the engine does, the
+              map is covered. */}
           <button
             type="button"
-            className={effectiveStyle === 'imposters' ? `${styles.map} ${styles.cutout}` : styles.map}
+            className={cameraStyle ? `${styles.map} ${cameraReady ? styles.cutout : styles.covered}` : styles.map}
             onClick={map.toggle}
             aria-label="Open map"
           >

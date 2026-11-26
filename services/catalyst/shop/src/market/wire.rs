@@ -52,6 +52,16 @@ impl<'a> Params<'a> {
         }
     }
 
+    /// [`Self::get_number`] as an integer: the fraction dropped, out-of-range
+    /// values saturated, NaN as 0.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the page readers clamp the result"
+    )]
+    pub fn get_integer(&self, key: &str) -> Option<i64> {
+        self.get_number(key, None).map(|n| n as i64)
+    }
+
     /// Presence, not truth: upstream reads its boolean flags as "the key is there".
     pub fn get_boolean(&self, key: &str) -> bool {
         self.pairs.iter().any(|(k, _)| k == key)
@@ -294,6 +304,32 @@ pub fn get_number_parameter(
         .ok_or_else(|| InvalidParameterError::new(name, raw))
 }
 
+/// A nonnegative decimal integer representable exactly in a JavaScript number.
+pub(super) fn unsigned_decimal(p: &Params<'_>, key: &str) -> Result<Option<i64>, ()> {
+    p.get_string(key, None)
+        .map(|text| {
+            if !text.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(());
+            }
+            text.parse::<i64>()
+                .ok()
+                .filter(|n| *n <= 9_007_199_254_740_991)
+                .ok_or(())
+        })
+        .transpose()
+}
+
+pub(super) fn strict_page(p: &Params<'_>) -> Result<(i64, i64), ApiError> {
+    match (unsigned_decimal(p, "first"), unsigned_decimal(p, "skip")) {
+        (Ok(first), Ok(skip)) if first != Some(0) => {
+            Ok((first.unwrap_or(20).min(100), skip.unwrap_or(0)))
+        }
+        _ => Err(ApiError::bad_request(
+            "first and skip must be whole numbers, first at least 1",
+        )),
+    }
+}
+
 /// `Number.parseInt` without a radix: leading whitespace (U+FEFF included),
 /// an optional sign, an optional `0x` prefix, then the leading digits. A
 /// value too wide saturates, as JS yields a lossy float there. Unlike
@@ -445,6 +481,15 @@ impl From<super::graph::Network> for Network {
     }
 }
 
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+pub(super) fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
+}
+
 pub const NETWORK_VALUES: &[&str] = &["ETHEREUM", "MATIC"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -566,7 +611,7 @@ pub fn bn_add(a: &str, b: &str) -> String {
     if carry > 0 {
         out.push(b'0' + carry as u8);
     }
-    while out.len() > 1 && *out.last().unwrap() == b'0' {
+    while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();
     }
     out.into_iter().rev().map(|b| b as char).collect()

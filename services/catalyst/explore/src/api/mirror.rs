@@ -162,7 +162,10 @@ pub enum Reach {
 /// validators of the copy held (`If-None-Match`, `If-Modified-Since`) when
 /// there is one. Any status other than 2xx, 304 and the missing ones is an
 /// error naming the host and path only.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the validators, cap, timeout and reach are per call"
+)]
 pub async fn fetch_conditional(
     client: &crate::http::Outbound,
     settings: &Settings,

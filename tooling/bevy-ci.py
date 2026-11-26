@@ -40,6 +40,7 @@ INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-e
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
           'tooling/bevy-ci.py', 'tooling/bevy-dead-code-check.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'library/hashing', 'tooling/check-local-hashing.mjs', 'apps/creator-hub/packages/zip-extract',
+          'rendering/avatar-preview',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -74,6 +75,7 @@ IMAGES_INPUTS = (
     'services/catalyst/**',
     'schemas/**',
     'library/**',
+    ':(exclude)library/js-sdk-toolchain',
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',
@@ -113,6 +115,20 @@ HEADLESS_JOBS = {
     'Headless packages / build (macos-amd64, darwin-x64, macos-15, x86_64-apple-darwin)',
     'Headless packages / build (windows-amd64, win32-x64, windows-2025, x86_64-pc-windows-msvc)',
 }
+# What the browser test of the relay wake (job "Relay wake in the browser") compiles and runs with:
+# its crate and every path dependency it reaches, in the workspace or vendored (the selection tests
+# derive this list from Cargo.lock), the protocol that dcl_component's build script compiles, the
+# Bevy fork's patch series (its web_worker crate; Cargo.toml and Cargo.lock name the fork's
+# revision), the workspace's manifests and Cargo configuration, the tools, the cache tools that
+# restore the build and its file times before Cargo runs, and the workflow. It is not a lane: on
+# main it follows the web lane's baseline.
+RELAY_WAKE_CRATE_DIRS = (*(SOURCE + 'crates/' + crate + '/' for crate in (
+    'dcl_wasm', 'common', 'console', 'dcl_component', 'dcl_js', 'dcl_types', 'platform', 'system_api_types',
+    'system_bridge')), 'rendering/bevy-explorer/vendor/rpc-rust/rpc/')
+RELAY_WAKE_INPUTS = (*RELAY_WAKE_CRATE_DIRS, 'library/protocol/proto/',
+                     PATCHES + '/bevy/', SOURCE + 'Cargo.toml', SOURCE + 'Cargo.lock', SOURCE + '.cargo/',
+                     '.cargo/', 'apps/bevy-explorer/install-web-tools.py', 'apps/bevy-explorer/install-tools.sh',
+                     'tooling/bevy-target-cache.py', 'tooling/bevy-mtimes.py', WORKFLOW, *TOOLS_INPUTS)
 # Unknown app inputs remain conservative. Only named integration boundaries narrow work.
 APP_INPUTS = {
     'README.md': (),
@@ -179,7 +195,7 @@ def hold_for_draft(result, pull_request):
         return result
     print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
           f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
-    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False),
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False), 'held': True,
             'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 
@@ -258,14 +274,16 @@ def ensure_commit(sha):
 
 
 def full_selection(reason):
-    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
+    return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), True), 'reason': reason}
 
 
 def platform_input(path):
     """A source path whose change can behave differently on Windows or macOS."""
     path = path.removeprefix(SOURCE)
     return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
-            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/',
+                                # The native platform layer: OS paths, profiles, files and deep links.
+                                'crates/platform/src/native.rs', 'crates/platform/src/native/'))
             or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
 
 
@@ -301,7 +319,7 @@ def select(base, head):
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
     paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
-    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
+    selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes', 'relay-wake'), False)
     if bootstrap:
         selected['web'] = True
     for path in paths:
@@ -347,6 +365,10 @@ def select(base, head):
         elif path in shared_paths and not path.startswith(SOURCE):
             # Shared library inputs are web-only; owned source keeps its existing lane rules.
             affected = ('web',)
+        elif path.startswith('rendering/avatar-preview/'):
+            # The avatar preview is built, packaged and published with the web app
+            # (play-artifact.py); no native lane compiles it.
+            affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
             # These are runtime web assets, not inputs to Cargo's native tests
@@ -373,6 +395,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix', 'scenes')
         for lane in affected:
             selected[lane] = True
+        if path.startswith(RELAY_WAKE_INPUTS):
+            selected['relay-wake'] = True
     names = [name for name, enabled in selected.items() if enabled]
     return {**selected, 'base': base,
             'reason': 'Selected: ' + ', '.join(names) if names else 'Inputs unchanged; integrity checks only'}
@@ -392,6 +416,7 @@ def plan(event, base, head, repo):
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
             result['native-matrix'] = result['test']
+            result['relay-wake'] = selections[baselines.get('web')]['relay-wake']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):

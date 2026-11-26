@@ -46,6 +46,85 @@
   color: var(--dcl-text-secondary);
 }
 
+/* A group's heading is the button that collapses and expands its list: it keeps the heading's type. */
+.groupToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  inline-size: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--dcl-space-4) var(--dcl-space-8) var(--dcl-space-4) 0;
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.groupToggle:hover:not([aria-disabled='true']),
+.collapseAll:hover:not([aria-disabled='true']) {
+  background: var(--dcl-bg-hover);
+}
+
+.groupToggle:focus-visible,
+.collapseAll:focus-visible,
+.navLink:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.groupToggle[aria-disabled='true'],
+.collapseAll[aria-disabled='true'] {
+  cursor: default;
+}
+
+.chevron {
+  flex-shrink: 0;
+  inline-size: 6px;
+  block-size: 6px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease-out;
+}
+
+.groupToggle[aria-expanded='true'] .chevron {
+  transform: rotate(45deg);
+}
+
+.groupToggle[aria-disabled='true'] .chevron {
+  visibility: hidden;
+}
+
+.collapseAll {
+  display: block;
+  margin: var(--dcl-space-8) 0 0 auto;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: var(--dcl-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collapseAll[aria-disabled='true'] {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
 .navList {
   list-style: none;
   margin: 0;
@@ -130,8 +209,14 @@
   color: var(--dcl-text-link);
 }
 
+/* The export names wrap between names on a narrow window instead of widening the page. */
+.exports {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--dcl-space-8);
+}
+
 .exports code {
-  margin-inline-end: var(--dcl-space-8);
   color: var(--dcl-text-primary);
 }
 
@@ -152,6 +237,7 @@
 
 .control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--dcl-space-8);
   font-size: 14px;
@@ -175,9 +261,21 @@
   background: var(--dcl-bg-page);
 }
 
+.fit {
+  margin-inline: auto;
+}
+
 .canvas {
   max-inline-size: none;
   margin-inline: auto;
+  /* A canvas drawn scaled down to fit keeps its layout size; the frame around it takes the scaled size. */
+  transform-origin: 0 0;
+}
+
+.scaled {
+  margin: 0 0 var(--dcl-space-8);
+  color: var(--dcl-text-secondary);
+  font-size: 13px;
 }
 
 /* A HUD canvas is a window: the HUD scales to its width and height, fixes dialogs to it and scrolls inside. Narrow

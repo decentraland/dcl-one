@@ -12,6 +12,7 @@ pub mod inputs;
 pub mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod movement_clip;
 pub mod partition;
 pub mod perf;
 pub mod platform_ban;
@@ -20,7 +21,9 @@ pub mod rpc;
 pub mod sets;
 pub mod sky_preset;
 pub mod structs;
+pub mod sync;
 pub mod terrain;
+pub mod token_bucket;
 pub mod util;
 
 /// Panics on debug builds but only logs an error on release builds

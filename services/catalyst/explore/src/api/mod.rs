@@ -1,10 +1,11 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
 //! ([`realm_provider`]), the asset-bundle Registry gateway
-//! ([`registry`]), and four mirrors with a local overlay and a
-//! persisted pass marker: dcl-lists ([`lists`]), the config denylist
-//! ([`denylist`]), the feature flags ([`feature_flags`]) and the
-//! api.decentraland.org tile grid behind `map.png` ([`map`]), plus the
+//! ([`registry`]), three mirrors with a local overlay and a persisted
+//! pass marker: dcl-lists ([`lists`]), the config denylist ([`denylist`])
+//! and the feature flags ([`feature_flags`]), and the tile grid behind the
+//! api.decentraland.org map routes, built from this node's own LAND and
+//! marketplace indexes ([`map`]), plus the
 //! asset-bundle CDN as a bounded read-through cache of upstream's
 //! ([`ab_cdn`]), and the explorer statics the old gateway served beside
 //! them: the satellite pyramid over mirrored region renders
@@ -71,8 +72,6 @@ pub struct Sources {
     /// local abgen runtime, any other a public Registry; empty serves `200 []`
     /// to the boot reads.
     pub registry: String,
-    /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
-    pub map: String,
     /// asset-bundle CDN: `GET {ab_cdn}/v{n}/{cid}_{platform}`, `/LOD/...`, `/manifest/...`;
     /// empty reads none.
     pub ab_cdn: String,
@@ -83,7 +82,6 @@ impl Sources {
     pub const DEFAULT_DENYLIST: &str = "https://config.decentraland.org/denylist.json";
     pub const DEFAULT_FEATURE_FLAGS: &str = "https://feature-flags.decentraland.org/explorer.json";
     pub const DEFAULT_REGISTRY: &str = "https://asset-bundle-registry.decentraland.org";
-    pub const DEFAULT_MAP: &str = "https://api.decentraland.org";
     pub const DEFAULT_AB_CDN: &str = ab_cdn::DEFAULT_UPSTREAM;
 
     pub fn defaults() -> Self {
@@ -92,12 +90,11 @@ impl Sources {
             denylist: Self::DEFAULT_DENYLIST.into(),
             feature_flags: Self::DEFAULT_FEATURE_FLAGS.into(),
             registry: Self::DEFAULT_REGISTRY.into(),
-            map: Self::DEFAULT_MAP.into(),
             ab_cdn: Self::DEFAULT_AB_CDN.into(),
         }
     }
 
-    /// The six sources from [`Config`]; a blank one is none (the mirror
+    /// The five sources from [`Config`]; a blank one is none (the mirror
     /// posture sets Decentraland's): its mirror does not run and its
     /// on-demand reader reads nothing.
     pub fn from_config(config: &Config) -> Self {
@@ -109,7 +106,6 @@ impl Sources {
                 String::new(),
             ),
             registry: value_or(&config.explore.explorer_registry_source_url, String::new()),
-            map: value_or(&config.explore.explorer_map_source_url, String::new()),
             ab_cdn: value_or(
                 config.ab_cdn.abgen_upstream_ab_cdn.as_deref().unwrap_or(""),
                 String::new(),
@@ -117,13 +113,12 @@ impl Sources {
         }
     }
 
-    pub fn all(&self) -> [(&'static str, &str); 6] {
+    pub fn all(&self) -> [(&'static str, &str); 5] {
         [
             ("EXPLORER_LISTS_SOURCE_URL", &self.lists),
             ("EXPLORER_DENYLIST_SOURCE_URL", &self.denylist),
             ("EXPLORER_FEATURE_FLAGS_SOURCE_URL", &self.feature_flags),
             ("EXPLORER_REGISTRY_SOURCE_URL", &self.registry),
-            ("EXPLORER_MAP_SOURCE_URL", &self.map),
             ("ABGEN_UPSTREAM_AB_CDN", &self.ab_cdn),
         ]
     }
@@ -169,8 +164,14 @@ pub struct Settings {
     pub bff_url: String,
     /// The one app whose flags document is mirrored (`explorer`).
     pub feature_flags_app: String,
-    /// Floor between two downloads of the 38 MB tile grid (`EXPLORER_MAP_MIN_REFRESH_SECS`, 3600).
-    pub map_min_refresh: Duration,
+    /// `EVENTS_FEATURE_FLAGS_URL`, no trailing slash: where `events.json` is
+    /// read for the Foundation names; empty reads none.
+    pub events_flags_url: String,
+    /// `EVENTS_FEATURE_FLAGS_USER_ID`: that request's `X-Address-Hash`.
+    pub events_flags_user_id: Option<String>,
+    /// The least age of a stored tile grid revision before a changed one
+    /// replaces it ([`map::MIN_PUBLISH_INTERVAL`]; none in tests).
+    pub map_min_publish_interval: Duration,
     pub version: String,
     pub commit_hash: String,
     /// Tests only: lets a loopback mock stand in for an upstream. Never set
@@ -226,6 +227,7 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    pub(crate) magic_deletion: Option<auth_api::MagicDeletion>,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
@@ -264,9 +266,15 @@ impl Settings {
             ),
             bff_url: value_or(&config.explore.bff_url, "/bff".into()),
             feature_flags_app: "explorer".into(),
-            map_min_refresh: Duration::from_secs(
-                config.explore.explorer_map_min_refresh_secs.max(1),
-            ),
+            events_flags_url: value_or(&config.explore.events_feature_flags_url, String::new()),
+            events_flags_user_id: config
+                .explore
+                .events_feature_flags_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
+            map_min_publish_interval: map::MIN_PUBLISH_INTERVAL,
             version: env!("CARGO_PKG_VERSION").to_string(),
             commit_hash: config.commit_hash().unwrap_or_default(),
             allow_private_sources: false,
@@ -344,6 +352,7 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            magic_deletion: auth_api::MagicDeletion::from_config(config),
             trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
@@ -358,7 +367,9 @@ impl Settings {
             comms_fixed_adapter: "offline:offline".into(),
             bff_url: "/bff".into(),
             feature_flags_app: "explorer".into(),
-            map_min_refresh: Duration::from_secs(3600),
+            events_flags_url: String::new(),
+            events_flags_user_id: None,
+            map_min_publish_interval: Duration::ZERO,
             version: "test".into(),
             commit_hash: String::new(),
             allow_private_sources: true,
@@ -386,6 +397,7 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            magic_deletion: None,
             trusted_proxy_cidrs: Vec::new(),
         }
     }
@@ -447,6 +459,11 @@ impl Settings {
                 false,
             ),
             (
+                "EVENTS_FEATURE_FLAGS_URL",
+                Some(self.events_flags_url.as_str()).filter(|u| !u.is_empty()),
+                false,
+            ),
+            (
                 "OPENSEA_FALLBACK_URL",
                 self.opensea.fallback.as_deref(),
                 false,
@@ -494,8 +511,10 @@ impl Settings {
 }
 
 fn network_id(eth_network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
+        return pair.chain_ids().0 as u64;
+    }
     match eth_network {
-        "sepolia" => 11155111,
         "goerli" => 5,
         _ => 1,
     }
@@ -531,9 +550,14 @@ pub struct State {
     /// The auth relay's budget of contract-wallet (`isValidSignature`) calls,
     /// per network and per replica.
     pub contract_checks: auth_api::ContractChecks,
+    pub(crate) auth_sockets: auth_api::SocketBindings,
     /// The LAND index, attached after construction (`attach_land_authz`):
-    /// the Estate metadata of estates the grid no longer holds.
+    /// the LAND and estates the tile grid is built from, and the Estate
+    /// metadata of estates the grid no longer holds.
     pub land_authz: std::sync::OnceLock<Arc<crate::land_authz::LandAuthzState>>,
+    /// Shop's LAND and Estate listings, names and rentals, attached after
+    /// construction (`attach_land_market`): the rest of the tile grid.
+    pub land_market: std::sync::OnceLock<Arc<dyn map::LandMarket>>,
 }
 
 pub type Shared = Arc<State>;
@@ -579,7 +603,9 @@ impl State {
             registry_denylist: Default::default(),
             eip1654: std::sync::OnceLock::new(),
             contract_checks: Default::default(),
+            auth_sockets: Default::default(),
             land_authz: std::sync::OnceLock::new(),
+            land_market: std::sync::OnceLock::new(),
         });
         state
             .denylist
@@ -593,7 +619,7 @@ impl State {
             .map
             .load(&state.pool)
             .await
-            .context("loading the mirrored tile grid")?;
+            .context("loading the stored tile grid")?;
         state
             .satellite
             .load(&state.pool)
@@ -607,12 +633,17 @@ impl State {
         Ok(state)
     }
 
-    /// The four mirror loops, each a periodic job: a failed pass backs off
+    /// The mirror loops, each a periodic job: a failed pass backs off
     /// (doubling to an hour) and the next one starts over from the persisted
-    /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; local
-    /// maintenance and denylist snapshot reload run on every process.
+    /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; the tile
+    /// grid is built from this node's own database whatever that switch says
+    /// (`explorer-map-grid`, leased: a build when its inputs change, watched
+    /// every 5 s, a failed pass backing off to five minutes); local
+    /// maintenance, the denylist snapshot reload and the tile grid reload
+    /// (`explorer-map-grid-reload`, every 10 s) run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
+        self.auth_sockets.spawn(self, jobs);
         denylist::spawn_reload(
             self,
             jobs,
@@ -632,6 +663,22 @@ impl State {
                 }
             },
         );
+        let s = self.clone();
+        jobs.spawn_leased(map::JOB, move |ctx| {
+            let s = s.clone();
+            async move { map::watch(&s, &ctx).await }
+        });
+        let s = self.clone();
+        jobs.spawn_periodic(
+            map::RELOAD_JOB,
+            PeriodicCfg::every(map::FOLLOW_INTERVAL)
+                .with_jitter(Duration::from_secs(10))
+                .after_first_interval(),
+            move |_ctx| {
+                let s = s.clone();
+                async move { map::follow(&s).await }
+            },
+        );
         if self.settings.ab_cdn_enabled {
             let store = self.ab_cdn.store.clone();
             jobs.spawn_periodic(
@@ -648,11 +695,29 @@ impl State {
                 },
             );
         }
+        // The Foundation names follow the flags service whatever the mirror switch says.
+        if !self.settings.events_flags_url.is_empty() {
+            let s = self.clone();
+            jobs.spawn_periodic_leased(
+                feature_flags::EVENTS_JOB,
+                PeriodicCfg::every(crate::events::foundation::REFRESH_INTERVAL)
+                    .with_jitter(Duration::from_secs(30)),
+                move |_ctx| {
+                    let s = s.clone();
+                    async move { feature_flags::refresh_events(&s).await }
+                },
+            );
+        } else if self.settings.mirrors_enabled && !self.settings.sources.feature_flags.is_empty() {
+            tracing::warn!(
+                "EXPLORER_MIRRORS_ENABLED=true with EXPLORER_FEATURE_FLAGS_SOURCE_URL set but EVENTS_FEATURE_FLAGS_URL \
+                 empty: the explorer flags mirror no longer reads events.json, so the Foundation event creators \
+                 stay at the last stored list; set EVENTS_FEATURE_FLAGS_URL"
+            );
+        }
         if !self.settings.mirrors_enabled {
             tracing::info!(
                 "EXPLORER_MIRRORS_ENABLED=false: no explorer mirrors; dcl-lists, the denylist, the feature \
-                 flags, the tile grid, the satellite regions and the world manifest stay at their last \
-                 mirrored state"
+                 flags, the satellite regions and the world manifest stay at their last mirrored state"
             );
             return;
         }
@@ -703,17 +768,6 @@ impl State {
             jobs.spawn_periodic_leased("explorer-flags-mirror", cfg(300, 30), move |ctx| {
                 let s = s.clone();
                 async move { feature_flags::run_pass(&s, &ctx).await }
-            });
-        }
-        if named(
-            "EXPLORER_MAP_SOURCE_URL",
-            &sources.map,
-            "explorer-map-mirror",
-        ) {
-            let s = self.clone();
-            jobs.spawn_periodic_leased("explorer-map-mirror", cfg(300, 30), move |ctx| {
-                let s = s.clone();
-                async move { map::run_pass(&s, &ctx).await }
             });
         }
         if self.settings.satellite_upstream.is_some() {
@@ -787,8 +841,7 @@ pub fn service_routers(state: Shared) -> Vec<(&'static str, Router)> {
 /// the statics the main vhost served at the root: `/world-manifest.json`,
 /// `/satellite/{z}/{x}/{y}` (web.nix's `/satellite/` location) and the
 /// poster bucket's `/poster[-vertical]/{file}` (the vhost's own paths).
-/// Everything but the Registry answers permissive CORS; the Registry is
-/// nested after that layer so only its own CORS applies.
+/// The Registry and sign-in relay keep their own CORS policies.
 pub fn router(state: Shared) -> Router {
     let mut app = Router::new()
         .route("/mirrors", get(mirror::status))
@@ -796,23 +849,27 @@ pub fn router(state: Shared) -> Router {
         .route("/satellite/{z}/{x}/{y}", get(satellite::tile))
         .merge(posters::routes())
         .with_state(state.clone());
-    let (registry, services): (Vec<_>, Vec<_>) = service_routers(state)
+    let socket_state = state.clone();
+    let (own_cors, services): (Vec<_>, Vec<_>) = service_routers(state)
         .into_iter()
-        .partition(|(prefix, _)| *prefix == REGISTRY_PREFIX);
+        .partition(|(prefix, _)| matches!(*prefix, REGISTRY_PREFIX | "auth-api"));
     for (prefix, service) in services {
         app = app.nest(&format!("/{prefix}"), service);
     }
     let mut app = app.layer(CorsLayer::permissive());
-    for (prefix, service) in registry {
+    for (prefix, service) in own_cors {
         app = app.nest(&format!("/{prefix}"), service);
     }
-    app
+    app.merge(auth_api::socket_router(socket_state))
 }
 
 /// The unavailable envelope (`marketplace::unavailable`'s shape) for a
 /// static whose mirror has not landed a copy yet: 503 with `Retry-After`.
-pub(crate) fn unavailable(source: &str, configure: &str, message: &str) -> Response {
-    let body = json!({ "error": "Service Unavailable", "message": message, "source": source, "configure": configure });
+pub(crate) fn unavailable(source: &str, configure: Option<&str>, message: &str) -> Response {
+    let mut body = json!({ "error": "Service Unavailable", "message": message, "source": source });
+    if let Some(configure) = configure {
+        body["configure"] = json!(configure);
+    }
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -842,6 +899,11 @@ impl State {
     /// Attaches the LAND index; `false` if one was attached already.
     pub fn attach_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) -> bool {
         self.land_authz.set(land).is_ok()
+    }
+
+    /// Attaches Shop's LAND listings reader; `false` if one was attached already.
+    pub fn attach_land_market(&self, market: Arc<dyn map::LandMarket>) -> bool {
+        self.land_market.set(market).is_ok()
     }
 }
 

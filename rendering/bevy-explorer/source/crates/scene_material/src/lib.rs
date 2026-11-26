@@ -29,7 +29,9 @@ pub type SceneMaterial = ExtendedMaterial<SceneBound>;
 
 pub const SCENE_MATERIAL_SHOW_OUTSIDE_BOUNDS_MESH_TAG: u32 = 0x01000000;
 pub const SCENE_MATERIAL_NO_DITHERING_MESH_TAG: u32 = 0x02000000;
-pub const SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG: u32 = 0x04000000;
+// a scene mesh that holds a collider the player camera is kept in front of: it is not faded
+// between the camera and the player (bound_material_effect.wgsl's camera_dither)
+pub const SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG: u32 = 0x04000000;
 // cel-shade this mesh (avatars) instead of standard PBR — see toon.wgsl
 pub const SCENE_MATERIAL_TOON_MESH_TAG: u32 = 0x08000000;
 // the tone-on-tone avatar outline (bound_material.wgsl, mask_material.wgsl)
@@ -84,8 +86,8 @@ pub fn avatar_style_shader_defs() -> Vec<ShaderDefVal> {
             SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
         ),
         (
-            "CONE_ONLY_DITHER_MESH_TAG",
-            SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
+            "CAMERA_OBSTACLE_MESH_TAG",
+            SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG,
         ),
         ("TOON_MESH_TAG", SCENE_MATERIAL_TOON_MESH_TAG),
         ("OUTLINE_MESH_TAG", SCENE_MATERIAL_OUTLINE_MESH_TAG),
@@ -890,6 +892,7 @@ mod test {
             bake::ImposterBakeMaterialPlugin, ImposterBakeBundle, ImposterBakeCamera,
             ImposterBakePlugin,
         };
+        use common::sync::MutexExt;
         use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
 
         use crate::{BoundRegion, SceneBound, SceneBounds, SceneMaterial, EMPTY_SCENE_CELLS};
@@ -987,7 +990,7 @@ mod test {
         };
         camera.set_callback({
             let baked = baked.clone();
-            move |image| *baked.lock().unwrap() = Some(image)
+            move |image| *baked.lock_ignore_poison() = Some(image)
         });
         world.spawn(ImposterBakeBundle {
             camera,
@@ -1003,7 +1006,7 @@ mod test {
         let started = Instant::now();
         let image = loop {
             app.update();
-            if let Some(image) = baked.lock().unwrap().take() {
+            if let Some(image) = baked.lock_ignore_poison().take() {
                 break image;
             }
             assert!(

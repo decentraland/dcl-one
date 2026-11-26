@@ -27,8 +27,8 @@
 import { useRef, useState } from 'react'
 import { formatCreditsFull } from '@shop/checkout/lib/currency'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
-import { GeneralDecentralandColor, GeneralPolygonMana } from '@dcl/one-ui'
-import { ArmedButton, Button, ScrollThumb, Spinner } from '@hud/design'
+import { Button, GeneralDecentralandColor, GeneralPolygonMana, ScrollThumb, Spinner } from '@dcl/one-ui'
+import { ArmedButton } from '@hud/design'
 import balanceCredit from '../assets/modal/balance-credit-small.svg'
 import creditsCoin from '../assets/modal/credits-coin.svg'
 import illustrationCredits from '../assets/modal/illustration-credits.png'
@@ -117,9 +117,17 @@ export type ShopPurchaseStep =
   /**
    * Buy Item with its payment options. `initial`: the buyer's earlier pick (the step shown again after a failure),
    * picked again while it still pays. `split`: where offered, both options may be ticked together, and then pay it
-   * together.
+   * together. `notice`: a sentence over the options, saying why they changed (a split read anew).
    */
-  | { step: 'method'; items: ShopPurchaseItem[]; credits: ShopCreditsChoice; mana: ShopManaChoice; split?: ShopSplitChoice; initial?: ShopPaymentMethod }
+  | {
+      step: 'method'
+      items: ShopPurchaseItem[]
+      credits: ShopCreditsChoice
+      mana: ShopManaChoice
+      split?: ShopSplitChoice
+      initial?: ShopPaymentMethod
+      notice?: string
+    }
   /**
    * Authorize MANA. `venue`: what the allowance is for, named ("the Marketplace"); `network`: its chain, named;
    * `required`: the MANA this purchase needs, in wei. `waiting`: the wallet or the chain is confirming it; `failed`:
@@ -229,7 +237,7 @@ export function ShopPurchaseDialog({
   onCheckAgain
 }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
-    <Button variant="dark" size="dialog" onClick={onClose}>
+    <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
       Cancel
     </Button>
   )
@@ -244,7 +252,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" disabled>
+              <Button appearance="hud" size="dialog" disabled>
                 {buyLabel(count, name, view.simulation)}
               </Button>
             </>
@@ -292,7 +300,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" onClick={onBuyCredits}>
+              <Button appearance="hud" size="dialog" onClick={onBuyCredits}>
                 Buy credits
               </Button>
             </>
@@ -331,7 +339,7 @@ export function ShopPurchaseDialog({
           label={buyTitle(view.count ?? 1, view.subject === 'name')}
           busy
           actions={
-            <Button size="dialog" disabled>
+            <Button appearance="hud" size="dialog" disabled>
               Processing...
             </Button>
           }
@@ -352,15 +360,15 @@ export function ShopPurchaseDialog({
           label={title}
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 Continue shopping
               </Button>
               {view.simulation ? (
-                <Button size="dialog" onClick={onPreview}>
+                <Button appearance="hud" size="dialog" onClick={onPreview}>
                   Preview on avatar
                 </Button>
               ) : isName(view.items) ? null : (
-                <Button size="dialog" onClick={onBackpack}>
+                <Button appearance="hud" size="dialog" onClick={onBackpack}>
                   Go to backpack
                 </Button>
               )}
@@ -436,13 +444,13 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {view.close && (
-                <Button variant="dark" size="dialog" onClick={onClose}>
+                <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                   {view.close}
                 </Button>
               )}
               {/* The design's button in its loading state: the label kept out of sight, the spinner in its place. */}
               <span className={styles.waiting} role="status" aria-label="Waiting for your wallet">
-                <Spinner variant="shop" size={22.667} />
+                <Spinner variant="thick" size={22.667} />
               </span>
             </>
           }
@@ -460,7 +468,7 @@ export function ShopPurchaseDialog({
           label="Purchase in progress"
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 Continue shopping
               </Button>
               {view.retry ? (
@@ -469,7 +477,7 @@ export function ShopPurchaseDialog({
                 </ArmedButton>
               ) : (
                 view.check && (
-                  <Button size="dialog" disabled={view.check === 'checking'} onClick={onCheckAgain}>
+                  <Button appearance="hud" size="dialog" disabled={view.check === 'checking'} onClick={onCheckAgain}>
                     {view.check === 'checking' ? 'Checking...' : 'Check again'}
                   </Button>
                 )
@@ -492,16 +500,16 @@ export function ShopPurchaseDialog({
           label="Oops! Something went wrong"
           actions={
             <>
-              <Button variant="dark" size="dialog" onClick={onClose}>
+              <Button appearance="hud" variant="dark" size="dialog" onClick={onClose}>
                 {view.retry || view.switchTo != null ? 'Cancel' : 'Close'}
               </Button>
               {view.switchTo != null ? (
-                <Button size="dialog" onClick={onSwitchNetwork}>
+                <Button appearance="hud" size="dialog" onClick={onSwitchNetwork}>
                   Switch to {view.switchTo} and retry
                 </Button>
               ) : (
                 view.retry && (
-                  <Button size="dialog" onClick={onRetry}>
+                  <Button appearance="hud" size="dialog" onClick={onRetry}>
                     Try again
                   </Button>
                 )
@@ -530,7 +538,7 @@ export function ShopPurchaseDialog({
           actions={
             <>
               {cancel}
-              <Button size="dialog" onClick={onSignIn}>
+              <Button appearance="hud" size="dialog" onClick={onSignIn}>
                 Sign in
               </Button>
             </>
@@ -737,7 +745,7 @@ function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
 function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.Element {
   return (
     <div className={`${styles.working} ${size === 'small' ? styles.workingSmall : ''}`.trim()} role="status" aria-label={label}>
-      <Spinner variant="shop" size={30} />
+      <Spinner variant="thick" size={30} />
     </div>
   )
 }
@@ -794,6 +802,11 @@ function MethodStep({
         <Balance credits={credits.balance} mana={mana.balance} />
       </ShopModalHeader>
       <ItemList items={view.items} />
+      {view.notice && (
+        <p className={styles.message} role="status">
+          {view.notice}
+        </p>
+      )}
       <PaymentOptions credits={credits} mana={mana} split={split} ticked={ticked} onPick={(m) => setTicked((t) => tick(t, m, split != null))} />
       {count > 1 && <OrderSummary count={count} credits={method === 'mana' ? null : credits.price} mana={method === 'mana' ? mana.price : null} />}
     </ShopModal>

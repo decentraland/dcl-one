@@ -8,26 +8,17 @@
 use std::sync::LazyLock;
 
 use alloy_primitives::{Address, U256};
-use serde::Deserialize;
 
 use super::super::types::{L1_NETWORKS, L2_NETWORKS};
 
-const COLLECTIONS_V1_JSON: &str = include_str!("contracts/collections-v1.json");
-
-#[derive(Deserialize)]
-struct V1Collection {
-    id: String,
-    name: String,
-}
-
+/// The v1 collections by URN name (`crate::collections_v1`).
 static COLLECTIONS_V1: LazyLock<Vec<(String, Address)>> = LazyLock::new(|| {
-    serde_json::from_str::<Vec<V1Collection>>(COLLECTIONS_V1_JSON)
-        .expect("vendored collections-v1.json")
-        .into_iter()
+    crate::collections_v1::collections()
+        .iter()
         .filter_map(|c| {
             Some((
                 c.name.strip_prefix("dcl://")?.to_string(),
-                c.id.parse().ok()?,
+                c.address.parse().ok()?,
             ))
         })
         .collect()

@@ -6,10 +6,12 @@ use common::{
     structs::{PortableExperiencesToggle, SpawnPoint},
     util::{dcl_assert, RingBuffer},
 };
-use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
+use dcl_component::{
+    DclReader, DclWriter, SceneComponentId, SceneCrdtTimestamp, SceneEntityId, ToDclWriter,
+};
 use dcl_types::{
     interface::{CrdtStore, CrdtType},
-    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters,
+    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters, SceneWake,
 };
 use scene_material::{BoundRegion, SceneBounds};
 
@@ -192,6 +194,15 @@ impl RendererSceneContext {
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
         match &self.state {
             SceneState::Live { handle, .. } => Some(&handle.sender),
+            _ => None,
+        }
+    }
+
+    /// Whether the engine wakes the scene's runtime when it sends it something, while the scene
+    /// runs.
+    pub(crate) fn wake(&self) -> Option<&SceneWake> {
+        match &self.state {
+            SceneState::Live { handle, .. } => Some(&handle.wake),
             _ => None,
         }
     }
@@ -403,11 +414,11 @@ impl RendererSceneContext {
         crdt_type: CrdtType,
         id: SceneEntityId,
         data: &impl ToDclWriter,
-    ) {
+    ) -> SceneCrdtTimestamp {
         let mut buf = Vec::new();
         DclWriter::new(&mut buf).write(data);
         self.crdt_store
-            .force_update(component_id, crdt_type, id, Some(&mut DclReader::new(&buf)));
+            .force_update(component_id, crdt_type, id, Some(&mut DclReader::new(&buf)))
     }
 
     pub fn update_crdt_if_different(

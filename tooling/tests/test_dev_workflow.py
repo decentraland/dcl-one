@@ -1,5 +1,6 @@
 """Development CI keeps platform coverage and reusable, isolated build snapshots."""
 from pathlib import Path
+import fnmatch
 import json
 import os
 import re
@@ -21,7 +22,7 @@ CREATOR_HUB = WORKFLOW.with_name('creator-hub-ci.yml')
 
 def jobs():
     source = WORKFLOW.read_text().split('jobs:\n', 1)[1]
-    return dict(re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', source))
+    return dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
 
 
 def disk_steps():
@@ -234,6 +235,117 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prune(deps, "")
 
+    def test_smoke_prunes_verified_binary_and_dynamic_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            current = deps / ('catalyst-' + 'a' * 16)
+            old = deps / ('catalyst-' + 'b' * 16)
+            old.write_bytes(b'old')
+            other = deps / ('other-' + 'b' * 16)
+            other.touch()
+            libraries = []
+            for suffix in ('.so', '.dylib'):
+                active = deps / ('libmacro-' + 'a' * 16 + suffix)
+                stale = deps / ('libmacro-' + 'b' * 16 + suffix)
+                active.touch()
+                libraries.append(str(active))
+                stale.write_bytes(b'old')
+            library_receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': libraries})
+            os.link(app, current)
+            # The smoke profile disables debug info, so this receipt lists only the executable.
+            bin_receipt = json.dumps({'reason': 'compiler-artifact', 'target': {'kind': ['bin']},
+                                      'filenames': [str(app)], 'executable': str(app)})
+            receipts = library_receipts + '\n' + bin_receipt
+            self.assertEqual(prune(deps, receipts), 9)
+            self.assertTrue(all(Path(lib).exists() for lib in libraries))
+            self.assertFalse(old.exists())
+            self.assertTrue(current.samefile(app))
+            self.assertTrue(other.exists())
+            self.assertEqual(prune(deps, receipts), 0)
+
+    def test_smoke_reports_when_hashed_binaries_are_kept(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        for reported in (False, True):
+            with self.subTest(app_reported=reported), tempfile.TemporaryDirectory() as temporary:
+                deps = Path(temporary) / 'deps'
+                deps.mkdir()
+                app = deps.parent / 'catalyst'
+                app.write_bytes(b'current')
+                candidate = deps / ('catalyst-' + 'a' * 16)
+                lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+                lib.touch()
+                stale = deps / ('libcrate-' + 'b' * 16 + '.rlib')
+                stale.write_bytes(b'old')
+                filenames = [str(lib)]
+                if reported:
+                    filenames.append(str(app))
+                    candidate.write_bytes(b'unmatched')
+                else:
+                    os.link(app, candidate)
+                receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': filenames})
+                # Keeping the binaries does not stop the superseded library from being pruned.
+                with patch('builtins.print') as diagnostic:
+                    self.assertEqual(prune(deps, receipt), 3)
+                    diagnostic.assert_called_once()
+                    self.assertIn('Kept all 1 hashed Catalyst', diagnostic.call_args.args[0])
+                self.assertTrue(candidate.exists())
+                self.assertTrue(lib.exists())
+                self.assertFalse(stale.exists())
+
+    def test_smoke_prunes_a_dangling_library_symlink(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            active = deps / ('libcrate-' + 'a' * 16 + '.so')
+            active.touch()
+            obsolete = deps / ('libcrate-' + 'b' * 16 + '.so')
+            obsolete.symlink_to('missing-library')
+            link_size = obsolete.lstat().st_size
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), link_size)
+            self.assertFalse(obsolete.is_symlink())
+            self.assertTrue(active.exists())
+
+    def test_smoke_counts_only_the_last_unlinked_name(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            active, obsolete, linked = [deps / ('libcrate-' + c * 16 + '.rlib') for c in 'abc']
+            active.touch()
+            obsolete.write_bytes(b'old')
+            os.link(obsolete, obsolete.with_suffix('.rmeta'))
+            linked.write_bytes(b'shared')
+            survivor = deps.parent / 'retained'
+            os.link(linked, survivor)
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), 3)
+            self.assertEqual(set(deps.iterdir()), {active})
+            self.assertEqual(survivor.read_bytes(), b'shared')
+
+    def test_smoke_recognizes_copied_binaries_by_contents(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            first, second, stale = [deps / ('catalyst-' + c * 16) for c in 'abc']
+            for copy in (first, second):
+                copy.write_bytes(app.read_bytes())
+            stale.write_bytes(b'expired')
+            stamp = app.stat().st_mtime_ns
+            os.utime(stale, ns=(stamp, stamp))
+            lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+            lib.touch()
+            receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(lib), str(app)]})
+            self.assertEqual(prune(deps, receipts), 7)
+            self.assertEqual(set(deps.iterdir()), {first, second, lib})
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
@@ -251,7 +363,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
-        self.assertEqual(condition('Prune superseded Rust libraries from the smoke snapshot'),
+        self.assertEqual(condition('Prune superseded Rust build artifacts from the smoke snapshot'),
                          condition('Save successful smoke build snapshot'))
         self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
@@ -260,7 +372,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
-        for name in ('development.yml', 'social-voice-release.yml'):
+        for name in ('development.yml', 'social-voice-release.yml', 'sdk.yml'):
             jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
             for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
@@ -269,21 +381,22 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'cargo clippy' in job or 'social-voice-release-test.sh' in job else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
-                    # One Rust test shard saves; the other jobs save from every main run.
+                    # One Rust test shard and the web job's ui3 leg save; the other jobs save from every main run.
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
-                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else ' }}'), snapshot)
+                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else
+                                     " && matrix.app == 'ui3' }}" if 'app: [sites, ui3]' in job else ' }}'), snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
                     self.assertIn('mkdir -p .cache/nix-roots\n', roots)
                     self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 7)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -349,6 +462,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
+
+        def native(lane, generation):
+            return f'bevy-native-v1-{lane}-Linux-X64-' + '-'.join(['0' * 16] * 3 + [generation * 16])
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -374,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            # A hyphenated lane is one family per ref, apart from the other lanes of the same platform.
+            {'id': 25, 'ref': 'refs/heads/main', 'key': native('relay-wake', '1')},
+            {'id': 26, 'ref': 'refs/heads/main', 'key': native('relay-wake', '2')},
+            {'id': 27, 'ref': 'refs/heads/main', 'key': native('relay-wake', '3')},
+            {'id': 28, 'ref': 'refs/heads/main', 'key': native('test', '1')},
+            {'id': 29, 'ref': 'refs/heads/main', 'key': native('test', '2')},
+            {'id': 30, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '1')},
+            {'id': 31, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '2')},
         ]
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
@@ -390,6 +514,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/20',
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
+            'repos/decentraland/dcl-one/actions/caches/25',
+            'repos/decentraland/dcl-one/actions/caches/26',
+            'repos/decentraland/dcl-one/actions/caches/28',
+            'repos/decentraland/dcl-one/actions/caches/30',
         ])
         self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
@@ -433,6 +561,39 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertNotEqual(previous, current)
                     previous = current
 
+    def test_creator_hub_workflows_track_shared_tooltip_sources(self):
+        ci = CREATOR_HUB.read_text()
+        push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
+        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
+        def ui_paths(paths):
+            return {path for path in paths if path.startswith('library/ui/')}
+
+        self.assertEqual(ui_paths(push_patterns), shared_filter)
+        for path in ['library/ui/components/Tooltip/Tooltip.tsx',
+                     'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
+                self.assertRegex(path, pr_pattern)
+        for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
+                          'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
+            self.assertNotRegex(unrelated, pr_pattern)
+
+        for workflow in ['build', 'e2e']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            cached = re.findall(r"'(library/ui/[^']+)'", source)
+            self.assertEqual(set(cached), shared_filter, workflow)
+        sources = {path.removesuffix('/**') for path in shared_filter}
+        for workflow in ['inspector', 'desktop']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            version_paths = re.search(r'change_path: "([^"]+)"', source)[1].split()
+            self.assertEqual(ui_paths(version_paths), sources, workflow)
+            if workflow == 'inspector':
+                note_paths = re.search(r"paths: '([^']+)'", source)[1].split(',')
+                sections = re.search(r"section_names: '([^']+)'", source)[1].split(',')
+                self.assertEqual(set(version_paths), set(note_paths))
+                self.assertEqual(len(note_paths), len(sections))
+
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
@@ -469,21 +630,94 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                 self.assertIn(dry_run, found[name])
                 self.assertRegex(found[name], r'(?m)^    needs: \[ changes, ')
 
+    def test_every_pull_request_runs_the_workflow_tests(self):
+        changes = jobs()['changes']
+        self.assertNotIn('continue-on-error', changes)
+        last = re.split(r'(?m)^      - ', changes)[-1]
+        command = ('python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                   'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest')
+        self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
+                         ['name: Run the workflow tests', f'        run: {command}'],
+                         msg='Changes must end with exactly this step, after the steps that set its outputs')
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))['WORKFLOW_TESTS'].command
+        self.assertEqual(local, command, msg="ci-local must run the Changes job's workflow tests")
+
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']
-        self.assertIn('name: Web tests and contracts', web)
-        self.assertIn('run: python3 tooling/dev-ci.py', web)
-        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
+        changes = jobs()['changes']
+        self.assertIn('run: python3 tooling/dev-ci.py\n', changes)
+        self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', changes)
+        self.assertIn('web-units: ${{ steps.web-coverage.outputs.run-web-unit-tests }}', changes)
+        self.assertIn('fail-fast: false', web)
+        self.assertIn('app: [sites, ui3]', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
-        selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
+        selected = [step for step in steps if 'needs.changes.outputs.web-units' in step]
         self.assertEqual(len(selected), 4)
-        for app in ('ui3', 'sites', 'ui3/editor-scene'):
-            self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
-        self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
-        contracts = next(step for step in steps if 'name: Check web types' in step)
-        self.assertNotIn('\n        if:', contracts)
+        for app, command in [('ui3', 'ui3 test'), ('ui3', 'ui3 test:browser'),
+                             ('ui3', 'ui3/editor-scene test'), ('sites', 'sites test')]:
+            step = next(step for step in selected if f'pnpm --dir apps/{command}\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}' && needs.changes.outputs.web-units != 'false'", step)
+        for app in ('ui3', 'sites'):
+            contracts = next(step for step in steps if f'pnpm --dir apps/{app} typecheck\n' in step)
+            self.assertIn(f"if: matrix.app == '{app}'\n", contracts)
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
+        # Both legs share the pnpm cache key, so only the UI3 leg saves it, after the editor scene
+        # install: a store saved from the Sites leg would lack the UI3-only packages.
+        save = next(step for step in steps if step.startswith('name: Save the pnpm store from main'))
+        self.assertIn("if: matrix.app == 'ui3' && github.ref == 'refs/heads/main'", save)
+        installs = [i for i, step in enumerate(steps)
+                    if 'pnpm --dir apps/sites install' in step or 'pnpm --dir apps/ui3/editor-scene install' in step]
+        self.assertEqual(len(installs), 2)
+        self.assertLess(max(installs), steps.index(save))
+
+
+class RustDependencyWorkflowTest(unittest.TestCase):
+    DEPS = WORKFLOW.with_name('rust-deps.yml')
+    DENY = WORKFLOW.parents[2] / 'services/catalyst/deny.toml'
+
+    def test_runs_on_dependency_changes_and_daily(self):
+        text = self.DEPS.read_text()
+        self.assertRegex(text, r"(?m)^  schedule:\n    - cron: '[\d ]+\* \* \*'\n")
+        inputs = ['**/Cargo.lock', '**/Cargo.toml', 'services/catalyst/deny.toml',
+                  'services/catalyst/rust-toolchain.toml', 'flake.*', '.github/workflows/rust-deps.yml']
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
+        for event in ('push', 'pull_request'):
+            self.assertEqual(local['workflow_paths']('rust-deps.yml', event), inputs, event)
+        self.assertIn('  push:\n    branches: [main]\n', text)
+
+    def test_checks_both_workspaces_with_the_shared_policy_read_only(self):
+        text = self.DEPS.read_text()
+        self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
+        self.assertNotRegex(text, r':\s*write\b|secrets\.')
+        for action in re.findall(r'uses: (\S+)', text):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
+        self.assertIn('checks: [advisories, bans licenses sources]', text)
+        for manifest in ('services/catalyst/Cargo.toml', 'services/catalyst/cast-bot/Cargo.toml'):
+            self.assertIn(f'cargo deny --manifest-path {manifest} \\\n'
+                          '            --workspace --config services/catalyst/deny.toml --locked check $CHECKS', text)
+
+    def test_only_pull_request_advisories_are_non_blocking(self):
+        expression = re.search(r'(?m)^    continue-on-error: \$\{\{ (.+) \}\}$', self.DEPS.read_text()).group(1)
+        expression = expression.replace('&&', 'and')
+        for event, checks, expected in (('pull_request', 'advisories', True),
+                                        ('pull_request', 'bans licenses sources', False),
+                                        ('push', 'advisories', False), ('schedule', 'advisories', False)):
+            with self.subTest(event=event, checks=checks):
+                self.assertEqual(eval(expression, {'__builtins__': {}}, {
+                    'github': SimpleNamespace(event_name=event), 'matrix': SimpleNamespace(checks=checks),
+                }), expected)
+
+    def test_policy_denies_unknown_sources_and_explains_every_ignored_advisory(self):
+        import tomllib
+        policy = tomllib.loads(self.DENY.read_text())
+        self.assertEqual(policy['advisories']['yanked'], 'deny')
+        for entry in policy['advisories']['ignore']:
+            self.assertRegex(entry['id'], r'^RUSTSEC-\d{4}-\d{4}$')
+            self.assertTrue(entry['reason'].strip(), entry['id'])
+        self.assertEqual(policy['bans']['multiple-versions'], 'warn')
+        self.assertEqual((policy['sources']['unknown-registry'], policy['sources']['unknown-git']), ('deny', 'deny'))
+        self.assertEqual(policy['sources']['allow-git'], ['https://github.com/decentraland/dcl-one'])
 
 
 if __name__ == '__main__':

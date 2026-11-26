@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setUser } from '@sentry/electron/renderer';
@@ -33,6 +33,7 @@ vi.mock('/@/lib/auth', () => ({
   SignInError: class extends Error {},
   AuthServerProvider: class {
     static setAuthServerUrl = vi.fn();
+    static setIdentityFetcher = vi.fn();
     static setAuthDappUrl = vi.fn();
     static hasValidIdentity = vi.fn();
     static getAccount = vi.fn();

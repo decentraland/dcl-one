@@ -630,7 +630,10 @@ struct Entry {
     content_hash: Option<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded entry field"
+)]
 async fn record(
     conn: &mut PgConnection,
     signature_hash: &str,
@@ -804,19 +807,12 @@ mod tests {
     }
 
     async fn claimed_name(pool: &PgPool, state: &CommunitiesState, w: &PrivateKeySigner) {
-        state.set_chain_index(std::sync::Arc::new(crate::chain_index::ChainIndex::new(
-            crate::http::Outbound::for_tests(),
-            crate::chain_index::IndexSettings::for_tests(),
-        )));
-        state.chain_index.get().unwrap().graph.names.insert(
-            address(w),
-            std::sync::Arc::new(vec![crate::chain_index::graph::OwnedName {
-                name: "Named".to_string(),
-                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
-                token_id: "1".to_string(),
-                price: None,
-            }]),
-        );
+        // One source shared by every federated test (their wallets are
+        // fresh), so a test's second named wallet joins its first.
+        static NAMES: std::sync::LazyLock<std::sync::Arc<super::super::test_names::Held>> =
+            std::sync::LazyLock::new(Default::default);
+        NAMES.grant(&address(w), "Named");
+        state.set_name_authority(NAMES.clone());
         let metadata = json!({ "v": { "avatars": [{ "name": "fed", "hasClaimedName": true, "avatar": { "snapshots": { "face256": "bafkface" } } }] } });
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
