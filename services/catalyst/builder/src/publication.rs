@@ -24,6 +24,7 @@ use super::drafts::ItemDraft;
 use super::http::ApiError;
 use super::items::ItemsComponent;
 
+/// One item as the collection manager deploys it.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct PublicationItem {
@@ -34,6 +35,8 @@ pub struct PublicationItem {
     pub metadata: String,
 }
 
+/// The parameters the owner's wallet signs to publish a collection, and the
+/// `revision` of the snapshot they come from.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct PublicationPreparation {
@@ -52,6 +55,8 @@ pub struct PublicationPreparation {
 }
 
 impl ItemsComponent {
+    /// The publisher's preparation: the one its attempt holds, else one
+    /// prepared from the collection as it is now.
     pub async fn prepare_publication(
         &self,
         publisher: &Publisher,
@@ -63,7 +68,7 @@ impl ItemsComponent {
             return Ok(state.preparation);
         }
         let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_decision(&mut conn).await?;
+        let view = chain_state::for_decision(&mut conn, &self.clock).await?;
         refuse_before_snapshot(&mut conn, &view, id, signer).await?;
         let mut snapshot: Value = sqlx::query_scalar(SNAPSHOT_QUERY)
             .bind(id)

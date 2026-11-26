@@ -47,13 +47,33 @@ pub async fn temp_storage() -> Arc<Storage> {
 
 /// A complete pass of the Polygon collections copy that ended `minutes_ago`.
 pub async fn copy_pass(pool: &sqlx::PgPool, minutes_ago: i64) {
+    pass_ended(
+        pool,
+        chrono::Utc::now() - chrono::TimeDelta::minutes(minutes_ago),
+    )
+    .await;
+}
+
+/// A complete pass of the copy that ended at `at` on the node's clock and
+/// refreshed every collection it holds: for a test that moves the clock
+/// days ahead, on a database of its own.
+pub async fn copy_pass_at(pool: &sqlx::PgPool, at: chrono::DateTime<chrono::Utc>) {
+    pass_ended(pool, at).await;
+    sqlx::query("UPDATE shop.collections SET mirrored_at = $1 WHERE network = 'matic'")
+        .bind(at.naive_utc())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn pass_ended(pool: &sqlx::PgPool, at: chrono::DateTime<chrono::Utc>) {
     sqlx::query(
         "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
          VALUES ('collections', 'matic', 'https://subgraph.example', $1, $1) \
          ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
            pass_started_at = EXCLUDED.pass_started_at, cursor_id = NULL",
     )
-    .bind(chrono::Utc::now().naive_utc() - chrono::TimeDelta::minutes(minutes_ago))
+    .bind(at.naive_utc())
     .execute(pool)
     .await
     .unwrap();
@@ -465,8 +485,10 @@ pub async fn state(
         temp_storage().await,
         Arc::default(),
         dcl_http::Outbound::for_tests(),
+        dcl_http::Outbound::for_tests(),
         market,
         None,
+        std::sync::Arc::default(),
         settings,
     )
     .unwrap()

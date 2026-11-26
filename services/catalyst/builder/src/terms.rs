@@ -13,15 +13,14 @@
 //! same collection and event, so they stay one per collection, signer and
 //! event, each naming at most as many hashes as the collection has items.
 
-use crate::shared::writes::PassGate;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use crate::State;
 use crate::access::{self, CollectionManage};
 use crate::chain_state;
-use crate::handlers::newsletter::is_valid_email;
 use crate::http::ApiError;
+use crate::newsletter::is_valid_email;
 
 /// The most attempts an acceptance's forward gets.
 pub const MAX_ATTEMPTS: i32 = 6;
@@ -121,7 +120,7 @@ pub async fn accept(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::not_found("Collection not found"))?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_collection_manage(&mut tx, &view, manage).await?;
     if let Some(hashes) = &acceptance.hashes {
         let items: i64 =
@@ -300,8 +299,11 @@ async fn send(state: &State, event: &str, body: &Value) -> Sent {
 /// answers how many the warehouse took. Nothing without a warehouse or
 /// while creator writes are off.
 pub async fn forward_due(state: &State) -> anyhow::Result<u64> {
-    static GATE: PassGate = PassGate::new("builder-terms-forward");
-    if state.settings.warehouse.is_none() || !GATE.allows(state.settings.writes_enabled) {
+    if state.settings.warehouse.is_none()
+        || !state
+            .terms_forward_gate
+            .allows(state.settings.writes_enabled)
+    {
         return Ok(0);
     }
     let due: Vec<(Uuid, String, Value)> = sqlx::query_as(

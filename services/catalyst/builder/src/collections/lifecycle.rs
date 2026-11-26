@@ -31,7 +31,7 @@ const CHAIN_UNKNOWN: &str = "The collection's chain state is not available. Try 
 pub async fn lock(state: &State, lock: &CollectionLock) -> Result<DateTime<Utc>, ApiError> {
     let at = DateTime::from_timestamp_millis(lock.at().timestamp_millis()).unwrap_or(lock.at());
     let mut tx = state.items.pool().begin().await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     sqlx::query("SELECT id FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(lock.id())
         .fetch_optional(&mut *tx)
@@ -106,7 +106,7 @@ pub async fn delete(state: &State, manage: &CollectionManage) -> Result<(), ApiE
         _ => None,
     };
     let mut tx = state.items.pool().begin().await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     sqlx::query("SELECT id FROM builder.collections WHERE id = $1 FOR UPDATE")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -193,8 +193,12 @@ struct Snapshot {
     approved: bool,
 }
 
-async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, ApiError> {
-    let view = chain_state::for_decision(conn).await?;
+async fn snapshot(
+    conn: &mut sqlx::PgConnection,
+    clock: &chain_state::Clock,
+    id: Uuid,
+) -> Result<Snapshot, ApiError> {
+    let view = chain_state::for_decision(conn, clock).await?;
     let (contract, pending): (Option<String>, bool) = sqlx::query_as(
         "SELECT contract_address, publication_pending FROM builder.collections WHERE id = $1",
     )
@@ -253,7 +257,7 @@ pub async fn publish(
     let id = sync.id();
     let before = {
         let mut conn = state.items.pool().acquire().await?;
-        snapshot(&mut conn, id).await?
+        snapshot(&mut conn, &state.items.clock, id).await?
     };
     if before.pending {
         return Err(not_published(id));
@@ -290,9 +294,9 @@ pub async fn publish(
             .bind(id)
             .fetch_all(&mut *tx)
             .await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
         access::confirm_collection_sync(&mut tx, &view, state, sync).await?;
-        let now = snapshot(&mut tx, id).await?;
+        let now = snapshot(&mut tx, &state.items.clock, id).await?;
         let same_items = now
             .items
             .iter()

@@ -1,3 +1,7 @@
+//! The draft routes: collection and item saves, item reads and deletes, item
+//! file and video uploads, the signer's drafts listings and a collection's
+//! publication preparation.
+
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -266,6 +270,8 @@ pub async fn post_item_videos(
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
 
+/// `GET /v1/collections/{id}/publication`: the parameters the owner's wallet
+/// signs to publish the collection.
 pub async fn get_publication(
     State(state): State<SharedState>,
     Signed(signer): Signed,

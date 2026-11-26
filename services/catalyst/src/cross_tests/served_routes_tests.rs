@@ -179,8 +179,10 @@ impl Rig {
                 storage.clone(),
                 storage.denylist().clone(),
                 crate::http::Outbound::for_tests(),
+                crate::http::Outbound::for_tests(),
                 None,
                 None,
+                std::sync::Arc::default(),
                 crate::builder::Settings::default(),
             )
             .unwrap(),

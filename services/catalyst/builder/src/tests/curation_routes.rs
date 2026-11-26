@@ -131,7 +131,7 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
     .execute(&pool)
     .await
     .unwrap();
-    let mut state = super::support::state(
+    let state = super::support::state(
         pool.clone(),
         Some(registry_index(&options.committee, &options.registry).await),
         crate::Settings {
@@ -150,7 +150,6 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
         },
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
     let app = options
         .registry

@@ -24,7 +24,6 @@
 
 pub mod claims;
 
-use crate::shared::writes::PassGate;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -355,7 +354,7 @@ pub(crate) async fn record(
         tracing::info!(%collection, trigger = trigger.as_str(), "builder validation: no item to review");
         return Ok(Recorded::default());
     }
-    let now = (state.now)().naive_utc();
+    let now = state.now().naive_utc();
     if items.len() > MAX_ITEMS {
         tracing::info!(%collection, trigger = trigger.as_str(), items = items.len(), "builder validation: too large to request");
         let notice = Some(Notice::ValidationNotRequested {
@@ -478,7 +477,7 @@ pub(crate) async fn on_publish(
             events::Actor::Creator,
             Some(publisher),
             serde_json::json!({}),
-            Some((state.now)().naive_utc()),
+            Some(state.now().naive_utc()),
         )
         .await?;
         Timeline::On { by: None }
@@ -626,11 +625,13 @@ where
 /// after [`KEPT_FOR`] and the seen signatures whose window has passed.
 /// Nothing while creator writes are off.
 pub async fn sweep(state: &State) -> anyhow::Result<()> {
-    static GATE: PassGate = PassGate::new("builder-validation-requests");
-    if !GATE.allows(state.settings.writes_enabled) {
+    if !state
+        .validation_sweep_gate
+        .allows(state.settings.writes_enabled)
+    {
         return Ok(());
     }
-    let now = (state.now)().naive_utc();
+    let now = state.now().naive_utc();
     let pool = state.items.pool();
     let flow = {
         let mut conn = pool.acquire().await?;

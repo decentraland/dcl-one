@@ -1197,6 +1197,7 @@ async fn the_sixth_retry_of_a_utc_day_is_refused_until_the_next_day() {
         "refused before anything is written"
     );
     set_clock(tomorrow);
+    super::support::copy_pass_at(&node.pool, tomorrow).await;
     assert_eq!(
         post(&node, OWNER_KEY, id, "validations", json!({})).await.0,
         200
@@ -1368,6 +1369,7 @@ async fn creator_text_is_bounded_per_collection_and_per_caller_each_utc_day() {
         200
     );
     advance(Duration::days(1));
+    super::support::copy_pass_at(&node.pool, clock()).await;
     assert_eq!(
         post(&node, OWNER_KEY, first, "comments", comment.clone())
             .await

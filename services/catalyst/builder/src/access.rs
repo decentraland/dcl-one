@@ -740,7 +740,7 @@ async fn decision(
     state: &SharedState,
 ) -> Result<(sqlx::pool::PoolConnection<sqlx::Postgres>, DecisionView), ApiError> {
     let mut conn = state.items.pool().acquire().await?;
-    let view = chain_state::for_decision(&mut conn).await?;
+    let view = chain_state::for_decision(&mut conn, &state.items.clock).await?;
     Ok((conn, view))
 }
 
@@ -911,11 +911,12 @@ type StaleRow = (
 /// pass.
 async fn own_draft_while_stale(
     conn: &mut PgConnection,
+    clock: &chain_state::Clock,
     signer: &Signer,
     id: Uuid,
     registry: Option<&[Provider]>,
 ) -> Result<Option<bool>, ApiError> {
-    let view = chain_state::for_read(conn).await?;
+    let view = chain_state::for_read(conn, clock).await?;
     let row: Option<StaleRow> =
         sqlx::query_as(
             "SELECT c.eth_address, c.third_party_id, c.contract_address, v.managers, v.is_programmatic \
@@ -991,10 +992,18 @@ pub async fn read_collection(
     let id = parse(raw)?;
     let registry = registry_for(state, Since::read(), &[id], &[]).await?;
     let mut conn = state.items.pool().acquire().await?;
-    let view = match chain_state::for_decision(&mut conn).await {
+    let view = match chain_state::for_decision(&mut conn, &state.items.clock).await {
         Ok(view) => view,
         Err(stale) => {
-            return match own_draft_while_stale(&mut conn, signer, id, providers(&registry)).await? {
+            return match own_draft_while_stale(
+                &mut conn,
+                &state.items.clock,
+                signer,
+                id,
+                providers(&registry),
+            )
+            .await?
+            {
                 Some(programmatic) => Ok(CollectionRead {
                     id,
                     full: true,
@@ -1160,7 +1169,7 @@ pub async fn edit_collection(
     let edit = CollectionEdit {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         provider: provider.map(str::to_string),
         registry,
         own_content: state.content_sync.is_own_content_authority(),
@@ -1249,7 +1258,7 @@ pub async fn save_item(
         id,
         signer: signer.as_str().to_string(),
         collection: intent.collection,
-        at: (state.now)(),
+        at: state.now(),
         registry,
         own_content: state.content_sync.is_own_content_authority(),
     };
@@ -1614,7 +1623,7 @@ pub async fn change_item(
     let change = ItemChange {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         registry: registry_for(state, Since::write(), &[], &[id]).await?,
     };
     let (mut conn, view) = decision(state).await?;
@@ -1678,7 +1687,7 @@ pub async fn lock_collection(
     let lock = CollectionLock {
         id: parse(raw)?,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
     };
     let (mut conn, view) = decision(state).await?;
     confirm_collection_lock(&mut conn, &view, &lock).await?;
@@ -1711,7 +1720,7 @@ pub async fn manage_collection(
     let manage = CollectionManage {
         id,
         signer: signer.as_str().to_string(),
-        at: (state.now)(),
+        at: state.now(),
         registry: registry_for(state, Since::write(), &[id], &[]).await?,
     };
     let (mut conn, view) = decision(state).await?;

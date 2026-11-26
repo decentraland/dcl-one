@@ -67,6 +67,7 @@ pub mod items;
 pub mod kept;
 pub mod limits;
 pub mod network;
+pub mod newsletter;
 pub mod onchain;
 pub mod publication;
 pub mod publication_chain;
@@ -83,6 +84,7 @@ pub mod writes;
 pub(crate) mod tests;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use axum::Router;
@@ -91,7 +93,9 @@ use axum::routing::{get, patch, post};
 use sqlx::PgPool;
 
 use crate::chain_index::ChainIndex;
+use crate::shared::writes::PassGate;
 use crate::storage::Storage;
+use catalyst_jobs::{Jobs, PeriodicCfg};
 use dcl_auth::eip1654::Eip1654Validator;
 use dcl_http::{HttpClientCfg, Outbound};
 
@@ -223,6 +227,7 @@ pub struct RawSettings {
     pub video_uploads_max: Option<usize>,
 }
 
+/// The builder's settings, parsed from its environment by [`Settings::parse`].
 #[derive(Clone, Default)]
 pub struct Settings {
     /// The Polygon chain whose contracts, URNs and chain id the builder uses.
@@ -492,6 +497,8 @@ impl Settings {
     }
 }
 
+/// The builder's state, built once by [`State::new`] and shared by its
+/// routes and jobs.
 pub struct State {
     pub items: ItemsComponent,
     /// The marketplace readers the on-chain routes read; `None` (or one
@@ -513,8 +520,6 @@ pub struct State {
     pub third_parties: third_parties::ThirdParties,
     /// The curation committee (`committee`), read per decision.
     pub committee: committee::Committee,
-    /// The node's clock, which a collection's lock is set and compared by.
-    pub now: fn() -> chrono::DateTime<chrono::Utc>,
     /// What the Polygon RPC says of collection contracts, kept per contract.
     pub deployments: collections::deployment::Deployments,
     /// The curators' Slack notices.
@@ -535,27 +540,37 @@ pub struct State {
     pub file_deadline: std::time::Duration,
     /// The request budgets per source, signer and route ([`limits`]).
     pub limits: limits::Limits,
+    /// The write switch the `builder-terms-forward` job last saw.
+    pub(crate) terms_forward_gate: PassGate,
+    /// The write switch the `builder-validation-requests` job last saw.
+    pub(crate) validation_sweep_gate: PassGate,
 }
 
+/// The [`State`] the routes share.
 pub type SharedState = Arc<State>;
 
 /// The guarded client that follows no redirect, 20 s a request, built once
 /// per process: the shared one follows redirects with the request's headers.
-pub fn guarded_client() -> Outbound {
+pub fn guarded_client() -> anyhow::Result<Outbound> {
     Outbound::new(HttpClientCfg::default().with_total_timeout(std::time::Duration::from_secs(20)))
-        .expect("the guarded client builds")
+        .context("the guarded client")
 }
 
 impl State {
     /// `blobs` is the node's blob store; the builder keeps its item files in
     /// its [`Storage::item_files`] tree, which the content routes never read.
+    /// `guarded` is the client that follows no redirect ([`guarded_client`]),
+    /// `content_sync` the content sync's status.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: PgPool,
         blobs: Arc<Storage>,
         denylist: Arc<crate::content::Denylist>,
         http: Outbound,
+        guarded: Outbound,
         market: Option<Arc<ChainIndex>>,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
+        content_sync: Arc<crate::content::SyncStatus>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
         let notices = curation::slack::Notices::new(settings.slack.clone(), settings.links.clone());
@@ -582,16 +597,15 @@ impl State {
             market,
             settings,
             http,
-            guarded: guarded_client(),
+            guarded,
             eip1654,
             denylist,
             rarities: rarities::Rarities::default(),
             third_parties: third_parties::ThirdParties::default(),
             committee: committee::Committee::default(),
-            now: chrono::Utc::now,
             deployments: collections::deployment::Deployments::default(),
             notices,
-            content_sync: Arc::default(),
+            content_sync,
             validator_calls: validator::calls_limiter(),
             videos,
             file_uploads: items::places::Places::new(
@@ -602,7 +616,41 @@ impl State {
             ),
             file_deadline: items::upload::DEADLINE,
             limits,
+            terms_forward_gate: PassGate::new("builder-terms-forward"),
+            validation_sweep_gate: PassGate::new("builder-validation-requests"),
         })
+    }
+
+    /// Registers the builder's leased jobs: the terms forward every minute
+    /// ([`terms::forward_due`]) and the validation requests' sweep every ten
+    /// minutes ([`validator::sweep`]).
+    pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "builder-terms-forward",
+            PeriodicCfg::every(Duration::from_secs(60)),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    terms::forward_due(&state).await?;
+                    Ok(())
+                }
+            },
+        );
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "builder-validation-requests",
+            PeriodicCfg::every(Duration::from_secs(600)),
+            move |_ctx| {
+                let state = state.clone();
+                async move { validator::sweep(&state).await }
+            },
+        );
+    }
+
+    /// The node's clock ([`ItemsComponent::clock`]).
+    pub fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        (self.items.clock.now)()
     }
 
     /// The Polygon collections subgraph the builder reads:
@@ -999,8 +1047,10 @@ mod router_tests {
             crate::tests::support::temp_storage().await,
             Arc::default(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             None,
             None,
+            std::sync::Arc::default(),
             settings,
         )
         .unwrap();

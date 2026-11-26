@@ -1,3 +1,7 @@
+//! The curation routes: collection and item curations, the committee's
+//! curation listing, and the operator's under-review listing and item status
+//! writes.
+
 use axum::Json;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::HeaderMap;
@@ -50,6 +54,7 @@ pub struct BulkItemStatusPatchOut {
     pub updated: u64,
 }
 
+/// The most items one bulk item status write names.
 pub(crate) const MAX_BULK_ITEMS: usize = 1000;
 
 fn parse_status(status: &str) -> Result<Status, ApiError> {
@@ -89,12 +94,15 @@ pub async fn get_curation_collections(
     })))
 }
 
+/// The operator's status for one item.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ItemStatusBody {
     pub status: String,
 }
 
+/// `PATCH /v1/collections/{id}/items/{item}/status`: the operator sets one
+/// item's curation status; 404 when it changes none.
 pub async fn patch_item_status(
     State(state): State<SharedState>,
     admin: Admin,
@@ -119,6 +127,7 @@ pub async fn patch_item_status(
     })))
 }
 
+/// The operator's status for the items `itemIds` names.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BulkItemStatusBody {
@@ -127,6 +136,8 @@ pub struct BulkItemStatusBody {
     pub item_ids: Vec<String>,
 }
 
+/// `PATCH /v1/collections/{id}/items/status`: the operator sets the status
+/// of up to [`MAX_BULK_ITEMS`] items.
 pub async fn patch_items_status_bulk(
     State(state): State<SharedState>,
     admin: Admin,
@@ -171,7 +182,7 @@ pub async fn curations(
     let rows = match scope {
         CurationScope::Every(_) => rows::newest_of_every_collection(&mut conn).await?,
         CurationScope::Own(wallet) => {
-            chain_state::for_read(&mut conn).await?;
+            chain_state::for_read(&mut conn, &state.items.clock).await?;
             rows::newest_of_wallet(&mut conn, wallet.address(), &wallet.provider_ids()).await?
         }
     };

@@ -401,7 +401,7 @@ pub async fn update_collection(
     }
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
     unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
@@ -559,7 +559,7 @@ pub async fn open_collection(
     let known_committee = access::known_curator(state, &curator).await;
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_curator(&mut tx, &view, state, &curator).await?;
     unassignable(state, assignee_of, id).await?;
     let previous = rows::newest_of_collection(&mut tx, id).await?;
@@ -706,7 +706,7 @@ pub async fn update_item(
     }
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));
@@ -793,7 +793,7 @@ pub async fn operate_items(
     let collection = operator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, collection).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_operator(&mut tx, &view, &operator).await?;
     let members: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM builder.items WHERE collection_id = $1 AND id = ANY($2) ORDER BY id",
@@ -846,7 +846,7 @@ pub async fn open_item(
         .map_err(|r| refused(r, item))?;
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, curator.collection()).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     access::confirm_curator(&mut tx, &view, state, &curator).await?;
     let previous = rows::newest_of_item(&mut tx, item).await?;
     let from = previous.as_ref().and_then(|k| Status::parse(&k.status));

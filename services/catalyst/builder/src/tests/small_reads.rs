@@ -64,8 +64,10 @@ async fn rarities_app_on(
             temp_storage().await,
             Arc::default(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             Some(committee_index(subgraph).await),
             None,
+            std::sync::Arc::default(),
             crate::Settings {
                 network,
                 polygon_rpc_url: rpc,
@@ -257,8 +259,10 @@ async fn db() -> Option<Db> {
             store.clone(),
             Arc::default(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             None,
             None,
+            std::sync::Arc::default(),
             crate::Settings::default(),
         )
         .unwrap(),

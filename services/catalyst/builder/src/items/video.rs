@@ -506,7 +506,7 @@ impl ItemsComponent {
         let id = change.id();
         {
             let mut conn = self.pool.acquire().await?;
-            let view = chain_state::for_decision(&mut conn).await?;
+            let view = chain_state::for_decision(&mut conn, &self.clock).await?;
             access::confirm_item_change(&mut conn, &view, change).await?;
             named_video(&mut conn, id, &video.hash).await?;
         }
@@ -517,7 +517,7 @@ impl ItemsComponent {
                 .map_err(|e| ApiError::internal(format!("storing {}: {e}", video.hash)))?;
         }
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         lock_item(&mut tx, id, None).await?;
         access::confirm_item_change(&mut tx, &view, change).await?;
         named_video(&mut tx, id, &video.hash).await?;

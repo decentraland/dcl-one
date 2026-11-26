@@ -130,8 +130,7 @@ async fn node_tuned(url: Option<String>, tune: impl FnOnce(&mut crate::State)) -
         },
     )
     .await;
-    state.now = clock;
-    state.guarded = dcl_http::Outbound::for_tests();
+    state.items.clock.now = clock;
     tune(&mut state);
     let state = Arc::new(state);
     let app = super::support::mounted(&state);

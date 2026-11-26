@@ -1,3 +1,7 @@
+//! The collection and item reads: a collection's body and items, the
+//! committee's listings, an address's listings, the public search of
+//! published collections and the curation committee.
+
 use axum::Json;
 use axum::extract::{OriginalUri, Path, RawQuery, State};
 use axum::http::{HeaderMap, Uri};

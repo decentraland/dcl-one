@@ -158,8 +158,10 @@ async fn world() -> Option<World> {
         storage.clone(),
         Arc::default(),
         dcl_http::Outbound::for_tests(),
+        dcl_http::Outbound::for_tests(),
         Some(registry_index(&committee, &registry).await),
         None,
+        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: true,
             validator_secret: Some("example-validator-secret-0123456789abcdef".into()),

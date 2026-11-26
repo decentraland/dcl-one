@@ -107,8 +107,7 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
         },
     )
     .await;
-    state.now = options.now;
-    state.guarded = dcl_http::Outbound::for_tests();
+    state.items.clock.now = options.now;
     (options.tune)(&mut state);
     let state = Arc::new(state);
     let app = super::support::mounted(&state);

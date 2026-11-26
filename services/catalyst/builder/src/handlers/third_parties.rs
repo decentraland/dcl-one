@@ -14,7 +14,8 @@ use crate::access;
 use crate::auth::Signed;
 use crate::http::{ApiData, ApiError};
 use crate::third_parties::{
-    has_manager, lock_provider, managed_by, provider, provider_view, virtual_by_id, virtual_view,
+    has_manager, lock_provider, managed_by, provider, provider_view, remove_virtual,
+    set_programmatic, submitted_items, virtual_by_id, virtual_view,
 };
 
 pub(crate) const ID_MAX: usize = 512;
@@ -86,14 +87,10 @@ pub async fn slots(
         .map_or("0", |p| p.max_items.as_str())
         .parse::<i128>()
         .ok();
-    let submitted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT count(DISTINCT i.id) FROM builder.collections c JOIN builder.items i ON i.collection_id = c.id \
-         WHERE c.third_party_id = $1 AND {}",
-        crate::curation::ITEM_CURATED
-    )))
-    .bind(grant.id())
-    .fetch_one(state.items.pool())
-    .await?;
+    let submitted = {
+        let mut conn = state.items.pool().acquire().await?;
+        submitted_items(&mut conn, grant.id()).await?
+    };
     let free = max_items.map_or(0, |max| max - i128::from(submitted));
     Ok(Json(ApiData::ok(match i64::try_from(free) {
         Ok(free) => json!(free),
@@ -150,10 +147,7 @@ pub async fn delete(
         )
         .with_data(json!({ "id": id })));
     }
-    sqlx::query("DELETE FROM builder.virtual_third_parties WHERE id = $1")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    remove_virtual(&mut tx, &id).await?;
     tx.commit().await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -195,14 +189,7 @@ pub async fn update(
         }
         Some(_) => {}
     }
-    sqlx::query(
-        "UPDATE builder.virtual_third_parties SET is_programmatic = $2, updated_at = timezone('UTC', now()) \
-         WHERE id = $1 AND is_programmatic IS DISTINCT FROM $2",
-    )
-    .bind(&id)
-    .bind(programmatic)
-    .execute(&mut *tx)
-    .await?;
+    set_programmatic(&mut tx, &id, programmatic).await?;
     tx.commit().await?;
     Ok(Json(json!({ "ok": true })))
 }
