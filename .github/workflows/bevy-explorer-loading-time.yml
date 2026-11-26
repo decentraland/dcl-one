@@ -102,7 +102,8 @@ jobs:
   issue:
     name: File the issue
     needs: measure
-    if: always() && needs.measure.result != 'skipped' && needs.measure.result != 'cancelled'
+    # a scheduled run past the job's timeout ends `cancelled` too; a cancel by hand files nothing
+    if: always() && needs.measure.result != 'skipped' && (needs.measure.result != 'cancelled' || github.event_name == 'schedule')
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:

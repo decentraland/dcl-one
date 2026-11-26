@@ -46,6 +46,19 @@ describe('loading time', () => {
     assert.ok(readyAt <= Date.now() - 1500 && readyAt >= before - 1500)
   })
 
+  test('a client without firstRing fails at once even after a console error', async () => {
+    let reads = 0
+    const explorer = new Explorer(new FakeConsole({
+      scene_loading_state: () => {
+        if (++reads === 1) throw new Error('document gone')
+        return JSON.stringify({ stage: 'Running' })
+      }
+    }))
+    const started = Date.now()
+    await assert.rejects(waitFirstRingReady(explorer, { arrival: 1, what: 'the first ring', timeoutMs: 60_000 }), new RegExp(FIRST_RING_UNSUPPORTED))
+    assert.ok(Date.now() - started < 5000)
+  })
+
   test('a console error on the first read is retried, not a failed reading', async () => {
     let reads = 0
     const explorer = new Explorer(new FakeConsole({
@@ -56,6 +69,13 @@ describe('loading time', () => {
     }))
     await waitFirstRingReady(explorer, { arrival: 1, what: 'the first ring', timeoutMs: 5000 })
     assert.ok(reads >= 2)
+  })
+
+  test('time to world does not take the first ring of an arrival before the boot\'s last', async () => {
+    const explorer = new Explorer(new FakeConsole({ world_state: world(2), scene_loading_state: loading({ arrival: 1 }) }))
+    const { measurement } = await measureTimeToWorld(GENESIS, async () => explorer, { deadline: Date.now() + 1500 })
+    assert.equal(measurement.timeToWorldMs, null)
+    assert.match(measurement.error!, /first ring/)
   })
 
   test('time to world runs from before the launch to the first ring ready for the boot\'s arrival', async () => {
@@ -87,18 +107,21 @@ describe('loading time', () => {
     assert.match(measurement.error!, /boot: no console/)
   })
 
-  test('a teleport is timed from the command to the first ring ready for its arrival', async () => {
+  test('a teleport is timed from the command to the first ring ready for its arrival, not the one before', async () => {
     let arrivals = 1
+    let staleReads = 0
     const fake = new FakeConsole({
       world_state: () => world(arrivals),
       teleport: () => {
         arrivals = 2
         return 'new location'
       },
-      scene_loading_state: () => loading({ arrival: arrivals })
+      // the previous arrival's first ring stays the latest for a few polls after the teleport
+      scene_loading_state: () => loading({ arrival: arrivals === 2 && ++staleReads > 3 ? 2 : 1 })
     })
     const leg = await measureTeleport(new Explorer(fake), GENESIS, MUSEUM)
     assert.equal(leg.error, undefined)
+    assert.ok(staleReads > 3)
     assert.ok(leg.teleportMs! >= 0)
     assert.deepEqual(fake.sent('teleport'), ['/teleport 20 80'])
   })

@@ -73,12 +73,6 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function readSceneLoadingState(explorer: Explorer): Promise<SceneLoadingState> {
-  const reply = await explorer.sceneLoadingState()
-  if (!('firstRing' in reply)) throw new Error(FIRST_RING_UNSUPPORTED)
-  return reply
-}
-
 /** `/world_state`'s `arrivals`, read again on a transient console error. */
 async function readArrivals(explorer: Explorer, attempts = 3): Promise<number> {
   for (let attempt = 1; ; attempt++) {
@@ -92,12 +86,9 @@ async function readArrivals(explorer: Explorer, attempts = 3): Promise<number> {
 }
 
 /** Wait for the first ring to be ready for arrival `arrival` or a later one, and give the
- *  `Date.now()` time it was. A client without `firstRing` fails at once; any other error is
- *  retried. */
+ *  `Date.now()` time it was. A client without `firstRing` fails on its first reply; a console
+ *  error is retried. */
 export async function waitFirstRingReady(explorer: Explorer, options: { arrival: number; timeoutMs?: number; what: string }): Promise<number> {
-  await readSceneLoadingState(explorer).catch((error: unknown) => {
-    if (message(error) === FIRST_RING_UNSUPPORTED) throw error
-  })
   let receivedAt = 0
   const state = await until(
     async () => {
@@ -105,9 +96,11 @@ export async function waitFirstRingReady(explorer: Explorer, options: { arrival:
       receivedAt = Date.now()
       return reply
     },
-    (reply: SceneLoadingState) => reply.firstRing != null && reply.firstRing.arrival >= options.arrival,
+    // a reply without the key ends the wait too, to fail it below rather than time out
+    (reply: SceneLoadingState) => !('firstRing' in reply) || (reply.firstRing != null && reply.firstRing.arrival >= options.arrival),
     { timeoutMs: options.timeoutMs ?? FIRST_RING_TIMEOUT_MS, intervalMs: 250, what: options.what }
   )
+  if (!('firstRing' in state)) throw new Error(FIRST_RING_UNSUPPORTED)
   return receivedAt - state.firstRing!.sinceReadyMs
 }
 

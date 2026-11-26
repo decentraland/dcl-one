@@ -10,9 +10,9 @@ use serde_json::{json, Value};
 use web_time::Instant;
 
 use crate::{
-    initialize_scene::{SceneHash, SceneLoading},
+    initialize_scene::{PointerResult, SceneHash, SceneLoading},
     renderer_context::{RendererSceneContext, FROZEN_BLOCK},
-    vec3_to_parcel, ContainingScene,
+    ring_parcels, vec3_to_parcel, ContainingScene,
 };
 
 /// The target every line here is logged under.
@@ -40,7 +40,8 @@ pub struct FirstRingTiming {
 }
 
 /// The first ring was ready at `at`, in world after arrival number `arrival` ([`Arrivals`]): the
-/// first frame of that arrival when it was already loaded, else the frame it completed.
+/// first frame of that arrival when it was already loaded, else the frame it completed. Each of
+/// the nine parcels around the player is resolved, and empty or its scene spawned and ready.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FirstRingReady {
     pub(crate) arrival: u64,
@@ -66,7 +67,7 @@ pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
 pub fn report_scene_load_times(
     mut commands: Commands,
     player: Query<(Entity, &GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
-    arrivals: Option<Res<Arrivals>>,
+    arrivals: Res<Arrivals>,
     containing_scene: ContainingScene,
     scenes: Query<(
         Entity,
@@ -121,16 +122,30 @@ pub fn report_scene_load_times(
         }
     }
 
-    // without the counter (an app without `ArrivalsPlugin`) there is no arrival to key it to
-    let arrivals = arrivals.map_or(0, |arrivals| arrivals.0);
-    if first_ring_complete
-        && !out_of_world
-        && timing.ready.map_or(0, |ready| ready.arrival) < arrivals
-    {
-        timing.ready = Some(FirstRingReady {
-            arrival: arrivals,
-            at: now,
+    // the spawned scenes alone miss a neighbour still waiting for its pointer or its spawn, which
+    // the lifecycle defers until the player's scene has loaded
+    if !out_of_world && timing.ready.map_or(0, |ready| ready.arrival) < arrivals.0 {
+        let parcels_ready = ring_parcels(player_parcel, 1).all(|parcel| {
+            match containing_scene.pointers.get(parcel) {
+                None => false,
+                Some(PointerResult::Nothing) => true,
+                Some(PointerResult::Exists { hash, .. }) => containing_scene
+                    .live_scenes
+                    .scenes
+                    .get(hash)
+                    .and_then(|scene| scenes.get(*scene).ok())
+                    .is_some_and(|(_, _, _, context, loading, _)| {
+                        matches!(loading, Some(SceneLoading::Failed))
+                            || context.is_some_and(scene_is_ready)
+                    }),
+            }
         });
+        if first_ring_complete && parcels_ready {
+            timing.ready = Some(FirstRingReady {
+                arrival: arrivals.0,
+                at: now,
+            });
+        }
     }
 
     if let Some((scene, arrival)) = timing.arrival {

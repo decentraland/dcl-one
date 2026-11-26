@@ -28,6 +28,7 @@ fn world() -> World {
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
     world.init_resource::<FirstRingTiming>();
+    world.init_resource::<Arrivals>();
     let mut pointers = ScenePointers::default();
     pointers.insert(
         IVec2::ZERO,
@@ -217,7 +218,6 @@ fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
 #[test]
 fn the_first_ring_is_ready_for_the_arrival_that_reaches_the_world() {
     let mut world = world();
-    world.init_resource::<Arrivals>();
     let player = world
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(&world)
@@ -272,6 +272,16 @@ fn an_arrival_waits_for_a_loading_neighbour() {
 #[test]
 fn an_arrival_at_an_empty_parcel_is_ready_at_once() {
     let mut world = world();
+    // the realm's only scene is far away: the first ring is empty parcels
+    let mut pointers = ScenePointers::default();
+    pointers.insert(
+        IVec2::new(5, 5),
+        PointerResult::Exists {
+            hash: "far".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(pointers);
     world.insert_resource(Arrivals(3));
 
     world.run_system_once(report_scene_load_times).unwrap();
@@ -298,4 +308,48 @@ fn first_ring_json_is_null_before_an_arrival_is_ready() {
     let reply = first_ring_json(&timing, now + std::time::Duration::from_millis(1500));
     assert_eq!(reply["arrival"], 2);
     assert_eq!(reply["sinceReadyMs"], 1500);
+}
+
+#[test]
+fn an_arrival_waits_for_a_neighbour_not_spawned_yet() {
+    let mut world = world();
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::X,
+        PointerResult::Exists {
+            hash: "east".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+
+    // the neighbour's pointer is resolved, but the lifecycle has not spawned it yet
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    let neighbour = scene(&mut world, "east", &[IVec2::X], 2);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    set_tick(&mut world, neighbour, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .ready
+            .map(|ready| ready.arrival),
+        Some(1)
+    );
+}
+
+#[test]
+fn an_arrival_waits_for_an_unresolved_neighbour() {
+    let mut world = world();
+    // a realm whose pointers are still being fetched: no parcel around the player is known
+    world.insert_resource(ScenePointers::default());
+    world.insert_resource(Arrivals(1));
+
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
 }

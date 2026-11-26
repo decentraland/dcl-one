@@ -213,8 +213,9 @@ back to what they were.
 
 Readiness is the engine's own, keyed to the arrival `/world_state` counts: `/scene_loading_state`'s
 `firstRing.arrival` must reach the arrival after the boot or the teleport. Its instant is the
-reply's time less `firstRing.sinceReadyMs`, so polling adds no error. A destination already loaded,
-or an empty parcel, is ready on its first frame in world.
+reply's time less `firstRing.sinceReadyMs`, so polling adds only the reply's transit time. A
+destination already loaded, or an empty parcel, is ready on its first frame in world; a neighbour
+whose pointer is unresolved or whose scene has not spawned holds it.
 
 ```sh
 pnpm run loading-time                                   # the live client: decentraland.org/play, the main realm
