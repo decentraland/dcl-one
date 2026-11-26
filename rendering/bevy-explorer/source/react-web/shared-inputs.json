@@ -5756,18 +5756,6 @@
           "kind": "regular"
         },
         {
-          "name": "ShopEmptyState.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "ShopEmptyState.test.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "ShopEmptyState.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "ShopFooter.module.css",
           "kind": "regular"
         },
@@ -14909,14 +14897,6 @@
       "sha256": "833527b3eeb72e4d8224019fe7e3facc3af478e4e0887b5fa202a7d19997ec85"
     },
     {
-      "path": "library/ui/apps/shop/ShopEmptyState.module.css",
-      "sha256": "8c4b1047d6a04291678291574afda91e0771f579d775df80d455d5943199b6f2"
-    },
-    {
-      "path": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "sha256": "3107fdcc5f29ad9db85b7fa11f3f58b6159532653119d527b3397b64b4f06603"
-    },
-    {
       "path": "library/ui/apps/shop/ShopFooter.module.css",
       "sha256": "4344bb05c2d1f6a923a820b9bcecf93fc7988d6334dfcb7cdedab5798ae6acf8"
     },
@@ -14942,7 +14922,7 @@
     },
     {
       "path": "library/ui/apps/shop/index.ts",
-      "sha256": "dd10e47a5d44bac899ae58c1d3379ca0a9eef357f1cb544bf103f721c607a592"
+      "sha256": "b11110d174b5ce44ffc1e7af3ef4a7da7e3446d238fb94b83194f06ae878d940"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -16806,11 +16786,11 @@
     },
     {
       "path": "library/ui/components/EmptyState/EmptyState.module.css",
-      "sha256": "4a5de6dd42b32309e2e46f817191eaf3c57b569e96c4870d2eb655cc018b9439"
+      "sha256": "300b7f0afd75798c1a933b5f2f2280b8afb1a2c87e7020720797f5704413b4b2"
     },
     {
       "path": "library/ui/components/EmptyState/EmptyState.tsx",
-      "sha256": "52cf2909d71c593be3ac30df6fd64aa1cbf8bb63911b39430b996c125dedf6dd"
+      "sha256": "ca96f51fc9c7ab360216d418a073d76a07a4d76e5263409b3a4b96777871ac2f"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",
@@ -52067,36 +52047,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/apps/shop/ShopEmptyState.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/apps/shop/ShopEmptyState.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/apps/shop/ShopEmptyState.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "to": "library/ui/components/Button/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/shop/ShopFooter.tsx",
       "to": "library/ui/apps/shop/ShopFooter.module.css",
       "kind": "native:runtime"
@@ -52199,21 +52149,6 @@
     {
       "from": "library/ui/apps/shop/index.ts",
       "to": "library/ui/apps/shop/ShopChrome.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/index.ts",
-      "to": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/index.ts",
-      "to": "library/ui/apps/shop/ShopEmptyState.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/shop/index.ts",
-      "to": "library/ui/apps/shop/ShopEmptyState.tsx",
       "kind": "test:runtime"
     },
     {
@@ -69189,11 +69124,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopChrome.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/shop/ShopEmptyState.tsx",
       "kind": "type"
     },
     {

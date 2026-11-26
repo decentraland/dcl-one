@@ -1,4 +1,3 @@
-export { ShopEmptyState } from './ShopEmptyState'
 export { ShopFooter } from './ShopFooter'
 export { default as ShopChrome, ShopNavigation } from './ShopChrome'
 export type { ShopNavSet, ShopNavTab, ShopSection } from './ShopChrome'

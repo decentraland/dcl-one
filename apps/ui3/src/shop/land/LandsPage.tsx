@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import ManaMark from "../../atoms/ManaMark";
 import type { ShopClient } from "@shop/api/shop";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
@@ -460,10 +460,12 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               </Button>
             </div>
           ) : listing.data && listing.data.results.length === 0 ? (
-            <ShopEmptyState
+            <EmptyState
+              appearance="shop"
+              titleAs="h2"
               title="No LAND matches these filters"
               subtitle={filters.status === "rent" ? "Nothing is listed for rent with these filters." : "Try other filters or look at all land."}
-              action={{ label: "Clear filters", onClick: () => setParams(new URLSearchParams(), { replace: false }) }}
+              actions={<Button size="md" onClick={() => setParams(new URLSearchParams(), { replace: false })}>Clear filters</Button>}
             />
           ) : listing.data ? (
             <>

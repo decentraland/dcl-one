@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -84,7 +84,7 @@ export function ImportListingsView({ creations, owned }: { creations: ImportItem
 
   if (creations.length === 0 && owned.length === 0)
     return (
-      <ShopEmptyState variant="inline" title="You are all set!" subtitle="Nothing of yours is listed in MANA only." action={{ label: "My items", href: shopPath("myItems") }} data-testid="shop-import-empty" />
+      <EmptyState appearance="shop" titleAs="h2" variant="inline" title="You are all set!" subtitle="Nothing of yours is listed in MANA only." actions={<Button size="md" href={shopPath("myItems")}>My items</Button>} data-testid="shop-import-empty" />
     );
 
   return (

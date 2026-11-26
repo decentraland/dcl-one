@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCollection } from "@shop/discovery/api";
@@ -142,7 +142,7 @@ export default function Collection() {
           </div>
         ) : null}
         {!grid.isLoading && !grid.error && grid.items.length === 0 ? (
-          <ShopEmptyState data-testid="collection-empty" title={t("assets.empty.title")} subtitle={t("collection.empty")} action={{ label: t("filterBar.clearAll"), onClick: clearFilters }} />
+          <EmptyState appearance="shop" titleAs="h2" data-testid="collection-empty" title={t("assets.empty.title")} subtitle={t("collection.empty")} actions={<Button size="md" onClick={clearFilters}>{t("filterBar.clearAll")}</Button>} />
         ) : unavailable ? null : (
           <>
             <div className="shop-grid" data-testid="grid">

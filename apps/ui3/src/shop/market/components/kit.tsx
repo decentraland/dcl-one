@@ -6,7 +6,7 @@
 import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 
-import { Button, Spinner, ShopEmptyState } from "@dcl/one-ui";
+import { Button, Spinner, EmptyState } from "@dcl/one-ui";
 import ManaMark from "../../../atoms/ManaMark";
 import type { Eip1193Provider } from "../../../data/auth/wallet";
 import { chainLabel, isPolygon } from "@shop/model/chain";
@@ -50,11 +50,13 @@ export function ShopPage({ title, actions, children, className }: { title: React
 export function SignInGate({ title, body }: { title: string; body: string }) {
   const { host } = useShopWallet();
   return (
-    <ShopEmptyState
+    <EmptyState
+      appearance="shop"
+      titleAs="h2"
       variant="screen"
       title={title}
       subtitle={body}
-      action={host?.onSignIn ? { label: "Sign in", onClick: () => host.onSignIn?.() } : undefined}
+      actions={host?.onSignIn && <Button size="md" onClick={() => host.onSignIn?.()}>Sign in</Button>}
       data-testid="shop-signin-gate"
     />
   );

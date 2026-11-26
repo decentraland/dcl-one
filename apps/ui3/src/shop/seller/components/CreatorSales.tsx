@@ -8,7 +8,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import type { ChainId } from "@shop/model/chain";
 import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "@shop/model/money";
 import { dataUnavailable } from "../../market/lib/api";
@@ -239,7 +239,7 @@ export default function CreatorSales({ address, saleable, names }: { address: st
       ) : sales.isError ? (
         <LoadFailure error={sales.error} what="Discounts" onRetry={() => void sales.refetch()} />
       ) : sales.data.length === 0 ? (
-        <ShopEmptyState variant="inline" title="No discounts yet" subtitle="Put a collection on sale for a few days to bring buyers back." data-testid="shop-empty" />
+        <EmptyState appearance="shop" titleAs="h2" variant="inline" title="No discounts yet" subtitle="Put a collection on sale for a few days to bring buyers back." data-testid="shop-empty" />
       ) : (
         <ul className="mk-list">
           {sales.data.map((s) => (

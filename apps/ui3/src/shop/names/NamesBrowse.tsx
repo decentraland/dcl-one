@@ -9,7 +9,7 @@
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import type { ShopClient } from "@shop/api/shop";
 import { reasonText } from "@shop/payment/copy";
 import { indexOutage } from "../land/api";
@@ -153,7 +153,9 @@ export default function NamesBrowse({ client }: { client?: ShopClient }) {
           </Button>
         </div>
       ) : results.data && results.data.results.length === 0 ? (
-        <ShopEmptyState
+        <EmptyState
+          appearance="shop"
+          titleAs="h2"
           title={
             query.search
               ? `No NAME matching "${query.search}" is on resale${query.minPrice || query.maxPrice ? " in this price range" : ""}`

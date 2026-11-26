@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { Button, ShopEmptyState } from "@dcl/one-ui";
+import { Button, EmptyState } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCreatorCollections, type CollectionSummary } from "@shop/discovery/api";
@@ -117,7 +117,7 @@ export default function Creator() {
   });
   const unavailable = indexUnavailable(grid.error) ?? indexUnavailable(collections.error);
   const illustration = (src: string) => <img className="shop-creator__empty-illus" src={src} alt="" />;
-  const exploreCta = { label: t("assets.empty.cta"), onClick: () => navigate(`${SHOP_BASE}/items`) };
+  const exploreCta = <Button size="md" onClick={() => navigate(`${SHOP_BASE}/items`)}>{t("assets.empty.cta")}</Button>;
 
   if (!address) return null;
 
@@ -173,12 +173,14 @@ export default function Creator() {
                 </Button>
               </div>
             ) : !collections.isLoading && collections.items.length === 0 && !unavailable ? (
-              <ShopEmptyState
+              <EmptyState
+                appearance="shop"
+                titleAs="h2"
                 data-testid="creator-collections-empty"
                 icon={illustration(collectionsEmptyIllustration)}
                 title={t("creator.collectionsEmptyTitle")}
                 subtitle={t("creator.collectionsEmpty")}
-                action={exploreCta}
+                actions={exploreCta}
               />
             ) : (
               <div className="shop-grid" data-variant="collections">
@@ -208,14 +210,16 @@ export default function Creator() {
                 </Button>
               </div>
             ) : view === "no-creations" ? (
-              <ShopEmptyState data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} action={exploreCta} />
+              <EmptyState appearance="shop" titleAs="h2" data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} actions={exploreCta} />
             ) : view === "filters" ? (
-              <ShopEmptyState
+              <EmptyState
+                appearance="shop"
+                titleAs="h2"
                 data-testid="creator-empty-filters"
                 icon={illustration(searchEmptyIllustration)}
                 title={t("creator.emptyFiltersTitle")}
                 subtitle={t("creator.emptyFilters", { count: baseline.data ?? 0 })}
-                action={{ label: t("filterBar.clearAll"), onClick: clearFilters }}
+                actions={<Button size="md" onClick={clearFilters}>{t("filterBar.clearAll")}</Button>}
               />
             ) : unavailable ? null : (
               <>
