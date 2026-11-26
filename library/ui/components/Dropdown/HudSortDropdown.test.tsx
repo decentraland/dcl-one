@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { Dropdown } from './Dropdown'
@@ -73,13 +73,14 @@ describe("when a Dropdown is the hud's sort list", () => {
     render(<Dropdown appearance="hud" kind="sort" options={options} whileOpen={whileOpen} />)
     expect(whileOpen).not.toHaveBeenCalled()
     await userEvent.click(field())
-    expect(whileOpen).toHaveBeenCalledTimes(1)
+    // The list registers in an effect, which can run after the click settles.
+    await waitFor(() => expect(whileOpen).toHaveBeenCalledTimes(1))
     expect(cleanup).not.toHaveBeenCalled()
     fireEvent.click(document.body)
     close?.()
     await screen.findByRole('button', { expanded: false })
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
-    expect(cleanup).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(cleanup).toHaveBeenCalledTimes(1))
   })
 
   it('should open an empty list with nothing to choose', async () => {
