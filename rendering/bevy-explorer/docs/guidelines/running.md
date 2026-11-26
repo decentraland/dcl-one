@@ -454,7 +454,8 @@ Scene animations:
   reported to their scenes; and up to 32 `clips`, each with its `scene`, `entity`, `clip`,
   `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`). The debug panel's
   Scene animations section shows the counts. A clip that ended reads `finished` until its
-  scene's next Animator write, and `stopped` after it.
+  scene writes the Animator again: `stopped` after a write that keeps its state stopped, and
+  `playing` after one that plays it again.
 
 The HUD and input:
 
