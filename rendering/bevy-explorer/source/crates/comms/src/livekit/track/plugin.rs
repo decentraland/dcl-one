@@ -820,17 +820,12 @@ fn active_transmitter_removed(
 fn automatic_video_hidden(
     trigger: Trigger<OnRemove, AutomaticVideoShown>,
     mut commands: Commands,
-    tracks: Query<(Option<&ActiveTransmitter>, Has<SelectedVideoTransmitter>)>,
+    tracks: Query<Has<SelectedVideoTransmitter>>,
 ) {
     let entity = trigger.target();
     #[cfg(target_arch = "wasm32")]
     commands.entity(entity).try_remove::<HtmlMediaEntity>();
-    let (automatic, selected) = tracks.get(entity).unwrap_or_default();
-    // the next screen to show the automatic output must not start from this track's state
-    if let Some(automatic) = automatic {
-        automatic.send_if_modified(VideoState::VsLoading);
-    }
-    if !selected {
+    if !tracks.get(entity).unwrap_or(false) {
         commands.entity(entity).queue_handled(
             entity_command::trigger(UnsubscribeToTrack),
             bevy::ecs::error::debug,

@@ -1790,6 +1790,29 @@ fn automatic_video_is_shown_only_while_an_automatic_receiver_exists() {
         .get::<AutomaticVideoShown>(presentation)
         .is_some());
 
+    // a frame arrives, then the last automatic screen goes
+    let image = app
+        .world()
+        .get::<ReceiverImage>(automatic)
+        .unwrap()
+        .image
+        .clone();
+    let state = app
+        .world()
+        .get::<ActiveTransmitter>(presentation)
+        .unwrap()
+        .state
+        .clone();
+    app.world_mut()
+        .resource_mut::<Assets<Image>>()
+        .get_mut(&image)
+        .unwrap()
+        .resize(bevy::render::render_resource::Extent3d {
+            width: 640,
+            height: 360,
+            depth_or_array_layers: 1,
+        });
+    state.send_replace(dcl_component::proto_components::sdk::components::VideoState::VsPlaying);
     app.world_mut()
         .entity_mut(automatic)
         .remove::<ActiveReceiver>();
@@ -1798,6 +1821,12 @@ fn automatic_video_is_shown_only_while_an_automatic_receiver_exists() {
         .world()
         .get::<AutomaticVideoShown>(presentation)
         .is_none());
+    let cleared = app.world().resource::<Assets<Image>>().get(&image).unwrap();
+    assert_eq!((cleared.width(), cleared.height()), (8, 8));
+    assert_eq!(
+        *state.borrow(),
+        dcl_component::proto_components::sdk::components::VideoState::VsLoading
+    );
 }
 
 #[test]

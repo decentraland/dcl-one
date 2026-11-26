@@ -31,6 +31,7 @@ impl Plugin for LivestreamManagerPlugin {
         app.add_observer(transmitter_off);
         app.add_observer(receiver_on);
         app.add_observer(receiver_off);
+        app.add_observer(clear_hidden_automatic_output);
 
         app.add_systems(
             Update,
@@ -452,6 +453,14 @@ fn clear_automatic_image(
     mut images: ResMut<Assets<Image>>,
     mut resized: EventWriter<TransmissionImageResized>,
 ) {
+    clear_automatic_output(&manager, &mut images, &mut resized);
+}
+
+fn clear_automatic_output(
+    manager: &LivestreamManager,
+    images: &mut Assets<Image>,
+    resized: &mut EventWriter<TransmissionImageResized>,
+) {
     let Some(image) = images.get_mut(&manager.image) else {
         return;
     };
@@ -612,6 +621,20 @@ fn automatic_video_shown(
                 .entity(transmitter)
                 .try_remove::<AutomaticVideoShown>();
         }
+    }
+}
+
+/// The next screen to show the automatic output must not start from the hidden track's last
+/// frame or state. Cleared as the marker goes, so no frame is copied in after it.
+fn clear_hidden_automatic_output(
+    trigger: Trigger<OnRemove, AutomaticVideoShown>,
+    transmitters: Query<(), With<ActiveTransmitter>>,
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    if transmitters.contains(trigger.target()) {
+        clear_automatic_output(&manager, &mut images, &mut resized);
     }
 }
 

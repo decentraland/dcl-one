@@ -175,18 +175,7 @@ fn room_diagnostics(
         Has<Local>,
         Option<&ConnectionQuality>,
     )>,
-    video_tracks: Query<
-        (
-            &LivekitTrack,
-            &PublishedBy,
-            Has<Subscribed>,
-            Has<Subscribing>,
-            Has<Unsubscribing>,
-            Has<AutomaticVideoShown>,
-            Has<SelectedVideoTransmitter>,
-        ),
-        With<Video>,
-    >,
+    video_tracks: VideoTracks,
     players: Query<&ForeignPlayer>,
     indicators: Option<Res<RoomIndicators>>,
     definitions: Option<Res<Assets<ipfs::EntityDefinition>>>,
@@ -335,23 +324,25 @@ fn room_diagnostics(
     input.reply_ok(result.to_string());
 }
 
+/// The video tracks [`video_track_rows`] reads, as `room_diagnostics` queries them.
+type VideoTracks<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LivekitTrack,
+        &'static PublishedBy,
+        Has<Subscribed>,
+        Has<Subscribing>,
+        Has<Unsubscribing>,
+        Has<AutomaticVideoShown>,
+        Has<SelectedVideoTransmitter>,
+    ),
+    With<Video>,
+>;
+
 /// Each video track published by a participant `in_room`: its subscription and the outputs
 /// that want it.
-fn video_track_rows(
-    in_room: impl Fn(Entity) -> bool,
-    tracks: &Query<
-        (
-            &LivekitTrack,
-            &PublishedBy,
-            Has<Subscribed>,
-            Has<Subscribing>,
-            Has<Unsubscribing>,
-            Has<AutomaticVideoShown>,
-            Has<SelectedVideoTransmitter>,
-        ),
-        With<Video>,
-    >,
-) -> BTreeSet<String> {
+fn video_track_rows(in_room: impl Fn(Entity) -> bool, tracks: &VideoTracks) -> BTreeSet<String> {
     let mut rows = BTreeSet::new();
     for (track, publisher, subscribed, subscribing, unsubscribing, automatic, selected) in tracks {
         if in_room(publisher.get()) {
