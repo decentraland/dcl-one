@@ -122,7 +122,7 @@ impl super::State {
             timeout,
         )
         .await?;
-        metrics::gauge!("social_dapps_flags_last_refresh_timestamp_seconds")
+        dcl_metrics::gauge!("social_dapps_flags_last_refresh_timestamp_seconds")
             .set(chrono::Utc::now().timestamp() as f64);
         Ok(())
     }

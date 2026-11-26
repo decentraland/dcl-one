@@ -264,7 +264,7 @@ impl Event {
                 // An older replica rejects a newer kind; count it rather than drop silently.
                 let kind = rejected_kind(bytes);
                 tracing::debug!(?kind, len = bytes.len(), "undecodable social event dropped");
-                metrics::counter!("social_event_delivery_dropped", "reason" => "undecodable_inbound")
+                dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "undecodable_inbound")
                     .increment(1);
                 None
             }
@@ -387,7 +387,7 @@ impl Event {
                     }
                 }
                 Ok(None) => {
-                    metrics::counter!("social_event_delivery_dropped", "reason" => "expired_payload").increment(1);
+                    dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "expired_payload").increment(1);
                 }
                 Err(error) => {
                     tracing::warn!(%error, "social event payload lookup failed");
@@ -414,7 +414,7 @@ impl State {
             if let Some(event) = Event::decode(payload, source) {
                 if event.deliver_target(&target_context) { return; }
                 if incoming.try_send(event).is_err() {
-                    metrics::counter!("social_event_delivery_dropped", "reason" => "inbound_queue").increment(1);
+                    dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "inbound_queue").increment(1);
                 }
             }
         }));
@@ -447,15 +447,15 @@ impl State {
             let publish = async {
                 while let Some(event) = outgoing.recv().await {
                     let Some(bytes) = event.encode(source) else {
-                        metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound").increment(1);
+                        dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound").increment(1);
                         continue;
                     };
                     if bytes.len() > MAX_BYTES {
-                        metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound").increment(1);
+                        dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound").increment(1);
                         continue;
                     }
                     if bus.publish(SOCIAL_EVENTS_SUBJECT, bytes).await != crate::comms::gatekeeper::bus::PublishOutcome::Submitted {
-                        metrics::counter!("social_event_delivery_dropped", "reason" => "bus").increment(1);
+                        dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "bus").increment(1);
                     }
                 }
             };
@@ -465,7 +465,7 @@ impl State {
                 let context = &context;
                 async move {
                     if tokio::time::timeout(std::time::Duration::from_secs(5), event.deliver(context)).await.is_err() {
-                        metrics::counter!("social_event_delivery_dropped", "reason" => "delivery_timeout").increment(1);
+                        dcl_metrics::counter!("social_event_delivery_dropped", "reason" => "delivery_timeout").increment(1);
                     }
                 }
             });

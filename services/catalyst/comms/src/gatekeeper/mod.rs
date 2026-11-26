@@ -77,7 +77,8 @@ pub mod webhook;
 #[cfg(test)]
 mod tests;
 
-use std::sync::{Arc, Mutex, Weak};
+use parking_lot::Mutex;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crate::shared::routing::{delete, erase, get, patch, post, put};
@@ -129,8 +130,10 @@ pub struct RawSettings {
     pub gatekeeper_auth_token: Option<String>,
     /// `COMMS_LAND_OPERATORS_URL`: a lambdas base whose
     /// `/parcels/{x}/{y}/operators` protects LAND owners/operators from scene
-    /// bans (the old `LAMBDAS_URL`); unset protects none (the old degraded
-    /// mode without a places database).
+    /// bans (the old `LAMBDAS_URL`), read only when the permission core has
+    /// no land-authz index attached (`catalyst serve` always attaches it);
+    /// unset there protects none (the old degraded mode without a places
+    /// database).
     pub land_operators_url: Option<String>,
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
@@ -462,7 +465,7 @@ crate::shared::send_sync_once! {
         pub message_router: Option<Arc<message_router::MessageRouterAuthority>>,
         /// The world comms mints' throttle and capacity (`admission::world_mint`).
         pub world_mint: admission::world_mint::MintState,
-        pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
+        pub(crate) world_access_cursor: parking_lot::Mutex<Option<String>>,
         /// The island feed's settings (`admission::cluster`); the subscriber starts with
         /// [`Self::start_island_feed`].
         pub cluster: admission::cluster::ClusterConfig,
@@ -524,7 +527,7 @@ impl CommsState {
             relay_authority: None,
             message_router: None,
             world_mint: admission::world_mint::MintState::default(),
-            world_access_cursor: std::sync::Mutex::new(None),
+            world_access_cursor: parking_lot::Mutex::new(None),
             cluster: admission::cluster::ClusterConfig::default(),
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
@@ -934,14 +937,14 @@ impl CommsState {
         );
         runtime.subscriber.attach_sockets(sockets);
         runtime.start(jobs);
-        *self.island_feed.lock().unwrap() = Arc::downgrade(&runtime.subscriber);
+        *self.island_feed.lock() = Arc::downgrade(&runtime.subscriber);
     }
 
     /// The connector's announcement that `session` of `wallet` holds a live socket: the running
     /// island subscriber asks Pulse for its current island and mints it. Without one (not
     /// started, idle without `NATS_URL`, or stopped) it does nothing.
     pub fn announce_session(&self, wallet: &str, session: &str) {
-        let subscriber = self.island_feed.lock().unwrap().upgrade();
+        let subscriber = self.island_feed.lock().upgrade();
         if let Some(subscriber) = subscriber {
             subscriber.announce_connect(wallet, session);
         }
@@ -950,7 +953,7 @@ impl CommsState {
     /// The existing island subscriber authority, without extending its process lifetime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn island_subscriber(&self) -> Weak<admission::cluster::subscriber::ClusterSubscriber> {
-        self.island_feed.lock().unwrap().clone()
+        self.island_feed.lock().clone()
     }
 
     /// A test-owned subscriber can exercise final delivery checks without spawning service jobs.
@@ -959,7 +962,7 @@ impl CommsState {
         &self,
         subscriber: &Arc<admission::cluster::subscriber::ClusterSubscriber>,
     ) {
-        *self.island_feed.lock().unwrap() = Arc::downgrade(subscriber);
+        *self.island_feed.lock() = Arc::downgrade(subscriber);
     }
 }
 

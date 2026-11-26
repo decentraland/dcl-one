@@ -2,15 +2,16 @@ import * as components from '../components'
 import { componentNumberFromName } from '../components/component-number'
 import { checkNotThenable } from '../runtime/invariant'
 import { Schemas } from '../schemas'
-import { ISchema } from '../schemas/ISchema'
-import { MapResult, Spec } from '../schemas/Map'
+import type { ISchema } from '../schemas/ISchema'
+import type { MapResult, Spec } from '../schemas/Map'
 import { ByteBuffer } from '../serialization/ByteBuffer'
 import { crdtSceneSystem, OnChangeFunction } from '../systems/crdt'
-import { ComponentDefinition } from './component'
+import type { ComponentDefinition } from './component'
 import { createComponentDefinitionFromSchema } from './lww-element-set-component-definition'
 import { Entity, EntityState, EntityUtils, createEntityContainer } from './entity'
-import { ReadonlyComponentSchema } from './readonly'
-import { SystemItem, SystemContainer, SystemFn, SYSTEMS_REGULAR_PRIORITY } from './systems'
+import type { ReadonlyComponentSchema } from './readonly'
+import type { SystemFn } from './systems'
+import { SystemItem, SystemContainer, SYSTEMS_REGULAR_PRIORITY } from './systems'
 import type {
   IEngine,
   IEngineOptions,
@@ -18,10 +19,8 @@ import type {
   MapComponentDefinition,
   PreEngine
 } from './types'
-import {
-  createValueSetComponentDefinitionFromSchema,
-  ValueSetOptions
-} from './grow-only-value-set-component-definition'
+import type { ValueSetOptions } from './grow-only-value-set-component-definition'
+import { createValueSetComponentDefinitionFromSchema } from './grow-only-value-set-component-definition'
 import { removeEntityWithChildren as removeEntityWithChildrenEngine } from '../runtime/helpers/tree'
 import { CrdtMessageType } from '../serialization/crdt'
 export * from './input'

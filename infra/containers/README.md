@@ -5,13 +5,28 @@ are external. Explorer images: pipeline.
 
 | Output (local tag) | Command | State |
 | --- | --- | --- |
-| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema`; `cast-bot` | `/data`; PostgreSQL, blobs |
+| `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema`; `cast-bot`; `catalyst-message-router` | `/data`; PostgreSQL, blobs |
 | `image-sites` (`foundation-sites:nix`) | `sites-server` | `/data` |
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
+- Probe each API replica at `GET /health` for readiness. HTTP 503 means a required replica check failed. The JSON body also reports shared dependencies for alerting. See [Catalyst API readiness](../../docs/adr/2026-11-24-serve-readiness.md).
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
-- The community chat message router, `catalyst-message-router`, is a separate binary that links libwebrtc (`cargo build -p catalyst-message-router --features livekit`); no image carries it ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
+- The APIs image carries the community chat message router at `/bin/catalyst-message-router`
+  (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
+  with `--features livekit`, from the same patched SDK and libwebrtc as `cast-bot`, its notices
+  at `share/doc/catalyst-message-router/libwebrtc-LICENSE.md`). `serve` does not start it: run
+  one container of the same digest with the entrypoint `/bin/catalyst-message-router` and no
+  command, one replica, restarted whenever it exits (it exits non-zero when it cannot stay in the
+  room). It needs `DATABASE_URL` (after `schema`), `MESSAGE_ROUTER_TOKEN_URL`
+  (`<serve>/internal/message-router/token/v1` at serve's private address: https, or http to a
+  private IP or loopback), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`,
+  `MESSAGE_ROUTER_REPLICA=0`, and `MESSAGE_ROUTER_LIVEKIT_URL` when the SFU has a private
+  address (unset, it dials the URL the gatekeeper hands out); set `MESSAGE_ROUTER_METRICS_BIND=0.0.0.0:5007`
+  for an outside health probe of `/health/ready`. `serve` takes the same `MESSAGE_ROUTER_KEY` and
+  `MESSAGE_ROUTER_IDENTITY_PREFIX=message-router-prd` on decentraland.org, `message-router-dev`
+  elsewhere, the identities the Explorer trusts. The image smoke test runs its `--help`
+  ([message router](../../services/catalyst/docs/comms/comms-crate.md#message-router)).
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
 - The APIs image carries `cast-bot` (`.#cast-bot`, `infra/packages/cast-bot.nix`), the LiveKit
   participant `serve` starts once per Cast presentation, and sets `CAST_BOT_BIN` to it, so
@@ -185,6 +200,7 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - APIs and Sites set `COMMIT_HASH` to the build revision (`unversioned` outside git): APIs report it in `/about` and the status routes, Sites in `window.__DCL_PUBLIC__.commitHash`, which `/play`'s sign-in screens show as their build when the Vite build recorded none. A deployment's own `COMMIT_HASH` overrides it.
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets, and, behind the gateway, `HTTP_TRUSTED_PROXY_CIDRS` with the gateway's network ([gateway](../gateway/README.md)); Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
 - Sites' `/download` takes two addresses from the deployment: `EXPLORER_INSTALLERS_URL` is the host of the Explorer launcher installers (unset, the page offers no installer, the home page's download call leads to `/download` and `/download_success` answers 404: the node serves none), and `DOWNLOAD_COUNTS_URL` is the JSON of the download counts per platform (unset or unreachable, the page shows no total and the home page shows "+400K").
+- Sites' `/shop/cart` can send one document that a shared cache (a CDN) may keep: with `SHOP_CART_SHARED_CACHE=true` (off when unset) and `PUBLIC_CATALYST_URL` set (the document's links must not come from a request), a top-level navigation gets `Cache-Control: public, max-age=0, s-maxage=60`, `CDN-Cache-Control: max-age=60, stale-while-revalidate=300` and `Vary: Sec-Fetch-Dest`, without the visitor's session, wallet or language (`apps/sites/src/routes/shop/shared-cart.ts`). Browsers keep no copy. Turn it on only behind a cache that keys on `Sec-Fetch-Dest` and that a deploy purges.
 - Behind the gateway, `/play` dials Pulse on the page's host. Pulse is UDP, which an HTTP-only front (a CDN proxy, a load balancer) cannot carry, so a deployment whose Pulse sits elsewhere sets `PUBLIC_PULSE_SERVER` (`host[:port]`, port 7743 when omitted) on Sites, which hands it to `/play` as `window.__DCL_PUBLIC__.pulseServer`. Where `/play` composes services from a base domain instead (a `decentraland.*` subdomain, or a `?baseDomain=` other than the page host), it ignores it. The engine writes the Pulse host into every link it syncs, so changing or removing `PUBLIC_PULSE_SERVER` later sends links that still carry the old host through the untrusted-link gate.
 - Sites' blog (`/blog`) reads cms-server, the Contentful cache decentraland/sites reads: `BLOG_CMS_URL` is its full `<origin>/spaces/<space>/environments/<environment>` base. Unset, or with the CMS unreachable, the blog pages answer 503. TODO(cms-migration): point `BLOG_CMS_URL` at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
@@ -207,6 +223,71 @@ Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` 
 registry history, API replicas prefer the native index and can serve manager and slot details.
 The NFT worker supplies wallet holdings for open mappings.
 
+The marketplace historical holdings API serves the subgraph worker at
+`/v1/historical/*` on the marketplace gateway. Set `HISTORICAL_ADMIN_TOKEN_FILE`
+to the credential corresponding to the worker's `subgraph-historical-api-token`.
+The routes use the Ethereum and Polygon mainnet indexes. An existing
+database needs schema step 0094 and the registry review repair before the
+full Polygon history is available. Moving the marketplace API host to this
+gateway preserves the worker's request paths.
+
+The Wert card on-ramp (`POST /v1/wert/sign` under `/shop-api` and `/marketplace-api`)
+needs four settings:
+- `WERT_PRIVATE_KEY_FILE` and `WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE`: Wert's 32-byte
+  Ed25519 partner keys in hex. The plain variables are refused.
+- `WERT_API_URL`: Wert's partner API, over https.
+- `WERT_API_KEY`, or `WERT_API_KEY_FILE`.
+
+Without them, the route answers 503 naming them. A partial set fails startup. The
+route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
+
+The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
+`PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
+six settings:
+- `TRANSAK_API_URL` and `TRANSAK_API_GATEWAY_URL`, over https;
+- `TRANSAK_API_KEY` and `TRANSAK_API_SECRET`, plain or as `_FILE`;
+- `TRANSAK_REFRESH_ACCESS_TOKEN_AUTH`: the bearer of the forced refresh, at least
+  32 bytes;
+- `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
+
+Without them, the routes answer 503 naming them. A partial set fails startup.
+Run `catalyst schema migrate` before deploying: it creates
+`shop.transak_access_token`, the one access token the replicas share.
+
+**Never configure a node with the Transak partner key marketplace-server is
+serving with.** Transak invalidates the previous token on each refresh, and
+marketplace-server never refreshes on a 401. The node's first refresh would
+leave marketplace-server's Redis token dead, and production Transak with it,
+until that token expires (up to 7 days) or someone calls marketplace-server's
+`PUT /v1/transak/access-token`. Use separate partner credentials, or set the
+six `TRANSAK_*` only at the cutover, once marketplace-server has stopped
+serving Transak. No posture or default config sets them, so a node keeps the
+unavailable envelope until an operator does. When marketplace-server
+refreshes, the node itself recovers: its next 401 refreshes once, at most
+once per 30 s.
+
+Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
+posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
+lets it walk from block 15,202,000. Polygon accounts and creator rankings return HTTP 503
+until the collections and sales indexes publish their required history. Polygon accounts also require
+a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
+enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
+`CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
+index procedure in `DATABASE.md`.
+The catalogue continues to
+read the collections mirror unless the on-chain projection owns that network.
+
+Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
+`shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next
+trade-events fold settles every V3 trade's digest. Every route that lists, prices or reports the status of
+trades (the v3 catalog feeds and prices, orders, bids, the order legs of `/v1/nfts` and `/v1/items`) now answers
+the `trade-events-index` envelope until that index is current on both networks: a fold published within the
+last 30 minutes (a pass in progress keeps the previous publish). `/v1/trades` keeps serving the stored records once the trades mirror is ready. Expect that while the walk catches up
+or rebuilds. The explorer map's grid also waits for it on Ethereum. A node that does not walk the index
+(`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`, on under the mirror posture) answers the envelope on those routes.
+
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
 no posture; island, journey and posture-less nodes listed active leases in the explorer backpack
@@ -227,6 +308,41 @@ of active deployments from the scene entity to its place. An old replica reads a
 grants by entity id: after the release it refuses every admin, and a grant it writes is lost.
 `catalyst serve` refuses startup while a grant of an active deployment has the entity key.
 Keep the pre-migration database backup: rollback must restore the matching backup.
+
+This script and `schemas/releases/genesis-scene-ban-keys.sql` (`DATABASE.md` "Scene bans") move
+only entity-keyed rows, so no run of them changes the key of a grant or ban that is already on a
+parcel. A database that holds Genesis grants or bans on parcel keys
+when it takes this upgrade can hold them on a scene's least parcel while the scene's place is
+its declared base (`entity_metadata #>> '{v,scene,base}'`); no request of that scene reads such
+a row. Such a grant no longer admits its admin, and such a ban no longer refuses its wallet: the
+ban stops applying from the first request a new binary serves. After both scripts, before
+starting the new binaries, list them, and re-key every `scene_bans` row that was made for the
+listed scene before admitting players:
+
+```sql
+SELECT 'scene_admins' AS grants_table, d.entity_id, s.least AS keyed_on, s.place, a.admin_address AS wallet
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_admins a ON a.place_id = s.least AND a.active
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+UNION ALL
+SELECT 'scene_bans', d.entity_id, s.least, s.place, b.banned_address
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_bans b ON b.place_id = s.least
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+ ORDER BY 1, 3, 5;
+```
+
+A listed row can also be a grant or ban made for an earlier scene whose base was that parcel
+and that the place removal cleanup has not ended; the listed scene does not inherit it, so no
+script moves these rows. For each row that was made for the listed scene, set its key to the
+place:
+`UPDATE social.scene_admins SET place_id = '<place>' WHERE place_id = '<keyed_on>' AND admin_address = '<wallet>'`
+(`social.scene_bans` and `banned_address` for a ban). The update fails on the primary key when
+the wallet already has a row on the place: keep the row with the newer change and delete the other.
 
 Stream key upgrade: `catalyst schema migrate` creates five notification triggers on `worlds.world_scenes`, `worlds.worlds`, `worlds.world_permissions` and `worlds.world_permission_parcels`. Each `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock: writes to these four tables wait until the migrate transaction ends; reads continue.
 

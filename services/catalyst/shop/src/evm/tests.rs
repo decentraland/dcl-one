@@ -501,6 +501,22 @@ async fn post_transaction(
     (status, serde_json::from_str(&text).unwrap_or_default())
 }
 
+#[tokio::test]
+async fn relay_parse_errors_have_a_legacy_code() {
+    let app = router(state(lazy_pool(), Settings::for_tests()));
+    for payload in ["{", "{}", r#"{"transactionData":null}"#] {
+        let (status, text) =
+            send(&app, "POST", "/v1/transactions", Some(payload.into()), &[]).await;
+        let body: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["ok"], false, "{body}");
+        assert_eq!(body["code"], "invalid_schema", "{body}");
+        assert!(body["message"].as_str().is_some_and(|m| !m.is_empty()));
+        assert_eq!(body["error"], body["message"], "{body}");
+        assert_eq!(body["not_sent"], true, "{body}");
+    }
+}
+
 fn sender(addr: &str) -> MetaTxSender {
     MetaTxSender::from_meta_tx_calldata(addr, &split_sig_calldata(addr))
         .expect("calldata signed by the same address it is posted for")
@@ -1424,13 +1440,8 @@ async fn spawn_oz_answering(submission: Value, status: Value) -> String {
     format!("http://{addr}")
 }
 
-/// What the buyer's client reads when the OZ relayer created nothing: a submission without a hash,
-/// then a terminal status that says so with an explicit `"hash": null`. That reaches the client as
-/// a refusal it may act on, 400 with `"not_sent": true`, and the slot is released. The control is
-/// the same terminal status carrying a hash: the transaction was signed and may be out, so the
-/// answer is a 504 without the evidence and the slot is kept.
 #[tokio::test]
-async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
+async fn terminal_oz_status_preserves_the_reservation_and_history_from_its_hash() {
     let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
         .lock()
         .await;
@@ -1439,9 +1450,10 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
     };
     seed_collection(&pool, COLLECTION).await;
     let signed_hash = format!("0x{:064x}", 0xab);
-    for (terminal_hash, expected_status, expected_not_sent, expected_rows) in [
-        (Value::Null, 400u16, Some(true), 0i64),
-        (json!(signed_hash), 504, None, 1),
+    for (terminal_hash, status_code, error_code, expected_not_sent, expected_rows) in [
+        (Value::Null, 400, "expectation_failed", Some(true), 0),
+        (json!("0xfeed"), 504, "unknown", None, 1),
+        (json!(signed_hash), 500, "expectation_failed", None, 1),
     ] {
         let submission = json!({ "success": true, "data": { "id": "oz-tx", "hash": null, "status": "pending" } });
         let status = json!({ "success": true, "data": { "id": "oz-tx", "hash": terminal_hash, "status": "failed", "status_reason": "dropped" } });
@@ -1450,12 +1462,7 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
         let user = format!("{:#x}", key.address());
         let (code, body) =
             post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
-        let rows = row_count(&pool, &user).await;
-        cleanup_user(&pool, &user).await;
-        assert_eq!(
-            code, expected_status,
-            "terminal hash {terminal_hash}: {body}"
-        );
+        assert_eq!(code, status_code, "terminal hash {terminal_hash}: {body}");
         assert_eq!(
             body["ok"],
             json!(false),
@@ -1466,20 +1473,32 @@ async fn an_oz_transaction_never_signed_reaches_the_client_as_not_sent() {
             expected_not_sent,
             "terminal hash {terminal_hash}: {body}"
         );
-        if expected_status == 400 {
-            // Validation answers the same code; only the relayer's refusal carries its status reason.
-            assert_eq!(body["error"], json!("invalid_transaction"), "{body}");
-            assert!(
-                body["message"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("dropped")),
-                "the 400 is the relayer's refusal, not a validation error: {body}"
-            );
+        assert_eq!(body["code"], error_code, "{body}");
+        let existing_error = if status_code == 400 {
+            "invalid_transaction"
+        } else {
+            error_code
+        };
+        assert_eq!(body["error"], existing_error, "{body}");
+        assert!(body.get("txHash").is_none(), "{body}");
+        if status_code != 504 {
+            assert_eq!(body["message"], "Transaction failed: dropped", "{body}");
         }
-        assert_eq!(
-            rows, expected_rows,
-            "terminal hash {terminal_hash}: the slot is released only when nothing was signed"
-        );
+        assert_eq!(row_count(&pool, &user).await, expected_rows);
+        let (code, text) = send(&app, "GET", &format!("/v1/transactions/{user}"), None, &[]).await;
+        assert_eq!(code, 200, "{text}");
+        let history: Vec<Value> = serde_json::from_str(&text).unwrap();
+        if status_code == 500 {
+            assert_eq!(
+                confirmed_hash(&pool, &user).await.as_deref(),
+                Some(signed_hash.as_str())
+            );
+            assert_eq!(history.len(), 1, "{text}");
+            assert_eq!(history[0]["tx_hash"], signed_hash, "{text}");
+        } else {
+            assert!(history.is_empty(), "{text}");
+        }
+        cleanup_user(&pool, &user).await;
     }
 }
 
@@ -2028,6 +2047,65 @@ async fn a_target_outside_the_allowlist_is_refused_only_after_a_complete_mirror_
     assert_eq!((status, text.as_str()), (200, r#"{"ok":true}"#));
 }
 
+/// On a network the collections index owns, a relay target's membership is
+/// the index's projection under an authorizing publication, read in the
+/// statement that reads the verdict; the mirror's recorded pass, which a
+/// takeover leaves behind, never stands in for it.
+#[tokio::test]
+async fn on_an_owned_network_membership_follows_the_index() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    use crate::market::catalogue::owning;
+    let app = oz_app(&pool).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let calldata = signed_split_calldata(&key, FS);
+    let unknown = unique_address();
+    seed_collection(&pool, COLLECTION).await;
+    let get = |address: String| {
+        let app = app.clone();
+        async move {
+            let (status, text) =
+                send(&app, "GET", &format!("/v1/contracts/{address}"), None, &[]).await;
+            (status, text)
+        }
+    };
+
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    assert_eq!(get(COLLECTION.into()).await, (200, r#"{"ok":true}"#.into()));
+    assert_eq!(get(unknown.clone()).await.0, 404);
+
+    // A collections event walked past the publication (a revoked approval,
+    // a new collection): no target is enrolled or refused on it.
+    owning::walk_past(&pool, "matic", 101, COLLECTION).await;
+    for address in [COLLECTION.to_string(), unknown.clone()] {
+        let (status, text) = get(address).await;
+        assert_eq!(status, 503, "{text}");
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["source"], "collections-index", "{text}");
+    }
+    let (status, body) = post_transaction(&app, &user, &unknown, &calldata).await;
+    assert_eq!(status, 503, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("collections index"),
+        "{body}"
+    );
+    assert_eq!(row_count(&pool, &user).await, 0);
+
+    // Published past the window, or rewound: unavailable, though the
+    // mirror's pass is recorded.
+    owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+    assert_eq!(get(COLLECTION.into()).await.0, 503);
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    assert_eq!(get(COLLECTION.into()).await.0, 200);
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(get(COLLECTION.into()).await.0, 503);
+}
+
 #[derive(Clone, Default)]
 struct Captured {
     body: Vec<u8>,
@@ -2091,9 +2169,13 @@ async fn spawn_mock_upstream(behaviour: MockBehaviour, seen: Seen) -> String {
 
 /// No local broadcast provider and no chain, so the only route is the upstream forward.
 fn upstream_app(pool: &PgPool, upstream_base: &str, timeout: Duration) -> axum::Router {
+    // A forwarding relay is a testnet relay: a Polygon mainnet one refuses to
+    // start with an upstream (`Settings::validate`, which also refuses this
+    // loopback stub, so the state is built without it).
     let settings = Settings {
         transactions_upstream_url: Some(upstream_base.to_string()),
         transactions_upstream_timeout: timeout,
+        collections_chain_id: 80_002,
         ..Settings::for_tests()
     };
     router(state(pool.clone(), settings))
@@ -3314,6 +3396,9 @@ async fn the_relay_refuses_use_credits_on_a_resale_a_crafted_batch_a_hybrid_resa
         "creditsNotAllowed",
         "an ERC-721 resale through accept",
     );
+    assert_eq!(body["ok"], false, "{body}");
+    assert_eq!(body["code"], "payment_rule_refused", "{body}");
+    assert_eq!(body["not_sent"], true, "{body}");
     let (status, body) = relay(use_credits(
         routes.marketplaces[0],
         offchain::acceptCall::SELECTOR,
@@ -3983,6 +4068,8 @@ async fn a_trial_relay_is_held_by_the_operator_plane_even_with_data_writes_on() 
     let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
     assert_eq!(status, 503, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["ok"], false, "{text}");
+    assert_eq!(v["code"], "unknown", "{text}");
     assert_eq!(
         v["message"],
         crate::shared::writes::WRITES_DISABLED_MESSAGE,
@@ -4015,6 +4102,9 @@ async fn outside_a_trial_the_relay_keeps_the_data_plane_gate() {
     let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
     assert_eq!(status, 503, "{text}");
     assert!(text.contains("DATA_WRITES_ENABLED=false"), "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["ok"], false, "{text}");
+    assert_eq!(v["code"], "unknown", "{text}");
 }
 
 /// Under CREDITS_TRIAL_MODE the relay's one route is its own capped direct signer: any OZ or

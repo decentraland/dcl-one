@@ -15,9 +15,10 @@
 //! order for one NFT or item, or a second open bid by one bidder on one
 //! asset, is a 409; every amount, token id and item id is canonical decimal
 //! before it is stored. The RPC calls go through the ONE outbound client
-//! and its SSRF guard. v2's `trades` row has no `trade_digest` column: a v3
-//! cancellation digest is the signing hash, which the `trade_events` fold
-//! recomputes from the stored trade (`trade_chain_state.digest`); `GET
+//! and its SSRF guard. A V3 trade stores its cancellation digest, the
+//! EIP-712 signing hash the signature was verified over (`trade_digest`, as
+//! marketplace-server stores it); the `trade_events` fold verifies it and
+//! keys the trade's V3 cancellation on it (`trade_chain_state.digest`); `GET
 //! /v1/trades/{hash}/accept` is served there. `GET /v1/activity` (a
 //! wallet's sales, bids and orders across the squid tables) answers the
 //! envelope.
@@ -31,9 +32,10 @@ use catalyst_shared::json_number::{integral_i64, integral_u64};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::str::FromStr;
 
+use super::catalogue::{self, Purpose};
 use super::signed::{
     CREATE_TRADE_INTENT, MARKETPLACE_AUTH_SIGNERS, require_auth_metadata, require_signer,
 };
@@ -101,9 +103,9 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
-pub const ETHEREUM_SEPOLIA: i64 = 11155111;
+pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
-pub const MATIC_AMOY: i64 = 80002;
+pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
@@ -729,6 +731,9 @@ pub enum TradeCreationError {
     },
     /// The item is not in the mirrored catalogue (yet).
     ItemUnknown,
+    /// The collections index owns the item's network and cannot authorize
+    /// a read of it: why.
+    CatalogueUnavailable(String),
     NotTheCreator,
     /// The price is not the chain's MANA (nor USD-pegged MANA).
     InvalidPriceAsset,
@@ -778,6 +783,7 @@ impl std::fmt::Display for TradeCreationError {
                 )
             }
             Self::ItemUnknown => write!(f, "the item is not in the catalogue yet; retry later"),
+            Self::CatalogueUnavailable(why) => write!(f, "{why}; retry later"),
             Self::NotTheCreator => {
                 write!(f, "only the item's creator may sell it as a primary sale")
             }
@@ -809,7 +815,19 @@ pub fn served_chain(indexes: &super::chain_walk::IndexSettings, network: &str) -
     }
 }
 
-/// A public item order is a primary sale: only the item's creator may sign it.
+/// The item's creator and its network's catalogue state, in one statement.
+static ITEM_CREATOR_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, i.creator FROM (SELECT lower($1) AS network) AS n {joins} \
+         LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = lower($2) AND i.item_id = $3::numeric",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
+
+/// A public item order is a primary sale: only the item's creator may sign
+/// it. On a network the collections index owns, the creator is read under
+/// its authorizing publication, in the statement that reads the verdict.
 async fn verify_item_creator(
     pool: &PgPool,
     network: &str,
@@ -817,15 +835,17 @@ async fn verify_item_creator(
 ) -> Result<(), TradeCreationError> {
     let sent = &trade.sent[0];
     let item_id = sent.item_id.as_deref().unwrap_or_default();
-    let creator: Option<String> = sqlx::query_scalar(
-        "SELECT creator FROM shop.items \
-         WHERE network = lower($1) AND contract_address = lower($2) AND item_id = $3::numeric",
-    )
-    .bind(network)
-    .bind(&sent.contract_address)
-    .bind(item_id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(ITEM_CREATOR_SQL.as_str()))
+        .bind(network)
+        .bind(&sent.contract_address)
+        .bind(item_id)
+        .fetch_one(pool)
+        .await?;
+    let state = catalogue::NetworkState::from_row(&row)?;
+    if let Some(Err(why)) = state.owned_verdict(trade.chain_id, Purpose::Authorize, Utc::now()) {
+        return Err(TradeCreationError::CatalogueUnavailable(why));
+    }
+    let creator: Option<String> = row.try_get("creator")?;
     match creator {
         None => Err(TradeCreationError::ItemUnknown),
         Some(c) if c.eq_ignore_ascii_case(&trade.signer) => Ok(()),
@@ -1215,8 +1235,8 @@ pub async fn create_trade(
 }
 
 const CREATE_TRADE_SQL: &str = "WITH t AS (
-        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10)
+        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract, trade_digest)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10, $12)
         ON CONFLICT (hashed_signature) DO NOTHING
         RETURNING id
      ), input AS MATERIALIZED (
@@ -1235,9 +1255,21 @@ const CREATE_TRADE_SQL: &str = "WITH t AS (
      )
      SELECT id::text FROM t";
 
+/// The V3 cancellation key of `trade` signed on `contract`: its EIP-712
+/// signing hash against that marketplace's domain, `None` on a marketplace
+/// that cancels by signature (V1, V2) or one this node does not know.
+pub(crate) fn cancellation_digest(trade: &TradeCreation, contract: &str) -> Option<String> {
+    offchain_marketplaces(trade.chain_id)
+        .into_iter()
+        .find(|m| m.cancels_by_digest && m.address.eq_ignore_ascii_case(contract))
+        .and_then(|m| signing_hash(trade, &m).ok())
+        .map(|h| format!("{h:#x}"))
+}
+
 /// Head, assets and the typed sub-rows in one statement; a duplicate
 /// signature inserts nothing. The signature is stored lowercase, as the
-/// mirror stores upstream's, so one listing cannot land twice re-cased.
+/// mirror stores upstream's, so one listing cannot land twice re-cased. A
+/// trade on a V3 marketplace stores its [`cancellation_digest`].
 pub(crate) async fn insert_trade<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     trade: &TradeCreation,
@@ -1287,12 +1319,25 @@ pub(crate) async fn insert_trade<'e>(
         .bind(effective_since.naive_utc())
         .bind(contract)
         .bind(serde_json::Value::Array(rows))
+        .bind(cancellation_digest(trade, contract))
         .fetch_optional(executor)
         .await?;
     let Some((trade_id,)) = inserted else {
         return Err(TradeCreationError::Duplicate);
     };
     Ok(trade_id)
+}
+
+/// The 503 of a trade the catalogue cannot judge yet, with `Retry-After`: the
+/// mirror catches up within a pass, and the collections index publishes
+/// within one.
+fn retryable_creation_error(e: TradeCreationError) -> Response {
+    let mut response = creation_error_to_api(e).into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
 }
 
 fn creation_error_to_api(e: TradeCreationError) -> ApiError {
@@ -1306,7 +1351,8 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
         }
         TradeCreationError::OwnershipUnverifiable(_)
         | TradeCreationError::OwnershipLookupFailed(_)
-        | TradeCreationError::ItemUnknown => ApiError::http(503, message),
+        | TradeCreationError::ItemUnknown
+        | TradeCreationError::CatalogueUnavailable(_) => ApiError::http(503, message),
         TradeCreationError::Duplicate | TradeCreationError::DuplicateOpen(_) => {
             ApiError::http(409, message)
         }
@@ -1344,7 +1390,13 @@ async fn post_trade_inner(
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
-    let recovered = require_signer(headers, "post", "/v1/trades").await?;
+    let recovered = require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        "/v1/trades",
+    )
+    .await?;
     if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
@@ -1365,15 +1417,10 @@ async fn post_trade_inner(
     .await
     {
         Ok(id) => id,
-        // The mirror catches up within a pass: tell the client when to retry.
-        Err(TradeCreationError::ItemUnknown) => {
-            let mut response =
-                creation_error_to_api(TradeCreationError::ItemUnknown).into_response();
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static("60"),
-            );
-            return Ok(response);
+        Err(
+            e @ (TradeCreationError::ItemUnknown | TradeCreationError::CatalogueUnavailable(_)),
+        ) => {
+            return Ok(retryable_creation_error(e));
         }
         Err(e) => return Err(creation_error_to_api(e)),
     };
@@ -1488,6 +1535,27 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
+
+    /// A trade the catalogue cannot judge yet answers 503 with `Retry-After`:
+    /// an item the mirror has not brought, or an owned network the
+    /// collections index refuses.
+    #[test]
+    fn a_trade_the_catalogue_cannot_judge_yet_says_when_to_retry() {
+        for e in [
+            TradeCreationError::ItemUnknown,
+            TradeCreationError::CatalogueUnavailable("the index is rewinding".into()),
+        ] {
+            let response = retryable_creation_error(e);
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "60"
+            );
+        }
+    }
 
     #[test]
     fn endpoints_parse_per_chain_and_owner_words_decode() {

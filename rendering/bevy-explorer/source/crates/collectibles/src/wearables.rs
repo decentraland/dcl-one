@@ -443,6 +443,9 @@ impl AssetLoader for WearableLoader {
                     .with_settings::<GltfLoaderSettings>(|s| {
                         s.load_cameras = false;
                         s.load_lights = false;
+                        // the avatar reads its materials' emissive strengths from the source,
+                        // then drops it (avatar::drop_emissive_strengths)
+                        s.include_source = true;
                         s.load_meshes = RenderAssetUsages::MAIN_WORLD;
                         s.load_materials = RenderAssetUsages::RENDER_WORLD;
                         s.transfer_priority = RenderAssetTransferPriority::Priority(2);

@@ -449,3 +449,41 @@ describe('when tablet widths give routes less room than their labels', () => {
     expect(tray.current[1]).toBeLessThanOrEqual(tray.width - FADE + 1)
   })
 })
+
+describe('when ShopChrome supplies its own controls', () => {
+  it.each([
+    [390, true],
+    [768, true],
+    [769, false],
+    [1440, false]
+  ] as const)(
+    'should show the Activity shortcut according to the viewport at %i',
+    async (width, visible) => {
+      await navigate('shop-links', width)
+      expect(
+        await browser.evaluate(
+          'document.querySelector(\'a[href="#activity"]\').getClientRects().length > 0'
+        )
+      ).toBe(visible)
+      expect(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(
+        true
+      )
+    }
+  )
+
+  it('should render the campaign without animation when reduced motion is requested', async () => {
+    await browser.session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+    })
+    try {
+      await navigate('shop-links', 390)
+      expect(
+        await browser.evaluate(
+          "getComputedStyle(document.querySelector('[aria-current] span')).animationName"
+        )
+      ).toBe('none')
+    } finally {
+      await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+    }
+  })
+})

@@ -19,7 +19,7 @@ RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edi
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
-PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
+PostgreSQL +3, LiveKit +4..+6, index metrics on TCP +6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
 The ingress takes the first free block 10000 above the base (`ingress_port`):
 Valkey +0, RTMP +1 (every interface), the ingress relay +2, health +3 and the message
@@ -118,12 +118,14 @@ Status values:
 | Worlds content server `worlds-content-server` (`/index`, `/world/{name}/{about,scenes,permissions}`, content). `WORLDS_CONTENT_MIRROR_SOURCE`. Read-through only in dev. Status: mirror | `services/catalyst/worlds/src/mirror.rs`, `content/src/read_through.rs` | `@decentraland/apis` | No target yet |
 | Communities `social-api` (`/v1/communities`), thumbnails from `assets-cdn`. `COMMUNITIES_UPSTREAM_URL`, `COMMUNITIES_MIRROR_THUMBNAIL_URL`, and the `catalyst communities mirror` CLI defaults (`src/main.rs`). Off in dev. Status: mirror | `services/catalyst/social/src/communities/mirror.rs` | `@decentraland/apis` | No target yet |
 | Denylists `asset-bundle-registry` (`/denylist`, every 120 s) and `config` (`/denylist.json`). `DENYLIST_URLS`, `EXPLORER_DENYLIST_SOURCE_URL`, `DENY_LIST_URL` (comms; not set in dev). Status: mirror | `content/src/denylist.rs`, `explore/src/api/denylist.rs`, `comms/src/archipelago/mod.rs` | `@decentraland/apis` | No target yet |
-| Explorer lists, flags and map: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`), `api` (`/v2/tiles`, `/v2/tiles/info`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`, `EXPLORER_MAP_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs`, `explore/src/api/map/mod.rs` | `@decentraland/apis` | No target yet |
+| Explorer lists and flags: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs` | `@decentraland/apis` | No target yet |
+| Event Foundation names `feature-flags` (`/events.json`, every five minutes, Referer `https://decentraland.org`, optional `X-Address-Hash` from `EVENTS_FEATURE_FLAGS_USER_ID`). `EVENTS_FEATURE_FLAGS_URL`, independent of `EXPLORER_MIRRORS_ENABLED`. Status: mirror | `explore/src/api/feature_flags.rs` (`refresh_events`), `explore/src/events/foundation.rs` | `@decentraland/apis` | No target yet |
 | Asset-bundle registry `asset-bundle-registry` (`/entities/{active,versions,status}`, `/worlds/{name}/manifest`, `/queues/status`). `EXPLORER_REGISTRY_SOURCE_URL`. Status: mirror | `explore/src/api/registry.rs` | `@decentraland/apis` | The local abgen runtime with native Registry state ([registry ADR](adr/2026-11-09-registry-local-catalyst.md)) |
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
 | Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |
-| Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | No target yet |
-| Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`, `land-manager`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL`, `LAND_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `chain-index/src/land_graph.rs`, `builder/src/onchain.rs` | `@decentraland/apis` | LAND and permissions read the local land-authz and marketplace indexes once they are published (`config/src/shop.rs`); DCL NAMEs read the nft index on a node that walks it (`chain-index/src/names.rs`); collections still use the subgraphs |
+| Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | The node becomes the system of record for trades and `TRADES_SYNC_UPSTREAM_URL` is blanked ([trades and relay cutover](#trades-and-relay-cutover)) |
+| Meta-transaction relay forward `transactions-api` (`/v1/transactions`), used when the relay has no signer of its own. `TRANSACTIONS_UPSTREAM_URL`; a Polygon mainnet relay (`COLLECTIONS_CHAIN_ID=137`) refuses to start with it. The `testnet` dev profile sets it. Status: testnet only | `services/catalyst/shop/src/evm/` | `@decentraland/apis` | Mainnet relays sign with their own relayer ([trades and relay cutover](#trades-and-relay-cutover)); the testnet profile forwards until the testnet API retires |
+| Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `builder/src/onchain.rs` | `@decentraland/apis` | LAND permissions read the land-authz index alone (no land-manager subgraph); LAND listings read the marketplace indexes once they are published (`config/src/shop.rs`); DCL NAMEs read the nft index on a node that walks it (`chain-index/src/names.rs`); collections still use the subgraphs |
 | Third Party Registry (Polygon mainnet). `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED` is on under the mirror posture. | `shop/src/market/third_party_registry.rs`, `shop/src/market/third_party.rs` | `@decentraland/apis`, `/create` | The local index supplies approved providers and on-chain slot counts. When indexed reads are unavailable, the existing provider routes can use `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`. Testnet mirrors supply the Polygon registry subgraph by default. Builder still accounts for pending item reservations. |
 | NFT worker `nfts` (`/wallets/{owner}/networks/{network}/nfts`). `NFT_WORKER_BASE_URL`; mirror refuses to start without it. Status: mirror | `shop/src/market/third_party.rs` | `@decentraland/apis` | No target yet. When it is unset, holdings are read over JSON-RPC |
 | OpenSea fallback `opensea` (`/api/v2/chain/{chain}/contract/{contract}/nfts/{id}`). `OPENSEA_FALLBACK_URL`. Status: mirror | `explore/src/opensea.rs` | `@decentraland/apis` | No target yet |
@@ -144,6 +146,55 @@ Status values:
 | Shop parity and trade journey harnesses: they record live traffic to the Shop's services and use `rpc` (`/mainnet`, `/amoy`, `/sepolia`). Run by hand; CI runs only their offline tests. Status: dev-only | `tooling/shop-parity/lib/services.mts`, `lib/session.mts`, `tooling/shop-trade-journey/lib/wallet.mts` | `@decentraland/web-applications` | No target yet |
 
 Not listed: human links, canonical and sitemap URLs, URLs written into responses that the node does not fetch, mocks and fixtures, and third-party services (CoinGecko, publicnode, thirdweb, Segment and others).
+
+### Trades and relay cutover
+
+This is the order in which a production node stops relaying through transactions-server and stops reading trades from
+marketplace-server. Step 1 is a precondition of step 2's deploy, and it must land before transactions-server retires.
+
+1. Before deploying any build that carries the relay check, on a Polygon mainnet node (`COLLECTIONS_CHAIN_ID=137`):
+   - provision the relay's own signer: `OZ_RELAYER_URL`, `OZ_RELAYER_ID` and `OZ_RELAYER_API_KEY`, or
+     `META_TX_BROADCAST_ENABLED=true` with `RELAYER_PRIVATE_KEY_FILE` and `RPC_ENDPOINT_POLYGON`;
+   - unset `TRANSACTIONS_UPSTREAM_URL`.
+
+   The check runs at every start, whether or not the relay is used: a build that carries it refuses to start the
+   whole node while the variable is set. From here on, the node pays the relayed gas. Set `RELAYER_MAX_FEE_PER_GAS_WEI`
+   and `MAX_GAS_PRICE_ALLOWED_IN_WEI`, without which the direct signer is uncapped, and alert on the relayer
+   account's balance.
+2. Deploy a build that stores each V3 trade's digest (`shop.trades.trade_digest`) and run `catalyst schema migrate`.
+   Every route that lists, prices or reports trade status waits for the trade-events index to be current on both
+   networks (`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`).
+3. Open local writes (`DATA_WRITES_ENABLED=true`). This is the node's data-plane write switch, not a trades switch.
+   Besides the trades and coupons signed into the node, it opens the relay (`POST /v1/transactions`), broker, escrow
+   and checkout, rentals listings, the presence archive, lists and picks, cancellations, moderation, outfits and
+   subscriptions. The trades mirror keeps copying marketplace-server's trades meanwhile, and a trade signed into
+   either side is served.
+4. Freeze marketplace-server's trade writes and record the moment as T (UTC). Point every client's `POST /v1/trades`
+   at the node and stop marketplace-server from accepting new trades.
+5. Run the final marketplace-server import (`tooling/migration`, step `trades`) after T. It promotes the mirrored
+   copies to local authority and carries upstream's digests. Check T against it: `migrate.py status` shows a
+   completed `trades` walk that started after T, and marketplace-server holds no trade created after T.
+6. Blank `TRADES_SYNC_UPSTREAM_URL`. The node then reads its own trades only (local authority). A mirrored row the
+   import did not promote counts only within the trades freshness budget.
+7. Check the result:
+   - `/v1/trades-mirror` records no new pass.
+   - The trade-events index is current on both networks.
+   - Digest coverage: count the V3 trades that still have no digest their signature recovers the signer over
+     (`shop.trade_chain_state.digest_failed_at` set). These are left out of the listings. Compare the node's open
+     listings with marketplace-server's at T. Those trades are the expected difference; they must be few and each
+     one accounted for.
+
+Rollback:
+
+- **Before step 6:** set `DATA_WRITES_ENABLED=false`, which closes the relay and every other data-plane write too.
+  Re-enable marketplace-server's trade writes, and point clients' `POST /v1/trades` back at it. The mirror never
+  stopped, so every trade marketplace-server holds is still on the node. The reverse does not hold: trades signed
+  into the node since step 3 exist only on the node, and their signatures stay valid on chain. List the node's own
+  trades created since step 3 that marketplace-server does not hold (compare `hashed_signature`), then import them
+  into marketplace-server or have their sellers cancel them.
+- **After step 6:** do the same, and restore `TRADES_SYNC_UPSTREAM_URL`.
+- **Step 1, on a Polygon mainnet node:** there is no rollback by environment variable. Restoring the forward means
+  redeploying a build from before the relay check. A testnet relay can forward again by setting the variable.
 
 ## The web Explorer (`/play`)
 
@@ -195,12 +246,18 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a commit
+(default `HEAD`) locally, with the checks its changes since `origin/main` select (images
+need Linux or `CI_LOCAL_IMAGES=1`).
+
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
 The `tooling/tests` suite runs in its own job, Tooling tests, beside smoke. It needs
 only the dev shell: its PostgreSQL tests start their own clusters with the shell's
-binaries. It includes the workflow tests, so the CI gate requires it.
+binaries. It includes the workflow tests, so the CI gate requires it. The Changes job
+also runs some of them on every pull request, because they read files outside the path
+list of `development.yml`.
 
 The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
 `foundation-dev` initializes with it set runs without durability (`fsync`,
@@ -209,9 +266,6 @@ every scratch database a test drops forces a checkpoint. The flag has no effect
 on a cluster created without it, so it never weakens a stack that holds data.
 Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
 
-Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
-that run the matching workflows' checks (images need Linux or
-`CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
@@ -320,7 +374,7 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
 | `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 48 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 49 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), sdk-release (1), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |

@@ -21,6 +21,23 @@ use super::{
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::cors::{decentraland_cors, is_decentraland_origin};
 
+const SESSIONS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "dcl_auth_socketio_sessions_total",
+    "Auth Socket.IO namespace sessions opened.",
+    None,
+    &[],
+);
+const EVENTS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "dcl_auth_socketio_events_total",
+    "Inbound auth Socket.IO events handled.",
+    None,
+    &["event"],
+);
+
+/// Socket.IO exposes namespace and application callbacks for both Engine.IO
+/// polling and WebSocket clients.
+pub const SOCKET_FAMILIES: &[dcl_metrics::Descriptor] = &[SESSIONS.descriptor, EVENTS.descriptor];
+
 const PATH: &str = "/auth-api/socket.io/";
 const PUSH_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -189,23 +206,45 @@ fn metadata(socket: &SocketRef) -> (Option<Extension<ConnectInfo<SocketAddr>>>, 
     )
 }
 
+/// The client source of the socket's connecting request, for the node's
+/// budget of contract-wallet checks (`eip1654_budget`): socketioxide runs each
+/// event outside that request's scope, so an event's checks are charged to it
+/// here.
+fn client_source(
+    state: &AppState,
+    peer: Option<&Extension<ConnectInfo<SocketAddr>>>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    crate::shared::client_ip::distinct_client_ip(
+        headers,
+        peer.map(|Extension(ConnectInfo(peer))| *peer),
+        &state.settings.trusted_proxy_cidrs,
+    )
+}
+
 fn bad_message(ack: AckSender) {
     let _ = ack.send(&json!({ "error": "Invalid request body" }));
 }
 
 fn register(socket: SocketRef, state: AppState) {
+    SESSIONS.handle([]).increment(1);
     let create_state = state.clone();
     socket.on(
         "request",
         move |socket: SocketRef, TryData(body): TryData<CreateRequestBody>, ack: AckSender| {
             let state = create_state.clone();
             async move {
+                EVENTS.handle(["request"]).increment(1);
                 let Ok(body) = body else {
                     return bad_message(ack);
                 };
                 let (peer, headers) = metadata(&socket);
-                let response =
-                    create_request(State(state.clone()), peer, headers, RelayJson(body)).await;
+                let source = client_source(&state, peer.as_ref(), &headers);
+                let response = crate::shared::eip1654_budget::with_source(source, async {
+                    crate::shared::eip1654_budget::debug_assert_scoped("the auth socket's request");
+                    create_request(State(state.clone()), peer, headers, RelayJson(body)).await
+                })
+                .await;
                 if response.status() != StatusCode::CREATED {
                     return ack_response(ack, response).await;
                 }
@@ -233,6 +272,7 @@ fn register(socket: SocketRef, state: AppState) {
         move |TryData(data): TryData<RequestId>, ack: AckSender| {
             let state = recover_state.clone();
             async move {
+                EVENTS.handle(["recover"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };
@@ -251,6 +291,7 @@ fn register(socket: SocketRef, state: AppState) {
         move |TryData(data): TryData<RequestId>, ack: AckSender| {
             let state = validation_state.clone();
             async move {
+                EVENTS.handle(["request-validation-status"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };
@@ -268,12 +309,14 @@ fn register(socket: SocketRef, state: AppState) {
         move |socket: SocketRef, TryData(data): TryData<SocketOutcome>, ack: AckSender| {
             let state = state.clone();
             async move {
+                EVENTS.handle(["outcome"]).increment(1);
                 let Ok(data) = data else {
                     return bad_message(ack);
                 };
                 let (peer, headers) = metadata(&socket);
-                ack_response(
-                    ack,
+                let source = client_source(&state, peer.as_ref(), &headers);
+                let response = crate::shared::eip1654_budget::with_source(source, async {
+                    crate::shared::eip1654_budget::debug_assert_scoped("the auth socket's outcome");
                     submit_outcome(
                         State(state),
                         peer,
@@ -281,9 +324,10 @@ fn register(socket: SocketRef, state: AppState) {
                         Path(data.request_id.to_string()),
                         RelayJson(data.outcome),
                     )
-                    .await,
-                )
+                    .await
+                })
                 .await;
+                ack_response(ack, response).await;
             }
         },
     );

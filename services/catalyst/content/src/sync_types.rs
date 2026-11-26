@@ -16,7 +16,7 @@ pub type Pointer = String;
 pub(crate) fn timestamp_number(n: &serde_json::Number) -> Option<Timestamp> {
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     let n = n.as_f64()?;
-    (n >= 0.0 && n <= MAX_SAFE_INTEGER && n.fract() == 0.0).then_some(n as i64)
+    ((0.0..=MAX_SAFE_INTEGER).contains(&n) && n.fract() == 0.0).then_some(n as i64)
 }
 
 fn de_timestamp<'de, D>(d: D) -> Result<Timestamp, D::Error>
@@ -165,6 +165,17 @@ pub enum DeploymentContext {
     Local,
     Synced,
     SyncedFix,
+}
+
+impl DeploymentContext {
+    /// The `deployment_context` label of `total_deployments_count`.
+    pub fn label(self) -> &'static str {
+        match self {
+            DeploymentContext::Local => "LOCAL",
+            DeploymentContext::Synced => "SYNCED",
+            DeploymentContext::SyncedFix => "FIX_ATTEMPT",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

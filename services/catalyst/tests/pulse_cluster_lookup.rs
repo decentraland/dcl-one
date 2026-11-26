@@ -1,8 +1,6 @@
 // from: catalyrst/crates/catalyrst-pulse/tests/cluster_lookup.rs
-#[path = "support/gate.rs"]
-mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::gate;
+use crate::nats_broker;
 use catalyst::comms::pulse::{
     cluster::nats::{NatsClusterFeed, NatsFeedOptions},
     cluster::{ClusterOptions, ClusterTracker},

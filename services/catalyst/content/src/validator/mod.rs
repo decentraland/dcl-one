@@ -137,14 +137,16 @@ impl Settings {
                 .map(str::to_string)
         };
         let required = content_writes && !ignore_blockchain_access;
-        let eth_network = eth_network.trim().to_string();
+        let eth_network = crate::shared::network::ChainPair::from_eth_network(eth_network)
+            .map_or(eth_network.trim(), |pair| pair.names().0)
+            .to_string();
         let l2_raw = clean(l2_rpc_url);
         let l2_https = l2_raw
             .as_deref()
             .is_some_and(|url| url::Url::parse(url).is_ok_and(|u| u.scheme() == "https"));
         if required {
             let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
-            if !matches!(eth_network.as_str(), "mainnet" | "sepolia") {
+            if crate::shared::network::ChainPair::from_eth_network(&eth_network).is_none() {
                 bail!(
                     "ETH_NETWORK={eth_network} has no checker contracts (mainnet|sepolia): \
                      local deploys could not be checked; set it {fix}"
@@ -192,7 +194,7 @@ impl Settings {
             return Ok(());
         }
         let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
-        if !matches!(self.eth_network.as_str(), "mainnet" | "sepolia") {
+        if crate::shared::network::ChainPair::from_eth_network(&self.eth_network).is_none() {
             bail!(
                 "ETH_NETWORK={} has no checker contracts (mainnet|sepolia): synced entities \
                  could not be checked; set it {fix}",

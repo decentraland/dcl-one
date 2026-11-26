@@ -1,11 +1,8 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/control_v4_authority.rs
+use crate::fence;
 use catalyst::comms::archipelago::control_v4::{
     AssignmentAuthority, AssignmentPayload, LaneKey, V4Error, V4Owner,
 };
-#[path = "support/db.rs"]
-mod db;
-#[path = "support/fence.rs"]
-mod fence;
 use fence::Fixture;
 
 fn owner(address: &str, session: &str, epoch: u64) -> V4Owner {

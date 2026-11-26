@@ -120,7 +120,7 @@ def ports_free(base, public_udp=()):
     # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
     # (the Sites port) and ENet ports, LiveKit's media; behind a public origin Pulse's two, on every interface.
     return bindable([*((socket.SOCK_STREAM, port, '127.0.0.1') for port in (
-                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 7, base + 8, base + 9)),
+                         base, base + 1, base + 2, base + 3, base + 4, base + 5, base + 6, base + 7, base + 8, base + 9)),
                      *((socket.SOCK_DGRAM, port, '127.0.0.1') for port in (base + 2, base + 6, base + 7)),
                      *((socket.SOCK_DGRAM, port, '0.0.0.0') for port in public_udp)])
 
@@ -570,6 +570,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
         # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
         # worktree) would otherwise fail to start its API.
+        'INDEX_METRICS_BIND': f'127.0.0.1:{base + 6}',
         'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.
@@ -662,6 +663,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'EXPLORER_LISTS_SOURCE_URL': 'https://dcl-lists.decentraland.org',
             'EXPLORER_DENYLIST_SOURCE_URL': 'https://config.decentraland.org/denylist.json',
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
+            'EVENTS_FEATURE_FLAGS_URL': 'https://feature-flags.decentraland.org',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
             # Temporary: imposter tiles read through from the community CDN until the node bakes
@@ -675,6 +677,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'PROFILE_IMAGES_ORIGIN_URL': 'https://profile-images.decentraland.org',
             # The Shop's catalogue: the marketplace mirrors and the NFT and LAND
             # indexes `catalyst posture show mirror` names, run by the index process.
+            # The map's tile grid (Places, the HUD's map, estate images) is built from
+            # the same LAND and NFT indexes and the trades mirror once they are published.
             'MARKETPLACE_MIRRORS_ENABLED': 'true',
             'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.org/v1/trades',
             # The Shop's feeds wait for one complete trades pass; take it in one go rather than
@@ -685,9 +689,14 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-mainnet',
             'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-mainnet',
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
-            'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # The Shop's listings wait for the trade-events index to be current on both networks (its
+            # verdicts close sold and cancelled trades), over the same tagged endpoints as the other indexes.
+            # A fresh stack walks Polygon's off-chain marketplaces from 2024 first: about half an hour.
+            'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+            'TRADE_RPC_URLS': '1=https://rpc.decentraland.org/mainnet?project=dcl-one-dev,'
+                              '137=https://rpc.decentraland.org/polygon?project=dcl-one-dev',
             # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
             'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             # The mirror posture's pause between index passes: a pass makes its eth_getLogs calls whether or not a
@@ -699,11 +708,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
             # route redirects to; the builder pulls from it when the item bucket misses.
             'BUILDER_ASSET_PACKS_BUCKET_URL': 'https://builder-api.decentraland.org/v1/storage',
-            # Credit prices need a MANA spot; the map (Places, the HUD's map, estate images) its grid.
+            # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
                                       'kraken=https://api.kraken.com',
-            'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon?project=dcl-one-dev',
         })
     if config['profile'] == 'testnet':
@@ -729,7 +737,6 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-sepolia',
         'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-amoy',
         'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace-sepolia',
-        'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager-sepolia',
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
@@ -747,10 +754,10 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_INDEX_INTERVAL_SECS': '5',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
-        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
+        # The local dev profile serves the catalogue immediately through its configured
+        # graph readers. A testnet mirror with the NFT walk enabled waits for the local folds.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
-        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        # This non-walking dev profile uses the graph for rental assets.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
         # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
         'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
@@ -958,8 +965,8 @@ def project(config, postgres_only=False):
         return {'version': '0.5', 'processes': {'postgres': postgres}}
     api = process('api', {'postgres': 'process_healthy', 'api-build': 'process_completed_successfully',
                           'web-install': 'process_completed_successfully', 'nats': 'process_healthy'})
-    # Process readiness gates Pulse on schema/state/listener setup. /about also needs
-    # Pulse's heartbeat, so it remains the final whole-stack gate in wait_ready.
+    # Pulse needs a listening API before it can publish its heartbeat. Use process
+    # startup here and check aggregate readiness in wait_ready after Pulse starts.
     api['readiness_probe'] = {'http_get': {'host': '127.0.0.1', 'port': config['port'], 'path': '/status'},
                              'period_seconds': 2, 'failure_threshold': 1800}
     pulse = process('pulse', {'api': 'process_healthy', 'nats': 'process_healthy'})
@@ -1524,7 +1531,12 @@ def progress(processes, elapsed, log_positions=None):
 
 def wait_ready(timeout, postgres_only=False):
     config = settings()
-    urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
+    if not postgres_only:
+        # A fresh local mirror can serve traffic while its historical map indexes
+        # catch up. Its launch gate checks realm availability during that warmup.
+        api_probe = '/about' if config['profile'] == 'mirror' else '/health'
+        api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
+        sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
@@ -1558,13 +1570,18 @@ def wait_ready(timeout, postgres_only=False):
             restarting = [process['name'] for process in listing if process.get('status') == 'Restarting']
             if restarting:
                 raise RuntimeError('A process is restarting')
-            for url in urls:
+            for url in (api_url, sites_url):
                 with urllib.request.urlopen(url, timeout=3) as response:
                     if response.status != 200:
                         raise RuntimeError('Service not ready')
+                    if url == api_url and api_probe == '/health':
+                        # A usable local stack needs the database and Pulse as well as an API replica.
+                        checks = json.load(response)['details']
+                        if any(checks[name]['status'] != 'pass' for name in ('postgres', 'comms')):
+                            raise RuntimeError('Waiting for the database and Pulse')
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
-        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, ValueError, KeyError, subprocess.CalledProcessError):
             delay = next(delays, None)
             if delay is None:
                 break

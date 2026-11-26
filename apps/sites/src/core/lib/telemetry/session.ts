@@ -177,17 +177,19 @@ function withCookies(response: Response, cookies: string[]): Response {
 export const publicResponseContext = createContext<boolean>(false);
 
 /**
- * Called from the middleware of a route served with a public `Cache-Control` (the docs), before its
- * loaders run: such a response is stored once and served to everyone, so it must carry neither a
- * visitor's session id nor a session cookie.
+ * Called from the middleware of a route served with a public `Cache-Control` (the docs, the cart's
+ * shared document), before its loaders run: such a response is stored once and served to everyone, so
+ * it must carry no session cookie and nothing of the visitor in root data (session id, wallet, language).
  */
 export function markPublicResponse(context: Readonly<RouterContextProvider>): void {
   context.set(publicResponseContext, true);
 }
 
 /**
- * The paths whose route calls `markPublicResponse` (`routes/docs.$.tsx`, mounted at `/docs/*`), matched
- * case-insensitively as React Router matches routes: root's data for them carries no session.
+ * The paths whose route calls `markPublicResponse` for every response (`routes/docs.$.tsx`, mounted at
+ * `/docs/*`), matched case-insensitively as React Router matches routes: root's data for them carries no
+ * session. The cart calls it only for its shared document (`routes/shop/shared-cart.ts`), so root's
+ * `shouldRevalidate` knows that page by its data (`noteRootSid`), not by its path.
  */
 const PUBLIC_RESPONSE_PATH = /^\/docs(\/|$)/i;
 

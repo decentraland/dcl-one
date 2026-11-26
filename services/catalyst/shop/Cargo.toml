@@ -25,7 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 tracing.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 futures.workspace = true
@@ -36,6 +36,7 @@ tokio-util.workspace = true
 parking_lot.workspace = true
 ipnet.workspace = true
 hex.workspace = true
+ed25519-dalek.workspace = true
 urlencoding.workspace = true
 alloy-primitives.workspace = true
 sha2.workspace = true
@@ -72,4 +73,8 @@ catalyst-db = { path = "../db", features = ["test-support"] }
 catalyst-fed = { path = "../fed", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+tracing-subscriber.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints.clippy]
+unwrap_used = "deny"

@@ -10,10 +10,11 @@
 //! logs of the token precede it. The same log mined again in another block
 //! keeps its id; a different log at the same (block, log_index) gets another.
 
+use dcl_metrics::{Descriptor, GaugeFamily};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
+use super::chain_walk::{ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use crate::rentals::index::INDEXER_RENTALS;
 
 pub const TRANSFER_RECEIVED: &str = "transfer_received";
@@ -43,6 +44,31 @@ pub const PRODUCERS: &[&str] = &[
     ROYALTIES_BID_ACCEPTED_MATIC,
     BID_RECEIVED,
 ];
+
+/// Blocks between a producer's cursor and the published block its pages
+/// read up to (for bids, the lower of the sales and nft indexes'), by
+/// `producer`, set after each page: 0 once a page reads everything up to
+/// that block, otherwise the blocks still ahead of the cursor. The
+/// producers that wait for the catalogue (sales, bids, royalties) report
+/// it: a cursor held behind a sale shows as a lag that keeps growing. A
+/// pass whose index is not published reads no page and leaves it as it was.
+const CURSOR_LAG: GaugeFamily<1> = GaugeFamily::new(
+    "shop_notification_cursor_lag",
+    "Blocks between a chain notification producer's cursor and the published block it reads up to.",
+    None,
+    &["producer"],
+);
+
+/// The producers' families, declared for serve's registry.
+pub const FAMILIES: &[Descriptor] = &[CURSOR_LAG.descriptor];
+
+/// Records `producer`'s [`CURSOR_LAG`]: its cursor at `cursor_block`, its
+/// pages bounded by `published` (equal when a page read everything).
+pub(super) fn report_lag(producer: &'static str, published: i64, cursor_block: i64) {
+    CURSOR_LAG
+        .handle([producer])
+        .set(published.saturating_sub(cursor_block).max(0) as f64);
+}
 
 /// How far below an index's head a replay moves the cursors back: deeper
 /// rows are not announced again, and a backfill entirely below it replays nothing.
@@ -292,12 +318,10 @@ fn event_table(indexer: &str) -> Option<&'static str> {
 /// network's mainnet.
 fn read_chain(producer: &str, indexer: &str, net: ChainNet, trade_chains: (i64, i64)) -> i64 {
     match (indexer, net) {
-        (INDEXER_TRADE_EVENTS, _) if producer == TRANSFER_RECEIVED => {
-            chain_walk::mainnet_chain(net)
-        }
+        (INDEXER_TRADE_EVENTS, _) if producer == TRANSFER_RECEIVED => net.chain_id(),
         (INDEXER_TRADE_EVENTS, ChainNet::Ethereum) => trade_chains.0,
         (INDEXER_TRADE_EVENTS, ChainNet::Matic) => trade_chains.1,
-        _ => chain_walk::mainnet_chain(net),
+        _ => net.chain_id(),
     }
 }
 

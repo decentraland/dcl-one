@@ -1,4 +1,5 @@
-import { IEngine, CrdtMessage, CrdtMessageType } from '@dcl/ecs'
+import type { IEngine, CrdtMessage } from '@dcl/ecs'
+import { CrdtMessageType } from '@dcl/ecs'
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer'
 import { readMessage } from '@dcl/ecs/dist/serialization/crdt/message'
 
