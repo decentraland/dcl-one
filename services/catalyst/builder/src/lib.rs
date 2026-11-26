@@ -1,44 +1,28 @@
 //! Builder: the pre-publish draft store behind `builder-api.decentraland.org`:
-//! item and collection drafts, uploaded content, the committee's item
-//! curation, standard collection publication (Polygon factory parameters
-//! prepared here, signed and submitted by the client, the receipt verified
-//! here), third-party publication (the items a provider manager submits for
-//! curation with its signed slot cheque, [`cheques`]), the wearable
-//! validator's review requests, which it pulls ([`validator`]), the review
-//! flow creators, curators and the validator share ([`review`]), and the
-//! newsletter opt-in. It keeps no scenes: no projects, manifests,
-//! asset packs or scene files. Schema `builder` (`schemas/50_create.sql`).
+//! item and collection drafts, their listings and the committee's
+//! collection listing. It keeps no scenes: no projects, manifests, asset
+//! packs or scene files. Schema `builder` (`schemas/50_create.sql`).
 //!
 //! What it reuses: the ONE pool; the ONE `http::Outbound` client for the
-//! Polygon RPC; the ONE blob store (`storage`) for uploaded item files, by
-//! hash (an item's video streams there, [`items::video`]), which it serves
-//! itself (who may read a file is [`access::read_file`]); signed fetch
-//! through `src/auth` and the shared verifier the explore and social routes
-//! use (`shared::signed_fetch`, [`auth`]); the marketplace subgraph readers
-//! (`marketplace::graph`) for the curation console's listing ([`onchain`]);
-//! the shop's copy of the Polygon collections subgraph, read by shared SQL,
-//! for a collection's published and approved state ([`chain_state`]: 503
-//! while the copy can't tell) and the chain facts a collection's body and
-//! listings merge ([`collections`]). The one client it does not share is
-//! [`guarded_client`]: guarded as the shared one, but it follows no
-//! redirect, so a credential it carries never reaches another host; the
-//! terms-of-service forward to the warehouse ([`terms`]), the newsletter
-//! forward, the Slack notices and the forum take it. Every write goes behind
-//! `CREATE_WRITES_ENABLED` ([`writes`], default false, 503 with
-//! `Retry-After`, built the way `social::writes` gates the social writes).
+//! Polygon RPC, which tells whether a collection's address holds its
+//! contract ([`collections::deployment`]); signed fetch through `src/auth`
+//! and the shared verifier the explore and social routes use
+//! (`shared::signed_fetch`, [`auth`]); the shop's copy of the Polygon
+//! collections subgraph, read by shared SQL, for a collection's published
+//! and approved state ([`chain_state`]: 503 while the copy can't tell) and
+//! the chain facts a collection's body and listings merge ([`collections`]).
+//! Every write goes behind `CREATE_WRITES_ENABLED` ([`writes`], default
+//! false, 503 with `Retry-After`, built the way `social::writes` gates the
+//! social writes).
 //!
 //! Authorization: [`access`] decides every read and write of a collection or
 //! item (owner, on-chain manager, current committee member, third-party
 //! manager, as builder-server defines them; 503 when a source it needs can't
 //! tell), and the store functions take the grant it returns. The committee is
-//! [`committee`]'s read of the Polygon collections subgraph.
-//! The curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
-//! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer; chain
-//! writes are prepared here and signed and submitted by the client, the
-//! receipt verified over the Polygon RPC; a slot cheque is verified only;
-//! the node never holds a signing key. The signed-fetch window is the shared
-//! verifier's 60 seconds, and `BUILDER_POLYGON_RPC_URL` must be https to a
-//! public host, so a plaintext verifier can't be fed a fake receipt.
+//! [`committee`]'s read of the Polygon collections subgraph. The node never
+//! holds a signing key. The signed-fetch window is the shared verifier's 60
+//! seconds, and `BUILDER_POLYGON_RPC_URL` must be https to a public host, so
+//! a plaintext endpoint can't feed it a fake contract.
 //!
 //! Mount: `serve` merges [`root_router`] at the root (the
 //! `builder-api.` host's paths) and nests [`router`] under `/builder-api`
@@ -109,10 +93,9 @@ pub struct RawSettings {
     pub third_party_registry_subgraph_url: Option<String>,
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
-    /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that verifies
-    /// publication receipts and reads the rarities' MANA prices
-    /// ([`rarities`]); unset refuses begin/claim/verify and the rarities
-    /// routes with 503.
+    /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that tells whether a
+    /// collection's address holds its contract; unset, a save that moves a
+    /// collection off its stored address answers 503.
     pub polygon_rpc_url: Option<String>,
     /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
     pub cors_origin: Option<String>,
@@ -177,7 +160,7 @@ impl Settings {
                 .map_err(|e| anyhow::anyhow!("BUILDER_POLYGON_RPC_URL is not a valid URL: {e}"))?;
             if parsed.scheme() != "https" || !dcl_http::is_safe_http_url(url) {
                 bail!(
-                    "BUILDER_POLYGON_RPC_URL is {}:// to {}; publication receipts must be verified over a trusted TLS (https://) endpoint",
+                    "BUILDER_POLYGON_RPC_URL is {}:// to {}; the builder reads the chain only over a trusted TLS (https://) endpoint",
                     parsed.scheme(),
                     parsed.host_str().unwrap_or("?")
                 );
