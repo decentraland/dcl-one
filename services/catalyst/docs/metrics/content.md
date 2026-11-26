@@ -6,11 +6,10 @@ the names, types, label names, label values and histogram buckets of the content
 `src/metrics.ts` at `decentraland/catalyst@6c56f8a3eaff631cb7be0dc01ef92a24333bbc93`,
 except where a family serve already declares measures the same thing ("replaced by" below).
 
-The families are declared in `content/src/series.rs` (`catalyst_content::series::FAMILIES`)
-and `storage/src/gc.rs` (in `catalyst_storage::FAMILIES`), and both lists are composed into
-the serve registry in `src/serve_lifecycle.rs`, which applies the declared buckets. A
-histogram declared without buckets uses the Prometheus client's default buckets (0.005 to
-10 s). A family is absent from the scrape until its first observation.
+The families are declared in `content/src/series.rs`, `content/src/metrics.rs` and
+`storage/src/gc.rs`. The serve registry in `src/serve_lifecycle.rs` composes their lists
+and applies the declared buckets. Histograms without declared buckets use the Prometheus
+client's defaults (0.005 to 10 s). A family appears with its first observation.
 
 Every label value comes from a closed set. An entity type a client or a peer names is one
 of `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`, else `unknown`.
@@ -106,8 +105,8 @@ forwarding engine of both lanes (`lane` = `content-forward`, `worlds-forward`).
 
 | Series | Type and labels | Status | Observed at | Notes |
 |---|---|---|---|---|
-| `upstream_forward_sends_total` | counter `lane`, `outcome` = `accepted`, `rejected`, `retried`, `failed`, `superseded` | emitted | `content/src/forward.rs` `Forwarder::run_pass`, `Forwarder::close_foreign` | One per recorded send. `retried` is a send queued again; `failed` includes spent attempts, an entity past the upstream's age window and rows closed for another target. Alert on `rejected` or `failed` increasing. |
-| `upstream_forward_open_rows` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Queued or sending rows for the current upstream, read once per worker loop (every 5 s and on each deploy) by the replica holding the lane's lease, which sets 0 when it stops. |
+| `upstream_forward_sends_total` | counter `lane`, `outcome` = `accepted`, `rejected`, `retried`, `failed`, `superseded` | emitted | `content/src/forward.rs` `Forwarder::run_pass`, `Forwarder::close_foreign` | One per recorded forwarding outcome. `retried` is a send queued again; `failed` includes spent attempts, an entity past the upstream's age window and rows closed for another target. Alert on `rejected` or `failed` increasing. |
+| `upstream_forward_open_rows` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Queued or sending rows for the current upstream. The lease holder samples every 5 s, including during a send or sweep. Reads time out after 2 s and leave the previous value on failure. The holder sets 0 when sampling stops. Use `max by (lane)` across replicas during handover. |
 | `upstream_forward_oldest_open_age_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Seconds since `created_at` of the oldest open row; 0 when none. The upstream refuses an entity past its age window (5 minutes for worlds, 20 for content), so alert well below it. |
 
 ## Not applicable

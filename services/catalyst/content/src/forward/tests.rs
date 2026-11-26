@@ -1246,6 +1246,68 @@ async fn an_entity_past_the_upstreams_window_is_never_sent_nor_requeued() {
 }
 
 #[tokio::test]
+async fn open_queue_age_is_sampled_while_a_send_is_stalled() {
+    let Some(lab) = Lab::new(5).await else { return };
+    let entity = lab
+        .scene(
+            "17,18",
+            chrono::Utc::now().timestamp_millis(),
+            &[b"metrics"],
+        )
+        .await;
+    entity
+        .deploy(&lab.pool, &lab.storage, Some(&lab.forwarder))
+        .await
+        .unwrap();
+    lab.upstream.stall(true);
+
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let scrape = recorder.handle();
+    let age = || {
+        scrape.render().lines().find_map(|line| {
+            line.strip_prefix("upstream_forward_oldest_open_age_seconds{lane=\"content-forward\"} ")
+                .and_then(|value| value.parse::<f64>().ok())
+        })
+    };
+    let jobs = crate::jobs::Jobs::new();
+    lab.forwarder.spawn(&jobs);
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, lab.upstream.posted(1))
+        .await
+        .expect("the send never arrived");
+
+    let sampled = tokio::time::timeout(TICK * 3, async {
+        loop {
+            if age().is_some_and(|age| age >= TICK.as_secs_f64()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert_eq!(lab.row(&entity.entity_id).await.unwrap().0, "sending");
+    let sending_scrape = scrape.render();
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    let row = lab.row(&entity.entity_id).await.unwrap();
+    lab.cleanup().await;
+
+    assert!(
+        sampled.is_ok(),
+        "queue age did not advance during the stalled send"
+    );
+    assert!(sending_scrape.contains("upstream_forward_open_rows{lane=\"content-forward\"} 1"));
+    assert_eq!(row.0, "queued", "shutdown must release the claim");
+    assert_eq!(row.1, 0, "a cancelled send does not spend an attempt");
+    assert_eq!(age(), Some(0.0));
+    assert!(
+        scrape
+            .render()
+            .contains("upstream_forward_open_rows{lane=\"content-forward\"} 0")
+    );
+}
+
+#[tokio::test]
 async fn a_shutdown_mid_send_gives_the_claim_back_due_now() {
     let Some(lab) = Lab::new(5).await else { return };
     let signed = lab
@@ -1310,7 +1372,7 @@ async fn a_late_finish_never_overwrites_a_newer_claim() {
         status: 400,
         body: "late".into(),
     };
-    lab.forwarder.finish(&first, &late).await.unwrap();
+    assert_eq!(lab.forwarder.finish(&first, &late).await.unwrap(), None);
     lab.forwarder.release(&first).await.unwrap();
     let (status, attempts, error, upstream, _) = lab.row(&signed.entity_id).await.unwrap();
     assert_eq!(

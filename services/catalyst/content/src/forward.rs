@@ -69,7 +69,7 @@ use tokio_util::sync::CancellationToken;
 use super::SharedState;
 use super::errors::json_error;
 use crate::http::{HttpClientCfg, Outbound, read_body_capped};
-use crate::jobs::Jobs;
+use crate::jobs::{JobContext, Jobs};
 use crate::metrics::{FORWARD_OLDEST_OPEN_AGE, FORWARD_OPEN_ROWS, FORWARD_SENDS};
 use crate::storage::Storage;
 
@@ -86,6 +86,7 @@ const MAX_URL_LENGTH: usize = 2048;
 const ERROR_TEXT_CAP: usize = 8 * 1024;
 const RESPONSE_BODY_CAP: usize = 1024 * 1024;
 const TICK: Duration = Duration::from_secs(5);
+const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// Rows one pass claims at most before it yields to the next tick.
 const PASS_LIMIT: usize = 256;
 const RETENTION: chrono::Duration = chrono::Duration::days(30);
@@ -239,6 +240,18 @@ pub struct PassReport {
 }
 
 impl PassReport {
+    fn record(&mut self, state: &'static str) -> &'static str {
+        let (count, label) = match state {
+            "accepted" => (&mut self.accepted, state),
+            "rejected" => (&mut self.rejected, state),
+            "queued" => (&mut self.retried, "retried"),
+            "superseded" => (&mut self.superseded, state),
+            _ => (&mut self.failed, "failed"),
+        };
+        *count += 1;
+        label
+    }
+
     pub fn total(&self) -> usize {
         self.accepted + self.rejected + self.retried + self.failed + self.superseded
     }
@@ -309,52 +322,68 @@ impl Forwarder {
         jobs.spawn_leased(self.lane.job, move |ctx| {
             let this = this.clone();
             async move {
-                let mut ticker = tokio::time::interval(TICK);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                let mut swept: Option<Instant> = None;
                 for outcome in SEND_OUTCOMES {
                     FORWARD_SENDS.handle([this.lane.job, outcome]).increment(0);
                 }
-                loop {
-                    tokio::select! {
-                        _ = ctx.cancel.cancelled() => {
-                            // Only the lease holder reports; a stopped holder must not leave a stale value.
-                            FORWARD_OPEN_ROWS.handle([this.lane.job]).set(0.0);
-                            FORWARD_OLDEST_OPEN_AGE.handle([this.lane.job]).set(0.0);
-                            return Ok(());
-                        }
-                        _ = ticker.tick() => {}
-                        _ = this.kick.notified() => {}
-                    }
-                    if swept.is_none_or(|at| at.elapsed() >= SWEEP_EVERY) {
-                        swept = Some(Instant::now());
-                        if let Err(e) = this.close_foreign(&ctx.cancel).await {
-                            tracing::warn!(job = this.lane.job, error = %e, "closing other targets' rows failed");
-                        }
-                        if let Err(e) = this.sweep(now() - RETENTION, &ctx.cancel).await {
-                            tracing::warn!(job = this.lane.job, error = %e, "forwarding retention sweep failed");
-                        }
-                    }
-                    use futures::FutureExt;
-                    match std::panic::AssertUnwindSafe(this.run_pass(&ctx.cancel))
-                        .catch_unwind()
-                        .await
-                    {
-                        Ok(Ok(report)) if report.total() > 0 => ctx.progress(format!("{report:?}")),
-                        Ok(Ok(_)) => {}
-                        Ok(Err(e)) => {
-                            tracing::error!(job = this.lane.job, error = %e, "forwarding pass failed");
-                            ctx.error(format!("pass: {e}"));
-                        }
-                        Err(_) => {
-                            tracing::error!(job = this.lane.job, "forwarding pass panicked");
-                            ctx.error("pass: panic");
-                        }
-                    }
-                    this.observe_open().await;
-                }
+                tokio::join!(this.run_worker(&ctx), this.sample_open(&ctx.cancel));
+                Ok(())
             }
         });
+    }
+
+    async fn run_worker(&self, ctx: &JobContext) {
+        let mut ticker = tokio::time::interval(TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut swept: Option<Instant> = None;
+        loop {
+            tokio::select! {
+                biased;
+                _ = ctx.cancel.cancelled() => return,
+                _ = ticker.tick() => {}
+                _ = self.kick.notified() => {}
+            }
+            if swept.is_none_or(|at| at.elapsed() >= SWEEP_EVERY) {
+                swept = Some(Instant::now());
+                if let Err(e) = self.close_foreign(&ctx.cancel).await {
+                    tracing::warn!(job = self.lane.job, error = %e, "closing other targets' rows failed");
+                }
+                if let Err(e) = self.sweep(now() - RETENTION, &ctx.cancel).await {
+                    tracing::warn!(job = self.lane.job, error = %e, "forwarding retention sweep failed");
+                }
+            }
+            use futures::FutureExt;
+            match std::panic::AssertUnwindSafe(self.run_pass(&ctx.cancel))
+                .catch_unwind()
+                .await
+            {
+                Ok(Ok(report)) if report.total() > 0 => ctx.progress(format!("{report:?}")),
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(job = self.lane.job, error = %e, "forwarding pass failed");
+                    ctx.error(format!("pass: {e}"));
+                }
+                Err(_) => {
+                    tracing::error!(job = self.lane.job, "forwarding pass panicked");
+                    ctx.error("pass: panic");
+                }
+            }
+        }
+    }
+
+    /// Sample during sends and sweeps. On lease loss the sample stops immediately,
+    /// while the worker can still return a claimed row to the queue.
+    async fn sample_open(&self, cancel: &CancellationToken) {
+        let sample = async {
+            let mut ticker = tokio::time::interval(TICK);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                self.observe_open().await;
+            }
+        };
+        cancel.run_until_cancelled(sample).await;
+        FORWARD_OPEN_ROWS.handle([self.lane.job]).set(0.0);
+        FORWARD_OLDEST_OPEN_AGE.handle([self.lane.job]).set(0.0);
     }
 
     /// Sets the open-row gauges for this target: one aggregate over the
@@ -367,17 +396,20 @@ impl Forwarder {
              FROM {} WHERE target = $1 AND status IN ('queued', 'sending')",
             self.lane.table
         );
-        let row: sqlx::Result<(i64, f64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-            .bind(&self.target)
-            .fetch_one(&self.pool)
-            .await;
-        match row {
-            Ok((open, age)) => {
+        let query = sqlx::query_as::<_, (i64, f64)>(sqlx::AssertSqlSafe(sql)).bind(&self.target);
+        match tokio::time::timeout(OBSERVATION_TIMEOUT, query.fetch_one(&self.pool)).await {
+            Ok(Ok((open, age))) => {
                 FORWARD_OPEN_ROWS.handle([self.lane.job]).set(open as f64);
                 FORWARD_OLDEST_OPEN_AGE.handle([self.lane.job]).set(age);
             }
-            Err(e) => {
-                tracing::warn!(job = self.lane.job, error = %e, "reading the open forwarding rows failed")
+            Ok(Err(e)) => {
+                tracing::warn!(job = self.lane.job, error = %e, "reading the open forwarding rows failed");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    job = self.lane.job,
+                    "reading the open forwarding rows timed out"
+                );
             }
         }
     }
@@ -415,19 +447,10 @@ impl Forwarder {
                 };
                 outcome
             };
-            let state = self.finish(&row, &outcome).await?;
-            match state {
-                "accepted" => report.accepted += 1,
-                "rejected" => report.rejected += 1,
-                "queued" => report.retried += 1,
-                "superseded" => report.superseded += 1,
-                _ => report.failed += 1,
-            }
-            let label = match state {
-                "queued" => "retried",
-                "accepted" | "rejected" | "superseded" => state,
-                _ => "failed",
+            let Some(state) = self.finish(&row, &outcome).await? else {
+                continue;
             };
+            let label = report.record(state);
             FORWARD_SENDS.handle([self.lane.job, label]).increment(1);
             tracing::info!(job = self.lane.job, entity_id = %row.entity_id, attempts = row.attempts, state, ?outcome, "forwarded deployment");
         }
@@ -607,8 +630,8 @@ impl Forwarder {
     }
 
     /// Records the outcome; `attempts` fences a worker whose lease ran out
-    /// and whose row another claim took. Answers the state written.
-    async fn finish(&self, row: &Claimed, outcome: &Outcome) -> sqlx::Result<&'static str> {
+    /// and whose row another claim took. Returns the state only if the row changed.
+    async fn finish(&self, row: &Claimed, outcome: &Outcome) -> sqlx::Result<Option<&'static str>> {
         let now = now();
         let (state, next, error, upstream): (
             &'static str,
@@ -643,7 +666,7 @@ impl Forwarder {
              WHERE id = $1 AND status = 'sending' AND attempts = $2",
             self.lane.table
         );
-        sqlx::query(sqlx::AssertSqlSafe(sql))
+        let updated = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(row.id)
             .bind(row.attempts)
             .bind(state)
@@ -653,7 +676,7 @@ impl Forwarder {
             .bind(now)
             .execute(&self.pool)
             .await?;
-        Ok(state)
+        Ok((updated.rows_affected() == 1).then_some(state))
     }
 
     /// Gives a claim back unsent: `queued`, due now, the attempt uncounted
@@ -694,20 +717,22 @@ impl Forwarder {
             t = self.lane.table
         );
         let (sql, pool, target) = (sql.as_str(), &self.pool, self.target.as_str());
-        let closed = in_batches(cancel, move || {
-            sqlx::query(sqlx::AssertSqlSafe(sql))
+        let lane = self.lane.job;
+        in_batches(cancel, move || async move {
+            let closed = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(now)
                 .bind(target)
                 .bind(created_before)
                 .bind(FOREIGN_ERROR)
                 .bind(SWEEP_BATCH)
                 .execute(pool)
+                .await?;
+            FORWARD_SENDS
+                .handle([lane, "failed"])
+                .increment(closed.rows_affected());
+            Ok(closed)
         })
-        .await?;
-        FORWARD_SENDS
-            .handle([self.lane.job, "failed"])
-            .increment(closed);
-        Ok(closed)
+        .await
     }
 
     /// Deletes terminal rows last updated before `cutoff`, [`in_batches`].
