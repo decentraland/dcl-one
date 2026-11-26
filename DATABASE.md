@@ -1590,7 +1590,11 @@ Rollout, in order:
    `collection_publications` and `validation_requests`), the import's ledger
    `dcl_migration.builder_imported` and its `builder-server` checkpoints;
    the run that follows imports upstream as it is then (MAPPING.md, "Start
-   over"). Don't run the storage GC between the two.
+   over"). Don't run the storage GC between the two. It needs
+   `builder-linked-publications-retired.sql` to have run. A node whose builder
+   rows came from an import that kept no ledger, with creator writes never
+   opened, starts over with `-v unrecorded_import=on` (MAPPING.md, "Start
+   over").
 4. Open creator writes (`CREATE_WRITES_ENABLED=true`).
 
 Once creator writes are open, upstream is frozen for the node: the import

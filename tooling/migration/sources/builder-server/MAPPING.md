@@ -294,18 +294,36 @@ psql "$TARGET_DATABASE_URL" -X -f tooling/migration/sources/builder-server/start
 
 `start_over.sql` works in one transaction:
 
-1. It locks the tables it empties, waiting at most 10 seconds for a
+1. It refuses a node that still holds
+   `builder.linked_collection_publications`, whose foreign key would stop
+   the emptying: run `schemas/releases/builder-linked-publications-retired.sql`
+   first.
+2. It locks the tables it empties, waiting at most 10 seconds for a
    transaction that holds one and failing after that. A builder write that
    committed while it waited is seen by the check that follows; one that
    starts later waits for the start-over to end.
-2. It runs the check from "Before the first run" and refuses, emptying
+3. It runs the check from "Before the first run" and refuses, emptying
    nothing, a node that took builder writes. It also refuses a node holding
    a `builder.collection_publications` or `builder.validation_requests` row,
    which only a builder write makes.
-3. It empties the nine tables the check reads, with
+4. It empties the nine tables the check reads, with
    `builder.collection_publications` and `builder.validation_requests`.
-4. It deletes every row of `dcl_migration.builder_imported` and the
+5. It deletes every row of `dcl_migration.builder_imported` and the
    `builder-server` rows of `dcl_migration.checkpoint`.
+
+A node that ran an import that kept no ledger holds builder rows with no
+`dcl_migration.builder_imported` row, so the check refuses every one of
+them, and the refusal says so. If creator writes never opened on that node,
+its rows are that import's, and it starts over with the check replaced by
+one that the ledger is empty:
+
+```sh
+psql "$TARGET_DATABASE_URL" -X -v unrecorded_import=on \
+  -f tooling/migration/sources/builder-server/start_over.sql
+```
+
+With any ledger row, `unrecorded_import` refuses and the node starts over
+with the check.
 
 The node then holds no builder rows, and the next `migrate.py run
 builder-server` is a first run: it imports upstream as it is then. The blob
