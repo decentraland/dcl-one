@@ -1851,6 +1851,17 @@ Invariants:
   `a_read_naming_a_contract_keeps_the_rows_of_the_whole_read`).
 - Reads that name no contract (the feeds, related items, legacy and
   importable listings) keep the unscoped CTE.
+- A listing needs a published open verdict on its chain. An event in
+  `shop.trade_event` past that publication withholds that network's trades
+  until the fold publishes. A trade also needs its own folded verdict, and
+  a V3 verdict needs a verified cancellation digest.
+- An NFT listing sends one ERC-721 held by its signer in the published
+  `shop.nft` or LAND/Estate rights fold. A same-token transfer past the
+  ownership publication withholds it. The NFT leg also checks the tracked
+  contract's outstanding backfill and refold. These reads use the same
+  snapshot as their listing rows and totals. Listing-bearing catalog pages
+  recompute their rows on each request so a catalogue refresh is unnecessary
+  for a cancellation or change of owner to take effect.
 - Write cost: each sent asset that the trades mirror or a local signed trade
   inserts adds one index entry. Received assets are not in the index.
 
@@ -3822,8 +3833,7 @@ builds it from its own indexes.
     repair (which can run while the index is published); between two
     raises both logs only grow past the published block and the rights are
     their fold, so a rewind that refolds to the same positions with other
-    facts still moves the marks. An event past the published block moves
-    nothing.
+    facts still moves the marks. An event past the published block leaves these rights marks unchanged.
   - Shop's marks (`land_map::land_market_marks`, one statement on the
     same connection and database clock): the nft, trade-events and trades
     readiness; the Ethereum nft cursor's `reorg_rewinds` and `rebuilds`
@@ -3833,7 +3843,9 @@ builds it from its own indexes.
     seconds rounded half up, as the build compares it) and their newest order
     event; their names' count and newest document; and the SHA-256 of the
     open MANA trades and of the open rental listings exactly as the build
-    reads them at the clock (the trades after the trade-events verdicts).
+    reads them at the clock. The trade digest uses the published open
+    verdicts and the signer's published LAND/Estate ownership. It drops
+    trades with same-token transfers past that publication.
     The counts and digests are taken at the clock, so an expiry moves them
     too. Digesting every order and name instead would cost about 170 ms a
     read on the synthetic database below; the statement takes 27 ms.
@@ -4646,15 +4658,10 @@ commits in between is never half-seen:
 - fresh: complete and `folded_at` within 30 minutes. Every other reader needs
   it on the networks it reads (wearables both, emotes Polygon), and the lists
   also need the items mirror's complete pass (`shop.mirror_state`); otherwise
-  they answer the `nft-index` envelope. The `/v1/orders` routes instead
-  answer 200: until the index is fresh on the networks the read names, their
-  v3 listings leg keeps only the Ethereum LAND and Estate registries'
-  listings, which the index never holds (it reads their `Update` logs, not
-  their transfers) and the guard never filters, and the
-  `x-listings-owner-check` header says `partial` (`checked` when the guard
-  ran, `unchecked` on a node that does not walk the index). Which contracts
-  the index holds is not read from `shop.nft`: a rewind deletes the rows of
-  the tokens it reaches, so a sold token's collection could look unindexed.
+  they answer the `nft-index` envelope. The `/v1/orders` routes answer 200 with the listings
+  backed by the published sources. V3 listings of LAND and Estates use the
+  land-authz ownership fold, and other NFTs use the NFT fold. Both readers
+  emit `x-listings-owner-check: checked`.
 
 Queries, all bounded by one owner or one batch:
 
@@ -4669,10 +4676,10 @@ Queries, all bounded by one owner or one batch:
   pairs joined to `shop.nft` on `(network, contract_address, item_id)` and
   `owner`, v1 pairs through `shop.collections.urn` and `wearable_id`, newest
   transfer first (`transferred_block`, `transferred_log` descending);
-- the orders guard: `NOT EXISTS` a `shop.nft` row of the listing's exact token
-  held by another address or burned, by primary key. A node that does not
-  walk the index runs the listings statement without it and without the
-  snapshot.
+- the orders guard: the shared open-trades query reads ownership by the
+  exact contract and token primary key and checks for newer transfers
+  with the per-token event index. Readers use the published snapshot on
+  any node that serves the route.
 
 Measured on a seeded database (3.0M Polygon tokens over 100,000 items with a
 skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,

@@ -2764,20 +2764,6 @@ async fn each_ownership_route_follows_the_nft_index_state() {
                 assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
             }
         }
-        // The open listings' leg never fails the order book on the index:
-        // it is empty until the networks it reads are published, and
-        // unguarded on a node that does not walk the index.
-        for network in [None, Some(super::wire::Network::Matic)] {
-            let f = super::orders::OrderFilters {
-                status: Some("open".into()),
-                network,
-                ..Default::default()
-            };
-            assert!(
-                super::orders::trades_leg(state, &f).await.is_ok(),
-                "{label}: the orders leg on {network:?}"
-            );
-        }
     }
     let (_, body) = get(&walking, &format!("/lambdas/users/{OWNER}/wearables")).await;
     assert_eq!(body["elements"][0]["urn"], hat, "{body}");

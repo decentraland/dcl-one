@@ -1221,7 +1221,7 @@ pub async fn get_trendings(
     if let Err(envelope) = priced_preflight(&state, None).await {
         return envelope;
     }
-    let cache_control = [(CACHE_CONTROL, "public,max-age=3600,s-maxage=3600")];
+    let cache_control = [(CACHE_CONTROL, "no-cache")];
     if size <= 0 {
         return (cache_control, Json(json!({ "data": [] }))).into_response();
     }

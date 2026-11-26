@@ -558,6 +558,69 @@ pub fn uint_or_null(expr: &str) -> String {
     format!("(CASE WHEN {expr} ~ '^(0|[1-9][0-9]{{0,77}})$' THEN {expr}::numeric END)")
 }
 
+/// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
+fn nft_trade_backed_sql(now_p: &str, token_num: &str) -> String {
+    use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
+    let (eth, matic) = served_chains();
+    let land = if eth == 11_155_111 {
+        LAND_SEPOLIA
+    } else {
+        LAND_MAINNET
+    };
+    let nft_ready = super::chain_walk::published_sql_on("c", now_p, eth, matic);
+    format!(
+        "(sent.asset_type = 3 AND {token_num} IS NOT NULL
+          AND NOT EXISTS (
+              SELECT FROM shop.trade_assets other
+              WHERE other.trade_id = t.id AND other.direction = 'sent' AND other.id <> sent.id
+          )
+          AND CASE WHEN lower(t.network) = 'ethereum' AND sent.contract_address IN
+              ('{main_land}', '{main_estate}', '{test_land}', '{test_estate}')
+          THEN EXISTS (
+              SELECT FROM land_authz.index_cursor c
+              JOIN land_authz.token_right n ON n.token_address = sent.contract_address
+                   AND n.token_id = {token_num}
+              WHERE c.network = '{land_network}'
+                AND c.land_registry = '{land_registry}' AND c.estate_registry = '{estate_registry}'
+                AND sent.contract_address IN (c.land_registry, c.estate_registry)
+                AND c.full_replay_started AND c.folded_block IS NOT NULL
+                AND c.folded_at BETWEEN {now_p} - interval '30 minutes' AND {now_p}
+                AND n.owner = lower(t.signer) AND n.updated_block <= c.folded_block
+                AND NOT EXISTS (
+                    SELECT FROM land_authz.authz_event e
+                    WHERE e.token_address = n.token_address AND e.token_id = n.token_id
+                      AND e.kind = 'transfer' AND e.block_number > c.folded_block
+                )
+          ) ELSE EXISTS (
+              SELECT FROM shop.chain_cursor c
+              JOIN shop.nft n ON n.network = c.network AND n.contract_address = sent.contract_address
+                   AND n.token_id = {token_num}
+              WHERE c.indexer = 'nft' AND c.network = lower(t.network) AND {nft_ready}
+                AND n.owner = lower(t.signer) AND n.transferred_block <= c.folded_block
+                AND NOT EXISTS (
+                    SELECT FROM shop.nft_event e
+                    WHERE e.network = n.network AND e.contract_address = n.contract_address
+                      AND e.token_id = n.token_id AND e.kind = 'transfer'
+                      AND e.block_number > c.folded_block
+                )
+                AND NOT EXISTS (
+                    SELECT FROM shop.nft_contract watched
+                    WHERE watched.network = n.network AND watched.contract_address = n.contract_address
+                      AND (watched.refold_owed OR
+                           coalesce(watched.backfilled_to_block, watched.backfill_from_block - 1)
+                           < watched.walked_from_block - 1)
+                )
+          ) END)",
+        main_land = LAND_MAINNET.land_registry,
+        main_estate = LAND_MAINNET.estate_registry,
+        test_land = LAND_SEPOLIA.land_registry,
+        test_estate = LAND_SEPOLIA.estate_registry,
+        land_network = land.network,
+        land_registry = land.land_registry,
+        estate_registry = land.estate_registry,
+    )
+}
+
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
@@ -568,7 +631,8 @@ pub fn uint_or_null(expr: &str) -> String {
 /// left out, never listed on a stale verdict); and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
 /// order also needs its creator's signature and its marketplace among the
-/// collection's minters, as no other contract can mint the item.
+/// collection's minters. An NFT order needs current ownership evidence
+/// for its signer from the published NFT or LAND/Estate fold.
 pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
     unified_trades_cte_of(now_p, since_p, None)
 }
@@ -580,6 +644,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
     let of = contracts_p
         .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
         .unwrap_or_default();
+    let token_num = uint_or_null("sent_erc721.token_id");
     format!(
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
@@ -604,6 +669,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
              AND {served} \
              AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
              AND (sent_erc721.asset_id IS NULL OR {token_num} IS NOT NULL) \
+             AND (t.type <> 'public_nft_order' OR {backed}) \
              AND (t.type <> 'public_item_order' OR EXISTS ( \
                    SELECT 1 FROM shop.items ci \
                    WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
@@ -615,9 +681,9 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
          )",
         served = served_chain_sql("t"),
         item_num = uint_or_null("sent_item.item_id"),
-        token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
         listable = super::trade_events::listable_on_chain_sql("t", now_p),
+        backed = nft_trade_backed_sql(now_p, &token_num),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1225,8 +1291,17 @@ async fn catalog_inner(
         };
         // The v2 legs (price, isOnSale, tradeId, the listing counts) are
         // computed from shop.trades: a partial mirror is not the order book.
-        if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
-            return envelope;
+        if is_v2 {
+            if let Err(envelope) = read.trades_ready(&state).await {
+                return envelope;
+            }
+            match fetch_page(&state, &mut read, &filters, true).await {
+                Ok(page) => {
+                    read.note(&state);
+                    break Arc::new(page);
+                }
+                Err(e) => return e.into_response(),
+            }
         }
         let (key, stamp) = ((is_v2, filters.clone(), read.key()), read.stamp());
         let mut held = Some(read);
@@ -1692,6 +1767,9 @@ mod tests {
                     .await
                     .unwrap(),
             );
+        }
+        for id in &ids {
+            crate::test_db::open_trade_verdict(pool, id).await;
         }
         // The greater id gets the lower price, so neither MAX pairs them.
         ids.sort();

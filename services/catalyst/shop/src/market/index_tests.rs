@@ -1163,6 +1163,12 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     let app = super::market_router(st.clone());
     // The walk can be ahead of the published verdict. Its last execution is
     // visible only through the published height in the route's snapshot.
+    let published: i64 = sqlx::query_scalar(
+        "SELECT folded_block FROM shop.chain_cursor WHERE indexer='trade_events' AND network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     let sold_block: i64 = sqlx::query_scalar(
         "SELECT min(block_number) FROM shop.trade_event WHERE hashed_signature = $1",
     )
@@ -1174,8 +1180,8 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         .bind(sold_block - 1).execute(&db.pool).await.unwrap();
     let (code, body) = get_json(&app, &format!("/v1/trades/{}/accept", sold.1)).await;
     assert_eq!(code, StatusCode::NOT_FOUND, "{body}");
-    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block-1 WHERE indexer='trade_events' AND network='matic'")
-        .execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=$1 WHERE indexer='trade_events' AND network='matic'")
+        .bind(published).execute(&db.pool).await.unwrap();
     let (code, body) = get_json(
         &app,
         &format!("/v1/trades/{}/accept?timestamp=1234&caller={BOB}", sold.1),
@@ -1426,6 +1432,22 @@ async fn a_v3_cancellation_applies_on_the_stored_digest_and_a_trade_without_one_
         let late = stored_v3_trade(&db.pool, net, "0x1237").await;
         // open: nothing closes it.
         let open = stored_v3_trade(&db.pool, net, "0x1238").await;
+        super::owned_items::test_support::publish(
+            &db.pool,
+            &[net],
+            false,
+            std::time::Duration::ZERO,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+             VALUES ($1, '0x1111111111111111111111111111111111111111', 42, $2, 1, 1, 1, 0, 1)",
+        )
+        .bind(net.db_name())
+        .bind(&signer)
+        .execute(&db.pool)
+        .await
+        .unwrap();
         sqlx::query("UPDATE shop.trades SET checks = '{}'::jsonb WHERE id = ANY($1::uuid[])")
             .bind(vec![kept.0.clone(), late.0.clone()])
             .execute(&db.pool)
@@ -1656,6 +1678,22 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         (1, ZERO, "1"),
     )
     .await;
+    crate::test_db::open_trade_verdict(&db.pool, &id).await;
+    super::owned_items::test_support::publish(
+        &db.pool,
+        &[ChainNet::Matic],
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', '0x00000000000000000000000000000000000000c1', 1, $1, 1, 1, 1, 0, 1)",
+    )
+    .bind(ALICE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let records_served = || async {
         for path in ["/v1/trades?first=1".to_string(), format!("/v1/trades/{id}")] {
             let (code, body) = get_json(&app, &path).await;

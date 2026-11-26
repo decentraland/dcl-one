@@ -711,6 +711,7 @@ pub async fn list_nfts(
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
     validate(f)?;
+    let now = chrono::Utc::now();
     let chain_id = state.settings.market.indexes.chain_id_ethereum;
     // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
     // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
@@ -738,7 +739,7 @@ pub async fn list_nfts(
             ))
             .into_response());
         }
-        let conn = super::nft_reads::land_page_snapshot(state, f, sources).await?;
+        let conn = super::nft_reads::land_page_snapshot(state, f, sources, now).await?;
         snapshot = Some((conn, sources));
     }
     let owner_filters;
@@ -785,12 +786,15 @@ pub async fn list_nfts(
         f = &narrowed;
         prefetched = Some(listings);
     }
-    let (mut data, total) = match snapshot.as_mut() {
-        Some((conn, sources)) => {
+    let (mut data, total, mut snapshot) = match snapshot {
+        Some((mut conn, sources)) => {
             let (first, skip) = index_page(f);
-            super::nft_reads::list_page_on(state, f, first, skip, *sources, conn).await?
+            let (data, total) =
+                super::nft_reads::list_page_on(state, f, first, skip, sources, &mut conn, now)
+                    .await?;
+            (data, total, Some(conn))
         }
-        None => list_page(state, f).await?,
+        None => list_page(state, f, now).await?,
     };
     let listings = match prefetched {
         Some(listings) => listings,
@@ -801,7 +805,7 @@ pub async fn list_nfts(
                 .map(|r| r.nft.id.clone())
                 .collect();
             match snapshot.as_mut() {
-                Some((conn, _)) => {
+                Some(conn) => {
                     super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
                         .await
                         .map_err(super::nft_reads::read_error)?
@@ -850,19 +854,21 @@ pub async fn list_nfts(
         Default::default()
     } else {
         let read = async {
-            if let Some((conn, _)) = snapshot.as_mut() {
+            if let Some(conn) = snapshot.as_mut() {
                 // A price/order filter already checked this snapshot before reading the page.
                 if !super::nft_reads::needs_orders(f) {
-                    super::trades::ready_on(state, conn, chrono::Utc::now()).await?;
+                    super::trades::ready_on(state, conn, now).await?;
                 }
-                return super::orders::open_trade_orders_on(state, &mut **conn, &unlisted)
-                    .await
-                    .map_err(super::nft_reads::read_error);
-            }
-            super::trades::require_ready(state).await?;
-            super::orders::open_trade_orders(state, &unlisted)
+                return super::orders::open_trade_orders_on(
+                    state,
+                    &mut **conn,
+                    &unlisted,
+                    now.naive_utc(),
+                )
                 .await
-                .map_err(IntoResponse::into_response)
+                .map_err(super::nft_reads::read_error);
+            }
+            super::orders::open_trade_orders(state, &unlisted).await
         };
         match read.await {
             Ok(orders) => orders,
@@ -942,12 +948,15 @@ fn index_page(f: &NftFilters) -> (i64, i64) {
 async fn list_page(
     state: &MarketplaceState,
     f: &NftFilters,
-) -> Result<(Vec<NftResult>, i64), Response> {
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(Vec<NftResult>, i64, Option<super::nft_reads::ReadConn>), Response> {
     if super::owned_items::walks_here(state)
         && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
     {
         let (first, skip) = index_page(f);
-        return super::nft_reads::list_nfts(state, f, first, skip).await;
+        let (data, total, conn) =
+            super::nft_reads::indexed_page(state, f, first, skip, now).await?;
+        return Ok((data, total, Some(conn)));
     }
     // A NAME page reads the index where the node's latest sales are admitted,
     // whatever its sort, as its deep pages do: the graph's `soldAt` counts
@@ -955,11 +964,10 @@ async fn list_page(
     // the rows; a check that cannot run is the page's error.
     if super::owned_items::walks_here(state) && names_only(state, f) {
         let (first, skip) = index_page(f);
-        if let Some(page) =
-            super::nft_reads::names_page_if_admitted(state, f, first, skip, chrono::Utc::now())
-                .await?
+        if let Some((data, total, conn)) =
+            super::nft_reads::names_page_if_admitted(state, f, first, skip, now).await?
         {
-            return Ok(page);
+            return Ok((data, total, Some(conn)));
         }
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
@@ -967,11 +975,13 @@ async fn list_page(
         Some(page) if is_land_routed(f) && f.search.is_none() => page,
         _ => {
             let (first, skip) = index_page(f);
-            return super::nft_reads::list_nfts(state, f, first, skip).await;
+            let (data, total, conn) =
+                super::nft_reads::indexed_page(state, f, first, skip, now).await?;
+            return Ok((data, total, Some(conn)));
         }
     };
     // Shallow NAME queries and LAND queries on non-walkers use the configured graph.
-    let now_ms = readers::now_ms();
+    let now_ms = now.timestamp_millis();
     let where_ = graph_where(f, now_ms);
     let (order_by, direction) = graph_sort(f.sort_by);
     let url = readers::require_marketplace(state)?;
@@ -1028,7 +1038,7 @@ async fn list_page(
         .take(first as usize)
         .map(|v| nft_from_graph(&v, Network::Ethereum, now_ms))
         .collect();
-    Ok((data, total))
+    Ok((data, total, None))
 }
 
 pub async fn get_nfts(

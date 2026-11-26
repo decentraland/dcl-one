@@ -617,6 +617,10 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        crate::test_db::open_trade_verdict(pool, &id.to_string()).await;
+        if [LAND, ESTATE].contains(&contract) {
+            crate::test_db::publish_land_owner(pool, contract, token, signer).await;
+        }
     }
 
     /// An open rental listing of `token` of `contract`, signed for `chain_id`
@@ -881,7 +885,8 @@ mod tests {
                 .await
                 .unwrap();
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10",
         )
         .bind(estate_trade)
         .execute(&db.pool)
@@ -898,6 +903,21 @@ mod tests {
             ["5"],
             "the sold estate trade is closed"
         );
+        let before_transfer = marks_at(&state, Utc::now()).await;
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+             VALUES (101, 0, 1700000900, $1, 'transfer', 5, $2)",
+        )
+        .bind(LAND)
+        .bind(addr('c'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(
+            market(&state, 1).await.unwrap().trades.is_empty(),
+            "a transfer ahead of the fold hides the stale LAND owner's listing"
+        );
+        assert_ne!(before_transfer, marks_at(&state, Utc::now()).await);
         // A stale publish is not trusted: no answer, never the sold trade
         // read as open again.
         sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'")
@@ -1013,7 +1033,8 @@ mod tests {
                 .await
                 .unwrap();
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10",
         )
         .bind(estate_trade)
         .execute(&db.pool)
@@ -1086,7 +1107,8 @@ mod tests {
             }
         };
         let (verdict_a, verdict_b) = (trade_id("verdict-a").await, trade_id("verdict-b").await);
-        let sold = "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)";
+        let sold = "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)
+             ON CONFLICT (trade_id) DO UPDATE SET status='sold', executions=1, folded_block=10";
         sqlx::query(sold)
             .bind(verdict_a)
             .execute(&db.pool)
@@ -1097,11 +1119,7 @@ mod tests {
             "two trades, one sold on chain",
             marks_at(&state, Utc::now()).await,
         );
-        sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1")
-            .bind(verdict_a)
-            .execute(&db.pool)
-            .await
-            .unwrap();
+        crate::test_db::open_trade_verdict(&db.pool, &verdict_a.to_string()).await;
         sqlx::query(sold)
             .bind(verdict_b)
             .execute(&db.pool)

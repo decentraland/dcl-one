@@ -29,7 +29,7 @@
 //! called by `trades::ready`; the stored records of `/v1/trades` carry no
 //! status and wait for the trades mirror only), and
 //! `unified_trades` lists a trade only while its network's cursor is ready
-//! and no verdict closed it ([`listable_on_chain_sql`]), in the same
+//! and its open verdict is published ([`listable_on_chain_sql`]), in the same
 //! statement, so a cursor that falls behind after the gate drops the trade
 //! instead of listing it again. `/v1/bids` reports `sold` and `cancelled`
 //! from the same verdicts, and `GET /v1/trades/{hashed_signature}/accept`
@@ -877,15 +877,37 @@ pub fn unverifiable_sql(t: &str) -> String {
 }
 
 /// The SQL predicate "trade `t` may be served as an open listing" for the
-/// open-listing feeds (a bound `now_p`): its network's verdicts are current
-/// ([`verdicts_current_sql`]) and no verdict closed it (sold, cancelled) or
-/// left it unverifiable ([`unverifiable_sql`]). Fails closed: a trade of a
-/// network whose index is behind is not listed, whatever its row says.
+/// open-listing feeds (a bound `now_p`): its network has published verdicts
+/// and folded its recorded events. The trade needs an open verdict
+/// in that prefix: a late import may already have closed in the log. For
+/// V3, the fold also needs the verified digest that keys its cancellation.
+/// A trade can arrive between the indexer's digest pass and verdict fold.
 pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
+    let (eth, matic) = super::catalog::served_chains();
+    let v3 = |chain| {
+        deployments(chain)
+            .iter()
+            .filter(|(_, _, v3)| *v3)
+            .map(|(address, _, _)| format!("'{address}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     format!(
-        "({current} AND NOT EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
-                 WHERE tcs.trade_id = {t}.id AND (tcs.status <> 'open' OR tcs.digest_failed_at IS NOT NULL)))",
-        current = verdicts_current_sql(t, now_p)
+        "EXISTS (SELECT FROM shop.chain_cursor c
+                 WHERE c.indexer = 'trade_events' AND c.network = lower({t}.network) AND {ready}
+                   AND NOT EXISTS (SELECT FROM shop.trade_event e
+                                   WHERE e.network = c.network AND e.block_number > c.folded_block)
+                   AND EXISTS (SELECT FROM shop.trade_chain_state s
+                               WHERE s.trade_id = {t}.id AND s.network = c.network
+                                 AND s.status = 'open' AND s.digest_failed_at IS NULL
+                                 AND s.folded_block BETWEEN 0 AND c.folded_block
+                                 AND (s.digest IS NOT NULL OR NOT (
+                                     lower({t}.contract) = ANY(CASE c.network WHEN 'ethereum'
+                                       THEN ARRAY[{v3_eth}]::text[] ELSE ARRAY[{v3_matic}]::text[] END)
+                                 ))))",
+        ready = verdicts_ready_sql("c", now_p),
+        v3_eth = v3(eth),
+        v3_matic = v3(matic),
     )
 }
 
