@@ -97,6 +97,10 @@ impl GltfDefinition {
     }
 }
 
+/// An animation without a name is `Animation<index>`, in `GltfContainerLoadingState` and to an
+/// Animator.
+const UNNAMED_ANIMATION: &str = "Animation";
+
 /// The mesh/skin/material/animation names a scene sees in `GltfContainerLoadingState`.
 ///
 /// Extracted once per glTF, after which `Gltf::source` is dropped: bevy retains the whole
@@ -104,10 +108,6 @@ impl GltfDefinition {
 /// lists were the only thing we ever read from it (24MB on cleantheclub, 57MB on flagtag,
 /// measured headless). Cached rather than re-read because a second container sharing the
 /// same glTF arrives after the source is gone.
-/// An animation without a name is `Animation<index>`, in `GltfContainerLoadingState` and to an
-/// Animator.
-const UNNAMED_ANIMATION: &str = "Animation";
-
 #[derive(Clone, Default)]
 pub struct GltfNames {
     pub meshes: Vec<String>,

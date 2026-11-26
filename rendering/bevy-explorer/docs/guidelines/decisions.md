@@ -1325,4 +1325,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   back with that state's `playing` false, once, as the Unity client does, so a scene need not
   time the clip. The clip then stops contributing and the model holds the pose it ended on.
   Without the report the scene's own state would still say `playing`, and its next write about
-  any other clip would play the finished one again.
+  any other clip would play the finished one again. A clip can end while its scene's tick is
+  running, and that tick's write still says `playing`: the engine keeps the clip ended, applies
+  the rest of the write and sends the scene the result before its next tick, so the scene
+  always reads the end. To play the clip again, the scene writes `playing` after it has read
+  the end. A model is watched for an end only while its Animator plays a clip once.
