@@ -129,13 +129,13 @@ fn config(
 }
 
 /// The invalid badges already logged, with the reason logged.
-static WARNED_INVALID: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> =
+static WARNED_INVALID: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, &'static str>>> =
     std::sync::LazyLock::new(Default::default);
 
 /// False, and counted, for a badge whose catalog row presence may not write;
 /// logged once per badge and reason.
 fn writable(badge: &BadgeConfig, out: &mut EventOutcome) -> bool {
-    let mut warned = WARNED_INVALID.lock().unwrap_or_else(|e| e.into_inner());
+    let mut warned = WARNED_INVALID.lock();
     let Some(reason) = badge.invalid else {
         warned.remove(&badge.badge_id);
         return true;
@@ -765,7 +765,7 @@ impl Flow<'_> {
             .into_iter()
             .filter(|(_, s)| *s != event.session_id)
             .collect();
-        persist_remaining_connections(conn, &visit, &remaining).await?;
+        persist_remaining_connections(conn, visit, &remaining).await?;
         self.remember_ended(
             conn,
             &visit.badge_id,

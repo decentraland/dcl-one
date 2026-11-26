@@ -54,6 +54,10 @@ pub(super) fn connector_routes(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the upgrade route's extractors as-is"
+)]
 async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
@@ -513,7 +517,7 @@ async fn handle_socket(
                 let current = registration.as_mut().expect("registered fenced socket");
                 if !matches!(tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT,
-                    current.fence.as_mut().unwrap().poll(&state, &mut socket, &current.link, &current.address, &current.session),
+                    current.fence.as_mut().expect("guarded by the fenced-socket precondition").poll(&state, &mut socket, &current.link, &current.address, &current.session),
                 ).await, Ok(true)) {
                     state.registry.detach_selected_realm(&current.link);
                     state.gatekeeper.announce_session(&current.address, &current.session);
@@ -544,6 +548,9 @@ async fn handle_socket(
         tracing::info!(addr = %current.address, session = %current.session, "archipelago ws closed");
     }
 }
+
+#[cfg(feature = "test-support")]
+pub use io::assignment_test_support;
 
 #[cfg(test)]
 mod tests {
@@ -660,6 +667,3 @@ mod tests {
         ));
     }
 }
-
-#[cfg(feature = "test-support")]
-pub use io::assignment_test_support;

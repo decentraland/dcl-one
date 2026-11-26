@@ -682,8 +682,8 @@ pub async fn neighbours_of(
 /// what the avatar wears outranks a holding): a neighbour scores the sum of
 /// its similarities times its seeds' weights, and its seed is the one that
 /// contributed most.
-pub async fn weighted_neighbours_of(
-    pool: &PgPool,
+pub async fn weighted_neighbours_of<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     seeds: &[(String, String, String, f64)],
     exclude: &[String],
     limit: i64,
@@ -716,7 +716,7 @@ pub async fn weighted_neighbours_of(
     .bind(exclude)
     .bind(limit)
     .bind(&weights)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(rows
         .iter()
@@ -730,8 +730,8 @@ pub async fn weighted_neighbours_of(
 
 /// A wallet's held items (the seeds its holdings give), most recently
 /// received first, at most `limit`.
-pub async fn held_items(
-    pool: &PgPool,
+pub async fn held_items<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     wallet: &str,
     limit: i64,
 ) -> Result<Vec<(String, String, String)>, sqlx::Error> {
@@ -750,7 +750,7 @@ pub async fn held_items(
     )
     .bind(wallet.to_ascii_lowercase())
     .bind(limit)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(rows
         .iter()
@@ -765,11 +765,11 @@ pub async fn held_items(
 }
 
 /// Whether a neighbours build exists (the personalised rail's source).
-pub async fn built(pool: &PgPool) -> bool {
+pub async fn built<'e>(executor: impl sqlx::PgExecutor<'e>) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM shop.item_neighbors_meta WHERE id = 1)",
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
     .unwrap_or(false)
 }
