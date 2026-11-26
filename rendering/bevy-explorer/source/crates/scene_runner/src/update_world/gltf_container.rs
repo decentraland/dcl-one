@@ -1154,14 +1154,15 @@ impl NodeProcessing<'_, '_> {
                 )
             };
 
-            // try and get existing mesh/collider data from hash, converted by any scene for a
-            // part that draws as this one does
+            // try and get existing mesh/collider data from hash, converted for a part that draws
+            // as this one does: by any scene with a salt, and only this scene's own mesh without
             let existing_data = maybe_hash
-                .filter(|hash| {
-                    shared_meshes.hash_salt.is_some()
-                        || resource_lookup.mesh_ids_by_hash.contains_key(hash)
+                .and_then(|hash| {
+                    shared_meshes.by_hash.get(&(hash, visuals)).filter(|data| {
+                        shared_meshes.hash_salt.is_some()
+                            || resource_lookup.mesh_ids_by_hash.get(&hash) == Some(&data.mesh_id)
+                    })
                 })
-                .and_then(|hash| shared_meshes.by_hash.get(&(hash, visuals)))
                 .and_then(|data| asset_server.get_id_handle(data.mesh_id).map(|h| (h, data)));
 
             let (h_mesh, data) = if let Some((h_mesh, cached_data)) = existing_data {

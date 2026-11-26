@@ -387,7 +387,7 @@ impl VariantsBaseUrl {
     fn parse(url: &str) -> Option<Self> {
         match url::Url::parse(url.trim()) {
             Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
-                // `Url`'s serialised form
+                // `Url`'s serialised form, so it is a prefix of the urls `Url` serialises under it
                 Some(Self(parsed.as_str().trim_end_matches('/').to_owned()))
             }
             _ => None,
