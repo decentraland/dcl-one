@@ -753,6 +753,11 @@
         "status: fixture=401 candidate=409"
       ]
     },
+    "slots-count-failure": {
+      "text": "GET /v1/thirdParties/:id/slots: when the database can't count the provider's submitted items, the node answers 500 {ok:false, data:{}, error:'Internal Server Error'} and logs the failure; upstream answers 200 with 0 free slots for any failure, which reads as a provider with no room left.",
+      "captures": [],
+      "anchors": []
+    },
     "item-read-uncurated-third-party": {
       "text": "GET /v1/items/:id: upstream answers a signer with no role every item of a third-party collection that has an item curation with the item's public body, curated or not (source/340-item-uncurated-in-curated-collection-stranger.json), while GET /v1/collections/:id/items lists only the curated ones to it (source/342-collection-items-curated-stranger.json). The node answers it the curated items and an item an active entity of its content holds at its URN (source/473-item-deployed-uncurated-stranger.json), and refuses any other uncurated draft with 403 Unauthorized (deliberate:denied-signer-forbidden). The captures replay against a seed whose content holds the uncurated item of capture 340, so they all agree; no capture records a refused draft.",
       "captures": [],
@@ -5709,7 +5714,7 @@
       "id": "api_http:GET:/v1/thirdParties/:id/slots",
       "owner": "third-parties",
       "status": "reviewed",
-      "result": "The slots of an approved provider for its second registry manager and a stranger, of a virtual third party for its manager, of unapproved providers for the manager of their virtual third party, for a registry manager the virtual third party doesn't list, and for a wallet both list, and after the virtual third party was removed, were compared; every one matches but the manager of the virtual third party of a provider the registry lists unapproved for another wallet, whom the node refuses. Also compared: a registry provider's slots less its items with an item curation. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
+      "result": "The slots of an approved provider for its second registry manager and a stranger, of a virtual third party for its manager, of unapproved providers for the manager of their virtual third party, for a registry manager the virtual third party doesn't list, and for a wallet both list, and after the virtual third party was removed, were compared; every one matches but the manager of the virtual third party of a provider the registry lists unapproved for another wallet, whom the node refuses. Also compared: a registry provider's slots less its items with an item curation. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap. A count the database can't make answers 500 instead of upstream's 0, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/311-third-party-slots-registry-manager.json",
@@ -5771,12 +5776,18 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/348-third-party-slots-curated.json",
           "scope": "GET /thirdParties/{id}/slots signed by the manager the registry lists, a provider with curated items.",
           "replay": []
+        },
+        {
+          "path": "services/catalyst/builder/src/tests/third_party_matrix.rs",
+          "test": "free_slots_the_database_cannot_count_answer_500_instead_of_none",
+          "scope": "A manager's read while the database can't count the submitted items."
         }
       ],
       "gaps": [
         "deliberate:third-party-claims",
         "deliberate:third-party-registry-read-window",
-        "deliberate:denied-signer-forbidden"
+        "deliberate:denied-signer-forbidden",
+        "deliberate:slots-count-failure"
       ],
       "remaining_verification": "Slots after a third-party publication the node records."
     },

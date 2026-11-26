@@ -1560,7 +1560,11 @@ pub(crate) async fn confirm_item_save(
             if save.collection.is_none() {
                 return Err(published("deleted"));
             }
-            let stored = stored.as_ref().expect("an item in a collection is stored");
+            let Some(stored) = stored.as_ref() else {
+                return Err(ApiError::internal(
+                    "an item in a published collection is not stored",
+                ));
+            };
             if let (Some(next), Some(before)) = (intent.rarity.as_deref(), stored.rarity.as_deref())
                 && next != before
             {
