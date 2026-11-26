@@ -817,7 +817,10 @@ impl UsageIndex {
         .await
         .map_err(|e| anyhow::anyhow!("folding the usages: {e}"))?;
         outcome.consumed = diffs.iter().filter(|d| d.consumed && !d.replayed).count();
-        outcome.failed = diffs.iter().filter(|d| !d.consumed).count();
+        outcome.failed = diffs
+            .iter()
+            .filter(|d| !d.consumed && d.kind != super::settlement::DEFERRED)
+            .count();
         if settings.stop_block.is_some_and(|s| s < final_block.number) {
             if let Some(ctx) = ctx {
                 ctx.progress(format!("indexed to {target}: CREDITS_USAGE_STOP_BLOCK holds the index short, not published"));

@@ -353,6 +353,10 @@ pub fn remainder_credits(
     })
 }
 
+/// The kind of a log left for later: an earlier use of its credit is not
+/// settled yet, and the purchase must be the credit's first use.
+pub const DEFERRED: &str = "deferred";
+
 /// One line of a settled credit, as its event reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GroupLineCharge {
@@ -388,11 +392,15 @@ fn settled_lines(
     }
     let total = U256::from_str_radix(value_wei, 10).unwrap_or(U256::ZERO);
     let group_cents: i64 = lines.iter().map(|l| l.charged_cents.max(0)).sum();
+    // total * cents / group as (total / group) * cents + (total % group) *
+    // cents / group: neither product can overflow, since a line's cents are
+    // at most the group's, whatever the total.
     let mut shares: Vec<U256> = lines
         .iter()
         .map(|l| match u64::try_from(group_cents) {
             Ok(group) if group > 0 => {
-                total * U256::from(l.charged_cents.max(0) as u64) / U256::from(group)
+                let (group, cents) = (U256::from(group), U256::from(l.charged_cents.max(0) as u64));
+                total / group * cents + total % group * cents / group
             }
             _ => U256::ZERO,
         })
@@ -476,6 +484,36 @@ impl Credits {
                 replayed: true,
                 new_balance: String::new(),
                 kind: recorded.get("kind"),
+            });
+        }
+        // A credit's purchase is its first use: a log waits while an earlier
+        // log of its salt is unsettled, whichever pass reached it first, and
+        // the pass that covers the earlier one settles both in order.
+        let earlier_unsettled: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM credits.usages u \
+                 WHERE u.salt = $1 AND u.chain_id = $2 AND u.contract = $3 \
+                   AND (u.block_number, u.log_index) < ($4, $5) \
+                   AND NOT EXISTS (SELECT 1 FROM credits.usage_settlements s \
+                                   WHERE s.chain_id = u.chain_id AND s.block_number = u.block_number \
+                                     AND s.log_index = u.log_index))",
+        )
+        .bind(&c.salt)
+        .bind(chain_id)
+        .bind(contract)
+        .bind(c.block_number)
+        .bind(c.log_index)
+        .fetch_one(&mut *tx)
+        .await?;
+        if earlier_unsettled {
+            tx.rollback().await?;
+            return Ok(CreditUsageDiff {
+                credit_id: c.salt.clone(),
+                address,
+                debited: "0".into(),
+                consumed: false,
+                replayed: false,
+                new_balance: String::new(),
+                kind: DEFERRED.to_string(),
             });
         }
         let settled: i64 = sqlx::query_scalar(
@@ -1038,6 +1076,16 @@ mod tests {
             shares(&[line(0, 100, "a"), line(1, 100, "b")], "3"),
             [(100, "a".into(), "2".into()), (100, "b".into(), "1".into())],
             "among equals the first by position takes the remainder"
+        );
+        let half: U256 = U256::from(1u8) << 254usize;
+        let whole: U256 = half * U256::from(2u8);
+        assert_eq!(
+            shares(&[line(0, 2, "a"), line(1, 2, "b")], &whole.to_string()),
+            [
+                (2, "a".into(), half.to_string()),
+                (2, "b".into(), half.to_string())
+            ],
+            "no product overflows, at 2^255 wei"
         );
         let big = "123456789012345678901234567890123456789";
         let sum = shares(&[line(0, 333, "a"), line(1, 667, "b")], big)

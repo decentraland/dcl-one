@@ -11432,15 +11432,22 @@ async fn overlapping_folds_settle_one_purchase_per_credit() {
     first.await.unwrap().unwrap();
     second.await.unwrap().unwrap();
 
-    let mut kinds: Vec<String> = sqlx::query_scalar(
-        "SELECT kind FROM credits.usage_settlements WHERE authorization_id = $1",
+    // A log deferred behind an earlier one is settled by a pass covering both.
+    super::settlement::settle(&credits, 137, &manager, -1, 2)
+        .await
+        .unwrap();
+    let settled: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT block_number, kind FROM credits.usage_settlements WHERE authorization_id = $1 ORDER BY block_number",
     )
     .bind(&salt)
     .fetch_all(&pool)
     .await
     .unwrap();
-    kinds.sort();
-    assert_eq!(kinds, ["purchase", "remainder"]);
+    assert_eq!(
+        settled,
+        [(1, "purchase".to_string()), (2, "remainder".to_string())],
+        "the first use is the purchase, whichever pass took the lock first"
+    );
     assert_eq!(
         available(&pool, &buyer).await,
         "30",
@@ -11452,9 +11459,101 @@ async fn overlapping_folds_settle_one_purchase_per_credit() {
         .expect("the purchase");
     assert_eq!(posted["body"]["salt"], salt.as_str());
     assert_eq!(
+        posted["body"]["txHash"],
+        format!("0x{}", "01".repeat(32)),
+        "the first use's transaction"
+    );
+    assert_eq!(
         captured.next(std::time::Duration::from_millis(400)).await,
         None,
         "reported once"
+    );
+    db.drop().await;
+}
+
+/// A credit's purchase is its first use, whichever pass reaches a later one
+/// first: a pass over the later log alone leaves it for later, and the pass
+/// over both settles the first as the purchase (its transaction and MANA in
+/// the event) and the second as a remainder priced at the credit's rate.
+#[tokio::test]
+async fn a_later_use_never_settles_as_the_purchase() {
+    let Some(db) = OwnDatabase::create("settle_order").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::analytics().await;
+    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    // 0.30 USD per MANA.
+    sqlx::query("UPDATE credits.authorizations SET oracle_rate = 300000000000000000, oracle_decimals = 18 WHERE id = $1")
+        .bind(&salt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let tx = |n: u8| format!("0x{}", format!("{n:02x}").repeat(32));
+    for (block, wei) in [(1_i64, "1000000000000000000"), (2, "3000000000000000000")] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, $6::numeric)",
+        )
+        .bind(block)
+        .bind(&manager)
+        .bind(tx(block as u8))
+        .bind(&buyer)
+        .bind(&salt)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let later = super::settlement::settle(&credits, 137, &manager, 1, 2)
+        .await
+        .unwrap();
+    assert_eq!(
+        later
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed))
+            .collect::<Vec<_>>(),
+        [("deferred", false)],
+        "the later log waits for the first"
+    );
+    assert_eq!(available(&pool, &buyer).await, "100", "nothing debited yet");
+
+    super::settlement::settle(&credits, 137, &manager, -1, 2)
+        .await
+        .unwrap();
+    let settled: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT block_number, kind, debited_credits::text FROM credits.usage_settlements \
+         WHERE authorization_id = $1 ORDER BY block_number",
+    )
+    .bind(&salt)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        settled,
+        [
+            (1, "purchase".to_string(), "70".to_string()),
+            (2, "remainder".to_string(), "9".to_string())
+        ],
+        "the purchase's 700 cents, then 3 MANA at 0.30 USD"
+    );
+    assert_eq!(available(&pool, &buyer).await, "21");
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the purchase");
+    assert_eq!(posted["body"]["txHash"], tx(1));
+    assert_eq!(posted["body"]["manaSettledWei"], "1000000000000000000");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "the remainder is not a purchase"
     );
     db.drop().await;
 }
