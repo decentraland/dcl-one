@@ -56,7 +56,7 @@ export function WorldDetailPage() {
   useEffect(() => {
     if (project || loading || !ens || !wallet || resolutionFailure === name) return;
     let current = true;
-    void resolveWorldProject(new Worlds(), ens, wallet)
+    void resolveWorldProject(new Worlds('management'), ens, wallet)
       .then(found => {
         if (current) setResolved(found);
       })

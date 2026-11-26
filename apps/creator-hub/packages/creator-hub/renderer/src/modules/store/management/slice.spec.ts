@@ -55,6 +55,7 @@ const WorldPermissionType = {
 } as const;
 
 const createMockWorldsAPI = () => ({
+  usesCanonicalManagement: false,
   fetchWorlds: vi.fn(),
   fetchEmptyWorlds: vi.fn(),
   fetchWorldScenes: vi.fn(),
@@ -1035,6 +1036,57 @@ describe('management slice', () => {
   });
 
   describe('unpublishWorldScene', () => {
+    it.each([
+      { scenes: [{ entityId: 'replacement', parcels: ['0,0'] }], total: 1 },
+      { scenes: [], total: 0 },
+      null,
+    ])('refuses to delete an unconfirmed canonical scene (%j) and reloads the list', async page => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
+      mockWorldsAPI.fetchWorldScenes.mockResolvedValueOnce(page).mockResolvedValueOnce({
+        scenes: [],
+        total: 0,
+      });
+
+      await expect(
+        store
+          .dispatch(
+            unpublishWorldScene({
+              worldName: TEST_WORLD_NAME,
+              sceneCoord: '0,0',
+              entityId: 'selected',
+            }),
+          )
+          .unwrap(),
+      ).rejects.toThrow('could not be confirmed');
+      expect(mockWorldsAPI.unpublishWorldScene).not.toHaveBeenCalled();
+      expect(mockWorldsAPI.fetchWorldScenes).toHaveBeenCalledTimes(2);
+    });
+
+    it('deletes the confirmed canonical entity by its listed parcel', async () => {
+      mockWorldsAPI.usesCanonicalManagement = true;
+      vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
+      mockWorldsAPI.fetchWorldScenes
+        .mockResolvedValueOnce({ scenes: [{ entityId: 'selected', parcels: ['0,0'] }], total: 1 })
+        .mockResolvedValueOnce({ scenes: [], total: 0 });
+      mockWorldsAPI.unpublishWorldScene.mockResolvedValueOnce(true);
+
+      await store
+        .dispatch(
+          unpublishWorldScene({
+            worldName: TEST_WORLD_NAME,
+            sceneCoord: '0,0',
+            entityId: 'selected',
+          }),
+        )
+        .unwrap();
+      expect(mockWorldsAPI.unpublishWorldScene).toHaveBeenCalledWith(
+        TEST_ADDRESS,
+        TEST_WORLD_NAME,
+        '0,0',
+      );
+    });
+
     it('should call unpublishWorldScene API and refetch scenes when unpublishing succeeds', async () => {
       vi.mocked(AuthServerProvider.getAccount).mockReturnValueOnce(TEST_ADDRESS);
       mockWorldsAPI.unpublishWorldScene.mockResolvedValueOnce(true);

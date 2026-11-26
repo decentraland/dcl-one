@@ -280,7 +280,10 @@ export type WorldParcelsResponse = {
   total: number;
 };
 
-const WORLD_CONTENT_SERVER_URL = config.get('WORLDS_CONTENT_SERVER_URL');
+const DCL_DEV_WORLDS_URL = 'https://dcl.dev/worlds-content-server';
+const CANONICAL_WORLDS_URL = 'https://worlds-content-server.decentraland.org';
+
+export type WorldsPurpose = 'content' | 'management';
 
 export const WORLD_LIMITS_TIMEOUT_MS = 5000;
 // Reads behind picking a world. A dropped connection can leave a request pending instead of
@@ -309,7 +312,14 @@ class SceneLookupError extends Error {
 }
 
 export class Worlds {
-  private url = WORLD_CONTENT_SERVER_URL;
+  private readonly url: string;
+  public readonly usesCanonicalManagement: boolean;
+
+  constructor(purpose: WorldsPurpose = 'content') {
+    const configured = config.get('WORLDS_CONTENT_SERVER_URL').replace(/\/+$/, '');
+    this.usesCanonicalManagement = purpose === 'management' && configured === DCL_DEV_WORLDS_URL;
+    this.url = this.usesCanonicalManagement ? CANONICAL_WORLDS_URL : configured;
+  }
 
   private withIdentity(address: string): AuthIdentity {
     const identity = localStorageGetIdentity(address);
@@ -399,6 +409,18 @@ export class Worlds {
   ): Promise<{ success: boolean; error?: string }> {
     const formData = new FormData();
     const formattedSettings = fromCamelToSnake(settings);
+    if (
+      this.usesCanonicalManagement &&
+      Object.entries(formattedSettings).some(
+        ([key, value]) =>
+          value !== undefined && (key === 'realm_name_override' || key === 'preview_wearable_urns'),
+      )
+    ) {
+      return {
+        success: false,
+        error: 'Realm aliases and preview wearables are local Worlds settings.',
+      };
+    }
 
     for (const [key, value] of Object.entries(formattedSettings)) {
       if (key === 'thumbnail' && typeof value === 'string' && value.startsWith('data:')) {

@@ -8,7 +8,7 @@ import { config } from '/@/config';
 import { fetch } from '/shared/fetch';
 import { createLimit } from '/shared/limit';
 import { DCLNames, ENS as ENSApi } from '/@/lib/ens';
-import { Worlds } from '/@/lib/worlds';
+import { Worlds, type WorldsPurpose } from '/@/lib/worlds';
 import { createAsyncThunk } from '/@/modules/store/thunk';
 import { accountChanged, isSignedInAccount } from '/@/modules/store/account';
 import { settleRequest, settleRequestAndOlder } from '/@/modules/store/requests';
@@ -24,9 +24,9 @@ const REQUESTS_BATCH_SIZE = 25;
 const limit = createLimit(REQUESTS_BATCH_SIZE);
 
 // actions
-const fetchContributableDomains = async (address: string) => {
+const fetchContributableDomains = async (address: string, purpose?: WorldsPurpose) => {
   try {
-    return await new Worlds().fetchContributableDomains(address);
+    return await new Worlds(purpose).fetchContributableDomains(address);
   } catch (error) {
     captureException(error, {
       tags: {
@@ -208,7 +208,7 @@ export const fetchContributableNames = createAsyncThunk(
 
     const isAllowed = (name: string) =>
       name.split('.').every(nameSegment => !bannedNamesSet.has(nameSegment));
-    const domains = await fetchContributableDomains(address);
+    const domains = await fetchContributableDomains(address, 'management');
     const names = domains.filter(isDeployable).filter(({ name }) => isAllowed(name));
     const streamOnly = getStreamOnlyWorldNames(domains).filter(isAllowed);
 
