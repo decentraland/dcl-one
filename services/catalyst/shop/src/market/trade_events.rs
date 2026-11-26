@@ -938,22 +938,37 @@ pub async fn require_current_on(
     conn: &mut PgConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), Response> {
+    current_on(conn, now)
+        .await
+        .map_err(|(source, why)| unavailable(source, &why))
+}
+
+/// [`require_current_on`], typed: the source that refused and why, for a
+/// caller that carries them through its own error (a cursor read that
+/// failed is not current either).
+pub async fn current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), (Source, String)> {
     match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
-        Ok(stale) => Err(unavailable(
-            Source::TradeEventsIndex,
-            &stale_message(&stale),
-        )),
-        Err(e) => Err(unreadable(e)),
+        Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
+        Err(e) => Err(unreadable_reason(e)),
     }
 }
 
 /// The envelope of a cursor read that failed: not current, never a guess.
 fn unreadable(e: sqlx::Error) -> Response {
+    let (source, why) = unreadable_reason(e);
+    unavailable(source, &why)
+}
+
+/// [`unreadable`]'s source and reason.
+fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
-    unavailable(
+    (
         Source::TradeEventsIndex,
-        "the trade-events index state cannot be read",
+        "the trade-events index state cannot be read".to_string(),
     )
 }
 

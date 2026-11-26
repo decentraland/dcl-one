@@ -110,6 +110,17 @@ impl CreditAmount {
     }
 }
 
+/// A NUMERIC integer read as text (a report's rounded sum of cents), as an
+/// `i64` that saturates instead of failing: one absurd row must not fail a
+/// whole report.
+pub fn saturating_cents(text: &str) -> i64 {
+    match text.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) if text.starts_with('-') => i64::MIN,
+        Err(_) => i64::MAX,
+    }
+}
+
 /// The whole credits of a numeric text (`floor`), without a float: the
 /// integer part of `[-]digits[.digits]`, saturating at `i64::MAX`, `0` for
 /// anything else (a negative or malformed text is not a count of credits).
@@ -260,6 +271,14 @@ impl Decimal {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn saturating_cents_never_fail() {
+        assert_eq!(saturating_cents("1234"), 1234);
+        assert_eq!(saturating_cents("-5"), -5);
+        assert_eq!(saturating_cents("99999999999999999999999"), i64::MAX);
+        assert_eq!(saturating_cents("-99999999999999999999999"), i64::MIN);
+    }
     use super::*;
 
     fn ok(s: &str) -> bool {

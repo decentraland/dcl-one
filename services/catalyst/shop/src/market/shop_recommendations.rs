@@ -306,6 +306,7 @@ pub(super) fn rerank_for_diversity(
 
 pub(super) async fn personal_rows(
     state: &MarketplaceState,
+    read: &mut super::super::catalogue::CatalogueRead,
     p: &Params<'_>,
     verified: Option<&str>,
     filters: &UnifiedCatalogFilters,
@@ -324,13 +325,13 @@ pub(super) async fn personal_rows(
     let equipped = item_id_values(p, "equipped", MAX_EQUIPPED);
     let exclude = id_list(p, "exclude", MAX_EXCLUDE);
     let held = match profile_for {
-        Some(w) => super::super::neighbours::held_items(&state.pool, w, MAX_HELD_SEEDS).await?,
+        Some(w) => super::super::neighbours::held_items(&mut *read.tx, w, MAX_HELD_SEEDS).await?,
         None => Vec::new(),
     };
     let held_ids: Vec<String> = held.iter().map(|(_, c, i)| format!("{c}-{i}")).collect();
     let favorites: Vec<String> = match favorites_for {
         Some(address) => match super::super::lists::get_picks_by_list_id(
-            &state.pool,
+            &mut *read.tx,
             super::super::lists::DEFAULT_LIST_ID,
             Some(address),
             MAX_FAVORITES,
@@ -366,7 +367,7 @@ pub(super) async fn personal_rows(
     )
     .bind(&contracts)
     .bind(&items)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *read.tx)
     .await?;
     let mut seeds: Vec<(String, String, String, f64)> = Vec::new();
     let (mut wearable_weight, mut total_weight) = (0.0f64, 0.0f64);
@@ -396,7 +397,7 @@ pub(super) async fn personal_rows(
     let mut skip: Vec<String> = exclude;
     skip.extend(profile.iter().map(|(id, _)| id.clone()));
     let scored = super::super::neighbours::weighted_neighbours_of(
-        &state.pool,
+        &mut *read.tx,
         &seeds,
         &skip,
         (limit * 3) as i64,
@@ -406,7 +407,7 @@ pub(super) async fn personal_rows(
         return Ok(Vec::new());
     }
     let ids: Vec<String> = scored.iter().map(|s| s.id.clone()).collect();
-    let hydrated = items_by_ids(state, &ids, filters, rate).await?;
+    let hydrated = items_by_ids(state, read, &ids, filters, rate).await?;
     let by_id: HashMap<String, &UnifiedItem> = hydrated
         .iter()
         .map(|i| {

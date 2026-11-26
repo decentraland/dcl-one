@@ -1,11 +1,29 @@
 use super::*;
 use crate::credits::dto::*;
+use crate::credits::store::Credits;
 use chrono::SecondsFormat;
 fn iso(t: NaiveDateTime) -> String {
     t.and_utc().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 pub async fn enroll(state: &SharedState, address: &str) -> Result<(), ApiError> {
+    enroll_with_clock(state, address, super::super::store::now).await
+}
+
+#[cfg(test)]
+pub(super) async fn enroll_at(
+    state: &SharedState,
+    address: &str,
+    now: NaiveDateTime,
+) -> Result<(), ApiError> {
+    enroll_with_clock(state, address, || now).await
+}
+
+async fn enroll_with_clock(
+    state: &SharedState,
+    address: &str,
+    clock: impl Fn() -> NaiveDateTime,
+) -> Result<(), ApiError> {
     let mut tx = state.credits.pool.begin().await?;
     wallet_lock(&mut tx, address).await?;
     let email: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.subscriptions WHERE address=$1 AND email IS NOT NULL AND email <> '')")
@@ -21,7 +39,11 @@ pub async fn enroll(state: &SharedState, address: &str) -> Result<(), ApiError> 
         .bind(address)
         .execute(&mut *tx)
         .await?;
+    let day = login::enqueue_enrollment(&mut tx, address, clock()).await?;
     tx.commit().await?;
+    if let Some(day) = day {
+        login::advance_enrollment(state, &day, &clock).await;
+    }
     Ok(())
 }
 pub async fn status(state: &SharedState, address: &str) -> Result<Value, ApiError> {
@@ -148,7 +170,8 @@ pub async fn user_credits(
     address: &str,
     status: Option<&str>,
 ) -> Result<(Vec<UserCreditItem>, f64, u64), ApiError> {
-    read_credits(state, address, status, true).await
+    let mut conn = state.credits.pool.acquire().await?;
+    read_credits(&mut conn, address, status, true, super::super::store::now()).await
 }
 
 /// [`user_credits`] on `conn`, for a read within one snapshot.
@@ -157,26 +180,16 @@ pub async fn user_credits_on(
     address: &str,
     status: Option<&str>,
 ) -> Result<(Vec<UserCreditItem>, f64, u64), ApiError> {
-    read_credits_on(conn, address, status, true).await
+    read_credits(conn, address, status, true, super::super::store::now()).await
 }
 
 async fn read_credits(
-    state: &SharedState,
-    address: &str,
-    status: Option<&str>,
-    hide_flagged: bool,
-) -> Result<(Vec<UserCreditItem>, f64, u64), ApiError> {
-    let mut conn = state.credits.pool.acquire().await?;
-    read_credits_on(&mut conn, address, status, hide_flagged).await
-}
-
-async fn read_credits_on(
     conn: &mut PgConnection,
     address: &str,
     status: Option<&str>,
     hide_flagged: bool,
+    now: NaiveDateTime,
 ) -> Result<(Vec<UserCreditItem>, f64, u64), ApiError> {
-    let now = super::super::store::now();
     let blocked: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM credits.wallet_flags WHERE address=$1)")
             .bind(address)
@@ -186,7 +199,7 @@ async fn read_credits_on(
         return Ok((Vec::new(), 0.0, 0));
     }
     let rows = sqlx::query("SELECT g.*,g.amount_wei::text AS amount, GREATEST(g.amount_wei-COALESCE(u.used,0),0)::text AS available, CASE WHEN u.used IS NULL THEN 'AVAILABLE' WHEN u.used>=g.amount_wei THEN 'FULLY_USED' ELSE 'PARTIALLY_USED' END AS status FROM credits.goal_grants g LEFT JOIN LATERAL(SELECT sum(value_wei) AS used FROM credits.usages u WHERE u.salt=g.salt AND u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) u ON true WHERE g.address=$1 AND g.claimed_at IS NOT NULL AND g.expires_at>$2 ORDER BY g.created_at DESC")
-        .bind(address).bind(now).fetch_all(&mut *conn).await?;
+        .bind(address).bind(now).fetch_all(conn).await?;
     let mut items = Vec::new();
     let mut total = U256::ZERO;
     let mut expiry = None;
@@ -257,36 +270,89 @@ pub async fn progress(
     state: &SharedState,
     address: &str,
 ) -> Result<CreditsProgramProgressResponse, ApiError> {
-    let now = super::super::store::now();
+    progress_at(state, address, super::super::store::now()).await
+}
+
+pub(super) async fn progress_at(
+    state: &SharedState,
+    address: &str,
+    now: NaiveDateTime,
+) -> Result<CreditsProgramProgressResponse, ApiError> {
     let is_paused = paused(state).await;
-    let (has_started, wallet) = state.credits.user_progress(address).await?;
+    if state.settings.writes_enabled {
+        // Assignment initialization is idempotent. Finish it before opening
+        // the response snapshot, which needs no claim or worker locks.
+        let mut conn = state.credits.pool.acquire().await?;
+        if let Some(season) = current(&mut conn, now).await? {
+            initialize(&mut conn, address, season.id, season.week(now).0).await?;
+        }
+    }
+    let mut tx = state.credits.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let (has_started, wallet) = Credits::user_progress_on(&mut *tx, address).await?;
     let opted: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM credits.program_opt_outs WHERE address=$1)",
     )
     .bind(address)
-    .fetch_one(&state.credits.pool)
+    .fetch_one(&mut *tx)
     .await?;
-    let (_, total, expires) = read_credits(state, address, None, false).await?;
-    let mut tx = state.credits.pool.begin().await?;
+    let (_, total, expires) = read_credits(&mut tx, address, None, false, now).await?;
     let season = current(&mut tx, now).await?;
     let mut goals = Vec::new();
     let (season, current_week) = if let Some(s) = season {
         let (week, _, end) = s.week(now);
-        // Reads initialize only registered identities; unregistered users get the same definition as a default.
-        if state.settings.writes_enabled {
-            initialize(&mut tx, address, s.id, week).await?;
-        }
         let rows = sqlx::query("SELECT d.goal_id,COALESCE(p.title,d.title) AS title,CASE WHEN p.address IS NULL THEN d.description ELSE p.description END AS description,COALESCE(p.thumbnail,d.thumbnail) AS thumbnail,COALESCE(p.total_steps,d.total_steps) AS total_steps,COALESCE(p.reward_wei,d.reward_wei)::text AS reward,COALESCE(p.completed_steps,0) AS completed_steps,p.completed_at,g.claimed_at FROM credits.season_goals d LEFT JOIN credits.goal_progress p ON p.address=$1 AND p.season_id=d.season_id AND p.week_id=$3 AND p.goal_id=d.goal_id LEFT JOIN credits.goal_grants g ON g.address=p.address AND g.season_id=p.season_id AND g.week_id=p.week_id AND g.goal_id=p.goal_id WHERE d.season_id=$2 AND (p.address IS NOT NULL OR $3 BETWEEN d.start_week AND d.end_week) ORDER BY d.position")
             .bind(address).bind(s.id).bind(week).fetch_all(&mut *tx).await?;
-        let photos: Vec<Uuid> = sqlx::query_scalar("SELECT photo_id FROM credits.photo_goal_receipts WHERE address=$1 AND season_id=$2 AND week_id=$3 AND outcome='counted' ORDER BY ordinal")
-            .bind(address).bind(s.id).bind(week).fetch_all(&mut *tx).await?;
         for row in rows {
+            let goal: String = row.get("goal_id");
+            let mut title: String = row.get("title");
+            let mut metadata = GoalMetadata::default();
+            match goal.as_str() {
+                GOAL => {
+                    let photos: Vec<Uuid> = sqlx::query_scalar(
+                        "SELECT photo_id FROM credits.photo_goal_receipts
+                         WHERE address=$1 AND season_id=$2 AND week_id=$3 AND outcome='counted'
+                         ORDER BY ordinal",
+                    )
+                    .bind(address)
+                    .bind(s.id)
+                    .bind(week)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    metadata.photos_taken = Some(photos.iter().map(ToString::to_string).collect());
+                }
+                login::GOAL => {
+                    let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
+                        "SELECT day FROM credits.goal_login_days
+                         WHERE address=$1 AND season_id=$2 AND week_id=$3 AND pending_at IS NULL ORDER BY day",
+                    )
+                    .bind(address)
+                    .bind(s.id)
+                    .bind(week)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    metadata.dates = Some(dates.iter().map(ToString::to_string).collect());
+                }
+                stays::GOAL => {
+                    metadata.events_visited_and_stayed =
+                        Some(stays::metadata(&mut tx, address, s.id, week).await?);
+                }
+                "visit-location" => {
+                    title = rooms::weekly_world(week).map_or_else(
+                        || "No Scene To Explore This Week".to_owned(),
+                        |world| format!("Explore The Scene At {world}"),
+                    );
+                }
+                _ => {}
+            }
             let completed: Option<NaiveDateTime> = row.get("completed_at");
             goals.push(GoalData {
                 is_completed: completed.is_some(),
                 completed_at: completed.map(|t| t.and_utc().timestamp_millis()),
-                id: row.get("goal_id"),
-                title: row.get("title"),
+                id: goal,
+                title,
                 description: row.get("description"),
                 thumbnail: row.get("thumbnail"),
                 reward: mana_number(&row.get::<String, _>("reward"))?,
@@ -294,9 +360,7 @@ pub async fn progress(
                 progress: GoalProgressData {
                     total_steps: row.get::<i32, _>("total_steps") as u64,
                     completed_steps: row.get::<i32, _>("completed_steps") as u64,
-                    metadata: GoalMetadata {
-                        photos_taken: photos.iter().map(ToString::to_string).collect(),
-                    },
+                    metadata,
                 },
             });
         }
