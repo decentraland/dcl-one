@@ -546,10 +546,7 @@ pub(super) async fn book_snapshot(
         now,
     )
     .await
-    .map_err(|e| match e {
-        owned_items::ReadError::Db(e) => read_error(e),
-        e => e.into_response(|m| ApiError::internal(m.to_string()).into_response()),
-    })?;
+    .map_err(readers::index_source_error)?;
     // The ownership the book and the v3 listings read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.

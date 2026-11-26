@@ -439,7 +439,10 @@ pub(super) async fn ready_for_networks_on(
 ) -> Result<Readiness, Response> {
     ready_checked_for_networks_on(state, conn, nets, now)
         .await
-        .map_err(super::readers::index_source_error)
+        .map_err(|refused| match refused {
+            Some((source, why)) => unavailable(source, &why),
+            None => super::internal_server_error(),
+        })
 }
 
 /// [`ready_on`], typed: the source that refused and why (`None`: the pass
@@ -450,15 +453,7 @@ pub async fn ready_checked_on(
     conn: &mut sqlx::PgConnection,
     now: DateTime<Utc>,
 ) -> Result<Readiness, Option<(Source, String)>> {
-    ready_checked_for_networks_on(state, conn, &super::chain_walk::ChainNet::ALL, now)
-        .await
-        .map_err(|e| match e {
-            super::owned_items::ReadError::NotReady(source, why) => Some((source, why)),
-            super::owned_items::ReadError::Db(e) => {
-                tracing::error!(error = %e, "trades_mirror read failed");
-                None
-            }
-        })
+    ready_checked_for_networks_on(state, conn, &super::chain_walk::ChainNet::ALL, now).await
 }
 
 async fn ready_checked_for_networks_on(
@@ -466,18 +461,19 @@ async fn ready_checked_for_networks_on(
     conn: &mut sqlx::PgConnection,
     nets: &[super::chain_walk::ChainNet],
     now: DateTime<Utc>,
-) -> Result<Readiness, super::owned_items::ReadError> {
-    use super::owned_items::ReadError;
-
+) -> Result<Readiness, Option<(Source, String)>> {
     let readiness = readiness_on(state, conn, now)
         .await
         .map_err(|not_ready| match not_ready {
-            NotReady::Refused(why) => ReadError::NotReady(Source::TradesMirror, why),
-            NotReady::Database(e) => ReadError::Db(e),
+            NotReady::Refused(why) => Some((Source::TradesMirror, why)),
+            NotReady::Database(e) => {
+                tracing::error!(error = %e, "trades_mirror read failed");
+                None
+            }
         })?;
     super::trade_events::current_for_networks_on(conn, nets, now)
         .await
-        .map_err(|(source, why)| ReadError::NotReady(source, why))?;
+        .map_err(Some)?;
     Ok(readiness)
 }
 

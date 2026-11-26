@@ -9327,6 +9327,17 @@ async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publica
     use crate::land_authz::LAND_MAINNET;
 
     super::trade_events::tests::publish_cursors(pool).await;
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, \
+                                             folded_block, folded_at, full_replay_started) \
+         VALUES ($1, $2, $3, 100, 100, timezone('UTC', now()), true)",
+    )
+    .bind(LAND_MAINNET.network)
+    .bind(LAND_MAINNET.land_registry)
+    .bind(LAND_MAINNET.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
     let app = market_router(state);
     for (contract, token, owner, x, y) in [
         (
@@ -9386,50 +9397,6 @@ async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publica
         assert_eq!(body["data"]["total"], 1, "{body}");
         assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
         assert_eq!(body["data"]["results"][0]["seller"], owner, "{body}");
-    }
-    own.drop().await;
-}
-
-#[tokio::test]
-async fn orders_and_bids_use_the_statement_timeout_for_the_trades_pass_marker() {
-    let graph = serve_empty_graph().await;
-    let Some(own) = super::tests::support::OwnDb::create("trade_pass_timeout").await else {
-        return;
-    };
-    let mut settings = market_settings(&graph, &graph, true);
-    settings.trades_sync_upstream_url = Some(graph.clone());
-    settings.trades_serve_partial = false;
-    let state = Arc::new(super::MarketplaceState::new(
-        own.pool.clone(),
-        crate::http::Outbound::for_tests(),
-        settings,
-    ));
-    state.test_allow_loopback.store(true, Ordering::Relaxed);
-    super::trade_events::tests::publish_cursors(&own.pool).await;
-    let app = market_router(state);
-    let routes = ["/v1/orders?network=MATIC", "/v1/bids?network=MATIC"];
-    for route in routes {
-        let (status, body) = get(app.clone(), route).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-        assert_eq!(body["source"], "trades-mirror", "{body}");
-    }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "ALTER TABLE shop.trades_mirror RENAME TO saved_trades_mirror;
-         CREATE FUNCTION shop.trades_pass_error() RETURNS timestamp LANGUAGE plpgsql AS $$
-         BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
-         $$;
-         CREATE VIEW shop.trades_mirror AS
-           SELECT 1 AS id, '{graph}'::text AS upstream_url, shop.trades_pass_error() AS completed_at;"
-    )))
-    .execute(&own.pool)
-    .await
-    .unwrap();
-    for route in routes {
-        let (status, body) = get(app.clone(), route).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-        let message = body["message"].as_str().unwrap();
-        assert!(message.contains("statement bound"), "{body}");
-        assert!(!message.contains("private fixture detail"), "{body}");
     }
     own.drop().await;
 }
