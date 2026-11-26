@@ -828,6 +828,77 @@ mod tests {
         .unwrap();
     }
 
+    /// A module's `module.exports.x = ...` runs a scene setter on `Object.prototype`, and a
+    /// non-strict wrapper would hand that setter its `Deno` argument through `caller`.
+    #[test]
+    fn a_scene_setter_cannot_read_the_module_wrapper_arguments() {
+        run_scene(
+            true,
+            r#"
+            let seen = "the setter did not run";
+            Object.defineProperty(Object.prototype, "getRealm", {
+                set: function (value) {
+                    try {
+                        seen = typeof arguments.callee.caller.arguments[5];
+                    } catch (e) {
+                        seen = "refused";
+                    }
+                    Object.defineProperty(this, "getRealm", { value, writable: true });
+                },
+                configurable: true,
+            });
+            const runtime = require("~system/Runtime");
+            if (seen !== "refused") { throw new Error("the wrapper's arguments are reachable: " + seen); }
+            if (typeof runtime.getRealm !== "function") { throw new Error("Runtime did not load"); }
+            "#,
+        )
+        .unwrap();
+    }
+
+    /// Every module a scene can require loads under the strict wrapper, sealed or not.
+    #[test]
+    fn every_system_module_loads() {
+        for server in [true, false] {
+            run_scene(
+                server,
+                r#"
+                for (const name of [
+                    "CommunicationsController", "CommsApi", "EngineApi", "EnvironmentApi",
+                    "EthereumController", "Players", "PortableExperiences", "RestrictedActions",
+                    "Runtime", "Scene", "SignedFetch", "Testing", "UserActionModule",
+                    "UserIdentity", "AdaptationLayerHelper",
+                ]) {
+                    if (Object.keys(require("~system/" + name)).length === 0) {
+                        throw new Error(name + " exports nothing");
+                    }
+                }
+                "#,
+            )
+            .unwrap();
+        }
+    }
+
+    /// The HUD's module is the largest one; it loads only for a super-user scene.
+    #[test]
+    fn the_super_user_module_loads() {
+        let (mut runtime, _) = create_runtime(false, true, "test-su-module", Default::default());
+        let (host, _inbox) = tokio::sync::mpsc::unbounded_channel();
+        {
+            let state = runtime.op_state();
+            let mut state = state.borrow_mut();
+            state.put(context(false));
+            state.put(dcl_js::SuperUserScene(host));
+        }
+        runtime
+            .execute_script(
+                "<test>",
+                ascii_str!(
+                    r#"if (Object.keys(require("~system/BevyExplorerApi")).length === 0) { throw new Error("no exports"); }"#
+                ),
+            )
+            .unwrap();
+    }
+
     /// ...while the modules the scene is *supposed* to use still get it, via the `Deno`
     /// parameter `require` injects. Required from scene code, i.e. after the seal.
     #[test]
