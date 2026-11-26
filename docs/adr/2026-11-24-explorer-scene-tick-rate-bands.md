@@ -80,6 +80,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   only at a tick and drop new messages when full, and nothing releases a capped scene for them.
   A scene behind the camera or past 80 m that receives more than about 1,024 or 512 messages a
   second from peers loses the excess.
+- The photo and cinematic exemptions lift every cap, not just the scenes the camera frames. A
+  scene that keeps a cinematic camera or camera-mode area active while the player is inside it
+  ticks the whole world at the full rate for that time. Measuring the bands from the rendering
+  camera while it is away from the player would keep the caps there.
 - Bands and rates are code constants, not settings.
 
 ## Rejected
