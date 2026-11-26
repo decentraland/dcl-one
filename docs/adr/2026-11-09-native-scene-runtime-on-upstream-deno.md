@@ -34,9 +34,9 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
 - **Scripts are compiled in.** The deno_web and deno_webidl scripts the runtime loads are vendored
   byte-identical under `crates/dcl_deno/src/js/vendor/` with the fetch and webstorage scripts
   (MIT, versions and hashes in `upstream.lock.json`).
-- **Per scene, nothing shared:** a Blob store per runtime; the lock manager and broadcast ops are
-  not registered, and the native BroadcastChannel stays our own bridge shim. deno_web's native
-  classes are not installed.
+- **Per scene, nothing shared:** a Blob store per runtime; deno_web registers the lock manager
+  and broadcast ops, and the runtime disables them (`DISABLED_OPS`), so a call throws. The
+  native BroadcastChannel stays our own bridge shim. deno_web's native classes are not installed.
 - **Upstream ops that panic on scene input:** `op_compile_function`, `op_serialize` and
   `op_deserialize` are disabled (nothing the runtime loads calls them), and `op_structured_clone`
   (`performance.mark` and `measure` reach it) is replaced by a serializer with no host-object path
@@ -89,7 +89,7 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
 - Scene-visible changes: V8 15 adds the `Temporal`, `DisposableStack`, `AsyncDisposableStack`
   and `SuppressedError` globals; `String(opResult)` is `[object Object]` and op results inherit
   `Object.prototype`; `WebAssembly.compileStreaming`/`instantiateStreaming` are absent; the raw
-  deno_net, deno_url and deno_console ops are gone from `Deno.core.ops` on the client; the
-  deno_fetch 0.284 scripts replace 0.192's. The WebSocket follows the fetch private-network
+  deno_net ops are gone from `Deno.core.ops` on the client, and the URL and console ops there now
+  come from deno_web; the deno_fetch 0.284 scripts replace 0.192's. The WebSocket follows the fetch private-network
   rule, uses the operating system's trust store, fails a socket that sends past its outbound cap
   (error, then close 1006), and reports its own counters in the scene debug panel.
