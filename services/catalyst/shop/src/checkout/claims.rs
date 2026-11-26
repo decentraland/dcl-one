@@ -93,7 +93,7 @@ pub struct BrokerPurchaseClaim<'a> {
 /// lock. Taking over is safe at any age, because a transaction is sent only
 /// after its record, which is fenced on the claim's `status = 'pending'` and
 /// `updated_at`; the delay only spares an in-flight caller.
-pub const BROKER_PENDING_TAKEOVER_SECS: i64 = 120;
+pub const BROKER_PENDING_TAKEOVER_SECS: u32 = 120;
 
 /// Claims a broker purchase. Every claim this binary makes is `write_ahead`:
 /// its transaction is recorded before it is broadcast, so a `write_ahead`
@@ -153,7 +153,7 @@ pub async fn claim_broker_purchase(
     .bind(claim.usd_amount_wei)
     .bind(claim.mana_usd_rate_wei)
     .bind(now)
-    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
+    .bind(f64::from(BROKER_PENDING_TAKEOVER_SECS))
     .fetch_one(pool)
     .await
 }
