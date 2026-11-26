@@ -28,6 +28,8 @@ const GET_RARITY_BY_NAME = 'b5262333'
 const SEED_KEYS = ['wallets', 'third_parties', 'registry', 'collections', 'items', 'chain', 'collection_curations', 'item_curations', 'receipts', 'entities']
 const FAKED_WHERE_KEYS = new Set(['id', 'id_in', 'id_gt', 'creator', 'managers_contains', 'minters_contains', 'managers_contains_nocase', 'collection', 'isCommitteeMember'])
 const VOLATILE = '<<VOLATILE>>'
+const INHERITED_ENVIRONMENT = ['PATH', 'HOME', 'TMPDIR', 'TZ']
+const MIGRATE_TIMEOUT_MS = 5 * 60 * 1000
 const MOVED_ITEM_FILE = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
 
 /** A client-shaped wearable `item` body for `id`, in `collectionId` (null: no collection). */
@@ -65,8 +67,6 @@ const OWNER_INITIALIZE = '0xd14fee7700000000000000000000000000000000000000000000
 const STRANGER_INITIALIZE = '0xd14fee77000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000180000000000000000000000000cd6884d4258edc833f31ac773e24affe6a7d31540000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017113b44fdd661a156cc01b5031e3acf72c32eb300000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000011436f6e666f726d616e6365207361766564000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e44434c2d434e46524d4e43535644000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004268747470733a2f2f706565722e646563656e7472616c616e642e6f72672f6c616d626461732f636f6c6c656374696f6e732f7374616e646172642f6572633732312f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
 const ITEM_MODEL = 'bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei'
 const ITEM_THUMBNAIL = 'bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma'
-const ITEM_TEXTURE = 'bafkreihguhxlcxdu6hacttsy5lwuggfmehebqdb6ngpey2le77bibwl7xe'
-const ITEM_MODEL_V2 = 'bafkreiefylq3hbo4poewjyrt2yheyzadw3agtgqvt2xw5jypyyygqac4k4'
 const ITEM_OTHER_MODEL = 'bafkreidt4shc7ymjpyczl3qv7kuk4jf5r254fdi4lbycn5jjtiauqllvqa'
 const ITEM_EMPTY = 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku'
 const ITEM_DRAFT_MODEL = 'bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka'
@@ -617,7 +617,7 @@ const EDGE_CASES = [
   { name: '518-cors-preflight-listed', description: 'OPTIONS /collections/{id}, the preflight of a signed PUT from an origin CORS_ORIGIN lists', method: 'OPTIONS', path: OWNED_DRAFT, send: preflight(LISTED_ORIGIN), keep: PREFLIGHT_KEPT },
   { name: '519-cors-preflight-foreign', description: 'OPTIONS /collections/{id}, the preflight of a signed PUT from an origin CORS_ORIGIN does not list', method: 'OPTIONS', path: OWNED_DRAFT, send: preflight(FOREIGN_ORIGIN), keep: PREFLIGHT_KEPT },
   { name: '520-cors-info-any-origin', description: 'GET /info from an origin CORS_ORIGIN does not list, a route that answers every origin', method: 'GET', path: '/v1/info', send: { origin: FOREIGN_ORIGIN }, keep: CORS_KEPT },
-  { name: '521-review-writes-per-minute', description: 'POST /collections/{id}/validations signed by a wallet with no role, after 30 such requests within the minute, with the review flow off', method: 'POST', path: reviewOf('302', 'validations'), signer: 'stranger', repeat: 30, keep: ['retry-after', 'ratelimit', 'ratelimit-policy'] }
+  { name: '521-review-writes-per-minute', description: 'POST /collections/{id}/validations signed by a wallet with no role, after 30 such requests within the minute, with the review flow off', method: 'POST', path: reviewOf('302', 'validations'), signer: 'creator', repeat: 30, repeat_status: 404, keep: ['retry-after', 'ratelimit', 'ratelimit-policy'] }
 ]
 
 const OWNER_COLLECTIONS = '/v1/0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e/collections'
@@ -2627,36 +2627,29 @@ async function withScratchDatabase(admin, adminUrl, body) {
   }
 }
 
-/** Publishes `fixtures` ([name, text] pairs) into `output` only when `problems` is empty, staging them beside it first. */
+/**
+ * Replaces `output` with exactly `fixtures` ([name, text] pairs) only when `problems` is empty, staging them beside it
+ * first, so no capture of an earlier run stays behind.
+ */
 function finish(output, fixtures, problems) {
   if (problems.length) fail(`upstream reached a service the capture does not fake: ${[...new Set(problems)].join(', ')}`)
   const target = path.resolve(output)
   const staging = fs.mkdtempSync(path.join(path.dirname(target), '.builder-capture-'))
   try {
     for (const [name, text] of fixtures) fs.writeFileSync(path.join(staging, name), text)
-    fs.mkdirSync(target, { recursive: true })
-    for (const [name] of fixtures) fs.renameSync(path.join(staging, name), path.join(target, name))
+    fs.rmSync(target, { recursive: true, force: true })
+    fs.renameSync(staging, target)
   } finally {
     fs.rmSync(staging, { recursive: true, force: true })
   }
 }
 
-function assertLockedInstall(upstream) {
-  const read = file => JSON.parse(fs.readFileSync(path.join(upstream, file), 'utf8')).packages
-  let locked, installed
+/** Installs upstream's locked dependencies with `npm ci`, which replaces whatever `node_modules` held. */
+function installLocked(upstream) {
   try {
-    locked = read('package-lock.json')
-    installed = read('node_modules/.package-lock.json')
-  } catch {
-    fail('Install the upstream dependencies with npm ci before capturing')
-  }
-  const differing = Object.entries(locked)
-    .filter(([name, entry]) => name && !entry.optional)
-    .filter(([name, entry]) => installed[name]?.version !== entry.version || installed[name]?.integrity !== entry.integrity)
-    .map(([name]) => name)
-  const extra = Object.keys(installed).filter(name => !locked[name])
-  if (differing.length || extra.length) {
-    fail(`node_modules differs from package-lock.json (${[...differing, ...extra].slice(0, 5).join(', ')}); install with npm ci`)
+    execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: upstream, stdio: ['ignore', 'ignore', 'pipe'] })
+  } catch (error) {
+    fail(`npm ci failed in the upstream checkout: ${String(error.stderr ?? error.message).trim().split('\n').pop()}`)
   }
 }
 
@@ -3377,17 +3370,39 @@ function upstreamEnvironment(fakeBase, url, admins) {
   }
 }
 
-/** Runs upstream's migrations in a child process that loads the offline guard first. */
+/** `environment` with only the `INHERITED_ENVIRONMENT` variables of this process added: what upstream runs with. */
+function upstreamProcessEnvironment(environment) {
+  const inherited = INHERITED_ENVIRONMENT.filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]])
+  return { ...Object.fromEntries(inherited), ...environment }
+}
+
+/**
+ * Leaves this process with only `upstreamProcessEnvironment(environment)` and loads `environment` into upstream's
+ * `decentraland-commons` env, which otherwise reads `./.env` over it on first use.
+ */
+function useUpstreamEnvironment(req, environment) {
+  const kept = upstreamProcessEnvironment(environment)
+  for (const name of Object.keys(process.env)) if (!Object.hasOwn(kept, name)) delete process.env[name]
+  Object.assign(process.env, kept)
+  req('decentraland-commons').env.load({ values: environment })
+}
+
+/** Runs upstream's migrations in a child process that loads the offline guard first, from an empty directory. */
 function migrate(upstream, environment) {
-  execFileSync(process.execPath, [
-    '--require', GUARD,
-    path.join(upstream, 'migrations/node-pg-migrate'),
-    '--database-url-var', 'CONNECTION_STRING',
-    '--migration-file-language', 'ts',
-    '--migrations-dir', path.join(upstream, 'migrations'),
-    '--ignore-pattern', '\\..*|.*migrate(.ts)?',
-    'up'
-  ], { cwd: upstream, env: { ...process.env, ...environment }, stdio: ['ignore', 'ignore', 'pipe'] })
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'builder-capture-cwd-'))
+  try {
+    execFileSync(process.execPath, [
+      '--require', GUARD,
+      path.join(upstream, 'migrations/node-pg-migrate'),
+      '--database-url-var', 'CONNECTION_STRING',
+      '--migration-file-language', 'ts',
+      '--migrations-dir', path.join(upstream, 'migrations'),
+      '--ignore-pattern', '\\..*|.*migrate(.ts)?',
+      'up'
+    ], { cwd, env: upstreamProcessEnvironment(environment), stdio: ['ignore', 'ignore', 'pipe'], timeout: MIGRATE_TIMEOUT_MS })
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
 }
 
 async function seedDatabase(client, seed, signers) {
@@ -3541,7 +3556,9 @@ async function record(req, base, signers, volatileFields, item, bucket, latestSt
     : headers
   for (let n = 0; n < (item.repeat ?? 0); n++) {
     const again = item.signer ? { ...(await signedHeaders(req, signers[item.signer], item)), ...item.send } : headers
-    await (await fetch(base + item.path + (search ? '?' + search : ''), { method: item.method, headers: again, body: sent.body, redirect: 'manual', signal: AbortSignal.timeout(5000) })).arrayBuffer()
+    const warmUp = await fetch(base + item.path + (search ? '?' + search : ''), { method: item.method, headers: again, body: sent.body, redirect: 'manual', signal: AbortSignal.timeout(5000) })
+    await warmUp.arrayBuffer()
+    if (warmUp.status !== item.repeat_status) fail(`${item.name}: request ${n + 1} of the ${item.repeat} before it answered ${warmUp.status}, not ${item.repeat_status}`)
   }
   const response = await fetch(base + item.path + (search ? '?' + search : ''), {
     method: item.method,
@@ -3600,7 +3617,7 @@ async function runUpstream(capture, url, seed, signers, unfaked) {
     const client = new Client({ connectionString: url })
     await client.connect()
     try { await seedDatabase(client, seed, signers) } finally { await client.end() }
-    Object.assign(process.env, environment)
+    useUpstreamEnvironment(req, environment)
     freezeClock()
     process.stdout.write = () => true
     process.stderr.write = () => true
@@ -3673,8 +3690,9 @@ async function main() {
   const { upstream } = assertPinnedSource(root, 'builder')
   if (!output) fail('Usage: node tooling/builder-server-capture.cjs <upstream-checkout> <output-directory>')
   const adminUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
+  adminUrlSeen = adminUrl
   try { databaseUrl(adminUrl, 'postgres') } catch { fail('CATALYST_TEST_DATABASE_URL is not a valid URL') }
-  assertLockedInstall(upstream)
+  installLocked(upstream)
   const capture = sourceCapture(upstream, { kind: 'builder' })
   const seed = readSeed()
   const signers = wallets(capture.req, seed)
@@ -3688,8 +3706,10 @@ async function main() {
   finish(output, fixtures, [...refused, ...unfaked])
 }
 
+let adminUrlSeen
+
 function failed(error) {
-  report(`builder capture failed: ${redact(error?.message ?? error, process.env.CATALYST_TEST_DATABASE_URL)}\n`)
+  report(`builder capture failed: ${redact(error?.message ?? error, adminUrlSeen ?? process.env.CATALYST_TEST_DATABASE_URL)}\n`)
   Promise.resolve()
     .then(() => activeDrop?.())
     .catch(() => {})
@@ -3707,4 +3727,4 @@ if (require.main === module) {
   main().then(() => process.exit(0), failed)
 }
 
-module.exports = { EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, installFailureHandlers, selected }
+module.exports = { EDGE_CASES, CAPTURE_CORS_ORIGIN, NEWSLETTER_KEY, NEWSLETTER_PUBLICATION, NEWSLETTER_FAILING_EMAIL, newsletterAnswer, newsletterRecord, sentBody, REVIEW_CASES, snsAnswer, queueRecord, validatorHeaders, trackValidations, VALIDATOR_SECRET, SNS_TOPIC, activeEntities, receiptRows, chequeTypedData, withCheque, CASES, SLACK_TOKEN, SLACK_CHANNEL, slackAnswer, slackRoute, slackRecord, FORUM_KEY, FORUM_USERNAME, FORUM_CATEGORY, forumState, forumAnswer, forumRoute, forumRecord, readSeed, seedDatabase, FAKED_GRAPH_FIELDS, WAREHOUSE_TOKEN, warehouseAnswer, oracleAnswer, rarityRows, registryRows, bucketNamed, caseOrderErrors, ledgerCaptureErrors, recordedSign, requestBody, s3Answer, withScratchDatabase, finish, redact, scrubVolatile, refuseMarkers, volatileEqualities, migrate, useUpstreamEnvironment, installFailureHandlers, selected }
