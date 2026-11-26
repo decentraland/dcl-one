@@ -7155,6 +7155,106 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         "no bid read asks the subgraph: {:?}",
         up.requests.lock().unwrap()
     );
+    let networks = |body: &Value| -> Vec<String> {
+        let mut out: Vec<String> = body["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["network"].as_str().unwrap().to_string())
+            .collect();
+        out.sort();
+        out
+    };
+    // The networks' pages merge on full-width prices: a Sepolia bid above
+    // u128, expiring at the decoder's ceiling, ranks first at every limit.
+    const WIDE_PRICE: &str = "340282366920938463463374607431768211456";
+    sqlx::query(
+        "UPDATE shop.nft_bid SET price = $1::numeric, expires_at = $2 \
+         WHERE network = 'ethereum' AND contract_address = $3",
+    )
+    .bind(WIDE_PRICE)
+    .bind(i64::MAX)
+    .bind(&v1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    publish_bids(&pool, "ethereum", 200).await;
+    for limit in [1, 2] {
+        let url = format!("/v1/bids?sortBy=most_expensive&limit={limit}");
+        let (status, body) = get(app(), &url).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], 2, "{body}");
+        let results = body["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), limit, "{body}");
+        assert_eq!(
+            (results[0]["network"].as_str(), results[0]["price"].as_str()),
+            (Some("ETHEREUM"), Some(WIDE_PRICE)),
+            "{body}"
+        );
+    }
+    // A rolling upgrade: an older sales writer folds an acceptance into the
+    // Amoy book at 210 and stamps nothing. The read of both networks fails
+    // closed on the sales index rather than serve it under the publication
+    // at 200, and serves it once a fold is published again.
+    sqlx::query(
+        "UPDATE shop.nft_bid SET status = 'accepted', updated_block = 210, updated_at = 210 \
+         WHERE network = 'matic' AND contract_address = $1",
+    )
+    .bind(&verified)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let open = "/v1/bids?status=open";
+    let (status, body) = get(app(), open).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    publish_bids(&pool, "matic", 200).await;
+    let (status, body) = get(app(), open).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(networks(&body), vec!["ETHEREUM".to_string()], "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    // Polygon's catalogue is handed back to the mirror: its rows and its
+    // pass clear together while the nft and sales indexes stay ready. The
+    // read of both networks names the missing source; it does not answer
+    // Sepolia's bids alone with Amoy's left out of the page and the total.
+    sqlx::query("DELETE FROM shop.collections WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at = NULL \
+         WHERE mirror = 'collections' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("collections-mirror")),
+        "{body}"
+    );
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+         SELECT 'matic', $1, 80002, 'Pirates', $2, $2, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now()), true",
+    )
+    .bind(&verified)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    publish_bid_collections(&pool, 80_002).await;
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        networks(&body),
+        vec!["ETHEREUM".to_string(), "MATIC".to_string()],
+        "{body}"
+    );
+    assert_eq!(body["data"]["total"], 2, "{body}");
     own.drop().await;
 }
 
