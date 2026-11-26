@@ -7,8 +7,9 @@
 //! The bid contract accepts bids on any ERC721, and the sales index keeps
 //! them all: a bid on another contract notifies nobody. Under the mirrors it
 //! never holds the cursor; on a network the collections index owns it holds
-//! it until the publication covers its block, since a collection created by
-//! then may not be published yet ([`ItemWait`]).
+//! it until the publication covers its block, however long that takes, since
+//! a collection created by then may not be published yet ([`ItemWait`]). A
+//! held cursor shows as a growing `shop_notification_cursor_lag`.
 //!
 //! The recipient is the owner when the bid was placed, the subgraph's
 //! `seller`: the nft walk's latest transfer (a mint is one) before the bid,
@@ -211,40 +212,48 @@ pub async fn run_once(
     settings: &Settings,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Pass> {
-    if let Some(why) = start(pool, now).await? {
-        return Ok(Pass::Waiting(why));
-    }
-    pages(pool, settings, now).await
+    let published = match start(pool, now).await? {
+        Ok(published) => published,
+        Err(why) => return Ok(Pass::Waiting(why)),
+    };
+    pages(pool, settings, now, published).await
 }
 
-/// Why the pass reads nothing, or `None` once both indexes are ready, and
-/// the first seed at the sales index's published block. Each page reads its
-/// own bound ([`rows_sql`]); these checks only report and seed.
-async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Option<&'static str>> {
+/// The sales index's published block once both indexes are ready, after the
+/// first seed there; otherwise why the pass reads nothing. Each page reads
+/// its own bound ([`rows_sql`]); these checks only report and seed.
+async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Result<i64, &'static str>> {
     let Some(published) =
         chain_walk::published_block(pool, INDEXER_SALES, NET, NET.chain_id(), now).await?
     else {
-        return Ok(Some("the matic sales index is not published"));
+        return Ok(Err("the matic sales index is not published"));
     };
     if chain_walk::published_block(pool, INDEXER_NFT, NET, NET.chain_id(), now)
         .await?
         .is_none()
     {
-        return Ok(Some(
+        return Ok(Err(
             "the matic nft index is not published (a bid's owner is unknown)",
         ));
     }
     notice_cursor::seed(pool, PRODUCER, None, published, i32::MAX).await?;
-    Ok(None)
+    Ok(Ok(published))
 }
 
-/// The pages after the cursor, each under its own published bound.
-async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow::Result<Pass> {
+/// The pages after the cursor, each under its own published bound; the lag
+/// is reported against the sales index's `published` block.
+async fn pages(
+    pool: &PgPool,
+    settings: &Settings,
+    now: DateTime<Utc>,
+    published: i64,
+) -> anyhow::Result<Pass> {
     let network = NET.db_name();
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, PRODUCER).await?;
+        notice_cursor::report_lag(PRODUCER, published, since_block);
         let mut rows: Vec<BidRow> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql()))
             .bind(network)
             .bind(since_block)
@@ -324,23 +333,10 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
                 "bid_received: the contract's nft backfill outlasted the hold; the bid is not announced"
             );
         }
-        for r in ready
-            .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Skip)
-        {
-            tracing::warn!(
-                block = r.0.block_number,
-                log = r.0.log_index,
-                contract = %r.0.contract_address,
-                "bid_received: the collections index has not covered this bid for a day; it is not announced"
-            );
-        }
+        // Every bid before the first held one is described.
         let batch: Vec<NewNotification> = ready
             .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Describe)
-            .filter_map(|(r, _)| {
+            .filter_map(|r| {
                 let asset = metas.get(&(r.contract_address.clone(), r.token_id.clone()))?;
                 notice(settings, r, asset)
             })
@@ -415,8 +411,8 @@ mod tests {
     }
 
     #[test]
-    fn only_a_collection_bid_holds_and_never_past_the_bound() {
-        use Waited::{Describe, Hold, Skip};
+    fn only_a_collection_bid_holds_and_only_the_index_holds_past_the_bound() {
+        use Waited::{Describe, Hold};
         let t = T0;
         let mirror = ItemWait::Mirror(None);
         let at = |r: &BidRow, described, mirror_on, wait, now| {
@@ -476,9 +472,20 @@ mod tests {
             "a row read while the index refuses never describes the bid"
         );
         assert_eq!(
-            at(&bid, true, true, index(None), t + ITEM_HOLD_MAX_SECS),
-            Skip,
-            "past the bound an unverified row passes without a notice"
+            at(&bid, true, true, index(None), t + 30 * ITEM_HOLD_MAX_SECS),
+            Hold,
+            "past the bound the index still holds: an unverified row never describes the bid"
+        );
+        assert_eq!(
+            at(
+                &bid,
+                false,
+                true,
+                index(Some(bid.block_number)),
+                t + 30 * ITEM_HOLD_MAX_SECS
+            ),
+            Describe,
+            "however late, the publication over the bid describes it"
         );
         let unlisted = row(false, false, t);
         assert_eq!(
@@ -975,7 +982,11 @@ mod tests {
         bid(pool, 95, 7, BIDDER, "1000000000000000000").await; // owner: NEW_OWNER
         publish(pool, INDEXER_SALES, "matic", 200, T0 + 200).await;
         publish(pool, INDEXER_NFT, "matic", 200, T0 + 200).await;
-        assert_eq!(start(pool, Utc::now()).await.unwrap(), None, "both ready");
+        assert_eq!(
+            start(pool, Utc::now()).await.unwrap(),
+            Ok(200),
+            "both ready"
+        );
 
         // On another connection, as a divergence runs: the publication is
         // withdrawn first (the rows still the old chain's), then the
@@ -988,7 +999,10 @@ mod tests {
         .execute(&mut *other)
         .await
         .unwrap();
-        assert_eq!(pages(pool, &s, Utc::now()).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(
+            pages(pool, &s, Utc::now(), 200).await.unwrap(),
+            Pass::Emitted(0)
+        );
         assert_eq!(cursor(pool).await, (59, i32::MAX), "withdrawn: no bound");
         let mut rewind = sqlx::Connection::begin(&mut *other).await.unwrap();
         sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 80")
@@ -1004,7 +1018,10 @@ mod tests {
         .unwrap();
         rewind.commit().await.unwrap();
         drop(other);
-        assert_eq!(pages(pool, &s, Utc::now()).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(
+            pages(pool, &s, Utc::now(), 200).await.unwrap(),
+            Pass::Emitted(0)
+        );
         assert_eq!(
             cursor(pool).await,
             (59, i32::MAX),
