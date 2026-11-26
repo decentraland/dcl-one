@@ -13,13 +13,18 @@ use bevy::{
 use common::{anim_last_system, sets::SceneSets, structs::NoRenderApp};
 use dcl_component::{
     proto_components::sdk::components::{PbAnimationState, PbAnimator},
-    SceneComponentId, SceneCrdtTimestamp, SceneEntityId,
+    DclReader, DclWriter, FromDclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId,
 };
-use dcl_types::interface::{ComponentPosition, CrdtType};
+use dcl_types::{
+    crdt::lww::CrdtLWWState,
+    interface::{ComponentPosition, CrdtType},
+};
 
 use crate::{RendererSceneContext, SceneEntity, SceneLoopSchedule, SceneLoopSets};
 
-use super::{gltf_container::GltfReady, process_crdt_lww_updates, AddCrdtInterfaceExt};
+use super::{
+    gltf_container::GltfReady, process_crdt_lww_updates, AddCrdtInterfaceExt, CrdtStateComponent,
+};
 
 pub struct AnimatorPlugin;
 
@@ -35,15 +40,15 @@ impl Plugin for AnimatorPlugin {
         );
 
         app.init_resource::<FinishReports>();
-        // In the pass that applies a scene's reply, so the scene's next tick starts from what
-        // this settles.
+        // On a scene's reply before it is applied, in the pass that receives it, so the scene's
+        // next tick starts from what this settles.
         app.world_mut()
             .resource_mut::<SceneLoopSchedule>()
             .schedule
             .add_systems(
                 settle_stale_animator_writes
                     .in_set(SceneLoopSets::UpdateWorld)
-                    .after(process_crdt_lww_updates::<PbAnimator, Animator>),
+                    .before(process_crdt_lww_updates::<PbAnimator, Animator>),
             );
         app.add_systems(Update, update_animations.in_set(SceneSets::PostLoop));
         app.add_systems(PostUpdate, report_finished_clips.after(anim_last_system!()));
@@ -74,12 +79,19 @@ struct FinishReports(u64);
 #[derive(Component)]
 struct PlaysOnce;
 
-/// The clips the scene has been told ended, and the timestamp of the Animator that told it. A
-/// scene write that does not pass the timestamp was made before the scene read it.
-#[derive(Component)]
-struct ReportedClips {
-    timestamp: SceneCrdtTimestamp,
-    clips: Vec<String>,
+/// The clips the scene has been told ended, each with the timestamp of the Animator that told
+/// it. A scene write that does not pass a clip's timestamp was made before the scene read that
+/// end.
+#[derive(Component, Default)]
+struct ReportedClips(Vec<(String, SceneCrdtTimestamp)>);
+
+impl ReportedClips {
+    fn tell(&mut self, clip: &str, timestamp: SceneCrdtTimestamp) {
+        match self.0.iter_mut().find(|(told, _)| told == clip) {
+            Some(told) => told.1 = timestamp,
+            None => self.0.push((clip.to_owned(), timestamp)),
+        }
+    }
 }
 
 /// A state plays only when the scene sets `playing`.
@@ -97,65 +109,61 @@ fn plays_once(animator: &PbAnimator, clips: &Clips) -> bool {
     })
 }
 
-/// The timestamp of the entity's Animator in its scene's store: the later of the scene's last
-/// write and the engine's.
-fn animator_timestamp(context: &RendererSceneContext, id: SceneEntityId) -> SceneCrdtTimestamp {
-    context
-        .crdt_store
-        .lww
-        .get(&SceneComponentId::ANIMATOR)
-        .and_then(|state| state.last_write.get(&id))
-        .map(|entry| entry.timestamp)
-        .unwrap_or_default()
-}
-
 /// A clip can end while its scene's tick is running. That tick's write still says the clip is
 /// playing, and would play it again. Such a write keeps its other changes, and the scene is
 /// sent the result, which its next tick starts from.
 fn settle_stale_animator_writes(
     mut commands: Commands,
-    mut written: Query<
-        (Entity, &SceneEntity, &mut Animator, &mut ReportedClips),
-        Changed<Animator>,
-    >,
-    mut removed: RemovedComponents<Animator>,
-    orphaned: Query<(&SceneEntity, &ReportedClips), Without<Animator>>,
-    mut scenes: Query<&mut RendererSceneContext>,
+    mut scenes: Query<(
+        &mut RendererSceneContext,
+        &mut CrdtStateComponent<CrdtLWWState, PbAnimator>,
+    )>,
+    mut reported: Query<&mut ReportedClips>,
 ) {
-    for (ent, scene_ent, mut animator, mut reported) in written.iter_mut() {
-        let Ok(mut context) = scenes.get_mut(scene_ent.root) else {
-            continue;
-        };
-        if animator_timestamp(&context, scene_ent.id) > reported.timestamp {
-            // written after the scene read the report: playing the clip again is its choice
-            commands.entity(ent).try_remove::<ReportedClips>();
-            continue;
-        }
-        for state in animator.pb_animator.states.iter_mut() {
-            if is_playing(state) && reported.clips.contains(&state.clip) {
-                state.playing = Some(false);
+    for (mut context, mut writes) in scenes.iter_mut() {
+        let told: Vec<(SceneEntityId, Entity)> = writes
+            .last_write
+            .keys()
+            .filter_map(|id| {
+                let ent = context.bevy_entity(*id)?;
+                reported.contains(ent).then_some((*id, ent))
+            })
+            .collect();
+        for (id, ent) in told {
+            let Ok(mut reported) = reported.get_mut(ent) else {
+                continue;
+            };
+            let Some(write) = writes.last_write.get_mut(&id) else {
+                continue;
+            };
+            // a write that passes a clip's timestamp was made after the scene read that end:
+            // playing the clip again is its choice
+            reported.0.retain(|(_, told)| write.timestamp <= *told);
+            if reported.0.is_empty() {
+                commands.entity(ent).try_remove::<ReportedClips>();
+                continue;
             }
-        }
-        context.update_crdt(
-            SceneComponentId::ANIMATOR,
-            CrdtType::LWW_ANY,
-            scene_ent.id,
-            &animator.pb_animator,
-        );
-        reported.timestamp = animator_timestamp(&context, scene_ent.id);
-    }
-
-    for ent in removed.read() {
-        let Ok((scene_ent, reported)) = orphaned.get(ent) else {
-            continue;
-        };
-        commands.entity(ent).try_remove::<ReportedClips>();
-        let Ok(mut context) = scenes.get_mut(scene_ent.root) else {
-            continue;
-        };
-        if animator_timestamp(&context, scene_ent.id) <= reported.timestamp {
-            // the report the scene has yet to read would give it the Animator back
-            context.clear_crdt(SceneComponentId::ANIMATOR, CrdtType::LWW_ANY, scene_ent.id);
+            if !write.is_some {
+                // the report the scene has yet to read would give it the Animator back
+                context.clear_crdt(SceneComponentId::ANIMATOR, CrdtType::LWW_ANY, id);
+                commands.entity(ent).try_remove::<ReportedClips>();
+                continue;
+            }
+            let Ok(mut animator) = PbAnimator::from_reader(&mut DclReader::new(&write.data)) else {
+                continue;
+            };
+            for state in animator.states.iter_mut() {
+                if is_playing(state) && reported.0.iter().any(|(clip, _)| *clip == state.clip) {
+                    state.playing = Some(false);
+                }
+            }
+            write.data.clear();
+            DclWriter::new(&mut write.data).write(&animator);
+            let timestamp =
+                context.update_crdt(SceneComponentId::ANIMATOR, CrdtType::LWW_ANY, id, &animator);
+            for (_, told) in reported.0.iter_mut() {
+                *told = timestamp;
+            }
         }
     }
 }
@@ -402,7 +410,7 @@ fn report_finished_clips(
                 active.set_weight(0.0);
             }
         }
-        context.update_crdt(
+        let timestamp = context.update_crdt(
             SceneComponentId::ANIMATOR,
             CrdtType::LWW_ANY,
             scene_ent.id,
@@ -410,20 +418,15 @@ fn report_finished_clips(
         );
         reports.0 += finished.len() as u64;
 
-        let timestamp = animator_timestamp(&context, scene_ent.id);
         let ended = finished
             .iter()
-            .map(|(state_ix, _)| animator.pb_animator.states[*state_ix].clip.clone());
+            .map(|(state_ix, _)| animator.pb_animator.states[*state_ix].clip.as_str());
         match reported {
-            Some(mut reported) => {
-                reported.timestamp = timestamp;
-                reported.clips.extend(ended);
-            }
+            Some(mut reported) => ended.for_each(|clip| reported.tell(clip, timestamp)),
             None => {
-                commands.entity(ent).try_insert(ReportedClips {
-                    timestamp,
-                    clips: ended.collect(),
-                });
+                let mut reported = ReportedClips::default();
+                ended.for_each(|clip| reported.tell(clip, timestamp));
+                commands.entity(ent).try_insert(reported);
             }
         }
         if !plays_once(&animator.pb_animator, clips) {

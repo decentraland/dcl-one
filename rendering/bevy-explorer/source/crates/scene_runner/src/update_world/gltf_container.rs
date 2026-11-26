@@ -97,10 +97,6 @@ impl GltfDefinition {
     }
 }
 
-/// An animation without a name is `Animation<index>`, in `GltfContainerLoadingState` and to an
-/// Animator.
-const UNNAMED_ANIMATION: &str = "Animation";
-
 /// The mesh/skin/material/animation names a scene sees in `GltfContainerLoadingState`.
 ///
 /// Extracted once per glTF, after which `Gltf::source` is dropped: bevy retains the whole
@@ -145,18 +141,21 @@ impl GltfNames {
             animations: src
                 .animations()
                 .enumerate()
-                .map(|(ix, a)| named(a.name(), UNNAMED_ANIMATION, ix))
+                .map(|(ix, a)| named(a.name(), "Animation", ix))
                 .collect(),
         }
     }
 }
 
 /// Adds a model's clips to its graph: the first one, which plays while the model has no
-/// Animator, and each one under the name an Animator plays it by.
+/// Animator, and each one under the name an Animator plays it by. `names` are the names the
+/// scene is told, one for each animation: an animation that has none in the file is played by
+/// that one.
 fn clip_table(
     graph: &mut AnimationGraph,
     animations: &[Handle<AnimationClip>],
     named_animations: &HashMap<Box<str>, Handle<AnimationClip>>,
+    names: &[String],
     duration: impl Fn(&Handle<AnimationClip>) -> f32,
 ) -> Clips {
     let default = animations
@@ -170,17 +169,12 @@ fn clip_table(
             (name.to_string(), (node, duration(clip)))
         })
         .collect();
-    // an unnamed animation answers to the name its scene is told
-    for (ix, clip) in animations.iter().enumerate() {
-        if named_animations.values().any(|named| named == clip) {
-            continue;
-        }
-        named
-            .entry(format!("{UNNAMED_ANIMATION}{ix}"))
-            .or_insert_with(|| {
-                let node = graph.add_clip(clip.clone(), 1.0, graph.root);
-                (node, duration(clip))
-            });
+    // a name from the file keeps its animation
+    for (clip, name) in animations.iter().zip(names) {
+        named.entry(name.clone()).or_insert_with(|| {
+            let node = graph.add_clip(clip.clone(), 1.0, graph.root);
+            (node, duration(clip))
+        });
     }
     Clips { default, named }
 }
@@ -1513,7 +1507,7 @@ pub(crate) fn update_ready_gltfs(
                         mesh_names,
                         material_names,
                         skin_names,
-                        animation_names,
+                        animation_names: animation_names.clone(),
                     },
                 );
             }
@@ -1531,6 +1525,7 @@ pub(crate) fn update_ready_gltfs(
                     &mut graph,
                     &gltf.animations,
                     &gltf.named_animations,
+                    &animation_names,
                     |clip| {
                         animation_clips
                             .get(clip)
@@ -2164,24 +2159,28 @@ fn expose_gltfs(
         };
 
         match state {
-            GltfLinkState::Pending => scene.update_crdt(
-                SceneComponentId::GLTF_NODE_STATE,
-                CrdtType::LWW_ANY,
-                scene_ent.id,
-                &PbGltfNodeState {
-                    state: GltfNodeStateValue::GnsvPending as i32,
-                    error: None,
-                },
-            ),
-            GltfLinkState::Failed(err) => scene.update_crdt(
-                SceneComponentId::GLTF_NODE_STATE,
-                CrdtType::LWW_ANY,
-                scene_ent.id,
-                &PbGltfNodeState {
-                    state: GltfNodeStateValue::GnsvFailed as i32,
-                    error: Some(err.to_owned()),
-                },
-            ),
+            GltfLinkState::Pending => {
+                scene.update_crdt(
+                    SceneComponentId::GLTF_NODE_STATE,
+                    CrdtType::LWW_ANY,
+                    scene_ent.id,
+                    &PbGltfNodeState {
+                        state: GltfNodeStateValue::GnsvPending as i32,
+                        error: None,
+                    },
+                );
+            }
+            GltfLinkState::Failed(err) => {
+                scene.update_crdt(
+                    SceneComponentId::GLTF_NODE_STATE,
+                    CrdtType::LWW_ANY,
+                    scene_ent.id,
+                    &PbGltfNodeState {
+                        state: GltfNodeStateValue::GnsvFailed as i32,
+                        error: Some(err.to_owned()),
+                    },
+                );
+            }
             GltfLinkState::Ready {
                 gltf_entity,
                 src,
@@ -2265,7 +2264,7 @@ fn expose_gltfs(
                                     .unwrap_or_else(|| "???".to_owned()),
                             })),
                         },
-                    )
+                    );
                 }
                 if let Some(trigger) = maybe_trigger {
                     debug!("link trigger");
@@ -2756,19 +2755,37 @@ mod tests {
     #[test]
     fn an_unnamed_animation_is_played_by_the_name_its_scene_is_told() {
         let mut clips = Assets::<AnimationClip>::default();
-        let unnamed = clips.add(AnimationClip::default());
-        let walk = clips.add(AnimationClip::default());
-        // a named animation that takes the name the last, unnamed one would be told
-        let taken = clips.add(AnimationClip::default());
-        let last = clips.add(AnimationClip::default());
-        let animations = [unnamed.clone(), walk.clone(), taken.clone(), last.clone()];
+        let mut clip = || clips.add(AnimationClip::default());
+        let (unnamed, walk) = (clip(), clip());
+        // a name from the file that the next, unnamed animation is told too
+        let (taken, also_unnamed) = (clip(), clip());
+        // two animations with one name: the file's name map holds the second
+        let (run, run_again) = (clip(), clip());
+        let animations = [
+            unnamed.clone(),
+            walk.clone(),
+            taken.clone(),
+            also_unnamed,
+            run,
+            run_again.clone(),
+        ];
         let named_animations = HashMap::from_iter([
             ("Walk".into(), walk.clone()),
             ("Animation3".into(), taken.clone()),
+            ("Run".into(), run_again.clone()),
         ]);
+        let told = [
+            "Animation0",
+            "Walk",
+            "Animation3",
+            "Animation3",
+            "Run",
+            "Run",
+        ]
+        .map(str::to_owned);
 
         let mut graph = AnimationGraph::new();
-        let table = clip_table(&mut graph, &animations, &named_animations, |clip| {
+        let table = clip_table(&mut graph, &animations, &named_animations, &told, |clip| {
             if *clip == walk {
                 2.0
             } else {
@@ -2780,14 +2797,15 @@ mod tests {
             bevy::animation::graph::AnimationNodeType::Clip(clip) => clip.clone(),
             _ => panic!("not a clip node"),
         };
+        // every name the scene is told, and no other
         let mut names: Vec<_> = table.named.keys().cloned().collect();
         names.sort();
-        assert_eq!(names, ["Animation0", "Animation3", "Walk"]);
+        assert_eq!(names, ["Animation0", "Animation3", "Run", "Walk"]);
         assert_eq!(clip_of(table.named["Animation0"].0), unnamed);
         assert_eq!(table.named["Walk"].1, 2.0);
         assert_eq!(clip_of(table.named["Walk"].0), walk);
-        // the name belongs to the animation that carries it
         assert_eq!(clip_of(table.named["Animation3"].0), taken);
+        assert_eq!(clip_of(table.named["Run"].0), run_again);
         assert_eq!(clip_of(table.default.unwrap()), unnamed);
     }
 

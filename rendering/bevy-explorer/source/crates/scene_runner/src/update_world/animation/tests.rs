@@ -21,17 +21,27 @@ use crate::{
 /// The timestamp of the Animator in the scene's store.
 fn stored_timestamp(app: &App, root: Entity, id: SceneEntityId) -> u32 {
     let context = app.world().get::<RendererSceneContext>(root).unwrap();
-    animator_timestamp(context, id).0
+    context
+        .crdt_store
+        .lww
+        .get(&SceneComponentId::ANIMATOR)
+        .and_then(|state| state.last_write.get(&id))
+        .map_or(0, |entry| entry.timestamp.0)
 }
 
-/// A write by a scene that has read everything the engine wrote for it.
-fn send_animator(app: &mut App, root: Entity, id: SceneEntityId, message: Option<&PbAnimator>) {
-    // as `send_scene_updates` does when it starts the scene's tick
+/// The scene's next tick starts: it reads what the engine wrote for it, as
+/// `send_scene_updates` hands it over.
+fn scene_reads(app: &mut App, root: Entity) {
     app.world_mut()
         .get_mut::<RendererSceneContext>(root)
         .unwrap()
         .crdt_store
         .take_updates();
+}
+
+/// A write by a scene that has read everything the engine wrote for it.
+fn send_animator(app: &mut App, root: Entity, id: SceneEntityId, message: Option<&PbAnimator>) {
+    scene_reads(app, root);
     let timestamp = stored_timestamp(app, root, id) + 1;
     send_animator_at(app, root, id, message, timestamp);
 }
@@ -699,4 +709,64 @@ fn a_model_is_watched_only_while_it_plays_a_clip_once() {
     send_animator(&mut app, root, id, None);
     app.update();
     assert!(!watched(&app), "Animator removed");
+}
+
+#[test]
+fn a_replay_made_after_reading_one_end_plays_while_another_clip_ends() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+    let translation = |app: &App| app.world().get::<Transform>(bone).unwrap().translation.x;
+
+    // swim starts half a second before bite, and both play once
+    let once = |clip: &str| PbAnimationState {
+        r#loop: Some(false),
+        ..playing(clip)
+    };
+    send_animator(
+        &mut app,
+        root,
+        id,
+        Some(&PbAnimator {
+            states: vec![once("swim")],
+        }),
+    );
+    for _ in 0..5 {
+        app.update();
+    }
+    let both = PbAnimator {
+        states: vec![once("swim"), once("bite")],
+    };
+    send_animator(&mut app, root, id, Some(&both));
+    while app.world().resource::<FinishReports>().0 == 0 {
+        app.update();
+    }
+    let swim_ended = reported(&app, root, id).unwrap().0;
+    assert!(translation(&app) < 2.0, "bite is still playing");
+
+    // the scene reads swim's end and writes nothing; bite ends while its next tick runs
+    scene_reads(&mut app, root);
+    while app.world().resource::<FinishReports>().0 == 1 {
+        app.update();
+    }
+    let (bite_ended, animator) = reported(&app, root, id).unwrap();
+    assert_eq!(bite_ended, swim_ended + 1);
+    assert_eq!(animator.states[1].playing, Some(false));
+
+    // that tick plays swim again and still holds bite as playing
+    send_animator_at(&mut app, root, id, Some(&both), bite_ended);
+    app.update();
+    let replayed = scale(&app, bone);
+    assert!(replayed > 1.0 && replayed < 1.5, "swim at {replayed}");
+    assert!((translation(&app) - 2.0).abs() < 1e-4, "bite played again");
+    app.update();
+    assert!(scale(&app, bone) > replayed);
+    assert!((translation(&app) - 2.0).abs() < 1e-4, "bite played again");
+
+    // the scene is sent swim playing and bite ended, past its own write
+    let (timestamp, animator) = reported(&app, root, id).unwrap();
+    assert!(timestamp > bite_ended);
+    assert_eq!(animator.states[0].playing, Some(true));
+    assert_eq!(animator.states[1].playing, Some(false));
+    assert_eq!(app.world().resource::<FinishReports>().0, 2);
 }

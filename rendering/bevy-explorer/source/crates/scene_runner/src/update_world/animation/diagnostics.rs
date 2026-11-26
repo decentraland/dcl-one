@@ -6,7 +6,7 @@ use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use super::{Animator, Clips, FinishReports};
-use crate::SceneEntity;
+use crate::{RendererSceneContext, SceneEntity};
 
 /// The reply lists this many clips; the counts cover every model.
 const LISTED_CLIPS: usize = 32;
@@ -41,6 +41,7 @@ struct SceneAnimationsCommand;
 fn scene_animations(
     mut input: ConsoleCommand<SceneAnimationsCommand>,
     models: Query<(&SceneEntity, &AnimationPlayer, &Clips, Has<Animator>)>,
+    scenes: Query<&RendererSceneContext>,
     reports: Res<FinishReports>,
 ) {
     if input.take().is_none() {
@@ -72,7 +73,10 @@ fn scene_animations(
                 .iter()
                 .find(|(_, (named, _))| named == node)
                 .map(|(name, (_, duration))| (name.as_str(), *duration));
+            // entity ids repeat from scene to scene
+            let base = scenes.get(scene_ent.root).ok().map(|scene| scene.base);
             listed.push(json!({
+                "scene": base.map(|base| format!("{},{}", base.x, base.y)),
                 "entity": scene_ent.id.to_string(),
                 "clip": named.map(|(name, _)| name),
                 "state": state,
