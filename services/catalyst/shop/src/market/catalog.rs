@@ -641,10 +641,16 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
 /// trades that sell from those contracts, as a semi-join that stays hashed
 /// whatever the array's length.
 pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&str>) -> String {
+    use super::chain_walk::ChainNet;
     let of = contracts_p
         .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
         .unwrap_or_default();
     let token_num = uint_or_null("sent_erc721.token_id");
+    let mainnet = format!(
+        "t.chain_id IN ({}, {})",
+        ChainNet::Ethereum.chain_id(),
+        ChainNet::Matic.chain_id()
+    );
     format!(
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
@@ -673,10 +679,12 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
              AND (t.type <> 'public_item_order' OR EXISTS ( \
                    SELECT 1 FROM shop.items ci \
                    WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
+                     AND ci.chain_id = t.chain_id AND ({mainnet} OR ci.testnet_verified) \
                      AND ci.item_id = {item_num} AND lower(ci.creator) = lower(t.signer))) \
              AND (t.type <> 'public_item_order' OR EXISTS ( \
                    SELECT 1 FROM shop.collections mc \
                    WHERE mc.network = lower(t.network) AND mc.contract_address = lower(sent.contract_address) \
+                     AND mc.chain_id = t.chain_id AND ({mainnet} OR mc.testnet_verified) \
                      AND lower(t.contract) = ANY(mc.minters))) \
          )",
         served = served_chain_sql("t"),

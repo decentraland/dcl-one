@@ -3050,6 +3050,7 @@ async fn on_an_owned_network_an_item_order_needs_an_authorizing_publication() {
     let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
         .await
         .unwrap();
+    crate::test_db::open_trade_verdict(&pool, &id).await;
     assert!(open_item_order_ids(&pool).await.contains(&id));
 }
 
@@ -4717,6 +4718,66 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     own.drop().await;
 }
 
+/// Both the creator and minter evidence must come from the order's chain.
+#[tokio::test]
+async fn an_item_listing_requires_creator_and_minter_rows_on_its_chain() {
+    let up = FakeGraph::new();
+    let Some((pool, state, contract)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let (id, _) = insert_trade(
+        &pool,
+        "public_item_order",
+        CREATOR,
+        Asset {
+            asset_type: 4,
+            contract: contract.clone(),
+            value: "0".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(137).unwrap().into(),
+            value: "1000000000000000000".into(),
+        },
+    )
+    .await;
+    let listed = async |expected: bool| {
+        let uri = format!("/v3/catalog/importable?seller={CREATOR}");
+        let (status, body) = get(market_router(state.clone()), &uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"][0]["oldTradeId"].as_str(),
+            expected.then_some(id.as_str()),
+            "{body}"
+        );
+    };
+    listed(true).await;
+    for (set, restore) in [
+        (
+            "UPDATE shop.items SET chain_id = 80002, testnet_verified = true WHERE contract_address = $1",
+            "UPDATE shop.items SET chain_id = 137, testnet_verified = false WHERE contract_address = $1",
+        ),
+        (
+            "UPDATE shop.collections SET chain_id = 80002, testnet_verified = true WHERE contract_address = $1",
+            "UPDATE shop.collections SET chain_id = 137, testnet_verified = false WHERE contract_address = $1",
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(set))
+            .bind(&contract)
+            .execute(&pool)
+            .await
+            .unwrap();
+        listed(false).await;
+        sqlx::query(sqlx::AssertSqlSafe(restore))
+            .bind(&contract)
+            .execute(&pool)
+            .await
+            .unwrap();
+        listed(true).await;
+    }
+    pool.close().await;
+}
+
 /// Repeat the exact same reads while their trade and ownership publications
 /// change independently of the catalogue. Every leg uses the new proof.
 #[tokio::test]
@@ -4821,6 +4882,26 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
         );
     };
     assert_listed(true).await;
+
+    let venue = async |address: &str| {
+        sqlx::query("UPDATE shop.trades SET contract = $1 WHERE id = $2::uuid")
+            .bind(address)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    venue("0x9999999999999999999999999999999999999999").await;
+    assert_listed(false).await;
+    venue(super::trade_events::marketplaces(super::chain_walk::ChainNet::Matic)[0].0).await;
+    sqlx::query("UPDATE shop.trade_chain_state SET digest = NULL WHERE trade_id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_listed(true).await;
+    venue(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    crate::test_db::open_trade_verdict(&pool, &id).await;
     sqlx::query("UPDATE shop.chain_cursor SET last_block = last_block + 10 WHERE network = 'matic' AND indexer IN ('nft', 'trade_events')")
         .execute(&pool).await.unwrap();
     assert_listed(true).await;

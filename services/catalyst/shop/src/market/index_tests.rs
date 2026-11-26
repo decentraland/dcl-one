@@ -516,15 +516,24 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
         }
         Some("eth_getBlockByHash") => {
             let hash = body["params"][0].as_str().unwrap_or_default();
-            let Some(n) = hash.get(52..).and_then(|suffix| u64::from_str_radix(suffix,16).ok()) else {
+            let Some(n) = hash
+                .get(52..)
+                .and_then(|suffix| u64::from_str_radix(suffix, 16).ok())
+            else {
                 return reply(Value::Null);
             };
             if chain.hash_of(n) != hash {
                 return reply(Value::Null);
             }
-            let parent = chain.by_hash_parents.lock().get(&n).cloned()
+            let parent = chain
+                .by_hash_parents
+                .lock()
+                .get(&n)
+                .cloned()
                 .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
-            reply(json!({"number":format!("0x{n:x}"),"hash":hash,"parentHash":parent,"timestamp":format!("0x{:x}",time_of(n))}))
+            reply(
+                json!({"number":format!("0x{n:x}"),"hash":hash,"parentHash":parent,"timestamp":format!("0x{:x}",time_of(n))}),
+            )
         }
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {
@@ -541,7 +550,11 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 }
                 hex_u64(&body["params"][0])
             };
-            let parent = chain.by_number_parents.lock().get(&n).cloned()
+            let parent = chain
+                .by_number_parents
+                .lock()
+                .get(&n)
+                .cloned()
                 .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
             let answered = reply(
                 json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "parentHash": parent, "timestamp": format!("0x{:x}", time_of(n)) }),
@@ -1689,7 +1702,7 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         &db.pool,
         "public_nft_order",
         ALICE,
-        "0x00000000000000000000000000000000000000aa",
+        trade_events::marketplaces(ChainNet::Matic)[0].0,
         1,
         0,
         (3, "0x00000000000000000000000000000000000000c1", "1"),
@@ -1755,7 +1768,7 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         &db.pool,
         "public_nft_order",
         ALICE,
-        "0x00000000000000000000000000000000000000aa",
+        trade_events::marketplaces(ChainNet::Matic)[0].0,
         1,
         0,
         (3, "0x00000000000000000000000000000000000000c1", "2"),

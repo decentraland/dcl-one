@@ -583,7 +583,7 @@ mod tests {
         .bind(format!("sig-{tag}"))
         .bind(format!("hash-{tag}"))
         .bind(signer)
-        .bind(addr('9'))
+        .bind(super::super::trade_events::marketplaces(super::super::chain_walk::ChainNet::Ethereum)[0].0)
         .fetch_one(pool)
         .await
         .unwrap();

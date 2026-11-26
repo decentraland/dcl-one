@@ -879,35 +879,35 @@ pub fn unverifiable_sql(t: &str) -> String {
 /// The SQL predicate "trade `t` may be served as an open listing" for the
 /// open-listing feeds (a bound `now_p`): its network has published verdicts
 /// and folded its recorded events. The trade needs an open verdict
-/// in that prefix: a late import may already have closed in the log. For
+/// in that prefix from a venue the index watches. A late import may
+/// already have closed in the log. For
 /// V3, the fold also needs the verified digest that keys its cancellation.
 /// A trade can arrive between the indexer's digest pass and verdict fold.
 pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
-    let (eth, matic) = super::catalog::served_chains();
-    let v3 = |chain| {
-        deployments(chain)
-            .iter()
-            .filter(|(_, _, v3)| *v3)
-            .map(|(address, _, _)| format!("'{address}'"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let watched = DEPLOYMENTS
+        .iter()
+        .flat_map(|(chain, deployments)| {
+            deployments
+                .iter()
+                .map(move |(address, _, requires_digest)| {
+                    format!("({chain}::bigint, '{address}', {requires_digest})")
+                })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "EXISTS (SELECT FROM shop.chain_cursor c
-                 WHERE c.indexer = 'trade_events' AND c.network = lower({t}.network) AND {ready}
+                 JOIN (VALUES {watched}) AS venue(chain_id, address, requires_digest)
+                   ON venue.chain_id = c.chain_id AND venue.address = lower({t}.contract)
+                 JOIN shop.trade_chain_state s ON s.trade_id = {t}.id AND s.network = c.network
+                 WHERE c.indexer = 'trade_events' AND c.network = lower({t}.network)
+                   AND c.chain_id = {t}.chain_id AND {ready}
+                   AND s.status = 'open' AND s.digest_failed_at IS NULL
+                   AND s.folded_block BETWEEN 0 AND c.folded_block
+                   AND (NOT venue.requires_digest OR s.digest IS NOT NULL)
                    AND NOT EXISTS (SELECT FROM shop.trade_event e
-                                   WHERE e.network = c.network AND e.block_number > c.folded_block)
-                   AND EXISTS (SELECT FROM shop.trade_chain_state s
-                               WHERE s.trade_id = {t}.id AND s.network = c.network
-                                 AND s.status = 'open' AND s.digest_failed_at IS NULL
-                                 AND s.folded_block BETWEEN 0 AND c.folded_block
-                                 AND (s.digest IS NOT NULL OR NOT (
-                                     lower({t}.contract) = ANY(CASE c.network WHEN 'ethereum'
-                                       THEN ARRAY[{v3_eth}]::text[] ELSE ARRAY[{v3_matic}]::text[] END)
-                                 ))))",
+                                   WHERE e.network = c.network AND e.block_number > c.folded_block))",
         ready = verdicts_ready_sql("c", now_p),
-        v3_eth = v3(eth),
-        v3_matic = v3(matic),
     )
 }
 

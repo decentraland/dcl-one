@@ -2047,10 +2047,13 @@ Invariants:
   `a_read_naming_a_contract_keeps_the_rows_of_the_whole_read`).
 - Reads that name no contract (the feeds, related items, legacy and
   importable listings) keep the unscoped CTE.
-- A listing needs a published open verdict on its chain. An event in
+- A listing needs a published open verdict from a marketplace the trade
+  events index watches on its chain. An event in
   `shop.trade_event` past that publication withholds that network's trades
   until the fold publishes. A trade also needs its own folded verdict, and
-  a V3 verdict needs a verified cancellation digest.
+  a V3 verdict needs a verified cancellation digest. An item order's
+  creator and minter evidence must match its chain. Testnet rows must
+  also be verified.
 - An NFT listing sends one ERC-721 held by its signer in the published
   `shop.nft` or LAND/Estate rights fold. A same-token transfer past the
   ownership publication withholds it. The NFT leg also checks the tracked

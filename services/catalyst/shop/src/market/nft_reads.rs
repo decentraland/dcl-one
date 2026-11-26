@@ -2409,7 +2409,7 @@ mod tests {
                     ('ethereum', '{DCL_REGISTRAR}', 1002, 'o4', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '{a}', 20, 4000000000000, 13, 13, 1, 0), \
                     ('ethereum', '{LAND_REGISTRY_MAINNET}', 2, 'o5', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '{a}', 25, 4000000000000, 13, 13, 1, 0); \
              INSERT INTO shop.trades (id, network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract, created_at) \
-             SELECT md5('t' || v.n)::uuid, 'MATIC', 137, 's' || v.n, 'h' || v.n, '{{}}', v.signer, 'public_nft_order', '2100-01-01', '2000-01-01', '0xmarket', \
+             SELECT md5('t' || v.n)::uuid, 'MATIC', 137, 's' || v.n, 'h' || v.n, '{{}}', v.signer, 'public_nft_order', '2100-01-01', '2000-01-01', '{marketplace}', \
                     timestamp '2023-01-01' + make_interval(days => v.n) \
              FROM (VALUES (1, '{b}', 5, 7), (2, '{b}', 5, 9), (3, '{b}', 6, 3), (4, '{a}', 4, 5)) v(n, signer, token, price); \
              INSERT INTO shop.trade_assets (id, trade_id, direction, asset_type, contract_address, extra) \
@@ -2428,6 +2428,7 @@ mod tests {
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
              SELECT g, 0, 102 + g / 2, '{LAND_REGISTRY_MAINNET}', 'transfer', g, '{a}' FROM generate_series(1, 4) g; \
              UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1",
+            marketplace = crate::market::trade_events::marketplaces(ChainNet::Matic)[0].0,
             venue = crate::rentals::index::RENTALS_MAINNET
         )))
         .execute(&pool)
