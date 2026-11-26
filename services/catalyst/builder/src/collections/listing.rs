@@ -81,7 +81,7 @@ const APPROVED_ON_CHAIN: &str = "COALESCE(chain.is_approved, false)";
 const REVIEWED_ON_CHAIN: &str = "(chain.contract_address IS NOT NULL AND NOT chain.is_approved \
     AND chain.reviewed_at <> chain.created_at)";
 const ON_CHAIN: &str = "(chain.contract_address IS NOT NULL)";
-const STANDARD: &str = "(c.third_party_id IS NULL AND c.urn_suffix IS NULL)";
+const STANDARD: &str = "(c.third_party_id IS NULL)";
 const THIRD_PARTY: &str = "(c.third_party_id IS NOT NULL AND c.urn_suffix IS NOT NULL)";
 macro_rules! newest_curation {
     ($column:literal) => {

@@ -821,3 +821,65 @@ fn the_unavailable_condition_is_logged_once_per_change() {
     .collect();
     assert_eq!(seen, [true, false, true, false, true, false, true]);
 }
+
+#[tokio::test]
+async fn a_standard_collection_this_node_published_waits_in_the_committees_queue() {
+    let Some(pool) = super::validator::own_pool().await else {
+        return;
+    };
+    let member = super::validator::address(OWNER_KEY);
+    let mut queued = Vec::new();
+    for urn_suffix in [false, true] {
+        let mut conn = pool.acquire().await.unwrap();
+        let c = builder_collection(&mut conn, false, None).await;
+        let contract = super::support::on_chain(&pool, c.id, false).await;
+        if urn_suffix {
+            sqlx::query("UPDATE builder.collections SET urn_suffix = $2 WHERE id = $1")
+                .bind(c.id)
+                .bind(format!("urn:decentraland:matic:collections-v2:{contract}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO builder.collection_curations (id, collection_id, status) VALUES ($1, $2, 'pending')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(c.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        queued.push(c.id.to_string());
+    }
+    let committee =
+        super::support::committee_index(&super::support::FakeCommittee::with(&[&member])).await;
+    let app = super::limits::app_over(pool, |state| {
+        state.market = Some(committee);
+        state.limits = crate::limits::Limits::unbounded();
+    })
+    .await;
+    for status in ["to_review", "pending"] {
+        let (code, body, _) = super::limits::send(
+            &app,
+            &super::limits::Call {
+                key: Some(OWNER_KEY),
+                ..super::limits::Call::get(format!(
+                    "/v1/collections?status={status}&page=1&limit=50"
+                ))
+            },
+        )
+        .await;
+        assert_eq!(code, 200, "{status}: {body}");
+        let listed: Value = serde_json::from_str(&body).unwrap();
+        let mut ids: Vec<String> = listed["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        let mut expected = queued.clone();
+        expected.sort();
+        assert_eq!(ids, expected, "{status}");
+    }
+}
