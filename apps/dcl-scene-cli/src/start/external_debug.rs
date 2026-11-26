@@ -71,8 +71,8 @@ async fn descriptor(
         lan.set_host(Some(&ip.to_string())).expect("LAN IP");
         let lan = lan.as_str().trim_end_matches('/');
         let mobile = crate::joinblock::mobile_deep_link(lan, position);
-        let mut producer = url::Url::parse(&producer).unwrap();
-        producer.set_host(Some(&ip.to_string())).unwrap();
+        let mut producer = url::Url::parse(&producer).expect("same host as the preview URL");
+        producer.set_host(Some(&ip.to_string())).expect("LAN IP");
         add_param(&mobile, "scene-inspector", producer.as_str())
     });
     let prefix = super::forwarded_prefix(&headers);
@@ -171,10 +171,13 @@ async fn command(
             .store
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let session = store
+        let (session, send) = store
             .sessions
             .get_mut(&input.session_id)
-            .filter(|s| s.send.is_some())
+            .and_then(|s| {
+                let send = s.send.clone()?;
+                Some((s, send))
+            })
             .ok_or((StatusCode::NOT_FOUND, "Session is not connected".into()))?;
         if session.pending.len() >= 16 {
             return Err((
@@ -183,7 +186,7 @@ async fn command(
             ));
         }
         session.pending.insert(id.clone(), reply_tx);
-        session.send.as_ref().unwrap().clone()
+        send
     };
     let _pending = PendingGuard {
         state: st.clone(),

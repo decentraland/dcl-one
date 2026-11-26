@@ -3,6 +3,7 @@
 //! path), and SIGTERM the same. The second-signal and no-listener exits are decided by
 //! `dcl_scene_cli::shutdown::decide`, unit-tested there, because a stalled teardown cannot be
 //! produced on demand from outside the process.
+#![allow(clippy::unwrap_used, reason = "test support")]
 // Unix only: the test delivers SIGINT and SIGTERM with libc::kill.
 #![cfg(unix)]
 

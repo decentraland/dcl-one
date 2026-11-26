@@ -57,8 +57,10 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// Parsed once, then destructured: the size of `Start` costs nothing.
-#[allow(clippy::large_enum_variant)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "parsed once, then destructured: the size of `Start` costs nothing"
+)]
 enum Command {
     #[command(
         about = "Scaffold a new scene, smart wearable, portable experience or library project"

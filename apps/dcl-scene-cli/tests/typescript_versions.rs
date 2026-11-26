@@ -1,6 +1,7 @@
 //! The type check under every TypeScript line a scene may install: 5.x,
 //! 6.x and 7.x (the Go port). `DCL_SCENE_CLI_TEST_TYPESCRIPT` names, colon
 //! separated, directories whose `node_modules/typescript` is each one.
+#![allow(clippy::unwrap_used, reason = "test support")]
 #![cfg(unix)]
 
 mod common {

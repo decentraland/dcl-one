@@ -8,6 +8,8 @@
 //! that directory with no flags at all. Skips (through the test gate) on a
 //! build that embeds no server and finds none on PATH, which is what macOS
 //! gets.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 mod common {
     pub mod preview;
     pub mod testgate;

@@ -1,6 +1,7 @@
 //! `deploy --programmatic` end to end: the binary's two stdout lines and the
 //! `/api/deploy` resource a program drives between them, against a target
 //! that never answers so nothing can be published.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use serde_json::Value;
 use std::path::PathBuf;

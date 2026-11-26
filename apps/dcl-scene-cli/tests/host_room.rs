@@ -11,6 +11,7 @@
 //! `[senderLen u8][sender][frame]`; a custom event's payload is the envelope
 //! `{eventType: String, timestamp: Int64}` followed by the registered schema,
 //! all little-endian with u32 length-prefixed utf8 strings.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod common {
     pub mod testgate;

@@ -1,6 +1,6 @@
 //! A child `dcl-scene-cli` under test: its piped streams read while it runs,
 //! a bounded wait for its exit, and a SIGTERM-first stop.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test target uses part of it")]
 
 use std::io::Read;
 use std::process::{Child, ExitStatus};
