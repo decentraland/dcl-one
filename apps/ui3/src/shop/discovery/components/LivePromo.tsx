@@ -1,20 +1,33 @@
 // from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.tsx, app/src/components/LivePromo/LivePromo.styles.ts;
-//       shop@3a322cf9:app/src/components/LivePromo/LivePromo.tsx (emote={PreviewEmote.FASHION}, the emote item first)
+//       shop@32377959:app/src/components/LivePromo/LivePromo.tsx (the wearable-preview iframe, Babylon, muted and
+//       looping; mounted only while on screen) and app/src/hooks/usePreviewActive.ts
 
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 
+import PreviewFrame, { type PreviewFrameOptions } from "../../detail/components/PreviewFrame";
 import { pickRenderer } from "../../detail/lib/pickRenderer";
 import "./livepromo.css";
 
-const SETTLE_MS = 700;
-
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
 // The module path, not the "@dcl/one-ui" barrel: import() of the barrel keeps its whole namespace, which loses this
 // lazy chunk and pulls every icon into the chunk the root route loads.
 const AnimatedBackground = lazy(() =>
   import("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground").then((m) => ({ default: m.AnimatedBackground })),
 );
+
+// Upstream's close-up framing, passed as the preview's own zoom so it survives the camera framing the avatar again as
+// its items stream in. Its wheel range is widened to match; the tile takes no pointer input, so it only sets the range.
+const ZOOM = 100;
+const WHEEL_ZOOM = 2.5;
+
+/**
+ * The tile's avatar, as upstream draws it: Babylon whatever the Unity flag says, a default body in the promo's items doing
+ * PreviewEmote.FASHION (an emote item among the urns, listed first, plays instead). The urns are mainnet's, so the iframe
+ * reads mainnet's peer and marketplace whatever the Shop's environment (previewBase).
+ */
+function previewOptions(urns: string[]): PreviewFrameOptions {
+  return { urns, profile: "default", type: "avatar", emote: "fashion", zoom: ZOOM, wheelZoom: WHEEL_ZOOM, disableBackground: true };
+}
 
 type Props = {
   to: string;
@@ -29,56 +42,47 @@ type Props = {
 
 export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, fallbackAlt, testId }: Props) {
   const ref = useRef<HTMLAnchorElement>(null);
-  const [active, setActive] = useState(false);
+  // Read on the client only: the still picture stays for reduced motion and for a device that should not draw two 3D
+  // scenes on the home page.
+  const [allowed, setAllowed] = useState(false);
+  const [onScreen, setOnScreen] = useState(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [onScreen, setOnScreen] = useState(false);
-  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((entries) => {
-      const last = entries[entries.length - 1];
-      if (last) setOnScreen(last.isIntersecting);
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!ready || !onScreen) {
-      setSettled(false);
-      return;
-    }
-    const timer = setTimeout(() => setSettled(true), SETTLE_MS);
-    return () => clearTimeout(timer);
-  }, [ready, onScreen]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     if (pickRenderer().renderer !== "full") return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        setActive(true);
-        io.disconnect();
-      }
-    });
+    setAllowed(true);
+  }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Nothing to tell whether the tile is on screen with: it mounts, rather than keep the picture for good.
+    if (typeof IntersectionObserver === "undefined") {
+      setOnScreen(true);
+      return;
+    }
+    // A little before it scrolls into view, so the scene is ready when it lands.
+    const io = new IntersectionObserver((entries) => setOnScreen(entries.some((e) => e.isIntersecting)), { rootMargin: "200px" });
     io.observe(el);
     return () => io.disconnect();
   }, []);
 
-  const live = active && !failed;
-  const show = live && ready && onScreen && settled;
+  const live = allowed && !failed;
+  // The iframe lives only while the tile is on screen: off screen its render loop runs at full speed for nobody. A hidden
+  // tab keeps it, since the browser all but stops its frames there.
+  const mounted = live && onScreen;
+  // A new iframe has drawn nothing: back on screen, the picture stays until it has.
+  if (!mounted && ready) setReady(false);
+  const show = mounted && ready;
 
   return (
     <Link ref={ref} className="shop-promo" to={to} aria-label={ariaLabel} data-testid={testId} data-crest={show || undefined}>
       <span className="shop-promo__card">
         {/* The fitting room's animated backdrop under the avatar, as upstream's tile draws it: only while the tile is
             on screen, with larger drifting tiles (tiling 1, against the fitting room's 1.66) for the smaller card. */}
-        {live && onScreen ? (
+        {mounted ? (
           <Suspense fallback={null}>
             <AnimatedBackground patternTiling={1} />
           </Suspense>
@@ -89,26 +93,9 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
         </span>
         <img className="shop-promo__fallback" src={fallback} alt={fallbackAlt} data-hidden={show || undefined} decoding="async" />
       </span>
-      {live ? (
+      {mounted ? (
         <span className="shop-promo__avatar" data-ready={show || undefined} aria-hidden>
-          <Suspense fallback={null}>
-            <WearablePreview
-              urns={urns}
-              // Upstream's PreviewEmote.FASHION: the walk-through a look is shown off in. An emote item listed in
-              // `urns` (the emotes tile's first) plays instead, in a loop.
-              emote="fashion"
-              spin={false}
-              controls={false}
-              zoom={1.1}
-              pauseOffscreen
-              // The promo's items, not a bare body: where they cannot be resolved the still picture stays.
-              requireWearables
-              onStatus={(s) => {
-                if (s === "ready") setReady(true);
-                else if (s === "error" || s === "empty") setFailed(true);
-              }}
-            />
-          </Suspense>
+          <PreviewFrame options={previewOptions(urns)} ambient onLoad={() => setReady(true)} onError={() => setFailed(true)} />
         </span>
       ) : null}
     </Link>
