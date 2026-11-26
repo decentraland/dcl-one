@@ -4,7 +4,7 @@ SET LOCAL lock_timeout = '10s';
 DO $$
 BEGIN
     IF to_regclass('meta.schema_steps') IS NULL OR NOT EXISTS (
-        SELECT 1 FROM meta.schema_steps WHERE step = '0082_builder_collection_forum_claim'
+        SELECT 1 FROM meta.schema_steps WHERE step = '0089_builder_collection_forum_claim'
     ) THEN
         RAISE EXCEPTION 'run catalyst schema migrate with forum claims before retiring the linked forum column';
     END IF;

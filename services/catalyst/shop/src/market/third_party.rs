@@ -382,10 +382,11 @@ fn rpc_url_for(state: &MarketplaceState, network: &str) -> Option<String> {
         .trade_rpc_urls
         .for_chain(chain_id)
         .map(str::to_string);
-    let (l1, l2) = match state.settings.eth_network.trim() {
-        "sepolia" => ("sepolia", "amoy"),
-        _ => ("mainnet", "matic"),
-    };
+    let (l1, l2) =
+        match crate::shared::network::ChainPair::from_eth_network(&state.settings.eth_network) {
+            Some(crate::shared::network::ChainPair::Testnet) => ("sepolia", "amoy"),
+            _ => ("mainnet", "matic"),
+        };
     if network == l2 {
         state.settings.polygon_rpc_url.clone().or(listed)
     } else if network == l1 {

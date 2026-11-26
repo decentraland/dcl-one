@@ -259,8 +259,8 @@ pub struct ListPick {
     pub created_at: i64,
 }
 
-pub async fn get_picks_by_list_id(
-    pool: &PgPool,
+pub async fn get_picks_by_list_id<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     list_id: &str,
     user_address: Option<&str>,
     limit: i64,
@@ -272,7 +272,7 @@ pub async fn get_picks_by_list_id(
         .bind(GRANTED_TO_ALL)
         .bind(limit)
         .bind(offset)
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     let total = rows
         .first()

@@ -196,7 +196,13 @@ def pre_push_steps(changed):
     if development:
         steps.append(Step('dev stack smoke', 'bash tooling/dev-smoke.sh', tools=('nix',)))
         steps += web_steps()
+        steps.append(Step('catalyst clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets -- -D warnings', tools=('cargo',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
+    elif triggered('sdk.yml', changed):
+        # the workspace clippy above covers it otherwise
+        steps.append(Step('scene cli clippy', 'cd services/catalyst && cargo clippy --locked '
+                          '-p dcl-scene-cli --all-targets -- -D warnings', tools=('cargo',)))
     if images:
         system = image_system()
         if system is None:

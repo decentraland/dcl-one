@@ -10,14 +10,14 @@
 //! our signer holds the role), reserve the charged total under the wallet
 //! lock, sign the contract digest (`digest.rs`), answer the upstream wire.
 //!
-//! Deliberate departures from the pinned handlers (SHOP.md, backend items 3
-//! and 4): a line must name what it buys (a trade, a store item or a NAME);
-//! a bare `usdPriceCents` is refused, since nothing authoritative can be
-//! derived from it; the quote is the server's, a differing `usdPriceCents`
-//! answers 409 `Price changed` instead of being charged; a resale or LAND
-//! line answers 400 with the rule's reason; NAME registration with credits
-//! stays unavailable (503) until an executor that builds the registration on
-//! chain exists (docs/shop/CONTRACTS.md, "NAME credits").
+//! Deliberate departures from the pinned handlers, kept on purpose (#1664):
+//! a line must name what it buys (a trade, a store item or a NAME); a bare
+//! `usdPriceCents` is refused, since nothing authoritative can be derived
+//! from it; the quote is the server's, a differing `usdPriceCents` answers
+//! 409 `Price changed` instead of being charged; a resale or LAND line
+//! answers 400 with the rule's reason; NAME registration with credits stays
+//! unavailable (503) until an executor that builds the registration on chain
+//! exists.
 //!
 //! A request of exactly one line of one unit, on either route, may pay part
 //! of the price with credits (`creditsCents`, whole credits below the quote)

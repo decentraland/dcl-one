@@ -81,11 +81,16 @@ pub enum SignedFetchError {
     EipNotImplemented,
     #[error("Catalyst unavailable: {0}")]
     CatalystUnavailable(String),
+    /// The client source spent its budget of contract-wallet checks
+    /// (`eip1654_budget`): refused before the RPC, a 429.
+    #[error("Too many contract-wallet signature checks; retry later")]
+    RateLimited,
 }
 
 impl SignedFetchError {
     /// A malformed request answers 400 with its detail; every other refusal is
-    /// 401 Unauthenticated, as upstream answers them.
+    /// 401 Unauthenticated, as upstream answers them, except a contract-wallet
+    /// check that could not run (503) or that the client's budget refused (429).
     pub fn http_status_and_message(&self) -> (u16, String) {
         match self {
             Self::MalformedChain { detail } => (400, format!("Invalid Auth Chain: {detail}")),
@@ -96,6 +101,7 @@ impl SignedFetchError {
                 (401, "Unauthenticated: Invalid signature".to_string())
             }
             Self::CatalystUnavailable(d) => (503, format!("Catalyst unavailable: {d}")),
+            Self::RateLimited => (429, self.to_string()),
         }
     }
 
@@ -227,6 +233,7 @@ pub fn map_auth_error(err: AuthError) -> SignedFetchError {
         AuthError::Eip1654NotImplemented => SignedFetchError::EipNotImplemented,
         AuthError::Eip1654Rejected { .. } => SignedFetchError::InvalidSignature(err.to_string()),
         AuthError::Eip1654ValidationFailed(d) => SignedFetchError::CatalystUnavailable(d),
+        AuthError::Eip1654RateLimited => SignedFetchError::RateLimited,
     }
 }
 
@@ -550,6 +557,7 @@ pub async fn optional_signer_at(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use crate::auth::{AuthLink, AuthLinkType};

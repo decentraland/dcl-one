@@ -1,5 +1,6 @@
 //! Upgrade genuinely prepared v2 facts through the composed v3 release and
 //! production additive executor, retaining the historical migration ledger.
+#![allow(clippy::unwrap_used, reason = "test support")]
 use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -246,28 +247,32 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0063_shop_collections_index",
             "0064_shop_sale_accounting",
             "0065_shop_collections_projection",
+            "0066_map_grid_change_marks",
             "0067_rental_asset_membership_block",
+            "0068_shop_bid_fingerprint",
             "0069_shop_trade_digest",
             "0070_shop_mirror_chain",
             "0071_shop_testnet_sale_and_trade_venues",
             "0072_shop_verified_item_rows",
-            "0073_builder_scenes_retired",
-            "0074_shop_items_content_hash",
-            "0075_builder_collection_flags_retired",
-            "0076_builder_collection_listings",
-            "0077_builder_item_contents_order",
-            "0078_builder_item_contents_named_by",
-            "0079_builder_item_video_named_by",
-            "0080_builder_collection_lock",
-            "0081_builder_collection_forum",
-            "0082_builder_collection_forum_claim",
-            "0083_builder_linked_publications_retired",
-            "0084_builder_uploaded_video_size",
-            "0085_builder_validation_retry",
-            "0086_builder_slot_cheques_outlive_collections",
-            "0087_builder_uploaded_video_checked",
-            "0088_builder_collection_contract_lowercase",
-            "0089_credits_publication_fee_line",
+            "0078_shop_nft_last_sale",
+            "0079_credits_seasonal_visit_goals",
+            "0080_builder_scenes_retired",
+            "0081_shop_items_content_hash",
+            "0082_builder_collection_flags_retired",
+            "0083_builder_collection_listings",
+            "0084_builder_item_contents_order",
+            "0085_builder_item_contents_named_by",
+            "0086_builder_item_video_named_by",
+            "0087_builder_collection_lock",
+            "0088_builder_collection_forum",
+            "0089_builder_collection_forum_claim",
+            "0090_builder_linked_publications_retired",
+            "0091_builder_uploaded_video_size",
+            "0092_builder_validation_retry",
+            "0093_builder_slot_cheques_outlive_collections",
+            "0094_builder_uploaded_video_checked",
+            "0095_builder_collection_contract_lowercase",
+            "0096_credits_publication_fee_line",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)

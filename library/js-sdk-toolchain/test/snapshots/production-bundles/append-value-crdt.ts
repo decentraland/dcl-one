@@ -1,13 +1,5 @@
-import {
-  engine,
-  Entity,
-  InputAction,
-  inputSystem,
-  PBPointerEventsResult,
-  PointerEventsResult,
-  PointerEventType,
-  Transform
-} from '@dcl/sdk/ecs'
+import type { Entity, PBPointerEventsResult } from '@dcl/sdk/ecs'
+import { engine, InputAction, inputSystem, PointerEventsResult, PointerEventType, Transform } from '@dcl/sdk/ecs'
 import * as components from '@dcl/ecs/dist/components'
 import { withRenderer } from '../helpers/with-renderer'
 import { assert } from '../helpers/assertions'

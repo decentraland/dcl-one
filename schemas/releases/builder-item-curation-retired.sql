@@ -11,7 +11,7 @@ BEGIN
     IF to_regclass('meta.schema_steps') IS NULL THEN
         RAISE EXCEPTION 'not a migrated catalyst database (no meta.schema_steps)';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0081_builder_collection_forum') THEN
+    IF NOT EXISTS (SELECT 1 FROM meta.schema_steps WHERE step = '0088_builder_collection_forum') THEN
         RAISE EXCEPTION 'run catalyst schema migrate with the binary that keeps item curations first';
     END IF;
     SELECT count(*) INTO present

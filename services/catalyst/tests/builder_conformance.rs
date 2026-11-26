@@ -31,8 +31,7 @@ use catalyst::shared::signed_fetch::{
 use catalyst::social::test_fixtures::replay_with;
 use catalyst::storage::Storage;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const FIXTURES: &str = "services/catalyst/tests/fixtures/conformance/builder";
 const ROUTE_LEDGER: &str = "services/catalyst/builder/src/tests/upstream_routes.rs";

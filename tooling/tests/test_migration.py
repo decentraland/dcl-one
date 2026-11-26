@@ -975,6 +975,70 @@ class CommunityThumbnails(unittest.TestCase):
         self.assertEqual(blobs.copy_community_thumbnail(self.source, self.store, '../x').status, 'invalid')
 
 
+class EventPosters(unittest.TestCase):
+    KEY = 'poster/1ad0d5dd6a03ac29.png'
+    URL = f'https://bucket.example/{KEY}'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.store = blobs.Store(self.tmp / 'node')
+        self.answers = {}
+        self.source = blobs.HttpArtSource('https://bucket.example', opener=self.open)
+
+    def open(self, request, timeout):
+        answer = self.answers[request.full_url].pop(0)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
+        return FakeResponse(answer)
+
+    def copy(self, key=KEY):
+        return blobs.copy_event_poster(self.source, self.store, key)
+
+    @staticmethod
+    def avif(major=b'avif', compatible=(b'mif1',), size=None):
+        payload = major + b'\0\0\0\0' + b''.join(compatible)
+        return (size if size is not None else 8 + len(payload)).to_bytes(4, 'big') + b'ftyp' + payload
+
+    def test_when_upstream_has_the_poster_it_should_store_it_under_the_read_throughs_key(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [image]
+        outcome = self.copy()
+        cid = blobs.hash_bytes_v1(image)
+        self.assertEqual((outcome.status, outcome.cid, outcome.size, outcome.content_type),
+                         ('copied', cid, len(image), 'image/png'))
+        self.assertEqual(self.store.path(cid).read_bytes(), image)
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().status, 'present')
+
+    def test_when_the_poster_is_avif_it_should_record_its_media_type(self):
+        image = self.avif(major=b'mif1', compatible=(b'avif',)) + b'data'
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().content_type, 'image/avif')
+
+    def test_when_checking_avif_it_should_require_a_complete_file_type_box(self):
+        self.assertTrue(blobs.avif_file_type(self.avif()))
+        self.assertTrue(blobs.avif_file_type(self.avif(major=b'mif1', compatible=(b'avis',))))
+        self.assertFalse(blobs.avif_file_type(self.avif(major=b'mif1')))
+        self.assertFalse(blobs.avif_file_type(self.avif()[:-1]))
+        self.assertFalse(blobs.avif_file_type(self.avif(compatible=(b'mif',))))
+        self.assertFalse(blobs.avif_file_type(self.avif(size=0)))
+
+    def test_when_upstream_has_none_it_should_say_so_and_store_nothing(self):
+        self.answers[self.URL] = [404]
+        self.assertEqual(self.copy().status, 'missing')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_answers_something_else_than_an_image_it_should_store_nothing(self):
+        self.answers[self.URL] = [b'<html>not found</html>']
+        self.assertEqual(self.copy().status, 'corrupt')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_the_path_is_not_a_poster_it_should_read_nothing(self):
+        for key in ('poster/../x', 'other/a.png', 'poster/_a.png', 'poster/'):
+            self.assertEqual(self.copy(key).status, 'invalid', key)
+
+
 class MissingThreshold(unittest.TestCase):
     def setUp(self):
         self.args = migrate.parser().parse_args(['blobs', 'worlds-content-server'])

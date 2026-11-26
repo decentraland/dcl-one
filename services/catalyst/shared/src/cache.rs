@@ -249,37 +249,100 @@ where
 
                     let fetch = fetch.take().expect("a leader fetches once");
                     let result = fetch().await;
-                    match &result {
-                        Ok(value) => {
-                            let entry = Entry {
-                                at: Instant::now(),
-                                value: value.clone(),
-                            };
-                            match self.map.get_mut(&key) {
-                                Some(mut slot) => {
-                                    slot.cached = Some(entry);
-                                    slot.notify = None;
-                                }
-                                None => {
-                                    self.map.insert(
-                                        key.clone(),
-                                        Slot {
-                                            cached: Some(entry),
-                                            notify: None,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            if let Some(mut slot) = self.map.get_mut(&key) {
-                                slot.notify = None;
-                            }
-                        }
-                    }
+                    self.settle(&key, &result);
                     guard.finished = true;
                     notify.notify_waiters();
                     return result;
+                }
+            }
+        }
+    }
+
+    /// [`Self::get_or_fetch`] for a fetch that needs what the caller holds
+    /// in `held` (a pooled connection, say), which only the fetching caller
+    /// keeps: a hit leaves it with the caller, the leader's fetch borrows it
+    /// and the caller keeps it, and a caller that waits on another's fetch
+    /// drops it first (`held` becomes `None`), so no waiter holds one.
+    /// `Ok(None)`: the fetch it waited on failed, and with `held` gone this
+    /// caller must start again (open what it holds anew and call again).
+    pub async fn get_or_fetch_holding<G, F, E>(
+        &self,
+        key: K,
+        held: &mut Option<G>,
+        fetch: F,
+    ) -> Result<Option<V>, E>
+    where
+        F: AsyncFnOnce(&mut G) -> Result<V, E>,
+    {
+        loop {
+            let action = {
+                let mut entry = self.map.entry(key.clone()).or_insert_with(Slot::empty);
+                if let Some(cached) = entry.cached.as_ref()
+                    && cached.at.elapsed() < self.ttl
+                {
+                    return Ok(Some(cached.value.clone()));
+                }
+                if let Some(notify) = entry.notify.as_ref() {
+                    Action::Wait(notify.clone())
+                } else if held.is_none() {
+                    return Ok(None);
+                } else {
+                    let notify = Arc::new(Notify::new());
+                    entry.notify = Some(notify.clone());
+                    Action::Lead(notify)
+                }
+            };
+            match action {
+                Action::Wait(notify) => {
+                    *held = None;
+                    let _ = tokio::time::timeout(WAIT_RECHECK, notify.notified()).await;
+                }
+                Action::Lead(notify) => {
+                    let mut guard = LeaderGuard {
+                        cache: self,
+                        key: key.clone(),
+                        notify: notify.clone(),
+                        finished: false,
+                    };
+                    self.make_room(0);
+                    let result = fetch(held.as_mut().expect("a leader holds")).await;
+                    self.settle(&key, &result);
+                    guard.finished = true;
+                    notify.notify_waiters();
+                    return result.map(Some);
+                }
+            }
+        }
+    }
+
+    /// Files a leader's result: a value is cached, and either way the slot
+    /// is no longer in flight.
+    fn settle<E>(&self, key: &K, result: &Result<V, E>) {
+        match result {
+            Ok(value) => {
+                let entry = Entry {
+                    at: Instant::now(),
+                    value: value.clone(),
+                };
+                match self.map.get_mut(key) {
+                    Some(mut slot) => {
+                        slot.cached = Some(entry);
+                        slot.notify = None;
+                    }
+                    None => {
+                        self.map.insert(
+                            key.clone(),
+                            Slot {
+                                cached: Some(entry),
+                                notify: None,
+                            },
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(mut slot) = self.map.get_mut(key) {
+                    slot.notify = None;
                 }
             }
         }
@@ -295,16 +358,29 @@ pub struct Cached<T> {
 
 pub type TtlCache<T> = std::sync::Mutex<std::collections::HashMap<String, Cached<T>>>;
 
+// The memo holds plain values, so a poisoned one is still consistent.
+fn lock_cache<T>(
+    cache: &TtlCache<T>,
+) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Cached<T>>> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub fn cache_get<T: Clone>(cache: &TtlCache<T>, key: &str) -> Option<T> {
-    let cache = cache.lock().unwrap();
+    let cache = lock_cache(cache);
     cache
         .get(key)
         .filter(|c| c.expires_at > std::time::Instant::now())
         .map(|c| c.value.clone())
 }
 
+pub fn cache_remove<T>(cache: &TtlCache<T>, key: &str) {
+    lock_cache(cache).remove(key);
+}
+
 pub fn cache_put<T>(cache: &TtlCache<T>, key: String, value: T, ttl: Duration) {
-    let mut cache = cache.lock().unwrap();
+    let mut cache = lock_cache(cache);
     let now = std::time::Instant::now();
     cache.retain(|_, c| c.expires_at > now);
     cache.insert(
@@ -501,5 +577,88 @@ mod tests {
         );
         assert!(map.len() <= 10, "{}", map.len());
         assert_eq!(map.get_fresh(&9), Some(9), "recent entries are kept");
+    }
+
+    /// A caller that waits on another's fetch drops what it holds first and
+    /// gets the leader's value; the leader keeps what it holds.
+    #[tokio::test]
+    async fn a_waiter_drops_what_it_holds_before_waiting() {
+        let map: Arc<TtlMap<&'static str, u32>> = Arc::new(TtlMap::new(Duration::from_secs(60)));
+        let connection = Arc::new(());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let leader = {
+            let (map, release) = (map.clone(), release.clone());
+            let mut held = Some(connection.clone());
+            tokio::spawn(async move {
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| {
+                        release.notified().await;
+                        Ok::<u32, ()>(7)
+                    })
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiter = {
+            let map = map.clone();
+            let mut held = Some(connection.clone());
+            tokio::spawn(async move {
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| {
+                        Ok::<u32, ()>(0)
+                    })
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            Arc::strong_count(&connection),
+            2,
+            "only the leader still holds a clone"
+        );
+        release.notify_one();
+        assert_eq!(leader.await.unwrap(), (Ok(Some(7)), true));
+        assert_eq!(waiter.await.unwrap(), (Ok(Some(7)), false));
+        // A hit leaves what the caller holds with it.
+        let mut held = Some(connection.clone());
+        let hit = map
+            .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| Ok::<u32, ()>(0))
+            .await;
+        assert_eq!((hit, held.is_some()), (Ok(Some(7)), true));
+    }
+
+    /// When the fetch a caller waited on fails, the caller, its holding gone,
+    /// is told to start again rather than lead without it.
+    #[tokio::test]
+    async fn a_waiter_whose_leader_failed_starts_again() {
+        let map: Arc<TtlMap<&'static str, u32>> = Arc::new(TtlMap::new(Duration::from_secs(60)));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let leader = {
+            let (map, release) = (map.clone(), release.clone());
+            tokio::spawn(async move {
+                map.get_or_fetch_holding("page", &mut Some(()), async |_: &mut ()| {
+                    release.notified().await;
+                    Err::<u32, &str>("down")
+                })
+                .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiter = {
+            let map = map.clone();
+            tokio::spawn(async move {
+                let mut held = Some(());
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut ()| Ok::<u32, &str>(1))
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        release.notify_one();
+        assert_eq!(leader.await.unwrap(), Err("down"));
+        assert_eq!(waiter.await.unwrap(), (Ok(None), false));
     }
 }

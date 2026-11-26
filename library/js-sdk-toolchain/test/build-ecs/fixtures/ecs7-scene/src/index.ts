@@ -1,6 +1,6 @@
+import type { Entity } from '@dcl/ecs'
 import {
   engine,
-  Entity,
   InputAction,
   MeshCollider,
   MeshRenderer,

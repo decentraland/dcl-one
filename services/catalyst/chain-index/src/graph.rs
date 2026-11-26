@@ -1226,6 +1226,7 @@ mod tests {
 /// mutable registry: the name authority of the worlds tests (the old tests
 /// seeded squid's `ens`/`nft` tables).
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

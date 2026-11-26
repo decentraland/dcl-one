@@ -663,6 +663,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'EXPLORER_LISTS_SOURCE_URL': 'https://dcl-lists.decentraland.org',
             'EXPLORER_DENYLIST_SOURCE_URL': 'https://config.decentraland.org/denylist.json',
             'EXPLORER_FEATURE_FLAGS_SOURCE_URL': 'https://feature-flags.decentraland.org/explorer.json',
+            'EVENTS_FEATURE_FLAGS_URL': 'https://feature-flags.decentraland.org',
             'EXPLORER_REGISTRY_SOURCE_URL': 'https://asset-bundle-registry.decentraland.org',
             'ABGEN_UPSTREAM_AB_CDN': 'https://ab-cdn.decentraland.org',
             # Temporary: imposter tiles read through from the community CDN until the node bakes

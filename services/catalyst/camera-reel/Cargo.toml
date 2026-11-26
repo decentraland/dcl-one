@@ -23,6 +23,7 @@ serde_json.workspace = true
 serde_html_form = "=0.2.4"
 mime = "=0.3.17"
 moka.workspace = true
+parking_lot.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
@@ -49,3 +50,6 @@ catalyst-social = { path = "../social", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints.clippy]
+unwrap_used = "deny"

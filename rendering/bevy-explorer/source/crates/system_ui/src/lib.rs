@@ -22,7 +22,9 @@ use common::{
 use input_manager::{InputManager, InputPriority, MouseInteractionComponent};
 use login::LoginPlugin;
 use scene_runner::{
-    permissions::PermissionManager, renderer_context::RendererSceneContext, Toaster,
+    permissions::{PermissionManager, PermissionsInForce},
+    renderer_context::RendererSceneContext,
+    Toaster,
 };
 use system_bridge::{
     NativeUi, PermanentPermissionItem, PermissionLevel, PermissionRequestEvent, PermissionValue,
@@ -131,6 +133,7 @@ pub fn handle_scene_permissions(
     scenes: Query<&RendererSceneContext>,
     current_realm: Res<CurrentRealm>,
     mut uses: EventReader<PermissionUsed>,
+    in_force: Res<PermissionsInForce>,
 ) {
     // gather any resolved permissions in order
     // (manager.pending index => result)
@@ -163,7 +166,13 @@ pub fn handle_scene_permissions(
 
                 requests_streams.push(stream.clone())
             }
-            SystemApi::GetPermissionUsedStream(stream) => used_streams.push(stream.clone()),
+            SystemApi::GetPermissionUsedStream(stream) => {
+                // what acts on the player already, which a new stream has not been told
+                for start in in_force.starts() {
+                    let _ = stream.send(start);
+                }
+                used_streams.push(stream.clone())
+            }
             SystemApi::SetSinglePermission(result) => {
                 let Some((index, _)) = permission_ids
                     .iter()
@@ -316,5 +325,40 @@ pub fn handle_scene_permissions(
         for used_stream in used_streams.iter() {
             let _ = used_stream.send(usage.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use common::structs::PermissionType;
+
+    use super::*;
+
+    #[test]
+    fn a_used_stream_that_attaches_is_told_what_is_in_force_already() {
+        let mut app = App::new();
+        app.init_resource::<PermissionManager>()
+            .init_resource::<AppConfig>()
+            .init_resource::<CurrentRealm>()
+            .insert_resource(PermissionsInForce(vec![(
+                "scene".to_owned(),
+                PermissionType::ForceCamera,
+            )]))
+            .add_event::<SystemApi>()
+            .add_event::<PermissionUsed>()
+            .add_systems(Update, handle_scene_permissions);
+        app.update();
+
+        let (sender, mut receiver) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetPermissionUsedStream(sender));
+        app.update();
+        let told = std::iter::from_fn(|| receiver.try_recv().ok())
+            .map(|used| (used.scene, used.ty, used.in_force))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            told,
+            [("scene".to_owned(), PermissionType::ForceCamera, Some(true))]
+        );
     }
 }

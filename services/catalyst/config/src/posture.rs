@@ -14,6 +14,8 @@
 
 use std::fmt::Write as _;
 
+use catalyst_shared::network::ChainPair;
+
 use crate::config::Config;
 
 pub const ENV: &str = "NODE_POSTURE";
@@ -138,16 +140,13 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
 
 /// Some mirror preset jobs and endpoints cover only mainnet.
 fn mainnet(lookup: &Lookup) -> bool {
-    lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
+    set(lookup, "ETH_NETWORK")
+        .is_none_or(|n| ChainPair::from_eth_network(&n) == Some(ChainPair::Mainnet))
 }
 
 fn sepolia(lookup: &Lookup) -> bool {
-    set(lookup, "ETH_NETWORK").is_some_and(|n| {
-        matches!(
-            n.trim().to_ascii_lowercase().as_str(),
-            "sepolia" | "ethereum-sepolia"
-        )
-    })
+    set(lookup, "ETH_NETWORK").and_then(|n| ChainPair::from_eth_network(&n))
+        == Some(ChainPair::Testnet)
 }
 
 fn eth_collections_source(lookup: &Lookup) -> Option<String> {
@@ -286,6 +285,11 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "EVENTS_FEATURE_FLAGS_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream(
+        "mirrors",
         "SHOP_FEATURE_FLAGS_URL",
         "https://feature-flags.decentraland.org",
     ),
@@ -396,9 +400,8 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
-    // The collections walk keeps a log nothing reads yet: an operator's
-    // opt-in under every posture.
-    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
+    // Account inventory and lifetime creator rankings require the factory walk.
+    mirrored("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED"),
     // Taking a network's catalogue from the mirror is an operator's step.
     same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
     // The MANA transfer walk stays an operator's opt-in under every posture.
@@ -809,15 +812,11 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
 fn walks_catalogue(config: &Config) -> bool {
     let market = &config.marketplace;
     market.marketplace_nft_index_enabled
-        && matches!(
-            (
-                config.node.eth_network.trim(),
+        && ChainPair::from_eth_network(&config.node.eth_network).map(|pair| pair.chain_ids())
+            == Some((
                 market.marketplace_index_chain_id_ethereum,
-                market.marketplace_index_chain_id_matic
-            ),
-            ("mainnet" | "ethereum" | "ethereum-mainnet", 1, 137)
-                | ("sepolia" | "ethereum-sepolia", 11155111, 80002)
-        )
+                market.marketplace_index_chain_id_matic,
+            ))
 }
 
 /// A DCL NAME world's owner is its NAME's holder. A node that walks the nft
@@ -870,7 +869,9 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
 /// catalogue for its chain pair. A testnet mirror without a walk checks
 /// names through the configured graph and serves items as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
-    if !walks_catalogue(config) && config.node.eth_network.trim() != "mainnet" {
+    if !walks_catalogue(config)
+        && ChainPair::from_eth_network(&config.node.eth_network) != Some(ChainPair::Mainnet)
+    {
         if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
             anyhow::bail!(
                 "{ENV}=mirror off mainnet checks every profile's names against their owner through \
@@ -992,10 +993,7 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
-        .chain([
-            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED",
-            "MARKETPLACE_COLLECTIONS_INDEX_ENABLED",
-        ])
+        .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();
     if !on.is_empty() {
@@ -1043,6 +1041,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("MARKETPLACE_BASE_URL", LINK),
     ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
+    ("SHOP_EMAIL_ASSETS_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
     ("EVENTS_SITE_URL", LINK),

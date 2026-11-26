@@ -47,7 +47,7 @@ import { EmotePlayMode, ITEM_NAME_MAX_LENGTH, isValidItemName } from '@/data/lib
 import { hasFacialExpressions, THUMBNAIL_PATH, VIDEO_PATH, toMB } from '@/data/lib/creators/itemFiles'
 import { formatItemSize, isOverSizeLimit, type ItemSize } from '@/data/lib/creators/itemSize'
 import {
-  BodyShapeType,
+  type BodyShapeType,
   ItemType,
   getMissingBodyShapeType,
   isMissingSmartWearableVideo,

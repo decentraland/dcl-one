@@ -27,11 +27,11 @@ use crate::http::{
 /// reads (Decentraland's `addresses.json` `CatalystProxy` on mainnet); another
 /// network has no registry.
 pub fn registry_address(eth_network: &str) -> Option<&'static str> {
-    match eth_network.trim() {
-        "mainnet" => Some(MAINNET_REGISTRY),
-        "sepolia" => Some(SEPOLIA_REGISTRY),
-        _ => None,
-    }
+    use crate::shared::network::ChainPair;
+    ChainPair::from_eth_network(eth_network).map(|pair| match pair {
+        ChainPair::Mainnet => MAINNET_REGISTRY,
+        ChainPair::Testnet => SEPOLIA_REGISTRY,
+    })
 }
 
 pub const MAINNET_REGISTRY: &str = "0x4a2f10076101650f40342885b99b6b101d83c486";

@@ -30,21 +30,22 @@ The node's remote-source policy applies to both requests. A restricted node may 
 ## Gateway operations
 
 Referral quotas, the `POST /entities` burst limit and daily quota, the
-`/auth-api` pending sign-in caps and the
-`/contents` rate limit use the backend TCP peer by default. Configure
+`/auth-api` pending sign-in caps, the `/contents` rate limit and the budget of
+contract-wallet signature checks use the backend TCP peer by default. Configure
 `HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
 networks (the gateway's container network), and ensure those proxies overwrite
 a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header (only a loopback peer may name the
 client to the other per-client limits and IP bindings) and therefore buckets
 traffic behind a non-loopback gateway under that gateway's peer address: every
-deployer then shares one deploy limit. `/auth-api` instead skips its
-per-network cap for an untrusted private or loopback peer and keeps only its
-global cap. The API also reads `x-original-path` only from a trusted peer, so
-behind an unlisted gateway every signed request on a path the gateway rewrote
-is refused with 401. The API logs one warning when an untrusted private peer
-forwards `X-Real-IP`, one when it forwards `x-original-path`, and `/auth-api`
-one the first time it sees an untrusted private or loopback peer. Missing or malformed X-Real-IP from a trusted peer
+deployer then shares one deploy limit. For an untrusted private or loopback
+peer, the contract-wallet budget counts nothing, and `/auth-api` skips its
+per-network cap and keeps only its global cap. The API also reads
+`x-original-path` only from a trusted peer, so behind an unlisted gateway every
+signed request on a path the gateway rewrote is refused with 401. The API logs
+one warning when an untrusted private peer forwards `X-Real-IP`, one when it
+forwards `x-original-path`, and `/auth-api` one the first time it sees an
+untrusted private or loopback peer. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover:
@@ -99,7 +100,15 @@ upstream host names served under another prefix: `abcdn` and `abgen-cdn` →
 `rpc-social-service-ea` → `/social-rpc`, `market` → `/shop`, `storage` →
 `/world-storage`, `comms-gatekeeper-local` → `/comms-gatekeeper`; `peer` and
 `worlds` are the root. `gateway.<domain>/<sub>/...` uses the same table, and a
-path already under the target prefix is not prefixed twice. A scene builds a service
+path already under the target prefix is not prefixed twice. On `credits`, the
+paths credits-server itself serves under `/credits` (the bare `/credits`,
+`/credits/packs`, `/credits/checkout`, `/credits/orders/...` and
+`/credits/authorize...`) are prefixed too, since the node serves them under its
+`/credits` mount. `/credits/iap/...` is prefixed the same way for parity,
+though the node does not serve it yet.
+Any other `/credits/...` path is taken as already prefixed: Stripe's
+`/credits/webhook`, and the node's own `/credits/packs/{sku}/...` and
+`/credits/checkout/{id}`. A scene builds a service
 URL from its realm base URL, so the realm hosts `worlds-content-server`,
 `realm-provider` and `realm-provider-ea` leave a path under `/comms-gatekeeper/`
 or `/cast-presenter-service/` unprefixed; no service of these hosts has such a path.

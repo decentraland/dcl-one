@@ -38,11 +38,12 @@ pub struct NodeConfig {
     pub http_server_port: u16,
 
     /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
-    /// for referral quotas and the `/contents` rate limit, and the
-    /// `x-original-path` signed requests are verified against. Empty trusts
-    /// only a loopback peer; behind an unlisted proxy, signed requests on paths
-    /// it rewrote are refused. These are the backend proxy networks, not the
-    /// proxy's own upstream CDN networks.
+    /// for referral quotas, the `/contents` rate limit and the per-source budget
+    /// of contract-wallet signature checks, and the `x-original-path` signed
+    /// requests are verified against. Empty trusts only a loopback peer; behind
+    /// an unlisted proxy, signed requests on paths it rewrote are refused. These
+    /// are the backend proxy networks, not the proxy's own upstream CDN
+    /// networks.
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 

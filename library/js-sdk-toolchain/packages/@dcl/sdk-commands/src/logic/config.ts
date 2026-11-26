@@ -1,5 +1,5 @@
 import path from 'path'
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 import { readStringConfig } from '../components/config'
 import { readJson } from './fs'
 import { getPackageJson } from './project-files'

@@ -36,10 +36,8 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
-#[path = "support/auth.rs"]
-mod auth;
-#[path = "support/db.rs"]
-mod db;
+use crate::auth;
+use crate::db;
 
 const SEED: &str = include_str!("fixtures/snapshots/seed.sql");
 const GOLDEN: &str = include_str!("fixtures/snapshots/old-generator.json");

@@ -189,12 +189,12 @@ pub async fn recalculate(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u6
     loop {
         let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM social.communities WHERE origin='local' AND active AND id>$1 ORDER BY id LIMIT 100")
             .bind(after).fetch_all(pool).await?;
-        if ids.is_empty() {
+        let Some(&last) = ids.last() else {
             return Ok(total);
-        }
+        };
         recalculate_ids(pool, &ids, now).await?;
         total += ids.len() as u64;
-        after = *ids.last().unwrap();
+        after = last;
     }
 }
 

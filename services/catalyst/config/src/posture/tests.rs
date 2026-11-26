@@ -305,6 +305,7 @@ fn a_testnet_catalogue_mirror_accepts_amoy_endpoints() {
         ("MARKETPLACE_SUBGRAPH_URL", ""),
     ];
     let mut c = parsed(&vars);
+    c.node.eth_network = " Ethereum-Sepolia ".into();
     let values = env(&vars);
     refuse_unfiltered_profiles(&c, &lookup(&values)).unwrap();
     refuse_unwalkable_polygon(&c).unwrap();
@@ -759,6 +760,7 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
+    assert!(c.marketplace.marketplace_collections_index_enabled);
     assert!(c.shop.credits_usage_index_enabled);
     assert_eq!(c.shop.shop_rentals_index_enabled, Some(true));
     assert_eq!(
@@ -832,6 +834,52 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         "CREDITS_MANAGER_CONTRACT",
     ] {
         assert!(!got.contains_key(key), "{key}");
+    }
+}
+
+#[test]
+fn ethereum_network_aliases_derive_the_rpc_defaults_for_their_catalogue_pair() {
+    for (alias, l1, l2, expected_ids) in [
+        ("mainnet", "mainnet", "polygon", (1, 137)),
+        ("Ethereum", "mainnet", "polygon", (1, 137)),
+        (" ethereum-mainnet ", "mainnet", "polygon", (1, 137)),
+        ("Mainnet", "mainnet", "polygon", (1, 137)),
+        ("Sepolia", "sepolia", "amoy", (11155111, 80002)),
+        (" ethereum-sepolia ", "sepolia", "amoy", (11155111, 80002)),
+    ] {
+        let mut config = parsed(&[
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, "mirror"),
+            ("ETH_NETWORK", alias),
+        ]);
+        config.default_rpc_urls();
+        config.derive_trade_rpc_urls();
+        let l1 = format!("https://rpc.decentraland.org/{l1}?project=dcl-one");
+        let l2 = format!("https://rpc.decentraland.org/{l2}?project=dcl-one");
+        assert_eq!(
+            config.content.eth_rpc_url.as_deref(),
+            Some(l1.as_str()),
+            "{alias}"
+        );
+        assert_eq!(
+            config.economy.rpc_endpoint_polygon.as_deref(),
+            Some(l2.as_str()),
+            "{alias}"
+        );
+        assert_eq!(
+            (
+                config.marketplace.marketplace_index_chain_id_ethereum,
+                config.marketplace.marketplace_index_chain_id_matic
+            ),
+            expected_ids,
+            "{alias}"
+        );
+        assert!(walks_catalogue(&config), "{alias}");
+        assert_eq!(
+            config.marketplace.trade_rpc_urls,
+            (expected_ids == (1, 137)).then(|| format!("1={l1},137={l2}")),
+            "{alias}"
+        );
     }
 }
 
@@ -1069,7 +1117,7 @@ fn island_and_journey_refuse_every_follower_switch() {
         .map(|r| r.key)
         .collect();
     followers.push("MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED");
-    followers.push("MARKETPLACE_COLLECTIONS_INDEX_ENABLED");
+    assert!(followers.contains(&"MARKETPLACE_COLLECTIONS_INDEX_ENABLED"));
     assert!(followers.contains(&"PRICE_POLL_ENABLED") && followers.len() >= 14);
     for posture in ["island", "journey"] {
         for key in &followers {
@@ -1220,6 +1268,12 @@ fn island_and_journey_refuse_any_variable_naming_an_outside_host() {
             refuse_remote_hosts(Posture::Island, &island, &lookup(&map)).is_ok(),
             "{key}={value}"
         );
+    }
+    // The purchase receipt's images are a link mail clients follow, like
+    // SHOP_BASE_URL: a CDN never stops an island or a journey from starting.
+    for posture in ["island", "journey"] {
+        let images = ("SHOP_EMAIL_ASSETS_URL", "https://cdn.example.org/email");
+        assert_eq!(refusal(&[db, (ENV, posture), images]), None, "{posture}");
     }
     let err = refusal(&[db, (ENV, "journey"), ("NATS_URL", "nats://192.0.2.7:4222")]).unwrap();
     assert!(err.contains("NATS_URL names 192.0.2.7"), "{err}");

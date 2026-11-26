@@ -41,9 +41,11 @@ async fn verify(
     signed_fetch::require_signer_with(headers, method, path, &PROFILE, validator).await
 }
 
-/// upstream's refusal of a request whose signature did not verify.
+/// upstream's refusal of a request whose signature did not verify; a client
+/// source that spent its contract-wallet checks is refused with 429.
 pub fn unauthenticated(error: &SignedFetchError) -> ApiError {
     let message = match error {
+        SignedFetchError::RateLimited => return ApiError::http(429, error.to_string()),
         e if e.is_metadata_refusal() => "Invalid signature",
         SignedFetchError::MalformedChain { .. } | SignedFetchError::InsufficientLinks => {
             "Invalid auth chain"
@@ -245,6 +247,21 @@ mod tests {
                 .expect_err("refused"),
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn a_source_that_spent_its_contract_wallet_checks_is_refused_with_429() {
+        assert_eq!(
+            wire(unauthenticated(&SignedFetchError::RateLimited)).await,
+            (
+                429,
+                json!({
+                    "ok": false,
+                    "data": {},
+                    "error": "Too many contract-wallet signature checks; retry later"
+                })
+            )
+        );
     }
 
     #[tokio::test]
