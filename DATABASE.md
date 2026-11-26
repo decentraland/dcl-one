@@ -1741,7 +1741,9 @@ operator's unblock
 transaction that clears its block. Readers are the credits claim (`EXISTS` by
 address, folded into the captcha claim and the balance reports as
 `is_blocked_for_claiming`; the spend and the reservation read the operator's
-block alone, so a flag never holds credits a wallet has) and the admin list
+block alone, so a flag never holds credits a wallet has), a studio's grant
+(`studio_grants.rs`, `EXISTS` by address under the studio's lock, after the
+studio's own checks) and the admin list
 (`GET /credits/admin/flags`, by address or paged by `flagged_at`). Rows are
 small and few: a flag per wallet reported.
 
@@ -1754,8 +1756,9 @@ INSERT` to one role, or a `SECURITY DEFINER` function, would name the writer
 and keep the flags raised while no listener is up: the next step if the
 database gains other roles.
 
-Invariants: a flag is a signal, not a verdict: it holds the credits claim
-alone, and the admin's unflag or the operator's unblock deletes it; nothing
+Invariants: a flag is a signal, not a verdict: it holds the credits claim and
+refuses a studio's grant to the wallet, nothing else, and the admin's unflag
+or the operator's unblock deletes it; nothing
 else does, and a flag never expires. A wallet has at most one flag (the
 primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
@@ -1766,7 +1769,7 @@ gains it from the object pass, so no step exists.
 
 `credits.studios`, `credits.studio_operators` and
 `credits.studio_budget_entries` (`schemas/60_ops.sql`;
-`shop/src/credits/studios.rs`) hold credits-server's
+`shop/src/credits/studios.rs`, `studio_grants.rs`) hold credits-server's
 studios: scene studios that give Credits out of a budget an operator assigns.
 A studio has a name (unique ignoring case) and a status (`active` or
 `paused`); its operators are the wallets that act for it; its budget is a
@@ -1779,21 +1782,49 @@ Writers are the operator routes under `/credits/admin/studios` and
 pause or resume a studio, add or remove an operator, and record a deposit or
 an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 (`studio.create`, `studio.update`, `studio.operator.add`,
-`studio.operator.remove`, `studio.budget`). Readers are the same routes: the
-studio list (one aggregate of every entry grouped by studio, and of the
-operators), a studio's figures, operators and history page (newest first, by
-`studio_budget_entries_studio_idx`, whose `INCLUDE (usd_cents)` also answers
-the balance), and the day's new budget, read under the deposits lock by
-`studio_budget_entries_inflow_idx`. Rows are few: an operator's studios, their
-wallets, and a budget entry per deposit, adjustment or grant.
+`studio.operator.remove`, `studio.budget`). A studio's own operators grant
+Credits to players out of its budget, signed fetch with no admin gate
+(`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
+at 60 per operator wallet a minute). Its signature counts over the mount's
+path or the credits host's own route, never a foreign prefix ending with it;
+a contract wallet's is checked with the uncached EIP-1654 validator; and a
+signed `bodySha256` must be the body's. A grant writes, in one transaction, the
+player's paid credit as an admin grant does (`credits.wallets`,
+`credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
+the "A gift from {studio}" notice) and the `grant` entry naming that ledger
+row, with the operator as `created_by` and the reason as `note`. Readers are
+the same routes: the studio list (one aggregate of every entry grouped by
+studio, and of the operators), a studio's figures, operators and history page
+(newest first, by `studio_budget_entries_studio_idx`, whose
+`INCLUDE (usd_cents)` also answers the balance), the day's new budget, read
+under the deposits lock by `studio_budget_entries_inflow_idx`, an operator's
+studios (`GET /credits/operator/studios`, by `studio_operators_address_idx`)
+and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
+REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
+`GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
+with an admin `grant` audit row or named by a budget entry, by
+`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
+ONLY snapshot; a gift that is not a whole number of cents within
+`Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
+counted in a warning; a migrated Decentraland grant has neither link and is not
+listed until #2473). The credits report calls a grant `studio_grant` only on
+proof a studio paid for it: a budget entry that names it, or credits-server's
+own record of a studio grant (an imported audit with `upstreamCreditId` and
+`studioName`); a `studioName` alone, as the admin route once wrote it, stays
+`grant`. Rows are few: an operator's studios,
+their wallets, and a budget entry per deposit, adjustment or grant.
 
 Locks: a change that adds budget first takes the service-wide advisory lock
 (`pg_advisory_xact_lock`, the first 15 hex digits of the SHA-256 of
 `studio-budget-deposits`, credits-server's), then the studio's row
 (`FOR UPDATE`); any other budget change, and adding or removing an operator,
-takes the studio's row alone. Each statement after a lock reads a snapshot
-taken after it was granted (READ COMMITTED), so a balance or the day's total
-is never read from before the previous holder committed.
+takes the studio's row alone, and so does a grant, which then takes the
+player's wallet row (no path takes a wallet row before a studio row). Each
+transaction pins READ COMMITTED whatever the session default, so each statement
+after a lock reads a snapshot taken after it was granted, and a balance, the
+day's total, a grant's operators or its studio's status is never read from
+before the previous holder committed: of two grants racing for the last of a
+budget, the second waits for the row and sees the first's entry.
 
 Invariants: a studio's balance never goes below zero (checked under its row
 lock before the entry is written). The new budget written in one UTC day of
@@ -1804,7 +1835,13 @@ deposits lock, so the day it is counted in is the day the next check reads.
 An idempotency key is used once per studio (`studio_budget_entries_idempotency_uidx`)
 with the hash of the request it wrote: a repeat with the same request answers
 that entry before any ceiling or balance check, and with another request is
-refused. A `grant` names exactly one ledger row and no other kind names one
+refused; a grant hashes `["grant", ...]` and a budget change `["budget", ...]`,
+so a key is never answered for the other kind. A grant is refused, writing
+nothing, unless its operator acts for the studio when the row is locked, the
+studio is `active`, the player is not one of its operators, the balance covers
+it, the player carries no flag, and it gives at most
+`CREDITS_STUDIO_GRANT_MAX_CENTS` (unset or negative refuses every grant,
+fail-closed). A `grant` names exactly one ledger row and no other kind names one
 (`studio_budget_entries_ledger_check`, `studio_budget_entries_ledger_uidx`);
 the ledger row cannot be deleted under it. Entries are never updated or
 deleted. Addresses are lower-cased and checked by the table; the handlers
