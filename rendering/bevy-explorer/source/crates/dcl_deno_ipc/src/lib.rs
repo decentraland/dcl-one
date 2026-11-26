@@ -388,6 +388,10 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
+/// Whether a scene's spawn replays the global updates its receiver holds: `renderer_ipc_out`
+/// swaps in the new receiver and replays its contents to every scene of the context.
+pub const REPLAYS_GLOBAL_UPDATES: bool = true;
+
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

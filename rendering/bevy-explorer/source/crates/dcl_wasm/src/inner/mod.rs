@@ -65,6 +65,10 @@ pub fn queue_scene(data: SceneInitializationData) -> bool {
         .is_some()
 }
 
+/// Whether a scene's spawn replays the global updates its receiver holds: the relay pumps each
+/// scene's own receiver and replays nothing.
+pub const REPLAYS_GLOBAL_UPDATES: bool = false;
+
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

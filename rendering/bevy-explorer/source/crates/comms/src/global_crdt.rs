@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest, TimeOfDay,
+        SceneDrivenAnimationRequest, TimeOfDay, SCENE_GLOBAL_UPDATE_CAPACITY,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -321,7 +321,7 @@ pub struct GlobalCrdtState {
 impl GlobalCrdtState {
     pub fn new(room: Option<String>) -> Self {
         let (ext_sender, ext_receiver) = mpsc::channel(1000);
-        let (int_sender, _) = broadcast::channel(1000);
+        let (int_sender, _) = broadcast::channel(SCENE_GLOBAL_UPDATE_CAPACITY);
         Self {
             room,
             ext_receiver,

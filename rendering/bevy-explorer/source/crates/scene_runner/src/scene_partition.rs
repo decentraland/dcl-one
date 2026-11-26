@@ -70,6 +70,16 @@ pub(crate) const FAR_SCENE_TICK_RATE: f32 = 0.5;
 /// The most ticks a second of a scene behind the camera.
 pub(crate) const BEHIND_SCENE_TICK_RATE: f32 = 1.0;
 
+/// The steepest camera pitch, as the height of the camera's unit forward direction, at which the
+/// behind cap applies. `is_behind` tests parcels against the flat forward direction, so looking
+/// steeply up or down it can call a scene behind while its content is on screen.
+pub(crate) const BEHIND_SCENE_MAX_FORWARD_Y: f32 = 0.5;
+
+/// Whether a camera facing `forward` (unit length) applies the behind cap.
+pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
+    forward.y.abs() < BEHIND_SCENE_MAX_FORWARD_Y
+}
+
 /// The most ticks a second of a scene at `partition`: its distance band's rate, or
 /// `FAR_SCENE_TICK_RATE` beyond the last band, at most `BEHIND_SCENE_TICK_RATE` behind the
 /// camera.

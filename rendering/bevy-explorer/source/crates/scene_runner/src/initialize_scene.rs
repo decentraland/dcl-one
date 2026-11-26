@@ -62,10 +62,10 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use dcl_deno_ipc::spawn_scene;
+use dcl_deno_ipc::{spawn_scene, REPLAYS_GLOBAL_UPDATES};
 
 #[cfg(target_arch = "wasm32")]
-use dcl_wasm::spawn_scene;
+use dcl_wasm::{spawn_scene, REPLAYS_GLOBAL_UPDATES};
 
 #[derive(Default)]
 pub struct CrdtLoader;
@@ -787,13 +787,15 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
-        // the native forwarder replays what this receiver holds to every scene of the context
-        // (the web relay does not). An update sent between here and the forwarder's swap is
-        // replayed uncounted, within the half of each host that `GLOBAL_UPDATE_BACKLOG_DUE`
-        // leaves free
-        if cfg!(not(target_arch = "wasm32")) {
+        // a replay delivers what this receiver holds, at most its capacity after tokio's rounding
+        // (a lagged receiver's `len` counts the updates it lost too). An update sent between
+        // here and the forwarder's swap is replayed uncounted
+        if REPLAYS_GLOBAL_UPDATES {
             if let Ok(mut crdt) = crdt_contexts.get_mut(crdt_context) {
-                crdt.count_replayed(global_updates.len() as u64);
+                let held = global_updates
+                    .len()
+                    .min(common::structs::SCENE_GLOBAL_UPDATE_CAPACITY.next_power_of_two());
+                crdt.count_replayed(held as u64);
             }
         }
 

@@ -27,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
-        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PhotoMode,
+        PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -60,8 +60,8 @@ use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::{CurrentImposterScene, SuperUserScene},
     scene_partition::{
-        publish_download_priorities, scene_tick_rate, tick_rate_allows, update_scene_partitions,
-        Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
+        behind_cap_applies, publish_download_priorities, scene_tick_rate, tick_rate_allows,
+        update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY, GLOBAL_UPDATE_BACKLOG_DUE,
     },
 };
 use common::partition::PartitionData;
@@ -612,7 +612,10 @@ fn update_scene_priority(
         Without<SceneLoading>,
     >,
     player: Query<Entity, With<PrimaryUser>>,
-    rendering_camera: Query<(), (With<PrimaryCamera>, With<Camera>)>,
+    rendering_camera: Query<
+        (&GlobalTransform, Has<PhotoMode>),
+        (With<PrimaryCamera>, With<Camera>),
+    >,
     crdt_contexts: Query<&GlobalCrdtState>,
     imposter_scene: Res<CurrentImposterScene>,
     mut updates: ResMut<SceneUpdates>,
@@ -632,9 +635,13 @@ fn update_scene_priority(
     );
 
     let elapsed = time.elapsed_secs_f64();
-    // the distance bands cap tick rates only where a camera renders: the headless server ticks
-    // every scene it runs
-    let rate_capped = !rendering_camera.is_empty();
+    let camera = rendering_camera.single().ok();
+    // the distance bands cap tick rates only where a camera renders around the player: the
+    // headless server ticks every scene it runs, and the photo camera may frame scenes far from
+    // the player
+    let rate_capped = camera.is_some_and(|(_, photo_mode)| !photo_mode);
+    let behind_capped =
+        camera.is_some_and(|(camera, _)| behind_cap_applies(camera.forward().as_vec3()));
     let global_updates_sent = global_updates_sent(&crdt_contexts);
     let imposter_hash = match &imposter_scene.0 {
         Some((PointerResult::Exists { hash, .. }, _)) => Some(hash.as_str()),
@@ -652,7 +659,8 @@ fn update_scene_priority(
             || context.inspected
             || imposter_hash == Some(&*context.hash)
             || context.tick_number < SCENE_LOADED_TICK;
-        let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
+        let mut partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
+        partition.is_behind &= behind_capped;
         context.tick_rate_cap = (!full_rate).then(|| scene_tick_rate(&partition));
         // mark scenes that have been in-flight past the timeout as broken and free their
         // slot, so a wedged scene worker can't hold a scene thread forever
@@ -1294,7 +1302,11 @@ mod player_scenes_tests {
             parcel_distance: 6,
             is_behind: false,
         }));
-        world.spawn((PrimaryCamera::default(), Camera::default()));
+        world.spawn((
+            PrimaryCamera::default(),
+            Camera::default(),
+            GlobalTransform::default(),
+        ));
         scene_loop_resources(&mut world);
         let frame = |world: &mut World, seconds: f32| {
             world
@@ -1329,6 +1341,43 @@ mod player_scenes_tests {
         assert!(queued(&world).contains(&east));
     }
 
+    /// While the photo camera frames the shot, no scene is capped: it may be far from the player.
+    #[test]
+    fn photo_mode_ticks_every_scene_at_the_full_rate() {
+        let mut world = World::new();
+        let Scenes { east, .. } = scenes(&mut world);
+        live_scene(&mut world, east, IVec2::new(3, 2));
+        world
+            .get_mut::<RendererSceneContext>(east)
+            .unwrap()
+            .tick_number = SCENE_LOADED_TICK;
+        world.entity_mut(east).insert(Partition(PartitionData {
+            sqr_distance: 100.0 * 100.0,
+            parcel_distance: 6,
+            is_behind: true,
+        }));
+        world.spawn((
+            PrimaryCamera::default(),
+            Camera::default(),
+            GlobalTransform::default(),
+            PhotoMode,
+        ));
+        scene_loop_resources(&mut world);
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(0.1));
+        world.run_system_once(update_scene_priority).unwrap();
+
+        assert!(queued(&world).contains(&east));
+        assert_eq!(
+            world
+                .get::<RendererSceneContext>(east)
+                .unwrap()
+                .tick_rate_cap,
+            None
+        );
+    }
+
     /// A capped scene whose host holds many global updates it has not read is due before its
     /// band allows, so the host drops none.
     #[test]
@@ -1345,7 +1394,11 @@ mod player_scenes_tests {
             parcel_distance: 6,
             is_behind: false,
         }));
-        world.spawn((PrimaryCamera::default(), Camera::default()));
+        world.spawn((
+            PrimaryCamera::default(),
+            Camera::default(),
+            GlobalTransform::default(),
+        ));
         let mut crdt = GlobalCrdtState::new(None);
         // a scene host's subscription: without one nothing is sent
         let (_, _host) = crdt.subscribe(Vec3::ZERO);

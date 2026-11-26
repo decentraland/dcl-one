@@ -1,5 +1,5 @@
 use super::*;
-use crate::scene_partition::{BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE};
+use crate::scene_partition::{behind_cap_applies, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE};
 use common::partition::PartitionData;
 
 const BEHIND_FAR: PartitionData = PartitionData {
@@ -85,4 +85,17 @@ fn an_interval_between_frames_waits_for_the_later_frame() {
     assert!(!tick_rate_allows(40.0, 1.0 / 60.0, 1.0 / 60.0));
     assert!(!tick_rate_allows(40.0, 0.0168, 0.0168));
     assert!(tick_rate_allows(40.0, 2.0 / 60.0, 1.0 / 60.0));
+}
+
+#[test]
+fn the_behind_cap_applies_to_a_level_camera() {
+    assert!(behind_cap_applies(Vec3::NEG_Z));
+    assert!(behind_cap_applies(Vec3::new(0.0, -0.4, -0.9).normalize()));
+}
+
+#[test]
+fn the_behind_cap_lifts_while_the_camera_looks_steeply_up_or_down() {
+    // a flat behind test misses what is on screen beneath or above the camera
+    assert!(!behind_cap_applies(Vec3::new(0.0, -0.8, -0.6)));
+    assert!(!behind_cap_applies(Vec3::new(0.0, 0.8, 0.6)));
 }

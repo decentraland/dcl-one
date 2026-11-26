@@ -20,7 +20,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   under 64 m, 10; under 80 m, 5 (`SCENE_TICK_RATE_BANDS`); from 80 m on, once every two seconds
   (`FAR_SCENE_TICK_RATE`). Distance is the partition's, from the player to the nearest point of
   the scene's nearest parcel.
-- **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`).
+- **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`), while the camera is
+  near level (`behind_cap_applies`). The behind test compares parcels with the flat forward
+  direction, so looking steeply up or down it can call a scene behind while its content is on
+  screen.
 - **The farthest band keeps a slow tick, and unread global updates make a scene due.** The
   engine sends every global update (player joins, leaves, identities, avatars, movement) to each
   scene's host as it happens: the IPC forwarder on native, the relay pump on the web. The host
@@ -30,14 +33,18 @@ and main-thread time each frame there is spare time, whether or not the player c
   the player returns. A busy island can send more than that in two seconds, so a rate alone
   does not bound the loss. `GlobalCrdtState::sent` counts the updates delivered to each host:
   every update sent, plus, when a scene spawns, the updates since its snapshot that the native
-  forwarder replays to every scene of the context (`count_replayed`). Each dispatch records the
-  count on the scene (`global_updates_read`), and a capped scene with `GLOBAL_UPDATE_BACKLOG_DUE`
-  (250) or more delivered since is due whatever its band. Only that scene is released. A replay
-  holds at most what the scene has not read, so before the scene is due its host holds at most
-  about 500 of 1,024 entries; the free half takes the updates that arrive until it ticks,
-  including those sent between a spawn and the forwarder's swap, which are replayed uncounted.
-  The web relay does not replay, so only native counts replays. The slow tick keeps a scene's other
-  channels, such as scene comms, moving.
+  forwarder replays to every scene of the context (`count_replayed`, at most the receiver's
+  capacity). Each dispatch records the count on the scene (`global_updates_read`), and a capped
+  scene with `GLOBAL_UPDATE_BACKLOG_DUE` (250) or more delivered since is due whatever its band.
+  Only that scene is released. A replay starts at the spawning scene's snapshot, taken before its
+  script downloads, so it can hold up to 1,024 entries, some of which the capped scene already
+  read. It sits behind the scene's unread updates, so an overflow drops the oldest unread
+  updates only when the replay holds them again. A unique update is lost only after more than
+  1,024 minus the unread count (at least 774) arrive before the scene ticks, and the scene is
+  due once 250 are unread. Updates sent between a spawn and the forwarder's swap are
+  replayed uncounted. Each backend states whether it replays (`REPLAYS_GLOBAL_UPDATES`): the
+  native forwarder does, the web relay does not. The slow tick keeps a scene's other channels,
+  such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so
@@ -48,8 +55,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   inspector, the scene being baked into an imposter, and every scene before
   `SCENE_LOADED_TICK` (so loading, which waits on a scene's first ticks, never stalls on a slow
   band).
-- **Only where a camera renders.** Without a `PrimaryCamera` that has a `Camera`, as on the
-  headless authoritative server, no scene is capped.
+- **Only where a camera renders around the player.** Without a `PrimaryCamera` that has a
+  `Camera`, as on the headless authoritative server, no scene is capped. Neither is one while the
+  photo camera frames a shot (`PhotoMode`): it can sit up to 50 m from the player, so bands
+  measured from the player would cap scenes in its foreground.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
   `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
   `released_by_global_updates` those due early on unread global updates; the runtime debug
