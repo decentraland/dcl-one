@@ -36,6 +36,7 @@ tokio-util.workspace = true
 parking_lot.workspace = true
 ipnet.workspace = true
 hex.workspace = true
+ed25519-dalek.workspace = true
 urlencoding.workspace = true
 alloy-primitives.workspace = true
 sha2.workspace = true
@@ -75,5 +76,5 @@ tower = { version = "0.5", features = ["util"] }
 tracing-subscriber.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 
-[lints.clippy]
-unwrap_used = "deny"
+[lints]
+workspace = true

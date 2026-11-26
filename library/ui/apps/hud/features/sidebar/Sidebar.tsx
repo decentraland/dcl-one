@@ -4,8 +4,9 @@
 // Camera, Nearby Voice and Chat. Me, Discover, Shop, System, Volume and Camera each open a panel
 // beside the column, one at a time; Map shows and hides the minimap.
 
+import { MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Switch } from '@dcl/one-ui'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ControlButton, IconButton, MaskIcon, MenuList, MenuPanel, MenuRow, Panel, Slider, Toggle } from '../../design'
+import { ControlButton, IconButton } from '../../design'
 import { toggleDebugPanel, useDebugPanelState } from '../debug/useDebugPanel'
 import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -507,7 +508,7 @@ export function Sidebar({
         <Panel className={styles.config} role="dialog" aria-label="Sidebar settings">
           <div className={styles.configRow}>
             <span>Hide Sidebar Automatically</span>
-            <Toggle size="sm" checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Hide Sidebar Automatically" />
+            <Switch appearance="hud" size="sm" checked={autoHide.enabled} onCheckedChange={autoHide.setEnabled} label="Hide Sidebar Automatically" labelHidden />
           </div>
           {/* `/debug` in the chat opens the same panel. */}
           <button type="button" className={styles.configExtra} onClick={() => {

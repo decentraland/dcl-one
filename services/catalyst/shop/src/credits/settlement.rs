@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 // from: credits-server@465e628bc:src/logic/usd-reconciler.ts (settle on indexed consumption, recover a released intent), src/logic/credits-revoker.ts (revokeCredits by credit hash), offchain-marketplace-contract@87350c63e:src/credits/CreditsManagerPolygon.sol (the flags, roles and allowlist the gate reads); docs/shop/CONTRACTS.md ("Checks a dedicated manager must pass", "No spendable remainder")
 //! Everything after the signature:
 //!
@@ -20,7 +26,10 @@
 //!   whatever it was (`retired`, `released`, `expired`: a cancel or an expiry
 //!   is not proof a signed credit went unused), and its hash is queued for
 //!   revocation. A debit the balance cannot cover rolls back and is retried
-//!   by the reconciler's full pass.
+//!   by the reconciler's full pass. A credit used after its hold was released
+//!   or expired, one consumed near its MANA cap, and one its wallet cannot
+//!   cover each queue an alert (`alerts.rs`): the first two in the
+//!   settlement's transaction, the last once that rolled back.
 //! - **Revocation** ([`Revoker`], the `credits-settlement` job): the outbox
 //!   `credits.revocations` is drained with `revokeCredits(bytes32[])` from
 //!   the `CREDITS_REVOKER_KEY_FILE` signer when one is configured. The row is
@@ -37,6 +46,7 @@ use alloy_sol_types::{SolCall, SolValue, sol};
 use async_trait::async_trait;
 use sqlx::Row;
 
+use super::alerts;
 use super::errors::ApiError;
 use super::events;
 use super::metrics;
@@ -327,7 +337,7 @@ pub async fn settle(
             after_log = candidate.log_index;
             out.push(credits.settle_usage(chain_id, contract, &candidate).await?);
         }
-        if (n as i64) < SETTLE_BATCH {
+        if i64::try_from(n).is_ok_and(|n| n < SETTLE_BATCH) {
             return Ok(out);
         }
     }
@@ -406,7 +416,10 @@ fn settled_lines(
         .iter()
         .map(|l| match u64::try_from(group_cents) {
             Ok(group) if group > 0 => {
-                let (group, cents) = (U256::from(group), U256::from(l.charged_cents.max(0) as u64));
+                let (group, cents) = (
+                    U256::from(group),
+                    U256::from(u64::try_from(l.charged_cents).unwrap_or(0)),
+                );
                 total / group * cents + total % group * cents / group
             }
             _ => U256::ZERO,
@@ -469,9 +482,10 @@ impl Credits {
         let oracle_decimals: Option<i16> = row.get("oracle_decimals");
         let credit_hash: Option<String> = row.get("credit_hash");
         // Released or expired: its hold no longer counted against the balance.
-        let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        let status: String = row.get("status");
+        let recovered = matches!(status.as_str(), "released" | "expired");
         // A later log of an already consumed credit (a remainder) moves no pledge.
-        let newly_consumed = row.get::<&str, _>("status") != "consumed";
+        let newly_consumed = status != "consumed";
         let trade_id: Option<String> = row.get("trade_id");
         // Another pass settled this log while this one waited for the lock.
         if let Some(recorded) = sqlx::query(
@@ -583,6 +597,25 @@ impl Credits {
             Err(e) => {
                 tx.rollback().await?;
                 tracing::error!(credit = %c.salt, %address, kind, error = %e, "credit-used debit FAILED: the credit was used on chain but the wallet cannot cover it; retried by the reconciler's full pass");
+                // Once per log, however often the fold retries it. A failed
+                // insert is logged and the pass goes on: the next fold retries
+                // the debit and queues the alert then.
+                let queued = async {
+                    alerts::record(
+                        &mut *self.pool.acquire().await?,
+                        alerts::UNPAID_CONSUMPTION,
+                        &format!("{chain_id}:{}:{}", c.block_number, c.log_index),
+                        serde_json::json!({
+                            "salt": c.salt, "address": address, "status": status, "kind": kind,
+                            "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                        }),
+                    )
+                    .await
+                }
+                .await;
+                if let Err(error) = queued {
+                    tracing::error!(credit = %c.salt, %error, "queueing the unpaid-consumption alert failed; the next fold retries it");
+                }
                 return Ok(CreditUsageDiff {
                     credit_id: c.salt.clone(),
                     address,
@@ -611,6 +644,31 @@ impl Credits {
         .await?;
         if let Some(hash) = credit_hash {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
+        }
+        if recovered {
+            alerts::record(
+                &mut tx,
+                alerts::RECOVERED_CONSUMPTION,
+                &c.salt,
+                serde_json::json!({
+                    "salt": c.salt, "address": address, "status": status, "usdCents": usd_cents,
+                    "debitedCredits": amount, "txHash": c.tx_hash, "valueWei": c.value_wei,
+                }),
+            )
+            .await?;
+        }
+        alerts::record_cap_near_limit(&mut tx, &c.salt, &c.tx_hash).await?;
+        // The feed's line, once: a replayed debit was reported when recorded.
+        if kind == "purchase" && !spent.replayed {
+            alerts::record_purchase_settled(
+                &mut tx,
+                &c.salt,
+                chain_id,
+                &c.tx_hash,
+                &c.value_wei,
+                recovered,
+            )
+            .await?;
         }
         tx.commit().await?;
         // This pass inserted the log's settlement row (its key), so the log
@@ -749,7 +807,7 @@ impl Revoker {
         let signer = DirectSigner::new(
             chain,
             key,
-            chain_id as u64,
+            u64::try_from(chain_id).map_err(|_| format!("invalid chain id {chain_id}"))?,
             REVOCATION_GAS_CAP,
             Duration::from_secs(1),
             Duration::from_secs(60),
@@ -1030,6 +1088,21 @@ pub(super) async fn settlement_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_revoker_refuses_a_negative_chain_id() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap();
+        let chain = Arc::new(ChainComponent::new(
+            crate::http::Outbound::for_tests(),
+            "http://127.0.0.1:1",
+            Duration::from_secs(1),
+        ));
+        let key = format!("0x{}", "11".repeat(32));
+        let err = Revoker::new(Credits::new(pool), chain, &key, -1).err();
+        assert_eq!(err.as_deref(), Some("invalid chain id -1"));
+    }
 
     #[test]
     fn the_role_and_calldata_match_the_contract() {

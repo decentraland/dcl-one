@@ -25,6 +25,7 @@ use bevy::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
+use chat_reactions::ChatReactionsSetting;
 use common::structs::DmPrivacy;
 #[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
@@ -67,6 +68,7 @@ pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
 pub mod chat_bubble_visibility;
+pub mod chat_reactions;
 pub mod constrain_ui;
 mod debug_quality;
 pub mod dm_privacy;
@@ -290,6 +292,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<ChatBubbleVisibility>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<ChatReactionsSetting>(app, &mut settings, &mut schedule, &config);
 
         app.insert_resource(settings);
         app.add_plugins(debug_quality::DebugQualityPlugin);
@@ -727,6 +730,30 @@ mod tests {
         assert!(!info.disabled);
         assert_eq!(info.value, high);
         assert_eq!(config.graphics.dof, DofSetting::High);
+    }
+
+    #[test]
+    fn chat_reactions_start_off_and_follow_the_setting() {
+        let mut config = AppConfig::default();
+        let mut settings = Settings {
+            settings: Vec::default(),
+        };
+        settings.add_enum_setting::<ChatReactionsSetting>(&config);
+        let title = ChatReactionsSetting::title();
+        let value = |settings: &Settings| {
+            settings
+                .get()
+                .into_iter()
+                .find(|s| s.name == title)
+                .unwrap()
+                .value
+        };
+        assert_eq!(value(&settings), 0.0);
+        assert!(!config.chat_reactions);
+
+        settings.set_value(&mut config, &title, 1.0).unwrap();
+        assert_eq!(value(&settings), 1.0);
+        assert!(config.chat_reactions);
     }
 
     #[test]

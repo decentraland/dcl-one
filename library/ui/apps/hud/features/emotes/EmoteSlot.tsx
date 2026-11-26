@@ -30,7 +30,7 @@ const RARITIES: Record<string, RaritySpec> = {
   ] },
   common: { flap: '#73D3D3', glows: [
     { c: '#73D3D3', cx: 137, cy: 115, r: 119, b: 89.96 },
-    { c: '#B5FFF6', cx: 44, cy: 32, r: 68, b: 50 }
+    { c: '#ACF8F8', cx: 44, cy: 32, r: 68, b: 50 }
   ] },
   uncommon: { flap: '#FF8362', glows: [
     { c: '#FF8362', cx: 137, cy: 115, r: 119, b: 81.65 },

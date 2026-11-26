@@ -71,13 +71,12 @@ describe('when the sidebar lists foundations, components, the HUD and the Figma 
     expect(reference.open).toBe(false)
     expect(screen.getByRole('link', { name: 'Colors' }).textContent).toBe('Colors')
     expect(link('Switch').textContent).toBe('Switch')
-    // The runtime and Figma Buttons carry their source; the HUD's sits under its own heading.
+    // The runtime and Figma Buttons carry their source; a HUD section sits under its own heading and carries none.
     expect(screen.getAllByRole('link', { name: /^Button/ }).map((a) => a.textContent)).toEqual([
       'Buttonruntime',
-      'Button',
       'ButtonFigma'
     ])
-    expect(hudLink('Button').textContent).toBe('Button')
+    expect(hudLink('Modal').textContent).toBe('Modal')
     expect(
       [...reference.querySelectorAll('a')].find((a) => a.textContent?.startsWith('ShopModals'))
         ?.textContent
@@ -103,11 +102,17 @@ describe('when a reviewer opens the HUD Showcase', () => {
   beforeEach(() => window.history.replaceState(null, '', '/gallery/?component=Button'))
   afterEach(() => window.history.replaceState(null, '', '/'))
 
-  it('should list the Showcase, every section in its order, then the glyphs', () => {
+  it('should list the Showcase, then every section and the glyphs by name', () => {
     render(<Shell search={window.location.search} />)
-    expect(
-      hudLinks().map((a) => new URL((a as HTMLAnchorElement).href).searchParams.get('hud'))
-    ).toEqual(['Showcase', ...SHOWCASE_INDEX.map((section) => section.name), 'Glyphs'])
+    const listed = hudLinks().map((a) =>
+      new URL((a as HTMLAnchorElement).href).searchParams.get('hud')
+    )
+    expect(listed[0]).toBe('Showcase')
+    expect(listed.slice(1)).toEqual(
+      [...SHOWCASE_INDEX.map((section) => section.name), 'Glyphs'].sort((a, b) =>
+        a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true })
+      )
+    )
   })
 
   it('should open a section in place, in a window of the HUD document, labelled HUD', () => {
@@ -133,9 +138,9 @@ describe('when a reviewer opens the HUD Showcase', () => {
   })
 
   it('should open a component on the section that renders it, and name a missing section', () => {
-    const { unmount } = render(<Shell search="?hud=MenuRow" />)
-    expect(screen.getByText('MenuRow is shown on the MenuPanel page.')).toBeTruthy()
-    expect(heading()).toBe('MenuPanelHUD')
+    const { unmount } = render(<Shell search="?hud=TextArea" />)
+    expect(screen.getByText('TextArea is shown on the FormControls page.')).toBeTruthy()
+    expect(heading()).toBe('FormControlsHUD')
     unmount()
     render(<Shell search="?hud=Nope" />)
     expect(screen.getByRole('alert').textContent).toBe(

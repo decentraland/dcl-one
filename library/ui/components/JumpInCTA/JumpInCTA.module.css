@@ -77,6 +77,47 @@
     --jump-in-icon: 16px;
   }
 
+  /* Not in Figma: the Explorer HUD's Jump In on its cards. Its 6px radius and its pressed red have no
+     token. */
+  .hud {
+    padding: var(--dcl-space-0);
+    border-radius: 6px;
+    box-shadow: 0 2px 2px rgba(0, 0, 0, 0.05);
+    color: var(--dcl-neutrals-snow);
+    font-family: inherit;
+    font-weight: 700;
+    line-height: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    transition: background-color 100ms;
+
+    &:hover:not(:disabled, [data-disabled], [data-loading]) {
+      background-color: var(--dcl-primary-primary-light-1);
+    }
+
+    &:active:not(:disabled, [data-disabled], [data-loading]) {
+      background-color: rgb(200, 35, 67);
+    }
+
+    &:disabled,
+    &[data-disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    &.xl {
+      gap: var(--dcl-space-8);
+      height: 46px;
+      font-size: 16px;
+    }
+
+    &.md {
+      gap: 6px;
+      height: 40px;
+      font-size: 14px;
+    }
+  }
+
   .icon {
     flex-shrink: 0;
     width: var(--jump-in-icon);

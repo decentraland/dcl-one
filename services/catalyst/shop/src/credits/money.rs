@@ -20,6 +20,13 @@
 //! written by a `WHERE portion > 0` predicate evaluated by PostgreSQL in
 //! NUMERIC, in the same statement family that applies the balance change.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use super::errors::ApiError;
 
 /// Reject `|amount| >= 10^30`. Credits are a retail currency; anything at or
@@ -264,6 +271,10 @@ impl Decimal {
 
     /// Base-10 exponent of the most significant digit: the value lies in
     /// `[10^mag, 10^(mag+1))`. Only meaningful when `has_nonzero_digit`.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "slice indexes are at most isize::MAX, which fits i64"
+    )]
     fn magnitude_exp(&self) -> i64 {
         self.int_len as i64 - self.first_significant as i64 - 1 + self.exp
     }

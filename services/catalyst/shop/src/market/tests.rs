@@ -1696,6 +1696,28 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
         assert_eq!(status, want, "{id}: {body}");
     }
 
+    for id in &ids {
+        crate::test_db::open_trade_verdict(pool, id).await;
+    }
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         SELECT lower(t.network), a.contract_address, n.token_id::numeric, t.signer, 1, 1, 1, 0, 1
+         FROM shop.trades t JOIN shop.trade_assets a ON a.trade_id = t.id
+         JOIN shop.trade_assets_erc721 n ON n.asset_id = a.id
+         WHERE t.id = $1::uuid AND a.direction = 'sent' ON CONFLICT DO NOTHING",
+    )
+    .bind(fresh)
+    .execute(pool)
+    .await
+    .unwrap();
+
     let book = |since: Option<chrono::NaiveDateTime>| {
         let ids = ids.clone();
         async move {

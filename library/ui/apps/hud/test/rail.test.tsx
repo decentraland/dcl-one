@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Rail } from '../design/Rail'
+import arrowLeft from '../assets/rail/arrow-left.png'
+import arrowRight from '../assets/rail/arrow-right.png'
 
 // Renders and lets the Rail's measuring effects settle inside act(), so React reports no stray updates.
 async function renderSettled(ui: React.ReactElement): Promise<void> {
@@ -18,6 +20,36 @@ afterEach(() => {
   HTMLElement.prototype.scrollTo = scrollTo
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+// The HUD's Rail is the shared PagedRail (library/ui/components/PagedRail, tested there) with the HUD's arrows.
+describe('Rail arrows', () => {
+  it('draws the HUD arrow art as masks, the left one on Previous and the right one on Next', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(280)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(864)
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(2008)
+    HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number): void {
+      this.scrollLeft = Math.min(typeof options === 'object' ? options.left ?? 0 : options ?? 0, 1144)
+      this.dispatchEvent(new Event('scroll'))
+    }
+    await renderSettled(<Rail perPage={3} gap={8}>{Array.from({ length: 7 }, (_, i) => <div key={i}>Place {i + 1}</div>)}</Rail>)
+    const next = screen.getByRole('button', { name: 'Next' })
+    expect(next.querySelector('svg')).toBeNull()
+    expect(next.firstElementChild?.getAttribute('style')).toContain(arrowRight)
+    await act(async () => fireEvent.click(next))
+    const previous = screen.getByRole('button', { name: 'Previous' })
+    expect(previous.querySelector('svg')).toBeNull()
+    expect(previous.firstElementChild?.getAttribute('style')).toContain(arrowLeft)
+    expect(previous.firstElementChild?.getAttribute('style')).toContain('width: 15px')
+  })
+
+  it('draws no arrow when every card fits', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(280)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(864)
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(864)
+    await renderSettled(<Rail perPage={3} gap={8}>{[<div key="only">Place 1</div>]}</Rail>)
+    expect(screen.queryByRole('button')).toBeNull()
+  })
 })
 
 describe('Rail pagination', () => {

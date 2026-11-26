@@ -762,7 +762,7 @@
           "queued_empty": "Nothing is waiting to upload.",
           "delete": "Delete everything I've shared",
           "deleting": "Deleting…",
-          "deleted": "Deleted {count} shared turns.",
+          "deleted": "{count, plural, one {Deleted # shared turn.} other {Deleted # shared turns.}}",
           "delete_failed": "Couldn't delete your shared conversations. Check your connection and try again.",
           "viewer_show": "Show what I've shared",
           "viewer_hide": "Hide what I've shared",

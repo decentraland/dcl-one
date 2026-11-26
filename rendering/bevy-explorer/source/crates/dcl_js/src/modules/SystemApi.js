@@ -424,7 +424,8 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
-// get situational reactions as they play (the local user's included) as a stream
+// get situational reactions as they play (the local user's included) as a stream; nothing
+// arrives while the "Chat Reactions" setting is off
 // type Reaction = {
 //   from: string,
 //   emoji: string,

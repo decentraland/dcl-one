@@ -32,7 +32,7 @@ pub fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
         ("comms-streaming-key-recheck", 600, Workflow::Recheck),
         ("comms-streaming-cleanup", 60, Workflow::Cleanup),
     ] {
-        let (state, cursor) = (state.clone(), Arc::new(std::sync::Mutex::default()));
+        let (state, cursor) = (state.clone(), Arc::new(parking_lot::Mutex::default()));
         jobs.spawn_periodic_leased(
             name,
             PeriodicCfg::every(Duration::from_secs(interval))
@@ -409,7 +409,10 @@ async fn world_key_context(
 /// saved or recovered scene place decides its scene admins, so they survive
 /// the scene's retirement; a definitively unresolvable binding tells none;
 /// with neither, the room's live scene does.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the recipients depend on the place, binding, room and grants"
+)]
 async fn key_recipients(
     state: &CommsState,
     context: &PlaceContext,
@@ -1202,7 +1205,7 @@ mod tests {
         cleanup_access(&state, id).await.unwrap();
 
         {
-            let told = directory.streaming_notifications.lock().unwrap();
+            let told = directory.streaming_notifications.lock();
             let mut recipients: Vec<&str> = told.iter().map(|n| n.recipient.as_str()).collect();
             recipients.sort();
             assert_eq!(recipients, [owner, approved, admin]);
@@ -1356,7 +1359,7 @@ mod tests {
             .execute(&state.pool)
             .await
             .unwrap();
-        *directory.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        *directory.fail_streaming_recipient.lock() = Some(wallet(2));
         let _ = cleanup_access(&state, id).await;
         let progress: (bool, i32) = sqlx::query_as("SELECT recipients_resolved,recipient_cursor FROM social.scene_stream_cleanup WHERE access_id=$1")
             .bind(id).fetch_one(&state.pool).await.unwrap();
@@ -1371,7 +1374,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -1384,7 +1386,6 @@ mod tests {
             directory
                 .streaming_attempts
                 .lock()
-                .unwrap()
                 .iter()
                 .filter(|recipient| **recipient == wallet(1))
                 .count(),
@@ -1431,7 +1432,7 @@ mod tests {
             (Some(place.clone()), false),
             "checkpoint context even when binding SQL fails"
         );
-        assert!(directory.streaming_notifications.lock().unwrap().is_empty());
+        assert!(directory.streaming_notifications.lock().is_empty());
         sqlx::query("UPDATE explore.world_scene_place SET active=false,entity_id=NULL WHERE world_name=$1 AND entity_id='fanout-scene'")
             .bind(&name).execute(&state.pool).await.unwrap();
         sqlx::query("DELETE FROM explore.place WHERE id=$1")
@@ -1445,7 +1446,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -1528,7 +1528,7 @@ mod tests {
         let evidence: (bool,bool,bool) = sqlx::query_as("SELECT (source_context->>'admin_binding_pending')::boolean,COALESCE((source_context->>'admin_binding_unresolvable')::boolean,false),recipients_resolved FROM social.scene_stream_cleanup WHERE access_id=$1")
             .bind(id).fetch_one(&state.pool).await.unwrap();
         assert_eq!(evidence, (deferred, !deferred, !deferred));
-        *directory.fail_streaming_recipient.lock().unwrap() = Some(wallet(3));
+        *directory.fail_streaming_recipient.lock() = Some(wallet(3));
         let _ = cleanup_access(&state, id).await;
         let progress: (bool,i32) = sqlx::query_as("SELECT recipients_resolved,recipient_cursor FROM social.scene_stream_cleanup WHERE access_id=$1")
             .bind(id).fetch_one(&state.pool).await.unwrap();
@@ -1542,7 +1542,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -1555,7 +1554,6 @@ mod tests {
             directory
                 .streaming_attempts
                 .lock()
-                .unwrap()
                 .iter()
                 .filter(|recipient| **recipient == wallet(1))
                 .count(),
@@ -1621,7 +1619,7 @@ mod tests {
             .bind(id).fetch_one(&state.pool).await.unwrap();
         assert!(evidence.0.is_some());
         assert!(!evidence.1);
-        assert!(directory.streaming_notifications.lock().unwrap().is_empty());
+        assert!(directory.streaming_notifications.lock().is_empty());
         sqlx::query("UPDATE explore.world_scene_place SET active=false,entity_id=NULL WHERE world_name=$1 AND entity_id='fanout-scene'")
             .bind(&name).execute(&state.pool).await.unwrap();
         state.policy = policy;
@@ -1631,7 +1629,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|n| n.recipient.clone())
             .collect();
@@ -1679,7 +1676,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -1735,7 +1731,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -1789,7 +1784,7 @@ mod tests {
         let id = fanout_access(&state, &place, CleanupCommand::Reset).await;
         // The reset reached everyone, but ingress deletion kept failing, the
         // replacement was revoked in turn, and the grace period passed.
-        let told = directory.streaming_notifications.lock().unwrap().len();
+        let told = directory.streaming_notifications.lock().len();
         sqlx::query("UPDATE social.scene_stream_cleanup SET ingress_deleted=false, ingress_id='IN_failing', notification_started=true, recipient_cursor=cardinality(recipients), occurred_at=timezone('UTC',now())-interval '2 hours', due_at=timezone('UTC',now()) WHERE access_id=$1")
             .bind(id).execute(&state.pool).await.unwrap();
         sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id=$1 AND id<>$2")
@@ -1812,7 +1807,7 @@ mod tests {
             assert_eq!(kind, "streaming_key_reset");
             assert!(started && cursor > 0, "the delivery position is kept");
         }
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         assert_eq!(notices.len(), told, "nobody is told again");
         assert!(
             notices
@@ -1880,7 +1875,7 @@ mod tests {
                 .message
                 .contains("cast eviction")
         );
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         assert_eq!(
             notices
                 .iter()
@@ -1917,7 +1912,7 @@ mod tests {
             let id = fanout_access_bound(&state, &place, command, key).await;
             cleanup_access(&state, id).await.unwrap();
             {
-                let notices = directory.streaming_notifications.lock().unwrap();
+                let notices = directory.streaming_notifications.lock();
                 let actual: std::collections::BTreeSet<_> =
                     notices.iter().map(|n| n.recipient.clone()).collect();
                 assert_eq!(
@@ -1934,7 +1929,7 @@ mod tests {
                     assert_eq!(notice.metadata["address"], notice.recipient.as_str());
                 }
             }
-            directory.streaming_notifications.lock().unwrap().clear();
+            directory.streaming_notifications.lock().clear();
             sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id=$1")
                 .bind(&place)
                 .execute(&state.pool)
@@ -1974,7 +1969,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -2045,7 +2039,6 @@ mod tests {
         let actual: std::collections::BTreeSet<_> = directory
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.clone())
             .collect();
@@ -2062,12 +2055,12 @@ mod tests {
             return;
         };
         let id = fanout_access(&state, &place, CleanupCommand::Revoke).await;
-        *directory.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        *directory.fail_streaming_recipient.lock() = Some(wallet(2));
         assert!(
             cleanup_access(&state, id).await.is_err(),
             "the second recipient must be attempted"
         );
-        assert_eq!(directory.streaming_notifications.lock().unwrap().len(), 1);
+        assert_eq!(directory.streaming_notifications.lock().len(), 1);
         sqlx::query("UPDATE social.scene_admins SET active=false,removed_at=timezone('UTC',now()) WHERE place_id='10,20'")
             .execute(&state.pool).await.unwrap();
         state.policy = Arc::new(crate::interfaces::test_support::StubPolicy::default());
@@ -2075,7 +2068,7 @@ mod tests {
             .bind(id).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
         {
-            let notices = directory.streaming_notifications.lock().unwrap();
+            let notices = directory.streaming_notifications.lock();
             assert_eq!(
                 notices.len(),
                 6,
@@ -2101,7 +2094,7 @@ mod tests {
             "the intent is acknowledged only after the complete fanout"
         );
         assert_eq!(
-            *directory.streaming_attempts.lock().unwrap(),
+            *directory.streaming_attempts.lock(),
             [1, 2, 2, 3, 4, 5, 6].map(wallet),
             "a successful prefix is checkpointed, rather than replayed on every pass"
         );
@@ -2113,13 +2106,13 @@ mod tests {
             return;
         };
         let id = fanout_access(&state, &place, CleanupCommand::KeyExpiry).await;
-        *directory.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        *directory.fail_streaming_recipient.lock() = Some(wallet(2));
         assert!(cleanup_access(&state, id).await.is_err());
         sqlx::query("INSERT INTO social.scene_stream_access(place_id,streaming_url,streaming_key,generated_by) VALUES ($1,'rtmp://example.invalid/live','replacement','test')")
             .bind(&place).execute(&state.pool).await.unwrap();
         sqlx::query("UPDATE social.scene_stream_cleanup SET due_at=timezone('UTC',now()) WHERE access_id=$1").bind(id).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         assert_eq!(notices.len(), 6);
         assert!(
             notices
@@ -2141,14 +2134,14 @@ mod tests {
             return;
         };
         let id = fanout_access(&state, &place, CleanupCommand::KeyExpiry).await;
-        *directory.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        *directory.fail_streaming_recipient.lock() = Some(wallet(2));
         assert!(cleanup_access(&state, id).await.is_err());
         sqlx::query("UPDATE social.scene_stream_cleanup SET recipient_cursor=0 WHERE access_id=$1 AND notification_started").bind(id).execute(&state.pool).await.unwrap();
         sqlx::query("INSERT INTO social.scene_stream_access(place_id,streaming_url,streaming_key,generated_by) VALUES ($1,'rtmp://example.invalid/live','replacement','test')")
             .bind(&place).execute(&state.pool).await.unwrap();
         sqlx::query("UPDATE social.scene_stream_cleanup SET due_at=timezone('UTC',now()) WHERE access_id=$1").bind(id).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         assert_eq!(notices.len(), 6);
         assert!(
             notices
@@ -2201,7 +2194,7 @@ mod tests {
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         for index in 0..12 {
-            while directory.streaming_attempts.lock().unwrap().len() <= index {
+            while directory.streaming_attempts.lock().len() <= index {
                 assert!(
                     std::time::Instant::now() < deadline,
                     "timed out waiting for the next notification attempt"
@@ -2227,7 +2220,7 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         }
-        while directory.streaming_attempts.lock().unwrap().len() < 13 {
+        while directory.streaming_attempts.lock().len() < 13 {
             assert!(
                 std::time::Instant::now() < deadline,
                 "timed out waiting for interrupted notification"
@@ -2254,8 +2247,8 @@ mod tests {
         sqlx::query("UPDATE social.scene_stream_cleanup SET claim_until=timezone('UTC',now())-interval '1 second' WHERE access_id=$1")
             .bind(id).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
-        assert_eq!(directory.streaming_notifications.lock().unwrap().len(), 14);
-        let attempts = directory.streaming_attempts.lock().unwrap();
+        assert_eq!(directory.streaming_notifications.lock().len(), 14);
+        let attempts = directory.streaming_attempts.lock();
         assert_eq!(
             attempts.iter().filter(|a| **a == wallet(1)).count(),
             1,
@@ -2303,7 +2296,7 @@ mod tests {
             .unwrap()
         );
         cleanup_access(&state, id).await.unwrap();
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         let actual: std::collections::BTreeSet<_> =
             notices.iter().map(|n| n.recipient.clone()).collect();
         let mut expected: std::collections::BTreeSet<_> = (1..=6).map(wallet).collect();
@@ -2341,7 +2334,7 @@ mod tests {
         sqlx::query("UPDATE social.scene_stream_cleanup SET due_at=timezone('UTC',now()) WHERE access_id=$1")
             .bind(id).execute(&state.pool).await.unwrap();
         cleanup_access(&state, id).await.unwrap();
-        let notices = directory.streaming_notifications.lock().unwrap();
+        let notices = directory.streaming_notifications.lock();
         assert_eq!(notices.len(), 6);
         assert!(
             notices

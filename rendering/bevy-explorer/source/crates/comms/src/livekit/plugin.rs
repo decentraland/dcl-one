@@ -9,7 +9,7 @@ use dcl_component::proto_components::kernel::apis::{
     VideoTrackSourceType, VideoTracksActiveStreamsData, VideoTracksActiveStreamsResponse,
 };
 use input_manager::{InputManager, InputPriority};
-use livestream_manager::ActiveTransmitter;
+use livestream_manager::{livekit_track_url, ActiveTransmitter, LIVEKIT_CURRENT_STREAM};
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc, task::JoinHandle};
 #[cfg(not(target_arch = "wasm32"))]
@@ -447,12 +447,12 @@ fn respond_to_rpc_calls(
                         tracks.iter_many(publishing.collection())
                     {
                         let identity = participant.identity().0;
-                        let track_sid = format!("livekit-video://{}/{}", identity, track.sid());
+                        let track_sid = livekit_track_url(&identity, track.sid());
 
                         if has_active_streamer {
                             streams.push(VideoTracksActiveStreamsData {
                                 identity: participant.identity().0.clone(),
-                                track_sid: "livekit-video://current-stream".to_owned(),
+                                track_sid: LIVEKIT_CURRENT_STREAM.to_owned(),
                                 source_type: match source {
                                     (Some(_), _) => VideoTrackSourceType::VtstCamera as i32,
                                     (_, Some(_)) => VideoTrackSourceType::VtstScreenShare as i32,

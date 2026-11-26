@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 
 ENVIRONMENT = ('environment: WASM_PACK_MODE is passed to wasm-pack as --mode. The value no-install uses the '
                'wasm-bindgen on PATH instead of a download, for a sandboxed or offline build. '
@@ -17,6 +18,10 @@ ENVIRONMENT = ('environment: WASM_PACK_MODE is passed to wasm-pack as --mode. Th
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
 SOURCE = ROOT / 'rendering/bevy-explorer/source'
+PREVIEW = ROOT / 'rendering/avatar-preview'
+# The largest gzip -9 size an optimized avatar preview module may have: every Shop and creator page
+# that shows an avatar downloads one (the WebGPU module or the WebGL2 one).
+PREVIEW_MAX_WASM_GZIP = 10_000_000
 spec = importlib.util.spec_from_file_location('play_artifact', ROOT / 'tooling/play-artifact.py')
 artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
@@ -37,6 +42,11 @@ def executable(name):
     if os.name != 'nt':
         return name
     return git_bash() if name == 'bash' else shutil.which(name) or name
+
+
+def pnpm():
+    # A shell with pnpm on its PATH sets PNPM=pnpm (nix develop .#wasm does), as the justfile reads it.
+    return tuple(os.environ.get('PNPM', '').split()) or ('corepack', 'pnpm@12.21.0')
 
 
 def run(*args, cwd=SOURCE, env=None):
@@ -106,11 +116,50 @@ def prepare_engine(no_opt, engine_cache, shared_build, features, env):
     return engine
 
 
+def compile_preview(no_opt, env):
+    """build.sh's two modules with the pinned binding generator and optimizer, in its own target."""
+    # Unoptimized (a PR's build) skips only wasm-opt, so it compiles as main does and reuses main's target.
+    env = {name: value for name, value in env.items() if name != 'CARGO_TARGET_DIR'}
+    manifest = tomllib.loads((PREVIEW / 'Cargo.toml').read_text())
+    wasm_opt = manifest['package']['metadata']['wasm-pack']['profile']['release']['wasm-opt']
+    module = PREVIEW / 'target/wasm32-unknown-unknown/release/dcl_avatar_preview.wasm'
+    for part, features in (('pkg', ()), ('pkg-gl', ('--no-default-features', '--features', 'webgl2'))):
+        run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown', '--lib',
+            *features, cwd=PREVIEW, env=env)
+        output = ROOT / artifact.PREVIEW_PARTS[part]
+        run('wasm-bindgen', str(module), '--target', 'web', '--out-dir', str(output), cwd=PREVIEW, env=env)
+        if not no_opt:
+            wasm = output / 'dcl_avatar_preview_bg.wasm'
+            optimized = wasm.with_suffix('.opt.wasm')
+            run('wasm-opt', str(wasm), *wasm_opt, '-o', str(optimized), cwd=PREVIEW, env=env)
+            optimized.replace(wasm)
+        shutil.copy2(SOURCE / 'deploy/web/engine/content_cache.js', output / 'content_cache.js')
+
+
+def prepare_preview(no_opt, preview_cache, shared_build, env):
+    """The avatar preview's modules, compiled from this tree's engine crates or restored for the same inputs."""
+    if preview_cache and preview_cache.exists():
+        preview = artifact.restore_preview(preview_cache, ROOT, allow_unoptimized=no_opt)
+        print(f"Reusing the compiled avatar preview from {preview['revision']}", flush=True)
+        return preview
+    for part in artifact.PREVIEW_PARTS.values():
+        if (ROOT / part).exists():
+            shutil.rmtree(ROOT / part)
+    if shared_build:
+        compile_preview(no_opt, env)
+    else:
+        run('bash', './build.sh', *(['--fast'] if no_opt else []), cwd=PREVIEW, env=env)
+    revision = os.environ.get('GITHUB_SHA', 'local')
+    if preview_cache:
+        return artifact.pack_preview(preview_cache, ROOT, optimized=not no_opt, revision=revision)
+    return {'inputs': artifact.preview_inputs(ROOT), 'revision': revision, 'optimized': not no_opt}
+
+
 def web_features(performance_profiler):
     return ['livekit', 'social', *(['performance-profiler'] if performance_profiler else [])]
 
 
-def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False):
+def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False, preview_cache=None):
     # the release engine leaves out `performance-profiler`: its spans and allocation counter cost
     # every frame even while the profiler records nothing
     features = web_features(performance_profiler)
@@ -118,12 +167,13 @@ def web(no_opt=False, engine_cache=None, shared_build=False, performance_profile
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
         installations = [
-            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+            pool.submit(run, *pnpm(), '--dir', 'react-web',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
-            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+            pool.submit(run, *pnpm(), '--dir', 'react-web/bridge-scene',
                         'install', '--frozen-lockfile', '--ignore-scripts', env=env),
         ]
         engine = prepare_engine(no_opt, engine_cache, shared_build, features, env)
+        preview = prepare_preview(no_opt, preview_cache, shared_build, env)
         for installation in installations:
             installation.result()
     run('node', './react-web/scripts/shared-inputs.mjs', '--check', env=env)
@@ -137,16 +187,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False, performance_profile
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build', env=web_env)
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+    run(*pnpm(), '--dir', 'react-web', 'run', 'build', env=web_env)
+    run(*pnpm(), '--dir', 'react-web/bridge-scene',
         '--filter', '@dcl/hashing', 'build', env=web_env)
     run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
         str(SOURCE / 'react-web/bridge-scene'), env=web_env)
     # Node 25+ ships a localStorage global (empty without --localstorage-file) that
     # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
     node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
-    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
+    run(*pnpm(), '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
+    run(*pnpm(), '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)
@@ -156,11 +206,14 @@ def web(no_opt=False, engine_cache=None, shared_build=False, performance_profile
                  'engine/pkg-scene/dcl_scene_wasm_bg.wasm', 'service_worker.js'):
         if not (output / name).is_file():
             raise SystemExit(f'Missing web build output: {name}')
+    # Sites serves the page at /avatar-preview/ and its content-hashed files at /assets/avatar-preview/.
+    run(sys.executable, str(PREVIEW / 'tools/package.py'), str(output / 'avatar-preview'),
+        *(['--max-wasm-gzip', str(PREVIEW_MAX_WASM_GZIP)] if preview['optimized'] else []), cwd=ROOT)
     shutil.copy2(SOURCE / 'LICENSE', output / 'LICENSE')
     (output / 'build-info.json').write_text(json.dumps({'component': 'bevy-explorer-web',
-        'revision': revision, 'engine': engine}) + '\n')
+        'revision': revision, 'engine': engine, 'preview': preview}) + '\n')
     run(sys.executable, str(ROOT / 'tooling/play-artifact.py'), 'pack', str(output),
-        *([] if engine['optimized'] else ['--unoptimized']), cwd=ROOT)
+        *([] if engine['optimized'] and preview['optimized'] else ['--unoptimized']), cwd=ROOT)
     print(output)
 
 
@@ -169,6 +222,8 @@ def main():
     parser.add_argument('--no-opt', action='store_true', help='Skip wasm-opt for development/PR builds')
     parser.add_argument('--engine-cache', type=Path,
                         help='CI-only compiled WASM cache, restored with an exact input key')
+    parser.add_argument('--preview-cache', type=Path,
+                        help='CI-only compiled avatar preview cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
     parser.add_argument('--performance-profiler', action='store_true',
@@ -189,7 +244,7 @@ def main():
         run('bash', './scripts/gen-ts-bindings.sh', env=env)
         return
     web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build,
-        args.performance_profiler)
+        args.performance_profiler, args.preview_cache.resolve() if args.preview_cache else None)
 
 
 if __name__ == '__main__':
