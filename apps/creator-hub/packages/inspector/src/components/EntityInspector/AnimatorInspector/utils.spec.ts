@@ -1,0 +1,157 @@
+import type { Entity } from '@dcl/ecs';
+import { Animator } from '@dcl/ecs';
+
+import type { SdkContextValue } from '../../../lib/sdk/context';
+import type { RendererAnimation } from '../../../lib/renderer/types';
+import {
+  fromNumber,
+  toNumber,
+  isValidWeight,
+  isValidSpeed,
+  initializeAnimatorComponent,
+  mapAnimationsToStates,
+} from './utils';
+
+vi.mock('../../../lib/sdk/context');
+
+describe('NumberUtils', () => {
+  describe('fromNumber', () => {
+    it('converts number to multiplied value', () => {
+      const result = fromNumber(50, 2);
+      expect(result).toBe(100);
+    });
+
+    it('converts string to multiplied value', () => {
+      const result = fromNumber('50', 2);
+      expect(result).toBe(100);
+    });
+  });
+
+  describe('toNumber', () => {
+    it('converts number to divided value', () => {
+      const result = toNumber(100, 2);
+      expect(result).toBe(50);
+    });
+
+    it('converts string to divided value', () => {
+      const result = toNumber('100', 2);
+      expect(result).toBe(50);
+    });
+  });
+
+  describe('isValidWeight', () => {
+    it('returns true for a valid weight', () => {
+      const result = isValidWeight('0.50');
+      expect(result).toBe(true);
+    });
+
+    it('returns false for a invalid weight, number', () => {
+      const result = isValidWeight('50');
+      expect(result).toBe(false);
+    });
+
+    it('returns false for an invalid weight, string', () => {
+      const result = isValidWeight('invalid');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('isValidSpeed', () => {
+    it('returns true for a valid speed', () => {
+      const result = isValidSpeed('100');
+      expect(result).toBe(true);
+    });
+
+    it('returns false for an invalid speed', () => {
+      const result = isValidSpeed('invalid');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('initializeAnimatorComponent', () => {
+    it('initializes animator component with provided animations', async () => {
+      const sdk = {
+        operations: {
+          addComponent: vi.fn(),
+          updateValue: vi.fn(),
+          dispatch: vi.fn(),
+        },
+      };
+      const entity: Entity = 512 as Entity;
+      const animations: RendererAnimation[] = [{ name: 'animation' }];
+
+      const result = await initializeAnimatorComponent(
+        sdk as any as SdkContextValue,
+        entity,
+        animations,
+      );
+
+      expect(result).toEqual({
+        states: [
+          {
+            clip: 'animation',
+            playing: false,
+            weight: 1,
+            speed: 1,
+            loop: false,
+            shouldReset: false,
+          },
+        ],
+      });
+      expect(sdk.operations.addComponent).toHaveBeenCalledWith(entity, Animator.componentId);
+      expect(sdk.operations.updateValue).toHaveBeenCalledWith(Animator, entity, result);
+      expect(sdk.operations.dispatch).toHaveBeenCalled();
+    });
+
+    it('initializes animator component with empty animations array', async () => {
+      const sdk = {
+        operations: {
+          addComponent: vi.fn(),
+          updateValue: vi.fn(),
+          dispatch: vi.fn(),
+        },
+      };
+      const entity: Entity = 512 as Entity;
+      const animations: RendererAnimation[] = [];
+
+      const result = await initializeAnimatorComponent(
+        sdk as any as SdkContextValue,
+        entity,
+        animations,
+      );
+
+      expect(result).toEqual({
+        states: [],
+      });
+      expect(sdk.operations.addComponent).toHaveBeenCalledWith(entity, Animator.componentId);
+      expect(sdk.operations.updateValue).toHaveBeenCalledWith(Animator, entity, result);
+      expect(sdk.operations.dispatch).toHaveBeenCalled();
+    });
+  });
+
+  describe('mapAnimationsToStates', () => {
+    it('preserves GLTF-authored playback values', () => {
+      const states = mapAnimationsToStates([
+        { name: 'idle', weight: 0.5, speed: 2, loop: true, playing: true },
+      ]);
+      expect(states).toEqual([
+        { clip: 'idle', weight: 0.5, speed: 2, loop: true, playing: true, shouldReset: false },
+      ]);
+    });
+
+    it('falls back to defaults for omitted fields', () => {
+      const states = mapAnimationsToStates([{ name: 'walk' }]);
+      expect(states).toEqual([
+        { clip: 'walk', weight: 1, speed: 1, loop: false, playing: false, shouldReset: false },
+      ]);
+    });
+
+    it('falls back to weight 1 when the reported weight is out of range', () => {
+      const states = mapAnimationsToStates([
+        { name: 'main', weight: -1 },
+        { name: 'close', weight: 2 },
+      ]);
+      expect(states.map($ => $.weight)).toEqual([1, 1]);
+    });
+  });
+});

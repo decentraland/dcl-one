@@ -5,6 +5,7 @@ const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+const webCore = fileURLToPath(new URL("../../library/web-core", import.meta.url));
 const cssStub = fileURLToPath(new URL("./test/e2e/css-stub.ts", import.meta.url));
 
 export default defineConfig({
@@ -12,13 +13,16 @@ export default defineConfig({
     alias: [
       { find: /^.*\.css$/, replacement: cssStub },
       { find: "@ui", replacement: ui },
+      { find: "@dcl/one-ui", replacement: fileURLToPath(new URL("../../library/ui", import.meta.url)) },
       { find: "@catalyst-api", replacement: catalystApi },
       { find: "@shop", replacement: shopCore },
-      { find: "dcl-validate-impl", replacement: `${ui}/validate/checked.ts` },
+      { find: "@web-core", replacement: webCore },
+      { find: "dcl-validate-impl", replacement: `${webCore}/validate/checked.ts` },
       { find: "@", replacement: src },
     ],
-    // viem: library/shop has no node_modules of its own, so its imports resolve to this app's copy.
-    dedupe: ["react", "react-dom", "react-router", "viem"],
+    // viem, zod: library/shop and library/web-core have no node_modules of their own, so their imports
+    // resolve to this app's copy.
+    dedupe: ["react", "react-dom", "react-router", "viem", "zod", "@walletconnect/sign-client"],
   },
   test: {
     include: ["test/e2e/**/*.e2e.test.ts"],

@@ -5,11 +5,11 @@
 //! Foundation" on every event record (`Event/model.ts:493`,
 //! `getEventCreatorDisplayName`). Upstream refreshed the list from the
 //! feature-flags service every five minutes; this node reads the `events`
-//! feature-flags document the explorer API's feature-flags mirror fetches
-//! beside the explorer one (`api::feature_flags::run_pass`, row
-//! `explore_api.feature_flags` app `events`) on the same cadence, lazily
-//! from the event reads, and keeps the last list when the row is absent, as
-//! upstream kept its cache when a refresh failed.
+//! feature-flags document that `api::feature_flags::refresh_events` stores
+//! from `EVENTS_FEATURE_FLAGS_URL` (row `explore_api.feature_flags` app
+//! `events`), independently of `EXPLORER_MIRRORS_ENABLED`, on the same
+//! cadence, lazily from the event reads, and keeps the last list when the
+//! row is absent, as upstream kept its cache when a refresh failed.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use serde_json::Value;
 use sqlx::PgPool;
+
+use crate::auth::normalize_eth_address;
 
 /// `decentralandFoundationAddresses.ts:8`.
 pub const FOUNDATION_NAME: &str = "Decentraland Foundation";
@@ -58,7 +60,7 @@ impl Foundation {
         this.replace(
             addresses
                 .into_iter()
-                .filter_map(|a| normalize(a.as_ref()))
+                .filter_map(|a| normalize_eth_address(a.as_ref()))
                 .collect(),
         );
         this
@@ -80,7 +82,7 @@ impl Foundation {
         self.replace(addresses_in(document));
     }
 
-    /// Reads the mirrored `events` flags document once per
+    /// Reads the stored `events` flags document once per
     /// [`REFRESH_INTERVAL`]; a missing row or a database error keeps the
     /// current list (`:48-52`).
     pub async fn refresh_if_stale(&self, pool: &PgPool) {
@@ -110,14 +112,6 @@ impl Foundation {
     }
 }
 
-fn normalize(address: &str) -> Option<String> {
-    let address = address.trim().to_ascii_lowercase();
-    (address.len() == 42
-        && address.starts_with("0x")
-        && address[2..].bytes().all(|b| b.is_ascii_hexdigit()))
-    .then_some(address)
-}
-
 fn addresses_in(document: &Value) -> HashSet<String> {
     let variant = document.get("variants").and_then(|v| v.get(FLAG));
     let Some(variant) = variant else {
@@ -139,7 +133,7 @@ fn addresses_in(document: &Value) -> HashSet<String> {
     items
         .iter()
         .filter_map(Value::as_str)
-        .filter_map(normalize)
+        .filter_map(normalize_eth_address)
         .collect()
 }
 

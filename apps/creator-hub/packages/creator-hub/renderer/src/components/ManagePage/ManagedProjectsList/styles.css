@@ -1,0 +1,32 @@
+.ManagedProjectsList .LoadMoreContainer {
+  width: 100%;
+  flex-shrink: 0;
+  text-align: center;
+  margin-top: 16px;
+}
+
+/* A white button in every state, in the text font. */
+.ManagedProjectsList .LoadMoreContainer .LoadMore,
+.ManagedProjectsList .LoadMoreContainer .LoadMore:hover,
+.ManagedProjectsList .LoadMoreContainer .LoadMore:disabled {
+  height: 40px;
+  min-width: 64px;
+  background-color: var(--white);
+  color: var(--light-gray);
+  padding: 8px 22px;
+  font-family: var(--text-font);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+}
+
+/* A disabled button takes the disabled text colour of the dark theme. */
+.ManagedProjectsList .LoadMoreContainer .LoadMore:disabled {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.UnpublishConfirmationModal {
+  max-width: 500px;
+  margin: 0 auto;
+}

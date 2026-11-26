@@ -16,7 +16,7 @@
 // ui) skips this plugin entirely — the engine-side ui drives instead.
 //
 // Run (files only, no servers):
-//   cd react-web && npm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
+//   cd react-web && pnpm run bundle:native   # page -> assets/react-hud, scene -> assets/bridge-scene
 //   cargo run --release --features react-hud-cef --bin decentra-bevy -- --realm <realm>
 // The page loads from cef://localhost/react-hud (the bevy assets dir) and the bridge-scene loads
 // as a file realm from assets/bridge-scene. Override: REACT_HUD_URL (e.g. a vite dev server with
@@ -45,6 +45,7 @@ use cef_offscreen::prelude::{
 use common::rpc::{RpcResultReceiver, RpcResultSender, RpcStreamSender};
 use common::structs::{OutOfWorld, PrimaryUser};
 use input_manager::{InputPriorities, MouseInteractionComponent};
+use scene_runner::update_scene::synthetic_pointer::SyntheticPointer;
 use std::collections::BTreeMap;
 use std::time::Instant;
 use system_bridge::{SystemApi, SystemBridge};
@@ -64,6 +65,8 @@ pub struct ReactHudCefPlugin {
     /// --guest: injected into the page URL as ?guest=1, the page's own auto guest-login boot flag
     /// (parity with ?guest=1 on web).
     pub guest: bool,
+    /// --debug-panel: shows the corner launcher through the HUD's debugPanel query switch.
+    pub debug_panel: bool,
     /// --autopilot: injected as ?autopilot, which takes the page through its sign-in and
     /// destination without a person (always as the local guest; a stored login is never used).
     pub autopilot: bool,
@@ -75,6 +78,7 @@ struct ReactHudOptions {
     server: Option<String>,
     position: Option<String>,
     guest: bool,
+    debug_panel: bool,
     autopilot: bool,
 }
 
@@ -84,6 +88,7 @@ impl Plugin for ReactHudCefPlugin {
             server: self.server.clone(),
             position: self.position.clone(),
             guest: self.guest,
+            debug_panel: self.debug_panel,
             autopilot: self.autopilot,
         });
         // Needed to read engine fps for the perf overlay; may already be added by --log-fps/preview.
@@ -95,7 +100,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
-        diagnostics::register(app);
+        app.add_plugins(diagnostics::CefHudDiagnosticsPlugin);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -179,7 +184,7 @@ fn react_hud_url() -> Option<String> {
     if let Ok(url) = std::env::var("REACT_HUD_URL") {
         return Some(url);
     }
-    // Bundled page (npm run bundle:native → assets/react-hud) served over the cef:// scheme —
+    // Bundled page (pnpm run bundle:native → assets/react-hud) served over the cef:// scheme —
     // dev and prod run the same embedded build, no server. The path check mirrors the bevy
     // asset root: cwd for packaged runs, the checkout for `cargo run` from any directory.
     let mut roots = vec![
@@ -210,7 +215,7 @@ fn spawn_hud(
 ) {
     let Some(mut url) = react_hud_url() else {
         error!(
-            "[react-hud-cef] no HUD page: run `npm run bundle:native` in react-web (or set \
+            "[react-hud-cef] no HUD page: run `pnpm run bundle:native` in react-web (or set \
              REACT_HUD_URL); the app will run without a HUD"
         );
         return;
@@ -228,6 +233,10 @@ fn spawn_hud(
     if options.guest {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("guest=1");
+    }
+    if options.debug_panel {
+        url.push_str(if url.contains('?') { "&" } else { "?" });
+        url.push_str("debugPanel=1");
     }
     if options.autopilot {
         url.push_str(if url.contains('?') { "&" } else { "?" });
@@ -380,32 +389,6 @@ fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
-#[cfg(test)]
-mod hit_tests {
-    use super::*;
-
-    #[test]
-    fn samples_the_painted_pixel_at_fractional_dpi() {
-        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
-        // bottom-right device pixel covers the world.
-        let mut pixels = vec![0; 3 * 3 * 4];
-        pixels[35] = 255;
-        let image = Image::new(
-            Extent3d {
-                width: 3,
-                height: 3,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            pixels,
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
-        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
-    }
-}
-
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -418,8 +401,9 @@ struct MultiClick {
 // full document like on web — outside-clicks defocus text fields, :hover tracks the real cursor);
 // what the ENGINE receives is gated per-pixel — an opaque HUD pixel under the cursor blocks world
 // input (via Interaction on the fullscreen node). While pointer-locked (camera mouse-look) there
-// is no cursor and the engine keeps everything.
-#[allow(clippy::too_many_arguments)]
+// is no cursor and the engine keeps everything. While a synthetic aim drives the pointer
+// (`/hover_entity`, `/click_entity`), its presses are meant for the aimed entity, not for the page
+// under the OS cursor, so button presses and releases are not forwarded (motion still is).
 fn route_mouse(
     state: Option<ResMut<ReactHudCef>>,
     images: Res<Assets<Image>>,
@@ -431,6 +415,7 @@ fn route_mouse(
     time: Res<Time>,
     mut clicks: Local<MultiClick>,
     mut commands: Commands,
+    synthetic: Option<Res<SyntheticPointer>>,
 ) {
     let Some(mut state) = state else { return };
     let Ok(window) = windows.single() else {
@@ -473,7 +458,13 @@ fn route_mouse(
 
     let Some(cursor) = cursor else { return };
     browsers.send_mouse_move(&state.hud, buttons.get_pressed(), cursor, false);
-    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+    let aimed = synthetic.is_some_and(|synthetic| synthetic.0.is_some());
+    let routed: &[MouseButton] = if aimed {
+        &[]
+    } else {
+        &[MouseButton::Left, MouseButton::Right, MouseButton::Middle]
+    };
+    for &button in routed {
         if buttons.just_pressed(button) {
             let now = time.elapsed_secs_f64();
             // same button, quick succession, near-stationary -> next multi-click step
@@ -640,27 +631,10 @@ fn on_page_envelope(
     {
         let id = env.get("id").and_then(|i| i.as_u64()).unwrap_or_default();
         let line = env.get("line").and_then(|l| l.as_str()).unwrap_or("");
-        let mut parts = line.split_whitespace();
-        let Some(cmd) = parts.next() else {
-            console_reply(
-                &mut commands,
-                state.hud,
-                id,
-                Err("empty command".to_owned()),
-            );
-            return;
-        };
-        let cmd = if cmd.starts_with('/') {
-            cmd.to_owned()
-        } else {
-            format!("/{cmd}")
-        };
         let (sx, rx) = RpcResultSender::channel();
-        let _ = bridge.sender.send(SystemApi::ConsoleCommand(
-            cmd,
-            parts.map(String::from).collect(),
-            sx,
-        ));
+        let _ = bridge
+            .sender
+            .send(SystemApi::ConsoleLine(line.to_owned(), sx));
         state.pending_console.push((id, rx));
         return;
     }
@@ -668,15 +642,18 @@ fn on_page_envelope(
     // through one at a time.
     if env.get("to").and_then(|t| t.as_str()) == Some("engine") {
         match env.get("kind").and_then(|k| k.as_str()) {
-            Some("prefsLoad") => {
-                commands.trigger_targets(
-                    HostEmitEvent {
-                        id: "prefs".to_string(),
-                        payload: serde_json::to_string(&state.prefs).unwrap(),
-                    },
-                    state.hud,
-                );
-            }
+            Some("prefsLoad") => match serde_json::to_string(&state.prefs) {
+                Ok(payload) => {
+                    commands.trigger_targets(
+                        HostEmitEvent {
+                            id: "prefs".to_string(),
+                            payload,
+                        },
+                        state.hud,
+                    );
+                }
+                Err(e) => error!("[react-hud-cef] failed to serialize prefs: {e}"),
+            },
             Some("prefSet") => {
                 if let (Some(key), Some(value)) = (
                     env.get("key").and_then(|k| k.as_str()),
@@ -684,6 +661,14 @@ fn on_page_envelope(
                 ) {
                     state.prefs.insert(key.to_owned(), value.to_owned());
                     write_prefs(&state.prefs);
+                }
+            }
+            // The page names no path: only the folder the download handler saves to is opened.
+            Some("openDownloads") => {
+                if let Some(dir) = cef_offscreen::prelude::downloads_dir() {
+                    if let Err(e) = opener::open(&dir) {
+                        warn!("[react-hud-cef] could not open {}: {e}", dir.display());
+                    }
                 }
             }
             _ => {}
@@ -797,10 +782,17 @@ fn read_prefs() -> BTreeMap<String, String> {
 
 fn write_prefs(prefs: &BTreeMap<String, String>) {
     let Some(file) = prefs_file() else { return };
+    let json = match serde_json::to_string(prefs) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("[react-hud-cef] failed to serialize prefs: {e}");
+            return;
+        }
+    };
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
     }
-    if let Err(e) = std::fs::write(&file, serde_json::to_string(prefs).unwrap()) {
+    if let Err(e) = std::fs::write(&file, json) {
         warn!("[react-hud-cef] failed to write {file:?}: {e}");
     }
 }
@@ -993,5 +985,31 @@ fn push_text_focus(
             },
             state.hud,
         );
+    }
+}
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
     }
 }

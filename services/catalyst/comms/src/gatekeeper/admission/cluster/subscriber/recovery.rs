@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 use tokio::sync::Notify;
 
@@ -39,7 +40,6 @@ impl CleanupReceipts {
         !self
             .0
             .lock()
-            .unwrap()
             .iter()
             .any(|((_, w, _), receipt)| w == wallet && receipt.state != CleanupState::Confirmed)
     }
@@ -52,7 +52,7 @@ impl CleanupReceipts {
         now: u64,
         token_ttl_seconds: u64,
     ) -> Option<(CleanupReceipt, bool)> {
-        let mut receipts = self.0.lock().unwrap();
+        let mut receipts = self.0.lock();
         let key = (source.into(), wallet.into(), operation.takeover_id.clone());
         if let Some(receipt) = receipts.get(&key) {
             return (receipt.operation == *operation).then(|| (receipt.clone(), false));
@@ -101,11 +101,10 @@ impl CleanupReceipts {
     }
 
     pub(super) fn set(&self, source: &str, wallet: &str, id: &str, state: CleanupState) {
-        if let Some(receipt) =
-            self.0
-                .lock()
-                .unwrap()
-                .get_mut(&(source.into(), wallet.into(), id.into()))
+        if let Some(receipt) = self
+            .0
+            .lock()
+            .get_mut(&(source.into(), wallet.into(), id.into()))
         {
             receipt.state = state;
         }
@@ -114,7 +113,6 @@ impl CleanupReceipts {
     pub(super) fn reject(&self, source: &str, wallet: &str, id: &str) {
         self.0
             .lock()
-            .unwrap()
             .remove(&(source.into(), wallet.into(), id.into()));
     }
 
@@ -122,18 +120,15 @@ impl CleanupReceipts {
         &self,
         snapshot: &crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot,
     ) {
-        self.0
-            .lock()
-            .unwrap()
-            .retain(|(source, wallet, id), receipt| {
-                source != &snapshot.source_incarnation
-                    || wallet != &snapshot.wallet
-                    || receipt.state != CleanupState::Confirmed
-                    || snapshot
-                        .pending_takeovers
-                        .iter()
-                        .any(|operation| &operation.takeover_id == id)
-            });
+        self.0.lock().retain(|(source, wallet, id), receipt| {
+            source != &snapshot.source_incarnation
+                || wallet != &snapshot.wallet
+                || receipt.state != CleanupState::Confirmed
+                || snapshot
+                    .pending_takeovers
+                    .iter()
+                    .any(|operation| &operation.takeover_id == id)
+        });
     }
 }
 
@@ -155,7 +150,7 @@ impl Attempt {
 
 impl RecoveryOwners {
     pub(super) fn begin(self: &Arc<Self>, wallet: &str, session: &str) -> Option<RecoveryTicket> {
-        let mut owners = self.0.lock().unwrap();
+        let mut owners = self.0.lock();
         let sessions = owners.entry(wallet.into()).or_default();
         if sessions
             .get(session)
@@ -180,7 +175,7 @@ impl RecoveryOwners {
     }
 
     pub(super) fn invalidate(&self, wallet: &str) {
-        if let Some(sessions) = self.0.lock().unwrap().remove(wallet) {
+        if let Some(sessions) = self.0.lock().remove(wallet) {
             for attempt in sessions.into_values().filter_map(|a| a.upgrade()) {
                 attempt.cancel();
             }
@@ -188,7 +183,7 @@ impl RecoveryOwners {
     }
 
     pub(super) fn clear(&self) {
-        for (_, sessions) in self.0.lock().unwrap().drain() {
+        for (_, sessions) in self.0.lock().drain() {
             for attempt in sessions.into_values().filter_map(|a| a.upgrade()) {
                 attempt.cancel();
             }
@@ -221,7 +216,7 @@ impl RecoveryTicket {
 
 impl Drop for RecoveryTicket {
     fn drop(&mut self) {
-        let mut owners = self.owners.0.lock().unwrap();
+        let mut owners = self.owners.0.lock();
         let Some(sessions) = owners.get_mut(&self.wallet) else {
             return;
         };
@@ -291,7 +286,7 @@ mod tests {
                 .is_none()
         );
         assert!(!receipts.safe_to_mint("w0"));
-        assert_eq!(receipts.0.lock().unwrap().len(), RECEIPT_CAPACITY);
+        assert_eq!(receipts.0.lock().len(), RECEIPT_CAPACITY);
         receipts.set("source", "w0", "op", CleanupState::Confirmed);
         assert!(
             receipts
@@ -304,7 +299,7 @@ mod tests {
                 .is_some()
         );
         assert!(!receipts.safe_to_mint("w1"));
-        assert_eq!(receipts.0.lock().unwrap().len(), RECEIPT_CAPACITY);
+        assert_eq!(receipts.0.lock().len(), RECEIPT_CAPACITY);
     }
 
     #[test]
@@ -321,16 +316,19 @@ mod tests {
         assert!(!fresh);
         assert_eq!(first.cutoff, retry.cutoff);
         let mut snapshot = crate::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
             wallet: "wallet".into(),
             source_incarnation: "source".into(),
             pending_takeovers: vec![op],
             ..Default::default()
         };
         receipts.acknowledge(&snapshot);
-        assert_eq!(receipts.0.lock().unwrap().len(), 1);
+        assert_eq!(receipts.0.lock().len(), 1);
         snapshot.pending_takeovers.clear();
         receipts.acknowledge(&snapshot);
-        assert!(receipts.0.lock().unwrap().is_empty());
+        assert!(receipts.0.lock().is_empty());
     }
 
     #[test]
@@ -343,9 +341,9 @@ mod tests {
         assert!(owners.begin("wallet", "first").is_none());
         assert!(owners.begin("wallet", "second").is_none());
         drop(first);
-        assert_eq!(owners.0.lock().unwrap()["wallet"].len(), 1);
+        assert_eq!(owners.0.lock()["wallet"].len(), 1);
         drop(second);
-        assert!(owners.0.lock().unwrap().is_empty());
+        assert!(owners.0.lock().is_empty());
     }
 
     #[test]
@@ -358,10 +356,10 @@ mod tests {
         assert!(first.attempt.cancelled.load(Ordering::SeqCst));
         assert!(second.attempt.cancelled.load(Ordering::SeqCst));
         assert!(!other.attempt.cancelled.load(Ordering::SeqCst));
-        assert_eq!(owners.0.lock().unwrap().len(), 1);
+        assert_eq!(owners.0.lock().len(), 1);
         owners.clear();
         assert!(other.attempt.cancelled.load(Ordering::SeqCst));
-        assert!(owners.0.lock().unwrap().is_empty());
+        assert!(owners.0.lock().is_empty());
     }
 
     #[test]
@@ -373,6 +371,6 @@ mod tests {
         drop(first);
         assert!(owners.begin("wallet", "session").is_none());
         drop(second);
-        assert!(owners.0.lock().unwrap().is_empty());
+        assert!(owners.0.lock().is_empty());
     }
 }

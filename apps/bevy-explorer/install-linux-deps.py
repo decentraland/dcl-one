@@ -4,8 +4,19 @@ import argparse
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import time
+
+FALLBACK_MIRROR = 'https://mirrors.edge.kernel.org/ubuntu/\tpriority:0\n'
+
+
+def resolves(host):
+    try:
+        socket.getaddrinfo(host, 443)
+    except OSError:
+        return False
+    return True
 
 
 def configure(apt_root):
@@ -24,6 +35,12 @@ def configure(apt_root):
         if updated != original:
             path.write_text(updated)
             print(f'Using the Ubuntu archive in {path.name}', flush=True)
+    mirrors = apt_root / 'apt-mirrors.txt'
+    if mirrors.is_file() and not resolves('archive.ubuntu.com'):
+        listed = mirrors.read_text()
+        if FALLBACK_MIRROR not in listed:
+            mirrors.write_text(FALLBACK_MIRROR + listed)
+            print('archive.ubuntu.com does not resolve; trying mirrors.edge.kernel.org first', flush=True)
     config = apt_root / 'apt.conf.d/80-bevy-ci-network'
     config.write_text('Acquire::Retries "3";\n'
                       'Acquire::http::Timeout "30";\n'
@@ -32,7 +49,8 @@ def configure(apt_root):
 
 def install(packages, apt_root=Path('/etc/apt')):
     configure(apt_root)
-    env = {**os.environ, 'DEBIAN_FRONTEND': 'noninteractive'}
+    # The runner is disposable: needrestart's scan and service restarts after the install only use time.
+    env = {**os.environ, 'DEBIAN_FRONTEND': 'noninteractive', 'NEEDRESTART_SUSPEND': '1'}
     started = time.monotonic()
     # Do not proceed with stale indexes when any repository update fails.
     subprocess.run(['apt-get', '-o', 'APT::Update::Error-Mode=any', 'update'],

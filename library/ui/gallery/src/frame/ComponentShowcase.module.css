@@ -1,0 +1,74 @@
+/* One track the width of the viewport at every level, as on a page's own canvas: an example's scroller or wrapping
+   row fits the page instead of widening it. */
+.showcase,
+.group,
+.page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.showcase {
+  gap: var(--dcl-space-48);
+  padding: var(--dcl-space-24) var(--dcl-space-16);
+}
+
+.group {
+  gap: var(--dcl-space-32);
+}
+
+.groupTitle {
+  margin: 0;
+  padding-block-end: var(--dcl-space-8);
+  border-block-end: 1px solid var(--dcl-border-default);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dcl-text-secondary);
+}
+
+.page {
+  gap: var(--dcl-space-16);
+}
+
+.pageHeader {
+  display: grid;
+  gap: var(--dcl-space-4);
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: 20px;
+}
+
+.pageTitle a {
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.pageTitle a:hover {
+  text-decoration: underline;
+}
+
+.pageTitle a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: var(--dcl-radius-xs);
+}
+
+.pageSummary,
+.empty {
+  margin: 0;
+  font-size: 14px;
+  color: var(--dcl-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* A page's own canvas spans the Showcase's padding, so its viewport is the chosen width: the width its media queries
+   read on the page itself. The nested canvas pads its examples as every canvas does. */
+.frame {
+  display: block;
+  box-sizing: border-box;
+  inline-size: calc(100% + 2 * var(--dcl-space-16));
+  margin-inline: calc(-1 * var(--dcl-space-16));
+  border: 0;
+}

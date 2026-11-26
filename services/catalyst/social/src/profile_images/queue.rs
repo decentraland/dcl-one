@@ -4,10 +4,11 @@
 //! database did not hold.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use parking_lot::Mutex;
 use sqlx::PgPool;
 use tokio::sync::{Semaphore, broadcast};
 
@@ -40,19 +41,18 @@ impl MissMemo {
     fn hit(&self, entity: &str) -> bool {
         self.map
             .lock()
-            .ok()
-            .and_then(|m| m.get(entity).copied())
+            .get(entity)
+            .copied()
             .is_some_and(|at| at.elapsed() < NOT_FOUND_TTL)
     }
 
     fn record(&self, entity: &str) {
-        if let Ok(mut m) = self.map.lock() {
-            if m.len() >= NOT_FOUND_MAX {
-                m.retain(|_, at| at.elapsed() < NOT_FOUND_TTL);
-            }
-            if m.len() < NOT_FOUND_MAX {
-                m.insert(entity.to_string(), Instant::now());
-            }
+        let mut m = self.map.lock();
+        if m.len() >= NOT_FOUND_MAX {
+            m.retain(|_, at| at.elapsed() < NOT_FOUND_TTL);
+        }
+        if m.len() < NOT_FOUND_MAX {
+            m.insert(entity.to_string(), Instant::now());
         }
     }
 }
@@ -106,7 +106,7 @@ impl RenderQueue {
         }
 
         let (leader, mut rx, tx) = {
-            let mut map = self.inner.inflight.lock().unwrap();
+            let mut map = self.inner.inflight.lock();
             if let Some(existing) = map.get(entity) {
                 (false, existing.subscribe(), existing.clone())
             } else {
@@ -183,26 +183,7 @@ impl RenderQueue {
                 );
                 match (body, face) {
                     (Ok(b), Ok(f)) => {
-                        let body = Bytes::from(b);
-                        let face = Bytes::from(f);
-                        let (w1, w2) = tokio::join!(
-                            self.inner.cache.put(
-                                entity,
-                                ImageKind::Body,
-                                ImageSource::Render,
-                                &body
-                            ),
-                            self.inner.cache.put(
-                                entity,
-                                ImageKind::Face,
-                                ImageSource::Render,
-                                &face
-                            )
-                        );
-                        match (w1, w2) {
-                            (Ok(()), Ok(())) => RenderOutcome::Rendered { body, face },
-                            _ => RenderOutcome::Failed("cache write failed".into()),
-                        }
+                        keep_render(&self.inner.cache, entity, Bytes::from(b), Bytes::from(f)).await
                     }
                     _ => RenderOutcome::Failed("rendered png unreadable".into()),
                 }
@@ -222,6 +203,19 @@ impl RenderQueue {
     }
 }
 
+/// Caches a finished render and answers it. As the origin path, a render the
+/// cache could not keep (a store-lock timeout included) is still served.
+async fn keep_render(cache: &ImageCache, entity: &str, body: Bytes, face: Bytes) -> RenderOutcome {
+    let (w1, w2) = tokio::join!(
+        cache.put(entity, ImageKind::Body, ImageSource::Render, &body),
+        cache.put(entity, ImageKind::Face, ImageSource::Render, &face)
+    );
+    if let Err(e) = w1.and(w2) {
+        tracing::warn!(entity, error = %e, "a rendered profile image was not cached");
+    }
+    RenderOutcome::Rendered { body, face }
+}
+
 struct InflightGuard {
     inner: Arc<Inner>,
     entity: String,
@@ -232,11 +226,7 @@ struct InflightGuard {
 impl Drop for InflightGuard {
     fn drop(&mut self) {
         {
-            let mut map = self
-                .inner
-                .inflight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut map = self.inner.inflight.lock();
             map.remove(&self.entity);
         }
         let outcome = self
@@ -251,6 +241,34 @@ impl Drop for InflightGuard {
 mod tests {
     use super::*;
 
+    /// A render the cache cannot keep (the collector holds the store lock) is still served.
+    #[tokio::test]
+    async fn a_render_the_cache_cannot_keep_is_still_served() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("render-keep-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let cache = ImageCache::new(pool.clone(), storage, 60, None);
+        let collector = crate::storage::gc::lock_store_exclusive(&pool)
+            .await
+            .unwrap();
+        let outcome = keep_render(
+            &cache,
+            "entity",
+            Bytes::from_static(b"body"),
+            Bytes::from_static(b"face"),
+        )
+        .await;
+        collector.rollback().await.unwrap();
+        assert!(
+            matches!(&outcome, RenderOutcome::Rendered { body, face } if body == "body" && face == "face"),
+            "{outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn miss_memo_remembers_recent_misses_only() {
         let memo = MissMemo::new();
@@ -260,7 +278,6 @@ mod tests {
         assert!(!memo.hit("b"));
         memo.map
             .lock()
-            .unwrap()
             .insert("old".into(), Instant::now() - NOT_FOUND_TTL * 2);
         assert!(!memo.hit("old"));
     }

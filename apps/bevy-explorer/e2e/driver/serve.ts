@@ -64,6 +64,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
+  '.webm': 'video/webm',
   '.bin': 'application/octet-stream',
   '.txt': 'text/plain; charset=utf-8',
   '.wat': 'text/plain; charset=utf-8',
@@ -172,20 +173,70 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
   pipeline(createReadStream(file), response, () => {})
 }
 
-/** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
+/** Serve `root` on loopback, at `http://localhost:<port>/` (port 0 picks a free one). The page's
+ *  host is `localhost`, not `127.0.0.1`: the services' CORS allowlists (events, places) admit
+ *  `http://localhost:<port>` to the preflight of a signed read, and not `127.0.0.1`. It listens on
+ *  both loopback addresses `localhost` can resolve to, `127.0.0.1` and `[::1]`, so the browser
+ *  cannot reach another process on the other one. */
 export async function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
   // the origin the realm document names: known once the server listens, before any request comes
   let origin = ''
-  const server: Server = createServer((request, response) => {
+  const handler = (request: IncomingMessage, response: ServerResponse): void => {
     serveFile(absoluteRoot, () => origin, request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500)
       response.end()
     })
+  }
+  const listening = await listenLocalhost(() => createServer(handler), port)
+  const served = { ...listening, url: `http://localhost:${listening.port}/` }
+  origin = served.url.replace(/\/$/, '')
+  return served
+}
+
+/** How many free ports `listenLocalhost` tries when the one IPv4 picked is taken on `[::1]`. */
+const LOCALHOST_PORT_TRIES = 5
+
+/** Listen on `127.0.0.1` and on `[::1]` at one port. A host with no IPv6 loopback listens on IPv4
+ *  only: nothing else can be reached at `[::1]` there. A `[::1]` port that is taken fails a fixed
+ *  port, naming it, and a picked one (port 0) is picked again. */
+export async function listenLocalhost(make: () => Server, port: number): Promise<StaticServer> {
+  for (let attempt = 1; ; attempt++) {
+    const v4 = await listen(make(), port)
+    const v6 = make()
+    const outcome = await listenOn(v6, v4.port, '::1')
+    if (outcome === 'listening') {
+      return {
+        ...v4,
+        close: async () => {
+          await Promise.all([v4.close(), closeServer(v6)])
+        }
+      }
+    }
+    if (outcome === 'unavailable') return v4
+    await v4.close()
+    if (port !== 0 || attempt >= LOCALHOST_PORT_TRIES) {
+      throw new Error(`port ${v4.port} is taken on [::1] by another process, which the browser would reach at localhost:${v4.port}`)
+    }
+  }
+}
+
+function listenOn(server: Server, port: number, host: string): Promise<'listening' | 'unavailable' | 'taken'> {
+  return new Promise((resolve, reject) => {
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') resolve('taken')
+      else if (error.code === 'EADDRNOTAVAIL' || error.code === 'EAFNOSUPPORT') resolve('unavailable')
+      else reject(error)
+    })
+    server.listen(port, host, () => resolve('listening'))
   })
-  const listening = await listen(server, port)
-  origin = listening.url.replace(/\/$/, '')
-  return listening
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((done) => {
+    server.closeAllConnections()
+    server.close(() => done())
+  })
 }
 
 export function listen(server: Server, port: number): Promise<StaticServer> {
@@ -197,11 +248,7 @@ export function listen(server: Server, port: number): Promise<StaticServer> {
       resolve({
         url: `http://127.0.0.1:${bound}/`,
         port: bound,
-        close: () =>
-          new Promise<void>((done) => {
-            server.closeAllConnections()
-            server.close(() => done())
-          })
+        close: () => closeServer(server)
       })
     })
   })

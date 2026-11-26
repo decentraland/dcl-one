@@ -9,8 +9,10 @@
 //! unavailable envelope through [`require_collections`] /
 //! [`require_marketplace`], never an empty page.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
@@ -19,6 +21,56 @@ use crate::shared::cache::TtlMap;
 
 use super::graph::{self, Network};
 use super::{MarketplaceState, Source, unavailable};
+
+/// Index snapshot SQL errors use the statement-bound 503 or a sanitized 500.
+pub(super) fn index_read_error(e: sqlx::Error) -> Response {
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        super::wire::ApiError::from(e).into_response()
+    }
+}
+
+pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
+    match e {
+        super::owned_items::ReadError::Db(e) => index_read_error(e),
+        super::owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
+}
+
+/// Require the LAND publication for the served registries on the book's snapshot.
+pub(super) async fn require_land_on(
+    conn: &mut sqlx::PgConnection,
+    state: &MarketplaceState,
+    chain_id: i64,
+) -> Result<(), Response> {
+    let unavailable = super::nft_reads::land_unavailable;
+    let served = super::nft_index::deployments::Deployments::for_chain(
+        super::chain_walk::ChainNet::Ethereum,
+        chain_id,
+    )
+    .and_then(|deployments| deployments.land);
+    let land = state
+        .land_network()
+        .filter(|land| Some(*land) == served)
+        .ok_or_else(unavailable)?;
+    let observed = crate::land_authz::indexer::cursor_observed(conn, land.network)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
+            unavailable()
+        })?;
+    if !observed.is_some_and(|observed| {
+        crate::land_authz::indexer::observation_ready(
+            &observed,
+            land.land_registry,
+            land.estate_registry,
+        )
+    }) {
+        return Err(unavailable());
+    }
+    Ok(())
+}
 
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +102,41 @@ pub struct Caches {
     m5: TtlMap<String, Arc<Value>>,
     m10: TtlMap<String, Arc<Value>>,
     m15: TtlMap<String, Arc<Value>>,
+    /// The keys a background read is refreshing, or whose last refresh failed
+    /// ([`Caches::begin_refresh`]).
+    refreshing: parking_lot::Mutex<HashMap<String, Refresh>>,
+    /// The next [`ClaimId`] a refresh is given.
+    next_claim: AtomicU64,
+    /// The last good answer of the keys served while they refresh ([`Caches::keep`]), apart from
+    /// the bounded maps, whose eviction would drop an expired one first.
+    kept: parking_lot::Mutex<HashMap<String, Kept>>,
 }
+
+/// A kept answer: when it was read, plus the age a test adds to it ([`Caches::backdate_kept`]),
+/// which never moves an `Instant` back past the clock's start.
+struct Kept {
+    at: Instant,
+    aged: Duration,
+    value: Arc<Value>,
+}
+
+impl Kept {
+    fn age(&self) -> Duration {
+        self.at.elapsed() + self.aged
+    }
+}
+
+/// A key's background refresh: running under the claim it was given, or failed at an instant.
+enum Refresh {
+    Running(ClaimId),
+    FailedAt(Instant),
+}
+
+/// One claim on a key's refresh ([`Caches::begin_refresh`]). Its release acts only while the key
+/// still runs under it, so a claim that outlives a reset ([`Caches::clear`]) never releases or
+/// fails a newer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClaimId(u64);
 
 impl Default for Caches {
     fn default() -> Self {
@@ -60,6 +146,9 @@ impl Default for Caches {
             m5: TtlMap::bounded(Ttl::M5.duration(), MAX_ENTRIES),
             m10: TtlMap::bounded(Ttl::M10.duration(), MAX_ENTRIES),
             m15: TtlMap::bounded(Ttl::M15.duration(), MAX_ENTRIES),
+            refreshing: parking_lot::Mutex::default(),
+            next_claim: AtomicU64::new(0),
+            kept: parking_lot::Mutex::default(),
         }
     }
 }
@@ -75,11 +164,138 @@ impl Caches {
         }
     }
 
+    /// `key`'s answer under `ttl` while it is fresh.
+    pub fn fresh(&self, ttl: Ttl, key: &str) -> Option<Arc<Value>> {
+        self.map(ttl).get_fresh(&key.to_string())
+    }
+
+    /// Keeps `value` as `key`'s last good answer, for [`Caches::kept_within`], aged from the read
+    /// that produced it: keeping the very answer already kept (a cache hit handing it out again)
+    /// leaves its age alone, and only a new answer starts it over.
+    pub fn keep(&self, key: &str, value: Arc<Value>) {
+        let mut kept = self.kept.lock();
+        if kept
+            .get(key)
+            .is_some_and(|held| Arc::ptr_eq(&held.value, &value))
+        {
+            return;
+        }
+        let fresh = Kept {
+            at: Instant::now(),
+            aged: Duration::ZERO,
+            value,
+        };
+        kept.insert(key.to_string(), fresh);
+    }
+
+    /// Ages `key`'s kept answer by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_kept(&self, key: &str, by: Duration) {
+        if let Some(held) = self.kept.lock().get_mut(key) {
+            held.aged += by;
+        }
+    }
+
+    /// `key`'s last good answer while it was kept less than `max_age` ago.
+    pub fn kept_within(&self, key: &str, max_age: Duration) -> Option<Arc<Value>> {
+        self.kept
+            .lock()
+            .get(key)
+            .filter(|held| held.age() < max_age)
+            .map(|held| Arc::clone(&held.value))
+    }
+
+    /// Claims `key`'s background refresh: the claim for the one caller that is to run it and
+    /// release it with [`Caches::end_refresh`]. None while another runs, nor within `backoff` of a
+    /// failed one, so a failing source is retried at most once per `backoff`.
+    pub fn begin_refresh(&self, key: &str, backoff: Duration) -> Option<ClaimId> {
+        let mut claims = self.refreshing.lock();
+        let blocked = match claims.get(key) {
+            Some(Refresh::Running(_)) => true,
+            Some(Refresh::FailedAt(at)) => at.elapsed() < backoff,
+            None => false,
+        };
+        if blocked {
+            return None;
+        }
+        let claim = ClaimId(self.next_claim.fetch_add(1, Ordering::Relaxed));
+        claims.insert(key.to_string(), Refresh::Running(claim));
+        Some(claim)
+    }
+
+    /// Releases `claim` on `key`: cleared when the refresh succeeded, else marked failed now. A
+    /// claim the key no longer runs under (a reset dropped it, a newer one took the key) changes
+    /// nothing.
+    pub fn end_refresh(&self, key: &str, claim: ClaimId, succeeded: bool) {
+        let mut claims = self.refreshing.lock();
+        if !matches!(claims.get(key), Some(Refresh::Running(held)) if *held == claim) {
+            return;
+        }
+        if succeeded {
+            claims.remove(key);
+        } else {
+            claims.insert(key.to_string(), Refresh::FailedAt(Instant::now()));
+        }
+    }
+
+    /// Drops `key`'s answer under `ttl`, as an eviction would, without moving the clock (a
+    /// backdate of minutes can pass the clock's start on a host just booted).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget(&self, ttl: Ttl, key: &str) {
+        self.map(ttl).remove(&key.to_string());
+    }
+
+    /// Whether `key` holds a fresh answer under `ttl`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn holds(&self, ttl: Ttl, key: &str) -> bool {
+        self.map(ttl).get_fresh(&key.to_string()).is_some()
+    }
+
+    /// Drops every answer under `ttl`, as their expiry would.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_all(&self, ttl: Ttl) {
+        self.map(ttl).clear();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear(&self) {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {
             m.clear();
         }
+        self.refreshing.lock().clear();
+        self.kept.lock().clear();
+    }
+}
+
+/// A claimed refresh ([`Caches::begin_refresh`]), released when dropped however the refresh
+/// ended, a panic included: as failed unless [`RefreshClaim::succeeded`] was called.
+pub struct RefreshClaim {
+    state: super::SharedState,
+    key: String,
+    claim: ClaimId,
+    succeeded: bool,
+}
+
+impl RefreshClaim {
+    pub fn new(state: super::SharedState, key: String, claim: ClaimId) -> Self {
+        Self {
+            state,
+            key,
+            claim,
+            succeeded: false,
+        }
+    }
+
+    pub fn succeeded(&mut self) {
+        self.succeeded = true;
+    }
+}
+
+impl Drop for RefreshClaim {
+    fn drop(&mut self) {
+        self.state
+            .readers
+            .end_refresh(&self.key, self.claim, self.succeeded);
     }
 }
 
@@ -103,10 +319,48 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
 {
+    memoized(state, ttl, key, fetch).await
+}
+
+/// [`cached`] for a fetch whose failure is the route's own answer; a failure is not kept.
+pub async fn memoized<F, Fut, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    fetch: F,
+) -> Result<Arc<Value>, E>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
+{
     state
         .readers
         .map(ttl)
         .get_or_fetch(key, || async { fetch().await.map(Arc::new) })
+        .await
+}
+
+/// [`memoized`] for a fetch that reads through what the caller holds (its
+/// catalogue read), which only the fetching request keeps
+/// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]): a request that
+/// waits on another's fetch drops it first. `Ok(None)`: that fetch failed
+/// and the caller, its read gone, opens a new one and asks again.
+pub async fn memoized_holding<G, F, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    held: &mut Option<G>,
+    fetch: F,
+) -> Result<Option<Arc<Value>>, E>
+where
+    F: AsyncFnOnce(&mut G) -> Result<Value, E>,
+{
+    state
+        .readers
+        .map(ttl)
+        .get_or_fetch_holding(key, held, async move |g: &mut G| {
+            fetch(g).await.map(Arc::new)
+        })
         .await
 }
 
@@ -463,8 +717,18 @@ pub async fn top_rows(
     p: &GraphPage<'_>,
     want: i64,
 ) -> Result<Vec<Value>, String> {
+    read_top(state, network, url, ttl, p, want.min(DEEP_WINDOW)).await
+}
+
+async fn read_top(
+    state: &MarketplaceState,
+    network: Network,
+    url: &str,
+    ttl: Ttl,
+    p: &GraphPage<'_>,
+    want: i64,
+) -> Result<Vec<Value>, String> {
     let size = super::graph::THE_GRAPH_PAGE_SIZE;
-    let want = want.min(DEEP_WINDOW);
     let mut out: Vec<Value> = Vec::new();
     let mut skip = 0;
     let mut exhausted = false;
@@ -674,4 +938,99 @@ pub fn reader_window(
 /// The unix milliseconds the readers compare an expiry against.
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    /// One refresh runs at a time; a success clears its claim, a failure holds the next one off
+    /// for the backoff, and a refresh that panics still releases its claim, as failed.
+    #[tokio::test]
+    async fn a_refresh_claim_is_released_however_the_refresh_ends() {
+        let state = crate::market::tests::support::state_with_empty_readers(None).await;
+        let readers = &state.readers;
+        const KEY: &str = "refresh-claim";
+        let hour = Duration::from_secs(3600);
+        let first = readers.begin_refresh(KEY, hour).expect("claimed");
+        assert!(
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
+            "one refresh at a time"
+        );
+        readers.end_refresh(KEY, first, true);
+        let second = readers
+            .begin_refresh(KEY, hour)
+            .expect("a success clears the claim");
+        readers.end_refresh(KEY, second, false);
+        assert!(
+            readers.begin_refresh(KEY, hour).is_none(),
+            "a failure holds the next one off"
+        );
+        let third = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
+        let held = Arc::clone(&state);
+        let refresh = tokio::spawn(async move {
+            let _claim = RefreshClaim::new(held, KEY.to_string(), third);
+            panic!("a row that does not decode");
+        });
+        assert!(refresh.await.is_err());
+        assert!(
+            readers.begin_refresh(KEY, hour).is_none(),
+            "released as failed, not held for good"
+        );
+        assert!(readers.begin_refresh(KEY, Duration::ZERO).is_some());
+    }
+
+    /// A claim that outlives a reset releases nothing: whether its refresh ends well or not, the
+    /// newer claim keeps the key, so two reads never run at once and a healthy one is not failed.
+    #[tokio::test]
+    async fn a_claim_outliving_a_reset_leaves_the_newer_claim_alone() {
+        let state = crate::market::tests::support::state_with_empty_readers(None).await;
+        let readers = &state.readers;
+        const KEY: &str = "refresh-reset";
+        let old = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
+        readers.clear();
+        let new = readers
+            .begin_refresh(KEY, Duration::ZERO)
+            .expect("a reset frees the key");
+        readers.end_refresh(KEY, old, false);
+        assert!(
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
+            "the old claim's failure did not release the newer one"
+        );
+        readers.end_refresh(KEY, old, true);
+        assert!(
+            readers.begin_refresh(KEY, Duration::ZERO).is_none(),
+            "nor did its success"
+        );
+        readers.end_refresh(KEY, new, false);
+        assert!(
+            readers
+                .begin_refresh(KEY, Duration::from_secs(3600))
+                .is_none(),
+            "the newer claim's own failure still backs off"
+        );
+    }
+
+    /// A kept answer ages from the read that produced it: handing the same answer out again (a
+    /// cache hit) does not extend its hour, and only a new read starts it over.
+    #[test]
+    fn a_kept_answer_ages_from_its_read_not_from_its_reuse() {
+        let caches = Caches::default();
+        const KEY: &str = "kept";
+        let hour = Duration::from_secs(3600);
+        let read = Arc::new(json!(["read at 12:00"]));
+        caches.keep(KEY, Arc::clone(&read));
+        caches.backdate_kept(KEY, Duration::from_secs(50 * 60));
+        caches.keep(KEY, Arc::clone(&read));
+        assert_eq!(caches.kept_within(KEY, hour), Some(Arc::clone(&read)));
+        caches.backdate_kept(KEY, Duration::from_secs(11 * 60));
+        assert_eq!(
+            caches.kept_within(KEY, hour),
+            None,
+            "reusing the read at 12:50 did not extend it past 13:00"
+        );
+        let again = Arc::new(json!(["read at 13:01"]));
+        caches.keep(KEY, Arc::clone(&again));
+        assert_eq!(caches.kept_within(KEY, hour), Some(again));
+    }
 }

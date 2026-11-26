@@ -1,13 +1,14 @@
+import type { MapResult } from '../../packages/@dcl/ecs/src'
 import {
   cyclicParentingChecker,
   getComponentEntityTree,
   getEntitiesWithParent,
   getWorldPosition,
   getWorldRotation,
-  MapResult,
   RESERVED_STATIC_ENTITIES
 } from '../../packages/@dcl/ecs/src'
-import { Engine, Entity, LastWriteWinElementSetComponentDefinition } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity, LastWriteWinElementSetComponentDefinition } from '../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../packages/@dcl/ecs/src/engine'
 import { createRendererTransport } from '../../packages/@dcl/sdk/src/internal/transports/rendererTransport'
 import { Schemas } from '../../packages/@dcl/ecs/src/schemas'
 import { components } from '../../packages/@dcl/ecs/src'

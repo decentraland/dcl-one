@@ -7,7 +7,6 @@ use bevy::{
     app::AppExit,
     prelude::*,
     tasks::{IoTaskPool, Task},
-    window::PrimaryWindow,
 };
 use bevy_dui::{DuiCommandsExt, DuiEntityCommandsExt, DuiProps, DuiRegistry};
 use common::{
@@ -16,10 +15,10 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
     structs::{
-        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin, SystemAudio,
-        WorldHold, ZOrder, TERMS_VERSION,
+        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin,
+        RequestClientWindowFocus, SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
     },
-    util::{TaskCompat, TaskExt},
+    util::{AsH160, TaskCompat, TaskExt},
 };
 use comms::profile::{
     get_default_look, get_remote_profile, CurrentUserProfile, UserProfile, DEFAULT_LOOKS,
@@ -46,7 +45,7 @@ pub struct LoginPlugin;
 
 impl Plugin for LoginPlugin {
     fn build(&self, app: &mut App) {
-        client_login::register(app);
+        app.add_plugins(client_login::ClientLoginPlugin);
         app.add_event::<LoginType>().add_systems(
             Update,
             (
@@ -65,7 +64,6 @@ enum LoginType {
     Cancel,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn login(
     mut commands: Commands,
     wallet: Res<Wallet>,
@@ -263,7 +261,6 @@ fn login(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_profile_for_realm(
     realm: Res<CurrentRealm>,
     wallet: Res<Wallet>,
@@ -273,17 +270,23 @@ fn update_profile_for_realm(
 ) {
     if realm.is_changed() && !wallet.is_guest() {
         if let Some(address) = wallet.address() {
-            *task = Some(IoTaskPool::get().spawn_compat(get_remote_profile(
-                address,
-                ipfas.ipfs().clone(),
-                None,
-            )));
+            *task = Some(
+                IoTaskPool::get().spawn_compat(get_remote_profile(address, ipfas.ipfs().clone())),
+            );
         }
     }
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
+            Some(Ok(Some(mut profile))) => {
+                if wallet
+                    .address()
+                    .is_some_and(|address| profile.content.eth_address.as_h160() == Some(address))
+                {
+                    mark_account(&mut profile, wallet.is_guest_account());
+                    current_profile.adopt_server_profile(profile);
+                }
+            }
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
@@ -359,7 +362,6 @@ async fn get_profile_with_retry(
     address: Address,
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
-    endpoint: Option<String>,
 ) -> Result<Option<UserProfile>, String> {
     const ATTEMPTS: u32 = 5;
     let mut last_error = String::default();
@@ -367,7 +369,7 @@ async fn get_profile_with_retry(
         if attempt > 0 {
             async_std::task::sleep(std::time::Duration::from_secs(2)).await;
         }
-        match get_remote_profile(address, ipfs.clone(), endpoint.clone()).await {
+        match get_remote_profile(address, ipfs.clone()).await {
             Ok(maybe_profile) => return Ok(maybe_profile),
             Err(e) => last_error = e.to_string(),
         }
@@ -392,9 +394,8 @@ async fn login_profile(
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
     pick: Option<NewAccountPick>,
-    endpoint: Option<String>,
 ) -> Result<LoginProfile, String> {
-    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error, endpoint).await? {
+    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error).await? {
         Some(profile) => Ok(LoginProfile::Deployed(profile)),
         None => Ok(LoginProfile::New(
             new_account_profile(root_address, ipfs, pick).await,
@@ -402,11 +403,19 @@ async fn login_profile(
     }
 }
 
+/// Records in the profile whether the account is a guest's, whatever an earlier deploy said: a
+/// guest account has not connected web3. True when a guest account's saved copy said otherwise
+/// (one made before the flag was kept), so the login saves it again and other clients see a guest.
+fn mark_account(profile: &mut UserProfile, guest_account: bool) -> bool {
+    let resave = guest_account && profile.content.has_connected_web3 != Some(false);
+    profile.content.has_connected_web3 = Some(!guest_account);
+    resave
+}
+
 fn new_profile(address: Address, ipfs: &IpfsIo) -> UserProfile {
     UserProfile {
         version: 0,
         content: SerializedProfile {
-            has_connected_web3: Some(true),
             eth_address: format!("{address:#x}"),
             user_id: Some(format!("{address:#x}")),
             ..Default::default()
@@ -565,11 +574,16 @@ fn remember_login(
     }
 }
 
+/// A person signing out: the stored login goes, as unity-explorer's logout clears its identity. The
+/// benchmark guest's root key stays: it is not a sign-in.
+fn forget_login(config: &mut AppConfig) -> bool {
+    config.previous_login.take().is_some()
+}
+
 fn account_locked(wallet: &Wallet, world_hold: &Option<Res<WorldHold>>) -> bool {
     world_hold.is_none() && wallet.address().is_some()
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn process_login_bridge(
     mut e: EventReader<SystemApi>,
     ipfas: IpfsAssetServer,
@@ -594,7 +608,7 @@ fn process_login_bridge(
     mut segment_config: ResMut<SegmentConfig>,
     mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
-    mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut commands: Commands,
     mut config: ResMut<AppConfig>,
     world_hold: Option<Res<WorldHold>>,
     preview: Res<PreviewMode>,
@@ -626,7 +640,7 @@ fn process_login_bridge(
             // the account can only change while the world is held (the lobby): once in
             // world, comms and scenes are bound to the wallet that entered
             SystemApi::LoginPrevious(_, sender)
-            | SystemApi::LoginWithIdentity(_, _, _, _, _, sender)
+            | SystemApi::LoginWithIdentity(_, _, _, _, sender)
                 if account_locked(&wallet, &world_hold) =>
             {
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
@@ -650,7 +664,9 @@ fn process_login_bridge(
             SystemApi::LoginLocalGuest(sender) if autopilot.is_none() => {
                 sender.send(Err(LOCAL_GUEST_AUTOPILOT_ONLY.to_owned()));
             }
-            SystemApi::LoginGuest | SystemApi::Logout if account_locked(&wallet, &world_hold) => {
+            SystemApi::LoginGuest | SystemApi::Logout | SystemApi::ForgetLogin
+                if account_locked(&wallet, &world_hold) =>
+            {
                 warn!("{ACCOUNT_LOCKED}");
             }
             SystemApi::LoginPrevious(default_on_error, rpc_result_sender) => {
@@ -670,8 +686,7 @@ fn process_login_bridge(
                     } = previous_login;
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -679,8 +694,19 @@ fn process_login_bridge(
                             }
                         };
 
-                    let local_wallet =
-                        PrivateKeySigner::from_bytes(&B256::from_slice(&ephemeral_key)).unwrap();
+                    // the stored key must be exactly 32 bytes
+                    let local_wallet = match B256::try_from(ephemeral_key.as_slice())
+                        .map_err(|e| e.to_string())
+                        .and_then(|key| {
+                            PrivateKeySigner::from_bytes(&key).map_err(|e| e.to_string())
+                        }) {
+                        Ok(local_wallet) => local_wallet,
+                        Err(e) => {
+                            rpc_result_sender
+                                .send(Err(format!("Previous login has an invalid key: {e}")));
+                            return Err(());
+                        }
+                    };
 
                     Ok((
                         previous_login.root_address,
@@ -719,8 +745,7 @@ fn process_login_bridge(
                         };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 result_sender.send(Err(e));
@@ -743,7 +768,6 @@ fn process_login_bridge(
                 default_on_error,
                 guest_account,
                 pick,
-                profiles,
                 rpc_result_sender,
             ) => {
                 // The web page already holds a signed AuthIdentity (read from localStorage,
@@ -760,9 +784,7 @@ fn process_login_bridge(
                     };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, pick, profiles)
-                            .await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, pick).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -808,7 +830,7 @@ fn process_login_bridge(
                             return Err(());
                         }
                     };
-                    let profile = match login_profile(root_address, ipfs, false, None, None).await {
+                    let profile = match login_profile(root_address, ipfs, false, None).await {
                         Ok(profile) => profile,
                         Err(e) => {
                             rpc_result_sender.send(Err(e));
@@ -841,7 +863,7 @@ fn process_login_bridge(
                 });
                 current_profile.is_deployed = true;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
             }
             SystemApi::LoginCancel => {
                 *login_task = None;
@@ -853,7 +875,10 @@ fn process_login_bridge(
                 segment_config.reset_identity();
                 current_profile.profile = None;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
+            }
+            SystemApi::ForgetLogin if forget_login(&mut config) => {
+                platform::write_config_file(&*config);
             }
             _ => (),
         }
@@ -866,9 +891,7 @@ fn process_login_bridge(
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
             }
             Some(Ok((root_address, ephemeral_key, auth, guest_account, profile, sender))) => {
-                if let Ok(mut window) = window.single_mut() {
-                    window.focused = true;
-                }
+                commands.trigger(RequestClientWindowFocus);
 
                 if remember_login(
                     &mut config,
@@ -896,15 +919,21 @@ fn process_login_bridge(
                 login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
-                let (profile, deployed) = match profile {
+                let (mut profile, deployed) = match profile {
                     LoginProfile::Deployed(profile) => (profile, true),
                     LoginProfile::New(profile) => (profile, false),
                 };
+                let resave = mark_account(&mut profile, guest_account);
                 current_profile.profile = Some(profile);
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
+                if deployed && resave {
+                    // as any deploying edit: peers hear the saved version number (already marked
+                    // as a guest's here) until the re-save lands, and a failed one goes back to it
+                    current_profile.queue_guest_resave();
+                }
 
                 sender.send(Ok(()));
             }
@@ -918,6 +947,20 @@ fn process_login_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_guest_account_is_marked_and_an_old_copy_saved_again() {
+        let mut old = UserProfile::default();
+        old.content.has_connected_web3 = Some(true);
+        assert!(mark_account(&mut old, true));
+        assert_eq!(old.content.has_connected_web3, Some(false));
+        // already marked: nothing to save
+        assert!(!mark_account(&mut old, true));
+        // a signed-in account is marked as connected and never saved for it
+        let mut account = UserProfile::default();
+        assert!(!mark_account(&mut account, false));
+        assert_eq!(account.content.has_connected_web3, Some(true));
+    }
 
     #[test]
     fn guest_names_are_valid_unclaimed_names() {
@@ -989,6 +1032,17 @@ mod tests {
             ..Default::default()
         };
         (config, account.address())
+    }
+
+    #[test]
+    fn signing_out_forgets_the_stored_login_and_keeps_the_benchmark_guest_key() {
+        let (mut config, _) = config_with_an_account_and_a_guest_key();
+        let guest_key = config.guest_root_key.clone();
+        assert!(forget_login(&mut config));
+        assert!(get_previous_login(&config).is_none());
+        assert_eq!(config.guest_root_key, guest_key);
+        // nothing left to forget: the config is not written again
+        assert!(!forget_login(&mut config));
     }
 
     fn a_guest_identity() -> (Address, EphemeralKey, Vec<ChainLink>) {

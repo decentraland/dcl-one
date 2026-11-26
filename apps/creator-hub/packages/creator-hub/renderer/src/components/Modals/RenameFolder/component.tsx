@@ -1,0 +1,125 @@
+import { useCallback, useEffect, useState } from 'react';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
+import TextField from '@ui/atoms/TextField';
+
+import { t } from '/@/modules/store/translation/utils';
+import { getBaseName, isValidFolderName } from '/shared/utils';
+
+import { Modal } from '..';
+import Button from '@ui/atoms/Button';
+
+import type { Props } from './types';
+
+import './styles.css';
+
+export function RenameFolder({ open, project, onClose, onSubmit }: Props) {
+  const currentName = getBaseName(project.path);
+  const [name, setName] = useState(currentName);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Reset the field whenever the modal is (re)opened for a project.
+  useEffect(() => {
+    if (open) {
+      setName(currentName);
+      setError(null);
+      setLoading(false);
+    }
+  }, [open, currentName]);
+
+  const handleChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setError(null);
+    setName(event.target.value);
+  }, []);
+
+  const trimmedName = name.trim();
+  const isEmpty = trimmedName.length === 0;
+  const isUnchanged = trimmedName === currentName;
+  const isInvalid = !isEmpty && !isValidFolderName(trimmedName);
+
+  const handleSubmit = useCallback(async () => {
+    if (isEmpty || isUnchanged || isInvalid || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await onSubmit(project, trimmedName);
+      onClose();
+    } catch (error) {
+      // `unwrap()` rejects with a SerializedError (plain object), not an Error instance.
+      const message = (error as { message?: string } | null)?.message ?? '';
+      const isCollision = message.includes('already exists');
+      setError(
+        isCollision
+          ? t('modal.rename_folder.errors.name_taken')
+          : t('modal.rename_folder.errors.rename_failed'),
+      );
+      setLoading(false);
+    }
+  }, [onSubmit, onClose, project, trimmedName, isEmpty, isUnchanged, isInvalid, loading]);
+
+  return (
+    <Modal
+      open={open}
+      title={t('modal.rename_folder.title')}
+      size="tiny"
+      className="RenameFolderModal"
+      onClose={onClose}
+      actions={
+        <>
+          <Button
+            variant="text"
+            className="hub-button hub-button--secondary"
+            onClick={onClose}
+          >
+            {t('modal.cancel')}
+          </Button>
+          <Button
+            variant="text"
+            className="hub-button hub-button--primary"
+            onClick={handleSubmit}
+            disabled={loading || isEmpty || isUnchanged || isInvalid}
+          >
+            {loading ? (
+              <Spinner
+                size={20}
+                color="primary"
+                role="progressbar"
+              />
+            ) : (
+              t('modal.confirm')
+            )}
+          </Button>
+        </>
+      }
+    >
+      <div className="RenameFolderFormControl">
+        <Text variant="body1">{t('modal.rename_folder.field_label')}</Text>
+        <TextField
+          className="RenameFolderField"
+          tone="neutral"
+          fullWidth
+          value={name}
+          onChange={handleChange}
+          autoFocus
+        />
+        {isInvalid && (
+          <Text
+            variant="body1"
+            className="error"
+          >
+            {t('modal.rename_folder.errors.invalid_name')}
+          </Text>
+        )}
+        {error && (
+          <Text
+            variant="body1"
+            className="error"
+          >
+            {error}
+          </Text>
+        )}
+      </div>
+    </Modal>
+  );
+}

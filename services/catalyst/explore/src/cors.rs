@@ -27,6 +27,10 @@
 //! `https://decentraland.org.evil.com` was echoed; no legitimate client
 //! relied on that, and the anchors are the one deliberate deviation of this
 //! port. A configured pattern must be anchored too, or it reopens the hole.
+//!
+//! The Shop's signed routes use their own list,
+//! `shared::cors::is_decentraland_origin`, ported from the relay and rentals
+//! services; the two differ where those services differed.
 
 use std::sync::Arc;
 
@@ -290,7 +294,7 @@ pub async fn explore_cors(
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
-            .unwrap();
+            .expect("a fixed status and an empty body are valid");
         let h = resp.headers_mut();
         if echo
             && let Some(origin) = origin

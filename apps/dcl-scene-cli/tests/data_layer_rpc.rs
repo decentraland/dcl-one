@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

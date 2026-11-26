@@ -1,18 +1,13 @@
-use super::control::RoomPaused;
 use alloy_core::primitives::Address;
-use bevy::{
-    platform::{collections::HashMap, sync::Arc},
-    prelude::*,
-};
+use bevy::prelude::*;
 use common::{debug_panic, structs::AudioDecoderError, util::AsH160};
-use http::Uri;
 use tokio::sync::{mpsc, oneshot};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     kira::sound::streaming::StreamingSoundData,
     livekit::{
         id::ParticipantIdentity, participant::Participant, ConnectionState, DataPacket,
-        DisconnectReason, Room, RoomEvent, RoomOptions, RoomResult,
+        DisconnectReason, Room, RoomEvent, RoomOptions,
     },
 };
 
@@ -31,6 +26,11 @@ use crate::{
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
     },
+    room_connection::{
+        AdmissionError, CredentialRequest, FailureKind, NeedsAdapter, RoomAccessScope,
+        RoomRecovery, RoomSuspended,
+    },
+    voice_chat::{VoiceRoom, VoiceRoomDisconnected},
     NetworkMessageRecipient,
 };
 #[cfg(target_arch = "wasm32")]
@@ -38,7 +38,7 @@ use crate::{
     global_crdt::StreamingSoundData,
     livekit::web::{
         ConnectionState, DataPacket, DisconnectReason, Participant, ParticipantIdentity, Room,
-        RoomEvent, RoomOptions, RoomResult,
+        RoomEvent, RoomOptions,
     },
 };
 
@@ -46,16 +46,16 @@ pub struct LivekitRoomPlugin;
 
 impl Plugin for LivekitRoomPlugin {
     fn build(&self, app: &mut App) {
-        super::control::register(app);
+        app.add_plugins(super::control::RoomControlPlugin);
         app.add_observer(livekit_transport_added);
         app.add_observer(initiate_room_connection);
         app.add_observer(create_local_participant);
-        app.add_observer(disconnect_from_room_on_replace);
 
         app.add_systems(
             Update,
             (
                 try_reconnect.run_if(not(in_state(ConnectionAvailability::Unavailable))),
+                close_conflicted_rooms,
                 poll_connecting_rooms,
                 (
                     process_room_events,
@@ -78,83 +78,84 @@ fn livekit_transport_added(trigger: Trigger<OnAdd, LivekitTransport>, mut comman
 fn initiate_room_connection(
     trigger: Trigger<OnAdd, Connecting>,
     mut commands: Commands,
-    mut livekit_transports: Query<&mut LivekitTransport>,
-    paused: Query<(), With<RoomPaused>>,
+    mut livekit_transports: Query<(&LivekitTransport, &mut RoomRecovery)>,
+    paused: Query<(), With<RoomSuspended>>,
     livekit_runtime: LivekitRuntimeRes,
     connection_availability: Res<State<ConnectionAvailability>>,
 ) {
-    if paused.contains(trigger.target())
-        || *connection_availability.get() == ConnectionAvailability::Unavailable
-    {
-        debug!("Can't connect because new connections are disabled.");
+    let entity = trigger.target();
+    if paused.contains(entity) {
+        debug!("Can't connect because the room is paused.");
         return;
     }
-
-    let entity = trigger.target();
-    let Ok(mut livekit_transport) = livekit_transports.get_mut(entity) else {
+    let Ok((livekit_transport, mut recovery)) = livekit_transports.get_mut(entity) else {
         error!("{entity} does not have a LivekitRuntime.");
         return;
     };
+    if *connection_availability.get() == ConnectionAvailability::Unavailable {
+        debug!("Can't connect because new connections are disabled.");
+        recovery.failure = Some(FailureKind::IdentityConflict);
+        commands.entity(trigger.target()).try_remove::<Connecting>();
+        return;
+    }
 
-    livekit_transport.retries += 1;
     let remote_address = &livekit_transport.address;
 
-    let url = Uri::try_from(remote_address).unwrap();
-    let address = format!(
-        "{}://{}{}",
-        url.scheme_str().unwrap_or_default(),
-        // authority, not host: host() drops an explicit port (breaks e.g. ws://localhost:7880)
-        url.authority().map(|a| a.as_str()).unwrap_or_default(),
-        url.path()
-    );
-    let params: HashMap<_, _, bevy::platform::hash::FixedHasher> =
-        HashMap::from_iter(url.query().unwrap_or_default().split('&').flat_map(|par| {
-            par.split_once('=')
-                .map(|(a, b)| (a.to_owned(), b.to_owned()))
-        }));
-    let token = params.get("access_token").cloned().unwrap_or_default();
+    let Ok((address, token)) = crate::adapter::livekit_credentials(remote_address) else {
+        recovery.failure = Some(FailureKind::Invalid);
+        commands.entity(entity).try_remove::<Connecting>();
+        return;
+    };
 
-    commands
-        .entity(entity)
-        .try_insert(ConnectingLivekitRoom(
-            livekit_runtime.spawn(connect_to_room(address, token)),
-        ))
-        .try_remove::<ConnectFailed>();
+    recovery.failure = None;
+    commands.entity(entity).try_insert(ConnectingLivekitRoom(
+        livekit_runtime.spawn(connect_to_room(address, token)),
+    ));
 }
 
 fn poll_connecting_rooms(
     mut commands: Commands,
-    livekit_rooms: Populated<(Entity, &mut ConnectingLivekitRoom)>,
+    livekit_rooms: Populated<(
+        Entity,
+        &mut ConnectingLivekitRoom,
+        &mut RoomRecovery,
+        Has<CredentialRequest>,
+        Has<crate::archipelago::IslandOwner>,
+    )>,
     livekit_runtime: LivekitRuntimeRes,
+    time: Res<Time>,
 ) {
-    for (entity, mut connecting_livekit_room) in livekit_rooms.into_inner() {
+    for (entity, mut connecting_livekit_room, mut recovery, refreshable, island) in
+        livekit_rooms.into_inner()
+    {
         if connecting_livekit_room.is_finished() {
-            let Ok(poll) =
-                livekit_runtime.block_on(connecting_livekit_room.as_deref_mut().as_mut())
-            else {
-                error!("Failed to poll ConnectingLivekitRoom.");
-                continue;
-            };
+            let poll = livekit_runtime
+                .block_on(connecting_livekit_room.as_deref_mut().as_mut())
+                .unwrap_or_else(|_| Err(AdmissionError::new(FailureKind::Transient)));
 
             match poll {
-                Ok((room, room_event_receiver)) => {
+                Ok(room) => {
+                    recovery.failure = None;
                     commands
                         .entity(entity)
-                        .try_insert(LivekitRoom {
-                            room: Arc::new(room),
-                            room_event_receiver,
-                            closed: false,
-                            traffic: Default::default(),
-                            publishes: Vec::new(),
-                        })
-                        .remove::<ConnectingLivekitRoom>();
+                        .try_insert(room)
+                        .try_remove::<ConnectingLivekitRoom>();
                 }
                 Err(err) => {
-                    error!("Failed to connect to room due to '{err}'.");
+                    let err = if err.kind == FailureKind::Denied {
+                        AdmissionError::new(if refreshable || island {
+                            FailureKind::Transient
+                        } else {
+                            FailureKind::CredentialsRequired
+                        })
+                    } else {
+                        err
+                    };
+                    warn!(?entity, kind = ?err.kind, "room connection failed");
+                    recovery.fail(time.elapsed_secs_f64(), err);
                     commands
                         .entity(entity)
-                        .try_insert(ConnectFailed)
-                        .remove::<ConnectingLivekitRoom>();
+                        .try_remove::<(ConnectingLivekitRoom, Connecting)>();
                 }
             }
         }
@@ -162,15 +163,67 @@ fn poll_connecting_rooms(
 }
 
 #[allow(clippy::result_large_err)] // RoomError is livekit's, and connect failures are rare
-async fn connect_to_room(
-    address: String,
-    token: String,
-) -> RoomResult<(Room, mpsc::UnboundedReceiver<RoomEvent>)> {
+async fn connect_to_room(address: String, token: String) -> Result<LivekitRoom, AdmissionError> {
     let mut options = RoomOptions::default();
     options.auto_subscribe = false;
     options.adaptive_stream = false;
     options.dynacast = false;
-    Room::connect(&address, &token, options).await
+    Room::connect(&address, &token, options)
+        .await
+        .map(|(room, receiver)| LivekitRoom::new(room, receiver))
+        .map_err(classify_connect_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn classify_connect_error(error: livekit::RoomError) -> AdmissionError {
+    if let livekit::RoomError::Engine(livekit::rtc_engine::EngineError::Signal(
+        livekit_signaling::SignalError::Client(status, _),
+    )) = error
+    {
+        return AdmissionError::status(status.as_u16(), None);
+    }
+    AdmissionError::new(FailureKind::Transient)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn classify_connect_error(error: crate::livekit::web::RoomError) -> AdmissionError {
+    error
+        .status
+        .map_or(AdmissionError::new(FailureKind::Transient), |status| {
+            AdmissionError::status(status, None)
+        })
+}
+
+/// Applies full room metadata snapshots in order. Missing or malformed lists retain their
+/// last good value; explicit arrays use the moderation parser's validation policy.
+pub(crate) fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
+    let metadata = metadata.to_owned();
+    commands
+        .entity(entity)
+        .queue_silenced(move |mut entity: EntityWorldMut| {
+            let observed = entity
+                .get::<crate::scene_bans::MetadataSceneBan>()
+                .map(|ban| ban.0);
+            let invalidated = {
+                let mut moderation = entity
+                    .entry::<crate::SceneRoomModeration>()
+                    .or_default()
+                    .into_mut();
+                match moderation.update_from_metadata(&metadata) {
+                    Ok(()) => debug!(
+                        "scene room metadata: {} banned, {} admins",
+                        moderation.banned_addresses.len(),
+                        moderation.scene_admins.len()
+                    ),
+                    Err(err) => warn!("scene room metadata unreadable ({err:?}): {metadata}"),
+                }
+                observed.is_some_and(|address| !moderation.is_banned(address))
+            };
+            if invalidated {
+                // A later ban in this command batch must cancel credentials from before it.
+                entity.remove::<crate::scene_bans::MetadataSceneBan>();
+            }
+        });
 }
 
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
@@ -179,20 +232,37 @@ async fn connect_to_room(
 #[derive(Component)]
 pub struct ServerRoomTerminal;
 
-/// Marker for a room whose connect attempt was refused (`Room::connect` failed).
-#[derive(Component)]
-pub struct ConnectFailed;
-
 /// How long a sender may stay unannounced after its first data before its presence is withdrawn
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
 fn process_room_events(
     mut commands: Commands,
-    livekit_rooms: Query<(Entity, &mut LivekitRoom, &mut UnannouncedParticipants)>,
+    livekit_rooms: Query<(
+        Entity,
+        &mut LivekitRoom,
+        &mut UnannouncedParticipants,
+        &mut RoomRecovery,
+        Option<&RoomAccessScope>,
+        Has<crate::archipelago::IslandOwner>,
+        Has<crate::SceneRoom>,
+        Has<VoiceRoom>,
+        Has<crate::room_connection::BanRecheck>,
+    )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced) in livekit_rooms {
+    for (
+        entity,
+        mut livekit_room,
+        mut unannounced,
+        mut recovery,
+        scope,
+        island,
+        scene_room,
+        is_voice_room,
+        ban_recheck,
+    ) in livekit_rooms
+    {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -200,6 +270,9 @@ fn process_room_events(
                 RoomEvent::Connected {
                     participants_with_tracks,
                 } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &livekit_room.metadata());
+                    }
                     for (participant, publications) in participants_with_tracks {
                         unannounced.remove(participant.identity().as_str());
                         commands.trigger(ParticipantConnected {
@@ -215,27 +288,44 @@ fn process_room_events(
                     }
                 }
                 RoomEvent::Disconnected { reason } => {
-                    if matches!(
-                        reason,
-                        DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
-                    ) {
-                        if common::structs::server_mode() {
-                            // a server has no "connected in another tab" UX: mark the room
-                            // terminal so the headless supervisor reaps it and re-mints
-                            commands.entity(entity).try_insert(ServerRoomTerminal);
-                        } else {
-                            commands.set_state(ConnectionAvailability::Unavailable);
-                        }
+                    if is_voice_room {
+                        recovery
+                            .retry
+                            .observe_connection(false, time.elapsed_secs_f64());
+                        commands
+                            .entity(entity)
+                            .try_insert(VoiceRoomDisconnected::new(&reason));
+                    } else {
+                        record_disconnect(
+                            &mut commands,
+                            entity,
+                            &mut recovery,
+                            scope,
+                            reason,
+                            island,
+                            ban_recheck,
+                            time.elapsed_secs_f64(),
+                        );
                     }
                 }
                 RoomEvent::ConnectionStateChanged(state) => match state {
                     ConnectionState::Connected => {
+                        recovery.failure = None;
                         commands.entity(entity).try_insert(Connected);
                     }
                     ConnectionState::Reconnecting => {
+                        recovery
+                            .retry
+                            .observe_connection(false, time.elapsed_secs_f64());
                         commands.entity(entity).try_insert(Reconnecting);
                     }
                     ConnectionState::Disconnected => {
+                        if recovery.failure.is_none() {
+                            recovery.fail(
+                                time.elapsed_secs_f64(),
+                                AdmissionError::new(FailureKind::Transient),
+                            );
+                        }
                         livekit_room.closed = true;
                         commands.entity(entity).try_insert(Disconnected);
                     }
@@ -285,6 +375,11 @@ fn process_room_events(
                         room: entity,
                         participant: participant.into(),
                     });
+                }
+                RoomEvent::RoomMetadataChanged { metadata, .. } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &metadata);
+                    }
                 }
                 RoomEvent::TrackPublished {
                     publication,
@@ -364,11 +459,10 @@ fn process_channel_control(
 
 /// Outgoing messages are published only while the room is connected; otherwise they wait in
 /// the transport's bounded channel and go out once it is (again).
-#[allow(clippy::type_complexity)]
 fn process_network_message(
     rooms: Query<
         (&mut LivekitRoom, &mut LivekitNetworkMessage),
-        (With<Connected>, Without<RoomPaused>),
+        (With<Connected>, Without<RoomSuspended>),
     >,
     livekit_runtime: LivekitRuntimeRes,
 ) {
@@ -430,29 +524,6 @@ fn create_local_participant(
     commands.trigger(ParticipantConnected {
         participant: local_participant.into(),
         room: entity,
-    });
-}
-
-fn disconnect_from_room_on_replace(
-    trigger: Trigger<OnReplace, LivekitRoom>,
-    livekit_rooms: Query<&LivekitRoom>,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    let entity = trigger.target();
-    let Ok(livekit_room) = livekit_rooms.get(entity) else {
-        unreachable!("Infallible query.");
-    };
-
-    if livekit_room.closed {
-        // re-dialled after the SDK gave the room up; nothing left to close
-        return;
-    }
-    let room = livekit_room.room.clone();
-    debug!("Closing room {}.", room.name());
-    livekit_runtime.spawn(async move {
-        if let Err(err) = room.close().await {
-            error!("Error while closing room {}. '{err}'.", room.name());
-        }
     });
 }
 
@@ -608,9 +679,113 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
+fn record_disconnect(
+    commands: &mut Commands,
+    entity: Entity,
+    recovery: &mut RoomRecovery,
+    scope: Option<&RoomAccessScope>,
+    reason: DisconnectReason,
+    island: bool,
+    ban_recheck: bool,
+    now: f64,
+) {
+    recovery.retry.observe_connection(false, now);
+    if matches!(
+        reason,
+        DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
+    ) {
+        if common::structs::server_mode() {
+            // The headless supervisor reaps the room and obtains a fresh adapter.
+            commands.entity(entity).try_insert(ServerRoomTerminal);
+        } else if reason == DisconnectReason::DuplicateIdentity {
+            record_identity_conflict(commands, recovery, scope);
+        } else if island
+            || matches!(
+                scope.map(|scope| &scope.0),
+                Some(crate::access_status::AccessScope::Scene(_))
+            )
+        {
+            if ban_recheck && recovery.failure == Some(FailureKind::Denied) {
+                return;
+            }
+            // The island owner or the scene gatekeeper decides whether the player may return; a
+            // scene ban comes back as a refusal that keeps checking for the unban.
+            // ConnectionStateChanged can already have started the backoff, and Pulse's
+            // `DuplicateSession` can already have ended the island for another device.
+            if !matches!(
+                recovery.failure,
+                Some(FailureKind::Transient | FailureKind::IdentityConflict)
+            ) {
+                recovery.fail(now, AdmissionError::new(FailureKind::Transient));
+            }
+        } else {
+            recovery.failure = Some(FailureKind::Denied);
+        }
+    }
+}
+
+/// A room put in identity conflict while open or dialing (Pulse's `DuplicateSession` ends the
+/// realm's rooms) closes; the SDK's disconnect then retires its participants, and the conflict
+/// keeps it from dialing again.
+fn close_conflicted_rooms(
+    mut commands: Commands,
+    rooms: Query<
+        (Entity, &RoomRecovery, Option<&LivekitRoom>, Has<Connecting>),
+        Changed<RoomRecovery>,
+    >,
+    runtime: LivekitRuntimeRes,
+) {
+    for (entity, recovery, room, connecting) in &rooms {
+        if recovery.failure != Some(FailureKind::IdentityConflict) {
+            continue;
+        }
+        if connecting {
+            commands.entity(entity).try_remove::<Connecting>();
+        }
+        if let Some(room) = room.filter(|room| !room.closed) {
+            let room = room.room.clone();
+            runtime.spawn(async move {
+                if let Err(err) = room.close().await {
+                    warn!("Unable to close a room in identity conflict: {err}");
+                }
+            });
+        }
+    }
+}
+
+fn record_identity_conflict(
+    commands: &mut Commands,
+    recovery: &mut RoomRecovery,
+    scope: Option<&RoomAccessScope>,
+) {
+    recovery.failure = Some(FailureKind::IdentityConflict);
+    if !matches!(
+        scope.map(|scope| &scope.0),
+        Some(crate::access_status::AccessScope::PrivateChat)
+    ) {
+        commands.set_state(ConnectionAvailability::Unavailable);
+    }
+}
+
 fn try_reconnect(
     mut commands: Commands,
-    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>)>,
+    rooms: Query<
+        (
+            Entity,
+            &RoomRecovery,
+            Has<Disconnected>,
+            Has<CredentialRequest>,
+            Option<&crate::archipelago::IslandOwner>,
+        ),
+        (
+            With<LivekitTransport>,
+            Without<Connecting>,
+            Without<NeedsAdapter>,
+            Without<RoomSuspended>,
+            Without<VoiceRoom>,
+        ),
+    >,
+    time: Res<Time>,
 ) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints
@@ -618,7 +793,439 @@ fn try_reconnect(
         // Disconnected and the headless bin asks the orchestrator for a fresh adapter.
         return;
     }
-    for entity in rooms.into_inner() {
+    for (entity, recovery, disconnected, refreshable, island) in &rooms {
+        if (!disconnected && recovery.failure.is_none())
+            || !recovery.can_retry(time.elapsed_secs_f64())
+        {
+            continue;
+        }
+        restart_room(
+            &mut commands,
+            entity,
+            refreshable,
+            island.map(|island| island.0),
+        );
+    }
+}
+
+/// Manual resume and automatic recovery use the same credential source.
+pub(super) fn restart_room(
+    commands: &mut Commands,
+    entity: Entity,
+    refreshable: bool,
+    island: Option<Entity>,
+) {
+    if let Some(island) = island {
+        if let Ok(mut owner) = commands.get_entity(island) {
+            owner.try_insert(crate::archipelago::RefreshIsland);
+            commands.entity(entity).try_insert(RoomSuspended);
+        }
+    } else if refreshable {
+        commands.entity(entity).try_insert(NeedsAdapter);
+    } else {
         commands.entity(entity).try_insert(Connecting);
+    }
+}
+
+#[cfg(test)]
+mod disconnect_tests {
+    use super::*;
+    use crate::access_status::AccessScope;
+    use crate::archipelago::{IslandOwner, RefreshIsland};
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn participant_removed_from_island_requests_a_fresh_assignment() {
+        let mut world = World::new();
+        let owner = world.spawn_empty().id();
+        let island = world
+            .spawn((
+                IslandOwner(owner),
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            island,
+            &mut recovery,
+            None,
+            DisconnectReason::ParticipantRemoved,
+            true,
+            false,
+            0.0,
+        );
+        world.entity_mut(island).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_some());
+        assert!(world.get::<RoomSuspended>(island).is_some());
+    }
+
+    /// The gatekeeper's removal can reach the island room after Pulse's `DuplicateSession` has
+    /// ended the island: the identity conflict holds, and nothing asks for a fresh assignment.
+    #[test]
+    fn participant_removed_after_a_takeover_keeps_the_identity_conflict() {
+        let mut world = World::new();
+        let owner = world.spawn_empty().id();
+        let island = world
+            .spawn((
+                IslandOwner(owner),
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery {
+            failure: Some(FailureKind::IdentityConflict),
+            ..default()
+        };
+        record_disconnect(
+            &mut world.commands(),
+            island,
+            &mut recovery,
+            None,
+            DisconnectReason::ParticipantRemoved,
+            true,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+        world.entity_mut(island).insert(recovery);
+        world.init_resource::<Time>();
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(60));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<RefreshIsland>(owner).is_none());
+    }
+
+    #[test]
+    fn participant_removed_from_a_scene_room_asks_the_gatekeeper_again() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/scene".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::Scene("scene".into()))),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Transient));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_some());
+    }
+
+    #[test]
+    fn participant_removed_from_a_credentialed_room_stays_denied() {
+        let mut world = World::new();
+        let room = world
+            .spawn((
+                CredentialRequest {
+                    method: "POST",
+                    url: "https://rooms.example/voice".into(),
+                    metadata: "{}".into(),
+                },
+                LivekitTransport {
+                    address: String::new(),
+                },
+            ))
+            .id();
+        let mut recovery = RoomRecovery::default();
+        record_disconnect(
+            &mut world.commands(),
+            room,
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::PrivateChat)),
+            DisconnectReason::ParticipantRemoved,
+            false,
+            false,
+            0.0,
+        );
+        assert_eq!(recovery.failure, Some(FailureKind::Denied));
+        world.entity_mut(room).insert(recovery);
+        world.init_resource::<Time>();
+        world
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(5));
+        world.run_system_once(try_reconnect).unwrap();
+        assert!(world.get::<NeedsAdapter>(room).is_none());
+    }
+
+    #[test]
+    fn a_private_identity_conflict_stops_only_its_room() {
+        let mut world = World::new();
+        world.init_resource::<NextState<ConnectionAvailability>>();
+        let mut recovery = RoomRecovery::default();
+        record_identity_conflict(
+            &mut world.commands(),
+            &mut recovery,
+            Some(&RoomAccessScope(AccessScope::PrivateChat)),
+        );
+        world.flush();
+        assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+        assert!(!recovery.can_retry(60.0));
+        assert!(matches!(
+            world.resource::<NextState<ConnectionAvailability>>(),
+            NextState::Unchanged
+        ));
+    }
+
+    #[test]
+    fn a_world_identity_conflict_keeps_the_session_gate() {
+        for scope in [
+            None,
+            Some(AccessScope::Realm("realm".into())),
+            Some(AccessScope::Scene("scene".into())),
+        ] {
+            let mut world = World::new();
+            world.init_resource::<NextState<ConnectionAvailability>>();
+            let mut recovery = RoomRecovery::default();
+            record_identity_conflict(
+                &mut world.commands(),
+                &mut recovery,
+                scope.map(RoomAccessScope).as_ref(),
+            );
+            world.flush();
+            assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+            assert!(matches!(
+                world.resource::<NextState<ConnectionAvailability>>(),
+                NextState::Pending(ConnectionAvailability::Unavailable)
+            ));
+        }
+    }
+}
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use crate::SceneRoomModeration;
+
+    #[test]
+    fn scene_metadata_ban_kick_preserves_denial_and_retry_deadline() {
+        use crate::room_connection::{BanRecheck, BAN_RECHECK_SECS};
+        for delay in [BAN_RECHECK_SECS, 45.0] {
+            let mut world = World::new();
+            let room = world.spawn(BanRecheck).id();
+            let mut recovery = RoomRecovery::default();
+            let mut refusal = AdmissionError::new(FailureKind::Denied);
+            refusal.retry_after = Some(delay);
+            recovery.fail(0.0, refusal);
+            let due = recovery.retry.due;
+            let ban_recheck = world.get::<BanRecheck>(room).is_some();
+            record_disconnect(
+                &mut world.commands(),
+                room,
+                &mut recovery,
+                Some(&RoomAccessScope(crate::access_status::AccessScope::Scene(
+                    "scene".into(),
+                ))),
+                DisconnectReason::ParticipantRemoved,
+                false,
+                ban_recheck,
+                2.0,
+            );
+            assert_eq!(recovery.failure, Some(FailureKind::Denied));
+            assert_eq!(recovery.retry.due, due);
+        }
+    }
+
+    #[test]
+    fn scene_room_metadata_updates_replace_only_explicit_lists() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let replacement = Address::repeat_byte(3);
+        let initial = SceneRoomModeration {
+            banned_addresses: [banned].into_iter().collect(),
+            scene_admins: [admin].into_iter().collect(),
+        };
+        for (metadata, expected_bans, expected_admins) in [
+            (
+                serde_json::json!({"sceneAdmins": [replacement.to_string()]}),
+                vec![banned],
+                vec![replacement],
+            ),
+            (
+                serde_json::json!({"bannedAddresses": [replacement.to_string()]}),
+                vec![replacement],
+                vec![admin],
+            ),
+            (
+                serde_json::json!({"bannedAddresses": []}),
+                vec![],
+                vec![admin],
+            ),
+            (serde_json::json!({"sceneAdmins": []}), vec![banned], vec![]),
+            (
+                serde_json::json!({"bannedAddresses": [], "sceneAdmins": []}),
+                vec![],
+                vec![],
+            ),
+        ] {
+            let mut world = World::new();
+            let room = world.spawn(initial.clone()).id();
+            apply_scene_room_metadata(&mut world.commands(), room, &metadata.to_string());
+            world.flush();
+            assert_eq!(
+                world.get::<SceneRoomModeration>(room).unwrap(),
+                &SceneRoomModeration {
+                    banned_addresses: expected_bans.into_iter().collect(),
+                    scene_admins: expected_admins.into_iter().collect(),
+                },
+                "{metadata}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_entries_cannot_discard_new_bans_or_keep_revoked_admins() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let replacement = Address::repeat_byte(3);
+        for populated in [false, true] {
+            let initial = if populated {
+                SceneRoomModeration {
+                    banned_addresses: [banned].into_iter().collect(),
+                    scene_admins: [admin].into_iter().collect(),
+                }
+            } else {
+                SceneRoomModeration::default()
+            };
+            for (metadata, expected_bans, expected_admins) in [
+                (
+                    serde_json::json!({"bannedAddresses": [replacement.to_string(), "invalid"]}),
+                    [replacement].into_iter().collect(),
+                    initial.scene_admins.clone(),
+                ),
+                (
+                    serde_json::json!({"bannedAddresses": ["invalid", null]}),
+                    initial.banned_addresses.clone(),
+                    initial.scene_admins.clone(),
+                ),
+                (
+                    serde_json::json!({"sceneAdmins": [replacement.to_string(), "invalid"]}),
+                    initial.banned_addresses.clone(),
+                    [replacement].into_iter().collect(),
+                ),
+                (
+                    serde_json::json!({"sceneAdmins": [false, null]}),
+                    initial.banned_addresses.clone(),
+                    Default::default(),
+                ),
+            ] {
+                let mut world = World::new();
+                let room = world.spawn(initial.clone()).id();
+                apply_scene_room_metadata(&mut world.commands(), room, &metadata.to_string());
+                world.flush();
+                assert_eq!(
+                    world.get::<SceneRoomModeration>(room).unwrap(),
+                    &SceneRoomModeration {
+                        banned_addresses: expected_bans,
+                        scene_admins: expected_admins,
+                    },
+                    "{metadata}, populated={populated}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scene_room_metadata_without_arrays_keeps_previous_lists() {
+        let initial = SceneRoomModeration {
+            banned_addresses: [Address::repeat_byte(1)].into_iter().collect(),
+            scene_admins: [Address::repeat_byte(2)].into_iter().collect(),
+        };
+        for metadata in [
+            "",
+            " \n ",
+            "{}",
+            r#"{"unrelated":true}"#,
+            r#"{"bannedAddresses":null,"sceneAdmins":false}"#,
+            r#"{"bannedAddresses":"not a list","sceneAdmins":42}"#,
+            "not json",
+            "[]",
+            "null",
+        ] {
+            let mut world = World::new();
+            let room = world.spawn(initial.clone()).id();
+            apply_scene_room_metadata(&mut world.commands(), room, metadata);
+            world.flush();
+            assert_eq!(
+                world.get::<SceneRoomModeration>(room),
+                Some(&initial),
+                "{metadata}"
+            );
+        }
+    }
+
+    #[test]
+    fn queued_scene_room_metadata_snapshots_apply_in_order() {
+        let banned = Address::repeat_byte(1);
+        let admin = Address::repeat_byte(2);
+        let mut world = World::new();
+        let room = world.spawn_empty().id();
+        apply_scene_room_metadata(
+            &mut world.commands(),
+            room,
+            &serde_json::json!({"bannedAddresses": [banned.to_string()], "sceneAdmins": []})
+                .to_string(),
+        );
+        apply_scene_room_metadata(
+            &mut world.commands(),
+            room,
+            &serde_json::json!({"bannedAddresses": [banned.to_string()], "sceneAdmins": [admin.to_string()]}).to_string(),
+        );
+        world.flush();
+        assert_eq!(
+            world.get::<SceneRoomModeration>(room),
+            Some(&SceneRoomModeration {
+                banned_addresses: [banned].into_iter().collect(),
+                scene_admins: [admin].into_iter().collect(),
+            })
+        );
+    }
+
+    #[test]
+    fn new_scene_room_metadata_starts_empty_and_ignores_a_removed_room() {
+        let mut world = World::new();
+        let removed = world.spawn_empty().id();
+        apply_scene_room_metadata(&mut world.commands(), removed, r#"{"bannedAddresses":[]}"#);
+        world.despawn(removed);
+        let room = world.spawn_empty().id();
+        apply_scene_room_metadata(&mut world.commands(), room, "not json");
+        world.flush();
+        assert_eq!(world.get::<SceneRoomModeration>(removed), None);
+        assert_eq!(
+            world.get::<SceneRoomModeration>(room),
+            Some(&SceneRoomModeration::default())
+        );
     }
 }

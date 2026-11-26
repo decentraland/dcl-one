@@ -1,9 +1,11 @@
-import { check } from "@ui/validate";
+import { check } from "@web-core/validate";
 
 import { AuthIdentitySchema } from "../persisted-schemas";
 
 import { isIdentityExpired } from "./expiry";
-import { clearAllShared, clearShared, freshestShared, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
+import { recordSignIn } from "./signin-kind";
+import { clearAllShared, clearShared, clearWalletSessions, freshestShared, saveWalletSession, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
+import { signedOutElsewhere } from "./session-change";
 import type { AuthIdentity } from "./types";
 import { clearWalletCookie, serializeWalletCookie, walletInCookies } from "./wallet-cookie";
 
@@ -15,15 +17,17 @@ function syncWalletCookie(identity: AuthIdentity | null): void {
 }
 
 export const SESSION_STORAGE_KEY = "dcl:auth:identity:v1";
+export const SUSPENDED_WALLET_KEY = "dcl:auth:suspended-wallet";
 
 /**
- * The session this document starts with: the host's, else this site's own record, else the freshest session
- * decentraland.org's dapps share on this origin (`single-sign-on-<address>`), for a reader who signed in there.
+ * The host's session, this site's own record, or the freshest one other dapps on this origin share. During a
+ * wallet switch this tab waits for the selected account instead of adopting a fallback from another dapp.
+ * `head-account.ts` repeats these rules for the cart document's head script.
  */
 function readStorage(): AuthIdentity | null {
   if (typeof window === "undefined") return null;
   if (hostIdentity !== undefined) return hostIdentity;
-  return readOwn() ?? freshestShared();
+  return readOwn() ?? (suspendedSigner ? null : freshestShared());
 }
 
 function readOwn(): AuthIdentity | null {
@@ -43,7 +47,7 @@ function readOwn(): AuthIdentity | null {
   ) {
     return null;
   }
-  if (isIdentityExpired(identity)) {
+  if (isIdentityExpired(identity) && identity.signer.toLowerCase() !== suspendedSigner) {
     try {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
@@ -54,10 +58,14 @@ function readOwn(): AuthIdentity | null {
 }
 
 /**
- * Keeps a session in this site's record and the shared one. Switching accounts ends the previous account's shared
- * session; signing out ends every shared session on this origin, so no other account comes back on the next load.
+ * Keeps a session in this site's record and the shared one. Wallet selection can leave the previous signature
+ * available. Explicit sign-out ends every shared session on this origin.
  */
-function writeStorage(identity: AuthIdentity | null, previous: AuthIdentity | null): void {
+function writeStorage(
+  identity: AuthIdentity | null,
+  previous: AuthIdentity | null,
+  walletSwitch: boolean,
+): void {
   if (typeof window === "undefined") return;
   try {
     if (identity) {
@@ -67,8 +75,15 @@ function writeStorage(identity: AuthIdentity | null, previous: AuthIdentity | nu
     }
   } catch {
   }
-  if (!identity) clearAllShared();
-  else if (previous && previous.signer !== identity.signer) clearShared(previous.signer);
+  if (!identity) {
+    clearWalletSessions();
+    clearAllShared();
+  } else if (walletSwitch) {
+    if (previous && previous.signer !== identity.signer) saveWalletSession(previous);
+    clearAllShared(identity.signer);
+  } else if (previous && previous.signer !== identity.signer) {
+    clearShared(previous.signer);
+  }
   if (identity) storeShared(identity);
   syncWalletCookie(identity);
 }
@@ -76,6 +91,7 @@ function writeStorage(identity: AuthIdentity | null, previous: AuthIdentity | nu
 let current: AuthIdentity | null = null;
 let hostIdentity: AuthIdentity | null | undefined;
 let hydrated = false;
+let suspendedSigner: string | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -84,23 +100,68 @@ function emit() {
 
 function ensureHydrated() {
   if (hydrated || typeof window === "undefined") return;
+  try {
+    suspendedSigner = window.sessionStorage.getItem(SUSPENDED_WALLET_KEY);
+  } catch {
+  }
   current = readStorage();
   hydrated = true;
 }
 
 export function getIdentity(): AuthIdentity | null {
   ensureHydrated();
-  return current;
+  return !hostOwnsSession() && current?.signer.toLowerCase() === suspendedSigner ? null : current;
 }
 
-export function setIdentity(identity: AuthIdentity | null): void {
+function setSuspendedSigner(signer: string | null): void {
+  suspendedSigner = signer;
+  try {
+    if (signer) window.sessionStorage.setItem(SUSPENDED_WALLET_KEY, signer);
+    else window.sessionStorage.removeItem(SUSPENDED_WALLET_KEY);
+  } catch {
+  }
+}
+
+/** Keeps the saved session available to the wallet watcher while this tab is signed out. */
+export function getSavedWebsiteIdentity(): AuthIdentity | null {
+  ensureHydrated();
+  return hostOwnsSession() ? null : current;
+}
+
+export function getSuspendedWalletSigner(): string | null {
+  ensureHydrated();
+  return !hostOwnsSession() && !getIdentity() ? suspendedSigner : null;
+}
+
+export function suspendWalletIdentity(): void {
+  const active = getSavedWebsiteIdentity();
+  if (!active || !getIdentity()) return;
+  setSuspendedSigner(active.signer.toLowerCase());
+  syncWalletCookie(null);
+  emit();
+}
+
+function updateIdentity(identity: AuthIdentity | null, walletSwitch: boolean): void {
   if (hostIdentity !== undefined) throw new Error("Use the explorer to change accounts.");
   ensureHydrated();
   const previous = current;
+  if (suspendedSigner) setSuspendedSigner(null);
   current = identity;
   hydrated = true;
-  writeStorage(identity, previous);
+  writeStorage(identity, previous, walletSwitch);
   emit();
+}
+
+export function setIdentity(identity: AuthIdentity | null): void {
+  updateIdentity(identity, false);
+}
+
+/** A wallet-driven switch keeps the previous signature reusable. */
+export function setBrowserWalletIdentity(identity: AuthIdentity, rdns: string, fromWalletEvent = false): void {
+  if (hostOwnsSession()) throw new Error("Use the explorer to change accounts.");
+  const suspended = getSuspendedWalletSigner() !== null;
+  recordSignIn(identity.signer, "web3", rdns);
+  updateIdentity(identity, fromWalletEvent || suspended);
 }
 
 /** Native marketplace host owns this session. Never overwrite the website wallet. */
@@ -175,10 +236,15 @@ function onStorage(e: StorageEvent) {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
     }
+    clearWalletSessions();
   }
   if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
+    const before = current;
     current = readStorage();
-    syncWalletCookie(current);
+    if (suspendedSigner && current && current.signer.toLowerCase() !== suspendedSigner) setSuspendedSigner(null);
+    syncWalletCookie(getIdentity());
+    // Signed out in another tab: this tab's page views stop naming the account at once.
+    if (before && !current) signedOutElsewhere();
     emit();
   }
 }

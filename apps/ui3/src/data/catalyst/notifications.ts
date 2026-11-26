@@ -1,10 +1,10 @@
 import { getJSON, sendJSON, type RequestOpts } from "./client";
-import { notificationMillis, type Notification } from "./notificationsView";
+import { notificationMillis, type Notification } from "@web-core/notifications/notificationsView";
 import { serviceBase, signedFetch } from "./client";
-import { field, isRecord, keepRows } from "./rows";
+import { field, isRecord, keepRows } from "@web-core/catalyst/rows";
 import { ListEnvelopeSchema, NotificationSchema } from "./schemas/notifications";
 
-export * from "./notificationsView";
+export * from "@web-core/notifications/notificationsView";
 
 export function isUsableNotification(row: unknown): boolean {
   return (

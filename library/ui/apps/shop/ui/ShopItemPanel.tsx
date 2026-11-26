@@ -1,0 +1,154 @@
+// The Shop's item panel, beside the grid while an item is selected: the item on its rarity's glow, its
+// price (and, for a buyer shown MANA, its MANA equivalent under it), rarity and stock, creator, description
+// and what it hides, and what can be done with it here.
+// A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
+// sale) is offered on the web Shop's item page.
+
+import type { CardPrice } from '@shop/discovery/cardPrice'
+import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
+import { GeneralClose, GeneralFavorites, GeneralPolygonMana, MaskIcon } from '@dcl/one-ui'
+import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
+import cartIcon from '../assets/cart.svg'
+import externalIcon from '../assets/external.svg'
+import { buyableInWorld, PriceTag } from './PriceTag'
+import { pressedWith, type PressedWith } from './pressedWith'
+import styles from './ShopItemPanel.module.css'
+
+/** A part the item hides on the avatar, as its chip shows it. */
+export interface ShopItemHide {
+  key: string
+  label: string
+  icon: React.ReactNode
+}
+
+export interface ShopItemPanelProps {
+  name: string
+  thumbnail?: string | null
+  /** Its rarity (the art and the tag); `base` without one. */
+  rarity: string
+  /** Its category's glyph, before the name. */
+  icon: React.ReactNode
+  price: CardPrice
+  /** The MANA a credits price comes to, shown under it ("≈ 5,000 MANA") to a buyer shown MANA; absent otherwise. */
+  manaPrice?: ManaWei | null
+  /** What is left of its supply, as "35/1000", when known. */
+  stock?: string
+  creator: { name: string; picture?: string | null; color: string }
+  /** The item's own description and what it hides, once known. */
+  description?: string
+  hides?: readonly ShopItemHide[]
+  onClose: () => void
+  /** Offers the item on the web Shop (resales, MANA-only, not for sale); absent when it has no page there. */
+  onOpenOnWeb?: () => void
+  /** BUY ITEM, with how it was pressed. Without it, or without ADD TO CART, that button is shown off. */
+  onBuy?: (input: PressedWith) => void
+  onAddToCart?: () => void
+}
+
+export function ShopItemPanel({
+  name,
+  thumbnail,
+  rarity,
+  icon,
+  price,
+  manaPrice,
+  stock,
+  creator,
+  description,
+  hides = [],
+  onClose,
+  onOpenOnWeb,
+  onBuy,
+  onAddToCart
+}: ShopItemPanelProps): React.JSX.Element {
+  return (
+    <aside className={styles.panel} data-rarity={rarity} aria-label={name}>
+      <button type="button" className={styles.favourite} aria-label="Add to favourites" disabled title="Favourites are coming soon">
+        <GeneralFavorites size={30} aria-hidden="true" />
+      </button>
+      <button type="button" className={styles.close} aria-label="Close item" onClick={onClose}>
+        <GeneralClose size={30} aria-hidden="true" />
+      </button>
+      <div className={styles.image}>{thumbnail && <img src={thumbnail} alt="" />}</div>
+      <div className={styles.info}>
+        <div className={styles.title}>
+          <span className={styles.name}>
+            {icon}
+            <span>{name}</span>
+          </span>
+          <span className={styles.prices}>
+            <span className={styles.price}>
+              {/* Credits with the design's full-colour coin (Figma shop/credits-coin). */}
+              <PriceTag price={price} size={24} coin="full" />
+            </span>
+            {price.kind === 'credits' && manaPrice != null && manaPrice > 0n && (
+              <span className={styles.manaPrice} title={`${formatMana(manaPrice, { group: true })} MANA`}>
+                <GeneralPolygonMana size={16} aria-hidden="true" />≈ {formatManaPrice(manaPrice)} MANA
+              </span>
+            )}
+          </span>
+        </div>
+        {/* Two words 8px apart, as the design's tag; the space between them keeps them two words when read. */}
+        <span className={styles.rarity}>
+          <span>{rarity}</span>
+          {stock != null && (
+            <>
+              {' '}
+              <span>{stock}</span>
+            </>
+          )}
+        </span>
+        <span className={styles.creator}>
+          {creator.picture ? <img className={styles.face} src={creator.picture} alt="" /> : <span className={styles.face} aria-hidden="true" />}
+          <span className={styles.by}>
+            {/* The creator's name colour is the HUD's per-user one, known only at run time. */}
+            By <span className={styles.creatorName} style={{ '--creator-color': creator.color } as React.CSSProperties}>{creator.name}</span>
+          </span>
+        </span>
+        <hr className={styles.rule} />
+        {description != null && description !== '' && (
+          <div className={styles.section}>
+            <span className={styles.label}>Description</span>
+            <p className={styles.description}>{description}</p>
+          </div>
+        )}
+        {hides.length > 0 && (
+          <div className={`${styles.section} ${styles.hidesSection}`}>
+            <span className={styles.label}>
+              <MaskIcon src={hiddenIcon} size={20} />
+              Hides
+            </span>
+            <div className={styles.hides}>
+              {hides.map((h) => (
+                <span key={h.key} className={styles.hide}>
+                  {h.icon}
+                  {h.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className={styles.actions}>
+        {buyableInWorld(price) ? (
+          <>
+            <button type="button" className={styles.cart} disabled={onAddToCart == null} onClick={onAddToCart}>
+              <MaskIcon src={cartIcon} size={24} />
+              Add to cart
+            </button>
+            <button type="button" className={styles.buy} disabled={onBuy == null} onClick={onBuy && ((e) => onBuy(pressedWith(e)))}>
+              Buy item
+            </button>
+          </>
+        ) : (
+          onOpenOnWeb != null && (
+            <button type="button" className={styles.resale} onClick={onOpenOnWeb}>
+              Buy resale
+              <MaskIcon src={externalIcon} size={18} />
+            </button>
+          )
+        )}
+      </div>
+    </aside>
+  )
+}

@@ -1,5 +1,6 @@
 //! Upgrade genuinely prepared v2 facts through the composed v3 release and
 //! production additive executor, retaining the historical migration ledger.
+#![allow(clippy::unwrap_used, reason = "test support")]
 use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -8,7 +9,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 17] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -26,6 +27,27 @@ const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0036_credits_authorization_request_digest",
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
+    "0039_worlds_set_here",
+    "0040_shop_nft_event_tx_hash",
+    "0041_social_federation_entry_privacy",
+    "0042_economy_relay_free_calls",
+    "0043_credits_captcha_generated_at",
+    "0044_camera_reel_image_content_type",
+    "0045_camera_reel_original_filename",
+    "0046_player_report_evidence_source_key",
+    "0047_shop_sale_notification_producers",
+    "0048_broker_purchases_write_ahead",
+    "0049_land_authz_cursor_block_hash",
+    "0050_explore_poster_avif",
+    "0051_explore_auth_identity_request_id",
+    "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
+    "0056_signatures_rental_cancel_reason",
+    "0057_worlds_thumbnail_alias_expiry",
+    "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -66,6 +88,7 @@ struct Database {
     pool: PgPool,
     admin: PgPool,
     name: String,
+    options: PgConnectOptions,
 }
 impl Database {
     async fn new() -> Option<Self> {
@@ -80,20 +103,20 @@ impl Database {
             .await
             .unwrap();
         let name = format!(
-            "catalyst_test_social_voice_{}",
-            uuid::Uuid::new_v4().simple()
+            "catalyst_test_lib_{}_social_voice_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
             .await
             .unwrap();
+        let options = options
+            .database(&name)
+            .options([("TimeZone", "UTC"), ("search_path", "content,meta")]);
         let pool = PgPoolOptions::new()
             .max_connections(2)
-            .connect_with(
-                options
-                    .database(&name)
-                    .options([("TimeZone", "UTC"), ("search_path", "content,meta")]),
-            )
+            .connect_with(options.clone())
             .await
             .unwrap();
         // Captured from c1fab3991's real v2 release and additive executor; the
@@ -114,7 +137,36 @@ impl Database {
                 .await
                 .unwrap();
         }
-        Some(Self { pool, admin, name })
+        Some(Self {
+            pool,
+            admin,
+            name,
+            options,
+        })
+    }
+    /// Waits until this database has exactly `expected` client sessions.
+    /// `PgPool::close` returns once it has sent each connection's Terminate;
+    /// the server process leaves `pg_stat_activity` when it exits, after that.
+    async fn await_client_sessions(&self, expected: i64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let sessions: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND {}",
+                schema_migrate::CLIENT_SESSION
+            )))
+            .bind(&self.name)
+            .fetch_one(&self.admin)
+            .await
+            .unwrap();
+            if sessions == expected {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{sessions} client sessions remain, expected {expected}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
     async fn close(self) {
         self.pool.close().await;
@@ -186,11 +238,33 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .execute(pool)
         .await
         .unwrap();
+    let expected_steps: Vec<_> = PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
+            "0065_shop_collections_projection",
+            "0066_map_grid_change_marks",
+            "0067_rental_asset_membership_block",
+            "0068_shop_bid_fingerprint",
+            "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
+            "0071_shop_testnet_sale_and_trade_venues",
+            "0072_shop_verified_item_rows",
+            "0073_land_authz_transfer_parties",
+            "0078_shop_nft_last_sale",
+            "0079_credits_seasonal_visit_goals",
+            "0094_shop_historical_holdings",
+        ])
+        .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps, expected_steps,
         "only steps the prepared capture lacks run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
@@ -215,7 +289,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(ledger.len(), before.len() + expected_steps.len());
     for row in &before {
         assert!(
             ledger.contains(row),
@@ -225,7 +299,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_steps
     );
     let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
     for row in added {
@@ -521,5 +595,199 @@ async fn v3_retired_step_still_verifies_genuine_receipt_hash_in_all_entry_points
         Err(schema_migrate::MigrateError::StepDrift { .. })
     ));
     assert!(catalyst_db::bootstrap(pool).await.is_err());
+    db.close().await;
+}
+
+/// `schema migrate --release` takes both genuine version-2 origins to the
+/// version-3 layout in one transaction. It refuses while another session is
+/// connected, and a release that fails leaves version 2 as it was.
+#[tokio::test]
+async fn migrate_with_release_takes_both_v2_origins_to_v3_once_every_other_session_is_gone() {
+    for schema in [MAIN_V2, PREPARED_V2] {
+        let Some(db) = Database::with_schema(schema).await else {
+            return;
+        };
+        let version = "SELECT version FROM meta.schema WHERE id = 1";
+        let status = schema_migrate::status(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        assert_eq!(status.exit_code(), 5, "{:?}", status.lines());
+        assert!(matches!(
+            schema_migrate::migrate(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+            Err(schema_migrate::MigrateError::Incompatible { version: 2, .. })
+        ));
+
+        let solo = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(db.options.clone())
+            .await
+            .unwrap();
+        let writer = db.pool.acquire().await.unwrap();
+        match schema_migrate::migrate_with_release(
+            &solo,
+            SCHEMA_SQL,
+            MIGRATIONS_SQL,
+            catalyst_db::RELEASE_SQL,
+        )
+        .await
+        {
+            Err(schema_migrate::MigrateError::SessionsConnected { count, .. }) => {
+                // Every connection the harness pool holds is a session.
+                assert_eq!(count, db.pool.size() as usize)
+            }
+            other => panic!("{other:?}"),
+        }
+        drop(writer);
+        db.pool.close().await;
+        db.await_client_sessions(1).await;
+
+        // A failure after every statement of the release, stamp included,
+        // rolls the whole run back.
+        let layout = "SELECT (SELECT version FROM meta.schema WHERE id = 1), \
+            to_regclass('social.community_voice_notifications') IS NOT NULL, \
+            (SELECT count(*) FROM pg_constraint WHERE conrelid = 'social.private_voice_chats'::regclass \
+                AND conname IN ('private_voice_chats_caller_key', 'private_voice_chats_callee_key')), \
+            (SELECT count(*) FROM meta.schema_steps)";
+        let before: (i32, bool, i64, i64) = sqlx::query_as(layout).fetch_one(&solo).await.unwrap();
+        assert_eq!((before.0, before.1, before.2), (2, false, 2));
+        let failing = format!("{}\nSELECT 1 / 0;\n", catalyst_db::RELEASE_SQL);
+        match schema_migrate::migrate_with_release(&solo, SCHEMA_SQL, MIGRATIONS_SQL, &failing)
+            .await
+        {
+            Err(schema_migrate::MigrateError::Sqlx(error)) => {
+                assert!(error.to_string().contains("division by zero"), "{error}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let after: (i32, bool, i64, i64) = sqlx::query_as(layout).fetch_one(&solo).await.unwrap();
+        assert_eq!(after, before);
+
+        let done = schema_migrate::migrate_with_release(
+            &solo,
+            SCHEMA_SQL,
+            MIGRATIONS_SQL,
+            catalyst_db::RELEASE_SQL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(done.released, Some(3));
+        assert!(!done.steps.is_empty());
+        let after: i32 = sqlx::query_scalar(version).fetch_one(&solo).await.unwrap();
+        assert_eq!(after, 3);
+        assert_release_indexes(&solo).await;
+        let status = schema_migrate::status(&solo, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        assert_eq!(status.exit_code(), 0, "{:?}", status.lines());
+        catalyst_db::bootstrap(&solo).await.unwrap();
+        // At this version `--release` is the plain migrate: serving
+        // sessions do not stop it.
+        let serving = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(db.options.clone())
+            .await
+            .unwrap();
+        let session = serving.acquire().await.unwrap();
+        assert!(
+            schema_migrate::migrate_with_release(
+                &solo,
+                SCHEMA_SQL,
+                MIGRATIONS_SQL,
+                catalyst_db::RELEASE_SQL,
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        drop(session);
+        serving.close().await;
+        solo.close().await;
+        db.close().await;
+    }
+}
+
+/// Without `pg_read_all_stats`, `pg_stat_activity` hides the session type of
+/// another role's session; the guard still counts it.
+#[tokio::test]
+async fn the_release_guard_counts_sessions_of_roles_it_cannot_inspect() {
+    let Some(db) = Database::with_schema(MAIN_V2).await else {
+        return;
+    };
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let migrator = format!("release_migrator_{suffix}");
+    let writer = format!("release_writer_{suffix}");
+    // The CI database uses SCRAM authentication; generated for this test only.
+    let password = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    for statement in [
+        format!("CREATE ROLE {migrator} LOGIN PASSWORD '{password}'"),
+        format!("CREATE ROLE {writer} LOGIN PASSWORD '{password}'"),
+        format!("GRANT USAGE ON SCHEMA meta TO {migrator}"),
+        format!("GRANT SELECT ON meta.schema TO {migrator}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    }
+    let connect = |role: &str| {
+        PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(db.options.clone().username(role).password(&password))
+    };
+    let writing = connect(&writer).await.unwrap();
+    let session = writing.acquire().await.unwrap();
+    let migrating = connect(&migrator).await.unwrap();
+    let hidden: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+         AND pid <> pg_backend_pid() AND usename = $1 AND backend_type IS NULL",
+    )
+    .bind(&writer)
+    .fetch_one(&migrating)
+    .await
+    .unwrap();
+    assert_eq!(
+        hidden, 1,
+        "the writer's session type is hidden from the migrator"
+    );
+    db.pool.close().await;
+    // Only the writer's and the migrator's sessions remain.
+    db.await_client_sessions(2).await;
+    match schema_migrate::migrate_with_release(
+        &migrating,
+        SCHEMA_SQL,
+        MIGRATIONS_SQL,
+        catalyst_db::RELEASE_SQL,
+    )
+    .await
+    {
+        Err(schema_migrate::MigrateError::SessionsConnected { count, .. }) => assert_eq!(count, 1),
+        other => panic!("{other:?}"),
+    }
+    drop(session);
+    writing.close().await;
+    migrating.close().await;
+    // Roles are cluster-wide: drop their grants here, then the roles.
+    let owner = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(db.options.clone())
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP OWNED BY {migrator}, {writer}"
+    )))
+    .execute(&owner)
+    .await
+    .unwrap();
+    owner.close().await;
+    for role in [&migrator, &writer] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
+            .execute(&db.admin)
+            .await
+            .unwrap();
+    }
     db.close().await;
 }

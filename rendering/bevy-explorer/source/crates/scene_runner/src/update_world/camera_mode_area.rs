@@ -80,7 +80,6 @@ impl Plugin for CameraModeAreaPlugin {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_camera_mode_area(
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
     containing_scene: ContainingScene,
@@ -291,10 +290,13 @@ pub fn update_camera_mode_area(
                     }));
                 }
             }
+            // every arm that gets here wrote the override; one that could not has returned
+            camera.scene_override_owner = Some(scene_ent.root);
         }
     } else {
         // no camera areas
         camera.scene_override = None;
+        camera.scene_override_owner = None;
     }
 
     if current_areas.is_empty() {

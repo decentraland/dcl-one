@@ -7,7 +7,7 @@ import { loader } from "./places_.$id";
 vi.mock("@/data/lib/catalyst/places/index.server", () => ({ loadPlace: vi.fn() }));
 vi.mock("@/data/lib/catalyst/places/world-scenes", async (original) => ({ ...await original<typeof import("@/data/lib/catalyst/places/world-scenes")>(), loadPlaceTravel: vi.fn() }));
 vi.mock("@/core/lib/telemetry/page-loader", () => ({
-  pageLoaderWith: async (_request: Request, _defaults: unknown, load: () => Promise<unknown>) => ({ sid: "travel-test", data: await load(), wrap: data }),
+  pageLoaderWith: async (_request: Request, _context: unknown, _defaults: unknown, load: () => Promise<unknown>) => ({ sid: "travel-test", data: await load(), wrap: data }),
 }));
 
 describe("when retrying travel through a single-fetch data request", () => {

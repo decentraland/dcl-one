@@ -24,8 +24,11 @@
 //! scripts/update-goldens.sh. A MISSING golden fails too — this repo's CI
 //! backstop counts passing tests and never checks for a dirty tree, so an
 //! auto-written golden would report green having asserted nothing.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 // Unix only: every staged fixture shares the toolchain's node_modules by symlink.
 #![cfg(unix)]
+#![recursion_limit = "256"]
 
 use dcl_scene_cli::build::{self, BuildOptions};
 use dcl_scene_cli::{crdt_gen, deploy, entrypoint, init, split};
@@ -37,10 +40,10 @@ mod common {
     pub mod testgate;
 }
 
-/// Pinned in Cargo.toml as `rolldown = "=1.2.6"`. Repeated here so a bump has
+/// Pinned in Cargo.toml as `rolldown = "=1.3.2"`. Repeated here so a bump has
 /// to be copied into this line, invalidating every golden in one visible place
 /// instead of scattering unexplained byte diffs.
-const BUNDLER: &str = "rolldown-1.2.6";
+const BUNDLER: &str = "rolldown-1.3.2";
 
 /// The CLI stamps the wall clock into the deploy entity, which would put a
 /// fresh CID in every run. Per-file CIDv1s are timestamp-independent, so only
@@ -148,6 +151,15 @@ async fn no_main_production() {
     golden(Fixture::new("no-main")).await;
 }
 
+#[test]
+fn the_bundler_label_is_the_pinned_rolldown() {
+    let pin = BUNDLER.replacen("rolldown-", "rolldown = { version = \"=", 1) + "\"";
+    assert!(
+        include_str!("../Cargo.toml").contains(&pin),
+        "copy the rolldown pin into BUNDLER"
+    );
+}
+
 async fn golden(fixture: Fixture) {
     let Some(node) = node_bin() else {
         return;
@@ -201,6 +213,10 @@ fn work_dir() -> PathBuf {
 /// `OnceLock::get_or_init` is the lock: cargo runs these `#[test]`s in
 /// parallel and every one calls this before touching anything else, so the
 /// environment scrub below lands before any build reads it.
+#[allow(
+    unsafe_code,
+    reason = "clears inherited environment before any test thread reads it"
+)]
 fn node_modules_src() -> &'static Path {
     static SRC: OnceLock<PathBuf> = OnceLock::new();
     SRC.get_or_init(|| {

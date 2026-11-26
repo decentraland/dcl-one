@@ -1,8 +1,15 @@
 //! Packs, purchases and the Stripe side of the ledger: the active-pack memo,
 //! the pending purchase rows the intent/session flows insert, the webhook's
-//! `paid` flip (locked row, expected amount, one statement), the reversals
+//! `paid` flip (locked row, expected currency and amount, one statement), the reversals
 //! (bounded by the PURCHASE through `revoked_credits <= credits`, never by
 //! spend rows) and the completion-based event de-duplication.
+
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 
 use serde_json::Value as JsonValue;
 use sqlx::Row;
@@ -10,17 +17,64 @@ use sqlx::Row;
 use super::errors::ApiError;
 use super::store::Credits;
 
+pub(crate) fn validate_sku(raw: &str) -> Result<String, ApiError> {
+    let s = raw.trim();
+    if s.is_empty() || s.len() > 100 {
+        return Err(ApiError::bad_request("invalid sku"));
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_graphic() && c != '/' && c != '\\')
+    {
+        return Err(ApiError::bad_request("invalid sku"));
+    }
+    Ok(s.to_string())
+}
+
+/// A purchase a settled event just flipped to `paid`, read from its row:
+/// what the grant credits, and the keys its ledger row and its recorded
+/// reversals go by, whichever Stripe event settled it.
+#[derive(Debug, Clone)]
+pub struct SettledPurchase {
+    /// `credits.purchases.id`, the key of its receipt.
+    pub id: i64,
+    pub address: String,
+    pub credits: String,
+    pub sku: String,
+    /// Set for a pack order opened as a Checkout Session.
+    pub order_id: Option<String>,
+    pub checkout_session: Option<String>,
+    /// The payment intent the purchase holds after the flip: the one it
+    /// already had (an unpaid completion records it), else the event's.
+    pub payment_intent: Option<String>,
+    /// What the payment charged, in cents of `currency`, and how many
+    /// packs it bought (the credits and the cents are already the totals).
+    pub amount_cents: i64,
+    pub currency: String,
+    pub quantity: i32,
+}
+
 #[derive(Debug, Clone)]
 pub enum MarkPaidOutcome {
-    Granted {
-        address: String,
-        credits: String,
-    },
+    Granted(SettledPurchase),
     AmountMismatch {
         expected_cents: i64,
         charged_cents: i64,
     },
-    NoPendingPurchase,
+    /// The charge is in another currency: its minor units are not the
+    /// purchase's, so no amount comparison can approve it.
+    CurrencyMismatch {
+        expected: String,
+        charged: String,
+    },
+    /// No purchase goes by the event's key.
+    NoPurchase,
+    /// The purchase is no longer settleable ([`SETTLEABLE_STATUSES`]): an
+    /// earlier event credited it (`paid`, `refunded`, `disputed`), or its
+    /// payment failed (`failed`).
+    NotSettleable {
+        status: String,
+    },
 }
 
 /// A reversal returns the buyer's money, so our side must REMOVE the credits
@@ -39,6 +93,8 @@ pub enum ReversalOutcome {
         shortfall: String,
         /// Whether `shortfall` is strictly positive (decided in NUMERIC).
         has_shortfall: bool,
+        /// A dispute's reversal; else a refund's.
+        dispute: bool,
     },
     NothingToReverse,
     NoPaidPurchase,
@@ -112,6 +168,11 @@ impl PackOrder<'_> {
     }
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "d % 10 is below 10")]
+fn digit_char(d: u64) -> char {
+    char::from(b'0' + (d % 10) as u8)
+}
+
 /// `text × factor`, exactly, for PostgreSQL's plain `numeric::text` output
 /// (`[-]digits[.digits]`); `None` for anything else.
 fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
@@ -147,20 +208,14 @@ fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
     head.reverse();
     head.extend(digits);
     let split = head.len() - frac_part.len();
-    let int_digits: String = head[..split]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let int_digits: String = head[..split].iter().map(|d| digit_char(*d)).collect();
     let int_digits = int_digits.trim_start_matches('0');
     let int_digits = if int_digits.is_empty() {
         "0"
     } else {
         int_digits
     };
-    let frac_digits: String = head[split..]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let frac_digits: String = head[split..].iter().map(|d| digit_char(*d)).collect();
     let mut out = String::new();
     if negative {
         out.push('-');
@@ -255,7 +310,10 @@ impl Credits {
         .bind(&order.pack.sku)
         .bind(&order.credits)
         .bind(order.amount_cents)
-        .bind(order.quantity as i32)
+        .bind(
+            i32::try_from(order.quantity)
+                .map_err(|_| ApiError::Internal(format!("pack quantity {} is past i32", order.quantity)))?,
+        )
         .bind(order.source)
         .bind(&order.pack.currency)
         .bind(checkout_session_id)
@@ -305,45 +363,34 @@ impl Credits {
         }))
     }
 
-    pub async fn mark_order_paid_by_session(
-        &self,
-        session_id: &str,
-        event_id: &str,
-        charged_cents: i64,
-        payment_intent: Option<&str>,
-    ) -> Result<MarkPaidOutcome, ApiError> {
-        let mut tx = self.pool.begin().await?;
-        let outcome = self
-            .mark_order_paid_by_session_in_tx(
-                &mut tx,
-                session_id,
-                event_id,
-                charged_cents,
-                payment_intent,
-            )
-            .await?;
-        tx.commit().await?;
-        Ok(outcome)
-    }
-
-    /// `payment_intent` is the session's `payment_intent`, stored on the
-    /// order so a later `charge.refunded` / `charge.dispute.*` (keyed by
-    /// payment intent) finds the purchase to revoke
-    /// (money-session-order-reversal).
+    /// Only for a session whose payment has SETTLED (the caller checks
+    /// `payment_status`). `payment_intent` is the session's `payment_intent`,
+    /// stored on the order when it has none yet, so a later `charge.refunded`
+    /// / `charge.dispute.*` (keyed by payment intent) finds the purchase to
+    /// revoke; it is locked first ([`Self::lock_payment_in_tx`]). After a
+    /// grant the caller applies [`Self::apply_recorded_reversals_in_tx`] for
+    /// the intent the purchase holds ([`SettledPurchase::payment_intent`]).
+    /// When that one was already stored, no further lock is needed: a
+    /// reversal's own apply locks this same purchase row, so it either ran
+    /// before this flip (and committed its record first) or waits for this
+    /// transaction and then finds the purchase paid.
     pub(crate) async fn mark_order_paid_by_session_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         session_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
+        if let Some(payment_intent) = payment_intent {
+            Self::lock_payment_in_tx(tx, payment_intent).await?;
+        }
         Self::mark_paid_in_tx(
             tx,
             MARK_PAID_BY_SESSION,
             session_id,
             event_id,
-            charged_cents,
+            charged,
             payment_intent,
         )
         .await
@@ -358,6 +405,15 @@ impl Credits {
         Self::mark_order_status_by_session_on(&self.pool, session_id, status, failure_reason).await
     }
 
+    /// Retires a pending order. One whose payment is processing (see
+    /// [`Self::mark_order_processing_by_session_in_tx`]) is only ever retired
+    /// as `failed`, by its own payment's outcome; a cancel, an expiry or a
+    /// resume leaves it pending. The payment's failure also closes an order
+    /// already retired as `abandoned`: otherwise an unpaid completion
+    /// retried after the failure would mark it processing again, with no
+    /// outcome left to settle it. A `failed` order is not settleable
+    /// ([`SETTLEABLE_STATUSES`]), so nothing revives it, and a credited one
+    /// (`paid`, `refunded`, `disputed`) is never moved here.
     pub(crate) async fn mark_order_status_by_session_on<'e, E>(
         executor: E,
         session_id: &str,
@@ -370,7 +426,9 @@ impl Credits {
         let res = sqlx::query(
             "UPDATE credits.purchases \
              SET status = $2, failure_reason = COALESCE($3, failure_reason), updated_at = timezone('UTC', now()) \
-             WHERE stripe_checkout_session = $1 AND status = 'pending'",
+             WHERE stripe_checkout_session = $1 \
+               AND (status = 'pending' OR ($2 = 'failed' AND status = 'abandoned')) \
+               AND (stripe_payment_intent IS NULL OR $2 = 'failed')",
         )
         .bind(session_id)
         .bind(status)
@@ -380,75 +438,126 @@ impl Credits {
         Ok(res.rows_affected() > 0)
     }
 
-    pub async fn mark_purchase_paid(
-        &self,
-        payment_intent_id: &str,
-        event_id: &str,
-        charged_cents: i64,
-    ) -> Result<MarkPaidOutcome, ApiError> {
-        let mut tx = self.pool.begin().await?;
-        let outcome = self
-            .mark_purchase_paid_in_tx(&mut tx, payment_intent_id, event_id, charged_cents)
-            .await?;
-        tx.commit().await?;
-        Ok(outcome)
+    /// The session completed but its payment is still processing (a bank
+    /// debit takes days): the order records the session's payment intent,
+    /// which marks it as awaiting that payment's outcome, and stays (or, if
+    /// a sweep or cancel retired it meanwhile, is again) `pending`, shown as
+    /// `processing`. Nothing but the outcome moves it from there.
+    pub(crate) async fn mark_order_processing_by_session_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        session_id: &str,
+        payment_intent: &str,
+    ) -> Result<bool, ApiError> {
+        let res = sqlx::query(
+            "UPDATE credits.purchases \
+             SET status = 'pending', failure_reason = NULL, \
+                 stripe_payment_intent = COALESCE(stripe_payment_intent, $2), \
+                 updated_at = timezone('UTC', now()) \
+             WHERE stripe_checkout_session = $1 AND status = ANY($3::text[])",
+        )
+        .bind(session_id)
+        .bind(payment_intent)
+        .bind(&SETTLEABLE_STATUSES[..])
+        .execute(&mut **tx)
+        .await?;
+        Ok(res.rows_affected() > 0)
     }
 
+    /// The current status of a session's order, for the webhook's logs.
+    pub(crate) async fn order_status_by_session_on<'e, E>(
+        executor: E,
+        session_id: &str,
+    ) -> Result<Option<String>, ApiError>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        Ok(sqlx::query_scalar(
+            "SELECT status FROM credits.purchases WHERE stripe_checkout_session = $1",
+        )
+        .bind(session_id)
+        .fetch_optional(executor)
+        .await?)
+    }
+
+    /// Any purchase holding this PaymentIntent, a Checkout order's included
+    /// (its unpaid completion records it). Locks the PaymentIntent first;
+    /// after a grant the caller applies
+    /// [`Self::apply_recorded_reversals_in_tx`].
     pub(crate) async fn mark_purchase_paid_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         payment_intent_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
     ) -> Result<MarkPaidOutcome, ApiError> {
+        Self::lock_payment_in_tx(tx, payment_intent_id).await?;
         Self::mark_paid_in_tx(
             tx,
             MARK_PAID_BY_PAYMENT_INTENT,
             payment_intent_id,
             event_id,
-            charged_cents,
+            charged,
             None,
         )
         .await
     }
 
     /// Locks the purchase row and flips it to `paid` in one statement when it
-    /// is still pending with the expected amount; the pre-update row decides
-    /// the outcome exactly as the separate SELECT FOR UPDATE + UPDATE did.
+    /// is still unpaid ([`SETTLEABLE_STATUSES`]) and the charge matches its
+    /// currency and amount; the pre-update row decides the outcome exactly as
+    /// the separate SELECT FOR UPDATE + UPDATE did.
     async fn mark_paid_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         sql: &'static str,
         key: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         let row = sqlx::query(sql)
             .bind(key)
             .bind(event_id)
-            .bind(charged_cents)
+            .bind(charged.cents)
             .bind(payment_intent)
+            .bind(charged.currency)
+            .bind(&SETTLEABLE_STATUSES[..])
             .fetch_optional(&mut **tx)
             .await?;
         let Some(row) = row else {
-            return Ok(MarkPaidOutcome::NoPendingPurchase);
+            return Ok(MarkPaidOutcome::NoPurchase);
         };
-        let address: String = row.get("address");
-        let credits: String = row.get("credits");
         let amount_cents: i64 = row.get("amount_cents");
+        let currency: String = row.get("currency");
         let status: String = row.get("status");
         let existing_event: Option<String> = row.get("stripe_event_id");
         let updated: bool = row.get("updated");
 
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
-            return Ok(MarkPaidOutcome::Granted { address, credits });
+            return Ok(MarkPaidOutcome::Granted(SettledPurchase {
+                id: row.get("id"),
+                address: row.get("address"),
+                credits: row.get("credits"),
+                sku: row.get("sku"),
+                order_id: row.get("order_id"),
+                checkout_session: row.get("stripe_checkout_session"),
+                payment_intent: row.get("payment_intent"),
+                amount_cents,
+                currency: currency.clone(),
+                quantity: row.get("quantity"),
+            }));
         }
-        if status != "pending" {
-            return Ok(MarkPaidOutcome::NoPendingPurchase);
+        if !SETTLEABLE_STATUSES.contains(&status.as_str()) {
+            return Ok(MarkPaidOutcome::NotSettleable { status });
+        }
+        if !currency.eq_ignore_ascii_case(charged.currency) {
+            return Ok(MarkPaidOutcome::CurrencyMismatch {
+                expected: currency,
+                charged: charged.currency.to_string(),
+            });
         }
         Ok(MarkPaidOutcome::AmountMismatch {
             expected_cents: amount_cents,
-            charged_cents,
+            charged_cents: charged.cents,
         })
     }
 
@@ -480,14 +589,10 @@ impl Credits {
         cumulative_refunded_cents: i64,
         event_id: &str,
     ) -> Result<ReversalOutcome, ApiError> {
-        self.apply_reversal(
-            tx,
-            payment_intent_id,
-            ReversalTarget::Cumulative(cumulative_refunded_cents),
-            None,
-            event_id,
-        )
-        .await
+        let target = ReversalTarget::Cumulative(cumulative_refunded_cents);
+        Self::persist_reversal_in_tx(tx, payment_intent_id, &target).await?;
+        self.apply_reversal(tx, payment_intent_id, target, None, event_id)
+            .await
     }
 
     /// Stripe `charge.dispute.*`: the whole charge goes back to the buyer.
@@ -512,6 +617,7 @@ impl Credits {
         status_label: &str,
         event_id: &str,
     ) -> Result<ReversalOutcome, ApiError> {
+        Self::persist_reversal_in_tx(tx, payment_intent_id, &ReversalTarget::Full).await?;
         self.apply_reversal(
             tx,
             payment_intent_id,
@@ -520,6 +626,78 @@ impl Credits {
             event_id,
         )
         .await
+    }
+
+    /// Serializes the Stripe events of one PaymentIntent (its settlement and
+    /// its reversals) until the transaction ends. Taken before the purchase
+    /// row, so a reversal and the grant it must reduce never miss each other:
+    /// whichever commits second sees the other.
+    pub(crate) async fn lock_payment_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+    ) -> Result<(), ApiError> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('stripe-payment:' || $1, 0))")
+            .bind(payment_intent)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
+    /// Records a reversal against its PaymentIntent whether or not a credited
+    /// purchase exists yet (`credits.payment_reversals`): a refund or dispute
+    /// can reach us before the settlement that credits the purchase.
+    async fn persist_reversal_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+        target: &ReversalTarget,
+    ) -> Result<(), ApiError> {
+        Self::lock_payment_in_tx(tx, payment_intent).await?;
+        let cumulative = match target {
+            ReversalTarget::Cumulative(c) => Some(*c),
+            ReversalTarget::Full => None,
+        };
+        sqlx::query(
+            "INSERT INTO credits.payment_reversals (payment_intent, refunded_cents, disputed) \
+             VALUES ($1, GREATEST(COALESCE($2::bigint, 0), 0), $2::bigint IS NULL) \
+             ON CONFLICT (payment_intent) DO UPDATE \
+                 SET refunded_cents = GREATEST(credits.payment_reversals.refunded_cents, EXCLUDED.refunded_cents), \
+                     disputed = credits.payment_reversals.disputed OR EXCLUDED.disputed, \
+                     updated_at = timezone('UTC', now())",
+        )
+        .bind(payment_intent)
+        .bind(cumulative)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// Right after a grant, in its transaction: the reversals recorded for
+    /// this PaymentIntent before it was credited, applied to the purchase
+    /// just flipped, so returned money never becomes spendable Credits. A
+    /// dispute reverses the whole purchase; otherwise the highest cumulative
+    /// refund does, bounded by the purchase like any reversal.
+    pub(crate) async fn apply_recorded_reversals_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        payment_intent: &str,
+        event_id: &str,
+    ) -> Result<Option<ReversalOutcome>, ApiError> {
+        let recorded: Option<(i64, bool)> = sqlx::query_as(
+            "SELECT refunded_cents, disputed FROM credits.payment_reversals WHERE payment_intent = $1",
+        )
+        .bind(payment_intent)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let (target, status_label) = match recorded {
+            Some((_, true)) => (ReversalTarget::Full, Some("disputed")),
+            Some((refunded_cents, false)) if refunded_cents > 0 => {
+                (ReversalTarget::Cumulative(refunded_cents), None)
+            }
+            _ => return Ok(None),
+        };
+        self.apply_reversal(tx, payment_intent, target, status_label, event_id)
+            .await
+            .map(Some)
     }
 
     /// The lock, the clamp and the conditional UPDATE are one statement:
@@ -616,6 +794,7 @@ impl Credits {
             removed: outcome.removed,
             shortfall: outcome.shortfall,
             has_shortfall: outcome.has_shortfall,
+            dispute: status_label == Some("disputed"),
         })
     }
 
@@ -645,22 +824,42 @@ impl Credits {
     }
 }
 
+/// The statuses a payment may still move: a settled one flips them to
+/// `paid`, a processing one back to `pending`. `abandoned` is one because
+/// the stale-order sweep (`orders::ABANDON_AFTER`) or a cancel can retire
+/// an order before Stripe's events for it arrive; a verified settled
+/// payment means the money arrived, so the order is credited. `failed`,
+/// `refunded` and `disputed` never come back.
+pub const SETTLEABLE_STATUSES: [&str; 2] = ["pending", "abandoned"];
+
+/// What a Stripe event says was charged: `cents` is in `currency`'s minor
+/// unit, so it only compares against a purchase in the same currency.
+#[derive(Debug, Clone, Copy)]
+pub struct Charge<'a> {
+    pub cents: i64,
+    pub currency: &'a str,
+}
+
 macro_rules! mark_paid_sql {
     ($column:literal) => {
         concat!(
             "WITH cur AS ( \
-                 SELECT id, address, credits::text AS credits, amount_cents, status, stripe_event_id \
+                 SELECT id, address, credits::text AS credits, amount_cents, quantity, currency, status, stripe_event_id, \
+                        sku, order_id, stripe_checkout_session, stripe_payment_intent \
                  FROM credits.purchases WHERE ",
             $column,
             " = $1 FOR UPDATE \
              ), upd AS ( \
                  UPDATE credits.purchases p \
                  SET status = 'paid', stripe_event_id = $2, stripe_payment_intent = COALESCE(p.stripe_payment_intent, $4::text), \
-                     updated_at = timezone('UTC', now()) \
-                 FROM cur WHERE p.id = cur.id AND cur.status = 'pending' AND cur.amount_cents = $3 \
+                     failure_reason = NULL, updated_at = timezone('UTC', now()) \
+                 FROM cur WHERE p.id = cur.id AND cur.status = ANY($6::text[]) \
+                     AND cur.amount_cents = $3 AND lower(cur.currency) = lower($5::text) \
                  RETURNING p.id \
              ) \
-             SELECT cur.address, cur.credits, cur.amount_cents, cur.status, cur.stripe_event_id, \
+             SELECT cur.id, cur.address, cur.credits, cur.amount_cents, cur.quantity, cur.currency, cur.status, cur.stripe_event_id, \
+                    cur.sku, cur.order_id, cur.stripe_checkout_session, \
+                    COALESCE(cur.stripe_payment_intent, $4::text) AS payment_intent, \
                     EXISTS (SELECT 1 FROM upd) AS updated \
              FROM cur"
         )

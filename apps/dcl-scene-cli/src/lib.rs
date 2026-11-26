@@ -2,7 +2,9 @@ pub mod abgen_embed;
 pub mod asset_bundles;
 pub mod build;
 pub mod build_script;
+pub mod check_server;
 pub mod check_stamp;
+pub mod code_to_composite;
 pub mod comms;
 pub mod context_files;
 pub mod crdt_gen;
@@ -13,6 +15,7 @@ pub mod entity_names;
 pub mod entrypoint;
 pub mod esbuild;
 pub mod exec_file;
+pub mod export_static;
 pub mod host;
 pub mod init;
 pub mod joinblock;
@@ -30,6 +33,7 @@ pub mod project_sync;
 pub mod rolldown_backend;
 pub mod scene;
 pub mod scene_files;
+pub mod sdk_cache;
 pub mod shutdown;
 pub mod signed_fetch;
 pub mod skills;
@@ -38,7 +42,9 @@ pub mod start;
 pub mod storage;
 pub mod storage_cli;
 pub mod storage_remote;
+pub mod textures;
 pub mod tunnel;
+pub mod typescript;
 pub mod ux;
 pub mod watch;
 pub mod workspace;
@@ -48,6 +54,7 @@ pub mod world_linker;
 
 /// A test's environment write.
 #[cfg(test)]
+#[allow(unsafe_code, reason = "tests write the process environment")]
 pub(crate) fn set_test_env(key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<std::ffi::OsStr>) {
     // SAFETY: test-only. std orders the write against every `std::env` read;
     // a libc `getenv` on another test thread (DNS resolution, SQLite's temp
@@ -57,6 +64,7 @@ pub(crate) fn set_test_env(key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<s
 
 /// A test's environment removal; see [`set_test_env`].
 #[cfg(test)]
+#[allow(unsafe_code, reason = "tests write the process environment")]
 pub(crate) fn remove_test_env(key: impl AsRef<std::ffi::OsStr>) {
     // SAFETY: as in `set_test_env`.
     unsafe { std::env::remove_var(key) }

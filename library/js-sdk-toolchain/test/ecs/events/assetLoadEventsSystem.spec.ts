@@ -1,11 +1,5 @@
-import {
-  components,
-  createAssetLoadLoadingStateSystem,
-  Engine,
-  IEngine,
-  AssetLoadLoadingStateSystem,
-  LoadingState
-} from '../../../packages/@dcl/ecs/src'
+import type { IEngine, AssetLoadLoadingStateSystem } from '../../../packages/@dcl/ecs/src'
+import { components, createAssetLoadLoadingStateSystem, Engine, LoadingState } from '../../../packages/@dcl/ecs/src'
 
 describe('AssetLoad loading state helper system should', () => {
   const engine: IEngine = Engine()

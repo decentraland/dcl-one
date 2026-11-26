@@ -35,6 +35,7 @@ pub mod realm_grids;
 pub mod server;
 pub mod simulation;
 pub mod snapshot;
+pub mod statistics;
 pub mod transport;
 
 pub use crate::protocol::pulse::decentraland;

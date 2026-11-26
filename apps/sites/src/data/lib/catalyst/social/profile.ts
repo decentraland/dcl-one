@@ -1,8 +1,11 @@
-import { profileFaceUrl } from "../../auth/profile-face-url";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
+
+import { profileFaceUrl, profileSnapshotUrl } from "../../auth/profile-face-url";
 import { siteUrl } from "../bases";
 import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { z } from "zod";
+import { absentWhenNull } from "../absent";
 import { NameColorSchema } from "../generated-schemas/communities";
 import { ETH_ADDRESS_RE } from "../format/address";
 
@@ -24,10 +27,9 @@ const LinkSchema = z.object({
 const AvatarInfoSchema = z
   .object({
     wearables: z.array(z.string()).optional(),
-    snapshots: z
-      .object({ face256: z.string().optional(), body: z.string().optional() })
-      .passthrough()
-      .optional(),
+    snapshots: absentWhenNull(
+      z.object({ face256: z.string().optional(), body: z.string().optional() }).passthrough(),
+    ),
   })
   .passthrough();
 
@@ -35,19 +37,19 @@ const AvatarSchema = z
   .object({
     name: z.string(),
     hasClaimedName: z.boolean(),
-    nameColor: z.union([Color3Schema, z.string()]).optional(),
+    nameColor: absentWhenNull(z.union([Color3Schema, z.string()])),
     description: z.string(),
-    links: z.array(LinkSchema).optional(),
-    country: z.string().optional(),
-    gender: z.string().optional(),
-    pronouns: z.string().optional(),
-    relationshipStatus: z.string().optional(),
-    sexualOrientation: z.string().optional(),
-    language: z.string().optional(),
-    profession: z.string().optional(),
-    birthdate: z.number().optional(),
-    realName: z.string().optional(),
-    hobbies: z.string().optional(),
+    links: absentWhenNull(z.array(LinkSchema)),
+    country: absentWhenNull(z.string()),
+    gender: absentWhenNull(z.string()),
+    pronouns: absentWhenNull(z.string()),
+    relationshipStatus: absentWhenNull(z.string()),
+    sexualOrientation: absentWhenNull(z.string()),
+    language: absentWhenNull(z.string()),
+    profession: absentWhenNull(z.string()),
+    birthdate: absentWhenNull(z.number()),
+    realName: absentWhenNull(z.string()),
+    hobbies: absentWhenNull(z.string()),
     ethAddress: z.string().optional(),
     userId: z.string().optional(),
     avatar: AvatarInfoSchema.optional(),
@@ -87,29 +89,44 @@ export type ProfileVM = {
   hasClaimedName: boolean;
   nameColor: string;
   avatarUrl?: string;
+  /** The full-body snapshot URL, local/content-store path, data URL, or empty. */
+  bodyUrl: string;
   mutualCount: number;
   bio: string;
   accountUrl: string;
   info: ProfileInfoField[];
   links: ProfileLink[];
   equipped: unknown[];
+  /** The on-chain items the avatar wears, as item URNs (no token id), in the order worn. */
+  wornCollectibles: string[];
 };
 
-const DEFAULT_NAME_COLOR = "#FF8362";
-
-function color3ToHex(c: { r?: number; g?: number; b?: number }): string {
-  const to255 = (n: number | undefined) =>
-    Math.max(0, Math.min(255, Math.round((n ?? 0) * 255)));
-  const hex = (n: number) => n.toString(16).padStart(2, "0");
-  return `#${hex(to255(c.r))}${hex(to255(c.g))}${hex(to255(c.b))}`;
+/**
+ * The worn wearables that are collectibles: an on-chain collection item, without the token id a
+ * worn copy carries, once each. The base avatar's own parts are not collectibles.
+ */
+export function wornCollectibleUrns(wearables: readonly string[] | undefined): string[] {
+  const urns = new Set<string>();
+  for (const worn of wearables ?? []) {
+    const parts = worn.trim().toLowerCase().split(":");
+    if (parts[0] !== "urn" || parts[1] !== "decentraland") continue;
+    if (parts[2] !== "matic" && parts[2] !== "ethereum") continue;
+    // Third-party collections are not in the marketplace catalogue.
+    if ((parts[3] !== "collections-v1" && parts[3] !== "collections-v2") || !parts[4] || !parts[5]) continue;
+    urns.add(parts.slice(0, 6).join(":"));
+  }
+  return [...urns];
 }
+
 
 const INFO_FIELDS: { src: keyof Avatar; key: string; label: string; icon: string }[] = [
   { src: "country", key: "country", label: "Country", icon: "globe" },
   { src: "language", key: "language", label: "Language", icon: "translate" },
   { src: "pronouns", key: "pronouns", label: "Pronouns", icon: "pronouns" },
+  { src: "relationshipStatus", key: "relationship_status", label: "Relationship status", icon: "heart" },
   { src: "gender", key: "gender", label: "Gender", icon: "gender" },
   { src: "profession", key: "profession", label: "Profession", icon: "games" },
+  { src: "realName", key: "real_name", label: "Real name", icon: "at" },
   { src: "hobbies", key: "favorite_hobby", label: "Favorite hobby", icon: "heart" },
 ];
 
@@ -119,23 +136,42 @@ export function emptyProfile(address: string): ProfileVM {
     address: addr,
     name: addr,
     hasClaimedName: false,
-    nameColor: DEFAULT_NAME_COLOR,
+    // The same derived color the page showed before the profile loaded, from the address alone.
+    nameColor: getAvatarBackgroundColor(getDisplayName(addr, false, addr)),
+    bodyUrl: "",
     mutualCount: 0,
     bio: "",
     accountUrl: addr ? siteUrl("/shop") : "",
     info: [],
     links: [],
     equipped: [],
+    wornCollectibles: [],
   };
 }
 
+/** The site name a link points to, for a link saved without a title. */
+function linkSite(url: string): string {
+  const host = new URL(url).hostname.replace(/^www\./, "");
+  const first = host.split(".")[0] ?? host;
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+/** Only http(s) links reach the page: a profile's links are written by its owner. */
+function httpUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function mapProfile(avatar: Avatar, address: string): ProfileVM {
-  const nameColor =
-    typeof avatar.nameColor === "string"
-      ? avatar.nameColor
-      : avatar.nameColor
-        ? color3ToHex(avatar.nameColor)
-        : DEFAULT_NAME_COLOR;
+  const addr = normalizeAddress(address) || avatar.ethAddress || address;
+  const name = avatar.name || addr;
+  // Every Decentraland client colors a name from the display name (the explorer's NameColorHelper),
+  // so every tab of a profile shows the same color.
+  const nameColor = getAvatarBackgroundColor(getDisplayName(name, avatar.hasClaimedName, addr));
 
   const info: ProfileInfoField[] = [];
   for (const f of INFO_FIELDS) {
@@ -145,23 +181,27 @@ export function mapProfile(avatar: Avatar, address: string): ProfileVM {
     }
   }
 
-  const links: ProfileLink[] = (avatar.links ?? [])
-    .filter((l) => /^https?:\/\//i.test(l.url))
-    .map((l) => ({ title: l.title || l.url, url: l.url }));
-
-  const addr = normalizeAddress(address) || avatar.ethAddress || address;
+  // The one place a link's URL and shown title are decided: untitled links show their site's name.
+  const links: ProfileLink[] = (avatar.links ?? []).flatMap((l) => {
+    const url = httpUrl(l.url);
+    if (!url) return [];
+    const title = l.title.trim();
+    return [{ title: title && title !== l.url ? title : linkSite(url), url }];
+  });
 
   return {
     address: addr,
-    name: avatar.name || addr,
+    name,
     hasClaimedName: Boolean(avatar.hasClaimedName),
     nameColor,
     avatarUrl: profileFaceUrl(avatar.avatar?.snapshots?.face256),
+    bodyUrl: profileSnapshotUrl(avatar.avatar?.snapshots?.body, "body.png"),
     mutualCount: 0,
     bio: avatar.description ?? "",
     accountUrl: siteUrl("/shop"),
     info,
     links,
     equipped: [],
+    wornCollectibles: wornCollectibleUrns(avatar.avatar?.wearables),
   };
 }

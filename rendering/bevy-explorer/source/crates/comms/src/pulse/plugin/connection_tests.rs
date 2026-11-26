@@ -20,7 +20,7 @@ fn address(wallet: &str) -> Address {
 
 /// A session on a stub link, `Connecting` as a freshly spawned driver leaves it, and the driver's
 /// end of that link, for the test to play.
-fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
+pub(super) fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
     let (link, driver) = transport::pulse_channels(16);
     let grid = PulseParcelGrid::default();
     let session = PulseSession {
@@ -46,6 +46,8 @@ fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
         policy: ReconnectPolicy::exact(),
         accepted: false,
         initial_realm: None,
+        teleport_owed: false,
+        placed_realm: None,
         state: Connection::Connecting,
     };
     (session, driver)
@@ -163,6 +165,7 @@ fn standing_in(x: i32) -> Vec3 {
 fn parcel_index(x: i32) -> i32 {
     PulseParcelGrid::default()
         .encode_to_parcel(standing_in(x))
+        .unwrap()
         .0
 }
 
@@ -310,6 +313,7 @@ impl Harness {
     /// The profile has loaded, at `version`.
     fn profile(&mut self, version: u32) {
         self.world.insert_resource(CurrentUserProfile {
+            is_deployed: true,
             profile: Some(UserProfile {
                 version,
                 ..default()
@@ -320,7 +324,9 @@ impl Harness {
 
     /// The player is behind the loading screen.
     fn leave_world(&mut self) {
-        self.world.entity_mut(self.user).insert(OutOfWorld);
+        self.world
+            .entity_mut(self.user)
+            .insert(OutOfWorld::default());
     }
 
     /// The player is placed in the world.
@@ -544,6 +550,93 @@ fn a_terminal_reason_parks_until_the_next_realm_change() {
     harness.world.insert_resource(realm("away"));
     harness.follow_realm();
     assert_eq!(respawn_at(harness.session()), Some(0.0));
+}
+
+/// The realm's room and its island, connected, and a scene room beside them; in that order.
+fn realm_rooms(world: &mut World) -> [Entity; 3] {
+    use crate::room_connection::{RealmRoom, RoomRecovery};
+    let realm_room = world.spawn((RealmRoom, RoomRecovery::default())).id();
+    let island = world
+        .spawn((
+            RealmRoom,
+            RoomRecovery::default(),
+            crate::archipelago::IslandOwner(realm_room),
+        ))
+        .id();
+    let scene_room = world
+        .spawn((
+            crate::SceneRoom("scene".to_owned()),
+            RoomRecovery::default(),
+        ))
+        .id();
+    [realm_room, island, scene_room]
+}
+
+fn room_failure(world: &World, room: Entity) -> Option<crate::room_connection::FailureKind> {
+    world
+        .get::<crate::room_connection::RoomRecovery>(room)
+        .unwrap()
+        .failure
+}
+
+/// Pulse's `DuplicateSession` is the one word this device gets when another device of its wallet
+/// signs in: the archipelago replaces only this device's own socket. So the island ends with Pulse,
+/// in the identity-conflict state that nothing retries, until the realm changes; scene rooms stay.
+#[test]
+fn a_duplicate_session_ends_the_island_connection() {
+    use crate::room_connection::FailureKind;
+    let mut harness = Harness::established(1.0);
+    let [realm_room, island, scene_room] = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::DuplicateSession));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in [realm_room, island] {
+        assert_eq!(
+            room_failure(&harness.world, room),
+            Some(FailureKind::IdentityConflict)
+        );
+        assert!(!harness
+            .world
+            .get::<crate::room_connection::RoomRecovery>(room)
+            .unwrap()
+            .can_retry(1000.0));
+    }
+    assert_eq!(room_failure(&harness.world, scene_room), None);
+}
+
+/// A terminal reason that says nothing about another device, an overrun event budget here, ends
+/// Pulse alone: the island stays connected.
+#[test]
+fn a_rate_limit_disconnect_leaves_the_island_connection() {
+    let mut harness = Harness::established(1.0);
+    let rooms = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(
+        PulseDisconnect::DiscreteEventRateExceeded,
+    ));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in rooms {
+        assert_eq!(room_failure(&harness.world, room), None);
+    }
+}
+
+/// A scene listener is not a player: a `DuplicateSession` ends its Pulse session and nothing else.
+#[test]
+fn a_duplicate_session_on_a_listener_ends_only_pulse() {
+    let (mut harness, _scenes) = Harness::listener([IVec2::ZERO]);
+    let rooms = realm_rooms(&mut harness.world);
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::DuplicateSession));
+    harness.pump_at(2.0);
+
+    assert!(matches!(harness.session().state, Connection::Dead));
+    for room in rooms {
+        assert_eq!(room_failure(&harness.world, room), None);
+    }
 }
 
 /// The attempts that failed before an accepted connection are forgiven: the next failure is the
@@ -788,7 +881,7 @@ fn the_outbox_keeps_the_caches_while_disconnected() {
 
         assert_eq!(
             harness.session().last_state,
-            Some(from_movement(&movement(), &PulseParcelGrid::default()))
+            from_movement(&movement(), &PulseParcelGrid::default())
         );
         assert_eq!(
             harness.driver.outbound.try_recv().unwrap_err(),
@@ -830,6 +923,241 @@ fn an_emote_is_kept_from_its_start_to_its_stop() {
     assert_eq!(harness.session().local_emote, None);
     let kinds: Vec<_> = harness.sent().iter().map(|(kind, _)| *kind).collect();
     assert_eq!(kinds, [FrameKind::Emote]);
+}
+
+/// A one-shot longer than the servers accept goes out durationless, like a loop, and is kept as
+/// one for the handshake, so neither the start nor a later handshake ends the session.
+#[test]
+fn a_one_shot_too_long_for_pulse_goes_out_durationless() {
+    let mut harness = Harness::established(10.0);
+    harness.sent();
+    harness.broadcast(movement());
+
+    for (duration_ms, sent_as) in [
+        (
+            crate::PULSE_MAX_EMOTE_DURATION_MS,
+            Some(crate::PULSE_MAX_EMOTE_DURATION_MS),
+        ),
+        (crate::PULSE_MAX_EMOTE_DURATION_MS + 1, None),
+    ] {
+        harness.broadcast(Emote {
+            duration_ms: Some(duration_ms),
+            ..emote(false)
+        });
+        harness.drain_at(12.0);
+
+        let sent = harness.sent();
+        let Some((_, pulse::client_message::Message::EmoteStart(start))) = sent.last() else {
+            panic!("{sent:?}")
+        };
+        assert_eq!(start.duration_ms, sent_as);
+        assert_eq!(
+            harness.session().local_emote.as_ref().unwrap().duration_ms,
+            sent_as
+        );
+    }
+
+    // Long past the cap the handshake still names it, with no duration the server would refuse.
+    let initial = initial_state(
+        Some(&pose()),
+        harness.session().local_emote.as_ref(),
+        Some(HOME),
+        true,
+        200.0,
+    )
+    .unwrap();
+    assert_eq!(initial.emote_id.as_deref(), Some("wave"));
+    assert_eq!(initial.emote_duration_ms, None);
+}
+
+/// Outside the parcel grid nothing is sent that the server would refuse for good: no input, no
+/// teleport, and no stale pose kept for an emote or a handshake to carry.
+#[test]
+fn nothing_is_sent_from_outside_the_parcel_grid() {
+    let mut harness = Harness::established(10.0);
+    harness.sent();
+    harness.broadcast(movement());
+    harness.drain_at(11.0);
+    assert!(harness.session().last_state.is_some());
+    harness.sent();
+
+    harness.broadcast(rfc4::Movement {
+        position_z: 16.0 * 1000.0,
+        ..movement()
+    });
+    harness.drain_at(12.0);
+    assert_eq!(harness.session().last_state, None);
+
+    harness.teleport_to(standing_in(1000));
+    harness.drain_at(13.0);
+    harness.broadcast(emote(false));
+    harness.drain_at(14.0);
+    let sent = harness.sent();
+    assert!(sent.is_empty(), "{sent:?}");
+}
+
+impl Harness {
+    /// The player stands at `position` (Bevy world space).
+    fn stand_at(&mut self, position: Vec3) {
+        let user = self.user;
+        self.world
+            .entity_mut(user)
+            .insert(GlobalTransform::from_translation(position));
+    }
+
+    /// The owed teleport is checked at `now`, and what is due drained.
+    fn reenter_at(&mut self, now: f64) {
+        self.world
+            .run_system_once(pulse_teleport_on_grid_reentry)
+            .unwrap();
+        self.drain_at(now);
+    }
+}
+
+/// The edge parcel nearest `standing_in(x)` (DCL convention, z = 0).
+fn edge_index(x: i32) -> i32 {
+    PulseParcelGrid::default()
+        .encode_clamped(standing_in(x))
+        .unwrap()
+        .0
+}
+
+/// A realm change outside the grid is never owed: the server would keep the avatar frozen in the
+/// realm left. It goes at once from the nearest edge, and re-entry snaps to the real position.
+#[test]
+fn a_realm_change_outside_the_grid_goes_from_the_edge() {
+    let mut harness = Harness::established(10.0);
+    harness.sent();
+
+    harness.world.insert_resource(realm("away"));
+    harness.teleport_to(standing_in(1000));
+    harness.drain_at(11.0);
+
+    let sent = harness.sent();
+    let [(_, pulse::client_message::Message::Teleport(teleport))] = sent.as_slice() else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(teleport.realm, "away");
+    assert_eq!(teleport.parcel_index, edge_index(1000));
+    assert!(harness.session().teleport_owed);
+
+    harness.stand_at(standing_in(3));
+    harness.reenter_at(12.0);
+    assert_eq!(teleported_parcels(&harness.sent()), [parcel_index(3)]);
+    assert!(!harness.session().teleport_owed);
+}
+
+/// A realm change can drop a queued edge teleport, so no realm counts as placed until one goes.
+#[test]
+fn a_realm_change_forgets_the_placed_realm() {
+    let mut harness = Harness::established(10.0);
+    harness.session_mut().placed_realm = Some(HOME.to_owned());
+    harness.leave_world();
+
+    harness.world.insert_resource(realm("away"));
+    harness.follow_realm();
+
+    assert_eq!(harness.session().placed_realm, None);
+}
+
+/// Behind the loading screen the position is provisional: an owed teleport waits for the player to
+/// be placed.
+#[test]
+fn an_owed_teleport_waits_out_the_loading_screen() {
+    let mut harness = Harness::established(10.0);
+    harness.sent();
+    harness.teleport_to(standing_in(1000));
+    harness.drain_at(11.0);
+    assert!(harness.sent().is_empty());
+
+    harness.stand_at(standing_in(3));
+    harness.leave_world();
+    harness.reenter_at(12.0);
+    assert!(harness.sent().is_empty());
+    assert!(harness.session().teleport_owed);
+
+    harness.enter_world();
+    harness.reenter_at(13.0);
+    assert_eq!(teleported_parcels(&harness.sent()), [parcel_index(3)]);
+}
+
+/// A teleport owed when the connection drops is still owed on the next one, whose handshake has no
+/// pose to carry from outside the grid: acceptance places the player at the edge, and re-entry
+/// where they are. A handshake that does carry a pose settles it.
+#[test]
+fn an_owed_teleport_survives_a_reconnect() {
+    let mut harness = Harness::idle();
+    harness.stand_at(standing_in(1000));
+    harness.session_mut().teleport_owed = true;
+    harness.session_mut().placed_realm = Some(HOME.to_owned());
+
+    let handshake = harness.signed_handshake(4.5);
+    assert_eq!(handshake.initial_state, None);
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+    let sent = harness.sent();
+    assert_eq!(teleported_parcels(&sent), [edge_index(1000)]);
+    assert!(harness.session().teleport_owed);
+
+    harness.stand_at(standing_in(3));
+    harness.reenter_at(6.0);
+    harness.reenter_at(7.0);
+    assert_eq!(teleported_parcels(&harness.sent()), [parcel_index(3)]);
+
+    // Owed again, but the next handshake carries a pose: nothing more to send on re-entry.
+    let mut harness = Harness::idle();
+    harness.session_mut().teleport_owed = true;
+    harness.session_mut().last_state = Some(pose());
+    let handshake = harness.signed_handshake(4.5);
+    assert!(handshake.initial_state.is_some());
+    assert!(!harness.session().teleport_owed);
+}
+
+/// A teleport skipped outside the grid goes once the player is back inside, from where they are
+/// then and in the realm current then, and only once.
+#[test]
+fn a_teleport_skipped_outside_the_grid_goes_on_reentry() {
+    let mut harness = Harness::established(10.0);
+    harness.sent();
+
+    harness.teleport_to(standing_in(1000));
+    harness.drain_at(11.0);
+    assert!(harness.sent().is_empty());
+    assert!(harness.session().teleport_owed);
+
+    // Still outside: nothing yet.
+    let user = harness.user;
+    harness
+        .world
+        .entity_mut(user)
+        .insert(GlobalTransform::from_translation(standing_in(1000)));
+    harness
+        .world
+        .run_system_once(pulse_teleport_on_grid_reentry)
+        .unwrap();
+    harness.drain_at(12.0);
+    assert!(harness.sent().is_empty());
+
+    harness.world.insert_resource(realm("away"));
+    harness
+        .world
+        .entity_mut(user)
+        .insert(GlobalTransform::from_translation(standing_in(3)));
+    for now in [13.0, 14.0] {
+        harness
+            .world
+            .run_system_once(pulse_teleport_on_grid_reentry)
+            .unwrap();
+        harness.drain_at(now);
+    }
+
+    let sent = harness.sent();
+    assert_eq!(teleported_parcels(&sent), [parcel_index(3)]);
+    let [(_, pulse::client_message::Message::Teleport(teleport))] = sent.as_slice() else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(teleport.realm, "away");
+    assert!(!harness.session().teleport_owed);
 }
 
 /// An emote the bucket allows leaves in its place in the queue. A start carries the pose it was
@@ -1078,4 +1406,244 @@ fn a_realm_change_while_connected_teleports_with_the_drain() {
         panic!("{sent:?}")
     };
     assert_eq!(teleport.realm, "away");
+}
+
+fn begin_resync_gap(session: &mut PulseSession, now: Instant) -> pulse::ResyncRequest {
+    session.decoder.handle_at(
+        pulse::ServerMessage {
+            message: Some(joined(42, W1)),
+        },
+        now,
+    );
+    let events = session.decoder.handle_at(
+        pulse::ServerMessage {
+            message: Some(pulse::server_message::Message::PlayerStateDelta(
+                pulse::PlayerStateDeltaTier0 {
+                    subject_id: 42,
+                    baseline_seq: 1,
+                    new_seq: 2,
+                    ..default()
+                },
+            )),
+        },
+        now,
+    );
+    let [PulseEvent::Resync(request)] = events.as_slice() else {
+        panic!("{events:?}");
+    };
+    request.clone()
+}
+
+#[test]
+fn partial_queue_admission_rotates_retries_while_an_admitted_subject_never_answers() {
+    let (mut session, _) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    let (link, mut driver) = transport::pulse_channels(1);
+    session.link = Some(link);
+    session.state = Connection::Established;
+    let start = Instant::now();
+    // Each subject gets its own wallet and outstanding gap.
+    for id in 42..45 {
+        let wallet = format!("0x{id:040x}");
+        session.decoder.handle_at(
+            pulse::ServerMessage {
+                message: Some(joined(id, &wallet)),
+            },
+            start,
+        );
+        let events = session.decoder.handle_at(
+            pulse::ServerMessage {
+                message: Some(pulse::server_message::Message::PlayerStateDelta(
+                    pulse::PlayerStateDeltaTier0 {
+                        subject_id: id,
+                        baseline_seq: 1,
+                        new_seq: 2,
+                        ..default()
+                    },
+                )),
+            },
+            start,
+        );
+        for event in events {
+            if let PulseEvent::Resync(request) = event {
+                send_resync(
+                    session.link.as_mut(),
+                    &mut session.resyncs,
+                    &mut session.decoder,
+                    request,
+                    0.0,
+                );
+            }
+        }
+    }
+    driver.outbound.try_recv().unwrap(); // Only subject 42 fit initially.
+    let mut admitted = Vec::new();
+    for seconds in [1, 3, 7, 12, 17, 22] {
+        let now = start + Duration::from_secs(seconds);
+        retry_resyncs(&mut session, now, 0.0);
+        let frame = driver.outbound.try_recv().unwrap();
+        let Some(pulse::client_message::Message::Resync(request)) =
+            pulse::ClientMessage::decode(frame.bytes.as_slice())
+                .unwrap()
+                .message
+        else {
+            panic!("expected a resync")
+        };
+        admitted.push(request.subject_id);
+        // Subject 42 never responds. Others recover and leave the retry set.
+        if request.subject_id != 42 {
+            session.decoder.handle_at(
+                pulse::ServerMessage {
+                    message: Some(pulse::server_message::Message::PlayerStateFull(
+                        pulse::PlayerStateFull {
+                            subject_id: request.subject_id,
+                            sequence: 2,
+                            server_tick: 2000,
+                            state: Some(pose()),
+                        },
+                    )),
+                },
+                now,
+            );
+        }
+        retry_resyncs(&mut session, now, 0.0);
+        assert!(driver.outbound.try_recv().is_err());
+    }
+    assert_eq!(&admitted[..3], &[42, 43, 44]);
+    assert_eq!(session.decoder.pending_resync.len(), 1);
+    assert!(session.decoder.pending_resync.contains_key(&42));
+    assert_eq!(session.resyncs[0], (0, 7));
+}
+
+#[test]
+fn a_full_send_queue_recovers_through_the_pump_without_inbound_or_game_time_progress() {
+    let mut harness = Harness::player(Connection::Established);
+    let (link, driver) = transport::pulse_channels(1);
+    harness.session_mut().link = Some(link);
+    harness.driver = driver;
+    let start = Instant::now();
+    {
+        let mut session = harness.session_mut();
+        let request = begin_resync_gap(&mut session, start);
+        assert!(session.link.as_mut().unwrap().send(PulseFrame {
+            bytes: Vec::new(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
+        }));
+        let session = &mut *session;
+        assert!(!send_resync(
+            session.link.as_mut(),
+            &mut session.resyncs,
+            &mut session.decoder,
+            request,
+            0.0
+        ));
+        assert_eq!(
+            session.resyncs.iter().map(|(_, count)| count).sum::<u32>(),
+            0
+        );
+    }
+    harness.driver.outbound.try_recv().unwrap();
+
+    // Make the request due without relying on an Instant before the clock's origin.
+    harness
+        .session_mut()
+        .decoder
+        .pending_resync
+        .get_mut(&42)
+        .unwrap()
+        .retry_at = start;
+    // The real pump has no inbound packet and its game clock remains at zero.
+    harness.pump_at(0.0);
+    let frame = harness.driver.outbound.try_recv().unwrap();
+    assert_eq!(frame.reliability, PulseReliability::Reliable);
+    assert_eq!(frame.kind, FrameKind::Control);
+    assert!(matches!(
+        pulse::ClientMessage::decode(frame.bytes.as_slice())
+            .unwrap()
+            .message,
+        Some(pulse::client_message::Message::Resync(
+            pulse::ResyncRequest {
+                subject_id: 42,
+                known_seq: 0,
+            }
+        ))
+    ));
+    assert_eq!(harness.session().resyncs[0], (0, 1));
+
+    harness.receive(pulse::server_message::Message::PlayerStateFull(
+        pulse::PlayerStateFull {
+            subject_id: 42,
+            sequence: 2,
+            server_tick: 2000,
+            state: Some(pose()),
+        },
+    ));
+    harness.pump_at(0.0);
+    assert!(harness.session().decoder.pending_resync.is_empty());
+    retry_resyncs(
+        &mut harness.session_mut(),
+        Instant::now() + Duration::from_secs(60),
+        0.0,
+    );
+    assert!(harness.sent().is_empty());
+    assert_eq!(harness.session().resyncs[0], (0, 1));
+}
+
+#[test]
+fn an_unanswered_resync_retries_over_the_link_only_when_due() {
+    let (mut session, mut driver) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    session.state = Connection::Established;
+    let start = Instant::now();
+    let request = begin_resync_gap(&mut session, start);
+    assert!(send_resync(
+        session.link.as_mut(),
+        &mut session.resyncs,
+        &mut session.decoder,
+        request,
+        0.0
+    ));
+    driver.outbound.try_recv().unwrap();
+    retry_resyncs(&mut session, start + Duration::from_millis(999), 0.0);
+    assert!(driver.outbound.try_recv().is_err());
+    retry_resyncs(&mut session, start + Duration::from_secs(1), 0.0);
+    let frame = driver.outbound.try_recv().unwrap();
+    assert!(matches!(
+        pulse::ClientMessage::decode(frame.bytes.as_slice())
+            .unwrap()
+            .message,
+        Some(pulse::client_message::Message::Resync(
+            pulse::ResyncRequest {
+                subject_id: 42,
+                known_seq: 0,
+            }
+        ))
+    ));
+    retry_resyncs(&mut session, start + Duration::from_secs(1), 0.0);
+    assert!(driver.outbound.try_recv().is_err());
+    assert_eq!(session.resyncs[0], (0, 2));
+}
+
+#[test]
+fn retry_polling_waits_for_an_established_connection_and_a_link() {
+    let (mut session, mut driver) = session_with_link(PulseRole::Listener(ListenerRole::default()));
+    let start = Instant::now();
+    begin_resync_gap(&mut session, start);
+    let due = start + Duration::from_secs(1);
+    for state in [
+        Connection::Connecting,
+        Connection::Idle,
+        Connection::AwaitingResponse { timeout_at: 10.0 },
+        Connection::Dead,
+    ] {
+        session.state = state;
+        retry_resyncs(&mut session, due, 0.0);
+        assert!(driver.outbound.try_recv().is_err());
+    }
+    session.state = Connection::Established;
+    let link = session.link.take();
+    retry_resyncs(&mut session, due, 0.0);
+    session.link = link;
+    retry_resyncs(&mut session, due, 0.0);
+    assert!(driver.outbound.try_recv().is_ok());
+    assert_eq!(session.resyncs[0], (0, 1));
 }

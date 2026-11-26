@@ -9,7 +9,7 @@ import {
   loadBackpackEmotes,
   loadOutfits,
   normalizeAddress,
-} from "../catalyst/backpack";
+} from "@web-core/catalyst/backpack";
 
 function keyAddr(address?: string | null): string {
   return normalizeAddress(address) || "anon";

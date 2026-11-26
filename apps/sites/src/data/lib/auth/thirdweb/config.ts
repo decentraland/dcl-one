@@ -10,6 +10,8 @@ declare global {
       magicApiKey?: string;
       thirdwebSignProxy?: string;
       docsBase?: string;
+      commitHash?: string;
+      pulseServer?: string;
     };
   }
 }

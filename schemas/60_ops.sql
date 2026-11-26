@@ -129,6 +129,85 @@ CREATE TABLE credits.idempotency (
     CONSTRAINT idempotency_scope_check CHECK (scope IN ('grant', 'spend', 'refund'))
 );
 
+-- Studios (credits-server's studios, its migration 1786700000000_studios;
+-- shop/src/credits/studios.rs): scene studios that give Credits to their
+-- players out of a budget an operator assigns. `studio_operators` are the
+-- wallets that act for a studio. `studio_budget_entries` is the budget's
+-- ledger, in USD cents (1 Credit = 10 cents): a `deposit` adds, an
+-- `adjustment` moves either way, a `grant` takes and names the
+-- `credits.ledger` row it credited to the player. A studio's balance is
+-- the sum of its entries; new budget (any positive entry) is bounded by a
+-- service-wide daily ceiling. A write's `idempotency_key` repeats with the
+-- same request (`request_hash`) to answer what it wrote. `created_by` and
+-- `added_by` name who wrote the row: the operator console's audit actor, or
+-- the wallet of the studio operator who granted.
+CREATE TABLE credits.studios (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    created_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studios_pkey PRIMARY KEY (id),
+    CONSTRAINT studios_status_check CHECK (status IN ('active', 'paused'))
+);
+
+-- Names tell studios apart, so two differing only in case are one name.
+CREATE UNIQUE INDEX studios_name_uidx ON credits.studios (lower(name));
+
+CREATE TABLE credits.studio_operators (
+    studio_id uuid NOT NULL,
+    address text NOT NULL,
+    added_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studio_operators_pkey PRIMARY KEY (studio_id, address),
+    CONSTRAINT studio_operators_studio_fkey FOREIGN KEY (studio_id)
+        REFERENCES credits.studios (id) ON DELETE CASCADE,
+    CONSTRAINT studio_operators_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+
+-- The studios a signed-in wallet acts for.
+CREATE INDEX studio_operators_address_idx ON credits.studio_operators (address);
+
+CREATE TABLE credits.studio_budget_entries (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    studio_id uuid NOT NULL,
+    usd_cents bigint NOT NULL,
+    kind text NOT NULL,
+    ledger_id bigint,
+    note text,
+    idempotency_key text,
+    request_hash text,
+    created_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studio_budget_entries_pkey PRIMARY KEY (id),
+    CONSTRAINT studio_budget_entries_studio_fkey FOREIGN KEY (studio_id)
+        REFERENCES credits.studios (id),
+    -- A granted credit is never removed: a removal fails rather than leave
+    -- a budget that no longer explains where its money went.
+    CONSTRAINT studio_budget_entries_ledger_fkey FOREIGN KEY (ledger_id)
+        REFERENCES credits.ledger (id),
+    CONSTRAINT studio_budget_entries_kind_check CHECK (
+        (kind = 'deposit' AND usd_cents > 0) OR (kind = 'grant' AND usd_cents < 0)
+        OR (kind = 'adjustment' AND usd_cents <> 0)),
+    -- A grant always names its credit, and nothing else does.
+    CONSTRAINT studio_budget_entries_ledger_check CHECK ((kind = 'grant') = (ledger_id IS NOT NULL)),
+    CONSTRAINT studio_budget_entries_idempotency_check CHECK (
+        (idempotency_key IS NULL) = (request_hash IS NULL))
+);
+
+-- One entry per key and studio: a repeat is answered from it.
+CREATE UNIQUE INDEX studio_budget_entries_idempotency_uidx
+    ON credits.studio_budget_entries (studio_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX studio_budget_entries_ledger_uidx
+    ON credits.studio_budget_entries (ledger_id) WHERE ledger_id IS NOT NULL;
+-- The day's new budget, every studio together (the daily deposit ceiling).
+CREATE INDEX studio_budget_entries_inflow_idx
+    ON credits.studio_budget_entries (created_at) WHERE usd_cents > 0;
+-- A studio's history page and its balance, read from the index alone.
+CREATE INDEX studio_budget_entries_studio_idx
+    ON credits.studio_budget_entries (studio_id, created_at) INCLUDE (usd_cents);
+
 -- Buyable Credit packs; `credits` is the numeric Credits granted on
 -- purchase, `price_cents` the fiat charge in minor units. Product
 -- configuration: the four tiers at the 0.10 USD/Credit peg are seeded here
@@ -219,6 +298,54 @@ CREATE UNIQUE INDEX purchases_checkout_session_uidx ON credits.purchases (stripe
 CREATE UNIQUE INDEX purchases_order_id_uidx ON credits.purchases (order_id) WHERE order_id IS NOT NULL;
 -- The reconciler's paid-vs-granted sums per wallet and /admin/credits/purchases?address=.
 CREATE INDEX purchases_address_idx ON credits.purchases (address, id DESC);
+
+-- The purchase receipt email: one row per Stripe purchase, written in the
+-- transaction that grants it (`credits/receipts.rs`), so a grant that rolls
+-- back leaves none and a redelivered event adds none. The
+-- `credits-purchase-receipts` job sends it after the commit. `buyer_email` is
+-- the address the buyer typed into Checkout when the settling event carried
+-- it; a terminal row drops it.
+CREATE TABLE credits.purchase_receipts (
+    purchase_id bigint NOT NULL,
+    buyer_email text,
+    status text NOT NULL DEFAULT 'pending',
+    attempts integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_error text,
+    provider_message_id text,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    sent_at timestamp without time zone,
+    CONSTRAINT purchase_receipts_pkey PRIMARY KEY (purchase_id),
+    CONSTRAINT purchase_receipts_purchase_fkey FOREIGN KEY (purchase_id)
+        REFERENCES credits.purchases (id) ON DELETE CASCADE,
+    CONSTRAINT purchase_receipts_status_check CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
+    CONSTRAINT purchase_receipts_attempts_check CHECK (attempts >= 0),
+    CONSTRAINT purchase_receipts_email_check CHECK (status = 'pending' OR buyer_email IS NULL)
+);
+
+-- The worker's due set: WHERE status = 'pending' AND next_attempt_at <= now
+-- ORDER BY next_attempt_at, purchase_id LIMIT 50 FOR UPDATE SKIP LOCKED.
+CREATE INDEX purchase_receipts_due_idx ON credits.purchase_receipts (next_attempt_at, purchase_id)
+    WHERE status = 'pending';
+
+-- Stripe reversals per PaymentIntent, recorded whether or not its purchase is
+-- credited yet: Stripe does not order deliveries, so a `charge.refunded` or
+-- `charge.dispute.*` can arrive before the settlement that credits the
+-- purchase. The webhook writes it under the PaymentIntent's advisory lock and
+-- the grant applies it in its own transaction (same lock), bounded by the
+-- purchase. `refunded_cents` is the highest cumulative `amount_refunded`
+-- seen; `disputed` latches on the first dispute. One row per reversed
+-- PaymentIntent (refunds and disputes are rare), read by primary key once
+-- per grant; no foreign key, since the purchase may not be linked yet.
+CREATE TABLE credits.payment_reversals (
+    payment_intent text NOT NULL,
+    refunded_cents bigint NOT NULL DEFAULT 0,
+    disputed boolean NOT NULL DEFAULT false,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT payment_reversals_pkey PRIMARY KEY (payment_intent),
+    CONSTRAINT payment_reversals_refunded_check CHECK (refunded_cents >= 0)
+);
 
 -- One open cart per wallet; the address is the natural key.
 CREATE TABLE credits.carts (
@@ -481,18 +608,55 @@ CREATE TABLE credits.revocations (
     CONSTRAINT revocations_attempts_check CHECK (attempts >= 0)
 );
 
--- The job's due set: unfinished revocations, oldest first.
+-- Creation-time range of unfinished revocations.
 CREATE INDEX revocations_due_idx ON credits.revocations (created_at) WHERE status IN ('pending', 'sent');
 
--- Short-lived slider captchas for the claim flow: GET /captcha invalidates
--- the wallet's open challenges and inserts one (120 s TTL, the PNG is
--- regenerated from answer_x), POST /captcha consumes the newest open one
--- and compares within tolerance, then the hCaptcha token when a provider is
--- configured (CREDITS_CAPTCHA_SECRET(_FILE), verified server-side).
+-- Each chain's unfinished credit hashes, in worker sweep order.
+CREATE INDEX revocations_chain_hash_idx ON credits.revocations (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
+
+-- Credits alerts: one row per alarm, written in the transaction that detects
+-- it (settlement: a credit used after its hold was released, a used credit
+-- its wallet cannot cover, a credit consumed near its MANA cap; the expiry
+-- sweep: a credit the Shop submitted that expired unconsumed, a wallet whose
+-- purchases of one item keep expiring), and the purchase feed's lines (the
+-- Stripe webhook: a pack credited, a reversal; settlement: an item purchase
+-- settled), at most once per (kind, dedupe_key).
+-- The credits-alerts job posts it to CREDITS_ALERTS_SLACK_WEBHOOK: `sent` once
+-- Slack accepted it, `skipped` (logged at error) with no webhook, `failed`
+-- (logged at error) when still undelivered a day later.
+CREATE TABLE credits.alerts (
+    id bigserial NOT NULL,
+    kind text NOT NULL,
+    dedupe_key text NOT NULL,
+    payload jsonb NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    attempts integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_error text,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    finished_at timestamp without time zone,
+    CONSTRAINT alerts_pkey PRIMARY KEY (id),
+    CONSTRAINT alerts_kind_dedupe_key UNIQUE (kind, dedupe_key),
+    -- One of the kinds `alerts.rs` names; a shape rather than a list, so a new
+    -- kind needs no step on an existing table.
+    CONSTRAINT alerts_kind_check CHECK (kind ~ '^[a-z][a-z_]{0,62}$'),
+    CONSTRAINT alerts_status_check CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+    CONSTRAINT alerts_attempts_check CHECK (attempts >= 0)
+);
+
+-- The delivery job's claim: pending alerts due now, oldest first.
+CREATE INDEX alerts_due_idx ON credits.alerts (next_attempt_at, id) WHERE status = 'pending';
+
+-- Slider captchas: GET reuses a live answer and refreshes its two-hour TTL
+-- and generated_at; POST consumes the challenge, requires a solve after one
+-- second and a strict error below three. Three failures block claiming for
+-- 24 hours after the last failure. A configured native hCaptcha provider
+-- adds a server-side token check outside the SQL transactions.
 CREATE TABLE credits.captcha_challenges (
     id bigint GENERATED ALWAYS AS IDENTITY,
     address text NOT NULL,
     answer_x numeric NOT NULL,
+    generated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expires_at timestamp without time zone NOT NULL,
     consumed_at timestamp without time zone,
     CONSTRAINT captcha_challenges_pkey PRIMARY KEY (id),
@@ -608,3 +772,203 @@ CREATE TABLE credits.usage_index_cursor (
 -- (ops agent: a persisted job report or sync-control row if a restart must
 -- keep them; both are process state today)
 -- ==== end section: ops ====
+
+-- Seasonal goal rewards are MANA wei, independent of the paid USD ledger.
+CREATE TABLE credits.seasons (
+    id integer PRIMARY KEY,
+    name text NOT NULL,
+    start_date timestamp without time zone NOT NULL,
+    end_date timestamp without time zone NOT NULL,
+    max_mana_wei numeric(78,0) NOT NULL CHECK (max_mana_wei >= 0),
+    grace_days integer NOT NULL DEFAULT 14 CHECK (grace_days BETWEEN 0 AND 365),
+    CHECK (end_date > start_date)
+);
+CREATE TABLE credits.season_goals (
+    season_id integer NOT NULL REFERENCES credits.seasons(id),
+    goal_id text NOT NULL CONSTRAINT season_goals_goal_id_check
+        CHECK (goal_id IN ('take-photo', 'log-in', 'visit-location', 'visit-event-and-stay')),
+    title text NOT NULL,
+    description text,
+    thumbnail text NOT NULL,
+    total_steps integer NOT NULL CHECK (total_steps > 0),
+    reward_wei numeric(78,0) NOT NULL CHECK (reward_wei >= 0),
+    start_week integer NOT NULL CHECK (start_week > 0),
+    end_week integer NOT NULL CHECK (end_week >= start_week),
+    position integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (season_id, goal_id)
+);
+CREATE TABLE credits.program_opt_outs (
+    address text PRIMARY KEY REFERENCES credits.wallets(address),
+    opted_out_at timestamp without time zone NOT NULL
+);
+CREATE TABLE credits.goal_progress (
+    address text NOT NULL REFERENCES credits.wallets(address),
+    season_id integer NOT NULL,
+    week_id integer NOT NULL CHECK (week_id > 0),
+    goal_id text NOT NULL,
+    title text NOT NULL,
+    description text,
+    thumbnail text NOT NULL,
+    total_steps integer NOT NULL CHECK (total_steps > 0),
+    reward_wei numeric(78,0) NOT NULL CHECK (reward_wei >= 0),
+    completed_steps integer NOT NULL DEFAULT 0 CHECK (completed_steps >= 0 AND completed_steps <= total_steps),
+    completed_at timestamp without time zone,
+    PRIMARY KEY (address, season_id, week_id, goal_id),
+    FOREIGN KEY (season_id, goal_id) REFERENCES credits.season_goals(season_id, goal_id),
+    CHECK ((completed_steps = total_steps) = (completed_at IS NOT NULL))
+);
+-- One login step per UTC day, from enrolment or a verified room join.
+CREATE TABLE credits.goal_login_days (
+    address text NOT NULL REFERENCES credits.wallets(address),
+    season_id integer NOT NULL REFERENCES credits.seasons(id),
+    week_id integer NOT NULL CHECK (week_id > 0),
+    day date NOT NULL,
+    pending_at timestamp without time zone,
+    PRIMARY KEY (address, season_id, week_id, day)
+);
+CREATE INDEX goal_login_enrollment_pending_idx
+    ON credits.goal_login_days (pending_at, address, season_id, week_id, day)
+    WHERE pending_at IS NOT NULL;
+
+-- Verified LiveKit facts, keyed by the webhook event ID across retries.
+CREATE TABLE credits.goal_room_events (
+    event_id text PRIMARY KEY,
+    address text NOT NULL,
+    room text NOT NULL,
+    participant_sid text NOT NULL,
+    joined boolean NOT NULL,
+    world boolean NOT NULL,
+    realm text NOT NULL,
+    scene_id text,
+    occurred_at timestamp without time zone NOT NULL,
+    ready_at timestamp without time zone NOT NULL,
+    processed_at timestamp without time zone,
+    stay_resolved boolean NOT NULL DEFAULT false,
+    stay_event_id text,
+    stay_start timestamp without time zone,
+    stay_finish timestamp without time zone,
+    CHECK ((stay_event_id IS NULL AND stay_start IS NULL AND stay_finish IS NULL)
+           OR (stay_resolved AND stay_event_id IS NOT NULL AND stay_start IS NOT NULL
+               AND stay_finish IS NOT NULL AND stay_finish > stay_start AND occurred_at BETWEEN stay_start AND stay_finish))
+);
+CREATE INDEX goal_room_events_pending_idx
+    ON credits.goal_room_events (ready_at, occurred_at, event_id) WHERE processed_at IS NULL;
+CREATE INDEX goal_room_events_session_idx
+    ON credits.goal_room_events (address, room, participant_sid, joined, occurred_at);
+CREATE INDEX goal_room_events_expiry_idx ON credits.goal_room_events (occurred_at);
+
+-- A signed room join starts an observation. Only a matching leave or a
+-- complete room roster proving the same session can confirm elapsed time.
+CREATE TABLE credits.goal_event_visits (
+    address text NOT NULL REFERENCES credits.wallets(address),
+    room text NOT NULL,
+    participant_sid text NOT NULL,
+    season_id integer NOT NULL REFERENCES credits.seasons(id),
+    week_id integer NOT NULL CHECK (week_id > 0),
+    event_id text NOT NULL,
+    joined_at timestamp without time zone NOT NULL,
+    occurrence_start timestamp without time zone NOT NULL,
+    occurrence_finish timestamp without time zone NOT NULL,
+    confirmed_until timestamp without time zone NOT NULL,
+    due_at timestamp without time zone NOT NULL,
+    check_at timestamp without time zone,
+    PRIMARY KEY (address, room, participant_sid),
+    CHECK (occurrence_start <= joined_at),
+    CHECK (confirmed_until BETWEEN joined_at AND occurrence_finish),
+    CHECK (due_at > joined_at AND due_at <= occurrence_finish)
+);
+CREATE INDEX goal_event_visits_wallet_idx
+    ON credits.goal_event_visits (address, season_id, week_id, event_id);
+CREATE INDEX goal_event_visits_due_idx ON credits.goal_event_visits (check_at)
+    WHERE check_at IS NOT NULL;
+
+CREATE TABLE credits.photo_goal_receipts (
+    photo_id uuid PRIMARY KEY,
+    event_id bigint NOT NULL UNIQUE,
+    address text NOT NULL,
+    processed_at timestamp without time zone NOT NULL,
+    outcome text NOT NULL,
+    season_id integer,
+    week_id integer,
+    ordinal integer,
+    CHECK ((outcome = 'counted') = (ordinal IS NOT NULL))
+);
+-- Wallet progress reads counted photo identities in completion order.
+CREATE INDEX photo_goal_receipts_counted_wallet_idx
+    ON credits.photo_goal_receipts (address, season_id, week_id, ordinal)
+    WHERE outcome = 'counted';
+
+CREATE TABLE credits.goal_grants (
+    address text NOT NULL,
+    season_id integer NOT NULL,
+    week_id integer NOT NULL,
+    goal_id text NOT NULL,
+    salt text NOT NULL UNIQUE CHECK (salt ~ '^0x[0-9a-f]{64}$'),
+    chain_id bigint NOT NULL CHECK (chain_id > 0),
+    contract text NOT NULL CHECK (contract ~ '^0x[0-9a-f]{40}$'),
+    credit_hash text NOT NULL CHECK (credit_hash ~ '^0x[0-9a-f]{64}$'),
+    amount_wei numeric(78,0) NOT NULL CHECK (amount_wei >= 0),
+    signature text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    claimed_at timestamp without time zone,
+    PRIMARY KEY (address, season_id, week_id, goal_id),
+    UNIQUE (chain_id, contract, credit_hash),
+    FOREIGN KEY (address, season_id, week_id, goal_id)
+        REFERENCES credits.goal_progress(address, season_id, week_id, goal_id),
+    CHECK (expires_at > created_at)
+);
+-- The daily usage reminders' range over claimed credits about to expire.
+CREATE INDEX goal_grants_claimed_expiry_idx ON credits.goal_grants (expires_at)
+    WHERE claimed_at IS NOT NULL;
+
+-- A wallet's failed slider attempts, expiring 24 hours after the last failure.
+-- Independent of multi-account flags: captcha failures block claims, not photos.
+CREATE TABLE credits.captcha_attempts (
+    address text PRIMARY KEY CHECK (address ~ '^0x[0-9a-f]{40}$'),
+    failed_attempts smallint NOT NULL CHECK (failed_attempts BETWEEN 1 AND 3),
+    last_failed_at timestamp without time zone NOT NULL
+);
+
+-- A change to what a wallet's balance answers announces the wallet's address
+-- on the `credits_balance` channel, for the balance streams
+-- (`GET /credits/users/{address}/credits/stream`, shop/src/credits/stream.rs):
+-- its wallet row, the status of its credits' pledges, its flag, its goal
+-- credits (granted or claimed) and their use on chain. What only the clock
+-- changes (an expiry) the streams read again on their own. The payload is an
+-- address, far below pg_notify's 8000 bytes, so it never fails the write, and
+-- a transaction's repeats arrive once.
+CREATE FUNCTION credits.notify_balance() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('credits_balance', OLD.address);
+    ELSE
+        PERFORM pg_notify('credits_balance', NEW.address);
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- The same for a CreditUsed log, which names its wallet `sender`.
+CREATE FUNCTION credits.notify_balance_of_sender() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('credits_balance', NEW.sender);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER wallets_balance_notify
+    AFTER INSERT OR UPDATE ON credits.wallets
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER authorizations_balance_notify
+    AFTER INSERT OR UPDATE OF status ON credits.authorizations
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER wallet_flags_balance_notify
+    AFTER INSERT OR UPDATE OR DELETE ON credits.wallet_flags
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER goal_grants_balance_notify
+    AFTER INSERT OR UPDATE ON credits.goal_grants
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER usages_balance_notify
+    AFTER INSERT ON credits.usages
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance_of_sender();

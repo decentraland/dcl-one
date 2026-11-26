@@ -142,28 +142,15 @@ async fn configured_comms_presence_drives_detail_lists_requests_and_active_handl
 /// without altering another test's tables or assuming the process has no rooms.
 #[tokio::test]
 async fn active_handler_preserves_empty_error_and_all_settled_source_contracts() {
-    let Some(url) = crate::db::scratch::url().await else {
+    let Some(database) =
+        crate::db::scratch::OwnedDatabase::new("voice", crate::db::scratch::Schema::Full, 3).await
+    else {
         return;
     };
-    let options: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(options.clone().database("postgres"))
-        .await
-        .unwrap();
+    let pool = database.pool.clone();
+    let options: sqlx::postgres::PgConnectOptions = database.url.parse().unwrap();
     let suffix = Uuid::new_v4().simple().to_string();
-    let database = format!("catalyst_voice_{}_{suffix}", std::process::id());
     let role = format!("voice_{suffix}");
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
-        .execute(&admin)
-        .await
-        .unwrap();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(3)
-        .connect_with(options.clone().database(&database))
-        .await
-        .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     // The CI database uses SCRAM authentication; local trust must not hide
     // a fixture role without a usable credential. Generated for this test only.
     let password = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -184,12 +171,7 @@ async fn active_handler_preserves_empty_error_and_all_settled_source_contracts()
     }
     let limited = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(
-            options
-                .database(&database)
-                .username(&role)
-                .password(&password),
-        )
+        .connect_with(options.username(&role).password(&password))
         .await
         .unwrap();
     let storage_dir = std::env::temp_dir().join(format!("catalyst-voice-{suffix}"));
@@ -299,18 +281,14 @@ async fn active_handler_preserves_empty_error_and_all_settled_source_contracts()
     // contract. A direct HTTP500 from that provider is a separate source case.
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, source("empty")["body"]);
-    pool.close().await;
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE {database} WITH (FORCE)"
-    )))
-    .execute(&admin)
-    .await
-    .unwrap();
+    database.drop().await;
+    // The role outlives its database; drop it from the shared scratch one.
+    let shared = crate::db::scratch::pool(1).await.unwrap();
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
-        .execute(&admin)
+        .execute(&shared)
         .await
         .unwrap();
-    admin.close().await;
+    shared.close().await;
     let _ = std::fs::remove_dir_all(storage_dir);
 }
 
@@ -480,4 +458,64 @@ async fn voice_sql_failures_degrade_separately_from_core_community_failures() {
     .await
     .unwrap();
     rig.finish();
+}
+
+#[tokio::test]
+async fn a_leave_succeeds_when_the_real_eviction_fails_in_livekit() {
+    use crate::comms::gatekeeper::{self as gatekeeper, CommsState};
+    use crate::comms::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _voice = VOICE_ROWS.lock().await;
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let removals = Arc::new(AtomicUsize::new(0));
+    let observed = removals.clone();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/RemoveParticipant",
+        axum::routing::post(move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(json!({ "code": "unavailable" })),
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = gatekeeper::Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let livekit = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    rig.state.set_voice_eviction(Arc::new(CommsState::new(
+        rig.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+        None,
+        None,
+        Arc::new(StubPolicy::default()),
+        Arc::new(StubScenes::default()),
+        Arc::new(crate::comms::presence::Presence::new()),
+        Arc::new(StubDirectory::default()),
+    )));
+    let (owner, leaver) = (wallet(), wallet());
+    let id = rig.community(&owner, true).await;
+    rig.member(id, &leaver, "member").await;
+    rig.voice(id, &leaver, "connected", false).await;
+    let path = format!("/v1/communities/{id}/members/{}", leaver.address);
+    let (status, _) = hit(&rig.app, Case::new("delete", &path).signed(&leaver).await).await;
+    livekit.abort();
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(removals.load(Ordering::SeqCst), 1);
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM social.community_members WHERE community_id=$1 AND member_address=$2), \
+         (SELECT count(*) FROM social.community_voice_chat_users WHERE community_id=$1 AND address=$2)",
+    )
+    .bind(id)
+    .bind(&leaver.address)
+    .fetch_one(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0));
 }

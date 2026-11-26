@@ -1,6 +1,6 @@
 //! The tile types as api.decentraland.org serves them, and `/v2/tiles`
 //! (bbox + `include`/`exclude` projection), `/v1/tiles` (the legacy numeric
-//! shape) and `/v2/tiles/info` over the mirrored grid.
+//! shape) and `/v2/tiles/info` over the built grid.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -157,31 +157,79 @@ pub fn coords_to_id(x: i32, y: i32) -> String {
     format!("{x},{y}")
 }
 
-/// The cache key is built from exactly these, so semantically equal requests
-/// collapse to one entry regardless of query order or extra params;
-/// `include`/`exclude` are sorted because projection is order-insensitive.
-const KEY_PARAMS: &[&str] = &["x1", "x2", "y1", "y2", "exclude", "include"];
+/// The bbox and projection a tiles request resolves to; the cache key is
+/// built from these, so spellings that select the same tiles share one entry.
+struct TileQuery {
+    bbox: Option<(i32, i32, i32, i32)>,
+    fields: Option<Vec<&'static str>>,
+}
 
-fn canonical_key(prefix: &str, q: &HashMap<String, String>, tag: u64) -> String {
-    let mut s = format!("{prefix}?");
-    for (i, p) in KEY_PARAMS.iter().enumerate() {
-        if i > 0 {
-            s.push('&');
-        }
-        s.push_str(p);
-        s.push('=');
-        if let Some(v) = q.get(*p) {
-            if *p == "include" || *p == "exclude" {
-                let mut parts: Vec<&str> = v.split(',').collect();
-                parts.sort_unstable();
-                s.push_str(&parts.join(","));
+impl TileQuery {
+    fn parse(q: &HashMap<String, String>) -> Self {
+        let bbox = match (
+            q.get("x1").and_then(|s| s.parse::<i32>().ok()),
+            q.get("x2").and_then(|s| s.parse::<i32>().ok()),
+            q.get("y1").and_then(|s| s.parse::<i32>().ok()),
+            q.get("y2").and_then(|s| s.parse::<i32>().ok()),
+        ) {
+            (Some(x1), Some(x2), Some(y1), Some(y2)) => {
+                Some((x1.min(x2), x1.max(x2), y1.min(y2), y1.max(y2)))
+            }
+            _ => None,
+        };
+        let fields = if let Some(s) = q.get("include") {
+            let included: Vec<&str> = s.split(',').collect();
+            Some(
+                VALID_FIELDS
+                    .iter()
+                    .copied()
+                    .filter(|f| included.contains(f))
+                    .collect(),
+            )
+        } else {
+            q.get("exclude").map(|s| {
+                let excluded: Vec<&str> = s.split(',').collect();
+                VALID_FIELDS
+                    .iter()
+                    .copied()
+                    .filter(|f| !excluded.contains(f))
+                    .collect()
+            })
+        };
+        Self { bbox, fields }
+    }
+}
+
+/// `bounds` is the grid's extent: a bbox is clamped to it, so every bbox
+/// covering the grid keys as no bbox and every disjoint one as empty.
+fn canonical_key(
+    prefix: &str,
+    q: &HashMap<String, String>,
+    bounds: Option<(i32, i32, i32, i32)>,
+    tag: u64,
+) -> String {
+    let tq = TileQuery::parse(q);
+    let bbox = match (tq.bbox, bounds) {
+        (None, _) => "all".to_string(),
+        (Some(b), None) => format!("{},{},{},{}", b.0, b.1, b.2, b.3),
+        (Some((x1, x2, y1, y2)), Some((bx1, bx2, by1, by2))) => {
+            let (x1, x2, y1, y2) = (x1.max(bx1), x2.min(bx2), y1.max(by1), y2.min(by2));
+            if x1 > x2 || y1 > y2 {
+                "none".to_string()
+            } else if (x1, x2, y1, y2) == (bx1, bx2, by1, by2) {
+                "all".to_string()
             } else {
-                s.push_str(v);
+                format!("{x1},{x2},{y1},{y2}")
             }
         }
-    }
-    s.push_str(&format!(":{tag}"));
-    s
+    };
+    // The legacy shape ignores the projection.
+    let fields = match &tq.fields {
+        _ if prefix == "v1" => "-".to_string(),
+        None => "*".to_string(),
+        Some(f) => f.join(","),
+    };
+    format!("{prefix}?bbox={bbox}&fields={fields}:{tag}")
 }
 
 const VALID_FIELDS: &[&str] = &[
@@ -208,36 +256,7 @@ pub fn filter_tiles<'a>(
     tiles: &'a HashMap<String, Tile>,
     q: &HashMap<String, String>,
 ) -> Vec<(&'a String, Value)> {
-    let bbox = match (
-        q.get("x1").and_then(|s| s.parse::<i32>().ok()),
-        q.get("x2").and_then(|s| s.parse::<i32>().ok()),
-        q.get("y1").and_then(|s| s.parse::<i32>().ok()),
-        q.get("y2").and_then(|s| s.parse::<i32>().ok()),
-    ) {
-        (Some(x1), Some(x2), Some(y1), Some(y2)) => {
-            Some((x1.min(x2), x1.max(x2), y1.min(y2), y1.max(y2)))
-        }
-        _ => None,
-    };
-    let fields: Option<Vec<String>> = if let Some(s) = q.get("include") {
-        Some(
-            s.split(',')
-                .filter(|f| VALID_FIELDS.contains(f))
-                .map(str::to_string)
-                .collect(),
-        )
-    } else if let Some(s) = q.get("exclude") {
-        let excluded: Vec<&str> = s.split(',').collect();
-        Some(
-            VALID_FIELDS
-                .iter()
-                .filter(|f| !excluded.contains(f))
-                .map(|s| s.to_string())
-                .collect(),
-        )
-    } else {
-        None
-    };
+    let TileQuery { bbox, fields } = TileQuery::parse(q);
     let use_bbox = match bbox {
         Some((min_x, max_x, min_y, max_y)) => {
             let w = (max_x as i64 - min_x as i64 + 1) as u64;
@@ -270,14 +289,14 @@ pub fn filter_tiles<'a>(
     out
 }
 
-fn project(tile: &Tile, fields: &Option<Vec<String>>) -> Value {
+fn project(tile: &Tile, fields: &Option<Vec<&'static str>>) -> Value {
     let obj = serde_json::to_value(tile).unwrap_or(Value::Null);
     let Some(fields) = fields else { return obj };
     let mut m = Map::new();
     if let Value::Object(src) = obj {
         for f in fields {
-            if let Some(v) = src.get(f) {
-                m.insert(f.clone(), v.clone());
+            if let Some(v) = src.get(*f) {
+                m.insert(f.to_string(), v.clone());
             }
         }
     }
@@ -316,17 +335,6 @@ pub fn to_legacy(tile: &Tile) -> LegacyTile {
     }
 }
 
-fn not_ready(last: i64) -> Response {
-    let mut resp = (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response();
-    http_cache::apply(
-        &mut resp,
-        last,
-        http_cache::DEFAULT_MAX_AGE,
-        http_cache::DEFAULT_SWR,
-    );
-    resp
-}
-
 fn cached_json(body: Arc<Vec<u8>>, last: i64, key: &str) -> Response {
     let mut resp = (
         StatusCode::OK,
@@ -351,8 +359,19 @@ async fn serve_tiles(
     q: &HashMap<String, String>,
     legacy: bool,
 ) -> Response {
-    let last = state.map.last_updated_at();
-    let key = canonical_key(if legacy { "v1" } else { "v2" }, q, state.map.content_tag());
+    // One grid for the key, the stamp and the body, so a concurrent swap
+    // cannot key one grid's body under the other's tag. Without a grid, the
+    // envelope as it is: never a 304 for a stamp no grid carries.
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    let last = grid.last_updated_at;
+    let key = canonical_key(
+        if legacy { "v1" } else { "v2" },
+        q,
+        grid.bounds,
+        grid.content_tag,
+    );
     if let Some(r) = http_cache::not_modified_etag(
         headers,
         last,
@@ -362,12 +381,16 @@ async fn serve_tiles(
     ) {
         return r;
     }
-    let Some(grid) = state.map.snapshot() else {
-        return not_ready(last);
-    };
     if let Some(body) = state.map.cached_tiles(&key) {
         return cached_json(body, last, &key);
     }
+    // Concurrent misses on one key build it once.
+    let flight = state.map.tiles_flight(&key);
+    let _building = flight.lock().await;
+    if let Some(body) = state.map.cached_tiles(&key) {
+        return cached_json(body, last, &key);
+    }
+    state.map.count_tiles_build();
     let mut map = Map::new();
     for (id, value) in filter_tiles(&grid.tiles, q) {
         let value = if legacy {
@@ -403,19 +426,33 @@ pub async fn get_legacy_tiles(
     serve_tiles(&state, &headers, &q, true).await
 }
 
+/// `/v2/tiles/info`: the grid's content stamp, and when the build last
+/// found it current against its sources (`checkedAt`, ms; absent before any
+/// check), what the map's age label reads.
+/// `/v2/tiles/info`'s body. `serverNow` is this process's clock when it
+/// answers (ms), so a client measures `checkedAt`'s age on the server's
+/// clock without reading the `Date` header, which a cross-origin client may
+/// not be allowed to.
+fn info_body(last_updated_at: i64, checked_at: i64, server_now: i64) -> Value {
+    let mut body = json!({ "lastUpdatedAt": last_updated_at, "serverNow": server_now });
+    if checked_at > 0 {
+        body["checkedAt"] = json!(checked_at);
+    }
+    body
+}
+
 pub async fn tiles_info(State(state): State<Shared>) -> Response {
     if !state.map.is_ready() {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            [("cache-control", "no-cache")],
-            "Not ready",
-        )
-            .into_response();
+        return state.map.unavailable();
     }
     (
         StatusCode::OK,
         [("cache-control", "no-cache")],
-        Json(json!({ "lastUpdatedAt": state.map.last_updated_at() })),
+        Json(info_body(
+            state.map.last_updated_at(),
+            state.map.checked_at(),
+            chrono::Utc::now().timestamp_millis(),
+        )),
     )
         .into_response()
 }
@@ -566,11 +603,105 @@ mod tests {
     fn param_order_collapses_to_one_key() {
         let a: HashMap<String, String> = [("include".to_string(), "x,y,owner".to_string())].into();
         let b: HashMap<String, String> = [("include".to_string(), "owner,y,x".to_string())].into();
-        assert_eq!(canonical_key("v2", &a, 7), canonical_key("v2", &b, 7));
+        assert_eq!(
+            canonical_key("v2", &a, None, 7),
+            canonical_key("v2", &b, None, 7)
+        );
         assert_ne!(
-            canonical_key("v2", &a, 7),
-            canonical_key("v2", &a, 8),
+            canonical_key("v2", &a, None, 7),
+            canonical_key("v2", &a, None, 8),
             "the grid tag is part of the key"
         );
+    }
+
+    fn query(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn junk_spellings_collapse_to_the_same_key() {
+        let bounds = Some((-150, 150, -150, 150));
+        let key = |pairs: &[(&str, &str)]| canonical_key("v2", &query(pairs), bounds, 1);
+        assert_eq!(key(&[("exclude", "junk1")]), key(&[("exclude", "junk2")]));
+        assert_eq!(
+            key(&[("include", "x,bogus")]),
+            key(&[("include", "x,x,other")])
+        );
+        assert_eq!(
+            key(&[("x1", "01"), ("x2", "5"), ("y1", "0"), ("y2", "5")]),
+            key(&[("x1", "1"), ("x2", "5"), ("y1", "0"), ("y2", "5")])
+        );
+        assert_eq!(
+            key(&[
+                ("x1", "-9000"),
+                ("x2", "9000"),
+                ("y1", "-200"),
+                ("y2", "200")
+            ]),
+            key(&[("x1", "x")]),
+            "a bbox covering the grid keys as no bbox"
+        );
+        assert_eq!(
+            key(&[("x1", "500"), ("x2", "600"), ("y1", "0"), ("y2", "0")]),
+            key(&[("x1", "700"), ("x2", "800"), ("y1", "0"), ("y2", "0")]),
+            "disjoint bboxes share the empty key"
+        );
+        assert_ne!(
+            key(&[("x1", "0"), ("x2", "1"), ("y1", "0"), ("y2", "1")]),
+            key(&[("x1", "0"), ("x2", "2"), ("y1", "0"), ("y2", "1")]),
+            "distinct areas keep distinct keys"
+        );
+        assert_ne!(key(&[("include", "x")]), key(&[("include", "y")]));
+        assert_eq!(
+            key(&[("x1", "-200"), ("x2", "10"), ("y1", "5"), ("y2", "500")]),
+            key(&[("x1", "-150"), ("x2", "10"), ("y1", "5"), ("y2", "150")]),
+            "a partly overlapping bbox keys as its part inside the grid"
+        );
+        let legacy = |pairs: &[(&str, &str)]| canonical_key("v1", &query(pairs), bounds, 1);
+        assert_eq!(
+            legacy(&[("include", "x")]),
+            legacy(&[("exclude", "owner")]),
+            "the legacy shape ignores the projection"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_tile_misses_build_the_body_exactly_once() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let mut tiles = HashMap::new();
+        for x in 0..50 {
+            for y in 0..50 {
+                let mut t = owned_tile();
+                t.id = coords_to_id(x, y);
+                t.x = x;
+                t.y = y;
+                tiles.insert(t.id.clone(), t);
+            }
+        }
+        state.map.set(super::super::Grid::from_tiles(
+            tiles,
+            1,
+            chrono::Utc::now().naive_utc(),
+        ));
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let calls: Vec<_> = (0..16)
+            .map(|_| {
+                let state = state.clone();
+                let barrier = barrier.clone();
+                tokio::spawn(async move {
+                    barrier.wait().await;
+                    serve_tiles(&state, &HeaderMap::new(), &HashMap::new(), false)
+                        .await
+                        .status()
+                })
+            })
+            .collect();
+        for call in calls {
+            assert_eq!(call.await.unwrap(), StatusCode::OK);
+        }
+        assert_eq!(state.map.tiles_builds(), 1);
     }
 }

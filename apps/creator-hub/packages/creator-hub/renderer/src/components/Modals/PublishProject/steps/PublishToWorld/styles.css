@@ -1,0 +1,442 @@
+/* Select World Modal */
+[role="dialog"] .SelectWorld {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+/* Selection */
+
+[role="dialog"] .SelectWorld .selection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+[role="dialog"] .SelectWorld .selection .Row {
+  gap: 8px;
+}
+
+[role="dialog"] .SelectWorld .selection .StepDescription,
+[role="dialog"] .SelectLocation .StepDescription {
+  color: var(--dcl-silver);
+}
+
+/* The select keeps one line colour in every state and a box of 56px. */
+[role="dialog"] .SelectWorld-ENSProvider > div,
+[role="dialog"] .SelectWorld-WorldName > div {
+  border-color: var(--transparent-gray-light);
+  letter-spacing: 0.00938em;
+  opacity: 1;
+}
+
+/* Focus and open: a line of 2px in the same colour. The top line grows half a pixel up and the
+   content stays in place. */
+[role="dialog"] .SelectWorld-ENSProvider > div:is([data-open], :focus-within),
+[role="dialog"] .SelectWorld-WorldName > div:is([data-open], :focus-within) {
+  margin-top: -0.5px;
+  border-width: 2px;
+  box-shadow: none;
+}
+
+[role="dialog"] .SelectWorld .selection :is([data-open], :focus-within) > [role="combobox"] {
+  padding: 15px 30px 14.5px 12px;
+}
+
+[role="dialog"]
+  .SelectWorld
+  .selection
+  :is([data-open], :focus-within)
+  > span:has(> .SelectWorld-SelectArrow) {
+  top: calc(50% + 0.25px);
+  right: 5px;
+}
+
+[role="dialog"] .SelectWorld .selection :is([data-open], :focus-within) > .Loader {
+  margin-right: 36px;
+}
+
+[role="dialog"] .SelectWorld-WorldName > div[data-disabled] {
+  color: var(--text-tone-disabled);
+}
+
+[role="dialog"] .SelectWorld .selection [role="combobox"] {
+  padding: 15.5px 31px 15.5px 13px;
+  letter-spacing: inherit;
+}
+
+[role="dialog"] .SelectWorld .selection [role="combobox"] > span {
+  display: flex;
+  align-items: center;
+  /* Room for the overhang of the italic placeholder. */
+  margin-right: -2px;
+  padding-right: 2px;
+}
+
+[role="dialog"] .SelectWorld .selection [role="combobox"] > span[data-placeholder] {
+  color: inherit;
+}
+
+[role="dialog"] .SelectWorld .selection span:has(> .SelectWorld-SelectArrow) {
+  right: 6px;
+  transition: none;
+}
+
+.SelectWorld-SelectArrow {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+  color: var(--icon-btn-ink);
+}
+
+[data-disabled] .SelectWorld-SelectArrow {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.SelectWorld-ENSProvider-Option {
+  display: flex;
+  align-items: center;
+}
+
+/* The popup is drawn outside the dialog. It touches the select and sits on whole pixels. */
+.SelectWorld-SelectMenu.SelectWorld-SelectMenu {
+  top: round(calc(var(--popover-top) - 4px), 1px);
+  left: round(var(--popover-left), 1px);
+  min-width: round(var(--popover-min-width), 1px);
+  letter-spacing: 0.00938em;
+}
+
+.SelectWorld-SelectMenu-Pointer [role="option"][data-active]:not(:hover, [aria-selected="true"]) {
+  background: none;
+}
+
+.SelectWorld-SelectMenu [role="option"][aria-selected="true"][data-active],
+.SelectWorld-SelectMenu .SelectWorld-NamePlaceholder {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
+.SelectWorld-SelectMenu [role="option"][aria-selected="true"][data-active]:hover {
+  background: color-mix(in srgb, var(--brand) 24%, transparent);
+}
+
+.SelectWorld-SelectMenu .SelectWorld-ClaimName {
+  gap: 0;
+}
+
+/* The loader stays left of the arrow: 38px from the outer edge of the select. */
+.SelectWorld-WorldName .Loader {
+  margin-right: 37px;
+  width: max-content;
+}
+
+.SelectWorld-ENSProvider {
+  width: 11rem;
+}
+
+.SelectWorld-WorldName {
+  width: 100%;
+}
+
+.SelectWorld-ENSProvider-Img {
+  height: 20px;
+  width: 20px;
+  margin-right: 8px;
+}
+
+[role="dialog"] .SelectWorld .actions {
+  display: flex;
+  width: 100%;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: auto;
+}
+
+[role="dialog"] .SelectWorld .actions:has(.ConfirmWorldReplaceContent) {
+  justify-content: space-between;
+}
+
+[role="dialog"] .SelectWorld .actions .ConfirmWorldReplaceContent {
+  display: flex;
+  align-items: center;
+}
+
+[role="dialog"] .SelectWorld .WorldHasContent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background-color: var(--card-on-modal);
+}
+
+[role="dialog"] .SelectWorld .WorldHasContent .WarningIcon {
+  display: inline-flex;
+  background-color: #ff7439;
+  border-radius: 50%;
+  padding: 4px;
+}
+
+/* Advanced Settings */
+
+[role="dialog"] .SelectWorld .AdvancedSettings {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  padding: 12px 16px;
+  background-color: var(--dark-gray);
+  border-radius: 8px;
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings > .Row {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettingsHeaderTexts {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettingsDescription {
+  font-weight: 500;
+  white-space: pre-line;
+}
+
+/* The switch keeps its look: a 34x14 track and a 20px knob that hangs 3px over each edge, in a
+   58x32 area. */
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle {
+  --w: 34px;
+  --h: 14px;
+  --toggle-disabled-opacity: 1;
+  margin: 6px 12px 12px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.38);
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle.is-on {
+  background: color-mix(in srgb, var(--brand) 50%, transparent);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle:disabled {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle.is-on:disabled {
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle .toggle__knob {
+  top: -3px;
+  left: -3px;
+  width: 20px;
+  height: 20px;
+  background: #ffffff;
+  box-shadow:
+    0px 2px 1px -1px rgba(0, 0, 0, 0.2),
+    0px 1px 1px 0px rgba(0, 0, 0, 0.14),
+    0px 1px 3px 0px rgba(0, 0, 0, 0.12);
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle.is-on .toggle__knob {
+  transform: translateX(20px);
+  background: var(--brand);
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle:disabled .toggle__knob {
+  background: #f5f5f5;
+}
+
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle.is-on:disabled .toggle__knob {
+  background: color-mix(in srgb, var(--brand) 38%, #ffffff);
+}
+
+/* The hover ring around the knob. */
+[role="dialog"] .SelectWorld .AdvancedSettings .toggle:hover:not(:disabled) .toggle__knob::before {
+  content: "";
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+[role="dialog"]
+  .SelectWorld
+  .AdvancedSettings
+  .toggle.is-on:hover:not(:disabled)
+  .toggle__knob::before {
+  background: color-mix(in srgb, var(--brand) 4%, transparent);
+}
+
+[role="dialog"] .SelectWorld .WorldInfoItem {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--dcl-silver);
+  font-weight: 500;
+}
+
+[role="dialog"] .SelectWorld .WorldInfoItem svg {
+  width: 16px;
+  height: 16px;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo {
+  width: calc(100% - 32px);
+  margin-left: auto;
+  display: flex;
+  gap: 16px;
+  background-color: var(--black);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .WorldThumbnail {
+  width: 144px;
+  height: 90px;
+  flex-shrink: 0;
+  background-color: var(--dark-gray);
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .WorldThumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .WorldInfoContent {
+  flex: 1;
+  padding: 8px 0;
+  overflow: hidden;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .CurrentWorldLabel {
+  font-size: 12px;
+  color: var(--dropdown);
+  text-transform: uppercase;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .WorldTitle {
+  font-weight: 600;
+  color: var(--white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[role="dialog"] .SelectWorld .WorldInfo .WorldMetadata {
+  gap: 24px;
+}
+
+/* Select Location Modal */
+[role="dialog"] .SelectLocation {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+[role="dialog"] .SelectLocation .AvailableParcelsCount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+[role="dialog"] .SelectLocation .AvailableParcelsCount p {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+[role="dialog"] .SelectLocation .actions {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: auto;
+}
+
+[role="dialog"] .SelectLocation .SelectedParcelInfo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+[role="dialog"] .SelectLocation .SelectedParcelInfo svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-on-secondary);
+}
+
+/* Confirm Overwrite Modal */
+[role="dialog"] .ConfirmOverwrite {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 520px;
+  margin: auto;
+  padding: 32px 32px 24px;
+  border-radius: 8px;
+  background-color: var(--black);
+  text-align: center;
+}
+
+[role="dialog"] .ConfirmOverwrite .ScenesList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+[role="dialog"] .ConfirmOverwrite .ScenesList li span {
+  color: var(--dcl-silver);
+}
+
+[role="dialog"] .ConfirmOverwrite .actions {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  align-items: center;
+  margin-top: 16px;
+}
+
+/* Empty Names Modal */
+[role="dialog"] .EmptyNames {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+}
+
+[role="dialog"] .EmptyNames .thumbnail {
+  width: 250px;
+}
+
+[role="dialog"] .EmptyNames .actions {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.WorldLoadError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}

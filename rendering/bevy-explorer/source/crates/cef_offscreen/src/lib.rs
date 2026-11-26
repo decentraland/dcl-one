@@ -11,7 +11,6 @@
 //! from upstream's `cef_thread.rs` — marshalling all browser interaction onto the CEF UI thread
 //! on Windows/Linux, where `multi_threaded_message_loop` means off-thread calls like
 //! `CreateBrowserSync` silently fail).
-#![allow(clippy::type_complexity)]
 
 mod components;
 pub mod core;
@@ -28,7 +27,7 @@ pub mod prelude {
     pub use crate::CefOffscreenPlugin;
     pub use crate::components::*;
     pub use crate::core::browser_process::{
-        Browsers, EditCommand, RenderPaintElementType, RenderTexture,
+        Browsers, EditCommand, RenderPaintElementType, RenderTexture, downloads_dir,
     };
     #[cfg(target_os = "macos")]
     pub use crate::core::debug::DebugLibraryLoader;

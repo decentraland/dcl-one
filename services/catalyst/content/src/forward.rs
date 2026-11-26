@@ -830,13 +830,7 @@ fn verdict(status: u16, body: String) -> Outcome {
 }
 
 fn capped(mut text: String) -> String {
-    if text.len() > ERROR_TEXT_CAP {
-        let mut end = ERROR_TEXT_CAP;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
-    }
+    text.truncate(text.floor_char_boundary(ERROR_TEXT_CAP));
     text
 }
 
@@ -1059,6 +1053,7 @@ mod status;
 pub use status::*;
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support;
 
 #[cfg(test)]

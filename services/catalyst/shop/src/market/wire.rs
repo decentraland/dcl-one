@@ -52,6 +52,16 @@ impl<'a> Params<'a> {
         }
     }
 
+    /// [`Self::get_number`] as an integer: the fraction dropped, out-of-range
+    /// values saturated, NaN as 0.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the page readers clamp the result"
+    )]
+    pub fn get_integer(&self, key: &str) -> Option<i64> {
+        self.get_number(key, None).map(|n| n as i64)
+    }
+
     /// Presence, not truth: upstream reads its boolean flags as "the key is there".
     pub fn get_boolean(&self, key: &str) -> bool {
         self.pairs.iter().any(|(k, _)| k == key)
@@ -294,6 +304,32 @@ pub fn get_number_parameter(
         .ok_or_else(|| InvalidParameterError::new(name, raw))
 }
 
+/// A nonnegative decimal integer representable exactly in a JavaScript number.
+pub(super) fn unsigned_decimal(p: &Params<'_>, key: &str) -> Result<Option<i64>, ()> {
+    p.get_string(key, None)
+        .map(|text| {
+            if !text.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(());
+            }
+            text.parse::<i64>()
+                .ok()
+                .filter(|n| *n <= 9_007_199_254_740_991)
+                .ok_or(())
+        })
+        .transpose()
+}
+
+pub(super) fn strict_page(p: &Params<'_>) -> Result<(i64, i64), ApiError> {
+    match (unsigned_decimal(p, "first"), unsigned_decimal(p, "skip")) {
+        (Ok(first), Ok(skip)) if first != Some(0) => {
+            Ok((first.unwrap_or(20).min(100), skip.unwrap_or(0)))
+        }
+        _ => Err(ApiError::bad_request(
+            "first and skip must be whole numbers, first at least 1",
+        )),
+    }
+}
+
 /// `Number.parseInt` without a radix: leading whitespace (U+FEFF included),
 /// an optional sign, an optional `0x` prefix, then the leading digits. A
 /// value too wide saturates, as JS yields a lossy float there. Unlike
@@ -445,6 +481,15 @@ impl From<super::graph::Network> for Network {
     }
 }
 
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+pub(super) fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
+}
+
 pub const NETWORK_VALUES: &[&str] = &["ETHEREUM", "MATIC"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -514,6 +559,28 @@ pub struct Contract {
     pub chain_id: ChainId,
 }
 
+/// `unisex` asks for both shapes, the same request as male + female.
+pub(crate) fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
+    let has_unisex = genders.iter().any(|g| g == "unisex");
+    let has_male = has_unisex || genders.iter().any(|g| g == "male");
+    let has_female = has_unisex || genders.iter().any(|g| g == "female");
+    let mut out = Vec::new();
+    if has_male {
+        out.push("BaseMale".to_string());
+    }
+    if has_female {
+        out.push("BaseFemale".to_string());
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+pub(crate) fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
+    if modes.is_empty() || modes.len() == 2 {
+        return None;
+    }
+    Some(modes.iter().any(|m| m == "loop"))
+}
+
 fn sanitize(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
@@ -544,7 +611,7 @@ pub fn bn_add(a: &str, b: &str) -> String {
     if carry > 0 {
         out.push(b'0' + carry as u8);
     }
-    while out.len() > 1 && *out.last().unwrap() == b'0' {
+    while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();
     }
     out.into_iter().rev().map(|b| b as char).collect()
@@ -618,15 +685,17 @@ pub fn fix_urn(urn: &str) -> String {
     urn.replace("mainnet", "ethereum")
 }
 
-/// A `contract-item` id split at its dash: the wire's item id when the item
-/// part is decimal (an unbounded blockchain id), else `None`.
+/// A `contract-item` id split at its dash, the contract lowercased: `None`
+/// unless the contract is `0x` plus 40 hex digits and the item part is a
+/// plain decimal uint256 (`types::parse_decimal`: 1 to 78 digits, at most
+/// `U256::MAX`). Every `<contract>-<itemId>` parameter is read through here.
 pub fn split_item_wire_id(wire: &str) -> Option<(String, String)> {
     let (contract, item) = wire.trim().split_once('-')?;
     let contract = contract.to_ascii_lowercase();
     let is_addr = contract
         .strip_prefix("0x")
         .is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    let is_item = !item.is_empty() && item.len() <= 78 && item.bytes().all(|b| b.is_ascii_digit());
+    let is_item = crate::types::parse_decimal(item).is_ok();
     (is_addr && is_item).then(|| (contract, item.to_string()))
 }
 
@@ -748,6 +817,42 @@ mod tests {
     }
 
     #[test]
+    fn gender_filters_preserve_shape_order_and_ignore_unknown_values() {
+        for (genders, expected) in [
+            (vec![], None),
+            (vec!["unknown"], None),
+            (vec!["male"], Some(vec!["BaseMale"])),
+            (vec!["female"], Some(vec!["BaseFemale"])),
+            (vec!["unisex"], Some(vec!["BaseMale", "BaseFemale"])),
+            (
+                vec!["female", "unknown", "male", "male"],
+                Some(vec!["BaseMale", "BaseFemale"]),
+            ),
+        ] {
+            let genders = genders.into_iter().map(String::from).collect::<Vec<_>>();
+            let expected =
+                expected.map(|shapes| shapes.into_iter().map(String::from).collect::<Vec<_>>());
+            assert_eq!(body_shapes_for_genders(&genders), expected);
+        }
+    }
+
+    #[test]
+    fn emote_modes_preserve_empty_and_two_entry_no_filter_behavior() {
+        for (modes, expected) in [
+            (vec![], None),
+            (vec!["loop"], Some(true)),
+            (vec!["simple"], Some(false)),
+            (vec!["unknown"], Some(false)),
+            (vec!["loop", "simple"], None),
+            (vec!["loop", "loop"], None),
+            (vec!["simple", "unknown", "loop"], Some(true)),
+        ] {
+            let modes = modes.into_iter().map(String::from).collect::<Vec<_>>();
+            assert_eq!(emote_play_mode_clause(&modes), expected);
+        }
+    }
+
+    #[test]
     fn decimal_strings_add_compare_and_format() {
         assert_eq!(
             bn_add("999999999999999999999", "1"),
@@ -808,6 +913,17 @@ mod tests {
         assert_eq!(
             split_item_wire_id("0xc5aaaa47d4ed16932d9970352afbd5e0df5a4925-abc"),
             None
+        );
+        // 78 digits, but past U256::MAX: no item can have that id.
+        let contract = "0xc5aaaa47d4ed16932d9970352afbd5e0df5a4925";
+        assert_eq!(
+            split_item_wire_id(&format!("{contract}-{}", "9".repeat(78))),
+            None
+        );
+        let max = alloy_primitives::U256::MAX.to_string();
+        assert_eq!(
+            split_item_wire_id(&format!("{contract}-{max}")),
+            Some((contract.into(), max))
         );
         assert_eq!(
             fix_urn("urn:decentraland:mainnet:collections-v1:x:y"),

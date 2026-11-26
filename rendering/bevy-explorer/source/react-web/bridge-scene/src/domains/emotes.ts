@@ -10,16 +10,11 @@ import { resolveDefsByUrn, thumbnailUrl } from './collections'
 import { resolveShopUrls } from './marketplace'
 import { itemUrn, tokenUrnOf } from './urns'
 import type { Ctx } from '../bridge'
-import type { Emote } from '../../../src/engine/protocol'
-import { readAllPages, type Page } from '../../../src/engine/paging'
+import type { Emote } from '@explorer-core/engine/protocol'
+import { readAllPages, type Page } from '@explorer-core/engine/paging'
 import { currentLook, editLook } from './avatarDraft'
 import { identity } from '../identity'
-
-const SLOT_COUNT = 10 // the emote wheel has 10 slots
-const BASE_EMOTE_PREFIX = 'urn:decentraland:off-chain:base-emotes:'
-const BASE_EMOTES = ['handsair', 'wave', 'fistpump', 'dance', 'raisehand', 'clap', 'money', 'kiss', 'headexplode', 'shrug'].map(
-  (n) => `${BASE_EMOTE_PREFIX}${n}`
-)
+import { BASE_EMOTE_PREFIX, BASE_EMOTES, lookSlots } from './emoteSlots'
 
 // getPlayer().emotes stores base emotes by SHORT name ("handsair"), not the full off-chain urn:
 // the engine strips base emotes to their short form when it writes the profile (see the explorer's
@@ -31,16 +26,6 @@ function fullEmoteUrn(urn: string): string {
 }
 
 const isBase = (urn: string): boolean => BASE_EMOTES.includes(itemUrn(urn))
-
-// The 10 wheel slots to show for a profile: its equipped emotes positionally, or — when the wheel is
-// entirely empty (a fresh profile) — the base emotes in order (slot i = BASE_EMOTES[i]). The bevy
-// runtime doesn't seed the defaults into getPlayer().emotes (bevy-ui-scene hits the same empty array),
-// so the HUD fills them here, mirroring Unity's SelfProfile empty-wheel fill: it's all-or-nothing, so
-// once any slot is equipped the remaining empties stay empty.
-export function equippedSlots(emotes: readonly unknown[] | undefined): string[] {
-  const slots = Array.from({ length: SLOT_COUNT }, (_, i) => String((emotes ?? [])[i] ?? ''))
-  return slots.every((u) => u === '') ? [...BASE_EMOTES] : slots
-}
 
 // Title-case a base-emote id ("raisehand" → "Raise Hand"); custom emotes use the catalog name.
 function baseEmoteName(urn: string): string {
@@ -153,9 +138,10 @@ export function registerEmotes(ctx: Ctx): void {
     if (!isBase(msg.urn) && tokenUrnByItem.size === 0) await getOwned(await catalystBase(), me.userId).catch(() => [])
     const look = currentLook()
     if (look == null) return
-    // Seed from the effective slots (base defaults when the wheel is empty) so equipping into a fresh
-    // profile persists the defaults alongside the new one, instead of blanking the other 9 slots.
-    const slots = equippedSlots(look.emotes)
+    // Seed from the effective slots (base defaults for a fresh profile's empty wheel) so equipping
+    // into a fresh profile persists the defaults alongside the new one, instead of blanking the
+    // other 9 slots.
+    const slots = lookSlots(look.emotes, me.emotes)
     slots[msg.slot] = equipUrn(msg.urn)
     editLook({ emotes: slots })
   })
@@ -167,7 +153,7 @@ export function registerEmotes(ctx: Ctx): void {
     // equipped array index = wheel slot; map item-urn → slot (base defaults when the wheel is empty).
     // Normalize short base-emote names to the full urn so equipped base emotes match a slot.
     const slotByItem = new Map<string, number>()
-    equippedSlots(currentLook()?.emotes).forEach((urn, slot) => {
+    lookSlots(currentLook()?.emotes, player?.emotes).forEach((urn, slot) => {
       if (urn !== '') slotByItem.set(itemUrn(fullEmoteUrn(urn)), slot)
     })
 

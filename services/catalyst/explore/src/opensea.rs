@@ -9,7 +9,7 @@
 //!
 //! Resolution, in the old order: this node's own data first (the node
 //! script read the squid `nft` table; v2 has no squid, so a LAND or Estate
-//! token answers from the mirrored tile grid, as `/api/v2/contracts/.../
+//! token answers from the built tile grid, as `/api/v2/contracts/.../
 //! tokens/...` does, and a collections-v2 item token from the `shop.items`
 //! mirror), then CryptoKitties' API for its contract, then the chain:
 //! `tokenURI(id)` (ERC-721) or `uri(id)` with `{id}` substituted (ERC-1155)
@@ -38,21 +38,18 @@
 //! only over a configured RPC upstream: with none (an island) the resolver
 //! answers from this node's data alone.
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use alloy_primitives::U256;
 use anyhow::Context as _;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use base64::Engine as _;
 use bytes::Bytes;
 use chrono::NaiveDateTime;
-use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -137,14 +134,14 @@ impl Settings {
 /// and one resolution per key at a time.
 pub struct Runtime {
     misses: TtlMap<String, Bytes>,
-    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    locks: crate::keyed_locks::KeyedLocks<String>,
 }
 
 impl Default for Runtime {
     fn default() -> Self {
         Self {
             misses: TtlMap::bounded(FALLBACK_MISS_TTL, FALLBACK_MISS_ENTRIES),
-            locks: Mutex::new(HashMap::new()),
+            locks: crate::keyed_locks::KeyedLocks::default(),
         }
     }
 }
@@ -748,14 +745,8 @@ pub async fn answer(state: &Shared, req: &NftRequest, now: NaiveDateTime) -> Res
     if let Some(body) = state.opensea.misses.get_fresh(&key) {
         return json_response(StatusCode::NOT_FOUND, body);
     }
-    let lock = state
-        .opensea
-        .locks
-        .lock()
-        .entry(key.clone())
-        .or_default()
-        .clone();
-    let response = async {
+    let lock = state.opensea.locks.claim(&key);
+    async {
         let _guard = lock.lock().await;
         if let Ok(Some(c)) = read_cache(&state.pool, req).await
             && c.resolved_at >= fresh_after
@@ -802,13 +793,7 @@ pub async fn answer(state: &Shared, req: &NftRequest, now: NaiveDateTime) -> Res
             },
         }
     }
-    .await;
-    let mut locks = state.opensea.locks.lock();
-    drop(lock);
-    if locks.get(&key).is_some_and(|l| Arc::strong_count(l) == 1) {
-        locks.remove(&key);
-    }
-    response
+    .await
 }
 
 async fn get_nft(
@@ -837,7 +822,7 @@ pub fn routes() -> Router<Shared> {
             get(get_nft),
         )
         .route("/health", get(health))
-        .fallback(unknown_route)
+        .fallback(erase(unknown_route))
 }
 
 #[cfg(test)]

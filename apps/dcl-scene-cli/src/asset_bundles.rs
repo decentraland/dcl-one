@@ -169,18 +169,22 @@ static SIDECAR_PGID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32
 pub const KILL_GRACE: Duration = Duration::from_secs(1);
 
 #[cfg(unix)]
+#[allow(unsafe_code, reason = "signals a process group through libc")]
 pub(crate) fn kill_process_group(pgid: i32) {
     if pgid <= 0 {
         return;
     }
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     unsafe { libc::kill(-pgid, libc::SIGTERM) };
     let deadline = Instant::now() + KILL_GRACE;
     while Instant::now() < deadline {
+        // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         if unsafe { libc::kill(-pgid, 0) } != 0 {
             return;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     unsafe { libc::kill(-pgid, libc::SIGKILL) };
 }
 
@@ -223,6 +227,7 @@ fn rewrite_build_line(line: &str, project_root: &Path) -> Option<(String, bool)>
     }
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 fn relay_output(
     stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,
     to_stderr: bool,
@@ -234,7 +239,7 @@ fn relay_output(
         if to_stderr {
             eprintln!("{line}");
         } else {
-            println!("{line}");
+            crate::ux::say(line);
         }
     };
     tokio::spawn(async move {
@@ -567,6 +572,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[allow(unsafe_code, reason = "probes the process group with kill(2)")]
     fn kill_process_group_reaps_leader_and_grandchildren() {
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
@@ -590,8 +596,10 @@ mod tests {
             .read_line(&mut line)
             .unwrap();
         let grandchild: i32 = line.trim().parse().expect("the grandchild's pid");
+        // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         assert_eq!(unsafe { libc::kill(-pgid, 0) }, 0, "group must be alive");
         assert_eq!(
+            // SAFETY: kill(2) takes plain integers and reads no memory of ours.
             unsafe { libc::kill(grandchild, 0) },
             0,
             "grandchild must be alive"
@@ -604,6 +612,7 @@ mod tests {
         assert!(!leader.success(), "leader died by signal");
 
         let gone = crate::test_wait::until_blocking(Duration::from_secs(10), || {
+            // SAFETY: kill(2) takes plain integers and reads no memory of ours.
             (unsafe { libc::kill(-pgid, 0) } != 0).then_some(())
         });
         assert!(

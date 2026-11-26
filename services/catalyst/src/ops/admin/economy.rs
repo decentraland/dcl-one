@@ -16,8 +16,6 @@
 //! bearer and the wallet as `x-catalyrst-admin` (the override's recorded
 //! operator), behind `DATA_WRITES_ENABLED` (`marketplace::DataWrites`).
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::Method;
@@ -32,7 +30,8 @@ use super::console::{
 };
 use crate::shared::writes::DataWrites;
 use crate::shop::credits::admin::{
-    normalize_address, validate_idempotency_key, validate_positive_amount, validated_reason,
+    normalize_address, refuse_studio_name, validate_idempotency_key, validate_positive_amount,
+    validated_reason,
 };
 use crate::shop::credits::admin_store::GrantRequest;
 use crate::shop::credits::errors::ApiError as CreditsError;
@@ -54,10 +53,8 @@ async fn credits_gate(
     {
         return Err(token_missing("credits"));
     }
-    if crate::shop::credits::writes::is_gated(&Method::POST, path)
-        && let Some(r) = crate::shared::writes::ops_refusal(cs.settings.writes_enabled)
-    {
-        return Err(refused(crate::shop::credits::writes::refused_response(&r)).await);
+    if !cs.settings.writes_enabled && crate::shop::credits::writes::is_gated(&Method::POST, path) {
+        return Err(refused(crate::shop::credits::writes::disabled_response()).await);
     }
     Ok(cs)
 }
@@ -66,7 +63,8 @@ fn opt_string(body: &Value, key: &str) -> Option<String> {
     str_field(body, key).filter(|s| !s.trim().is_empty())
 }
 
-/// `POST /admin/api/credits/grant` `{address, amount, reason?, idempotencyKey?}`.
+/// `POST /admin/api/credits/grant` `{address, amount, reason?, idempotencyKey?}`; a
+/// `studioName` is refused (`refuse_studio_name`).
 pub async fn credits_grant(
     session: AdminSession,
     State(state): State<SharedState>,
@@ -82,6 +80,7 @@ pub async fn credits_grant(
         let amount = validate_positive_amount(&str_field(&body, "amount").unwrap_or_default())?;
         let reason = validated_reason(&opt_string(&body, "reason"))?;
         let idempotency_key = validate_idempotency_key(&opt_string(&body, "idempotencyKey"))?;
+        refuse_studio_name(body.get("studioName"))?;
         let detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key, "via": "console" });
         let outcome = cs
             .credits
@@ -93,6 +92,7 @@ pub async fn credits_grant(
                 actor: Some(&actor),
                 idempotency_key: idempotency_key.as_deref(),
                 detail: &detail,
+                studio_name: None,
             })
             .await?;
         Ok::<_, CreditsError>(Json(json!({ "address": address, "applied": outcome.applied, "available": outcome.available, "replayed": outcome.replayed })))
@@ -197,10 +197,8 @@ async fn price_for(
     let Some(ps) = state.domains.price.clone() else {
         return Err(not_configured("price"));
     };
-    if DataWrites::is_gated(&method, path)
-        && let Some(r) = crate::shared::writes::refusal(ps.settings.writes_enabled)
-    {
-        return Err(refused(DataWrites::refused_response(&r)).await);
+    if !ps.settings.writes_enabled && DataWrites::is_gated(&method, path) {
+        return Err(refused(DataWrites::disabled_response()).await);
     }
     let Some(token) = configured(ps.settings.admin_token.as_deref()) else {
         return Err(token_missing("price"));

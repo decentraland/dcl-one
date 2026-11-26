@@ -1,6 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use crate::{
+    spring_bones::{model_spring_bones, spring_bone_models, SpringBoneModel},
     urn::{CollectibleInstance, CollectibleUrn},
     Collectible, CollectibleData, CollectibleType, Collectibles, CollectiblesTypePlugin,
 };
@@ -31,6 +32,11 @@ impl Plugin for WearablePlugin {
         app.add_systems(Update, (load_collections, retain_wearables));
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
+
+    fn finish(&self, app: &mut App) {
+        // reads the ipfs resource, which exists once every plugin is built
+        app.init_asset_loader::<crate::smart_wearables::SmartWearableSceneLoader>();
+    }
 }
 
 #[derive(Resource, Default)]
@@ -59,6 +65,8 @@ pub struct WearableData {
     pub replaces: Vec<WearableCategory>,
     pub removes_default_hiding: Option<Vec<String>>,
     pub outline_compatible: Option<bool>,
+    /// Read by [`spring_bone_models`], which tolerates a block that does not parse.
+    pub spring_bones: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -287,6 +295,8 @@ impl WearableCategory {
 pub struct WearableModel {
     pub gltf: Handle<Gltf>,
     pub outline_compatible: bool,
+    /// The spring-bone parameters the wearable declares for this model file, by bone name.
+    pub spring_bones: Option<Arc<SpringBoneModel>>,
 }
 
 #[derive(Debug, TypePath, Clone, PartialEq)]
@@ -301,6 +311,20 @@ pub struct Wearable {
 #[derive(Clone, Debug)]
 pub struct WearableExtraData {
     pub category: WearableCategory,
+    /// The content files named `scene.json` (`male/scene.json`, `female/scene.json`, or a bare
+    /// `scene.json`): a non-empty list marks a smart wearable candidate.
+    pub scene_json_files: Vec<String>,
+}
+
+/// The content keys that make a wearable a smart wearable candidate.
+pub fn scene_json_files(content: &ipfs::ContentMap) -> Vec<String> {
+    let mut files: Vec<String> = content
+        .files()
+        .filter(|file| file.ends_with("scene.json"))
+        .cloned()
+        .collect();
+    files.sort();
+    files
 }
 
 impl CollectibleType for Wearable {
@@ -317,6 +341,10 @@ impl CollectibleType for Wearable {
 
     fn data_extension() -> &'static str {
         "wearable_data"
+    }
+
+    fn with_content_aliases(content: ipfs::ContentMap) -> ipfs::ContentMap {
+        crate::smart_wearables::with_scene_aliases(content)
     }
 }
 
@@ -338,6 +366,7 @@ impl AssetLoader for WearableLoader {
         let mut entity = EntityDefinitionLoader
             .load(reader, settings, load_context)
             .await?;
+        let scene_json_files = scene_json_files(&entity.content);
         let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
         let meta = serde_json::from_value::<WearableMeta>(metadata)?;
 
@@ -350,9 +379,15 @@ impl AssetLoader for WearableLoader {
             .to_string_lossy()
             .into_owned();
 
+        let spring_bones = spring_bone_models(meta.data.spring_bones.as_ref(), &meta.id);
+
         let mut representations = HashMap::new();
 
         for representation in meta.data.representations.into_iter() {
+            // declared for each model file, under that file's content hash
+            let spring_bones =
+                model_spring_bones(&spring_bones, &entity.content, &representation.main_file);
+
             let (model, texture, mask) = if category.is_texture {
                 // don't validate the main file, as some base wearables have no extension on the main_file member (Eyebrows_09 e.g)
                 let texture = representation
@@ -408,6 +443,9 @@ impl AssetLoader for WearableLoader {
                     .with_settings::<GltfLoaderSettings>(|s| {
                         s.load_cameras = false;
                         s.load_lights = false;
+                        // the avatar reads its materials' emissive strengths from the source,
+                        // then drops it (avatar::drop_emissive_strengths)
+                        s.include_source = true;
                         s.load_meshes = RenderAssetUsages::MAIN_WORLD;
                         s.load_materials = RenderAssetUsages::RENDER_WORLD;
                         s.transfer_priority = RenderAssetTransferPriority::Priority(2);
@@ -482,6 +520,7 @@ impl AssetLoader for WearableLoader {
                         model: model.clone().map(|gltf| WearableModel {
                             gltf,
                             outline_compatible: meta.data.outline_compatible.unwrap_or(true),
+                            spring_bones: spring_bones.clone(),
                         }),
                         texture: texture.clone(),
                         mask: mask.clone(),
@@ -498,7 +537,10 @@ impl AssetLoader for WearableLoader {
                 name: meta.name.unwrap_or_default(),
                 description: meta.description.unwrap_or_default(),
                 available_representations: representations.keys().cloned().collect(),
-                extra_data: WearableExtraData { category },
+                extra_data: WearableExtraData {
+                    category,
+                    scene_json_files: scene_json_files.clone(),
+                },
             },
             representations,
         })
@@ -542,6 +584,7 @@ impl AssetLoader for WearableMetaLoader {
         let mut entity = EntityDefinitionLoader
             .load(reader, settings, load_context)
             .await?;
+        let scene_json_files = scene_json_files(&entity.content);
         let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
         let meta = serde_json::from_value::<WearableMeta>(metadata)?;
 
@@ -572,7 +615,10 @@ impl AssetLoader for WearableMetaLoader {
             name: meta.name.unwrap_or_default(),
             description: meta.description.unwrap_or_default(),
             available_representations,
-            extra_data: WearableExtraData { category },
+            extra_data: WearableExtraData {
+                category,
+                scene_json_files: scene_json_files.clone(),
+            },
         })
     }
 }

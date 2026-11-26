@@ -15,6 +15,9 @@ use crate::evm::abi::ERC721_TRANSFER_TOPIC0;
 use crate::evm::errors::ApiError;
 use crate::evm::oracle::{UsdPeggedCharge, UsdPeggedExpectation, charge_basis_for_usd_pegged};
 use crate::evm::signer::ReceiptLog;
+use crate::types::{
+    ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
+};
 
 pub const OFFCHAIN_MARKETPLACE_POLYGON: Address =
     address!("0x540fb08eDb56AaE562864B390542C97F562825BA");
@@ -23,11 +26,6 @@ pub const OFFCHAIN_MARKETPLACE_EIP712_NAME: &str = "DecentralandMarketplacePolyg
 pub const OFFCHAIN_MARKETPLACE_EIP712_VERSION: &str = "1.0.0";
 
 pub const MANA_POLYGON: Address = address!("0xA1c57f48F0Deb89f569dFbE6E2B7f46D33606fD4");
-
-pub const ASSET_TYPE_ERC20: i64 = 1;
-pub const ASSET_TYPE_USD_PEGGED_MANA: i64 = 2;
-pub const ASSET_TYPE_ERC721: i64 = 3;
-pub const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
 
 sol! {
     #[derive(Debug)]
@@ -278,6 +276,11 @@ pub struct TradeExpectations {
     pub usd_pegged: Option<UsdPeggedExpectation>,
 }
 
+/// An asset type the checks above already pinned to a small positive value.
+fn asset_type(raw: i64) -> Result<u64, ApiError> {
+    u64::try_from(raw).map_err(|_| err(format!("assetType {raw} is negative")))
+}
+
 fn err(msg: impl Into<String>) -> ApiError {
     ApiError::InvalidTransaction(msg.into())
 }
@@ -312,7 +315,7 @@ fn parse_bytes32_padded(label: &str, raw: Option<&str>) -> Result<B256, ApiError
 }
 
 fn parse_u256_dec(label: &str, raw: &str) -> Result<U256, ApiError> {
-    U256::from_str_radix(raw.trim(), 10)
+    crate::types::parse_decimal(raw.trim())
         .map_err(|e| err(format!("trade {label}: not a decimal integer {raw:?}: {e}")))
 }
 
@@ -408,8 +411,8 @@ pub fn validate_trade(
         .as_deref()
         .ok_or_else(|| err("trade received payment asset is missing `amount`"))?;
     let signed_amount = parse_u256_dec("received.amount", amount)?;
-    let (price, usd_pegged) = match recv.asset_type {
-        ASSET_TYPE_USD_PEGGED_MANA => {
+    let (price, usd_pegged) = match i32::try_from(recv.asset_type) {
+        Ok(ASSET_TYPE_USD_PEGGED_MANA) => {
             let exp = expect.usd_pegged.as_ref().ok_or_else(|| {
                 err(
                     "trade is priced in USD-pegged MANA (assetType 2) but no MANA/USD oracle \
@@ -429,7 +432,7 @@ pub fn validate_trade(
             let charge = charge_basis_for_usd_pegged(signed_amount, exp, now_s)?;
             (charge.mana_wei, Some(charge))
         }
-        ASSET_TYPE_ERC20 => {
+        Ok(ASSET_TYPE_ERC20) => {
             if recv_contract != MANA_POLYGON {
                 return Err(err(format!(
                     "trade wants payment in token {recv_contract:#x}, only MANA \
@@ -448,10 +451,11 @@ pub fn validate_trade(
             }
             (signed_amount, None)
         }
-        other => {
+        _ => {
             return Err(err(format!(
-                "trade received asset has assetType {other}, expected 1 (ERC20) or 2 \
-                 (USD_PEGGED_MANA)"
+                "trade received asset has assetType {}, expected 1 (ERC20) or 2 \
+                 (USD_PEGGED_MANA)",
+                recv.asset_type
             )));
         }
     };
@@ -476,7 +480,7 @@ pub fn validate_trade(
         )));
     }
     let (delivery, sent_value) = if is_item_order {
-        if sent.asset_type != ASSET_TYPE_COLLECTION_ITEM {
+        if sent.asset_type != i64::from(ASSET_TYPE_COLLECTION_ITEM) {
             return Err(err(format!(
                 "public_item_order sent asset has assetType {}, expected 4 (COLLECTION_ITEM)",
                 sent.asset_type
@@ -489,7 +493,7 @@ pub fn validate_trade(
         let v = parse_u256_dec("sent.itemId", item_id)?;
         (TradeDelivery::Item { item_id: v }, v)
     } else {
-        if sent.asset_type != ASSET_TYPE_ERC721 {
+        if sent.asset_type != i64::from(ASSET_TYPE_ERC721) {
             return Err(err(format!(
                 "public_nft_order sent asset has assetType {}, expected 3 (ERC721)",
                 sent.asset_type
@@ -519,8 +523,8 @@ pub fn validate_trade(
         signature: Bytes::from(sig_bytes.clone()),
         checks: SolChecks {
             uses: U256::from(c.uses),
-            expiration: U256::from(expiration_s.max(0) as u64),
-            effective: U256::from(effective_s.max(0) as u64),
+            expiration: U256::from(u64::try_from(expiration_s).unwrap_or(0)),
+            effective: U256::from(u64::try_from(effective_s).unwrap_or(0)),
             salt,
             contractSignatureIndex: U256::from(c.contract_signature_index),
             signerSignatureIndex: U256::from(c.signer_signature_index),
@@ -529,14 +533,14 @@ pub fn validate_trade(
             externalChecks: vec![],
         },
         sent: vec![SolAsset {
-            assetType: U256::from(sent.asset_type as u64),
+            assetType: U256::from(asset_type(sent.asset_type)?),
             contractAddress: sent_contract,
             value: sent_value,
             beneficiary: Address::ZERO,
             extra: Bytes::from(sent_extra),
         }],
         received: vec![SolAsset {
-            assetType: U256::from(recv.asset_type as u64),
+            assetType: U256::from(asset_type(recv.asset_type)?),
             contractAddress: recv_contract,
             value: signed_amount,
             beneficiary: recv_beneficiary,
@@ -613,6 +617,21 @@ pub fn transferred_token_id_from_logs(
 mod tests {
     use super::*;
     use alloy_sol_types::SolCall;
+
+    #[test]
+    fn signed_trade_numbers_are_plain_decimal_uint256() {
+        assert_eq!(
+            parse_u256_dec("sent.itemId", " 12 ").unwrap(),
+            U256::from(12u64)
+        );
+        for bad in ["", " ", "1_000", "0x10", &"1".repeat(79)] {
+            let err = parse_u256_dec("sent.itemId", bad).expect_err(bad);
+            assert!(
+                matches!(&err, ApiError::InvalidTransaction(m) if m.starts_with("trade sent.itemId: not a decimal integer")),
+                "{bad:?}: {err:?}"
+            );
+        }
+    }
 
     fn fixture_json() -> serde_json::Value {
         serde_json::json!({

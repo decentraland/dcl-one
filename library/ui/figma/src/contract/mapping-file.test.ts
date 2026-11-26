@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { parseFigmaUrl, parseMappingSource, readMappingFile } from './mapping-file.js'
 import { mappingSource } from './test-fixtures.js'
 
@@ -31,9 +31,16 @@ describe('parseFigmaUrl', () => {
   })
 
   describe('when the url has no node-id', () => {
-    it('should return undefined', () => {
-      expect(parseFigmaUrl('<DCL_FIGMA_FILE>')).toBeUndefined()
-      expect(parseFigmaUrl(`${FIGMA_DESIGN_URL}AbC123/Some-Name`)).toBeUndefined()
+    describe('and it names the file through the placeholder', () => {
+      it('should return undefined', () => {
+        expect(parseFigmaUrl('<DCL_FIGMA_FILE>')).toBeUndefined()
+      })
+    })
+
+    describe('and it is a literal Figma URL', () => {
+      it('should return undefined', () => {
+        expect(parseFigmaUrl(`${FIGMA_DESIGN_URL}AbC123/Some-Name`)).toBeUndefined()
+      })
     })
   })
 })
@@ -56,21 +63,58 @@ describe('parseMappingSource', () => {
     })
   })
 
-  describe('when the template calls an API outside the supported subset', () => {
-    it('should report unsupported-construct instead of ignoring it', () => {
+  describe('when reading the template id', () => {
+    it.each([
+      ['single quotes', "id: 'button'", 'button'],
+      ['double quotes, as the generator writes it', 'id: "button"', 'button'],
+      ['an empty id', "id: ''", undefined]
+    ])('should read it written with %s', (_label, line, expected) => {
       const mapping = parseMappingSource(
-        mappingSource({ body: "const icon = instance.getInstanceSwap('Icon')\n" }),
-        'Button.figma.ts'
+        mappingSource().replace("id: 'button'", line),
+        'B.figma.ts'
       )
+
+      expect(mapping.id).toBe(expected)
+    })
+
+    // The nearest false positive: a nodeId property is not the template id.
+    describe('and only a nodeId property is present', () => {
+      let source: string
+
+      beforeEach(() => {
+        source = mappingSource()
+          .replace("id: 'button',", '')
+          .replace('metadata: {', "metadata: { nodeId: 'x',")
+      })
+
+      it('should not take the nodeId property for the id', () => {
+        expect(parseMappingSource(source, 'B.figma.ts').id).toBeUndefined()
+      })
+    })
+  })
+
+  describe('when the template calls an API outside the supported subset', () => {
+    let source: string
+
+    beforeEach(() => {
+      source = mappingSource({ body: "const icon = instance.getInstanceSwap('Icon')\n" })
+    })
+
+    it('should report unsupported-construct instead of ignoring it', () => {
+      const mapping = parseMappingSource(source, 'Button.figma.ts')
 
       expect(mapping.issues.map((issue) => issue.code)).toContain('unsupported-construct')
     })
   })
 
   describe('when getEnum values are not string literals', () => {
-    it('should report unsupported-construct', () => {
-      const source = mappingSource().replace("Primary: 'primary'", 'Primary: compute()')
+    let source: string
 
+    beforeEach(() => {
+      source = mappingSource().replace("Primary: 'primary'", 'Primary: compute()')
+    })
+
+    it('should report unsupported-construct', () => {
       const mapping = parseMappingSource(source, 'Button.figma.ts')
 
       expect(mapping.issues.map((issue) => issue.code)).toContain('unsupported-construct')
@@ -78,23 +122,33 @@ describe('parseMappingSource', () => {
   })
 
   describe('when the url header is missing', () => {
-    it('should report a mapping that cannot be tied to a Figma node', () => {
-      const source = mappingSource().replace(/^\/\/ url=.*$/m, '')
+    let source: string
 
-      const mapping = parseMappingSource(source, 'Button.figma.ts')
+    beforeEach(() => {
+      source = mappingSource().replace(/^\/\/ url=.*$/m, '')
+    })
 
-      expect(mapping.figma).toBeUndefined()
-      expect(mapping.issues).toHaveLength(1)
+    it('should not tie the mapping to a Figma node', () => {
+      expect(parseMappingSource(source, 'Button.figma.ts').figma).toBeUndefined()
+    })
+
+    it('should report a single issue', () => {
+      expect(parseMappingSource(source, 'Button.figma.ts').issues).toHaveLength(1)
     })
   })
 })
 
 describe('when a text placeholder is inside a JSX JavaScript expression', () => {
-  it('should reject the unsupported context instead of emitting entity text in JavaScript', () => {
-    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+  let source: string
+
+  beforeEach(() => {
+    source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
       '>Label</Button>',
       " aria-label={'${label}'}>Label</Button>"
     )
+  })
+
+  it('should reject the unsupported context instead of emitting entity text in JavaScript', () => {
     expect(
       parseMappingSource(source, 'Button.figma.ts').issues.map((issue) => issue.code)
     ).toContain('unsupported-construct')
@@ -102,11 +156,16 @@ describe('when a text placeholder is inside a JSX JavaScript expression', () => 
 })
 
 describe('when a text placeholder follows a literal brace in a quoted JSX attribute', () => {
-  it('should retain the supported JSX string context', () => {
-    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+  let source: string
+
+  beforeEach(() => {
+    source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
       '>Label</Button>',
       ' title="{${label}}">Label</Button>'
     )
+  })
+
+  it('should retain the supported JSX string context', () => {
     expect(parseMappingSource(source, 'Button.figma.ts').issues).toEqual([])
   })
 })

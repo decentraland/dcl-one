@@ -5,7 +5,7 @@
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 import { useMemo, useState } from "react";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { shortAddress } from "@shop/model/address";
 import type { ShopClient } from "@shop/api/shop";
@@ -14,6 +14,7 @@ import { landData, landParcels } from "./api";
 import { isEstateListingAffectedByUpgrade } from "./estate";
 import { dateText, epochMs, Mana } from "./format";
 import LandMap from "./LandMap";
+import MapGridAge from "./MapGridAge";
 import { distanceText, estateProximity, parcelProximity, proximityIndex, PROXIMITY_TITLE, type ProximityKind } from "./proximity";
 import { fetchRentalListings, isRentalExecuted, rentalEndDate, type RentalListing } from "./rentals";
 import { selectionCenter, type Tiles } from "./tiles";
@@ -40,6 +41,7 @@ export function LandMapPreview({ result, tiles, label }: { result: NftResult; ti
       initialZoom={8}
       withPopup={false}
       label={label ?? `Map of ${result.nft.name}`}
+      status={<MapGridAge />}
     />
   );
 }
@@ -129,7 +131,7 @@ export function EstateParcels({ parcels, total }: { parcels: { x: number; y: num
         ))}
       </ul>
       {parcels.length > 16 ? (
-        <Button size="sm" variant="ghost" onClick={() => setAll((a) => !a)} aria-expanded={all}>
+        <Button size="sm" variant="outline" onClick={() => setAll((a) => !a)} aria-expanded={all}>
           {all ? "Show less" : `Show ${parcels.length - 16} more`}
         </Button>
       ) : null}

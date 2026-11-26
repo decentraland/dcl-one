@@ -21,159 +21,196 @@ use crate::{
     vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
-pub(super) fn register(app: &mut App) {
-    app.init_resource::<ShowBounds>()
-        .add_console_command::<BoundsCommand, _>(set_bounds)
-        .add_systems(Update, draw_bounds.run_if(|show: Res<ShowBounds>| show.0))
-        .add_console_command::<SceneState, _>(scene_state)
-        .add_console_command::<SceneContent, _>(scene_content)
-        .add_console_command::<LoadingState, _>(loading_state)
-        .add_console_command::<TextureState, _>(texture_state)
-        .add_debug_section(DebugSection {
-            title: "Current Scene",
+/// Native scene WebSocket counters; browser scene workers use the browser's sockets.
+#[cfg(not(target_arch = "wasm32"))]
+const WEBSOCKET_FIELDS: &[(&str, &str)] = &[
+    (
+        "Sockets held (connecting, open or closing)",
+        "worker.ws_open",
+    ),
+    ("Sockets opened", "worker.ws_opened"),
+    ("Sockets refused by policy", "worker.ws_refused"),
+    ("Sockets failed to connect", "worker.ws_failed"),
+    ("Messages received / sent", "worker.ws_messages"),
+    ("Bytes received / sent", "worker.ws_bytes"),
+];
+
+pub(super) struct SceneDebugPanelPlugin;
+
+impl Plugin for SceneDebugPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ShowBounds>()
+            .add_console_command::<BoundsCommand, _>(set_bounds)
+            .add_systems(Update, draw_bounds.run_if(|show: Res<ShowBounds>| show.0))
+            .add_console_command::<SceneState, _>(scene_state)
+            .add_console_command::<SceneContent, _>(scene_content)
+            .add_console_command::<LoadingState, _>(loading_state)
+            .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
+            .add_console_command::<TextureState, _>(texture_state)
+            .add_debug_section(DebugSection {
+                title: "Current Scene",
+                query: "/current_scene_state",
+                fields: &[
+                    ("Name", "name"),
+                    ("SDK", "sdk"),
+                    ("Parcels", "parcels"),
+                    ("Height (m)", "height"),
+                    ("Collider height limit (m)", "colliderHeight"),
+                    ("Scenes whose colliders reach the player", "scenesInReach"),
+                    ("Global position (m) (X / Y / Z)", "world"),
+                    ("Scene position (m) (X / Y / Z)", "relative"),
+                    ("Tick", "tick"),
+                    ("Scene tick FPS", "history.fps"),
+                    ("Minimum FPS (last 256 observed ticks)", "history.minFps"),
+                    ("Maximum FPS (last 256 observed ticks)", "history.maxFps"),
+                    (
+                        "Hiccups over 50 ms (last 256 observed ticks)",
+                        "history.hiccups",
+                    ),
+                    ("Tick FPS history", "history.tickFps"),
+                    (
+                        "Component payload bytes/tick from scene",
+                        "history.from.bytes",
+                    ),
+                    ("Component updates/tick from scene", "history.from.updates"),
+                    ("Component payload bytes/tick to scene", "history.to.bytes"),
+                    ("Component updates/tick to scene", "history.to.updates"),
+                    (
+                        "From scene in chart window (bytes / updates)",
+                        "history.from.total",
+                    ),
+                    (
+                        "To scene in chart window (bytes / updates)",
+                        "history.to.total",
+                    ),
+                    (
+                        "From scene per second (bytes / updates)",
+                        "history.from.rate",
+                    ),
+                    ("To scene per second (bytes / updates)", "history.to.rate"),
+                    (
+                        "Updates/tick from scene (min / max / spikes)",
+                        "history.from.range",
+                    ),
+                    (
+                        "Updates/tick to scene (min / max / spikes)",
+                        "history.to.range",
+                    ),
+                    ("CRDT bytes from scene", "worker.crdt_bytes"),
+                    ("CRDT bytes/s from scene", "bytesPerSecond"),
+                    ("IPC responses from scene", "worker.ipc_responses"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Worker fetches started", "worker.fetch_started"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Worker fetches completed", "worker.fetch_completed"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Worker fetches failed", "worker.fetch_failed"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Worker fetch bytes received", "worker.fetch_bytes_down"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Current native V8 heap used (bytes)", "heap"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Current native V8 heap limit (bytes)", "heapLimit"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    (
+                        "Current native V8 external memory (bytes)",
+                        "externalMemory",
+                    ),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Sampled native JS engines", "engines.count"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ("Sampled native JS heaps used (bytes)", "engines.used"),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    (
+                        "Sampled native JS external memory (bytes)",
+                        "engines.external",
+                    ),
+                ],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Show scene bounds",
+                    field: "bounds",
+                    command: "/show_parcel_scene_bounds {value}",
+                    kind: DebugInputKind::Toggle,
+                }],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene Content",
+                query: "/current_scene_content",
+                fields: &[
+                    ("Entities known to renderer", "entities"),
+                    ("Mesh bodies (all)", "allBodies"),
+                    ("Triangles in mesh bodies (all)", "allTriangles"),
+                    ("Visible triangles", "triangles"),
+                    ("Visible meshes (bodies)", "bodies"),
+                    ("Unique geometries", "geometries"),
+                    ("Visible unique geometries", "visibleGeometries"),
+                    ("Unique materials", "materials"),
+                    ("Visible unique materials", "visibleMaterials"),
+                    ("Material textures", "textures"),
+                    ("Colliders", "colliders"),
+                    ("Colliders off outside scene bounds", "collidersOutOfBounds"),
+                ],
+                actions: &[],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene Loading",
+                query: "/scene_loading_state",
+                fields: &[
+                    ("Current parcel loading", "current"),
+                    ("Current parcel stage", "stage"),
+                    ("Pending glTF containers", "gltf"),
+                    ("Pending SDK asset preloads", "preloads"),
+                    ("Spawning", "spawned"),
+                    ("Reading definition", "definition"),
+                    ("Reading main.crdt", "crdt"),
+                    ("Starting JavaScript", "javascript"),
+                    ("Failed", "failed"),
+                    ("Running scenes", "running"),
+                    ("Blocked scenes", "blocked"),
+                    ("Broken scenes", "broken"),
+                ],
+                actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene permissions in force",
+                query: "/permissions_in_force",
+                fields: &[("In force now (scene, permission)", "inForce")],
+                actions: &[],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Resource Promises",
+                query: "/scene_loading_state",
+                fields: &[
+                    ("Pending glTF containers", "gltf"),
+                    ("Pending SDK asset preloads", "preloads"),
+                    ("Pending texture preloads", "texturePreloads"),
+                ],
+                actions: &[],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Cache Textures",
+                query: "/texture_cache_state",
+                fields: &[
+                    ("Resident image assets", "count"),
+                    ("Retained image bytes (CPU)", "bytes"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_debug_section(DebugSection {
+            title: "Scene WebSockets",
             query: "/current_scene_state",
-            fields: &[
-                ("Name", "name"),
-                ("SDK", "sdk"),
-                ("Parcels", "parcels"),
-                ("Height (m)", "height"),
-                ("Global position (m) (X / Y / Z)", "world"),
-                ("Scene position (m) (X / Y / Z)", "relative"),
-                ("Tick", "tick"),
-                ("Scene tick FPS", "history.fps"),
-                ("Minimum FPS (last 256 observed ticks)", "history.minFps"),
-                ("Maximum FPS (last 256 observed ticks)", "history.maxFps"),
-                (
-                    "Hiccups over 50 ms (last 256 observed ticks)",
-                    "history.hiccups",
-                ),
-                ("Tick FPS history", "history.tickFps"),
-                (
-                    "Component payload bytes/tick from scene",
-                    "history.from.bytes",
-                ),
-                ("Component updates/tick from scene", "history.from.updates"),
-                ("Component payload bytes/tick to scene", "history.to.bytes"),
-                ("Component updates/tick to scene", "history.to.updates"),
-                (
-                    "From scene in chart window (bytes / updates)",
-                    "history.from.total",
-                ),
-                (
-                    "To scene in chart window (bytes / updates)",
-                    "history.to.total",
-                ),
-                (
-                    "From scene per second (bytes / updates)",
-                    "history.from.rate",
-                ),
-                ("To scene per second (bytes / updates)", "history.to.rate"),
-                (
-                    "Updates/tick from scene (min / max / spikes)",
-                    "history.from.range",
-                ),
-                (
-                    "Updates/tick to scene (min / max / spikes)",
-                    "history.to.range",
-                ),
-                ("CRDT bytes from scene", "worker.crdt_bytes"),
-                ("CRDT bytes/s from scene", "bytesPerSecond"),
-                ("IPC responses from scene", "worker.ipc_responses"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Worker fetches started", "worker.fetch_started"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Worker fetches completed", "worker.fetch_completed"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Worker fetches failed", "worker.fetch_failed"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Worker fetch bytes received", "worker.fetch_bytes_down"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Current native V8 heap used (bytes)", "heap"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Current native V8 heap limit (bytes)", "heapLimit"),
-                #[cfg(not(target_arch = "wasm32"))]
-                (
-                    "Current native V8 external memory (bytes)",
-                    "externalMemory",
-                ),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Sampled native JS engines", "engines.count"),
-                #[cfg(not(target_arch = "wasm32"))]
-                ("Sampled native JS heaps used (bytes)", "engines.used"),
-                #[cfg(not(target_arch = "wasm32"))]
-                (
-                    "Sampled native JS external memory (bytes)",
-                    "engines.external",
-                ),
-            ],
-            actions: &[],
-            inputs: &[DebugInput {
-                label: "Show scene bounds",
-                field: "bounds",
-                command: "/show_parcel_scene_bounds {value}",
-                kind: DebugInputKind::Toggle,
-            }],
-        })
-        .add_debug_section(DebugSection {
-            title: "Scene Content",
-            query: "/current_scene_content",
-            fields: &[
-                ("Entities known to renderer", "entities"),
-                ("Mesh bodies (all)", "allBodies"),
-                ("Triangles in mesh bodies (all)", "allTriangles"),
-                ("Visible triangles", "triangles"),
-                ("Visible meshes (bodies)", "bodies"),
-                ("Unique geometries", "geometries"),
-                ("Visible unique geometries", "visibleGeometries"),
-                ("Unique materials", "materials"),
-                ("Visible unique materials", "visibleMaterials"),
-                ("Material textures", "textures"),
-                ("Colliders", "colliders"),
-            ],
-            actions: &[],
-            inputs: &[],
-        })
-        .add_debug_section(DebugSection {
-            title: "Scene Loading",
-            query: "/scene_loading_state",
-            fields: &[
-                ("Current parcel loading", "current"),
-                ("Current parcel stage", "stage"),
-                ("Pending glTF containers", "gltf"),
-                ("Pending SDK asset preloads", "preloads"),
-                ("Spawning", "spawned"),
-                ("Reading definition", "definition"),
-                ("Reading main.crdt", "crdt"),
-                ("Starting JavaScript", "javascript"),
-                ("Failed", "failed"),
-                ("Running scenes", "running"),
-                ("Blocked scenes", "blocked"),
-                ("Broken scenes", "broken"),
-            ],
-            actions: &[("Reload current parcel scene", "/reload --current")],
-            inputs: &[],
-        })
-        .add_debug_section(DebugSection {
-            title: "Resource Promises",
-            query: "/scene_loading_state",
-            fields: &[
-                ("Pending glTF containers", "gltf"),
-                ("Pending SDK asset preloads", "preloads"),
-                ("Pending texture preloads", "texturePreloads"),
-            ],
-            actions: &[],
-            inputs: &[],
-        })
-        .add_debug_section(DebugSection {
-            title: "Cache Textures",
-            query: "/texture_cache_state",
-            fields: &[
-                ("Resident image assets", "count"),
-                ("Retained image bytes (CPU)", "bytes"),
-            ],
+            fields: WEBSOCKET_FIELDS,
             actions: &[],
             inputs: &[],
         });
+    }
 }
 
 #[derive(Resource, Default)]
@@ -291,6 +328,8 @@ fn scene_state(
     scenes: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     bounds: Res<ShowBounds>,
     histories: Query<&SceneTraffic>,
+    colliders: Query<&SceneColliderData>,
+    parcel_scenes: Query<(&RendererSceneContext, &SceneColliderData), Without<SuperUserScene>>,
 ) {
     if input.take().is_none() {
         return;
@@ -343,11 +382,16 @@ fn scene_state(
     unavailable["history"] = "Waiting for a complete tick in the current parcel scene.".into();
     unavailable["bytesPerSecond"] = "Waiting for two consecutive worker samples.".into();
     unavailable["height"] = "The scene has no parcel bounds.".into();
+    unavailable["colliderHeight"] = "The scene's colliders have no bounds in this run.".into();
     unavailable[""] = "The parcel scene worker has not reported a sample.".into();
     let report = json!({
         "unavailable": unavailable,
         "bounds": bounds.0, "name": scene.title, "sdk": scene.sdk_version, "parcels": scene.parcels.len(),
         "height": scene.bounds.iter().map(|r| r.height).reduce(f32::max),
+        "colliderHeight": colliders.get(root).ok().and_then(SceneColliderData::height_limit),
+        "scenesInReach": player.map(|(_, at)| parcel_scenes.iter().filter(|(scene, colliders)| {
+            !scene.is_portable && colliders.reaches_avatar(at.translation().as_dvec3())
+        }).count()),
         "world": position.map(|p| p.to_array()), "relative": position.map(|p| (p-base).to_array()), "tick": scene.tick_number,
         "history": history, "engines": engines,
         "bytesPerSecond": scene.crdt_bytes_per_second.map(f64::round),
@@ -361,6 +405,12 @@ fn scene_state(
             report["worker"]["fetch_completed"] = c.fetch_completed.into();
             report["worker"]["fetch_failed"] = c.fetch_failed.into();
             report["worker"]["fetch_bytes_down"] = c.fetch_bytes_down.into();
+            report["worker"]["ws_open"] = c.ws_open.into();
+            report["worker"]["ws_opened"] = c.ws_opened.into();
+            report["worker"]["ws_refused"] = c.ws_refused.into();
+            report["worker"]["ws_failed"] = c.ws_failed.into();
+            report["worker"]["ws_messages"] = json!([c.ws_msgs_in, c.ws_msgs_out]);
+            report["worker"]["ws_bytes"] = json!([c.ws_bytes_in, c.ws_bytes_out]);
             report["heap"] = c.heap_used.into();
             report["heapLimit"] = c.heap_limit.into();
             report["externalMemory"] = c.external_memory.into();
@@ -533,7 +583,28 @@ fn scene_content(
         "allBodies": all_bodies, "allTriangles": all_triangles.display(),
         "geometries": geometry.len(), "visibleGeometries": visible_geometry.len(), "materials": material_ids.len(),
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
-        "colliders": colliders.map_or(0, SceneColliderData::collider_count)}).to_string());
+        "colliders": colliders.map_or(0, SceneColliderData::collider_count),
+        "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
+}
+
+/// Report, as JSON, the permissions whose effect acts on the player now: `inForce`, a list of
+/// `scene` (the hash of the scene that causes it) and `type`.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/permissions_in_force")]
+struct PermissionsInForceState;
+
+fn permissions_in_force_state(
+    mut input: ConsoleCommand<PermissionsInForceState>,
+    in_force: Res<crate::permissions::PermissionsInForce>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let list = in_force
+            .0
+            .iter()
+            .map(|(scene, ty)| json!({"scene": scene, "type": ty}))
+            .collect::<Vec<_>>();
+        input.reply_ok(json!({ "inForce": list }).to_string());
+    }
 }
 
 #[derive(clap::Parser, ConsoleCommand)]
@@ -637,6 +708,7 @@ mod tests {
     use super::*;
     use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
+    use common::sync::MutexExt;
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
@@ -661,7 +733,7 @@ mod tests {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
-            Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
+            Arc::new(move |reply| *result.lock_ignore_poison() = Some(reply))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
             command_name: "/current_scene_state".into(),
@@ -669,7 +741,7 @@ mod tests {
             responder: Some(responder),
         });
         app.update();
-        let reply = result.lock().unwrap().take().unwrap().unwrap();
+        let reply = result.lock_ignore_poison().take().unwrap().unwrap();
         serde_json::from_str(&reply).unwrap()
     }
 
@@ -757,6 +829,66 @@ mod tests {
             read_scene_state(&mut app)["history"]["tickFps"]["samples"],
             json!([50.0])
         );
+    }
+
+    #[test]
+    fn scene_state_counts_the_scenes_whose_colliders_reach_the_player() {
+        let mut app = scene_state_app();
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
+            ))
+            .id();
+        // two scenes side by side: parcel (0, 0) spans world x 0 to 16, parcel (1, 0) x 16 to 32
+        for parcel in [IVec2::ZERO, IVec2::X] {
+            let world = app.world_mut();
+            let root = world.spawn_empty().id();
+            let hash = parcel.to_string();
+            let regions = vec![scene_material::BoundRegion::new(parcel, parcel, 1)];
+            world.entity_mut(root).insert((
+                SceneColliderData::for_regions(&regions, 1),
+                RendererSceneContext::new(
+                    dcl_types::SceneId(root),
+                    hash.clone(),
+                    String::new(),
+                    false,
+                    0,
+                    hash.clone(),
+                    parcel,
+                    [parcel].into_iter().collect(),
+                    regions,
+                    default(),
+                    vec![],
+                    root,
+                    0.0,
+                    false,
+                    "sdk7",
+                    false,
+                    false,
+                ),
+            ));
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.clone(), root);
+            world
+                .resource_mut::<ScenePointers>()
+                .insert(parcel, PointerResult::Exists { hash, urn: None });
+        }
+        let mut scenes_in_reach = |at: Vec3| {
+            *app.world_mut().get_mut::<GlobalTransform>(player).unwrap() =
+                GlobalTransform::from_translation(at);
+            app.update();
+            read_scene_state(&mut app)["scenesInReach"].clone()
+        };
+
+        assert_eq!(scenes_in_reach(Vec3::new(8.0, 0.0, -8.0)), json!(1));
+        // the capsule reaches over the edge between the two
+        assert_eq!(scenes_in_reach(Vec3::new(15.8, 0.0, -8.0)), json!(2));
+        // above the 20 m a scene of one parcel is drawn to
+        assert_eq!(scenes_in_reach(Vec3::new(8.0, 30.0, -8.0)), json!(0));
     }
 
     #[test]

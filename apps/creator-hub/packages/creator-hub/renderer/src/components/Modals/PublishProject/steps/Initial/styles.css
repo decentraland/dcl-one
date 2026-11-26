@@ -1,0 +1,25 @@
+/* Initial Modal */
+[role="dialog"] .Initial {
+  display: flex;
+  flex-direction: column;
+}
+
+[role="dialog"] .Initial .select,
+[role="dialog"] .Initial .alternative_servers {
+  text-align: center;
+}
+
+[role="dialog"] .Initial .options {
+  display: flex;
+  margin: 20px 0;
+}
+
+[role="dialog"] .Initial .options .OptionBox + .OptionBox {
+  margin-left: 20px;
+}
+
+[role="dialog"] .Initial .alternative_servers {
+  text-decoration: underline;
+  text-transform: uppercase;
+  cursor: pointer;
+}

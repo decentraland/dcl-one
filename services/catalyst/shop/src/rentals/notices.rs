@@ -29,8 +29,8 @@ use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainNet};
 use crate::market::notice_cursor::{self, advance, lock, seed};
 use crate::market::transfer_notices::Pass;
-use crate::social::Address;
-use crate::social::notifications::store::{NewNotification, insert_notifications};
+use crate::shared::identity::Address;
+use crate::shared::notifications::{NewNotification, insert_notifications};
 
 pub const KIND_STARTED: &str = notice_cursor::RENTAL_STARTED;
 pub const KIND_ENDED: &str = notice_cursor::RENTAL_ENDED;
@@ -86,7 +86,11 @@ WITH r AS (
 }
 
 /// The parcel (`x,y`) a rented token stands for and whether it is an
-/// estate of several, over the period rows `p`.
+/// estate of several, over the period rows `p`. An estate's parcel comes
+/// from the land-authz estate links, read without its readiness gate since
+/// it only describes the notice: while a registry switch replays
+/// (`land_authz::indexer::begin_replay` deletes the links, and the new
+/// registries' fold rebuilds them), an estate's notice names no parcel.
 const PLACE: &str = "
     CASE WHEN p.contract_address = $2
          THEN land_authz.token_x(p.token_id) || ',' || land_authz.token_y(p.token_id)
@@ -190,7 +194,8 @@ async fn published(pool: &PgPool) -> Option<(i64, i64)> {
     Some((c.last_block, c.last_block_time?))
 }
 
-const WAITING: &str = "the rentals index is not published (SHOP_RENTALS_INDEX_ENABLED)";
+const WAITING: &str =
+    "the rentals index is not published (chain-1 RPC unset or SHOP_RENTALS_INDEX_ENABLED=false)";
 
 /// One `rental_started` pass: every published rent after the cursor.
 pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
@@ -318,7 +323,7 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
 
 pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     tracing::info!(
-        "rental notifications run while the rentals index is published (SHOP_RENTALS_INDEX_ENABLED); \
+        "rental notifications run while the rentals index is published; \
          until then their job progress reads `waiting`"
     );
     let pool = state.pool.clone();
@@ -536,6 +541,42 @@ mod tests {
         rent(31, 0, t0 + 4 * DAY, "9", 1, false).await;
         assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(0));
         assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(0));
+
+        // An operator rewind over history: the periods ending since t0 and
+        // the rents since block 10 are read again, and only the ones never
+        // announced (token 7's end; the rents at 10 to 12) are stored.
+        use notice_cursor::{RewindFrom, rewind};
+        rewind(
+            &pool,
+            KIND_ENDED,
+            RewindFrom::Time(t0),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
+        rewind(
+            &pool,
+            KIND_STARTED,
+            RewindFrom::Block(10),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(1));
+        assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(3));
+        let ended: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM social.notifications WHERE type = $1 ORDER BY occurred_at",
+        )
+        .bind(KIND_ENDED)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ended[0], ended_id("ethereum", &key(10).await));
+        assert_eq!(ended.len(), 3, "nothing twice");
         db.drop().await;
     }
 }

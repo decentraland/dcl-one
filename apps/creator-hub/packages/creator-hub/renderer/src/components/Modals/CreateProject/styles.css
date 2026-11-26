@@ -1,0 +1,12 @@
+.CreateProjectModal .CreateProjectFormControl {
+  display: flex;
+  flex-direction: column;
+}
+
+.CreateProjectModal .CreateProjectField + * {
+  margin-top: 16px;
+}
+
+.CreateProjectModal .error {
+  color: var(--error);
+}

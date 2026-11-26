@@ -1,18 +1,18 @@
 import * as net from 'net'
-import {
-  createServerComponent,
-  Router
-} from '../../../../packages/@dcl/sdk-commands/node_modules/@well-known-components/http-server'
-import { createRecordConfigComponent } from '../../../../packages/@dcl/sdk-commands/node_modules/@well-known-components/env-config-provider'
-import {
-  createDeployment,
+import { createServerComponent, Router } from '@well-known-components/http-server'
+import { createRecordConfigComponent } from '@well-known-components/env-config-provider'
+import type {
   DeployContext,
   IDeploymentComponent
 } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/deployment'
+import { createDeployment } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/deployment'
 import { setDeployResourceRoutes } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/routes'
 import { LINKER_CORS_OPTIONS } from '../../../../packages/@dcl/sdk-commands/src/run-dapp'
-import { DeploymentResult, DeploymentState } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
-import { LinkerResponse } from '../../../../packages/@dcl/sdk-commands/src/linker-dapp/routes'
+import type {
+  DeploymentResult,
+  DeploymentState
+} from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
+import type { LinkerResponse } from '../../../../packages/@dcl/sdk-commands/src/linker-dapp/routes'
 
 type Server = { stop(): Promise<void>; url: string }
 

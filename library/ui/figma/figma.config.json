@@ -218,6 +218,7 @@
     "Hidding": "hiding"
   },
   "componentNames": {
+    "button": "Button",
     "Button-Contained-Text": "Button",
     "Button-Contained-Text-Icon": "ButtonWithIcon",
     "Button-Multiple-Options": "SplitButton",
@@ -269,6 +270,14 @@
     },
     "NavBar": {
       "exposeTextSlots": false,
+      "responsive": {
+        "prop": "viewport",
+        "breakpoints": {
+          "mobile": "mobile",
+          "desktop": "desktop",
+          "largeDesktop": "largeDesktop"
+        }
+      },
       "semantics": {
         "@root": {
           "role": "navigation",
@@ -342,8 +351,5 @@
         "reason": "Owner-authorized web-modal background review"
       }
     ]
-  },
-  "promotion": {
-    "include": ["NavBar"]
   }
 }

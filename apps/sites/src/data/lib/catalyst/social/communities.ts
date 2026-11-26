@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { dataOf } from "../envelope";
-import { readCopy, type CopyStamp } from "@ui/data/copyAsOf";
+import { readCopy, type CopyStamp } from "@web-core/freshness/copyAsOf";
 import { CommunityMemberWireSchema } from "../generated-schemas/communities";
 
 const nullableStr = z.string().nullish().transform((v) => v ?? null);
@@ -30,7 +30,6 @@ export const CommunitySchema = z.object({
   privacy: z.enum(["public", "private"]),
   visibility: z.enum(["all", "unlisted"]).nullish().transform((v) => v ?? null),
   membersCount: z.number().nullish().transform((v) => v ?? null),
-  isLive: z.boolean().nullish().transform((v) => v ?? false),
   role: z.string().nullish().transform((v) => v ?? null),
 });
 export type Community = z.infer<typeof CommunitySchema>;
@@ -105,30 +104,6 @@ export async function loadCommunity(
     };
     const detail = projectNode(node, "live");
     return detail && { ...detail, copy: readCopy(cRaw) };
-  } catch {
-    return null;
-  }
-}
-
-export async function loadDefaultCommunity(
-  opts: GetOptions = {},
-): Promise<Community | null> {
-  try {
-    const raw = await getJSON<unknown>("/v1/communities", {
-      ...opts,
-      query: { ...opts.query, limit: 60 },
-    });
-    const rows: Community[] = [];
-    for (const n of unwrapResults(raw) ?? []) {
-      const parsed = CommunitySchema.safeParse(n);
-      if (parsed.success && parsed.data.name.trim() !== "") {
-        rows.push(parsed.data);
-      }
-    }
-    if (rows.length === 0) return null;
-    return rows.reduce((best, c) =>
-      (c.membersCount ?? -1) > (best.membersCount ?? -1) ? c : best,
-    );
   } catch {
     return null;
   }

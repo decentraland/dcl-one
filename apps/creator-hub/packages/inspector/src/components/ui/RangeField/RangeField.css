@@ -1,0 +1,109 @@
+:root {
+  --slider-track-height: 6px;
+}
+
+.Range.Field {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.Range.Field .RangeContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+
+.Range.Field .RangeContainer > .InputContainer {
+  display: flex;
+  width: 100%;
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput {
+  width: 100%;
+  appearance: none;
+  background-color: transparent;
+  outline: none;
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput::-webkit-slider-runnable-track {
+  height: var(--slider-track-height);
+  appearance: none;
+  border-radius: 100px;
+  background: linear-gradient(
+    90deg,
+    var(--primary-main) var(--completionPercentage, 0%),
+    var(--palette-neutral-gray2) var(--completionPercentage, 0%)
+  );
+}
+
+.Range.Field .RangeContainer.disabled .InputContainer .RangeInput::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    90deg,
+    var(--base-12) var(--completionPercentage, 0%),
+    var(--base-11) var(--completionPercentage, 0%)
+  );
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput::-moz-range-track {
+  height: var(--slider-track-height);
+  appearance: none;
+  border-radius: 100px;
+  background: linear-gradient(
+    90deg,
+    var(--primary-main) var(--completionPercentage, 0%),
+    var(--palette-neutral-gray2) var(--completionPercentage, 0%)
+  );
+}
+
+.Range.Field .RangeContainer.disabled .InputContainer .RangeInput::-moz-range-track {
+  background: linear-gradient(
+    90deg,
+    var(--base-12) var(--completionPercentage, 0%),
+    var(--base-11) var(--completionPercentage, 0%)
+  );
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: calc((var(--slider-track-height) - 14px) / 2);
+  background: var(--primary-main);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: var(--primary-main);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.Range.Field .RangeContainer .InputContainer .RangeInput:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.Range.Field .RangeContainer.disabled .InputContainer .RangeInput::-webkit-slider-thumb {
+  background: var(--base-12);
+  cursor: default;
+}
+
+.Range.Field .RangeContainer.disabled .InputContainer .RangeInput::-moz-range-thumb {
+  background: var(--base-12);
+  cursor: default;
+}
+
+/* wide enough for a value with 4 decimals, e.g. 0.0005 */
+.Range.Field .RangeContainer .RangeTextInput > .InputContainer input {
+  width: 64px;
+}

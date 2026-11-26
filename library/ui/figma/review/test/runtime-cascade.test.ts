@@ -41,7 +41,7 @@ async function renderLabel(stylesheets: (string | { css: string })[], name: stri
       `<body><span id="label" class="${labelClasses}">Sign In</span></body></html>`
   )
   const send = session.send as Send
-  await send('Page.navigate', { url: pathToFileURL(page).href })
+  await session.navigate(pathToFileURL(page).href)
   const { result } = (await send('Runtime.evaluate', {
     expression: `new Promise((resolve) => {
       const done = () => document.fonts.ready.then(() =>
@@ -91,41 +91,51 @@ describe('when a consumer bundle loads the generated stylesheets in either order
     await rm(folder, { recursive: true, force: true })
   })
 
-  it('should draw the NavBar label in Inter when the runtime loads first', async () => {
-    const label = await renderLabel(
-      [...fontCss, runtimeCss, textStylesCss, navBarCss],
-      'runtime-first'
-    )
-    assert.match(label.family, /^Inter\b|^"Inter"/)
-    assert.equal(label.platformFonts.length, 1)
-    assert.match(label.platformFonts[0]!, /^Inter\b.* \(web font\)$/)
+  describe('and the runtime loads first', () => {
+    it('should draw the NavBar label in the Inter web font', async () => {
+      const label = await renderLabel(
+        [...fontCss, runtimeCss, textStylesCss, navBarCss],
+        'runtime-first'
+      )
+      assert.match(label.family, /^Inter\b|^"Inter"/)
+      assert.equal(label.platformFonts.length, 1)
+      assert.match(label.platformFonts[0]!, /^Inter\b.* \(web font\)$/)
+    })
   })
 
-  it('should draw the NavBar label in Inter when the runtime loads last', async () => {
-    const label = await renderLabel(
-      [...fontCss, navBarCss, textStylesCss, runtimeCss],
-      'runtime-last'
-    )
-    assert.match(label.family, /^Inter\b|^"Inter"/)
-    assert.equal(label.platformFonts.length, 1)
-    assert.match(label.platformFonts[0]!, /^Inter\b.* \(web font\)$/)
+  describe('and the runtime loads last', () => {
+    it('should draw the NavBar label in the Inter web font', async () => {
+      const label = await renderLabel(
+        [...fontCss, navBarCss, textStylesCss, runtimeCss],
+        'runtime-last'
+      )
+      assert.match(label.family, /^Inter\b|^"Inter"/)
+      assert.equal(label.platformFonts.length, 1)
+      assert.match(label.platformFonts[0]!, /^Inter\b.* \(web font\)$/)
+    })
+
+    // Control: proves the layered reset is what keeps the runtime from overriding the text style.
+    describe('and the runtime reset is unlayered', () => {
+      it('should fall back to the page font', async () => {
+        const unlayered = (await readFile(runtimeCss, 'utf8'))
+          .replace(/@layer dcl\.reset, dcl\.foundations, dcl\.components;/, '')
+          .replace(/@layer dcl\.reset \{([\s\S]*)\}\s*$/, '$1')
+        assert.ok(!unlayered.includes('@layer'))
+        const label = await renderLabel(
+          [...fontCss, navBarCss, textStylesCss, { css: unlayered }],
+          'control'
+        )
+        assert.equal(label.family, 'serif')
+      })
+    })
   })
 
-  it('should fall back to the page font if the runtime reset were unlayered and loaded last (control)', async () => {
-    const unlayered = (await readFile(runtimeCss, 'utf8'))
-      .replace(/@layer dcl\.reset, dcl\.foundations, dcl\.components;/, '')
-      .replace(/@layer dcl\.reset \{([\s\S]*)\}\s*$/, '$1')
-    assert.ok(!unlayered.includes('@layer'))
-    const label = await renderLabel(
-      [...fontCss, navBarCss, textStylesCss, { css: unlayered }],
-      'control'
-    )
-    assert.equal(label.family, 'serif')
-  })
-
-  it('should draw no Inter web font when the consumer loads no Inter faces (font contract)', async () => {
-    const label = await renderLabel([runtimeCss, textStylesCss, navBarCss], 'no-faces')
-    assert.match(label.family, /^Inter\b|^"Inter"/)
-    assert.ok(label.platformFonts.every((font) => !font.endsWith('(web font)')))
+  // The consumer font contract: without the consumer's faces, the family resolves but no web font is drawn.
+  describe('and the consumer loads no Inter faces', () => {
+    it('should resolve the Inter family without drawing an Inter web font', async () => {
+      const label = await renderLabel([runtimeCss, textStylesCss, navBarCss], 'no-faces')
+      assert.match(label.family, /^Inter\b|^"Inter"/)
+      assert.ok(label.platformFonts.every((font) => !font.endsWith('(web font)')))
+    })
   })
 })

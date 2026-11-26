@@ -9,7 +9,7 @@
 //! `land_authz` pattern:
 //! - `eth_getLogs` over `CREDITS_MANAGER_CONTRACT` and the CreditUsed topic
 //!   on the collections chain (`RPC_ENDPOINT_POLYGON`, `COLLECTIONS_CHAIN_ID`)
-//!   through the land_authz JSON-RPC log client (`land_authz::indexer::Rpc`,
+//!   through the shared JSON-RPC log client (`chain_index::rpc::Rpc`,
 //!   over the ONE guarded client), up to the chain's `finalized` block
 //!   (Polygon milestones: a few blocks behind the head; an endpoint without
 //!   the tag gets head - [`FALLBACK_CONFIRMATIONS`]), so a reorg never
@@ -44,6 +44,13 @@
 //! `folded_block_time` (the reservation holds until the chain has been read
 //! past the credit's expiry).
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -56,10 +63,10 @@ use sqlx::{PgConnection, PgPool};
 use super::errors::ApiError;
 use super::reconcile::CreditUsageDiff;
 use super::store::Credits;
+pub use crate::chain_index::rpc::{Rpc, RpcLog};
+use crate::chain_index::rpc::{RpcError, hex_to_i64};
 use crate::http::Outbound;
 use crate::jobs::JobContext;
-use crate::land_authz::indexer::{IndexError as RpcError, hex_to_i64};
-pub use crate::land_authz::indexer::{Rpc, RpcLog};
 
 pub const JOB_NAME: &str = "credits-usage-index";
 /// The source a refusal names, and the variable that attaches the job.
@@ -196,26 +203,28 @@ fn hex_u64(s: &str) -> Option<u64> {
     hex_to_i64(s.trim()).and_then(|n| u64::try_from(n).ok())
 }
 
-fn is_word(s: &str) -> bool {
-    s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
+/// `n` as the `bigint` block column.
+fn block_column(n: u64) -> Result<i64, sqlx::Error> {
+    i64::try_from(n).map_err(|_| sqlx::Error::Encode(format!("block {n} is past i64").into()))
 }
 
-fn is_address(s: &str) -> bool {
-    s.len() == 42 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
+fn is_word(s: &str) -> bool {
+    s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// A 0x-prefixed 20-byte address, lowercased; `None` for anything else.
 pub fn normalize_address(raw: &str) -> Option<String> {
     let lower = raw.trim().to_ascii_lowercase();
-    is_address(&lower).then_some(lower)
+    crate::types::is_hex_address(&lower).then_some(lower)
 }
 
 pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {
     let block_number = hex_u64(&log.block_number)
-        .ok_or_else(|| format!("bad blockNumber {}", log.block_number))?
-        as i64;
-    let log_index =
-        hex_u64(&log.log_index).ok_or_else(|| format!("bad logIndex {}", log.log_index))? as i32;
+        .and_then(|n| i64::try_from(n).ok())
+        .ok_or_else(|| format!("bad blockNumber {}", log.block_number))?;
+    let log_index = hex_u64(&log.log_index)
+        .and_then(|n| i32::try_from(n).ok())
+        .ok_or_else(|| format!("bad logIndex {}", log.log_index))?;
     let topics: Vec<String> = log.topics.iter().map(|t| t.to_ascii_lowercase()).collect();
     if topics.len() != 3 || topics[0] != CREDIT_USED_TOPIC {
         return Err(format!("not a CreditUsed log ({} topics)", topics.len()));
@@ -252,7 +261,7 @@ pub fn decode_log(log: &RpcLog) -> Result<Usage, String> {
         .block_timestamp
         .as_deref()
         .and_then(hex_u64)
-        .and_then(|t| DateTime::from_timestamp(t as i64, 0))
+        .and_then(|t| DateTime::from_timestamp(i64::try_from(t).ok()?, 0))
         .map(|t| t.naive_utc());
     Ok(Usage {
         block_number,
@@ -366,7 +375,7 @@ pub async fn ensure_cursor(
     )
     .bind(settings.chain_id)
     .bind(contract)
-    .bind(settings.start_block as i64 - 1)
+    .bind(block_column(settings.start_block)? - 1)
     .execute(pool)
     .await?;
     let row = cursor(pool, settings.chain_id)
@@ -438,7 +447,7 @@ pub async fn begin_replay(
     )
     .bind(settings.chain_id)
     .bind(contract)
-    .bind(from as i64 - 1)
+    .bind(block_column(from)? - 1)
     .bind(full)
     .execute(pool)
     .await?;
@@ -459,7 +468,7 @@ pub async fn mark_folded(
          WHERE chain_id = $1 AND last_block = $2 AND full_replay_started AND contract = $5",
     )
     .bind(chain_id)
-    .bind(through.number as i64)
+    .bind(block_column(through.number)?)
     .bind(through.time)
     .bind(now.naive_utc())
     .bind(contract)
@@ -515,7 +524,8 @@ pub async fn insert_usages(
         .bind(col(|u| u.value_wei.clone()))
         .execute(&mut *conn)
         .await?;
-        written += result.rows_affected() as usize;
+        written =
+            written.saturating_add(usize::try_from(result.rows_affected()).unwrap_or(usize::MAX));
     }
     Ok(written)
 }
@@ -545,6 +555,10 @@ pub struct PassOutcome {
     pub paused: bool,
     pub consumed: usize,
     pub failed: usize,
+    /// Logs left for later behind an earlier, unsettled use of their credit
+    /// (`settlement::DEFERRED`): settled by a pass that covers both, the
+    /// operator's reconcile when this one's window has moved past them.
+    pub deferred: usize,
     pub published: bool,
 }
 
@@ -573,6 +587,18 @@ impl UsageIndex {
             replay_requested: AtomicBool::new(false),
             chain_checked: AtomicBool::new(false),
         }
+    }
+
+    /// `credits_usage_index_ready` and `credits_usage_index_lag_seconds`
+    /// as [`Self::ready_at`] reads the lane at `now`; the lag is from the
+    /// last folded block's time, set only while the lane is open.
+    pub async fn record_readiness(&self, now: DateTime<Utc>) {
+        let ready = self.ready_at(now).await;
+        let lag = ready
+            .as_ref()
+            .and_then(|c| c.folded_block_time)
+            .map(|t| (now.naive_utc() - t).num_milliseconds() as f64 / 1000.0);
+        super::metrics::usage_index(ready.is_some(), lag);
     }
 
     /// The cursor row when the authorize lane may mint at `now`; a
@@ -655,18 +681,23 @@ impl UsageIndex {
             let mut usages = Vec::with_capacity(logs.len());
             for log in &logs {
                 let usage = decode_log(log).map_err(|detail| IndexError::Decode {
-                    block: hex_u64(&log.block_number).unwrap_or(0) as i64,
-                    index: hex_u64(&log.log_index).unwrap_or(0) as i32,
+                    block: hex_u64(&log.block_number)
+                        .and_then(|n| i64::try_from(n).ok())
+                        .unwrap_or(0),
+                    index: hex_u64(&log.log_index)
+                        .and_then(|n| i32::try_from(n).ok())
+                        .unwrap_or(0),
                     detail,
                 })?;
                 usages.push(usage);
             }
+            let upper_col = block_column(upper)?;
             let mut tx = self.pool.begin().await?;
             let written = insert_usages(&mut tx, chain_id, &usages).await?;
-            set_cursor(&mut tx, chain_id, contract, upper as i64).await?;
+            set_cursor(&mut tx, chain_id, contract, upper_col).await?;
             tx.commit().await?;
             outcome.usages_written += written;
-            outcome.indexed_to = upper as i64;
+            outcome.indexed_to = upper_col;
             if !usages.is_empty() {
                 tracing::info!(
                     chain_id,
@@ -688,13 +719,38 @@ impl UsageIndex {
         Ok(())
     }
 
+    /// The `credits-usage-index` job's pass ([`super::State::spawn_jobs`]):
+    /// [`Self::run_pass`], folding only when `gate` lets this pass write
+    /// (`OPS_WRITES_ENABLED`); a skipped fold says so in the job's progress.
+    pub(super) async fn gated_pass(
+        &self,
+        ctx: Option<&JobContext>,
+        gate: &crate::shared::writes::PassGate,
+        writes_enabled: bool,
+    ) -> anyhow::Result<PassOutcome> {
+        let allowed = gate.allows(writes_enabled);
+        let outcome = self.run_pass(ctx, allowed).await;
+        // After every pass, a failed one included: the lane's state is what
+        // the gauges report, not the pass's success.
+        self.record_readiness(Utc::now()).await;
+        let outcome = outcome?;
+        if let (false, Some(ctx)) = (allowed, ctx) {
+            ctx.progress(format!(
+                "indexed to {}; not folded, not published: {}",
+                outcome.indexed_to,
+                crate::shared::writes::WRITES_DISABLED_MESSAGE
+            ));
+        }
+        Ok(outcome)
+    }
+
     /// One pass: replay if asked, catch up to the finalized block under the
     /// request budget, fold the new usages, publish when still at the head.
-    /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off or held by the
-    /// restore stamps: the fold debits the ledger) the pass indexes the log
+    /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off: the fold debits
+    /// the ledger) the pass indexes the log
     /// and stops before the fold, so nothing is published and the authorize
     /// lane stays closed.
-    pub async fn run_pass(
+    pub(super) async fn run_pass(
         &self,
         ctx: Option<&JobContext>,
         fold_enabled: bool,
@@ -764,7 +820,8 @@ impl UsageIndex {
             indexed_to: row.last_block,
             ..Default::default()
         };
-        let from = (row.last_block + 1) as u64;
+        let from = u64::try_from(row.last_block.saturating_add(1))
+            .with_context(|| format!("usage cursor at negative block {}", row.last_block))?;
         if from <= target {
             self.sync_range(
                 &rpc,
@@ -789,18 +846,31 @@ impl UsageIndex {
             }
             return Ok(outcome);
         }
-        let since = row.folded_block.unwrap_or(-1).min(target as i64);
+        let target_col = block_column(target)?;
+        let since = row.folded_block.unwrap_or(-1).min(target_col);
         let diffs = fold(
             &self.credits,
             settings.chain_id,
             contract,
             since,
-            target as i64,
+            target_col,
         )
         .await
         .map_err(|e| anyhow::anyhow!("folding the usages: {e}"))?;
         outcome.consumed = diffs.iter().filter(|d| d.consumed && !d.replayed).count();
-        outcome.failed = diffs.iter().filter(|d| !d.consumed).count();
+        outcome.failed = diffs
+            .iter()
+            .filter(|d| !d.consumed && d.kind != super::settlement::DEFERRED)
+            .count();
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == super::settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        outcome.deferred = deferred.len();
+        if !deferred.is_empty() {
+            tracing::warn!(count = deferred.len(), credit_ids = ?deferred, "credits-usage: logs left behind an earlier, unsettled use of their credit; a pass covering both (the reconcile) settles them");
+        }
         if settings.stop_block.is_some_and(|s| s < final_block.number) {
             if let Some(ctx) = ctx {
                 ctx.progress(format!("indexed to {target}: CREDITS_USAGE_STOP_BLOCK holds the index short, not published"));
@@ -834,8 +904,8 @@ impl UsageIndex {
         }
         if let Some(ctx) = ctx {
             ctx.progress(format!(
-                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused; published={}",
-                outcome.usages_written, outcome.consumed, outcome.failed, outcome.published
+                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused, {} deferred; published={}",
+                outcome.usages_written, outcome.consumed, outcome.failed, outcome.deferred, outcome.published
             ));
         }
         Ok(outcome)
@@ -904,6 +974,13 @@ mod unit_tests {
             "a partial use of a 30 MANA credit"
         );
         assert_eq!(u.block_time.unwrap().and_utc().timestamp(), 0x6ab58d9a);
+    }
+
+    #[test]
+    fn a_log_index_past_i32_is_refused() {
+        let mut log: RpcLog = serde_json::from_str(CAPTURED_LOG).unwrap();
+        log.log_index = "0x80000000".into();
+        assert!(decode_log(&log).unwrap_err().contains("bad logIndex"));
     }
 
     #[test]

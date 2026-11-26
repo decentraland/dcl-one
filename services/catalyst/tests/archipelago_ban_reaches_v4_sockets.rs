@@ -7,14 +7,12 @@
 use std::sync::Arc;
 
 use catalyst::comms::archipelago::config::ClusterConfig;
-use catalyst::comms::archipelago::peers::PeerDirectory;
+use catalyst::comms::archipelago::enforcement::Enforcement;
 use catalyst::comms::archipelago::registry::{PeersRegistry, SocketEvent};
 use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
+use crate::archipelago;
+use crate::db;
 
 const BANNED: &str = "0x00000000000000000000000000000000000bad01";
 const CLEAN: &str = "0x00000000000000000000000000000000000c1ea0";
@@ -32,8 +30,8 @@ async fn banning(pool: &sqlx::PgPool) -> Arc<Policy> {
     ))
 }
 
-fn directory(policy: Arc<Policy>, registry: &Arc<PeersRegistry>) -> Arc<PeerDirectory> {
-    PeerDirectory::new(
+fn directory(policy: Arc<Policy>, registry: &Arc<PeersRegistry>) -> Arc<Enforcement> {
+    Enforcement::new(
         ClusterConfig::default(),
         archipelago::gatekeeper(None),
         archipelago::ban_checker(policy),
@@ -72,12 +70,12 @@ async fn the_ban_sweep_ends_both_listeners_sockets_of_a_wallet_in_the_directory(
     let peers = directory(banning(&scratch.pool).await, &registry);
     let (_legacy, mut legacy_events, _) = registry.on_peer_connected(BANNED, "0xs1");
     let (_v4, mut v4_events) = registry.on_v4_peer_connected(BANNED, "0xs2", "conn-1");
-    peers.upsert_peer(BANNED.into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
+    peers.set_island(BANNED, "island-test");
 
     peers.ban_sweep_once().await;
 
     assert!(matches!(legacy_events.try_recv(), Ok(SocketEvent::Kicked)));
     assert!(matches!(v4_events.try_recv(), Ok(SocketEvent::Kicked)));
-    assert!(peers.peer(BANNED).is_none());
+    assert!(peers.island_of(BANNED).is_none());
     scratch.teardown().await;
 }

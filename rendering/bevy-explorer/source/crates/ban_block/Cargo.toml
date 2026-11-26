@@ -1,0 +1,32 @@
+[package]
+name = "ban_block"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[lib]
+
+[features]
+livekit = ["comms/livekit"]
+
+[dependencies]
+common = { workspace = true }
+comms = { workspace = true }
+console = { workspace = true }
+ipfs = { workspace = true }
+platform = { workspace = true }
+social = { workspace = true }
+system_bridge = { workspace = true }
+wallet = { workspace = true }
+
+bevy = { workspace = true }
+bevy_console = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+alloy-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+web-time = { workspace = true }

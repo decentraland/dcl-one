@@ -22,8 +22,8 @@ impl LocalParticipant {
         })
         .await?
         {
-            Reply::PublishData(result) => result.map_err(RoomError),
-            other => Err(RoomError(format!(
+            Reply::PublishData(result) => result.map_err(RoomError::from),
+            other => Err(RoomError::from(format!(
                 "unexpected reply to publish_data: {other:?}"
             ))),
         }
@@ -44,8 +44,8 @@ impl LocalParticipant {
         })
         .await?
         {
-            Reply::Publish(result) => result.map_err(RoomError),
-            other => Err(RoomError(format!(
+            Reply::Publish(result) => result.map_err(RoomError::from),
+            other => Err(RoomError::from(format!(
                 "unexpected reply to publish_track: {other:?}"
             ))),
         }
@@ -64,8 +64,8 @@ impl LocalParticipant {
         })
         .await?
         {
-            Reply::Publish(result) => result.map_err(RoomError),
-            other => Err(RoomError(format!(
+            Reply::Publish(result) => result.map_err(RoomError::from),
+            other => Err(RoomError::from(format!(
                 "unexpected reply to unpublish_track: {other:?}"
             ))),
         }

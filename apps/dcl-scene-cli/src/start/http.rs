@@ -54,14 +54,33 @@ pub(super) async fn root(State(st): State<Arc<AppState>>, req: Request) -> Respo
             // has completed gets every reload sent from then on, including one
             // sent before the socket's task first runs.
             let rx = st.reload_tx.subscribe();
-            upgrade.on_upgrade(move |socket| handle_ws(socket, rx))
+            // the texture import's last status, so a client that connects
+            // mid-run or after a run it missed can still offer the reload
+            let first = super::texture_status_frames(&st);
+            upgrade.on_upgrade(move |socket| handle_ws(socket, rx, first))
         }
         Err(e) => e.into_response(),
     }
 }
 
-async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Receiver<ReloadFrame>) {
+fn ws_message(frame: ReloadFrame) -> Message {
+    match frame {
+        ReloadFrame::Text(text) => Message::Text(text.into()),
+        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
+    }
+}
+
+async fn handle_ws(
+    socket: axum::extract::ws::WebSocket,
+    mut rx: broadcast::Receiver<ReloadFrame>,
+    first: Vec<ReloadFrame>,
+) {
     let (mut sink, mut stream) = socket.split();
+    for frame in first {
+        if sink.send(ws_message(frame)).await.is_err() {
+            return;
+        }
+    }
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing::info!("scene-update websocket client connected");
@@ -74,11 +93,7 @@ async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Rece
             },
             msg = rx.recv() => match msg {
                 Ok(frame) => {
-                    let message = match frame {
-                        ReloadFrame::Text(text) => Message::Text(text.into()),
-                        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
-                    };
-                    if sink.send(message).await.is_err() {
+                    if sink.send(ws_message(frame)).await.is_err() {
                         break;
                     }
                 }
@@ -86,7 +101,18 @@ async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Rece
                 Err(_) => break,
             },
             incoming = stream.next() => match incoming {
-                Some(Ok(Message::Close(_))) => break,
+                Some(Ok(Message::Close(_))) => {
+                    // The Close reply is queued, not sent: closing the sink
+                    // flushes it and draining the stream finishes the
+                    // handshake. Dropping the socket here instead would reset
+                    // the TCP connection under the client.
+                    let _ = sink.close().await;
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        while let Some(Ok(_)) = stream.next().await {}
+                    })
+                    .await;
+                    break;
+                }
                 Some(Ok(_)) => continue,
                 _ => break,
             },
@@ -136,6 +162,7 @@ pub(super) fn contents_cache_dir(st: &AppState) -> Option<PathBuf> {
 }
 
 pub(super) async fn about(State(st): State<Arc<AppState>>, req: Request) -> Json<Value> {
+    st.voice_settled().await;
     let headers = req.headers();
     let host = preview_host(headers);
     let origin = preview_origin(headers);
@@ -205,6 +232,7 @@ pub(super) async fn get_scene_adapter(
     body: Bytes,
 ) -> Response {
     let body: Option<Value> = serde_json::from_slice(&body).ok();
+    st.voice_settled().await;
     if let Some(lk) = st.voice() {
         let (signer, metadata) = match verified_signer(&headers, "/get-scene-adapter").await {
             Ok(v) => v,
@@ -252,7 +280,8 @@ fn no_scene_id() -> Response {
 /// endpoint through its fixed-room path (over plain http only with its
 /// `--accept-untrusted-realm`, over a tunnel's https with nothing).
 pub(super) async fn signed_login(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(lk) = &st.livekit else {
+    st.voice_settled().await;
+    let Some(lk) = st.livekit.get() else {
         return (
             StatusCode::NOT_FOUND,
             "this preview has no LiveKit server (--no-livekit, or none could start)\n",
@@ -373,6 +402,31 @@ pub(super) async fn preview_wearables(
     }))
 }
 
+/// `/preview-wearables/{id}`: the wearable whose project has that scene id
+/// (what upstream keys the route on), else the one whose `wearable.json`
+/// carries it. `data` is empty when neither matches, like upstream.
+pub(super) async fn preview_wearable(
+    State(st): State<Arc<AppState>>,
+    AxPath(id): AxPath<String>,
+    headers: HeaderMap,
+) -> Json<Value> {
+    let base = format!("{}/content/contents", preview_origin(&headers));
+    let entity_of = |p: &Project| scene_entity_cached(&st, p);
+    let by_scene: Vec<Project> = st
+        .projects()
+        .into_iter()
+        .filter(|p| scene_id_for(p, &st.machine) == id)
+        .collect();
+    let mut data = collect_preview_wearables(&by_scene, &base, entity_of);
+    if data.is_empty() {
+        data = collect_preview_wearables(&st.projects(), &base, entity_of)
+            .into_iter()
+            .filter(|w| w.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            .collect();
+    }
+    Json(json!({ "ok": true, "data": data }))
+}
+
 /// One entry per project with a readable `wearable.json`; a plain scene
 /// contributes nothing, so the route answers `{ok: true, data: []}` like
 /// upstream. The contents are the project's scene entity's (the same walk
@@ -441,7 +495,9 @@ pub(super) async fn contents(
         tracing::info!(target: "access", "contents <scene-entity-json> 200");
         return Json(scene_entity(&st, &project)).into_response();
     }
-    let Ok(canonical) = dunce::canonicalize(project.root.join(&rel)) else {
+    let source = crate::textures::staged_source(&project.root, &rel)
+        .unwrap_or_else(|| project.root.join(&rel));
+    let Ok(canonical) = dunce::canonicalize(source) else {
         return not_found();
     };
     if !canonical.starts_with(&project.root) {
@@ -647,7 +703,7 @@ fn build_and_cache(st: &AppState, project: &Project) -> (Value, PublishedPaths) 
 pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     let root = &project.root;
     let rels = match collect_publishable_files(root) {
-        Ok(rels) => rels,
+        Ok(rels) => crate::textures::publishable(root, rels),
         Err(e) => {
             tracing::warn!(
                 "collecting scene files under {} failed ({e:#}); serving an empty scene entity",
@@ -658,9 +714,10 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     };
     let tag = root_tag(root, machine);
     let content: Vec<Value> = crate::scene::parallel_map(&rels, |rel| {
+        let source = crate::textures::staged_source(root, rel).unwrap_or_else(|| root.join(rel));
         json!({
             "file": rel,
-            "hash": b64_content_hash_in_root(&tag, rel, &root.join(rel)),
+            "hash": b64_content_hash_in_root(&tag, rel, &source),
         })
     });
     let ts = SystemTime::now()
@@ -842,6 +899,20 @@ mod tests {
             };
             assert_eq!(frame, ClientMessage::Text("reload-proof".into()));
             socket.close(None).await.unwrap();
+            let closing = loop {
+                match socket.next().await {
+                    Some(Ok(ClientMessage::Ping(_))) => continue,
+                    other => break other,
+                }
+            };
+            assert!(
+                matches!(closing, Some(Ok(ClientMessage::Close(_)))),
+                "the server answers the client's Close with its own, got {closing:?}"
+            );
+            assert!(
+                socket.next().await.is_none(),
+                "the stream ends after the close handshake"
+            );
             crate::test_wait::until(Duration::from_secs(10), async || {
                 (state.reload_tx.receiver_count() == 0).then_some(())
             })
@@ -1189,7 +1260,7 @@ mod tests {
     fn livekit_state() -> State<Arc<AppState>> {
         let mut st = testkit::state(vec![]);
         st.offline_comms = false;
-        st.livekit = Some(
+        st.livekit = std::sync::OnceLock::from(
             crate::livekit::Livekit::new(
                 "ws://127.0.0.1:7880",
                 "devkey",
@@ -1304,7 +1375,7 @@ mod tests {
     async fn an_embedded_server_is_advertised_on_the_host_the_peer_dialled() {
         let mut st = testkit::state(vec![]);
         st.offline_comms = false;
-        st.livekit = Some(
+        st.livekit = std::sync::OnceLock::from(
             crate::livekit::Livekit::embedded(7880, "dcl-scene-cli", "devsecret", "LocalPreview")
                 .unwrap(),
         );
@@ -1467,6 +1538,38 @@ mod tests {
             "the url has to name the file inside the wearable's own root, or \
              /content/contents cannot find it"
         );
+    }
+
+    #[tokio::test]
+    async fn one_wearable_answers_to_its_id_and_to_its_scene_id() {
+        let tmp = Tmp::new("swid");
+        std::fs::write(tmp.0.join("scene.json"), "{}").unwrap();
+        std::fs::write(
+            tmp.0.join("wearable.json"),
+            r#"{"id":"urn:x","data":{"category":"eyewear"}}"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.0.join("model.glb"), b"glb").unwrap();
+        let project = project_at(tmp.0.clone());
+        let st = contents_state(vec![project.clone()]);
+        let ask = |id: &str| {
+            let st = st.clone();
+            let id = id.to_string();
+            async move {
+                preview_wearable(State(st), AxPath(id), HeaderMap::new())
+                    .await
+                    .0
+            }
+        };
+        for id in ["urn:x", &scene_id_for(&project, "m")] {
+            let out = ask(id).await;
+            assert_eq!(out["ok"], true);
+            assert_eq!(out["data"].as_array().unwrap().len(), 1, "{id}");
+            assert_eq!(out["data"][0]["id"], "urn:x", "{id}");
+        }
+        let out = ask("urn:somebody-else").await;
+        assert_eq!(out["ok"], true);
+        assert!(out["data"].as_array().unwrap().is_empty());
     }
 
     #[test]

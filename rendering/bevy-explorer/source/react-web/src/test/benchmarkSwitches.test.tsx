@@ -5,8 +5,9 @@
 
 import { render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { EngineRpc } from '../engine/engineRpc'
-import { EngineHost, entryEngineOptions } from '../features/engine/EngineHost'
+import { EngineRpc } from '@explorer-core/engine/engineRpc'
+import { EngineHost } from '@hud/features/engine/EngineHost'
+import { entryEngineOptions } from '../lib/engineLaunch'
 import { benchmarkSwitchesHonoured, bootMode } from '../lib/bootMode'
 import { untrustedLaunchParams } from '../lib/launchGate'
 import { isLoopbackHost } from '../lib/loopbackHost'
@@ -47,9 +48,9 @@ describe('benchmarkSwitchesHonoured', () => {
 describe('the autopilot boot mode', () => {
   it('is entered on a loopback host', () => {
     visit(HARNESS_URL)
-    expect(bootMode().autoLogin).toBe('autopilot')
+    expect(bootMode().autoLogin).toBe('unattended')
     visit('http://127.0.0.1:8080/?autopilot=')
-    expect(bootMode().autoLogin).toBe('autopilot')
+    expect(bootMode().autoLogin).toBe('unattended')
   })
 
   it('is never entered off loopback: the page boots as an ordinary visit', () => {

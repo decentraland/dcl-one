@@ -1,351 +1,163 @@
-use crate::archipelago::feed::IslandReport;
-use crate::archipelago::peers::{Address, PeerState, to_parcel};
-use crate::archipelago::state::AppState;
-use axum::extract::{Path, RawQuery, State};
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::{Json, Router};
-use chrono::Utc;
+use super::AppState;
 use serde::Serialize;
-use std::collections::HashMap;
 
-/// `/status` and `/ping`, which the content server already answers at the root of the one app.
-pub fn status_routes() -> Router<AppState> {
-    Router::new()
-        .route("/ping", get(ping))
-        .route("/status", get(status))
+pub fn diagnostics(state: &AppState) -> String {
+    super::metrics::diagnostics(state)
 }
 
-/// `/core-status`: Pulse's beacon as the feed carries it, which every process takes.
-pub fn core_status_routes() -> Router<AppState> {
-    Router::new().route("/core-status", get(core_status))
+/// The connector host has its own status count, methods, CORS and fallback.
+pub fn connector(state: AppState, primary: bool) -> axum::Router {
+    connector_configured(
+        state,
+        primary,
+        std::env::var("CURRENT_VERSION").unwrap_or_default(),
+        std::env::var("COMMIT_HASH").unwrap_or_default(),
+    )
 }
 
-/// The routes that read this process's own state: the peer directory its sockets fill, and what
-/// the cluster feed holds beside it.
-pub fn socket_routes() -> Router<AppState> {
-    let mut router = Router::new();
-
-    for prefix in ["", "/comms", "/stats"] {
-        router = router
-            .route(&format!("{prefix}/parcels"), get(parcels))
-            .route(&format!("{prefix}/peers"), get(peers))
-            .route(&format!("{prefix}/peers/{{id}}"), get(peer_by_id))
-            .route(&format!("{prefix}/islands"), get(islands))
-            .route(&format!("{prefix}/islands/{{id}}"), get(island_by_id));
-    }
-    router
-        .route("/hot-scenes", get(hot_scenes))
-        .route("/stats/health", get(stats_health))
-}
-
-async fn ping() -> &'static str {
-    "/ping"
-}
-
-#[derive(Serialize)]
-struct StatusResp {
+fn connector_configured(
+    state: AppState,
+    primary: bool,
     version: String,
-    #[serde(rename = "currentTime")]
-    current_time: i64,
-    #[serde(rename = "commitHash")]
+    commit_hash: String,
+) -> axum::Router {
+    let http = std::sync::Arc::new(ConnectorHttp {
+        state: state.clone(),
+        version,
+        commit_hash,
+    });
+    let sockets = if primary {
+        super::ws::connector_routes(http.clone()).with_state(state)
+    } else {
+        axum::Router::new()
+    };
+    sockets.fallback(crate::shared::routing::erase(
+        move |method, uri, extensions| {
+            let http = http.clone();
+            async move { http.respond(method, uri, extensions).await }
+        },
+    ))
+}
+
+pub(super) struct ConnectorHttp {
+    state: AppState,
+    version: String,
     commit_hash: String,
 }
-
-async fn status(State(s): State<AppState>) -> impl IntoResponse {
-    Json(StatusResp {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        current_time: Utc::now().timestamp_millis(),
-        commit_hash: s.settings.commit_hash.clone(),
-    })
-}
-
-/// The feed counters are appended, never reordered: the byte-exact shape assertions upstream
-/// parity keeps are written against the first four fields.
-#[derive(Serialize)]
-struct HealthResp {
-    healthy: bool,
-    uptime_secs: i64,
-    peers_total: usize,
-    islands_total: usize,
-    feed_connected: bool,
-    feed_delivered: u64,
-    feed_no_session_socket: u64,
-    feed_deduplicated: u64,
-    feed_undecodable: u64,
-    feed_publish_dropped: u64,
-    feed_assignment_coalesced: u64,
-    feed_assignment_oversized: u64,
-    socket_write_timeout: u64,
-    socket_assignments_written: u64,
-}
-
-async fn stats_health(State(s): State<AppState>) -> Json<HealthResp> {
-    let uptime = Utc::now()
-        .signed_duration_since(s.peers.started_at())
-        .num_seconds()
-        .max(0);
-    Json(HealthResp {
-        healthy: true,
-        uptime_secs: uptime,
-        peers_total: s.peers.peers_count(),
-        islands_total: s.feed.islands_count(),
-        feed_connected: s.outbox.is_linked(),
-        feed_delivered: s.feed.delivered_count(),
-        feed_no_session_socket: s.feed.no_session_socket_count(),
-        feed_deduplicated: s.feed.deduplicated_count(),
-        feed_undecodable: s.feed.undecodable_count(),
-        feed_publish_dropped: s.outbox.dropped(),
-        feed_assignment_coalesced: s.feed.coalesced_count(),
-        feed_assignment_oversized: s.feed.assignment_oversized_count(),
-        socket_write_timeout: s.feed.socket_write_timeout_count(),
-        socket_assignments_written: s.feed.socket_assignments_written_count(),
-    })
-}
-
-#[derive(Serialize)]
-struct CoreStatusResp {
-    healthy: bool,
-    #[serde(rename = "userCount")]
-    user_count: usize,
-}
-
-/// Reports what the clustering engine last announced on the discovery subject, not what this
-/// replica happens to hold: the engine is a service of its own now, and a stale or missing
-/// heartbeat is exactly the condition this endpoint exists to surface.
-async fn core_status(State(s): State<AppState>) -> Json<CoreStatusResp> {
-    Json(CoreStatusResp {
-        healthy: s.feed.is_core_healthy(Utc::now().timestamp_millis()),
-        user_count: s.feed.core_user_count() as usize,
-    })
-}
-
-#[derive(Serialize)]
-struct ParcelCoord {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Serialize)]
-struct ParcelResult {
-    #[serde(rename = "peersCount")]
-    peers_count: u32,
-    parcel: ParcelCoord,
-}
-
-#[derive(Serialize)]
-struct ParcelsResp {
-    parcels: Vec<ParcelResult>,
-}
-
-async fn parcels(State(s): State<AppState>) -> Json<ParcelsResp> {
-    let parcels = s
-        .peers
-        .parcel_counts()
-        .into_iter()
-        .map(|((x, y), peers_count)| ParcelResult {
-            peers_count,
-            parcel: ParcelCoord { x, y },
-        })
-        .collect();
-    Json(ParcelsResp { parcels })
-}
-
-#[derive(Serialize)]
-struct PeerResult {
-    id: Address,
-    address: Address,
-    #[serde(rename = "lastPing")]
-    last_ping: i64,
-    parcel: [i32; 2],
-    position: [f32; 3],
-}
-
-impl From<&PeerState> for PeerResult {
-    fn from(p: &PeerState) -> Self {
-        let [px, _py, pz] = p.position;
-        PeerResult {
-            id: p.address.clone(),
-            address: p.address.clone(),
-            last_ping: p.last_heartbeat.timestamp_millis(),
-            parcel: to_parcel(px, pz),
-            position: p.position,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct PeersResp {
-    ok: bool,
-    peers: Vec<PeerResult>,
-}
-
-async fn peers(State(s): State<AppState>, RawQuery(q): RawQuery) -> Json<PeersResp> {
-    let filter = parse_id_filter(q.as_deref());
-    let peers: Vec<PeerResult> = s
-        .peers
-        .peers_snapshot()
-        .iter()
-        .filter(|p| {
-            filter.is_empty() || filter.iter().any(|id| id.eq_ignore_ascii_case(&p.address))
-        })
-        .map(PeerResult::from)
-        .collect();
-    Json(PeersResp { ok: true, peers })
-}
-
-#[derive(Serialize)]
-struct PeerResp {
-    ok: bool,
-    peer: Option<PeerResult>,
-}
-
-async fn peer_by_id(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match s.peers.peer(&id.to_lowercase()) {
-        Some(p) => (
-            StatusCode::OK,
-            Json(PeerResp {
-                ok: true,
-                peer: Some(PeerResult::from(&p)),
-            }),
-        ),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(PeerResp {
-                ok: false,
-                peer: None,
-            }),
-        ),
-    }
-}
-
-#[derive(Serialize)]
-struct IslandResult {
-    id: String,
-    peers: Vec<PeerResult>,
-    #[serde(rename = "maxPeers")]
-    max_peers: usize,
-    center: [f32; 3],
-    radius: f32,
-}
-
-/// A member this replica has never heard a heartbeat from is left out rather than invented: the
-/// shape carries positions, and the replica holding that socket reports it with real ones.
-fn process_island(island: &IslandReport, lookup: &HashMap<Address, PeerState>) -> IslandResult {
-    let peers: Vec<PeerResult> = island
-        .peers
-        .iter()
-        .filter_map(|addr| lookup.get(addr))
-        .map(PeerResult::from)
-        .collect();
-    IslandResult {
-        id: island.id.clone(),
-        peers,
-        max_peers: island.max_peers as usize,
-        center: island.center,
-        radius: island.radius,
-    }
-}
-
-#[derive(Serialize)]
-struct IslandsResp {
-    ok: bool,
-    islands: Vec<IslandResult>,
-}
-
-async fn islands(State(s): State<AppState>) -> Json<IslandsResp> {
-    let lookup = s.peers.peers_by_address();
-    let islands = s
-        .feed
-        .islands()
-        .iter()
-        .map(|i| process_island(i, &lookup))
-        .collect();
-    Json(IslandsResp { ok: true, islands })
-}
-
-async fn island_by_id(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    match s.feed.island(&id) {
-        Some(island) => {
-            let lookup = s.peers.peers_by_address();
-            (StatusCode::OK, Json(process_island(&island, &lookup))).into_response()
-        }
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-#[derive(Serialize)]
-struct HotSceneInfo {
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(rename = "baseCoords")]
-    base_coords: [i32; 2],
-    #[serde(rename = "usersTotalCount")]
-    users_total_count: u32,
-    parcels: Vec<[i32; 2]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thumbnail: Option<String>,
-    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
-    project_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    creator: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-}
-
-const HOT_SCENES_LIMIT: usize = 100;
-
-async fn hot_scenes(State(s): State<AppState>) -> impl IntoResponse {
-    let mut count_per_tile: HashMap<String, u32> = HashMap::new();
-    for p in s.peers.peers_snapshot().iter() {
-        let [px, _py, pz] = p.position;
-        let [x, y] = to_parcel(px, pz);
-        *count_per_tile.entry(format!("{x},{y}")).or_insert(0) += 1;
-    }
-    let tiles: Vec<String> = count_per_tile.keys().cloned().collect();
-    let scenes = match s.content.fetch_scenes(&tiles).await {
-        Ok(scenes) => scenes,
-        Err(_) => {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-
-    let mut hot: Vec<HotSceneInfo> = scenes
-        .into_iter()
-        .map(|scene| {
-            let users_total_count: u32 = scene
-                .parcels
-                .iter()
-                .map(|tile| count_per_tile.get(tile).copied().unwrap_or(0))
-                .sum();
-            HotSceneInfo {
-                id: scene.id,
-                name: scene.name,
-                base_coords: scene.base,
-                users_total_count,
-                parcels: scene
-                    .parcels
-                    .iter()
-                    .map(|p| crate::archipelago::content::parse_coord(p))
-                    .collect(),
-                thumbnail: scene.thumbnail,
-                project_id: scene.project_id,
-                creator: scene.creator,
-                description: scene.description,
+impl ConnectorHttp {
+    pub(super) async fn respond(
+        &self,
+        method: axum::http::Method,
+        uri: axum::http::Uri,
+        extensions: axum::http::Extensions,
+    ) -> axum::response::Response {
+        use axum::{body::Body, response::Response};
+        let Self {
+            state,
+            version,
+            commit_hash,
+        } = self;
+        let path = uri.path();
+        let method = method.as_str();
+        let (code, body, mime, handler) = if path == "/status" && method == "GET" {
+            #[derive(Serialize)]
+            struct Status {
+                version: String,
+                #[serde(rename = "currentTime")]
+                current_time: i64,
+                #[serde(rename = "commitHash")]
+                commit_hash: String,
+                #[serde(rename = "userCount")]
+                user_count: usize,
             }
-        })
-        .collect();
-    hot.sort_by_key(|b| std::cmp::Reverse(b.users_total_count));
-    hot.truncate(HOT_SCENES_LIMIT);
-    Json(hot).into_response()
+            (
+                200,
+                crate::stats::render::json(&Status {
+                    version: version.clone(),
+                    current_time: chrono::Utc::now().timestamp_millis(),
+                    commit_hash: commit_hash.clone(),
+                    user_count: state.registry.authenticated_count(),
+                }),
+                Some("application/json"),
+                "/status",
+            )
+        } else if path == "/health/live" {
+            (200, "alive".into(), None, "/health/live")
+        } else {
+            (
+                404,
+                r#"{"error":"Not Found"}"#.into(),
+                Some("application/json"),
+                "unmatched",
+            )
+        };
+        dcl_metrics::http::route(&extensions, "connector", handler);
+        let mut response = Response::builder().status(code);
+        if let Some(mime) = mime {
+            response = response.header("content-type", mime);
+        }
+        response = response.header("access-control-allow-origin", "*");
+        if method == "HEAD" {
+            response = response.header("content-length", body.len());
+        }
+        response
+            .body(if method == "HEAD" {
+                Body::empty()
+            } else {
+                Body::from(body)
+            })
+            .expect("status and headers are valid constants")
+    }
 }
 
-fn parse_id_filter(query: Option<&str>) -> Vec<String> {
-    let Some(q) = query else { return Vec::new() };
-    url::form_urlencoded::parse(q.as_bytes())
-        .filter(|(k, _)| k == "id")
-        .map(|(_, v)| v.into_owned())
-        .collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn diagnostics_record_into_the_process_and_the_connector_scrape_is_gone() {
+        let state = super::super::test_support::state_over(
+            super::super::Settings::for_tests(),
+            std::sync::Arc::new(crate::gatekeeper::bus::DisabledBus),
+        )
+        .await;
+        let app = connector(state.clone(), true);
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _local = dcl_metrics::set_default_local_recorder(&recorder);
+        state.feed.on_deduplicated();
+        super::super::metrics::record_diagnostics(&state);
+        for (path, expected) in [
+            ("/metrics", 404),
+            ("/ws", 404),
+            ("/status", 200),
+            ("/health/live", 200),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{path}");
+        }
+        // A key-sized header claims the WebSocket path, then normal upgrade validation runs.
+        let bad_upgrade = Request::builder()
+            .uri("/ws")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(bad_upgrade).await.unwrap();
+        assert_eq!(response.status(), 400);
+        assert!(
+            !response
+                .headers()
+                .contains_key("access-control-allow-origin")
+        );
+        let body = recorder.handle().render();
+        assert!(
+            body.contains("dcl_ws_connector_island_changed_deduplicated_total 1\n"),
+            "{body}"
+        );
+    }
 }

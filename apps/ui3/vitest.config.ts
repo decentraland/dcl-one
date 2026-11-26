@@ -4,16 +4,32 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error -- plain JS helper, shared with the two vite configs so the
 import { validateAlias } from "./vite.validate.js";
 
+const ui = (file: string) => fileURLToPath(new URL("../../library/ui/" + file, import.meta.url));
+
 export default defineConfig({
   resolve: {
     alias: [
       ...validateAlias(),
       { find: "@catalyst-api", replacement: fileURLToPath(new URL("../../library/catalyst-api", import.meta.url)) },
       { find: "@shop", replacement: fileURLToPath(new URL("../../library/shop", import.meta.url)) },
+      { find: "@web-core", replacement: fileURLToPath(new URL("../../library/web-core", import.meta.url)) },
+      // The Explorer HUD UI (library/ui/apps/hud) and the behaviours /play supplies to it.
+      { find: "@hud-host", replacement: fileURLToPath(new URL("./src/play/host.ts", import.meta.url)) },
+      // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+      { find: "@shop-host", replacement: fileURLToPath(new URL("./src/play/shopHost.ts", import.meta.url)) },
+      { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
+      { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
+      { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: ui("foundations/typography/text-styles.module.css") },
+      { find: /^@dcl\/one-ui\//, replacement: ui("") },
     ],
-    // library/shop has no node_modules of its own: its viem imports resolve to ui3's copy.
-    dedupe: ["viem"],
+    // library/ has no node_modules of its own: viem, zod, the WalletConnect client, React and the testing packages
+    // the shared HUD's test harness imports resolve to ui3's copies.
+    dedupe: ["viem", "zod", "@walletconnect/sign-client", "qrcode-generator", "react", "react-dom", "@tanstack/react-query", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
+  // The HUD UI, the Sites assets (the bar's wordmark) and the shared images (AnimatedBackground's) live outside
+  // this app; their assets load through the dev server like ui3's own.
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/web-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url)), fileURLToPath(new URL("../../library/ui/assets", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",
@@ -27,9 +43,20 @@ export default defineConfig({
         test: {
           name: "ui3",
           include: ["src/**/*.test.{ts,tsx}"],
-          exclude: ["src/play/**"],
+          exclude: ["src/play/**", "src/**/*.browser.test.ts"],
           setupFiles: ["src/test/setup.ts"],
           css: true,
+        },
+      },
+      {
+        // Tests that drive Chrome or Chromium over the DevTools protocol. `pnpm test` leaves them out;
+        // `pnpm test:browser` runs them, with BROWSER_PATH or CHROME_PATH naming the browser when it is not
+        // in a usual place.
+        extends: true,
+        test: {
+          name: "ui3-browser",
+          include: ["src/**/*.browser.test.ts"],
+          environment: "node",
         },
       },
       {
@@ -43,6 +70,15 @@ export default defineConfig({
         },
       },
       {
+        // The browser logic ui3 shares with sites (library/web-core).
+        extends: true,
+        test: {
+          name: "web-core",
+          dir: "../../library/web-core",
+          include: ["**/*.test.ts"],
+        },
+      },
+      {
         // The Explorer HUD (src/play) under the harness it was written for upstream
         // (react-web/vitest.config.ts): its own setup file, no CSS processing.
         extends: true,
@@ -51,6 +87,18 @@ export default defineConfig({
           include: ["src/play/**/*.test.{ts,tsx}"],
           setupFiles: ["src/play/test/setup.ts"],
           css: false,
+        },
+      },
+      {
+        // The shared HUD UI's and the Explorer page core's tests against /play's host (src/play/host.ts);
+        // react-web runs the same tests against its own.
+        extends: true,
+        test: {
+          name: "play-shared",
+          include: ["../../library/ui/apps/hud/**/*.test.{ts,tsx}", "../../library/explorer-core/**/*.test.{ts,tsx}"],
+          setupFiles: ["src/play/test/setup.ts"],
+          css: false,
+          sequence: { hooks: "list" },
         },
       },
     ],

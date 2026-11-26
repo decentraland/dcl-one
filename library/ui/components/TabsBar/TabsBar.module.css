@@ -1,0 +1,527 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Figma: Tabs bar / TabsBar. The pill variant follows decentraland.org's events tab row (ExperiencesTabs). */
+@layer dcl.components {
+  .root {
+    display: flex;
+    align-items: center;
+  }
+
+  .underline {
+    gap: 50px;
+    padding: var(--dcl-space-0) var(--dcl-space-64);
+    background: var(--dcl-transparencies-black-20);
+    box-shadow: inset 0 -1px 0 0 var(--dcl-transparencies-white-20);
+  }
+
+  .compact {
+    composes: underline;
+    background: transparent;
+  }
+
+  .pill {
+    flex-wrap: wrap;
+    gap: var(--dcl-space-16);
+  }
+
+  /* After the variants, so it replaces their inline padding. */
+  .insetContent {
+    padding-inline: var(--dcl-space-16);
+  }
+
+  @media (min-width: 1024px) {
+    .insetContent {
+      padding-inline: var(--dcl-space-32);
+    }
+
+    .compact.insetContent {
+      padding-inline: 0;
+    }
+  }
+
+  /* No block padding: the tabs keep the Figma 64px and their indicator sits on the bar's bottom rule.
+     The underline tabs draw their focus ring inside their box, so the scroller does not clip it. */
+  .scrollable {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+/* Not in Figma: the Explorer HUD's strips. The selected tab is the one with `aria-selected`. The HUD's orange,
+   its white washes, its idle and hover tints and its easing curves have no token. */
+@layer dcl.components {
+  /* pill: filled pills, the selected one orange. */
+  .hudPill {
+    flex-wrap: wrap;
+    gap: var(--dcl-space-8);
+  }
+
+  .hudPill > [role='tab'] {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: var(--dcl-radius-full);
+    background: rgba(255, 255, 255, 0.08);
+    transition:
+      transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+      background-color 140ms ease;
+  }
+
+  .hudPill > [role='tab']:hover:not(:disabled) {
+    transform: scale(1.06);
+  }
+
+  .hudPill > [role='tab']:hover:not(:disabled):not([aria-selected='true']) {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .hudPill > [role='tab'][aria-selected='true'],
+  .hudPill > [role='tab'][aria-selected='true']:hover {
+    background: var(--dcl-primary-alt-primary-alt);
+    animation: hud-pill-pop 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* underline: bare labels on a hairline; the selected one's underline slides in. A host on a dark card sets
+     --tab-ink for brighter idle labels. */
+  .hudUnderline {
+    gap: 28px;
+    border-bottom: 1px solid var(--dcl-transparencies-white-10);
+  }
+
+  .hudUnderline > [role='tab'] {
+    position: relative;
+    padding: 12px 2px;
+    color: var(--tab-ink, var(--dcl-transparencies-white-60));
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: color 140ms ease;
+  }
+
+  .hudUnderline > [role='tab']::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 2px;
+    background: var(--dcl-primary-primary);
+    transform: scaleX(0);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hudUnderline > [role='tab']:hover:not(:disabled),
+  .hudUnderline > [role='tab'][aria-selected='true'] {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudUnderline > [role='tab'][aria-selected='true']::after {
+    transform: scaleX(1);
+  }
+
+  /* fill: equal-width tabs across the strip, all labels white, an inset thick underline. */
+  .hudFill {
+    gap: 0;
+    height: 100%;
+    border-bottom: 0;
+  }
+
+  .hudFill > [role='tab'] {
+    flex: 1 1 0;
+    justify-content: center;
+    gap: 6px;
+    height: 100%;
+    padding: 0;
+    color: var(--dcl-neutrals-snow);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .hudFill > [role='tab']::after {
+    right: 10px;
+    bottom: 0;
+    left: 10px;
+    height: 3px;
+  }
+
+  .hudFill > [role='tab']:not([aria-selected='true']):hover:not(:disabled)::after {
+    background: var(--dcl-transparencies-white-10);
+    transform: scaleX(1);
+  }
+
+  /* section: large icon pills, the sections of a menu page. */
+  .hudSection {
+    gap: 14px;
+  }
+
+  .hudSection > [role='tab'] {
+    gap: 13px;
+    height: 42px;
+    padding: 0 14px 0 8px;
+    border-radius: var(--dcl-radius-md);
+    background: rgba(120, 90, 160, 0.14);
+    font-size: 18px;
+    font-weight: 600;
+    transition: transform 83ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  /* shop: the section tabs of the Shop's title bar, tighter and on a white wash. */
+  .hudShop {
+    gap: 10px;
+  }
+
+  .hudShop > [role='tab'] {
+    gap: var(--dcl-space-4);
+    height: 42px;
+    padding: 0 14px 0 10px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-white-10);
+    font-size: 18px;
+    font-weight: 600;
+    transition: transform 83ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  .hudSection > [role='tab']:hover:not(:disabled),
+  .hudShop > [role='tab']:hover:not(:disabled) {
+    transform: scale(1.04);
+  }
+
+  .hudSection > [role='tab']:active:not(:disabled),
+  .hudShop > [role='tab']:active:not(:disabled) {
+    animation: hud-press-bounce 583ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  .hudSection > [role='tab'][aria-selected='true'],
+  .hudSection > [role='tab'][aria-selected='true']:hover,
+  .hudShop > [role='tab'][aria-selected='true'],
+  .hudShop > [role='tab'][aria-selected='true']:hover {
+    background: var(--dcl-primary-alt-primary-alt);
+  }
+
+  /* subtab: tall labels on a divider, the selected one with a thick underline. */
+  .hudSubtab {
+    gap: 28px;
+    height: 70px;
+  }
+
+  .hudSubtab > [role='tab'] {
+    position: relative;
+    gap: var(--dcl-space-8);
+    height: 70px;
+    padding: 0 2px;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .hudSubtab > [role='tab']::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 4px;
+    background: transparent;
+    transition: background-color 83ms linear;
+  }
+
+  .hudSubtab > [role='tab']:hover:not(:disabled):not([aria-selected='true'])::after {
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  .hudSubtab > [role='tab'][aria-selected='true'] {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudSubtab > [role='tab'][aria-selected='true']::after {
+    background: var(--dcl-primary-primary);
+  }
+}
+
+@keyframes hud-pill-pop {
+  0% {
+    transform: scale(0.92);
+  }
+
+  60% {
+    transform: scale(1.08);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes hud-press-bounce {
+  0% {
+    transform: scale(1.04);
+  }
+
+  14% {
+    transform: scale(0.9);
+  }
+
+  23% {
+    transform: scale(0.9);
+  }
+
+  43% {
+    transform: scale(1.04);
+  }
+
+  72% {
+    transform: scale(0.95);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@layer dcl.components {
+  .routeRoot {
+    box-sizing: border-box;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--dcl-space-32);
+    min-width: 0;
+    min-height: 64px;
+    padding-inline: var(--dcl-layout-margin-x);
+    background: var(--dcl-transparencies-black-20);
+    box-shadow: inset 0 -1px 0 var(--dcl-transparencies-white-20);
+    color: var(--dcl-text-primary);
+  }
+  .routeNavigation {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* Figma: overflowing routes fade out over 48px at each edge that has more routes beyond it. */
+  .routeList {
+    --route-fade: var(--dcl-space-48);
+    --route-fade-start: var(--dcl-space-0);
+    --route-fade-end: var(--dcl-space-0);
+    display: flex;
+    gap: var(--dcl-space-32);
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    list-style: none;
+    scrollbar-width: none;
+    scroll-padding-inline: var(--route-fade);
+  }
+  .routeList[data-fade-start] {
+    --route-fade-start: var(--route-fade);
+  }
+  .routeList[data-fade-end] {
+    --route-fade-end: var(--route-fade);
+  }
+  .routeList:is([data-fade-start], [data-fade-end]) {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      var(--dcl-neutrals-black) var(--route-fade-start),
+      var(--dcl-neutrals-black) calc(100% - var(--route-fade-end)),
+      transparent
+    );
+  }
+  /* Direction comes from the component: bundlers lower :dir() to a :lang() list that misses dir="rtl". */
+  .routeList:is([data-fade-start], [data-fade-end])[data-rtl] {
+    mask-image: linear-gradient(
+      to left,
+      transparent,
+      var(--dcl-neutrals-black) var(--route-fade-start),
+      var(--dcl-neutrals-black) calc(100% - var(--route-fade-end)),
+      transparent
+    );
+  }
+  .routeList::-webkit-scrollbar {
+    display: none;
+  }
+  .routeItem {
+    flex: none;
+  }
+  .routeLink {
+    composes: routeRoot from '../Tabs/Tabs.module.css';
+  }
+  .routeText {
+    composes: routeLabel from '../Tabs/Tabs.module.css';
+  }
+  /* Create remounts the bar with each route. Start the incoming underline at its centre on mount. */
+  @media (prefers-reduced-motion: no-preference) {
+    @starting-style {
+      .routeRoot[data-page='create'] .routeLink[aria-current] {
+        --tab-scale: 0;
+        background-position:
+          center bottom var(--tab-underline-offset),
+          left 0 bottom var(--tab-underline-offset);
+      }
+    }
+  }
+  .routeLink:focus-visible {
+    outline-offset: -2px;
+  }
+  .routeControls {
+    box-sizing: border-box;
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-24);
+    min-height: 64px;
+    min-width: 0;
+    max-width: calc(100% - 64px);
+    padding-block: var(--dcl-space-8);
+  }
+  .routeSearch {
+    flex: 0 1 240px;
+    width: 240px;
+    min-width: 0;
+  }
+  .routeActions {
+    display: flex;
+    align-items: center;
+    flex: none;
+    gap: var(--dcl-space-24);
+  }
+  @media (min-width: 1536px) {
+    .routeRoot,
+    .routeList {
+      gap: 50px;
+    }
+    .routeSearch {
+      flex-basis: 364px;
+      width: 364px;
+    }
+  }
+  /* Below the desktop breakpoint routes take a full row and the controls move under them. */
+  @media (width < 1024px) {
+    .routeRoot {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--dcl-space-0);
+    }
+    .routeNavigation {
+      flex: none;
+      width: 100%;
+    }
+    .routeControls {
+      width: 100%;
+      max-width: none;
+    }
+  }
+  @media (width < 768px) {
+    .routeRoot {
+      flex-direction: column;
+      gap: var(--dcl-space-12);
+      min-height: 44px;
+      padding-inline: 0;
+    }
+    .routeNavigation {
+      flex: none;
+      box-sizing: border-box;
+      width: 100%;
+      padding-inline: var(--dcl-space-16);
+    }
+    .routeList {
+      gap: var(--dcl-space-16);
+    }
+    .routeItem[data-mobile-hidden] {
+      display: none;
+    }
+    .routeControls {
+      gap: var(--dcl-space-8);
+      width: 100%;
+      max-width: none;
+      padding: var(--dcl-space-8) var(--dcl-space-16);
+    }
+    .routeSearch {
+      flex: 1 1 202px;
+      width: 202px;
+      max-width: 202px;
+    }
+    .routeRoot[data-page='learn'] .routeSearch {
+      flex-basis: 230px;
+      width: 230px;
+      max-width: 230px;
+    }
+    .routeRoot[data-page='learn'] .routeControls {
+      min-height: 68px;
+    }
+    .routeActions {
+      gap: var(--dcl-space-8);
+    }
+  }
+
+  .routeRoot[data-page='blog'] {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--dcl-space-24);
+  }
+
+  .routeRoot[data-page='blog'] .routeNavigation {
+    flex: 1 1 0;
+    width: auto;
+  }
+
+  .routeRoot[data-page='blog'] .routeControls {
+    flex: none;
+    max-width: none;
+    width: auto;
+    padding-block: var(--dcl-space-12);
+  }
+
+  .routeRoot[data-page='blog'] .routeSearch {
+    flex: none;
+    width: auto;
+  }
+
+  @media (max-width: 767px) {
+    .routeRoot[data-page='blog'] .routeControls {
+      display: none;
+    }
+  }
+}
+
+@layer dcl.components {
+  /* ShopChrome supplies the surrounding search, shortcuts and responsive rows. */
+  .routeRoot[data-layout='links'] {
+    display: block;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .routeRoot[data-layout='links'] .routeNavigation {
+    width: 100%;
+    padding: 0;
+  }
+  @media (width > 768px) {
+    .routeItem[data-mobile-only] {
+      display: none;
+    }
+  }
+
+  @media (forced-colors: none) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      color: transparent;
+      background-image: var(--dcl-gradient-rainbow);
+      background-size: 200% 100%;
+      background-clip: text;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      animation: campaignGradient 6s ease-in-out infinite alternate;
+    }
+  }
+
+  @keyframes campaignGradient {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 100%;
+    }
+  }
+}

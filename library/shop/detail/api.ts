@@ -4,8 +4,8 @@
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
-import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
-import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
+import { fetchUnified, fetchShopListingsRaw, type Opts, type UnifiedListing } from "../discovery/api";
+import { toGender, type Gender } from "../discovery/lib/catalogItem";
 import { isResale } from "../market/access-rule";
 
 function o(opts: Opts) {
@@ -13,16 +13,6 @@ function o(opts: Opts) {
 }
 
 type DataTotal<T> = { data?: T[]; total?: number };
-
-export async function fetchItemDescription(contractAddress: string, itemId: string, opts: Opts): Promise<string> {
-  try {
-    const json = await opts.client.catalog.v2<DataTotal<RawCollectionItem>>({ id: `${contractAddress.toLowerCase()}-${itemId}`, first: 1 }, o(opts));
-    const d = json.data?.[0]?.data;
-    return (d?.wearable?.description ?? d?.emote?.description ?? "").trim();
-  } catch {
-    return "";
-  }
-}
 
 export function pickItemListing<T extends Pick<UnifiedListing, "tokenId" | "source">>(items: T[]): T | null {
   const rank = (l: T) => (l.tokenId ? 2 : 0) + (l.source === "native" ? 0 : 1);
@@ -43,20 +33,6 @@ export function itemListingKey(contractAddress: string, itemId: string, scope: "
 export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts: Opts): Promise<UnifiedListing | null> {
   const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
   return items.find((l) => !isResale(l)) ?? null;
-}
-
-/** An item's creator listing, for buying the item itself (the in-world shell's BUY): primary sales only, never a resale. */
-export async function fetchShopListingForItem(contractAddress: string, itemId: string, opts: Opts): Promise<CatalogItem | null> {
-  const { listings } = await fetchShopListingsRaw({ contractAddress, itemId, first: 1, listingType: "primary" }, opts);
-  const row = listings[0] ? shopListingToItem(listings[0], opts.creatorSales()) : null;
-  return row && !isResale(row) ? row : null;
-}
-
-export async function fetchStoreMintState(contractAddress: string, itemId: string, opts: Opts): Promise<{ priceWei: string; available: number } | null> {
-  const { items } = await fetchUnified({ contractAddress, itemId, first: 1 }, opts);
-  const row = items[0];
-  if (!row || row.acquisition !== "store" || !row.manaWei) return null;
-  return { priceWei: row.manaWei, available: row.available ?? 0 };
 }
 
 export async function fetchItemResales(contractAddress: string, itemId: string, opts: Opts): Promise<UnifiedListing[]> {
@@ -194,6 +170,7 @@ export async function fetchResaleTokenInfos(contractAddress: string, tokenIds: s
 export type ItemMeta = {
   name?: string;
   thumbnail?: string;
+  description: string;
   isSmart: boolean;
   utility: string | null;
   urn: string | null;
@@ -230,7 +207,10 @@ export async function fetchItemMeta(contractAddress: string, itemId: string, opt
       category?: string;
       chainId?: number;
       network?: string;
-      data?: { wearable?: { isSmart?: boolean; category?: string; bodyShapes?: string[] }; emote?: { category?: string; loop?: boolean; hasSound?: boolean; hasGeometry?: boolean } };
+      data?: {
+        wearable?: { description?: string; isSmart?: boolean; category?: string; bodyShapes?: string[] };
+        emote?: { description?: string; category?: string; loop?: boolean; hasSound?: boolean; hasGeometry?: boolean };
+      };
     }>
   >({ contractAddress, itemId, first: 1 }, o(opts));
   const row = json.data?.[0];
@@ -238,6 +218,7 @@ export async function fetchItemMeta(contractAddress: string, itemId: string, opt
   return {
     name: row.name,
     thumbnail: row.thumbnail,
+    description: (row.data?.wearable?.description ?? row.data?.emote?.description ?? "").trim(),
     isSmart: !!row.data?.wearable?.isSmart,
     utility: row.utility?.trim() || null,
     urn: row.urn ?? null,

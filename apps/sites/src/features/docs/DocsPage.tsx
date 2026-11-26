@@ -1,7 +1,10 @@
 // The shared site top bar over the docs chrome: SUMMARY.md sidebar, the rendered page, its outline, page navigation and the theme switcher.
 import { useEffect, useRef, useState } from "react";
 
-import DclTopBar from "@ui/web/frames/DclTopBar";
+import { useChromeNav } from "@dcl/one-ui";
+import SitesTopBar from "../components/chrome/SitesTopBar";
+import styles from "./DocsPage.module.css";
+import { fetchDocMarkdown } from "@/data/lib/docs/markdown";
 import type { DocsPageView, DocsSpace } from "@/data/lib/docs/types";
 import DocsIcon from "./DocsIcon";
 import { NavList } from "./DocsNav";
@@ -29,6 +32,7 @@ function applyTheme(choice: Theme) {
 }
 
 export default function DocsPage({ view }: { view: DocsPageView }) {
+  const { headerLayout = "legacy", TopBar = SitesTopBar } = useChromeNav();
   const nav = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const toc = useRef<HTMLElement>(null);
@@ -91,9 +95,7 @@ export default function DocsPage({ view }: { view: DocsPageView }) {
   const flash = (what: string) => { setCopied(what); setTimeout(() => setCopied(""), 1400); };
   const copyMarkdown = async (what: string) => {
     try {
-      const response = await fetch(view.mdUrl);
-      if (!response.ok) throw new Error("Markdown unavailable");
-      await copyText(await response.text());
+      await copyText(await fetchDocMarkdown(view.mdUrl));
       flash(what);
     } catch {
       window.prompt("Copy this page:", document.querySelector(".dcl-docs main")?.textContent ?? "");
@@ -105,8 +107,8 @@ export default function DocsPage({ view }: { view: DocsPageView }) {
 
   return (
     <>
-      <div className="ui2 docs-topbar"><DclTopBar active="learn" /></div>
-      <div className="dcl-docs">
+      <div className={"ui2 docs-topbar " + styles.topbar} data-header-layout={headerLayout}><TopBar active="learn" /></div>
+      <div className={"dcl-docs " + styles.root} data-header-layout={headerLayout}>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <header className="site-header">
           <div className="spacebar">

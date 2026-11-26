@@ -4,13 +4,12 @@
 //! properties live in SQL, so they are asserted against a real postgres
 //! (CATALYST_TEST_DATABASE_URL; one scratch database per test).
 
-use catalyst::content::sync::retry_failed::prune_failed_deployments;
+use catalyst::content::failed_deployments_store::LiveFailedDeploymentsStore;
+use catalyst::content::failed_deployments_store::prune_failed_deployments;
 use catalyst::content::sync::{AuthChain, AuthLink, AuthLinkType};
 use catalyst::content::sync::{FailedDeployment, FailureReason};
-use catalyst::content::sync_deployer::LiveFailedDeploymentsStore;
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 fn auth_chain() -> AuthChain {
     vec![AuthLink {
@@ -303,7 +302,7 @@ async fn the_prune_takes_only_records_older_than_the_ttl() {
 
 // ── the bounded due query (DATABASE.md follow-up: retries) ─────────────────
 
-use catalyst::content::sync_deployer::DueCursor;
+use catalyst::content::failed_deployments_store::DueCursor;
 
 const NOW_MS: i64 = 1_800_000_000_000;
 const CAP: u32 = 10;
@@ -698,10 +697,11 @@ async fn bench_retry_cycle_shapes_over_a_populated_backlog() {
                     max_retries,
                     ..Default::default()
                 },
-                reqwest::Client::new(),
-                storage,
+                catalyst::content::sync::test_sync_client(reqwest::Client::new()),
+                storage.clone(),
                 Arc::new(LiveSyncDeployer::new(
                     pool.clone(),
+                    storage.clone(),
                     1,
                     catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
                 )),

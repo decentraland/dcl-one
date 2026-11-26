@@ -4,14 +4,16 @@ use crate::ux::{TrySteps, UserError};
 use anyhow::{Result, anyhow};
 use rolldown::Bundler;
 use rolldown_common::{
-    BundlerOptions, BundlerTransformOptions, ChecksOptions, CodeSplittingMode, Either, InputItem,
-    IsExternal, OutputFormat, Platform, RawMinifyOptions, ResolveOptions, SourceMapType, TsConfig,
+    BundlerOptions, BundlerTransformOptions, ChecksOptions, CodeSplittingMode, CommentsOptions,
+    Either, InputItem, IsExternal, OutputFormat, Platform, RawMinifyOptions, ResolveOptions,
+    SourceMapType, TsConfig,
 };
 use rolldown_utils::indexmap::FxIndexMap;
 use rolldown_utils::pattern_filter::StringOrRegex;
 use std::path::PathBuf;
 
-pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<()> {
+/// Bundle to `opts.outfile`; the files the bundler loaded come back.
+pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf>> {
     let mut bundler = Bundler::new(bundler_options(project, opts)?).map_err(|e| {
         anyhow::Error::from(
             UserError::new(
@@ -53,7 +55,11 @@ pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<()> {
         }
         tracing::warn!("rolldown {kind}: {warning}");
     }
-    Ok(())
+    Ok(bundler
+        .watch_files()
+        .iter()
+        .map(|file| PathBuf::from(file.as_str()))
+        .collect())
 }
 
 fn bundler_options(project: &Project, opts: &EsbuildOptions) -> Result<BundlerOptions> {
@@ -84,6 +90,13 @@ fn bundler_options(project: &Project, opts: &EsbuildOptions) -> Result<BundlerOp
             ..Default::default()
         }),
         minify: Some(RawMinifyOptions::Bool(opts.production)),
+        // A minified bundle is not fed to another bundler or a coverage
+        // tool, the only readers of `@__PURE__` and `istanbul ignore`.
+        comments: Some(CommentsOptions {
+            legal: true,
+            annotation: !opts.production,
+            jsdoc: !opts.production,
+        }),
         sourcemap: if opts.production {
             None
         } else {
@@ -143,4 +156,43 @@ fn defines(production: bool) -> FxIndexMap<String, String> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A save with a syntax error must not cost the preview its scene: the bundle of the last
+    /// build that passed stays on disk, byte for byte, until a build passes again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_build_keeps_the_last_bundle() {
+        let t = crate::scene::Tmp::new("rolldown-failed-build");
+        t.write("tsconfig.json", "{}");
+        t.write("src/index.ts", "export const scene = 'first'\n");
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        let opts = EsbuildOptions {
+            production: false,
+            entrypoint: t.0.join("src/index.ts"),
+            outfile: t.0.join("bin/index.js"),
+            tsconfig: t.0.join("tsconfig.json"),
+            aliases: Vec::new(),
+            externals: Vec::new(),
+        };
+        let bundle = || std::fs::read_to_string(&opts.outfile).unwrap();
+
+        run(&project, &opts).await.unwrap();
+        let last_good = bundle();
+        assert!(last_good.contains("first"), "{last_good}");
+
+        t.write("src/index.ts", "export const scene = (\n");
+        assert!(run(&project, &opts).await.is_err());
+        assert_eq!(bundle(), last_good);
+
+        t.write("src/index.ts", "export const scene = 'second'\n");
+        run(&project, &opts).await.unwrap();
+        assert!(bundle().contains("second"));
+    }
 }

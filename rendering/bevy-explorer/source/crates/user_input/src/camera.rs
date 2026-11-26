@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 
 use bevy::{
+    platform::collections::HashSet,
     prelude::*,
     render::view::ViewUserValue,
     window::{CursorGrabMode, PrimaryWindow},
@@ -10,27 +11,34 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind, PhotoMode,
-        PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
+        AppConfig, AvatarDynamicState, CameraOverride, ClientWindowFocus, CursorLocks, HeadSync,
+        MoveKind, PhotoMode, PrimaryCamera, PrimaryUser, RequestClientWindowFocus,
+        PLAYER_CAMERA_FOV,
     },
     terrain::PlayerTerrainHeight,
     util::ModifyComponentExt,
 };
 use dcl_component::proto_components::sdk::components::common::camera_transition::TransitionMode;
 use input_manager::{InputManager, InputPriority};
-use scene_runner::OutOfWorld;
+use scene_runner::{
+    update_world::mesh_collider::{GlobalGroundCollider, SceneColliderData},
+    ContainingScene, OutOfWorld,
+};
 use tween::SystemTween;
 
-use crate::TRANSITION_TIME;
+use crate::{
+    camera_collision::{
+        self, CameraCollision, CameraCollisionState, CameraObstacles, CAMERA_RADIUS,
+    },
+    TRANSITION_TIME,
+};
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub struct CinematicInitialData {
     base_yaw: f32,
     base_pitch: f32,
     base_roll: f32,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_camera(
     time: Res<Time>,
     mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
@@ -136,8 +144,7 @@ pub fn update_camera(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn update_camera_position(
+pub(crate) fn update_camera_position(
     mut commands: Commands,
     mut camera: Query<
         (
@@ -146,6 +153,7 @@ pub fn update_camera_position(
             &PrimaryCamera,
             &mut Projection,
             Option<&mut SystemTween>,
+            &mut CameraCollisionState,
         ),
         Without<PhotoMode>,
     >,
@@ -163,10 +171,22 @@ pub fn update_camera_position(
     mut prev_oow: Local<bool>,
     gt_helper: TransformHelper,
     terrain_height: Option<Res<PlayerTerrainHeight>>,
+    time: Res<Time>,
+    containing_scene: ContainingScene,
+    mut scene_colliders: Query<&mut SceneColliderData, Without<GlobalGroundCollider>>,
+    mut ground_colliders: Query<&mut SceneColliderData, With<GlobalGroundCollider>>,
+    collision: Res<CameraCollision>,
 ) {
     let (
         Ok((player_transform, dynamic_state, is_oow, mut head_sync, emotes)),
-        Ok((camera_ent, camera_transform, options, mut projection, maybe_tween)),
+        Ok((
+            camera_ent,
+            camera_transform,
+            options,
+            mut projection,
+            maybe_tween,
+            mut collision_state,
+        )),
     ) = (player.single_mut(), camera.single_mut())
     else {
         return;
@@ -183,7 +203,11 @@ pub fn update_camera_position(
     let idle = dynamic_state.move_kind == MoveKind::Idle
         && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
     let head_active = real_camera && idle;
-    let first_person = options.distance < 0.05;
+    let follow_distance = match options.scene_override {
+        Some(CameraOverride::Distance(d)) => d,
+        _ => options.distance,
+    };
+    let first_person = follow_distance < 0.05;
     head_sync.yaw_enabled = head_active && !first_person;
     head_sync.pitch_enabled = head_active;
     if head_active {
@@ -249,10 +273,7 @@ pub fn update_camera_position(
 
         commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
     } else {
-        let mut distance = match options.scene_override {
-            Some(CameraOverride::Distance(d)) => d,
-            _ => options.distance,
-        } * 5.0;
+        let mut distance = follow_distance * 5.0;
 
         target_transform.rotation =
             Quat::from_euler(EulerRot::YXZ, options.yaw, options.pitch, options.roll);
@@ -273,12 +294,73 @@ pub fn update_camera_position(
             distance = (player_head.y - ground) / (0.25 - target_direction.y);
         }
 
-        target_transform.translation =
-            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
+        let orbit = player_head + target_direction * distance;
+        // the camera sits in the player's head in first person, so there is nothing to collide
+        if collision.enabled && !first_person {
+            let shoulder = head_offset * distance.clamp(0.0, 3.0);
+            let margin = CAMERA_RADIUS + head_offset.length() * 3.0;
+            // the sweep runs from the shoulder, up to the whole offset beside the head
+            let mut scenes: HashSet<Entity> = [player_head, player_head + shoulder]
+                .into_iter()
+                .flat_map(|pivot| containing_scene.get_ray(pivot, orbit - player_head))
+                .map(|(scene, _)| scene)
+                .collect();
+            scenes.extend(containing_scene.get_area_at(player_head, margin));
+            scenes.extend(containing_scene.get_area_at(orbit, margin));
+            for scene in &scenes {
+                if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
+                    colliders.update_bvh();
+                }
+            }
+            for mut colliders in &mut ground_colliders {
+                colliders.update_bvh();
+            }
+            let obstacles = CameraObstacles(
+                scenes
+                    .iter()
+                    .filter_map(|scene| scene_colliders.get(*scene).ok())
+                    .chain(ground_colliders.iter())
+                    .collect(),
+            );
+
+            let offset = camera_collision::shoulder_offset(
+                &obstacles,
+                &mut collision_state,
+                player_head,
+                shoulder,
+                time.delta_secs(),
+            );
+            let pivot = player_head + offset;
+            let resolved = camera_collision::resolve(
+                &obstacles,
+                &mut collision_state,
+                pivot,
+                pivot + target_direction * distance,
+                time.elapsed_secs(),
+                time.delta_secs(),
+            );
+            let collided_distance = resolved.position.distance(pivot);
+            target_transform.translation = resolved.position;
+            collision_state.desired_distance = distance;
+            collision_state.collided_distance = collided_distance;
+            collision_state.occluded = resolved.occluded;
+            distance = collided_distance;
+        } else {
+            collision_state.invalidate();
+            target_transform.translation = orbit + head_offset * distance.clamp(0.0, 3.0);
+            collision_state.desired_distance = distance;
+            collision_state.collided_distance = distance;
+            collision_state.occluded = false;
+            collision_state.damp_time = 0.0;
+        }
 
         commands
             .entity(camera_ent)
             .try_insert(ViewUserValue(distance));
+    }
+
+    if !real_camera {
+        collision_state.invalidate();
     }
 
     // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities
@@ -338,32 +420,32 @@ pub fn update_camera_position(
 }
 
 pub fn update_cursor_lock(
+    mut commands: Commands,
     locks: Res<CursorLocks>,
+    focus: Res<ClientWindowFocus>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut prev: Local<bool>,
 ) {
     let lock = !locks.0.is_empty();
 
     if lock {
-        for mut window in &mut windows {
-            if !window.focused {
-                if !*prev {
-                    // new right-click while not focussed - try to focus
-                    window.focused = true;
-                    // and skip updating window fields until focus is processed
-                    return;
-                } else {
-                    continue;
-                }
-            }
-
-            if window.cursor_options.grab_mode == CursorGrabMode::None {
-                window.cursor_options.grab_mode = CursorGrabMode::Locked;
+        if *focus == ClientWindowFocus::NoFocus {
+            if !*prev {
+                // new right-click while not focussed - try to focus
+                commands.trigger(RequestClientWindowFocus);
+                // and skip updating window fields until focus is processed
                 return;
             }
+        } else {
+            for mut window in &mut windows {
+                if window.cursor_options.grab_mode == CursorGrabMode::None {
+                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                    return;
+                }
 
-            if window.cursor_options.visible {
-                window.cursor_options.visible = false;
+                if window.cursor_options.visible {
+                    window.cursor_options.visible = false;
+                }
             }
         }
     } else {

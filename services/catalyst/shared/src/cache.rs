@@ -51,6 +51,8 @@ where
     map: DashMap<K, Slot<V>>,
     ttl: Duration,
     max_entries: Option<usize>,
+    #[cfg(test)]
+    eviction_passes: std::sync::atomic::AtomicUsize,
 }
 
 struct LeaderGuard<'a, K, V>
@@ -90,6 +92,8 @@ where
             map: DashMap::new(),
             ttl,
             max_entries: None,
+            #[cfg(test)]
+            eviction_passes: Default::default(),
         }
     }
 
@@ -112,6 +116,14 @@ where
         self.map.clear();
     }
 
+    /// Drops `key`'s entry, as an eviction would (an expiry keeps the value for
+    /// [`TtlMap::get_stale`]), without moving any clock. For tests only: dropping a slot whose
+    /// fetch is in flight would drop its waiters' wake-up too.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn remove(&self, key: &K) {
+        self.map.remove(key);
+    }
+
     pub fn get_fresh(&self, key: &K) -> Option<V> {
         let slot = self.map.get(key)?;
         let entry = slot.cached.as_ref()?;
@@ -126,11 +138,52 @@ where
     }
 
     pub fn insert(&self, key: K, value: V) {
+        if !self.map.contains_key(&key) {
+            self.make_room(1);
+        }
         let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
         slot.cached = Some(Entry {
             at: Instant::now(),
             value,
         });
+    }
+
+    /// Makes room for `incoming` new keys in a bounded map: once full, expired
+    /// entries go, then the oldest down to ~90% of `max_entries` in one pass,
+    /// so a full map pays one scan per tenth of its size. In-flight fetches
+    /// stay, and concurrent inserts are not serialized: the bound is soft by
+    /// at most the in-flight and racing keys.
+    fn make_room(&self, incoming: usize) {
+        let Some(max) = self.max_entries else { return };
+        if self.map.len() + incoming <= max {
+            return;
+        }
+        #[cfg(test)]
+        self.eviction_passes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let ttl = self.ttl;
+        self.map.retain(|_, slot| {
+            slot.notify.is_some() || slot.cached.as_ref().is_some_and(|e| e.at.elapsed() < ttl)
+        });
+        let low_water = max.saturating_sub(max / 10 + 1);
+        let len = self.map.len() + incoming;
+        if len <= max {
+            return;
+        }
+        let excess = len.saturating_sub(low_water.max(incoming)).max(1);
+        let mut ages: Vec<(Option<Instant>, K)> = self
+            .map
+            .iter()
+            .filter(|slot| slot.notify.is_none())
+            .map(|slot| (slot.cached.as_ref().map(|e| e.at), slot.key().clone()))
+            .collect();
+        if ages.len() > excess {
+            ages.select_nth_unstable_by_key(excess - 1, |(at, _)| *at);
+            ages.truncate(excess);
+        }
+        for (_, key) in ages {
+            self.map.remove(&key);
+        }
     }
 
     /// The cached value, expired or not, while it is younger than `max_age`:
@@ -191,52 +244,105 @@ where
                         finished: false,
                     };
 
-                    if let Some(max) = self.max_entries
-                        && self.map.len() > max
-                    {
-                        self.map.clear();
-                        self.map.insert(
-                            key.clone(),
-                            Slot {
-                                cached: None,
-                                notify: Some(notify.clone()),
-                            },
-                        );
-                    }
+                    // This leader's own slot is in flight, so it survives.
+                    self.make_room(0);
 
                     let fetch = fetch.take().expect("a leader fetches once");
                     let result = fetch().await;
-                    match &result {
-                        Ok(value) => {
-                            let entry = Entry {
-                                at: Instant::now(),
-                                value: value.clone(),
-                            };
-                            match self.map.get_mut(&key) {
-                                Some(mut slot) => {
-                                    slot.cached = Some(entry);
-                                    slot.notify = None;
-                                }
-                                None => {
-                                    self.map.insert(
-                                        key.clone(),
-                                        Slot {
-                                            cached: Some(entry),
-                                            notify: None,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            if let Some(mut slot) = self.map.get_mut(&key) {
-                                slot.notify = None;
-                            }
-                        }
-                    }
+                    self.settle(&key, &result);
                     guard.finished = true;
                     notify.notify_waiters();
                     return result;
+                }
+            }
+        }
+    }
+
+    /// [`Self::get_or_fetch`] for a fetch that needs what the caller holds
+    /// in `held` (a pooled connection, say), which only the fetching caller
+    /// keeps: a hit leaves it with the caller, the leader's fetch borrows it
+    /// and the caller keeps it, and a caller that waits on another's fetch
+    /// drops it first (`held` becomes `None`), so no waiter holds one.
+    /// `Ok(None)`: the fetch it waited on failed, and with `held` gone this
+    /// caller must start again (open what it holds anew and call again).
+    pub async fn get_or_fetch_holding<G, F, E>(
+        &self,
+        key: K,
+        held: &mut Option<G>,
+        fetch: F,
+    ) -> Result<Option<V>, E>
+    where
+        F: AsyncFnOnce(&mut G) -> Result<V, E>,
+    {
+        loop {
+            let action = {
+                let mut entry = self.map.entry(key.clone()).or_insert_with(Slot::empty);
+                if let Some(cached) = entry.cached.as_ref()
+                    && cached.at.elapsed() < self.ttl
+                {
+                    return Ok(Some(cached.value.clone()));
+                }
+                if let Some(notify) = entry.notify.as_ref() {
+                    Action::Wait(notify.clone())
+                } else if held.is_none() {
+                    return Ok(None);
+                } else {
+                    let notify = Arc::new(Notify::new());
+                    entry.notify = Some(notify.clone());
+                    Action::Lead(notify)
+                }
+            };
+            match action {
+                Action::Wait(notify) => {
+                    *held = None;
+                    let _ = tokio::time::timeout(WAIT_RECHECK, notify.notified()).await;
+                }
+                Action::Lead(notify) => {
+                    let mut guard = LeaderGuard {
+                        cache: self,
+                        key: key.clone(),
+                        notify: notify.clone(),
+                        finished: false,
+                    };
+                    self.make_room(0);
+                    let result = fetch(held.as_mut().expect("a leader holds")).await;
+                    self.settle(&key, &result);
+                    guard.finished = true;
+                    notify.notify_waiters();
+                    return result.map(Some);
+                }
+            }
+        }
+    }
+
+    /// Files a leader's result: a value is cached, and either way the slot
+    /// is no longer in flight.
+    fn settle<E>(&self, key: &K, result: &Result<V, E>) {
+        match result {
+            Ok(value) => {
+                let entry = Entry {
+                    at: Instant::now(),
+                    value: value.clone(),
+                };
+                match self.map.get_mut(key) {
+                    Some(mut slot) => {
+                        slot.cached = Some(entry);
+                        slot.notify = None;
+                    }
+                    None => {
+                        self.map.insert(
+                            key.clone(),
+                            Slot {
+                                cached: Some(entry),
+                                notify: None,
+                            },
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(mut slot) = self.map.get_mut(key) {
+                    slot.notify = None;
                 }
             }
         }
@@ -252,16 +358,29 @@ pub struct Cached<T> {
 
 pub type TtlCache<T> = std::sync::Mutex<std::collections::HashMap<String, Cached<T>>>;
 
+// The memo holds plain values, so a poisoned one is still consistent.
+fn lock_cache<T>(
+    cache: &TtlCache<T>,
+) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Cached<T>>> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub fn cache_get<T: Clone>(cache: &TtlCache<T>, key: &str) -> Option<T> {
-    let cache = cache.lock().unwrap();
+    let cache = lock_cache(cache);
     cache
         .get(key)
         .filter(|c| c.expires_at > std::time::Instant::now())
         .map(|c| c.value.clone())
 }
 
+pub fn cache_remove<T>(cache: &TtlCache<T>, key: &str) {
+    lock_cache(cache).remove(key);
+}
+
 pub fn cache_put<T>(cache: &TtlCache<T>, key: String, value: T, ttl: Duration) {
-    let mut cache = cache.lock().unwrap();
+    let mut cache = lock_cache(cache);
     let now = std::time::Instant::now();
     cache.retain(|_, c| c.expires_at > now);
     cache.insert(
@@ -355,5 +474,191 @@ mod tests {
         release.notify_one();
         assert_eq!(misses.await, vec![Ok(3); 8]);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn insert_on_a_full_bounded_map_evicts_the_oldest() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 3);
+        for k in 0..3 {
+            map.insert(k, k);
+            tokio::time::advance(Duration::from_millis(1)).await;
+        }
+        map.insert(1, 10);
+        assert_eq!(map.len(), 3, "replacing a key needs no room");
+        map.insert(3, 3);
+        assert!(map.len() <= 3, "{}", map.len());
+        assert_eq!(map.get_fresh(&0), None, "the oldest entry is evicted");
+        assert_eq!(map.get_fresh(&1), Some(10));
+        assert_eq!(map.get_fresh(&3), Some(3));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn insert_on_a_full_bounded_map_drops_expired_entries_first() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(1), 3);
+        map.insert(0, 0);
+        map.insert(1, 1);
+        tokio::time::advance(Duration::from_secs(2)).await;
+        map.insert(2, 2);
+        map.insert(3, 3);
+        assert_eq!(map.len(), 2, "both expired entries are swept");
+        assert_eq!(map.get_fresh(&2), Some(2));
+        assert_eq!(map.get_fresh(&3), Some(3));
+    }
+
+    #[tokio::test]
+    async fn an_unbounded_map_keeps_every_insert() {
+        let map: TtlMap<u32, u32> = TtlMap::new(Duration::from_secs(60));
+        for k in 0..100 {
+            map.insert(k, k);
+        }
+        assert_eq!(map.len(), 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_map_of_one_keeps_only_the_newest_entry() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 1);
+        for k in 0..5 {
+            map.insert(k, k);
+            tokio::time::advance(Duration::from_millis(1)).await;
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.get_fresh(&k), Some(k));
+        }
+        assert_eq!(
+            map.get_or_fetch(9, || async { Ok::<_, ()>(9) }).await,
+            Ok(9)
+        );
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get_fresh(&9), Some(9));
+    }
+
+    #[tokio::test]
+    async fn a_full_map_evicts_in_batches_not_per_insert() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 100);
+        for k in 0..1_000 {
+            map.insert(k, k);
+        }
+        assert!(map.len() <= 100, "{}", map.len());
+        let passes = map.eviction_passes.load(Ordering::Relaxed);
+        assert!(
+            passes <= 1_000 / 10 + 1,
+            "one scan per tenth of the map, not per insert: {passes}"
+        );
+        assert_eq!(map.get_fresh(&999), Some(999), "the newest entry stays");
+    }
+
+    #[tokio::test]
+    async fn an_in_flight_fetch_survives_eviction_and_lands() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 10);
+        let release = Notify::new();
+        let fetch = || async {
+            release.notified().await;
+            Ok::<_, ()>(42)
+        };
+        let mut pending = std::pin::pin!(map.get_or_fetch(1_000, fetch));
+        assert!(futures::poll!(&mut pending).is_pending());
+        for k in 0..100 {
+            map.insert(k, k);
+        }
+        assert!(map.len() <= 11, "{}", map.len());
+        release.notify_one();
+        assert_eq!(pending.await, Ok(42));
+        assert_eq!(map.get_fresh(&1_000), Some(42));
+    }
+
+    #[tokio::test]
+    async fn a_leader_on_a_full_map_evicts_instead_of_clearing() {
+        let map: TtlMap<u32, u32> = TtlMap::bounded(Duration::from_secs(60), 10);
+        for k in 0..10 {
+            map.insert(k, k);
+        }
+        assert_eq!(
+            map.get_or_fetch(99, || async { Ok::<_, ()>(99) }).await,
+            Ok(99)
+        );
+        assert!(map.len() <= 10, "{}", map.len());
+        assert_eq!(map.get_fresh(&9), Some(9), "recent entries are kept");
+    }
+
+    /// A caller that waits on another's fetch drops what it holds first and
+    /// gets the leader's value; the leader keeps what it holds.
+    #[tokio::test]
+    async fn a_waiter_drops_what_it_holds_before_waiting() {
+        let map: Arc<TtlMap<&'static str, u32>> = Arc::new(TtlMap::new(Duration::from_secs(60)));
+        let connection = Arc::new(());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let leader = {
+            let (map, release) = (map.clone(), release.clone());
+            let mut held = Some(connection.clone());
+            tokio::spawn(async move {
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| {
+                        release.notified().await;
+                        Ok::<u32, ()>(7)
+                    })
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiter = {
+            let map = map.clone();
+            let mut held = Some(connection.clone());
+            tokio::spawn(async move {
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| {
+                        Ok::<u32, ()>(0)
+                    })
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            Arc::strong_count(&connection),
+            2,
+            "only the leader still holds a clone"
+        );
+        release.notify_one();
+        assert_eq!(leader.await.unwrap(), (Ok(Some(7)), true));
+        assert_eq!(waiter.await.unwrap(), (Ok(Some(7)), false));
+        // A hit leaves what the caller holds with it.
+        let mut held = Some(connection.clone());
+        let hit = map
+            .get_or_fetch_holding("page", &mut held, async |_: &mut Arc<()>| Ok::<u32, ()>(0))
+            .await;
+        assert_eq!((hit, held.is_some()), (Ok(Some(7)), true));
+    }
+
+    /// When the fetch a caller waited on fails, the caller, its holding gone,
+    /// is told to start again rather than lead without it.
+    #[tokio::test]
+    async fn a_waiter_whose_leader_failed_starts_again() {
+        let map: Arc<TtlMap<&'static str, u32>> = Arc::new(TtlMap::new(Duration::from_secs(60)));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let leader = {
+            let (map, release) = (map.clone(), release.clone());
+            tokio::spawn(async move {
+                map.get_or_fetch_holding("page", &mut Some(()), async |_: &mut ()| {
+                    release.notified().await;
+                    Err::<u32, &str>("down")
+                })
+                .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waiter = {
+            let map = map.clone();
+            tokio::spawn(async move {
+                let mut held = Some(());
+                let value = map
+                    .get_or_fetch_holding("page", &mut held, async |_: &mut ()| Ok::<u32, &str>(1))
+                    .await;
+                (value, held.is_some())
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        release.notify_one();
+        assert_eq!(leader.await.unwrap(), Err("down"));
+        assert_eq!(waiter.await.unwrap(), (Ok(None), false));
     }
 }

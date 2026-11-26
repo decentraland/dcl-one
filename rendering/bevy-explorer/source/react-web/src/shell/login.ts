@@ -1,26 +1,29 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackend } from '../features/auth/guest'
+import { webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { playAsGuest } from '@explorer-core/shell/guestLogin'
 import {
-  clearGuestLogin,
   clearStoredLogins,
-  getLocalGuestRootKey,
   getStoredLogin,
   loginExpired,
   publicLogin,
   rootAddress,
-  storeGuestLogin,
-  storeLocalGuestRootKey,
+  signOutGuest,
+  storeAccountLogin,
   type StoredLogin
-} from '../features/auth/sso'
+} from '@explorer-core/features/auth/sso'
+import { completeEmailSignIn, startEmailSignIn } from '@explorer-core/shell/emailLogin'
 import { isLoopbackHost } from '../lib/loopbackHost'
-import { createLocalGuestRootKey, localGuestIdentity } from './localGuest'
-import { personalSign } from './sign'
+import { createLocalGuestRootKey, getLocalGuestRootKey, localGuestIdentity, storeLocalGuestRootKey } from './localGuest'
+import { personalSign } from '@explorer-core/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it
 // from under the running engine. Until then (the login screen), or once it expires, storage is
 // read again.
+// The page as it was opened: the engine's URL sync later rewrites the query, which may drop
+// `?guestWallet=` (features/auth/guest.ts) before PLAY AS GUEST.
+const entryLocation = { hostname: location.hostname, search: location.search }
 let held: StoredLogin | null = null
 let pinned = false
 function currentLogin(): StoredLogin | null {
@@ -44,18 +47,19 @@ export async function request(method: unknown, params: unknown): Promise<unknown
         throw new Error(`not signed in as ${signer}`)
       }
       pinned = true
-      // Signing in with an account replaces the guest (an expired one included).
-      if (!login.guest) clearGuestLogin()
+      // An account signing in keeps the guest for PLAY AS GUEST, not signed in on its own (unity-explorer's).
+      if (!login.guest) signOutGuest()
       return personalSign(ephemeral.privateKey, message)
     }
-    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts),
-    // created and kept here like a sign-in. Any earlier guest is replaced.
+    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
+    // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
-      const identity = await createGuestIdentity(webGuestBackend)
-      storeGuestLogin(identity)
-      held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      // thirdweb on Decentraland's domains, with ?guestWallet=thirdweb, or once this browser keeps a
+      // thirdweb session; elsewhere a key made here
+      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(entryLocation))
+      held = login
       pinned = true
-      return publicLogin(held)
+      return { ...publicLogin(held), wallet }
     }
     // The autopilot's guest, the only identity a benchmark run signs in with: one account kept in this
     // profile, made here with no network call, so the run is never a new account. The root key is the
@@ -69,6 +73,18 @@ export async function request(method: unknown, params: unknown): Promise<unknown
       storeLocalGuestRootKey(rootKey)
       const identity = localGuestIdentity(rootKey)
       held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      pinned = true
+      return publicLogin(held)
+    }
+    // Email sign-in (features/startup): the code is sent, then checked here, and the account's
+    // identity kept like the sign-in page's, key included.
+    case 'emailStart':
+      await startEmailSignIn(params)
+      return null
+    case 'emailLogin': {
+      const { identity } = await completeEmailSignIn(params)
+      storeAccountLogin(identity)
+      held = { address: rootAddress(identity).toLowerCase(), identity }
       pinned = true
       return publicLogin(held)
     }

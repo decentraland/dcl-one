@@ -9,7 +9,9 @@ import { renderToPipeableStream } from "react-dom/server";
 
 import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
-import { ensureSid } from "@/core/lib/telemetry/session";
+import type { RouterContextProvider } from "react-router";
+
+import { publicResponseContext, requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import { applyFrameIsolation } from "./lib/frame-isolation";
@@ -21,7 +23,7 @@ export default function handleRequest(
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  _loadContext: unknown,
+  loadContext: RouterContextProvider,
 ) {
   const pathname = new URL(request.url).pathname;
   // The Explorer's native Shop runtime descriptor: /shop-native, and /marketplace-native for Explorer
@@ -49,7 +51,9 @@ export default function handleRequest(
   // A crawler's misses are not a visitor's: no Segment request per scanned path.
   if (responseStatusCode === 404 && !bot) {
     try {
-      const { sid } = ensureSid(request);
+      // A matched route's request shares the sid its loaders used (the root middleware set it). A URL
+      // that matches no route skips the middleware, so a cookieless visitor's 404 gets a sid of its own.
+      const { sid } = requestSession(request, loadContext);
       const u = new URL(request.url);
       track(
         "page_not_found",
@@ -58,7 +62,7 @@ export default function handleRequest(
           referrer: withoutSensitiveParams(request.headers.get("referer") ?? ""),
           ua: userAgent ?? "",
         },
-        { sid, story: "sites-error" },
+        { sid, story: "sites-error", requestUserAgent: userAgent },
       );
     } catch {
     }
@@ -67,8 +71,11 @@ export default function handleRequest(
   return new Promise((resolve, reject) => {
     let shellRendered = false;
 
+    // A response that a shared cache may keep is sent only when its render is complete: a render error or the
+    // timeout then gives a 500 that no cache keeps, not a public 200 that holds the error.
+    const shared = loadContext.get(publicResponseContext);
     const readyOption: keyof RenderToPipeableStreamOptions =
-      bot || routerContext.isSpaMode
+      bot || routerContext.isSpaMode || shared
         ? "onAllReady"
         : "onShellReady";
 
@@ -81,6 +88,7 @@ export default function handleRequest(
           const stream = createReadableStreamFromReadable(body);
 
           responseHeaders.set("Content-Type", "text/html");
+          if (shared && responseStatusCode >= 500) responseHeaders.set("Cache-Control", "no-store");
 
           resolve(
             new Response(stream, {

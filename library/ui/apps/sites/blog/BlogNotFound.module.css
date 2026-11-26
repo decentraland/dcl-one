@@ -1,0 +1,42 @@
+.box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--dcl-space-96) var(--dcl-layout-margin-x);
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-lg);
+  font-weight: 800;
+}
+
+.text {
+  margin: 0;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-lg);
+  overflow-wrap: anywhere;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  color: var(--dcl-text-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+  border-radius: var(--dcl-radius-sm);
+}

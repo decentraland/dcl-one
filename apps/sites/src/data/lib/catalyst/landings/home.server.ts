@@ -1,25 +1,20 @@
-import { fetchEvents, type Event } from "../places/events";
-import { fetchMostActivePlaces } from "../places/index";
 import type { GetOptions } from "../client";
-import { ttlMemo } from "../../ttl-memo";
 import {
-  eventToRitualItem,
-  eventWeekday,
-  parseHomeContent,
-  placeToHotspotItem,
-  withHotspots,
-  withLiveEvents,
-  withRituals,
-  type HomeContent,
-  type HotspotRailItem,
-  type RitualRailItem,
-} from "./home";
+  joinLiveNow,
+  loadProfiles,
+  plazaCard,
+  readLiveNow,
+  withDeployers,
+  type HotScene,
+  type LiveEvent,
+  type LiveNowCard,
+  type Profile,
+} from "../places/live-now.server";
+import { ttlMemo } from "../../ttl-memo";
+import { withDeadline } from "../../request-deadline";
+import { VIBE_CREATORS } from "./vibe-creators";
+import { parseHomeContent, type HomeContent } from "./home";
 
-const LIVE_RAIL_LIMIT = 3;
-const HOTSPOT_RAIL_LIMIT = 4;
-const RITUAL_RAIL_LIMIT = 5;
-const RITUAL_FETCH_LIMIT = 100;
-const EVENT_LISTS = ["highlight", "trending", "active"] as const;
 
 const HOME_CONTENT: HomeContent = {
   hero: {
@@ -48,7 +43,7 @@ const HOME_CONTENT: HomeContent = {
       id: "whatson",
       kind: "events",
       title: "Jump Into What's Happening",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
     {
@@ -62,7 +57,7 @@ const HOME_CONTENT: HomeContent = {
       id: "rituals",
       kind: "rituals",
       title: "Your Weekly Rituals",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
   ],
@@ -78,102 +73,118 @@ function loadHomeContent(): HomeContent {
 }
 
 const HOME_TTL_MS = 60_000;
+const HOME_EVENTS_FAILURE_TTL_MS = 5_000;
 
 type HomeData = { content: HomeContent; live: boolean; unreadable: string[] };
 
-const homeMemo = ttlMemo({
+// The reference home page's "Jump Into What's Happening": the live
+// events, the realm's hot scenes, their places and the creators' profiles, read as /whats-on's Live
+// Now reads them.
+
+// The home section has three card places: the list is cut to three.
+const LIVE_CARDS = 3;
+
+/** The Catch the Vibe creators, after the cards' creators in the one profile request. */
+const VIBE_ADDRESSES = Object.values(VIBE_CREATORS);
+
+export type HomeLiveData = HomeData & {
+  cards: LiveNowCard[];
+  profiles: Record<string, Profile>;
+};
+
+/** Hot scenes with at least five people, those with a live event first, then Genesis Plaza when fewer than three. */
+export function buildHomeLiveCards(
+  liveEvents: LiveEvent[],
+  hotScenes: HotScene[],
+): LiveNowCard[] {
+  const cards = joinLiveNow(liveEvents, hotScenes);
+  if (cards.length < LIVE_CARDS) {
+    const plaza = plazaCard(hotScenes);
+    if (!cards.some((card) => card.id === plaza.id)) cards.push(plaza);
+  }
+  return cards.slice(0, LIVE_CARDS);
+}
+
+/** The cards as the agent markdown's event rail (heroEventCards). */
+function withLiveCards(content: HomeContent, cards: LiveNowCard[]): HomeContent {
+  const items = cards.map((card) => ({
+    id: card.id,
+    category: "LIVE",
+    title: card.title,
+    when: "Live now",
+    live: true,
+    image: card.image || null,
+  }));
+  return {
+    ...content,
+    rails: content.rails.map((rail) =>
+      rail.kind === "events" ? { ...rail, items } : rail,
+    ),
+  };
+}
+
+// The home document waits for this read. 2 s is the deadline the home events read had before it
+// became the Live Now join (events, hot scenes, deployers, profiles); it covers the whole chain. A
+// node that is slower renders the page with what was read by then, and the short failure hold of
+// `homeLiveMemo` asks again.
+const HOME_LIVE_TIMEOUT_MS = 2_000;
+
+async function loadHomeLiveNow(opts: GetOptions): Promise<HomeLiveData> {
+  const read: Pick<HomeLiveData, "cards" | "profiles" | "unreadable"> = {
+    cards: [],
+    profiles: {},
+    unreadable: ["events"],
+  };
+  await withDeadline(
+    async (signal) => {
+      const bounded = { ...opts, signal };
+      const { events, scenes } = await readLiveNow(bounded, { world: false });
+      signal.throwIfAborted();
+      const built = buildHomeLiveCards(events ?? [], scenes ?? []);
+      read.cards = built;
+      // The creators are still to read: a deadline from here on leaves the cards and names them unread.
+      read.unreadable =
+        events === null && scenes === null ? ["events"] : ["profiles"];
+      const cards =
+        (await withDeployers(built, bounded).catch(() => null)) ?? built;
+      signal.throwIfAborted();
+      read.cards = cards;
+      const creators = cards.flatMap((card) =>
+        card.creatorAddress ? [card.creatorAddress] : [],
+      );
+      const profiles =
+        (await loadProfiles([...creators, ...VIBE_ADDRESSES], bounded).catch(
+          () => null,
+        )) ?? {};
+      signal.throwIfAborted();
+      read.profiles = profiles;
+      read.unreadable = events === null && scenes === null ? ["events"] : [];
+    },
+    HOME_LIVE_TIMEOUT_MS,
+    opts.signal,
+  ).catch(() => {});
+  const { cards, profiles, unreadable } = read;
+  return {
+    content: withLiveCards(loadHomeContent(), cards),
+    live: cards.length > 0,
+    unreadable,
+    cards,
+    profiles,
+  };
+}
+
+const homeLiveMemo = ttlMemo({
   ttlMs: HOME_TTL_MS,
+  ttlMsForValue: (data: HomeLiveData) =>
+    data.unreadable.length === 0 ? HOME_TTL_MS : HOME_EVENTS_FAILURE_TTL_MS,
   keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
-  keep: (d: HomeData) => d.unreadable.length === 0,
-  load: (opts) => loadHomeLive(opts.fetchImpl || opts.base ? opts : {}),
+  // An expired value serves for one more period while one reload runs behind it, so a visitor waits
+  // for the node only when the memo is cold.
+  staleMs: HOME_TTL_MS,
+  load: (opts: GetOptions) => loadHomeLiveNow(opts),
 });
 
-// The rails are visitor-independent; a fully readable result serves a minute of requests.
-export function loadHome(opts: GetOptions = {}): Promise<HomeData> {
-  return homeMemo(opts);
-}
-
-async function loadHomeLive(opts: GetOptions): Promise<HomeData> {
-  let content = loadHomeContent();
-
-  const [events, hotspots, rituals] = await Promise.all([
-    loadRailEvents(opts),
-    loadHotspots(opts),
-    loadRituals(opts),
-  ]);
-
-  const unreadable: string[] = [];
-  const live = (events?.length ?? 0) > 0;
-  if (events === null) unreadable.push("events");
-  else if (live) content = withLiveEvents(content, events);
-
-  if (hotspots === null) unreadable.push("hotspots");
-  else content = withHotspots(content, hotspots);
-
-  if (rituals === null) unreadable.push("rituals");
-  else content = withRituals(content, rituals);
-
-  if (unreadable.length > 0) {
-    content = {
-      ...content,
-      rails: content.rails.filter((rail) => !unreadable.includes(rail.kind)),
-    };
-  }
-
-  return { content, live, unreadable };
-}
-
-async function loadRailEvents(opts: GetOptions): Promise<Event[] | null> {
-  const results = await Promise.all(
-    EVENT_LISTS.map((list) =>
-      fetchEvents({ list, limit: LIVE_RAIL_LIMIT }, opts)
-        .then((r) => r.data)
-        .catch(() => null),
-    ),
-  );
-  if (results.every((events) => events === null)) return null;
-  return results.find((events) => events !== null && events.length > 0) ?? [];
-}
-
-async function loadHotspots(opts: GetOptions): Promise<HotspotRailItem[] | null> {
-  const places = await fetchMostActivePlaces(
-    { limit: HOTSPOT_RAIL_LIMIT },
-    opts,
-  ).catch(() => null);
-  return places === null ? null : places.map(placeToHotspotItem);
-}
-
-async function loadRituals(opts: GetOptions): Promise<RitualRailItem[] | null> {
-  const events = await fetchEvents({ limit: RITUAL_FETCH_LIMIT }, opts)
-    .then((r) => r.data)
-    .catch(() => null);
-  if (events === null) return null;
-  if (!events.length) return [];
-
-  const picked = events.filter((e) => e.recurrent_frequency === "WEEKLY");
-  if (picked.length < 2) {
-    for (const e of events) {
-      if (picked.length >= RITUAL_RAIL_LIMIT) break;
-      if (e.recurrent && !picked.some((p) => p.id === e.id)) picked.push(e);
-    }
-  }
-  if (picked.length < 2) {
-    for (const e of events) {
-      if (picked.length >= RITUAL_RAIL_LIMIT) break;
-      if (!picked.some((p) => p.id === e.id)) picked.push(e);
-    }
-  }
-
-  return sortByWeekday(picked)
-    .slice(0, RITUAL_RAIL_LIMIT)
-    .map(eventToRitualItem);
-}
-
-function weekdayKey(e: Event): number {
-  const day = eventWeekday(e);
-  return day == null ? 7 : (day + 6) % 7;
-}
-
-function sortByWeekday(events: Event[]): Event[] {
-  return [...events].sort((a, b) => weekdayKey(a) - weekdayKey(b));
+/** Visitor-independent: one read serves a minute of requests, five seconds after an unreadable one. */
+export function loadHomeLive(opts: GetOptions = {}): Promise<HomeLiveData> {
+  return homeLiveMemo(opts);
 }

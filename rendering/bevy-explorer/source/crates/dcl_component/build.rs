@@ -86,6 +86,9 @@ fn gen_sdk_components() -> Result<()> {
         "trigger_area_result",
         "gltf_node_modifiers",
         "skybox_time",
+        "skybox",
+        "sun",
+        "environment_fog",
         "avatar_movement_info",
         "avatar_movement",
         "avatar_locomotion_settings",
@@ -99,9 +102,39 @@ fn gen_sdk_components() -> Result<()> {
         "ui_input_binding",
         "avatar_nametag",
         "explorer_item_purchase_result",
+        "map_pin",
     ];
 
     let proto_root = protocol_proto_root();
+    // A protocol update must not silently disappear at the Explorer generation boundary.
+    let component_dir = proto_root.join("decentraland/sdk/components");
+    for entry in std::fs::read_dir(&component_dir)? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|ext| ext != "proto") {
+            continue;
+        }
+        let name = path.file_stem().unwrap().to_str().unwrap();
+        let source = std::fs::read_to_string(&path)?;
+        if source.contains("option (common.ecs_component_id)") {
+            assert!(components.contains(&name), "active protocol component {name} has no Explorer binding; add its binding and runtime consumer together");
+        }
+    }
+    let readers = include_str!("src/proto_components.rs");
+    for component in components {
+        let name = component
+            .split('_')
+            .map(|part| {
+                let mut chars = part.chars();
+                chars.next().unwrap().to_uppercase().to_string() + chars.as_str()
+            })
+            .collect::<String>();
+        assert!(
+            readers.contains(&format!(
+                "impl DclProtoComponent for sdk::components::Pb{name} {{}}"
+            )),
+            "component {component} has no CRDT wire reader"
+        );
+    }
     let shared = |path: &str| proto_root.join(path);
 
     let mut sources = components
@@ -136,6 +169,8 @@ fn gen_sdk_components() -> Result<()> {
         "Color3",
         "Color4",
         "ColorRange",
+        "ColorKey",
+        "ColorGradient",
         "Quaternion",
         "TextureUnion",
         "TextureUnion.tex",
@@ -170,12 +205,18 @@ fn gen_sdk_components() -> Result<()> {
         "Vector3",
         "PBAvatarBase",
         "PBAvatarEquippedData",
+        "PBAvatarEquippedData.EquippedWearable",
         "PBPointerEvents.Entry",
         "PBPointerEvents.Info",
     ];
     for component in ts_components {
         config.type_attribute(component, "#[derive(ts_rs::TS)]");
     }
+    // The engine writes this list and ignores it on input, so a setAvatar may leave it out.
+    config.field_attribute(
+        "PBAvatarEquippedData.wearables",
+        "#[serde(default)]\n#[ts(optional = nullable)]",
+    );
 
     let hash_components = [
         "PBMaterial",

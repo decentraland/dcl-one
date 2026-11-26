@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "core::GltfContainer",
+      "data": {
+        "0": {
+          "json": {
+            "src": "{assetPath}/spikes.glb"
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Script",
+      "data": {
+        "0": {
+          "json": {
+            "value": [
+              {
+                "path": "{assetPath}/Spikes.ts",
+                "priority": 0,
+                "layout": "{\"params\":{\"damagePoints\":{\"type\":\"number\",\"value\":15,\"optional\":true,\"tooltip\":\"How much damage each tick deals.\"},\"radius\":{\"type\":\"number\",\"value\":5,\"optional\":true,\"tooltip\":\"How far from the tile the damage reaches.\"},\"interval\":{\"type\":\"number\",\"value\":2,\"optional\":true,\"tooltip\":\"Seconds between damage ticks.\"},\"damageTarget\":{\"type\":\"enum\",\"value\":\"player\",\"options\":[\"all\",\"player\",\"non_player\"],\"optional\":true,\"tooltip\":\"Who takes the damage.\"},\"sound\":{\"type\":\"string\",\"value\":\"spikes.mp3\",\"optional\":true,\"tooltip\":\"Audio file in this item's folder played on each tick (e.g. spikes.mp3). Empty for none.\"}},\"actions\":[{\"methodName\":\"damage\",\"description\":\"Deals one tick of damage in the area right now.\",\"params\":{}}],\"events\":[]}"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Actions",
+      "data": {
+        "0": {
+          "json": {
+            "id": "{self}",
+            "value": [
+              {
+                "name": "Damage",
+                "type": "call_script_method",
+                "jsonPayload": "{\"scriptPath\":\"{assetPath}/Spikes.ts\",\"methodName\":\"damage\",\"params\":{}}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

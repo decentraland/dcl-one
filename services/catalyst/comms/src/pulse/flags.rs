@@ -64,7 +64,7 @@ impl FlagsPoller {
             }
         };
         let (tx, rx) = tokio::sync::watch::channel(initial.clone());
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             loop {
                 tokio::select! { biased; _ = tx.closed() => break, _ = tokio::time::sleep(POLL_INTERVAL) => {} }
                 tokio::select! {
@@ -562,7 +562,7 @@ mod tests {
         );
     }
 
-    type StubResponse = std::sync::Arc<std::sync::Mutex<(u16, Vec<u8>)>>;
+    type StubResponse = std::sync::Arc<parking_lot::Mutex<(u16, Vec<u8>)>>;
 
     async fn http(body: Vec<u8>) -> (String, StubResponse, tokio::task::JoinHandle<()>) {
         use axum::{
@@ -571,7 +571,7 @@ mod tests {
             http::{HeaderMap, StatusCode},
             routing::get,
         };
-        let state = std::sync::Arc::new(std::sync::Mutex::new((200u16, body)));
+        let state = std::sync::Arc::new(parking_lot::Mutex::new((200u16, body)));
         let app = Router::new()
             .route(
                 "/pulse.json",
@@ -579,7 +579,7 @@ mod tests {
                     |State(state): State<StubResponse>, headers: HeaderMap| async move {
                         assert_eq!(headers.get("x-debug").unwrap(), "false");
                         assert!(headers.get("referer").is_none());
-                        let (status, body) = state.lock().unwrap().clone();
+                        let (status, body) = state.lock().clone();
                         (StatusCode::from_u16(status).unwrap(), body)
                     },
                 ),
@@ -619,11 +619,11 @@ mod tests {
             (200, br#"{"flags":{"x":true},"variants":{"x":{"enabled":"true"}}}"#.to_vec()),
             (200, br#"{"flags":{"x":true},"variants":{"x":{"enabled":true,"name":"configuration","payload":{"type":"json","value":{}}}}}"#.to_vec()),
         ] {
-            *state.lock().unwrap() = (status, body);
+            *state.lock() = (status, body);
             assert!(refresh.fetch().await.is_err());
         }
         assert!(rx.borrow().enabled);
-        *state.lock().unwrap() = (200, b"{}".to_vec());
+        *state.lock() = (200, b"{}".to_vec());
         let mut removed = false;
         for _ in 0..5 {
             tokio::time::pause();

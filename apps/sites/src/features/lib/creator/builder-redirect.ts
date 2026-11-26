@@ -1,6 +1,7 @@
+import type { RouterContextProvider } from "react-router";
 import { redirect } from "react-router";
 
-import { ensureSid, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 export const REDIRECT_EVENT = "creator_builder_redirect";
@@ -13,36 +14,37 @@ export type RedirectRule = {
   from: string;
   to: string;
   carry: readonly string[];
-  param?: { name: string; queryKey?: string };
+  param?: { name: string };
 };
 
 export const REDIRECTS = {
   "item-editor": {
     from: "item-editor",
-    to: "/create/wearables/item-editor",
-    carry: ["collection", "item", "step", "variant"],
+    to: "/create/collections/editor",
+    carry: ["collection", "item", "reviewing"],
   },
   "publish-collection": {
     from: "publish-collection",
-    to: "/create/wearables/publish",
-    carry: ["collection", "step", "variant"],
+    to: "/create/collections/:collection",
+    carry: [],
+    param: { name: "collection" },
   },
   curation: {
     from: "curation",
-    to: "/create/curate",
-    carry: ["step", "id", "decision", "status", "type", "assignee", "committee", "variant"],
+    to: "/create/curation",
+    carry: ["status", "type", "assignee"],
   },
   "collection-detail": {
     from: "collection-detail",
-    to: "/create/wearables/collections/:id",
-    carry: ["address", "tab", "variant"],
+    to: "/create/collections/:id",
+    carry: [],
     param: { name: "id" },
   },
+  // The editor needs the item's collection, which an item link does not carry.
   "item-detail": {
     from: "item-detail",
-    to: "/create/wearables/item-editor",
-    carry: ["variant"],
-    param: { name: "id", queryKey: "item" },
+    to: "/create/collections",
+    carry: [],
   },
 } as const satisfies Record<string, RedirectRule>;
 
@@ -56,19 +58,14 @@ export function buildDestination(
   const out = new URLSearchParams();
 
   for (const key of rule.carry) {
-    const v = url.searchParams.get(key);
-    if (v != null && v !== "") out.set(key, v);
+    for (const v of url.searchParams.getAll(key)) if (v !== "") out.append(key, v);
   }
 
   let to = rule.to;
   if (rule.param) {
-    const raw = params[rule.param.name];
-    if (raw != null && raw !== "") {
-      if (rule.param.queryKey) out.set(rule.param.queryKey, raw);
-      else to = to.replace(`:${rule.param.name}`, encodeURIComponent(raw));
-    } else if (!rule.param.queryKey) {
-      to = "/create/wearables";
-    }
+    // The legacy page takes it in the path or, like publish-collection, in the query.
+    const raw = params[rule.param.name] ?? url.searchParams.get(rule.param.name);
+    to = raw != null && raw !== "" ? to.replace(`:${rule.param.name}`, encodeURIComponent(raw)) : "/create/collections";
   }
 
   const qs = out.toString();
@@ -78,13 +75,15 @@ export function buildDestination(
 export function builderRedirect(
   key: RedirectKey,
   request: Request,
+  context: Readonly<RouterContextProvider>,
   params: Record<string, string | undefined> = {},
 ): Response {
   const rule = REDIRECTS[key];
   const url = new URL(request.url);
   const to = buildDestination(rule, url, params);
 
-  const { sid, created } = ensureSid(request);
+  const session = requestSession(request, context);
+  const { sid } = session;
 
   track(
     REDIRECT_EVENT,
@@ -93,12 +92,13 @@ export function builderRedirect(
       to,
       fromPath: url.pathname + url.search,
     },
-    { sid, story: REDIRECT_STORY },
+    { sid, story: REDIRECT_STORY, requestUserAgent: request.headers.get("user-agent") },
   );
 
   const headers = new Headers();
   headers.set("Location", to);
-  if (created) headers.append("Set-Cookie", serializeSidCookie(sid));
+  // Behind the root middleware the cookie is set once on the response; on its own this sets it.
+  for (const [name, value] of ownedSessionCookies(request, session) ?? []) headers.append(name, value);
 
   return redirect(to, { status: PERMANENT, headers });
 }

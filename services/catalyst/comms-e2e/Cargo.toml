@@ -1,0 +1,48 @@
+[package]
+name = "catalyst-comms-e2e"
+version.workspace = true
+edition = "2024"
+description = "End-to-end scenarios against a running comms stack: protocol bots, a fault link and the headless explorer"
+publish = false
+
+[[bin]]
+name = "comms-e2e"
+path = "src/main.rs"
+
+[dependencies]
+catalyst-comms = { path = "../comms", features = ["test-support"] }
+dcl-auth.workspace = true
+dcl-livekit-token.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+futures.workspace = true
+prost.workspace = true
+url = { workspace = true, features = ["serde"] }
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+rusty_enet.workspace = true
+# `wss://` to an API served over https; `ring` is the process TLS provider it installs
+rustls = { workspace = true, features = ["ring"] }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+# the expiry of a short mandate, in the form the servers parse
+chrono.workspace = true
+base64.workspace = true
+# the key of a headless explorer's seeded guest wallet: the same generator and curve its wallet uses
+k256.workspace = true
+rand_chacha = "0.3.1"
+
+[dev-dependencies]
+axum.workspace = true
+# a visiting bot's profile through the content server's own validation
+catalyst-content = { path = "../content" }
+async-trait.workspace = true
+rcgen = "0.14.10"
+
+[lints]
+workspace = true

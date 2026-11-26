@@ -20,9 +20,9 @@ describe('native HUD snapshot presentation', () => {
       vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
       params(base)
       vi.stubGlobal('fetch', async () => Response.json({ avatars: [{ avatar: { snapshots: { body: image } } }] }))
-      const { Avatar } = await import('../design/Avatar')
-      const { fetchStoredProfile } = await import('../features/login/useStoredProfile')
-      const { ProfilePassport } = await import('../features/profile/ProfilePassport')
+      const { Avatar } = await import('@hud/design/Avatar')
+      const { fetchStoredProfile } = await import('@explorer-core/features/login/storedProfile')
+      const { ProfilePassport } = await import('@hud/features/profile/ProfilePassport')
       const expected = base + '/avatar%2Fface?q=1'
       render(
         <>
@@ -34,7 +34,9 @@ describe('native HUD snapshot presentation', () => {
       expect(screen.getAllByRole('img').some(img => img.getAttribute('src') === expected && img.getAttribute('alt') !== 'Friend')).toBe(true)
       expect((await fetchStoredProfile('default1'))?.body).toBe(expected)
       expect(profile.bodyImage).toBe(image)
-    }
+    },
+    // Each case loads the HUD modules again; on a busy machine that passes the default limit.
+    20_000
   )
 
   it.each([
@@ -52,7 +54,7 @@ describe('native HUD snapshot presentation', () => {
       history.replaceState(null, '', '?' + query)
       const fetcher = vi.fn(async () => Response.json({ ok: true, data: [] }))
       vi.stubGlobal('fetch', fetcher)
-      const { fetchEvents } = await import('../features/events/eventsApi')
+      const { fetchEvents } = await import('@explorer-core/features/events/eventsApi')
       await fetchEvents('upcoming')
       expect(fetcher).toHaveBeenCalledWith(events + '/api/events?list=upcoming', { signal: undefined })
     }
@@ -64,7 +66,7 @@ describe('native HUD snapshot presentation', () => {
     history.replaceState(null, '', '?native=1&baseDomain=decentraland.zone')
     const fetcher = vi.fn(async () => Response.json({ok:true,data:[]}))
     vi.stubGlobal('fetch', fetcher)
-    const { fetchEvents } = await import('../features/events/eventsApi')
+    const { fetchEvents } = await import('@explorer-core/features/events/eventsApi')
     await fetchEvents('live')
     expect(fetcher).toHaveBeenCalledWith('https://events.decentraland.zone/api/events?list=live', {signal:undefined})
   })
@@ -73,7 +75,7 @@ describe('native HUD snapshot presentation', () => {
     const base = 'https://gateway.example.org/prefix/profile-images'
     params(base)
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { NotificationsPanel } = await import('../features/notifications/NotificationsPanel')
+    const { NotificationsPanel } = await import('@hud/features/notifications/NotificationsPanel')
     const notification = {
       id: '1', type: 'social_service_friendship_request', read: false, timestamp: '2026-01-01T00:00:00Z',
       metadata: { sender: { name: 'Friend', address: '0x1234', profileImageUrl: image } }
@@ -89,7 +91,7 @@ describe('native HUD snapshot presentation', () => {
     const base = 'https://gateway.example.org/profile-images'
     params(base)
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { NotificationsPanel } = await import('../features/notifications/NotificationsPanel')
+    const { NotificationsPanel } = await import('@hud/features/notifications/NotificationsPanel')
     const sold = { id: 'sale', type: 'item_sold', read: true, timestamp: '2026-01-01T00:00:00Z', metadata: { title: 'Item sold', image } }
     const other = { ...sold, id: 'other', metadata: { thumbnailUrl: 'https://cdn.example.org/promo.png' } }
     const { container } = render(<NotificationsPanel notifications={{
@@ -102,7 +104,7 @@ describe('native HUD snapshot presentation', () => {
 
   it('ignores a browser-supplied image route', async () => {
     params('https://gateway.example.org/profile-images')
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     render(<Avatar name="Friend" src={image} />)
     expect(screen.getByRole('img')).toHaveAttribute('src', image)
   })
@@ -111,7 +113,7 @@ describe('native HUD snapshot presentation', () => {
     params('https://gateway.example.org/profile-images')
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
     vi.stubGlobal('__NATIVE_HUD__', false)
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     render(<Avatar name="Friend" src={image} />)
     expect(screen.getByRole('img')).toHaveAttribute('src', image)
   })
@@ -119,7 +121,7 @@ describe('native HUD snapshot presentation', () => {
   it('retains external or ambiguous image URLs in CEF', async () => {
     params('https://gateway.example.org/profile-images')
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { Avatar } = await import('../design/Avatar')
+    const { Avatar } = await import('@hud/design/Avatar')
     const { rerender } = render(<Avatar name="Friend" src={image} />)
     for (const raw of [
       'https://cdn.example.org/a',

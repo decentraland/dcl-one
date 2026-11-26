@@ -4,34 +4,11 @@
          app/src/styles/cta.styles.ts (creditsCtaCss), app/src/components/TopNav/TopNav.styles.ts (the site nav's
          wash and outlined SIGN IN), app/src/styles/index.css (--nav-h) */
 
-/* Inter v20 as decentraland.org's Shop loads it (app/index.html: Google Fonts, Inter 400/600/700, so 500 renders as 400
-   there too): Google's variable files, one per script, declared once per weight in Google's order. A single face spanning
-   the weight range, or the older static Inter, sets the text a fraction of a pixel off the Shop's. Inter is OFL-1.1. */
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic-ext.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek-ext.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+1F00-1FFF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-vietnamese.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin-ext.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic-ext.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek-ext.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+1F00-1FFF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-vietnamese.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin-ext.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic-ext.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-cyrillic.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek-ext.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+1F00-1FFF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-greek.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-vietnamese.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin-ext.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
-@font-face { font-family: "Inter"; src: url("/fonts/Inter-v20-latin.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+/* The Inter faces are global: atoms/inter.css. */
 
 /* `[data-shop-tokens]`: a Shop surface portaled outside the chrome (Buy now's dialog) keeps the same tokens. */
 .shop-chrome,
-.site-layout:has(.shop-chrome),
+[data-site-layout]:has(.shop-chrome),
 [data-shop-tokens] {
   --shop-text: #161518;
   --shop-muted: #716b7c;
@@ -77,7 +54,7 @@
   --shop-loading-wash-faint: rgba(143, 66, 219, 0.3);
   --shop-field: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
   --shop-gutter: 54px;
-  --shop-nav-h: 92px;
+  --shop-nav-h: var(--native-site-header-h, 92px);
   --shop-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   --ui-canvas: #32134c;
@@ -101,40 +78,39 @@
   --font-sans: var(--shop-sans);
   --brand: #ff2d55;
   --on-brand: #fcfcfc;
-  --site-header-h: var(--shop-nav-h);
+  --site-header-h: var(--native-site-header-h, var(--shop-nav-h));
   --site-nav-bg: transparent;
   --site-nav-line: transparent;
 }
 
 @media (max-width: 991px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome),
+  [data-site-layout]:has(.shop-chrome),
   [data-shop-tokens] {
-    --shop-nav-h: 64px;
+    --shop-nav-h: var(--native-site-header-h, 64px);
   }
 }
 @media (max-width: 768px) {
   .shop-chrome,
-  .site-layout:has(.shop-chrome),
+  [data-site-layout]:has(.shop-chrome),
   [data-shop-tokens] {
     --shop-gutter: 16px;
   }
 }
 
-.site-layout:has(.shop-chrome) {
+[data-site-layout]:has(.shop-chrome) {
   position: relative;
   isolation: isolate;
   background: var(--shop-field) fixed;
   background-color: #32134c;
   color: var(--shop-soft-white);
   font-family: var(--shop-sans);
-  -webkit-font-smoothing: antialiased;
 }
 @keyframes shop-symbol-drift {
   from { background-position: 0 0; }
   to { background-position: -610px -610px; }
 }
-.site-layout:has(.shop-chrome)::before {
+[data-site-layout]:has(.shop-chrome)::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -148,24 +124,24 @@
   mask-image: radial-gradient(75% 70% at 50% 45%, transparent 25%, #000 85%);
 }
 @media (prefers-reduced-motion: reduce) {
-  .site-layout:has(.shop-chrome)::before { animation: none; }
+  [data-site-layout]:has(.shop-chrome)::before { animation: none; }
 }
 
 /* The site nav is a dark wash over the page field that deepens once the page scrolls, painted on ::before as
    upstream's is, with ui2's outlined SIGN IN. */
-.site-layout:has(.shop-chrome) .site-layout__navigation {
+[data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] {
   --site-nav-bg: rgba(22, 21, 24, 0.4);
   --site-nav-line: transparent;
   --site-nav-pad: 54px;
   --font-sans: Inter, system-ui, sans-serif;
   font-family: var(--font-sans);
 }
-body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.8); }
-.site-layout:has(.shop-chrome) .dtb {
+body[data-shop-scrolled] [data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] { --site-nav-bg: rgba(22, 21, 24, 0.8); }
+[data-site-layout]:has(.shop-chrome) .dtb {
   background: transparent;
   border-bottom: 0;
 }
-.site-layout:has(.shop-chrome) .dtb::before {
+[data-site-layout]:has(.shop-chrome) .dtb::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -176,8 +152,8 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
   transition: background 0.25s ease;
   pointer-events: none;
 }
-.site-layout:has(.shop-chrome) .dtb__menu.is-open { background: rgb(22, 21, 24); }
-.site-layout:has(.shop-chrome) .dtb__signin {
+[data-site-layout]:has(.shop-chrome) .dtb__menu.is-open { background: rgb(22, 21, 24); }
+[data-site-layout]:has(.shop-chrome) .dtb__signin {
   padding: 8px 22px;
   border-color: #fcfcfc;
   color: #fcfcfc;
@@ -185,14 +161,14 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
   letter-spacing: 0.46px;
   text-transform: uppercase;
 }
-.site-layout:has(.shop-chrome) .dtb__signin:hover { background: rgba(255, 255, 255, 0.12); border-color: #fcfcfc; }
+[data-site-layout]:has(.shop-chrome) .dtb__signin:hover { background: rgba(255, 255, 255, 0.12); border-color: #fcfcfc; }
 @media (max-width: 991px) {
-  .site-layout:has(.shop-chrome) .dtb { gap: 24px; padding: 12px 16px; }
-  .site-layout:has(.shop-chrome) .dtb__brand img { width: 40px; height: 40px; }
-  .site-layout:has(.shop-chrome) .dtb__burger { background: rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fcfcfc; }
+  [data-site-layout]:has(.shop-chrome) .dtb { gap: 24px; padding: 12px 16px; }
+  [data-site-layout]:has(.shop-chrome) .dtb__brand img { width: 40px; height: 40px; }
+  [data-site-layout]:has(.shop-chrome) .dtb__burger { background: rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fcfcfc; }
 }
 @media (max-width: 768px) {
-  .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.75); }
+  [data-site-layout]:has(.shop-chrome) [data-site-layout-navigation] { --site-nav-bg: rgba(22, 21, 24, 0.75); }
 }
 
 .shop-chrome *,
@@ -202,6 +178,7 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
 .shop-chrome {
   color: var(--shop-soft-white);
   font-family: var(--shop-sans);
+  -webkit-font-smoothing: antialiased;
   background: transparent;
 }
 .shop-chrome > .cs__tools {

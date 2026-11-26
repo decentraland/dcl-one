@@ -3,6 +3,9 @@ name = "dcl_wasm"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [features]
@@ -30,3 +33,11 @@ js-sys = { workspace = true }
 web-sys = { workspace = true }
 
 log = "0.4"
+
+# `inner` (wasm only) uses the web worker's page functions, which need a web backend; declared
+# here, as dcl_scene_wasm does, so the crate's own wasm tests build without the engine's crates
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { workspace = true, features = ["web-worker", "webgpu"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }

@@ -7,12 +7,12 @@ import userEvent from '@testing-library/user-event'
 // the bridge scene's tree has it: this file is out of `tsc` (tsconfig.json), which runs before that install
 import { Authenticator, type AuthChain } from '../../bridge-scene/node_modules/@dcl/crypto'
 import { createUnsafeIdentity } from '../../bridge-scene/node_modules/@dcl/crypto/dist/crypto'
-import { PopupHost } from '../design'
-import { useEditorHost } from '../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../features/editorHost/host/host'
-import { localSigner, signDeployment, signFetch } from '../features/editorHost/host/sign'
-import type { Signer } from '../features/editorHost/host/signer'
-import { fakeSession } from './harness'
+import { PopupHost } from '@hud/design'
+import { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import type { DclEditorHostV1 } from '@explorer-core/features/editorHost/host/host'
+import { localSigner, signDeployment, signFetch } from '@explorer-core/features/editorHost/host/sign'
+import type { Signer } from '@explorer-core/features/editorHost/host/signer'
+import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {
   __dclEditorHost?: DclEditorHostV1
@@ -26,7 +26,7 @@ const host = (): DclEditorHostV1 => w.__dclEditorHost!
 const owner = createUnsafeIdentity()
 // The entry the auth site leaves in localStorage, and the profile the engine reports for it.
 async function signIn(): Promise<void> {
-  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 60, async (message) =>
+  const identity = await Authenticator.initializeAuthChain(owner.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
     Authenticator.createSignature(owner, message)
   )
   localStorage.setItem(`single-sign-on-${owner.address.toLowerCase()}`, JSON.stringify(identity))
@@ -57,7 +57,7 @@ describe('editor host signing', () => {
     // a stored login for another wallet than the one in-world signs nothing
     const other = createUnsafeIdentity()
     const otherKey = `single-sign-on-${other.address.toLowerCase()}`
-    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 60, async (message) =>
+    const otherIdentity = await Authenticator.initializeAuthChain(other.address, createUnsafeIdentity(), 7 * 24 * 60, async (message) =>
       Authenticator.createSignature(other, message)
     )
     localStorage.setItem(otherKey, JSON.stringify(otherIdentity))
@@ -67,21 +67,23 @@ describe('editor host signing', () => {
     expect(fetched).not.toHaveBeenCalled()
 
     await signIn()
-    await host().signedFetch('http://localhost:8787/projects/p1/manifest?x=1', {
+    await host().signedFetch('http://localhost:8787/projects/p1/manifest?X=1', {
       method: 'put',
       body: '{}',
       headers: { 'content-type': 'application/json', 'X-Identity-Metadata': '{"signer":"decentraland-kernel-scene"}', 'x-forwarded-for': '1.2.3.4' }
     })
     const [url, init] = fetched.mock.lastCall!
     const headers = init!.headers as Record<string, string>
-    expect(url).toBe('http://localhost:8787/projects/p1/manifest?x=1')
+    expect(url).toBe('http://localhost:8787/projects/p1/manifest?X=1')
     expect(headers['content-type']).toBe('application/json')
     expect(headers['X-Identity-Metadata']).toBeUndefined()
     expect(headers['x-forwarded-for'], 'only the headers the host allows').toBeUndefined()
     expect(JSON.parse(headers['x-identity-metadata'])).toEqual({ intent: 'dcl:editor:projects', signer: 'dcl:editor', origin: location.origin })
     // what a signed-fetch verifier rebuilds and checks (ADR-44)
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
+    // the project service verifies only the folded payload; its fixed metadata folds to itself
+    expect(payload).toBe(payload.toLowerCase())
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
     fetched.mockRestore()
   })
@@ -134,7 +136,7 @@ describe('editor host signing', () => {
       ['https://multiplayer-server.decentraland.org/rooms'],
       ['https://storage.decentraland.org/players', { metadata: { signer: 'dcl:editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { intent: 'dcl:editor:projects' } }],
-      // the payload is signed lowercased, so a case change still signs as the editor
+      // a legacy verifier folds the metadata, so a case change would still sign as the editor
       ['https://storage.decentraland.org/players', { metadata: { signer: 'DCL:Editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { Intent: 'dcl:editor:projects' } }]
     ]
@@ -152,10 +154,10 @@ describe('editor host signing', () => {
       expect(fetched.mock.lastCall![0], url).toBe(url)
     }
 
-    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'bafkreiscene', realm: { hostname: 'boedo.dcl.eth' } }
+    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'BafkreiScene', realm: { hostname: 'Boedo.dcl.eth' } }
     const body = new FormData()
     const abort = new AbortController()
-    await host().signedFetch('https://storage.decentraland.org/players/0x1/values?key=a', {
+    await host().signedFetch('https://storage.decentraland.org/players/0xAB/values?key=a', {
       method: 'delete',
       body,
       metadata,
@@ -171,8 +173,10 @@ describe('editor host signing', () => {
     expect(headers['x-identity-metadata']).toBe(JSON.stringify(metadata))
     // the path without the query, as a scene's signed fetch signs it
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `delete:/players/0x1/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    // crypto-middleware 6.x: method and path folded, the mixed-case metadata verbatim
+    const payload = `delete:/players/0xab/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
+    expect((await Authenticator.validateSignature(payload.toLowerCase(), chain, null)).ok).toBe(false)
 
     // the project service keeps its own metadata
     await host().signedFetch('http://localhost:8787/projects', { metadata })

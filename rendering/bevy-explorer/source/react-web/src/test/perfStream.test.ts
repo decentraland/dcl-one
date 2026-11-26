@@ -1,4 +1,4 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 // DOMAIN: the page's half of the performance harness's browser stream — the offset protocol
 // the engine's CSV and log bytes travel by (deploy/web/engine/perf_stream.js; the engine half is
 // crates/perf_output, the server the harness's browser leg). A fake server stands in for it.

@@ -13,8 +13,7 @@ use catalyst::comms::gatekeeper::admission::cluster::fence::{
 use serde_json::json;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 #[path = "support/gate.rs"]
 mod gate;
 
@@ -28,6 +27,295 @@ mod snapshot;
 const AUDIENCE: &str = "comms-v4-assignment-fence-test";
 const WALLET: &str = "0x00000000000000000000000000000000000000f1";
 const SESSION: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+#[tokio::test]
+async fn selected_identity_domains_survive_production_assignment_json_postgres_roundtrip() {
+    use catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp;
+    use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+    use prost::Message;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    seed_realm(&fixture.pool, WALLET, SESSION, 7, 1, 11, None).await;
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/pulse_selected_recovery.json")).unwrap();
+    for vector in vectors["identity_boundary_vectors"].as_array().unwrap() {
+        let bytes = hex::decode(vector["wire_hex"].as_str().unwrap()).unwrap();
+        let mut snapshot = PeerClusterSnapshot::decode(bytes.as_slice()).unwrap();
+        snapshot.wallet = WALLET.into();
+        snapshot.session = SESSION.into();
+        snapshot.cluster_id = "selected".into();
+        let stamp = PulseAdmissionStamp::from_snapshot(&snapshot, 0);
+        if !vector["expected_selection_evidence_valid"]
+            .as_bool()
+            .unwrap()
+        {
+            assert!(stamp.is_none());
+            continue;
+        }
+        let mut document = assignment(&fixture.pool, "island-selected", None).await;
+        let safety = document.pulse_admission.as_ref().unwrap().clone();
+        let mut stamp = stamp.unwrap();
+        stamp.safety_generation = safety.safety_generation;
+        stamp.safety_token_floor = safety.safety_token_floor;
+        document.pulse_admission = Some(stamp.clone());
+        let fence = fixture.fence().await;
+        fence
+            .lock_realm(WALLET, SESSION)
+            .await
+            .unwrap()
+            .commit(document)
+            .await
+            .unwrap();
+        let restored = fence
+            .current_realm_assignment(WALLET, SESSION)
+            .await
+            .unwrap()
+            .pulse_admission
+            .unwrap();
+        assert_eq!(restored, stamp, "{}", vector["id"]);
+        assert_eq!(
+            restored.selected_identity.to_string(),
+            vector["identity_decimal"].as_str().unwrap()
+        );
+        assert!(restored.matches_snapshot(&snapshot));
+        let (_, _, json) = row_state(&fixture.pool).await;
+        assert_eq!(
+            json.unwrap()["pulseAdmission"]["selectedIdentity"].as_u64(),
+            Some(restored.selected_identity)
+        );
+    }
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only() {
+    use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let fence = fixture.fence().await;
+    let mut selected = PeerClusterSnapshot {
+        wallet: WALLET.into(),
+        session: SESSION.into(),
+        cluster_id: "selected".into(),
+        realm: "main".into(),
+        source_incarnation: "selected-lifecycle".into(),
+        assignment_version: 1,
+        pass: 1,
+        selected_origin: 1,
+        selected_identity: Some(1),
+        assignment_state: 1,
+        token_not_before: Some(0),
+        pending_takeovers: vec![],
+    };
+    let lease = fence.lock_selected(&selected).await.unwrap();
+    assert!(!lease.read_only());
+    let first = lease.token_fence();
+    let mut document = assignment(&fixture.pool, "island-selected", None).await;
+    let safety = document.pulse_admission.as_ref().unwrap().clone();
+    let mut stamp =
+        catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(
+            &selected, 0,
+        )
+        .unwrap();
+    stamp.safety_generation = safety.safety_generation;
+    stamp.safety_token_floor = safety.safety_token_floor;
+    document.pulse_admission = Some(stamp);
+    lease.commit(document.clone()).await.unwrap();
+    let before: (i64,i64,chrono::NaiveDateTime) = sqlx::query_as("SELECT owner_epoch, assignment_revision, updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(WALLET).fetch_one(&fixture.pool).await.unwrap();
+    // A restarted reader has no proof it owns this still-fresh row.
+    let restarted = fixture.fence().await;
+    let borrowed = restarted.lock_selected(&selected).await.unwrap();
+    assert!(borrowed.read_only());
+    assert_eq!(
+        borrowed.commit(document).await.unwrap_err(),
+        FenceError::Conflict
+    );
+    let after: (i64,i64,chrono::NaiveDateTime) = sqlx::query_as("SELECT owner_epoch, assignment_revision, updated_at FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(WALLET).fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(before, after, "borrowing cannot renew or mutate the owner");
+    selected.session = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    selected.selected_origin = 3;
+    selected.selected_identity = Some(700);
+    selected.assignment_version += 1;
+    assert!(matches!(
+        restarted.lock_selected(&selected).await,
+        Err(FenceError::Conflict)
+    ));
+    let foreign_wallet = "0x00000000000000000000000000000000000000f2";
+    seed_realm(&fixture.pool, foreign_wallet, SESSION, 1, 1, 1, None).await;
+    let mut external = selected.clone();
+    external.wallet = foreign_wallet.into();
+    external.session = SESSION.into();
+    let borrowed_null = restarted.lock_selected(&external).await.unwrap();
+    assert!(borrowed_null.read_only());
+    assert!(borrowed_null.previous_pulse_admission().is_none());
+    drop(borrowed_null);
+    let null_unchanged:bool=sqlx::query_scalar("SELECT assignment_json IS NULL FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(foreign_wallet).fetch_one(&fixture.pool).await.unwrap();
+    assert!(null_unchanged);
+    let successor = fence.lock_selected(&selected).await.unwrap();
+    let second = successor.token_fence();
+    assert!(second.owner_epoch > first.owner_epoch);
+    assert!(second.fencing_token > first.fencing_token);
+    drop(successor);
+    // Native priority changes authority through the known exact predecessor, without /ws.
+    selected.session = SESSION.into();
+    selected.selected_origin = 1;
+    selected.selected_identity = Some(2);
+    selected.assignment_version += 1;
+    let native = fence.lock_selected(&selected).await.unwrap();
+    assert!(native.token_fence().owner_epoch > second.owner_epoch);
+    assert_eq!(native.token_fence().owner_session, SESSION);
+    drop(native);
+    // A fresh foreign owner cannot be replaced from a different coordinator.
+    selected.session = "0xcccccccccccccccccccccccccccccccccccccccc".into();
+    assert!(matches!(
+        restarted.lock_selected(&selected).await,
+        Err(FenceError::Conflict)
+    ));
+    sqlx::query("UPDATE social.archipelago_v4_assignments SET updated_at=clock_timestamp()-interval '91 seconds' WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+        .bind(AUDIENCE).bind(WALLET).execute(&fixture.pool).await.unwrap();
+    let recovered = restarted.lock_selected(&selected).await.unwrap();
+    assert!(!recovered.read_only());
+    assert_eq!(recovered.token_fence().owner_session, selected.session);
+    drop(recovered);
+    fixture.finish().await;
+}
+
+#[path = "support/lost_commit.rs"]
+mod lost_commit;
+use lost_commit::LostCommitProxy;
+
+#[tokio::test]
+async fn lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor()
+ {
+    use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;
+    let fixture = Fixture::new()
+        .await
+        .expect("required disposable PostgreSQL");
+    let proxy = LostCommitProxy::start(&fixture.pool).await;
+    let fence = PgAssignmentFence::unfenced_test(proxy.pool.clone(), AUDIENCE.into()).unwrap();
+    let mut selected = PeerClusterSnapshot {
+        wallet: WALLET.into(),
+        session: SESSION.into(),
+        cluster_id: "selected".into(),
+        realm: "main".into(),
+        source_incarnation: "lost-ack".into(),
+        assignment_version: 1,
+        pass: 1,
+        selected_origin: 1,
+        selected_identity: Some(1),
+        assignment_state: 1,
+        token_not_before: Some(0),
+        pending_takeovers: vec![],
+    };
+    proxy.lose_next_commit();
+    assert!(matches!(
+        fence.lock_selected(&selected).await,
+        Err(FenceError::Unavailable)
+    ));
+    assert_eq!(
+        proxy.dropped_commits(),
+        1,
+        "the claim COMMIT acknowledgment was actually dropped"
+    );
+    assert_eq!(fence.unresolved_mutations(), 1);
+    let committed_epoch:i64=sqlx::query_scalar("SELECT owner_epoch FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(WALLET).fetch_one(&fixture.pool).await.unwrap();
+    let lease = match fence.lock_selected(&selected).await {
+        Ok(lease) => lease,
+        Err(error) => {
+            let unresolved = fence.unresolved_mutations();
+            let row = tokio::time::timeout(
+                Duration::from_secs(1),
+                sqlx::query_scalar::<_, serde_json::Value>("SELECT jsonb_build_object('owner_session',owner_session,'owner_epoch',owner_epoch,'assignment_revision',assignment_revision,'fencing_token',fencing_token,'authority_incarnation',authority_incarnation,'updated_at',updated_at::text,'assignment_json',CASE WHEN assignment_json IS NULL OR octet_length(assignment_json::text)<=65536 THEN assignment_json ELSE jsonb_build_object('diagnostic_truncated_bytes',octet_length(assignment_json::text)) END) FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                    .bind(AUDIENCE).bind(WALLET).fetch_optional(&fixture.pool),
+            ).await;
+            panic!(
+                "same-selection reconciliation after lost-claim acknowledgment failed: {error:?}; unresolved={unresolved}; prior_epoch={committed_epoch}; selected_identity={:?}; version={}; proxy_pool(size={},idle={},closed={}); direct_row={row:?}",
+                selected.selected_identity,
+                selected.assignment_version,
+                proxy.pool.size(),
+                proxy.pool.num_idle(),
+                proxy.pool.is_closed()
+            );
+        }
+    };
+    assert_eq!(
+        lease.token_fence().owner_epoch,
+        committed_epoch as u64,
+        "reconciliation reuses the committed attempt rather than claiming a new epoch"
+    );
+    assert_eq!(fence.unresolved_mutations(), 0);
+    let mut document = assignment(&fixture.pool, "island-selected", None).await;
+    let safety = document.pulse_admission.as_ref().unwrap().clone();
+    let mut stamp =
+        catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(
+            &selected, 0,
+        )
+        .unwrap();
+    stamp.safety_generation = safety.safety_generation;
+    stamp.safety_token_floor = safety.safety_token_floor;
+    document.pulse_admission = Some(stamp);
+    proxy.lose_next_commit();
+    assert_eq!(
+        lease.commit(document.clone()).await.unwrap_err(),
+        FenceError::Unavailable
+    );
+    assert_eq!(
+        proxy.dropped_commits(),
+        2,
+        "the publication COMMIT acknowledgment was actually dropped"
+    );
+    assert_eq!(fence.unresolved_mutations(), 1);
+    let stored:serde_json::Value=sqlx::query_scalar("SELECT assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(WALLET).fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(stored, serde_json::to_value(document).unwrap());
+    selected.selected_identity = Some(2);
+    selected.assignment_version += 1;
+    let same_session = match fence.lock_selected(&selected).await {
+        Ok(lease) => lease,
+        Err(error) => {
+            let unresolved = fence.unresolved_mutations();
+            let row = tokio::time::timeout(
+                Duration::from_secs(1),
+                sqlx::query_scalar::<_, serde_json::Value>("SELECT jsonb_build_object('owner_session',owner_session,'owner_epoch',owner_epoch,'assignment_revision',assignment_revision,'fencing_token',fencing_token,'authority_incarnation',authority_incarnation,'updated_at',updated_at::text,'assignment_json',CASE WHEN assignment_json IS NULL OR octet_length(assignment_json::text)<=65536 THEN assignment_json ELSE jsonb_build_object('diagnostic_truncated_bytes',octet_length(assignment_json::text)) END) FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'")
+                    .bind(AUDIENCE).bind(WALLET).fetch_optional(&fixture.pool),
+            ).await;
+            panic!(
+                "same-session transition after lost-publication acknowledgment failed: {error:?}; unresolved={unresolved}; prior_epoch={committed_epoch}; selected_identity={:?}; version={}; proxy_pool(size={},idle={},closed={}); direct_row={row:?}",
+                selected.selected_identity,
+                selected.assignment_version,
+                proxy.pool.size(),
+                proxy.pool.num_idle(),
+                proxy.pool.is_closed()
+            );
+        }
+    };
+    let same_epoch = same_session.token_fence().owner_epoch;
+    assert!(same_epoch > committed_epoch as u64);
+    assert_eq!(same_session.token_fence().owner_session, SESSION);
+    drop(same_session);
+    selected.session = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    selected.selected_identity = Some(3);
+    selected.assignment_version += 1;
+    let replacement = fence.lock_selected(&selected).await.unwrap();
+    assert!(replacement.token_fence().owner_epoch > same_epoch);
+    assert!(replacement.token_fence().owner_epoch > committed_epoch as u64);
+    assert_eq!(replacement.token_fence().owner_session, selected.session);
+    drop(replacement);
+    assert_eq!(fence.unresolved_mutations(), 0);
+    let row:(String,Option<serde_json::Value>)=sqlx::query_as("SELECT owner_session,assignment_json FROM social.archipelago_v4_assignments WHERE deployment_audience=$1 AND owner_address=$2 AND lane_key='realm'").bind(AUDIENCE).bind(WALLET).fetch_one(&fixture.pool).await.unwrap();
+    assert_eq!(row.0, selected.session);
+    assert!(
+        row.1.is_none(),
+        "old committed credentials are not restored onto the successor"
+    );
+    proxy.pool.close().await;
+    drop(proxy);
+    fixture.finish().await;
+}
 
 struct Fixture {
     db: Option<ScratchDb>,
@@ -49,7 +337,8 @@ impl Fixture {
     }
 
     async fn fence(&self) -> PgAssignmentFence {
-        PgAssignmentFence::new(self.pool.clone(), AUDIENCE.to_string()).expect("a valid audience")
+        PgAssignmentFence::unfenced_test(self.pool.clone(), AUDIENCE.to_string())
+            .expect("a valid audience")
     }
 }
 
@@ -87,13 +376,18 @@ async fn assignment(
     from_island_id: Option<&str>,
 ) -> AssignmentDocument {
     let safety =
-        catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::new(pool.clone())
-            .snapshot(WALLET)
-            .await
-            .unwrap();
+        catalyst::comms::gatekeeper::admission::cluster::safety::SafetyStore::unfenced_test(
+            pool.clone(),
+        )
+        .snapshot(WALLET)
+        .await
+        .unwrap();
     let mut stamp =
         catalyst::comms::gatekeeper::admission::cluster::fence::PulseAdmissionStamp::from_snapshot(
             &catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+                selected_origin: 1,
+                selected_identity: Some(1),
+                assignment_state: 1,
                 wallet: WALLET.into(),
                 session: SESSION.into(),
                 cluster_id: island_id

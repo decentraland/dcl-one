@@ -11,12 +11,11 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    structs::{MicState, PrimaryUser},
+    structs::{MicState, PlayerAddress, PrimaryUser},
     util::AsH160,
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
-use wallet::Wallet;
 
 use crate::{
     chat_marker_things,
@@ -27,9 +26,10 @@ use crate::{
 use crate::{
     livekit::{
         participant::{ActiveSpeaker, LivekitParticipant},
-        room::{ConnectFailed, Connected, Disconnected, Reconnecting},
         LivekitTransport,
     },
+    room_connection::RoomState,
+    room_connection::RoomStatus,
     SceneRoom, Transport,
 };
 
@@ -49,6 +49,7 @@ impl Plugin for CommsAutomationPlugin {
             fields: &[
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
+                ("Turned off by the scene", "mic.sceneBlocked"),
                 ("LiveKit available", "livekit"),
             ],
             actions: &[],
@@ -154,34 +155,18 @@ fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
         && crate::community_chat::community_id(&event.channel).is_none()
 }
 
-/// The sender's address: the local player's own, or a foreign player's.
-fn sender_address(
-    sender: Entity,
-    own: Option<(Entity, Address)>,
-    foreign: impl Fn(Entity) -> Option<Address>,
-) -> Option<Address> {
-    match own {
-        Some((entity, address)) if entity == sender => Some(address),
-        _ => foreign(sender),
-    }
-}
-
 fn record_chat(
     mut events: EventReader<ChatEvent>,
     mut log: ResMut<ChatLog>,
     primary: Query<Entity, With<PrimaryUser>>,
-    foreign: Query<&ForeignPlayer>,
-    wallet: Res<Wallet>,
+    players: Query<&PlayerAddress>,
 ) {
     if events.is_empty() {
         return;
     }
     let me = primary.single().ok();
-    let own = me.zip(wallet.address());
     for event in events.read().filter(|event| is_chat_message(event, me)) {
-        let address = sender_address(event.sender, own, |entity| {
-            foreign.get(entity).ok().map(|player| player.address)
-        });
+        let address = players.get(event.sender).ok().map(|address| address.0);
         log.push(ChatEntry {
             timestamp: event.timestamp,
             channel: event.channel.clone(),
@@ -225,52 +210,7 @@ fn chat_history_cmd(mut input: ConsoleCommand<ChatHistoryCommand>, log: Res<Chat
 
 // --- /voice_state ---
 
-/// A voice room's connection, as the room's marker components say it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
-pub(crate) enum RoomState {
-    /// not connected yet, including a room that has not started
-    Connecting,
-    Connected,
-    Reconnecting,
-    Disconnected,
-    /// the connection was refused
-    Failed,
-}
-
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
-impl RoomState {
-    pub(crate) fn from_markers(
-        connected: bool,
-        reconnecting: bool,
-        disconnected: bool,
-        failed: bool,
-    ) -> Self {
-        if connected {
-            Self::Connected
-        } else if reconnecting {
-            Self::Reconnecting
-        } else if disconnected {
-            Self::Disconnected
-        } else if failed {
-            Self::Failed
-        } else {
-            Self::Connecting
-        }
-    }
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Connecting => "connecting",
-            Self::Connected => "connected",
-            Self::Reconnecting => "reconnecting",
-            Self::Disconnected => "disconnected",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct VoiceRoom {
     /// a scene's room rather than the realm's
     scene: bool,
@@ -278,14 +218,14 @@ struct VoiceRoom {
 }
 
 /// What the LiveKit rooms say about voice; known only in a `livekit` build.
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct LivekitVoice {
     rooms: Vec<VoiceRoom>,
     /// sorted, once each
     speakers: Vec<Address>,
 }
 
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 impl LivekitVoice {
     fn new(
         rooms: impl IntoIterator<Item = VoiceRoom>,
@@ -309,51 +249,77 @@ impl LivekitVoice {
 
 struct VoiceState {
     mic: MicState,
+    #[cfg(feature = "livekit")]
     livekit: Option<LivekitVoice>,
+    /// The private call or community stream (`VoiceChatState`); null without `livekit`.
+    call: Option<Value>,
 }
+
+/// The call's fields that are null with no call, each with what the debug panel shows instead.
+const CALL_UNSET: [(&str, &str); 4] = [
+    ("callId", "No private call."),
+    ("communityId", "No community stream."),
+    ("peer", "No private call."),
+    ("error", "No call error."),
+];
 
 impl VoiceState {
     fn to_json(&self) -> Value {
-        let livekit = self.livekit.as_ref();
-        json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled },
-            "livekit": livekit.is_some(),
-            "connected": livekit.map(|livekit| livekit.connected()),
-            "rooms": livekit.map(|livekit| livekit.rooms.iter().map(|room| json!({
-                "scene": room.scene,
-                "state": room.state.name(),
-            })).collect::<Vec<_>>()),
-            "speakers": livekit.map(|livekit| livekit.speakers.iter()
+        let mut report = json!({
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
+            "call": self.call,
+            "livekit": false,
+            "connected": null,
+            "rooms": null,
+            "speakers": null,
+        });
+        #[cfg(feature = "livekit")]
+        if let Some(livekit) = &self.livekit {
+            report["livekit"] = true.into();
+            report["connected"] = livekit.connected().into();
+            report["rooms"] = livekit
+                .rooms
+                .iter()
+                .map(|room| json!({ "scene": room.scene, "state": room.state.name() }))
+                .collect();
+            report["speakers"] = livekit
+                .speakers
+                .iter()
                 .map(|address| format!("{address:#x}"))
-                .collect::<Vec<_>>()),
-        })
+                .collect();
+        }
+        if let Some(call) = self.call.as_ref().and_then(Value::as_object) {
+            let unavailable: serde_json::Map<String, Value> = CALL_UNSET
+                .iter()
+                .filter(|(field, _)| call.get(*field).is_none_or(Value::is_null))
+                .map(|(field, reason)| (format!("call.{field}"), Value::from(*reason)))
+                .collect();
+            if !unavailable.is_empty() {
+                report["unavailable"] = Value::Object(unavailable);
+            }
+        }
+        report
     }
 }
 
 /// The realm's and the scene's LiveKit rooms; the private chat room carries no voice and is
 /// not among them (it is no [`Transport`]).
 #[cfg(feature = "livekit")]
-type VoiceRooms<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Has<Connected>,
-        Has<Reconnecting>,
-        Has<Disconnected>,
-        Has<ConnectFailed>,
-        Has<SceneRoom>,
-    ),
-    (With<Transport>, With<LivekitTransport>),
->;
+type VoiceRooms<'w, 's> =
+    Query<'w, 's, (RoomStatus, Has<SceneRoom>), (With<Transport>, With<LivekitTransport>)>;
 
 #[cfg(feature = "livekit")]
 type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<ActiveSpeaker>>;
 
-/// Report, as JSON, the microphone as `mic` (`available`, `enabled`) and, in a build with the
+/// Report, as JSON, the microphone as `mic` (`available`, `enabled`, and `sceneBlocked` while the
+/// scene the player stands in turns nearby voice off or its room refused the player as banned)
+/// and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
-/// `scene` and `state`: connecting, connected, reconnecting, disconnected or failed) and
-/// `speakers` (addresses speaking now, the local player's included). `livekit` says whether the
-/// build has them; without it they are null
+/// `scene` and the shared room `state`, including paused and admission failures),
+/// `speakers` (addresses speaking now, the local player's included) and `call` (the private
+/// call or community stream as the HUD sees it: `status`, `kind`, `callId`, `communityId`,
+/// `peer`, `connection`, `participants`, `micEnabled`, `localSpeaker`, `localRole`, `error`).
+/// `livekit` says whether the build has them; without it they are null
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/voice_state")]
 struct VoiceStateCommand;
@@ -363,26 +329,35 @@ fn voice_state_cmd(
     mic: Res<MicState>,
     #[cfg(feature = "livekit")] rooms: VoiceRooms,
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
+    #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
+    #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
+    #[cfg(feature = "livekit")] focus: crate::livekit::mic::MicrophoneFocus,
+    #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
+        let call = call.zip(call_mic).map(|(call, call_mic)| {
+            serde_json::to_value(call.snapshot(&call_mic, focus.get(), &call_participants))
+                .unwrap_or(Value::Null)
+        });
+        #[cfg(not(feature = "livekit"))]
+        let call = None;
+        #[cfg(feature = "livekit")]
         let livekit = Some(LivekitVoice::new(
-            rooms.iter().map(
-                |(connected, reconnecting, disconnected, failed, scene)| VoiceRoom {
-                    scene,
-                    state: RoomState::from_markers(connected, reconnecting, disconnected, failed),
-                },
-            ),
+            rooms.iter().map(|(status, scene)| VoiceRoom {
+                scene,
+                state: status.state(),
+            }),
             speakers
                 .iter()
                 .filter_map(|participant| participant.identity().as_str().as_h160()),
         ));
-        #[cfg(not(feature = "livekit"))]
-        let livekit = None;
 
         let state = VoiceState {
             mic: mic.clone(),
+            #[cfg(feature = "livekit")]
             livekit,
+            call,
         };
         input.reply_ok(state.to_json().to_string());
     }
@@ -391,6 +366,13 @@ fn voice_state_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mic_state(available: bool, enabled: bool) -> MicState {
+        let mut mic = MicState::default();
+        mic.available = available;
+        mic.enabled = enabled;
+        mic
+    }
 
     fn address(last: u8) -> Address {
         Address::from([last; 20])
@@ -479,34 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn a_sender_is_the_local_player_a_foreign_player_or_unknown() {
-        let me = Entity::from_raw(1);
-        let other = Entity::from_raw(2);
-        let foreign = |entity| (entity == other).then(|| address(9));
-        let own = Some((me, address(5)));
-        assert_eq!(sender_address(me, own, foreign), Some(address(5)));
-        assert_eq!(sender_address(other, own, foreign), Some(address(9)));
-        assert_eq!(sender_address(Entity::from_raw(3), own, foreign), None);
-        // not signed in: the local player has no address
-        assert_eq!(sender_address(me, None, foreign), None);
-    }
-
-    #[test]
     fn chat_events_are_recorded_with_their_senders() {
-        let mut wallet = Wallet::default();
-        wallet.finalize_as_guest();
-        let own = wallet.address().unwrap();
-
         let mut app = App::new();
         app.add_event::<ChatEvent>()
             .init_resource::<ChatLog>()
-            .insert_resource(wallet)
             .add_systems(Update, record_chat);
-        let me = app.world_mut().spawn(PrimaryUser::default()).id();
+        let me = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), PlayerAddress(address(5))))
+            .id();
+        let other = app.world_mut().spawn(PlayerAddress(address(9))).id();
         let gone = app.world_mut().spawn_empty().id();
         app.world_mut().despawn(gone);
         for ev in [
             event(me, "Nearby", "mine"),
+            event(other, "Nearby", "theirs"),
             event(Entity::PLACEHOLDER, "Nearby", "a console line"),
             event(gone, "Nearby", "from someone who left"),
             event(me, &format!("{:#x}", address(3)), "a dm"),
@@ -516,10 +485,14 @@ mod tests {
         app.update();
 
         let log = app.world().resource::<ChatLog>();
-        assert_eq!(log.total, 2);
-        assert_eq!(messages(log, 10), ["mine", "from someone who left"]);
-        assert_eq!(log.entries[0].address, Some(own));
-        assert_eq!(log.entries[1].address, None);
+        assert_eq!(log.total, 3);
+        assert_eq!(
+            messages(log, 10),
+            ["mine", "theirs", "from someone who left"]
+        );
+        assert_eq!(log.entries[0].address, Some(address(5)));
+        assert_eq!(log.entries[1].address, Some(address(9)));
+        assert_eq!(log.entries[2].address, None);
     }
 
     #[test]
@@ -551,18 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn a_room_is_in_the_state_its_markers_say() {
-        use RoomState::*;
-        let state = RoomState::from_markers;
-        assert_eq!(state(true, false, false, false), Connected);
-        assert_eq!(state(false, true, false, false), Reconnecting);
-        assert_eq!(state(false, false, true, false), Disconnected);
-        // a refused room keeps its `Connecting` marker beside `ConnectFailed`
-        assert_eq!(state(false, false, false, true), Failed);
-        assert_eq!(state(false, false, false, false), Connecting);
-    }
-
-    #[test]
+    #[cfg(feature = "livekit")]
     fn voice_is_connected_when_a_voice_room_is() {
         let room = |scene, state| VoiceRoom { scene, state };
         let connected = |rooms| LivekitVoice::new(rooms, []).connected();
@@ -578,6 +540,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn speakers_are_listed_once_in_order() {
         let voice = LivekitVoice::new([], [address(9), address(2), address(9)]);
         assert_eq!(voice.speakers, [address(2), address(9)]);
@@ -586,16 +549,16 @@ mod tests {
     #[test]
     fn voice_state_without_livekit_has_only_the_mic() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: false,
-            },
+            mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
             livekit: None,
+            call: None,
         };
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": false },
+                "mic": { "available": true, "enabled": false, "sceneBlocked": false },
+                "call": null,
                 "livekit": false,
                 "connected": null,
                 "rooms": null,
@@ -605,12 +568,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn voice_state_with_livekit_reports_rooms_and_speakers() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: true,
-            },
+            mic: mic_state(true, true),
             livekit: Some(LivekitVoice::new(
                 [
                     VoiceRoom {
@@ -624,11 +585,13 @@ mod tests {
                 ],
                 [address(0xab)],
             )),
+            call: Some(json!({ "status": "disconnected" })),
         };
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": true },
+                "mic": { "available": true, "enabled": true, "sceneBlocked": false },
+                "call": { "status": "disconnected" },
                 "livekit": true,
                 "connected": true,
                 "rooms": [
@@ -636,6 +599,32 @@ mod tests {
                     { "scene": true, "state": "connecting" },
                 ],
                 "speakers": [format!("{:#x}", address(0xab))],
+                "unavailable": {
+                    "call.callId": "No private call.",
+                    "call.communityId": "No community stream.",
+                    "call.peer": "No private call.",
+                    "call.error": "No call error.",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn a_call_reading_that_is_set_needs_no_explanation() {
+        let state = VoiceState {
+            mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
+            livekit: None,
+            call: Some(json!({
+                "status": "connected", "callId": "c1", "communityId": null,
+                "peer": "0x01", "error": null,
+            })),
+        };
+        assert_eq!(
+            state.to_json()["unavailable"],
+            json!({
+                "call.communityId": "No community stream.",
+                "call.error": "No call error.",
             })
         );
     }

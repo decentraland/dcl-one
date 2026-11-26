@@ -13,7 +13,9 @@
 //! listed hash, the active-entity reads drop a listed entity id,
 //! `/pointer-changes` drops its deltas. A local deploy is refused when its
 //! entity id, a content hash it declares or one of its pointers is listed
-//! ([`refusal`]).
+//! ([`refusal`]). The old content server's denylist file is imported into
+//! the table once, at cutover ([`import_file`], `catalyst content
+//! import-denylist`).
 //!
 //! An id is any non-blank string of at most 512 bytes without
 //! whitespace or control characters (the old console's rule); entity ids
@@ -40,7 +42,7 @@ use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use sqlx::PgExecutor;
 
 use super::ContentState;
-use super::entity::Entity;
+use super::entity::{Entity, is_ipfs_v1, is_ipfs_v2};
 use crate::http::Outbound;
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -80,6 +82,32 @@ pub async fn load<'e, E: PgExecutor<'e>>(executor: E) -> sqlx::Result<Vec<String
     Ok(ids)
 }
 
+/// One `content.denylist` row, `added_at` in Unix milliseconds (UTC).
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Row {
+    pub id: String,
+    pub added_by: String,
+    pub added_at_ms: i64,
+}
+
+/// Every listed row, newest first, at most [`MAX_ENTRIES`].
+pub async fn rows<'e, E: PgExecutor<'e>>(executor: E) -> sqlx::Result<Vec<Row>> {
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, added_by, \
+                (EXTRACT(EPOCH FROM added_at) * 1000)::bigint AS added_at_ms \
+         FROM content.denylist ORDER BY added_at DESC, id LIMIT $1",
+    )
+    .bind(MAX_ENTRIES + 1)
+    .fetch_all(executor)
+    .await?;
+    if rows.len() as i64 > MAX_ENTRIES {
+        return Err(sqlx::Error::Protocol(format!(
+            "content.denylist holds more than {MAX_ENTRIES} rows; refusing to serve it"
+        )));
+    }
+    Ok(rows)
+}
+
 /// Inserts `id`; `false` when it was already listed. `actor` is the console
 /// wallet recorded with the row.
 pub async fn add<'e, E: PgExecutor<'e>>(executor: E, id: &str, actor: &str) -> sqlx::Result<bool> {
@@ -103,20 +131,265 @@ pub async fn remove<'e, E: PgExecutor<'e>>(executor: E, id: &str) -> sqlx::Resul
         == 1)
 }
 
+/// What [`parse_file`] read from a legacy denylist file.
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct FileList {
+    pub lines: u64,
+    pub blank: u64,
+    pub comments: u64,
+    /// Hash lines naming a hash an earlier line already named.
+    pub duplicates: u64,
+    /// Valid lines that are not an entity id or content hash (a pointer,
+    /// say): never matched by the old server, so not imported.
+    pub skipped_not_a_hash: u64,
+    /// The first [`LINES_SHOWN`] of those, by line number.
+    pub skipped_not_a_hash_lines: Vec<u64>,
+    /// The distinct entity ids and content hashes, in file order.
+    pub ids: Vec<String>,
+    /// Lines [`valid_id`] refuses.
+    pub malformed: u64,
+    /// `line N: reason` for the first [`LINES_SHOWN`] of those.
+    pub malformed_lines: Vec<String>,
+}
+
+/// How many skipped or malformed lines [`parse_file`] lists.
+pub const LINES_SHOWN: usize = 50;
+
+/// The largest file [`read_file`] accepts: [`MAX_ENTRIES`] ids of at most
+/// 512 bytes, with room for line endings, padding and comments.
+pub const MAX_FILE_BYTES: u64 = MAX_ENTRIES as u64 * 600;
+
+/// Reads a whole denylist file (or standard input), refusing one past
+/// [`MAX_FILE_BYTES`] instead of holding it in memory.
+pub fn read_file(reader: impl std::io::Read) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    reader.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "the file is larger than {MAX_FILE_BYTES} bytes; nothing was imported"
+    );
+    Ok(bytes)
+}
+
+/// Parses the old content server's denylist file
+/// (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>`, `denylist.txt` by default;
+/// `decentraland/catalyst:src/adapters/denylist/component.ts:36-57`) by its
+/// rules: one id a line (`\n`, `\r\n` or `\r`), trimmed as JS `trim` does
+/// ([`js_trimmed`]), a blank line or one starting with `#`
+/// skipped, the rest an id verbatim. The old server matched those ids only
+/// as entity ids and content hashes, so a line that is neither (an IPFS
+/// CIDv0 or CIDv1, [`is_ipfs_v1`]/[`is_ipfs_v2`]) is skipped and counted:
+/// listed here it would also deny a pointer. Beyond the old server: a line
+/// that is not UTF-8 or that [`valid_id`] refuses is malformed, not guessed
+/// at.
+pub fn parse_file(bytes: &[u8]) -> FileList {
+    let mut out = FileList::default();
+    let mut seen = std::collections::HashSet::new();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let end = rest
+            .iter()
+            .position(|b| *b == b'\n' || *b == b'\r')
+            .unwrap_or(rest.len());
+        let line = &rest[..end];
+        let skip = match rest.get(end..end + 2) {
+            Some(b"\r\n") => 2,
+            _ if end < rest.len() => 1,
+            _ => 0,
+        };
+        rest = &rest[end + skip..];
+        out.lines += 1;
+        let Ok(line) = std::str::from_utf8(line) else {
+            out.refuse("not UTF-8");
+            continue;
+        };
+        let id = line.trim_matches(js_trimmed);
+        if id.is_empty() {
+            out.blank += 1;
+        } else if id.starts_with('#') {
+            out.comments += 1;
+        } else if !valid_id(id) {
+            out.refuse(if id.len() > 512 {
+                "longer than 512 bytes"
+            } else {
+                "holds whitespace or a control character"
+            });
+        } else if !is_ipfs_v1(id) && !is_ipfs_v2(id) {
+            out.skipped_not_a_hash += 1;
+            if out.skipped_not_a_hash_lines.len() < LINES_SHOWN {
+                out.skipped_not_a_hash_lines.push(out.lines);
+            }
+        } else if seen.insert(id.to_string()) {
+            out.ids.push(id.to_string());
+        } else {
+            out.duplicates += 1;
+        }
+    }
+    out
+}
+
+/// The characters JS `String.prototype.trim` strips: ECMAScript
+/// WhiteSpace (tab, VT, FF, space, NBSP, the byte-order mark and every
+/// `Zs`) and LineTerminator (LF, CR, U+2028, U+2029). Unlike
+/// [`char::is_whitespace`] it keeps U+0085 (NEL), a control character
+/// [`valid_id`] then refuses.
+fn js_trimmed(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+impl FileList {
+    /// Counts the current line as malformed, listing it while fewer than
+    /// [`LINES_SHOWN`] are.
+    fn refuse(&mut self, reason: &str) {
+        self.malformed += 1;
+        if self.malformed_lines.len() < LINES_SHOWN {
+            self.malformed_lines
+                .push(format!("line {}: {reason}", self.lines));
+        }
+    }
+}
+
+/// What [`import_file`] did, beside what the file held.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct FileImport {
+    pub lines: u64,
+    pub blank: u64,
+    pub comments: u64,
+    pub duplicates: u64,
+    pub skipped_not_a_hash: u64,
+    pub skipped_not_a_hash_lines: Vec<u64>,
+    /// The file's distinct entity ids and content hashes:
+    /// `imported + already_present`.
+    pub distinct: u64,
+    pub imported: u64,
+    pub already_present: u64,
+}
+
+/// [`parse_file`], refusing a file with a malformed line.
+pub fn checked_file(bytes: &[u8]) -> anyhow::Result<FileList> {
+    let file = parse_file(bytes);
+    anyhow::ensure!(
+        file.malformed == 0,
+        "the file has {} malformed line(s); nothing was imported:\n{}{}",
+        file.malformed,
+        file.malformed_lines.join("\n"),
+        if file.malformed > LINES_SHOWN as u64 {
+            "\n..."
+        } else {
+            ""
+        }
+    );
+    Ok(file)
+}
+
+/// Lists every entity id and content hash of a legacy denylist file
+/// ([`checked_file`]) in one transaction, each new row as the console
+/// writes it, with `added_by` (the operator's wallet) and a
+/// `content`/`denylist.add` audit row. The wallet is the operator's own
+/// claim, not a signed-in session, so the audit actor is `cli:<wallet>`. A
+/// listed id is left alone and audits nothing, so a re-run adds nothing. A
+/// file with a malformed line, or one that would take the table past
+/// [`MAX_ENTRIES`], writes nothing and is an error.
+pub async fn import_file(
+    pool: &sqlx::PgPool,
+    bytes: &[u8],
+    added_by: &str,
+) -> anyhow::Result<FileImport> {
+    import(pool, checked_file(bytes)?, added_by, MAX_ENTRIES).await
+}
+
+async fn import(
+    pool: &sqlx::PgPool,
+    file: FileList,
+    added_by: &str,
+    max: i64,
+) -> anyhow::Result<FileImport> {
+    let mut tx = pool.begin().await?;
+    // Every other writer (a console add, a second import) waits for the
+    // commit, so the count still holds when the rows land.
+    sqlx::query("LOCK TABLE content.denylist IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *tx)
+        .await?;
+    let (rows, present): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(*) FILTER (WHERE id = ANY($1)) FROM content.denylist",
+    )
+    .bind(&file.ids)
+    .fetch_one(&mut *tx)
+    .await?;
+    let after = rows + file.ids.len() as i64 - present;
+    anyhow::ensure!(
+        after <= max,
+        "the import would list {after} ids, more than {max}; nothing was imported"
+    );
+    let added: Vec<String> = sqlx::query_scalar(
+        "INSERT INTO content.denylist (id, added_by) SELECT id, $2 FROM unnest($1::text[]) AS id \
+         ON CONFLICT (id) DO NOTHING RETURNING id",
+    )
+    .bind(&file.ids)
+    .bind(added_by)
+    .fetch_all(&mut *tx)
+    .await?;
+    let actor = format!("cli:{added_by}");
+    let entries: Vec<_> = added
+        .iter()
+        .map(|id| {
+            catalyst_shared::audit::Entry::new(&actor, "content", "denylist.add")
+                .target(Some(id))
+                .detail(serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }))
+        })
+        .collect();
+    catalyst_shared::audit::record_all(&mut *tx, &entries).await?;
+    tx.commit().await?;
+    Ok(FileImport {
+        lines: file.lines,
+        blank: file.blank,
+        comments: file.comments,
+        duplicates: file.duplicates,
+        skipped_not_a_hash: file.skipped_not_a_hash,
+        skipped_not_a_hash_lines: file.skipped_not_a_hash_lines,
+        distinct: file.ids.len() as u64,
+        imported: added.len() as u64,
+        already_present: (file.ids.len() - added.len()) as u64,
+    })
+}
+
 /// Why a local deploy of `entity` is refused, one message per kind of
 /// listed id; `None` when nothing it names is listed.
 pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String>> {
+    refusal_of(
+        &entity.id,
+        entity.content.iter().map(|c| c.hash.as_str()),
+        &entity.pointers,
+        denylist,
+    )
+}
+
+/// [`refusal`] of an entity known by its id, content hashes and pointers.
+pub fn refusal_of<'a>(
+    entity_id: &str,
+    hashes: impl IntoIterator<Item = &'a str>,
+    pointers: &[String],
+    denylist: &super::Denylist,
+) -> Option<Vec<String>> {
     let mut errors = Vec::new();
-    if denylist.contains(&entity.id) {
+    if denylist.contains(entity_id) {
         errors.push(format!(
-            "The entity {} is denylisted on this node.",
-            entity.id
+            "The entity {entity_id} is denylisted on this node."
         ));
     }
-    let mut hashes: Vec<&str> = entity
-        .content
-        .iter()
-        .map(|c| c.hash.as_str())
+    let mut hashes: Vec<&str> = hashes
+        .into_iter()
         .filter(|h| denylist.contains(h))
         .collect();
     hashes.sort_unstable();
@@ -127,8 +400,7 @@ pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String
             hashes.join(", ")
         ));
     }
-    let mut pointers: Vec<String> = entity
-        .pointers
+    let mut pointers: Vec<String> = pointers
         .iter()
         .map(|p| p.to_lowercase())
         .filter(|p| denylist.denies_pointer(p))
@@ -670,6 +942,298 @@ mod tests {
         assert_eq!((n, errors), (1, Vec::<String>::new()));
         assert_eq!(get(false).await.unwrap().status(), StatusCode::NOT_FOUND);
         assert_eq!(get(true).await.unwrap().status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A CIDv1 entity id or content hash, unique to `tag` and `n`.
+    fn cid(tag: &str, n: char) -> String {
+        let id = format!("bafkrei{tag}{}", n.to_string().repeat(20));
+        assert!(crate::entity::is_ipfs_v2(&id), "{id}");
+        id
+    }
+
+    /// The old server's file rules: one id a line under any line ending,
+    /// trimmed (a byte-order mark too), blank and `#` lines skipped, an id
+    /// kept verbatim; a repeat counts once, a line that is no entity id or
+    /// content hash (a pointer) is skipped and counted by line number, and a
+    /// line no id rule accepts is reported by number, not imported.
+    #[test]
+    fn a_legacy_file_parses_by_the_old_servers_rules() {
+        let (v1, v0) = (
+            cid("0123456789abcdef0123456789abcdef", 'a'),
+            format!("Qm{}", "b".repeat(44)),
+        );
+        let long = "a".repeat(513);
+        let mut bytes = format!(
+            "\u{feff}{v1}\r\n  {v0}  \n\n# a comment\n   #indented comment\r0,0\r\n{v1}\nbad id\n{long}\nbafyshort\n"
+        )
+        .into_bytes();
+        bytes.extend_from_slice(b"\xff\xfe\nQmLast");
+        let file = parse_file(&bytes);
+        assert_eq!(
+            file,
+            FileList {
+                lines: 12,
+                blank: 1,
+                comments: 2,
+                duplicates: 1,
+                skipped_not_a_hash: 3,
+                skipped_not_a_hash_lines: vec![6, 10, 12],
+                ids: vec![v1.clone(), v0],
+                malformed: 3,
+                malformed_lines: vec![
+                    "line 8: holds whitespace or a control character".to_string(),
+                    "line 9: longer than 512 bytes".to_string(),
+                    "line 11: not UTF-8".to_string(),
+                ],
+            }
+        );
+        assert_eq!(parse_file(b""), FileList::default());
+        assert_eq!(parse_file(b"\n").blank, 1);
+        assert_eq!(parse_file(b"bafy # note").malformed, 1);
+        // JS `trim` strips every Unicode space and a byte-order mark at
+        // either end; one inside an id makes it malformed.
+        let padded = parse_file(format!("\u{a0}\u{2003}{v1}\u{feff}\u{3000}\n").as_bytes());
+        assert_eq!((padded.ids, padded.malformed), (vec![v1.clone()], 0));
+        let inner = parse_file(format!("{}\u{a0}{}\n", &v1[..30], &v1[30..]).as_bytes());
+        assert_eq!(inner.malformed, 1);
+        // JS `trim` keeps NEL (U+0085), so the id keeps it and is refused,
+        // where the old server listed it and never matched it.
+        let nel = parse_file(format!("{v1}\u{85}\n\u{85}{v1}\n").as_bytes());
+        assert_eq!((nel.ids.len(), nel.malformed), (0, 2));
+        // Exactly what `(c + "x").trim() === "x"` holds for in Node.
+        let stripped: Vec<u32> = (0..=0x10ffff)
+            .filter_map(char::from_u32)
+            .filter(|c| js_trimmed(*c))
+            .map(u32::from)
+            .collect();
+        assert_eq!(
+            stripped,
+            [
+                0x9, 0xa, 0xb, 0xc, 0xd, 0x20, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003,
+                0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f,
+                0x205f, 0x3000, 0xfeff,
+            ]
+        );
+        let bad = "bad id\n".repeat(60);
+        let many = parse_file(bad.as_bytes());
+        assert_eq!(many.malformed, 60);
+        assert_eq!(many.malformed_lines.len(), LINES_SHOWN);
+        let err = checked_file(bad.as_bytes()).unwrap_err().to_string();
+        assert!(
+            err.contains("60 malformed") && err.contains("line 50:"),
+            "{err}"
+        );
+        assert!(!err.contains("line 51:") && err.ends_with("..."), "{err}");
+        let pointers = parse_file("0,0\n".repeat(60).as_bytes());
+        assert_eq!(pointers.skipped_not_a_hash, 60);
+        assert_eq!(
+            pointers.skipped_not_a_hash_lines,
+            (1..=50).collect::<Vec<u64>>()
+        );
+        assert!(pointers.ids.is_empty() && pointers.malformed == 0);
+    }
+
+    /// A file or standard input is read whole up to [`MAX_FILE_BYTES`];
+    /// past that, as from a stream that never ends, it is refused.
+    #[test]
+    fn a_file_past_the_byte_cap_is_refused() {
+        use std::io::Read as _;
+        assert_eq!(read_file(&b"Qm\n"[..]).unwrap(), b"Qm\n");
+        let err = read_file(std::io::repeat(b'\n')).unwrap_err();
+        assert!(err.to_string().contains("larger than"), "{err}");
+        let at_cap = read_file(std::io::repeat(b'\n').take(MAX_FILE_BYTES)).unwrap();
+        assert_eq!(at_cap.len() as u64, MAX_FILE_BYTES);
+    }
+
+    /// An import lists the file's ids as console rows with their audit
+    /// rows; a second run adds no row and no audit row; a malformed file
+    /// writes nothing.
+    #[tokio::test]
+    async fn a_file_import_is_idempotent_and_refuses_a_malformed_file() {
+        require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let (a, b, c) = (cid(&tag, 'a'), cid(&tag, 'b'), cid(&tag, 'c'));
+        let actor = "0x00000000000000000000000000000000000000aa";
+        assert!(add(&pool, &c, "0xconsole").await.unwrap());
+        let body = format!("# exported\n{a}\n\n{b}\n{a}\n0,0\n{c}\n");
+        let audited = |pool: sqlx::PgPool, prefix: String| async move {
+            let n: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM ops.admin_audit WHERE domain = 'content' \
+                 AND action = 'denylist.add' AND target LIKE $1 || '%' AND actor = $2",
+            )
+            .bind(prefix)
+            .bind(format!("cli:{actor}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            n
+        };
+        let prefix = format!("bafkrei{tag}");
+
+        let first = import_file(&pool, body.as_bytes(), actor).await.unwrap();
+        assert_eq!(
+            first,
+            FileImport {
+                lines: 7,
+                blank: 1,
+                comments: 1,
+                duplicates: 1,
+                skipped_not_a_hash: 1,
+                skipped_not_a_hash_lines: vec![6],
+                distinct: 3,
+                imported: 2,
+                already_present: 1,
+            }
+        );
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, added_by FROM content.denylist WHERE id LIKE $1 || '%' ORDER BY id",
+        )
+        .bind(&prefix)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (a.clone(), actor.to_string()),
+                (b.clone(), actor.to_string()),
+                (c.clone(), "0xconsole".to_string()),
+            ]
+        );
+        assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+        let audit: Vec<(String, serde_json::Value, String)> = sqlx::query_as(
+            "SELECT target, detail, result FROM ops.admin_audit WHERE domain = 'content' \
+             AND action = 'denylist.add' AND target LIKE $1 || '%' ORDER BY target",
+        )
+        .bind(&prefix)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            audit,
+            [&a, &b]
+                .map(|id| (
+                    id.clone(),
+                    serde_json::json!({ "id": id, "added": true, "source": "denylist-file" }),
+                    "ok".to_string(),
+                ))
+                .to_vec()
+        );
+        let pointer: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM content.denylist WHERE id = '0,0' AND added_by = $1",
+        )
+        .bind(actor)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pointer, 0, "a pointer line is not imported");
+
+        let again = import_file(&pool, body.as_bytes(), actor).await.unwrap();
+        assert_eq!((again.imported, again.already_present), (0, 3));
+        assert_eq!(audited(pool.clone(), prefix.clone()).await, 2);
+
+        let d = cid(&tag, 'd');
+        let err = import_file(&pool, format!("{d}\nnot valid\n").as_bytes(), actor)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("line 2: holds whitespace"),
+            "{err:#}"
+        );
+        assert!(
+            !load(&pool).await.unwrap().contains(&d),
+            "nothing was written"
+        );
+
+        for id in [&a, &b, &c] {
+            remove(&pool, id).await.unwrap();
+        }
+        pool.close().await;
+    }
+
+    /// An import that would take the table past the cap writes nothing,
+    /// checked before any row is inserted: two new ids fit a cap of two,
+    /// but not beside the rows already listed.
+    #[tokio::test]
+    async fn an_import_past_max_entries_writes_nothing() {
+        require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let ids = [cid(&tag, 'a'), cid(&tag, 'b')];
+        let listed = cid(&tag, 'c');
+        assert!(add(&pool, &listed, "0xconsole").await.unwrap());
+        let file = checked_file(ids.join("\n").as_bytes()).unwrap();
+        let err = import(&pool, file, "0x00000000000000000000000000000000000000aa", 2)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("nothing was imported"), "{err:#}");
+        let loaded = load(&pool).await.unwrap();
+        assert!(
+            ids.iter().all(|id| !loaded.contains(id)),
+            "nothing was written"
+        );
+        remove(&pool, &listed).await.unwrap();
+        pool.close().await;
+    }
+
+    /// An imported id is hidden by the content reads once the projection
+    /// loads the table (boot, or the reload job on a running node).
+    #[tokio::test]
+    async fn an_imported_hash_is_hidden_from_the_content_reads() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        use crate::tests::support::TestNode;
+
+        require_test_db!(Some(node) = TestNode::with_db("content-file-denied").await);
+        let sha256 = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let cid = crate::auth::raw_cid_v1_from_sha256_hex(&sha256).unwrap();
+        node.store(&cid, bytes::Bytes::from_static(b"x")).await;
+        let available = || async {
+            let resp = node
+                .router()
+                .oneshot(
+                    Request::get(format!("/content/available-content?cid={cid}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()
+        };
+        assert_eq!(
+            available().await,
+            serde_json::json!([{ "cid": cid, "available": true }])
+        );
+
+        let out = import_file(
+            &node.state.pool,
+            format!("{cid}\n").as_bytes(),
+            "0x00000000000000000000000000000000000000aa",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.imported, 1);
+        node.state.load_denylist().await.unwrap();
+        assert!(node.state.denylist.contains(&cid));
+        assert_eq!(available().await, serde_json::json!([]));
+        let got = node
+            .router()
+            .oneshot(
+                Request::get(format!("/content/contents/{cid}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.status(), axum::http::StatusCode::NOT_FOUND);
+
+        remove(&node.state.pool, &cid).await.unwrap();
     }
 
     /// The table is the authority: an edit lands as a row, a second add is

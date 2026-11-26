@@ -17,8 +17,6 @@
 //! from a request). The mutating ones are registry writes behind
 //! `OPS_WRITES_ENABLED`; `queues-status` is a read.
 
-#![allow(clippy::result_large_err)]
-
 use std::time::Duration;
 
 use axum::Json;
@@ -44,10 +42,8 @@ async fn reel_for(
     let Some(cr) = state.domains.camera_reel.clone() else {
         return Err(not_configured("camera-reel"));
     };
-    if crate::camera_reel::writes::is_gated(&method, path)
-        && let Some(r) = crate::shared::writes::refusal(cr.settings.writes_enabled)
-    {
-        return Err(refused(crate::camera_reel::writes::refused_response(&r)).await);
+    if !cr.settings.writes_enabled && crate::camera_reel::writes::is_gated(&method, path) {
+        return Err(refused(crate::camera_reel::writes::disabled_response()).await);
     }
     let Some(token) = configured(cr.settings.admin_token.as_deref()) else {
         return Err(token_missing("camera-reel"));
@@ -161,8 +157,8 @@ async fn builder_for(
     let Some(bs) = state.domains.builder.clone() else {
         return Err(not_configured("builder"));
     };
-    if let Some(r) = crate::shared::writes::refusal(bs.settings.writes_enabled) {
-        return Err(refused(crate::builder::writes::refused_response(&r)).await);
+    if !bs.settings.writes_enabled {
+        return Err(refused(crate::builder::writes::disabled_response()).await);
     }
     let Some(token) = configured(bs.settings.admin_token.as_deref()) else {
         return Err(token_missing("builder"));
@@ -380,7 +376,10 @@ impl Abgen {
 /// and (for the queue and denylist routes) its bearer, then the call. A
 /// transport failure is the old `502 {ok: false, status: 0, body: {error:
 /// request-failed}}`, audited as an error with status 0.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the call carries the session, the route and its body"
+)]
 async fn abgen_call(
     state: &SharedState,
     session: &AdminSession,

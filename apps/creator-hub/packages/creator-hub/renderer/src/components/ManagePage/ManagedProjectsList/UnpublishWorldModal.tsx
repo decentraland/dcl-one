@@ -1,0 +1,68 @@
+import { useState } from 'react';
+import Text from '@ui/atoms/Text';
+
+import { useDispatch } from '#store';
+import { unpublishEntireWorld } from '/@/modules/store/management';
+import { t } from '/@/modules/store/translation/utils';
+
+import Button from '@ui/atoms/Button';
+import { Loader } from '../../Loader';
+import { Modal } from '../../Modals';
+
+/** Confirms unpublishing every scene of `worldName`; closed while it is null. */
+export function UnpublishWorldModal({
+  worldName,
+  onClose,
+}: {
+  worldName: string | null;
+  onClose: () => void;
+}) {
+  const dispatch = useDispatch();
+  const [loading, setLoading] = useState(false);
+
+  const unpublish = async () => {
+    if (!worldName || loading) return;
+    try {
+      setLoading(true);
+      await dispatch(unpublishEntireWorld({ worldName })).unwrap();
+      onClose();
+    } catch {
+      return;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={!!worldName}
+      className="UnpublishConfirmationModal"
+      actions={
+        <>
+          <Button
+            variant="text"
+            className="hub-button hub-button--secondary"
+            onClick={onClose}
+          >
+            {t('modal.cancel')}
+          </Button>
+          <Button
+            variant="text"
+            className="hub-button hub-button--primary"
+            onClick={unpublish}
+            disabled={loading}
+          >
+            {loading ? <Loader size={24} /> : t('modal.confirm')}
+          </Button>
+        </>
+      }
+    >
+      <Text variant="h5">
+        {t('manage.unpublish_world_confirmation.title', {
+          worldName,
+          b: (chunks: string) => <b>{chunks}</b>,
+        })}
+      </Text>
+    </Modal>
+  );
+}

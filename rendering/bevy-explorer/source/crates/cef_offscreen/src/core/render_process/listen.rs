@@ -36,9 +36,9 @@ impl WrapV8Handler for ListenBuilder {
 impl Clone for ListenBuilder {
     fn clone(&self) -> Self {
         let object = unsafe {
-            let rc_impl = &mut *self.object;
+            let rc_impl = &*self.object;
             rc_impl.interface.add_ref();
-            rc_impl
+            self.object
         };
         Self {
             object,
@@ -64,7 +64,7 @@ impl ImplV8Handler for ListenBuilder {
         {
             LISTEN_EVENTS
                 .lock()
-                .unwrap()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(id.string_value().into_string(), callback.clone());
         }
         1

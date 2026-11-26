@@ -12,8 +12,6 @@
 //! user authority and were never wrapped (`worlds::writes`), so neither are
 //! these.
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -40,10 +38,8 @@ async fn worlds_for(
     let Some(ws) = state.domains.worlds.clone() else {
         return Err(not_configured(DOMAIN));
     };
-    if crate::worlds::writes::is_gated(&method, path)
-        && let Some(r) = crate::shared::writes::refusal(state.domains.worlds_writes_enabled)
-    {
-        return Err(refused(crate::worlds::writes::refused_response(&r)).await);
+    if !state.domains.worlds_writes_enabled && crate::worlds::writes::is_gated(&method, path) {
+        return Err(refused(crate::worlds::writes::disabled_response()).await);
     }
     let Some(token) = configured(ws.settings.admin_token.as_deref()) else {
         return Err(token_missing(DOMAIN));

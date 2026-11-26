@@ -15,8 +15,10 @@
 //!   ONE client (`COINGECKO_URL` is checked at startup to be a public https
 //!   endpoint that is not this node), or, when CoinGecko fails, one row from
 //!   the first `PRICE_FALLBACK_SOURCES` exchange that answers (same checks);
-//!   the route serves the newest row of any source (from memory once the
-//!   poller published one, the row otherwise), overlaid by `economy.price_overrides` for the requested
+//!   the route serves the newest row of any source (on a polling node from
+//!   memory, re-read once the copy is a poll interval old or past the
+//!   budget, so nodes without the job lease follow the leader's row; the
+//!   row on every call otherwise), overlaid by `economy.price_overrides` for the requested
 //!   `(token_id, vs_currency)` pairs. Freshness: one row per 300 s, and a
 //!   budget (`store::SNAPSHOT_MAX_AGE`, 30 min = six default polls): a
 //!   newer row is served with an `Age` header (its age on this node) and the
@@ -47,6 +49,13 @@
 //! and `/admin/api/price/*` collide with nothing) and `.nest("/price",
 //! price::router(state))` for a per-vhost proxy.
 
+// Money and block numbers: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
@@ -60,6 +69,7 @@ pub mod poller;
 pub mod store;
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -81,6 +91,9 @@ use crate::shared::writes::DataWrites;
 
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 300;
 pub const JOB_NAME: &str = "mana-price-poll";
+/// MANA's CoinGecko coin id: what the poller asks for and the price route
+/// answers under.
+pub const MANA_ID: &str = "decentraland";
 
 /// The raw values `main.rs` reads from `Config` (the old env names).
 #[derive(Clone)]
@@ -234,7 +247,10 @@ pub type SharedState = Arc<State>;
 impl State {
     pub fn new(pool: PgPool, http: Outbound, settings: Settings) -> Self {
         Self {
-            prices: store::Prices::new(pool.clone(), settings.poll_enabled),
+            prices: store::Prices::new(
+                pool.clone(),
+                settings.poll_enabled.then_some(settings.poll_interval),
+            ),
             overrides: store::Overrides::new(pool),
             http,
             settings,

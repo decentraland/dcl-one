@@ -1,7 +1,8 @@
 use super::*;
 use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
 use axum::{Router, http::StatusCode, routing::post};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 async fn exercise(
     speaker: bool,
@@ -28,7 +29,7 @@ async fn exercise(
             post(move |Json(body): Json<Value>| {
                 let captured = captured.clone();
                 async move {
-                    captured.lock().unwrap().push(body);
+                    captured.lock().push(body);
                     (update_status, Json(serde_json::json!({})))
                 }
             }),
@@ -54,7 +55,7 @@ async fn exercise(
     state.livekit.api_secret = "secret".into();
     let result = set_speaker(&state, CommunityId::new(), "wallet", speaker).await;
     server.abort();
-    let bodies = updates.lock().unwrap().clone();
+    let bodies = updates.lock().clone();
     (result, bodies)
 }
 

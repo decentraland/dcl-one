@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 use alloy_primitives::{Address, U256, keccak256};
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -70,7 +76,7 @@ impl RpcCouponChainReader {
             .endpoints
             .for_chain(chain_id)
             .ok_or(ChainReadError::NotConfigured(chain_id))?;
-        let rpc = crate::land_authz::indexer::Rpc::at(&self.http, url);
+        let rpc = crate::chain_index::rpc::Rpc::at(&self.http, url);
         let payload = rpc
             .call("eth_call", json!([{ "to": to, "data": data }, "latest"]))
             .await
@@ -230,7 +236,9 @@ impl CouponChainReader for RpcCouponChainReader {
         let mut decoded = Vec::with_capacity(slots.len());
         for (uses_word, cancelled_word) in slots {
             decoded.push((
-                word_to_u64(&uses_word?)? as i64,
+                i64::try_from(word_to_u64(&uses_word?)?).map_err(|_| {
+                    ChainReadError::Rpc("the coupon manager returned uses past i64".into())
+                })?,
                 word_to_bool(&cancelled_word?)?,
             ));
         }

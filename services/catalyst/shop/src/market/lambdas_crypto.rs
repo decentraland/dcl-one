@@ -223,7 +223,10 @@ fn unrecoverable_link(chain: &[AuthLink]) -> Option<&AuthLink> {
     chain.iter().skip(1).find(|link| {
         let signature = link.signature.as_deref().unwrap_or_default();
         match link.link_type {
-            AuthLinkType::SIGNER => false,
+            // Refused by the schema before any signature is read.
+            AuthLinkType::SIGNER
+            | AuthLinkType::EcdsaScopedEphemeral
+            | AuthLinkType::EcdsaEip1654ScopedEphemeral => false,
             AuthLinkType::EcdsaEphemeral => {
                 split_ephemeral_payload(&link.payload).is_ok_and(|(message, _, _)| {
                     recover_address(message.as_bytes(), signature).is_err()
@@ -255,7 +258,15 @@ fn verdict_message(chain: &[AuthLink], err: &AuthError) -> String {
     }
 }
 
-async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(), String> {
+/// Why a chain does not verify: a verdict (`valid: false`), or a
+/// contract-wallet check the client source's EIP-1654 budget refused before
+/// the RPC (a 429, no verdict on the signature).
+enum Refused {
+    Verdict(String),
+    RateLimited,
+}
+
+async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(), Refused> {
     // `@dcl/crypto` takes a lone SIGNER's address as the final authority;
     // the shared verifier refuses an unsigned chain.
     if let [signer] = prepared.chain.as_slice()
@@ -264,10 +275,10 @@ async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(
         if signer.payload == prepared.final_authority {
             return Ok(());
         }
-        return Err(final_authority_message(
+        return Err(Refused::Verdict(final_authority_message(
             &prepared.final_authority,
             &signer.payload,
-        ));
+        )));
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
     verify_auth_chain_async(
@@ -277,7 +288,10 @@ async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(
         state.eip1654.as_deref(),
     )
     .await
-    .map_err(|e| verdict_message(&prepared.chain, &e))
+    .map_err(|e| match e {
+        AuthError::Eip1654RateLimited => Refused::RateLimited,
+        e => Refused::Verdict(verdict_message(&prepared.chain, &e)),
+    })
 }
 
 pub async fn validate_signature(
@@ -319,7 +333,14 @@ pub async fn validate_signature(
         };
     let body = match verdict(&state, &prepared).await {
         Ok(()) => json!({ "valid": true, "ownerAddress": prepared.owner }),
-        Err(error) => json!({ "valid": false, "error": error }),
+        Err(Refused::Verdict(error)) => json!({ "valid": false, "error": error }),
+        Err(Refused::RateLimited) => {
+            return validator_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many contract-wallet signature checks; retry later",
+                None,
+            );
+        }
     };
     (StatusCode::OK, Json(body)).into_response()
 }
@@ -513,6 +534,32 @@ mod tests {
         );
     }
 
+    /// A scoped login (ADR-162) is not one of the schema's link types.
+    #[tokio::test]
+    async fn a_scoped_login_is_refused_by_the_schema() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "lambdas".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain = crate::auth::create_scoped_auth_chain(
+            &root,
+            &ephemeral,
+            4_000_000_000_000,
+            &grants,
+            "hello",
+        )
+        .unwrap();
+        let (status, v) = post(json!({ "authChain": chain, "signedMessage": "hello" })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(v["data"][0]["instancePath"], "/authChain/1/type", "{v}");
+        assert_eq!(v["data"][0]["keyword"], "enum", "{v}");
+    }
+
     /// `LP-28-single-signer-match.json`, `LP-28-single-signer-other.json`.
     #[tokio::test]
     async fn a_lone_signer_is_its_own_final_authority() {
@@ -548,6 +595,51 @@ mod tests {
         assert_eq!(
             v,
             json!({ "valid": false, "error": "ERROR. Link type: ECDSA_EPHEMERAL. Invalid ethereum signature." })
+        );
+    }
+
+    /// A contract-wallet check the client source's budget refused is a 429 in
+    /// the middleware envelope, not a `valid: false` verdict: a rate limit
+    /// says nothing about the signature.
+    #[tokio::test]
+    async fn a_rate_limited_contract_check_is_a_429_not_a_verdict() {
+        struct RateLimited;
+        #[async_trait::async_trait]
+        impl crate::auth::eip1654::Eip1654Validator for RateLimited {
+            async fn validate_signature(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+            ) -> Result<bool, AuthError> {
+                Err(AuthError::Eip1654RateLimited)
+            }
+        }
+        let message = "validate me";
+        let chain = vec![
+            signer_link("0x00000000000000000000000000000000000c0de1"),
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEip1654SignedEntity,
+                payload: message.into(),
+                signature: Some(format!("0x{}", "11".repeat(65))),
+            },
+        ];
+        let mut state = super::super::tests::support::state_without_db();
+        std::sync::Arc::get_mut(&mut state)
+            .expect("an unshared state")
+            .eip1654 = Some(std::sync::Arc::new(RateLimited));
+        let body = Bytes::from(json!({ "signedMessage": message, "authChain": chain }).to_string());
+        let resp = validate_signature(State(state), json_headers(), body).await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let v: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({ "ok": false, "message": "Too many contract-wallet signature checks; retry later" })
         );
     }
 

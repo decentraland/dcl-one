@@ -43,50 +43,74 @@ async function brokenCopy(name: string, breakIt: (copy: string) => Promise<void>
 }
 
 describe('when checking a built gallery', () => {
-  it('should navigate the catalog, switch variants and draw an audit render under a nested prefix', async () => {
-    const summary = await checkBuild({ dist, prefix: '/nested/prefix/' })
+  describe('and it is served under a nested prefix', () => {
+    it('should navigate the catalog, switch variants and draw an audit render', async () => {
+      const summary = await checkBuild({ dist, prefix: '/nested/prefix/' })
 
-    expect(summary.entry).toBe('/nested/prefix/index.html')
-    expect(summary.components).toBeGreaterThan(0)
-    expect(summary.variant).toBeGreaterThan(0)
-    expect(summary.audit.width).toBeGreaterThan(0)
-    expect(summary.audit.height).toBeGreaterThan(0)
-  }, 120_000)
+      expect(summary.entry).toBe('/nested/prefix/index.html')
+      expect(summary.components).toBeGreaterThan(0)
+      expect(summary.variant).toBeGreaterThan(0)
+      expect(summary.audit.width).toBeGreaterThan(0)
+      expect(summary.audit.height).toBeGreaterThan(0)
+    }, 120_000)
+  })
 
-  it('should also work at the root', async () => {
-    await expect(checkBuild({ dist })).resolves.toMatchObject({ entry: '/index.html' })
-  }, 120_000)
+  describe('and it is served at the root', () => {
+    it('should resolve with the root entry', async () => {
+      await expect(checkBuild({ dist })).resolves.toMatchObject({ entry: '/index.html' })
+    }, 120_000)
+  })
 
-  it('should fail when a script the entry loads is missing', async () => {
-    const copy = await brokenCopy('missing-script', async (target) => {
-      const assets = path.join(target, 'dcl-ui-review/assets')
-      const script = (await readdir(assets)).find((file) => file.endsWith('.js'))!
-      await rm(path.join(assets, script))
+  describe('and a script the entry loads is missing', () => {
+    let copy: string
+
+    beforeEach(async () => {
+      copy = await brokenCopy('missing-script', async (target) => {
+        const assets = path.join(target, 'dcl-ui-review/assets')
+        const script = (await readdir(assets)).find((file) => file.endsWith('.js'))!
+        await rm(path.join(assets, script))
+      })
     })
 
-    await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow()
-  }, 120_000)
-
-  it('should fail when the root entry is missing', async () => {
-    const copy = await brokenCopy('missing-entry', (target) => rm(path.join(target, 'index.html')))
-
-    await expect(checkBuild({ dist: copy })).rejects.toThrow(/Timed out|requests failed/)
-  }, 120_000)
-
-  it('should fail on an uncaught page error', async () => {
-    const copy = await brokenCopy('page-error', async (target) => {
-      const assets = path.join(target, 'dcl-ui-review/assets')
-      await writeFile(path.join(assets, 'boom.js'), 'throw new Error("boom")\n')
-      const entry = path.join(target, 'index.html')
-      const html = await readFile(entry, 'utf8')
-      await writeFile(
-        entry,
-        html.replace('</head>', '<script src="./dcl-ui-review/assets/boom.js"></script></head>')
+    it('should fail the check with the failed request', async () => {
+      await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+        /Timed out|requests failed/
       )
+    }, 120_000)
+  })
+
+  describe('and the root entry is missing', () => {
+    let copy: string
+
+    beforeEach(async () => {
+      copy = await brokenCopy('missing-entry', (target) => rm(path.join(target, 'index.html')))
     })
 
-    await expect(checkBuild({ dist: copy })).rejects.toThrow(/page error|boom/)
-  }, 120_000)
+    it('should fail the check with the failed request or a timeout', async () => {
+      await expect(checkBuild({ dist: copy })).rejects.toThrow(/Timed out|requests failed/)
+    }, 120_000)
+  })
+
+  describe('and the page raises an uncaught error', () => {
+    let copy: string
+
+    beforeEach(async () => {
+      copy = await brokenCopy('page-error', async (target) => {
+        const assets = path.join(target, 'dcl-ui-review/assets')
+        await writeFile(path.join(assets, 'boom.js'), 'throw new Error("boom")\n')
+        const entry = path.join(target, 'index.html')
+        const html = await readFile(entry, 'utf8')
+        await writeFile(
+          entry,
+          html.replace('</head>', '<script src="./dcl-ui-review/assets/boom.js"></script></head>')
+        )
+      })
+    })
+
+    it('should fail the check with the page error', async () => {
+      await expect(checkBuild({ dist: copy })).rejects.toThrow(/page error|boom/)
+    }, 120_000)
+  })
 
   describe('and a successful request escapes to a second controlled origin', () => {
     let external: Server
@@ -206,45 +230,58 @@ describe('when checking a built gallery', () => {
       }
     )
 
-    it('should name the second origin when the entry redirects there and it responds with HTTP 200', async () => {
-      copy = await brokenCopy('redirect-external', async (target) => {
+    describe('and the entry script redirects the document there', () => {
+      let escaped: string
+
+      beforeEach(async () => {
+        copy = await brokenCopy('redirect-external', async (target) => {
+          const entry = path.join(target, 'index.html')
+          const html = await readFile(entry, 'utf8')
+          await writeFile(
+            entry,
+            html.replace(
+              '<head>',
+              `<head><script>location.replace(${JSON.stringify(`${origin}/landed.html`)})</script>`
+            )
+          )
+        })
+        escaped = `${origin}/landed.html`.replaceAll('.', '\\.')
+      })
+
+      // The check reads the page only once the top frame stops loading, so it sees the document the redirect lands on,
+      // which the second origin has served by then.
+      it('should name the second origin even though it responds with HTTP 200', async () => {
+        await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+          new RegExp(`the document left the expected origin or prefix: ${escaped}$`)
+        )
+        expect(requests).toContain('/landed.html')
+      }, 120_000)
+    })
+  })
+
+  describe('and the page moves its document outside the prefix without a request', () => {
+    let copy: string
+
+    beforeEach(async () => {
+      copy = await brokenCopy('history-outside', async (target) => {
         const entry = path.join(target, 'index.html')
         const html = await readFile(entry, 'utf8')
         await writeFile(
           entry,
           html.replace(
             '<head>',
-            `<head><script>location.replace(${JSON.stringify(`${origin}/landed.html`)})</script>`
+            `<head><script>addEventListener('load', () => history.replaceState(null, '', '/outside/landed.html'))</script>`
           )
         )
       })
-
-      // The entry can finish loading before the redirect commits, so either the request or the final document names it.
-      const escaped = `${origin}/landed.html`.replaceAll('.', '\\.')
-      await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
-        new RegExp(`(request|document) left the expected origin or prefix: ${escaped}$`)
-      )
-      expect(requests).toContain('/landed.html')
-    }, 120_000)
-  })
-
-  it('should fail when the page moves its document outside the prefix without a request', async () => {
-    const copy = await brokenCopy('history-outside', async (target) => {
-      const entry = path.join(target, 'index.html')
-      const html = await readFile(entry, 'utf8')
-      await writeFile(
-        entry,
-        html.replace(
-          '<head>',
-          `<head><script>addEventListener('load', () => history.replaceState(null, '', '/outside/landed.html'))</script>`
-        )
-      )
     })
 
-    await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
-      /the document left the expected origin or prefix: http:\/\/127\.0\.0\.1:\d+\/outside\/landed\.html/
-    )
-  }, 120_000)
+    it('should fail the check naming the outside document', async () => {
+      await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+        /the document left the expected origin or prefix: http:\/\/127\.0\.0\.1:\d+\/outside\/landed\.html/
+      )
+    }, 120_000)
+  })
 
   describe('and history escapes after the final audit render is measured', () => {
     let escaped: string
@@ -299,6 +336,136 @@ describe('when checking a built gallery', () => {
     }, 120_000)
   })
 
+  describe('and a navigation replaces the page while a poll is pending', () => {
+    // Rewrites the first poll for the component heading: `poll` is what that evaluation runs instead.
+    const interrupting = (poll: string) => {
+      const seen = { rewritten: false, rejected: '', polls: 0 }
+      const open: typeof openSession = async (...args) => {
+        const session = await openSession(...args)
+        const send = session.send
+        session.send = async (method, params) => {
+          const heading =
+            method === 'Runtime.evaluate' &&
+            String(params?.expression).includes("document.querySelector('main h1')")
+          if (heading) seen.polls++
+          if (heading && !seen.rewritten) {
+            seen.rewritten = true
+            try {
+              return await send(method, { ...params, expression: poll })
+            } catch (error) {
+              seen.rejected = String(error)
+              throw error
+            }
+          }
+          return send(method, params)
+        }
+        return session
+      }
+      return { open, seen }
+    }
+
+    describe('and the pending poll never settles by itself', () => {
+      let interrupted: ReturnType<typeof interrupting>
+
+      beforeEach(() => {
+        // The evaluation is in flight when the reload commits.
+        interrupted = interrupting('(location.reload(), new Promise(() => {}))')
+      })
+
+      it('should read the poll again in the document that replaced it', async () => {
+        await expect(checkBuild({ dist, open: interrupted.open })).resolves.toMatchObject({
+          entry: '/index.html'
+        })
+        expect(interrupted.seen.rewritten).toBe(true)
+        // Chrome names the lost document or the lost context, depending on how it replaced the page.
+        expect(interrupted.seen.rejected).toMatch(
+          /Inspected target navigated or closed|Execution context was destroyed|Cannot find context/
+        )
+      }, 120_000)
+    })
+
+    describe('and the pending poll answers after the navigation started', () => {
+      let interrupted: ReturnType<typeof interrupting>
+
+      beforeEach(() => {
+        // The poll answers true, but the reload it starts is reported before that answer arrives.
+        interrupted = interrupting('(location.reload(), true)')
+      })
+
+      it('should not keep the value read and read the new document instead', async () => {
+        await expect(checkBuild({ dist, open: interrupted.open })).resolves.toMatchObject({
+          entry: '/index.html'
+        })
+        expect(interrupted.seen.rewritten).toBe(true)
+        expect(interrupted.seen.rejected).toBe('')
+        expect(interrupted.seen.polls).toBeGreaterThan(1)
+      }, 120_000)
+    })
+
+    describe('and the context is lost without a navigation to explain it', () => {
+      let open: typeof openSession
+
+      beforeEach(() => {
+        open = async (...args) => {
+          const session = await openSession(...args)
+          const send = session.send
+          session.send = async (method, params) => {
+            if (
+              method === 'Runtime.evaluate' &&
+              String(params?.expression).includes("document.querySelector('main h1')")
+            )
+              throw Object.assign(
+                new Error('{"code":-32000,"message":"Inspected target navigated or closed"}'),
+                { cdp: { code: -32000, message: 'Inspected target navigated or closed' } }
+              )
+            return send(method, params)
+          }
+          return session
+        }
+      })
+
+      it('should fail the check with the lost context error', async () => {
+        await expect(checkBuild({ dist, open })).rejects.toThrow(
+          'Inspected target navigated or closed'
+        )
+      }, 120_000)
+    })
+
+    describe('and the page never finishes loading', () => {
+      // A stand-in session whose page never finishes loading; `onRead` records each attempt to read it.
+      const neverLoaded = (onRead: () => void) => async () => ({
+        requests: [],
+        requestFailures: [],
+        runtimeErrors: [],
+        consoleErrors: [],
+        navigations: 0,
+        loading: true,
+        send: async () => ({}),
+        navigate: async () => ({}),
+        whenLoaded: async () => {},
+        evaluate: async () => {
+          onRead()
+          return 'http://127.0.0.1/'
+        },
+        close: async () => {}
+      })
+      let reads: number
+      let loading: ReturnType<typeof neverLoaded>
+
+      beforeEach(() => {
+        reads = 0
+        loading = neverLoaded(() => reads++)
+      })
+
+      it('should time out instead of reading the page', async () => {
+        await expect(checkBuild({ dist, browser: 'unused', open: loading })).rejects.toThrow(
+          /^Timed out waiting for the page at /
+        )
+        expect(reads).toBe(0)
+      }, 60_000)
+    })
+  })
+
   describe('and a teardown step fails', () => {
     let origin: string
     let serverCloses: number
@@ -310,10 +477,14 @@ describe('when checking a built gallery', () => {
         requestFailures: [],
         runtimeErrors: [],
         consoleErrors: [],
-        send: async (method: string, params?: Record<string, unknown>) => {
-          if (method === 'Page.navigate') origin ||= new URL(String(params?.url)).origin
+        navigations: 0,
+        loading: false,
+        navigate: async (url: string) => {
+          origin ||= new URL(url).origin
           return {}
         },
+        whenLoaded: async () => {},
+        send: async () => ({}),
         evaluate: async (expression: string) => evaluate(expression),
         close: async () => {
           if (!closes) throw new Error('browser would not close')
@@ -323,7 +494,7 @@ describe('when checking a built gallery', () => {
     const passing = (expression: string) => {
       const page = `${origin}/?component=Button`
       if (
-        expression === 'location.href' ||
+        expression.includes('return location.href }') ||
         expression.includes("readyState === 'complete' && location.href")
       )
         return page
@@ -353,60 +524,76 @@ describe('when checking a built gallery', () => {
       serverCloses = 0
     })
 
-    it('should keep the check failure when the browser fails to close and still close the server', async () => {
-      await expect(
-        checkBuild({ dist, browser: 'unused', open: session(unreachable, false) })
-      ).rejects.toThrow('page unreachable')
-      expect(origin).not.toBe('')
-      await expect(fetch(origin)).rejects.toThrow()
-    })
-
-    it('should report the browser close failure after a passing check and still close the server', async () => {
-      await expect(
-        checkBuild({ dist, browser: 'unused', open: session(passing, false) })
-      ).rejects.toThrow('browser would not close')
-      await expect(fetch(origin)).rejects.toThrow()
-    })
-
-    it('should report the server close failure after a passing check', async () => {
-      await expect(
-        checkBuild({
-          dist,
-          browser: 'unused',
-          open: session(passing),
-          createServer: failingServer
+    describe('and the browser fails to close', () => {
+      describe('and the check fails', () => {
+        it('should keep the check failure and still close the server', async () => {
+          await expect(
+            checkBuild({ dist, browser: 'unused', open: session(unreachable, false) })
+          ).rejects.toThrow('page unreachable')
+          expect(origin).not.toBe('')
+          await expect(fetch(origin)).rejects.toThrow()
         })
-      ).rejects.toThrow('server would not close')
-      expect(serverCloses).toBe(1)
+      })
+
+      describe('and the check passes', () => {
+        it('should report the browser close failure and still close the server', async () => {
+          await expect(
+            checkBuild({ dist, browser: 'unused', open: session(passing, false) })
+          ).rejects.toThrow('browser would not close')
+          await expect(fetch(origin)).rejects.toThrow()
+        })
+      })
+
+      describe('and the check passes but the server also fails to close', () => {
+        it('should report the browser close failure after attempting both closes', async () => {
+          await expect(
+            checkBuild({
+              dist,
+              browser: 'unused',
+              open: session(passing, false),
+              createServer: failingServer
+            })
+          ).rejects.toThrow('browser would not close')
+          expect(serverCloses).toBe(1)
+          await expect(fetch(origin)).rejects.toThrow()
+        })
+      })
     })
 
-    it('should report the check failure when the server also fails to close', async () => {
-      await expect(
-        checkBuild({
-          dist,
-          browser: 'unused',
-          open: session(unreachable),
-          createServer: failingServer
+    describe('and the server fails to close', () => {
+      describe('and the check passes', () => {
+        it('should report the server close failure', async () => {
+          await expect(
+            checkBuild({
+              dist,
+              browser: 'unused',
+              open: session(passing),
+              createServer: failingServer
+            })
+          ).rejects.toThrow('server would not close')
+          expect(serverCloses).toBe(1)
         })
-      ).rejects.toThrow('page unreachable')
-      expect(serverCloses).toBe(1)
-    })
+      })
 
-    it('should report the browser close failure when the server also fails to close, after attempting both', async () => {
-      await expect(
-        checkBuild({
-          dist,
-          browser: 'unused',
-          open: session(passing, false),
-          createServer: failingServer
+      describe('and the check fails', () => {
+        it('should report the check failure', async () => {
+          await expect(
+            checkBuild({
+              dist,
+              browser: 'unused',
+              open: session(unreachable),
+              createServer: failingServer
+            })
+          ).rejects.toThrow('page unreachable')
+          expect(serverCloses).toBe(1)
         })
-      ).rejects.toThrow('browser would not close')
-      expect(serverCloses).toBe(1)
-      await expect(fetch(origin)).rejects.toThrow()
+      })
     })
   })
 
-  it('should reject a prefix that is not an absolute path', async () => {
-    await expect(checkBuild({ dist, prefix: 'relative/' })).rejects.toThrow('absolute URL path')
+  describe('and the prefix is not an absolute path', () => {
+    it('should reject the prefix', async () => {
+      await expect(checkBuild({ dist, prefix: 'relative/' })).rejects.toThrow('absolute URL path')
+    })
   })
 })

@@ -12,10 +12,11 @@
 //! Handlers are invoked from the subscription's own task: one that panics is contained so the
 //! remaining subjects keep delivering, mirroring upstream's never-throws contract.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 /// Invoked once per message with the concrete subject it arrived on and its payload. Must not
 /// panic; one that does is caught, but the message is lost.
@@ -23,7 +24,8 @@ pub type NatsHandler = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublishOutcome {
-    /// The SDK accepted the command while the same ready outer-link revision was observed.
+    /// The SDK accepted the command under the invoked publication policy. Ordinary publication
+    /// requires the same ready outer-link revision; statistical disconnects do not.
     /// Local submission only: no broker receipt, subject acceptance or subscriber delivery is
     /// confirmed. A later connection loss can lose it; bounded SDK-buffered commands may also
     /// be delivered after reconnect. Application-queue rejection does not purge SDK-accepted work.
@@ -108,9 +110,43 @@ pub trait NatsBus: Send + Sync {
     /// or ambiguity. Periodic readiness fences do not acknowledge earlier publications.
     async fn publish(&self, subject: &str, payload: Vec<u8>) -> PublishOutcome;
 
+    /// Statistical removal only: production waits for bounded queue/SDK capacity without an
+    /// admission-readiness fence. Cancellation prevents an unstarted attempt; SDK submission
+    /// is not a broker or application acknowledgment, and a started attempt is never replayed.
+    async fn publish_statistical_disconnect(
+        &self,
+        payload: Vec<u8>,
+        deadline: tokio::time::Instant,
+    ) -> PublishOutcome {
+        if tokio::time::Instant::now() >= deadline {
+            return PublishOutcome::Failed;
+        }
+        tokio::time::timeout_at(
+            deadline,
+            self.publish(
+                crate::protocol::bus::statistics::OBSERVATIONS_SUBJECT,
+                payload,
+            ),
+        )
+        .await
+        .unwrap_or(PublishOutcome::Unconfirmed)
+    }
+
+    /// Correlated statistics registration only. Begin/Confirm may mutate Pulse's
+    /// observation fence; this capability never grants room or admission authority.
+    async fn statistics_control(&self, _payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        Err(RequestError::NoResponders)
+    }
+
     /// A bounded, correlated read-only exchange on one ready connection incarnation. A timeout
     /// says nothing about source ownership and must never authorize a cached fallback or a write.
     async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError>;
+
+    /// Fence publications already submitted on this link during orderly shutdown.
+    /// A successful broker flush is not an application-consumption acknowledgment.
+    async fn flush(&self) -> bool {
+        !self.is_enabled()
+    }
 }
 
 /// Matches a NATS subject against a subscription pattern: `*` stands for exactly one token, `>`
@@ -154,11 +190,13 @@ struct InProcessShared {
     refuse: AtomicBool,
     unconfirmed: AtomicBool,
     responder: Mutex<Option<NatsResponder>>,
+    #[cfg(any(test, feature = "test-support"))]
+    statistics: Mutex<crate::pulse::statistics::Statistics>,
 }
 
 impl SubscriptionRegistry for InProcessShared {
     fn cancel(&self, id: u64) {
-        self.subs.lock().unwrap().remove(&id);
+        self.subs.lock().remove(&id);
     }
 }
 
@@ -186,6 +224,8 @@ impl InProcessBus {
                 refuse: AtomicBool::new(false),
                 unconfirmed: AtomicBool::new(false),
                 responder: Mutex::new(None),
+                #[cfg(any(test, feature = "test-support"))]
+                statistics: Mutex::new(crate::pulse::statistics::Statistics::default()),
             }),
         }
     }
@@ -193,14 +233,14 @@ impl InProcessBus {
     /// Everything published so far, in order, including messages that were also delivered to a
     /// local subscriber.
     pub fn published(&self) -> Vec<(String, Vec<u8>)> {
-        self.shared.published.lock().unwrap().clone()
+        self.shared.published.lock().clone()
     }
 
     /// Every request made so far, in order, answered or not: one made while the link is down is
     /// recorded too, so a test can tell "nothing was asked" from "nothing got through".
     #[cfg(any(test, feature = "test-support"))]
     pub fn requested(&self) -> Vec<(String, Vec<u8>)> {
-        self.shared.requested.lock().unwrap().clone()
+        self.shared.requested.lock().clone()
     }
 
     /// Simulates the link going away: publishes report [`PublishOutcome::NoConnection`] and
@@ -223,7 +263,7 @@ impl InProcessBus {
     }
 
     pub fn respond_to_requests(&self, responder: NatsResponder) {
-        *self.shared.responder.lock().unwrap() = Some(responder);
+        *self.shared.responder.lock() = Some(responder);
     }
 
     /// Delivers a message to the matching subscribers without recording it as published: how a
@@ -232,7 +272,7 @@ impl InProcessBus {
     /// One member of each queue group is picked, like the broker's own distribution.
     pub fn inject(&self, subject: &str, payload: &[u8]) {
         let handlers: Vec<NatsHandler> = {
-            let subs = self.shared.subs.lock().unwrap();
+            let subs = self.shared.subs.lock();
             let mut grouped: HashMap<(String, String), NatsHandler> = HashMap::new();
             let mut ungrouped: Vec<NatsHandler> = Vec::new();
             for sub in subs.values() {
@@ -258,6 +298,9 @@ impl InProcessBus {
 
 #[async_trait::async_trait]
 impl NatsBus for InProcessBus {
+    async fn flush(&self) -> bool {
+        self.is_connected()
+    }
     fn is_enabled(&self) -> bool {
         true
     }
@@ -279,7 +322,7 @@ impl NatsBus for InProcessBus {
         handler: NatsHandler,
     ) -> NatsSubscription {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
-        self.shared.subs.lock().unwrap().insert(
+        self.shared.subs.lock().insert(
             id,
             InProcessSub {
                 subject: subject.to_string(),
@@ -303,7 +346,6 @@ impl NatsBus for InProcessBus {
         self.shared
             .published
             .lock()
-            .unwrap()
             .push((subject.to_string(), payload.clone()));
         self.inject(subject, &payload);
         if self.shared.unconfirmed.load(Ordering::Relaxed) {
@@ -313,16 +355,37 @@ impl NatsBus for InProcessBus {
         }
     }
 
+    async fn statistics_control(&self, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            if !self.is_ready() {
+                return Err(RequestError::NoConnection);
+            }
+            let request = crate::protocol::bus::statistics::ProducerRequest::decode(&payload)
+                .ok_or(RequestError::Invalid)?;
+            self.shared
+                .statistics
+                .lock()
+                .control(request)
+                .encode()
+                .ok_or(RequestError::Invalid)
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        {
+            let _ = payload;
+            Err(RequestError::NoResponders)
+        }
+    }
+
     async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
         self.shared
             .requested
             .lock()
-            .unwrap()
             .push((subject.to_string(), payload.clone()));
         if !self.is_ready() {
             return Err(RequestError::NoConnection);
         }
-        let responder = self.shared.responder.lock().unwrap().clone();
+        let responder = self.shared.responder.lock().clone();
         responder.ok_or(RequestError::NoResponders)?(subject, &payload)
     }
 }

@@ -24,14 +24,14 @@ use thiserror::Error;
 use crate::auth::AuthError as ChainError;
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::signed_fetch::{
-    LegacyPayload, SignatureRefusal, SignedRequest, SkewError, check_symmetric_skew,
+    LegacyPayload, SignatureRefusal, SignedRequest, SkewError, check_timestamp_window,
     parse_metadata, verify_signature,
 };
 use crate::shared::identity::Address;
 use crate::shared::rpc::handshake::{extract_from_object, is_refused_signer};
 use crate::shared::signed_fetch::{AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER};
 
-pub use crate::shared::signed_fetch::FIVE_MINUTES;
+pub use crate::shared::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
 
 #[derive(Debug, Error)]
 pub enum AuthError {
@@ -55,6 +55,8 @@ pub enum AuthError {
     EipNotImplemented,
     #[error("signature validation unavailable: {0}")]
     ValidatorUnavailable(String),
+    #[error("too many contract-wallet signature checks from this client")]
+    RateLimited,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +113,7 @@ pub async fn verify_auth_frame(
         .get(AUTH_METADATA_HEADER)
         .and_then(|v| v.as_str())
         .unwrap_or("{}");
-    check_symmetric_skew(ts, now, FIVE_MINUTES).map_err(|e| match e {
+    check_timestamp_window(ts, now, SIGNED_FETCH_WINDOW_SECS).map_err(|e| match e {
         SkewError::InvalidTimestamp(ts) => {
             AuthError::MalformedChain(format!("invalid timestamp: {ts:?}"))
         }
@@ -166,6 +168,7 @@ fn chain_error(e: ChainError) -> AuthError {
         },
         ChainError::Eip1654NotImplemented => AuthError::EipNotImplemented,
         ChainError::Eip1654ValidationFailed(d) => AuthError::ValidatorUnavailable(d),
+        ChainError::Eip1654RateLimited => AuthError::RateLimited,
         other => AuthError::InvalidSignature(format!("{other:?}")),
     }
 }

@@ -10,6 +10,8 @@
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
+/* A host sets the two tokens to dim a disabled switch. Without them the look does not change. */
+.toggle:disabled { opacity: var(--toggle-disabled-opacity, 1); cursor: var(--toggle-disabled-cursor, pointer); }
 html.theme-light .toggle { background: rgba(0, 0, 0, .22); }
 .toggle__knob {
   position: absolute; top: 3px; left: 3px;
@@ -17,3 +19,6 @@ html.theme-light .toggle { background: rgba(0, 0, 0, .22); }
   transition: transform .15s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, .3);
 }
 .toggle.is-on .toggle__knob { transform: translateX(18px); }
+.toggle--small { --w: 34px; --h: 20px; }
+.toggle--small .toggle__knob { top: 2px; left: 2px; width: 16px; height: 16px; }
+.toggle--small.is-on .toggle__knob { transform: translateX(14px); }

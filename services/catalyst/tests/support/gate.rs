@@ -1,5 +1,5 @@
 //! External runtimes remain opt-in locally. The two isolated brokers are mandatory in CI.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses a subset of these helpers")]
 
 use std::ffi::OsString;
 

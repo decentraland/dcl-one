@@ -1,5 +1,7 @@
 //! Isolate-wide V8 callbacks. Scene code reaches these without any op, so like ops they never
-//! panic and run no scene code: a panic inside a V8 callback aborts the sidecar.
+//! panic and run no scene code: a panic inside a V8 callback aborts the sidecar. deno_core's
+//! stack-trace callback reads getters and calls `Error.prepareStackTrace`, and its WebAssembly
+//! callback unwraps a settle that fails while the isolate terminates.
 
 use std::fmt::Write as _;
 
@@ -9,7 +11,6 @@ use deno_core::v8;
 pub fn install(isolate: &mut v8::Isolate) {
     isolate.set_prepare_stack_trace_callback(prepare_stack_trace);
     isolate.set_wasm_async_resolve_promise_callback(settle_wasm_compilation);
-    isolate.set_host_import_module_dynamically_callback(refuse_dynamic_import);
 }
 
 const MAX_HEADER_UNITS: usize = 64 * 1024;
@@ -20,18 +21,18 @@ const MAX_STACK_BYTES: usize = 1024 * 1024;
 /// JS running inside this callback, not even to terminate it. Only data properties are read,
 /// so a getter, a proxy or a scene's `Error.prepareStackTrace` never runs, and every string is
 /// cut to a bounded length.
-fn prepare_stack_trace<'s>(
-    scope: &mut v8::HandleScope<'s>,
+fn prepare_stack_trace<'s, 'i>(
+    scope: &mut v8::PinScope<'s, 'i>,
     error: v8::Local<'s, v8::Value>,
     callsites: v8::Local<'s, v8::Array>,
 ) -> v8::Local<'s, v8::Value> {
-    let scope = &mut v8::TryCatch::new(scope);
+    v8::tc_scope!(let scope, scope);
     let undefined: v8::Local<v8::Value> = v8::undefined(scope).into();
     if let Ok(object) = v8::Local::<v8::Object>::try_from(error) {
         // deno_core reads the call sites from here when it reports an uncaught error
         if let Some(name) = v8::String::new(scope, "deno_core::call_site_evals") {
             let key = v8::Private::for_api(scope, Some(name));
-            object.set_private(scope, key, callsites.into());
+            let _ = object.set_private(scope, key, callsites.into());
         }
     }
     let mut stack = header(scope, error);
@@ -60,7 +61,7 @@ fn prepare_stack_trace<'s>(
 /// A data property found on `object` or its prototypes; `None` if it is missing, an accessor,
 /// or behind a proxy.
 fn data_property<'s>(
-    scope: &mut v8::HandleScope<'s>,
+    scope: &v8::PinScope<'s, '_>,
     object: v8::Local<'s, v8::Object>,
     name: &str,
 ) -> Option<v8::Local<'s, v8::Value>> {
@@ -87,7 +88,7 @@ fn data_property<'s>(
     None
 }
 
-fn header<'s>(scope: &mut v8::HandleScope<'s>, error: v8::Local<'s, v8::Value>) -> String {
+fn header<'s>(scope: &v8::PinScope<'s, '_>, error: v8::Local<'s, v8::Value>) -> String {
     let Ok(object) = v8::Local::<v8::Object>::try_from(error) else {
         return String::new();
     };
@@ -110,7 +111,7 @@ fn header<'s>(scope: &mut v8::HandleScope<'s>, error: v8::Local<'s, v8::Value>) 
 /// A primitive as a string of at most `max_units` UTF-16 units. `None` for null, undefined,
 /// symbols and objects, whose conversion could run scene code.
 fn bounded_string(
-    scope: &mut v8::HandleScope,
+    scope: &v8::PinScope<'_, '_>,
     value: v8::Local<v8::Value>,
     max_units: usize,
 ) -> Option<String> {
@@ -120,7 +121,7 @@ fn bounded_string(
     let string = value.to_string(scope)?;
     let length = string.length();
     let mut units = vec![0u16; length.min(max_units)];
-    string.write(scope, &mut units, 0, v8::WriteOptions::NO_NULL_TERMINATION);
+    string.write_v2(scope, 0, &mut units, v8::WriteFlags::empty());
     let mut out = String::from_utf16_lossy(&units);
     if length > max_units {
         out.push('…');
@@ -148,11 +149,8 @@ struct Frame {
 }
 
 impl Frame {
-    fn read<'s>(
-        scope: &mut v8::HandleScope<'s>,
-        callsite: v8::Local<'s, v8::Object>,
-    ) -> Option<Self> {
-        let mut call = |name: &str| -> Option<v8::Local<'s, v8::Value>> {
+    fn read<'s>(scope: &v8::PinScope<'s, '_>, callsite: v8::Local<'s, v8::Object>) -> Option<Self> {
+        let call = |name: &str| -> Option<v8::Local<'s, v8::Value>> {
             let method = data_property(scope, callsite, name)?;
             let method = v8::Local::<v8::Function>::try_from(method).ok()?;
             method.call(scope, callsite.into(), &[])
@@ -171,7 +169,7 @@ impl Frame {
         let is_async = call("isAsync")?;
         let is_promise_all = call("isPromiseAll")?;
         let promise_index = call("getPromiseIndex")?;
-        let mut number =
+        let number =
             |v: v8::Local<v8::Value>| v.is_number().then(|| v.integer_value(scope)).flatten();
         let line = number(line);
         let column = number(column);
@@ -250,7 +248,13 @@ impl Frame {
             return;
         }
         match self.file_name.as_deref().filter(|f| !f.is_empty()) {
-            Some(file_name) => out.push_str(&deno_core::error::format_file_name(file_name)),
+            Some(file_name) => {
+                let parts = deno_core::error::format_file_name(file_name, None);
+                if let Some(dir) = parts.working_dir_path {
+                    out.push_str(&dir);
+                }
+                out.push_str(&parts.file_name);
+            }
             None => {
                 if let Some(origin) = self.eval_origin.as_deref().filter(|_| self.is_eval) {
                     let _ = write!(out, "{origin}, ");
@@ -270,34 +274,17 @@ impl Frame {
 /// Settles an asynchronous WebAssembly compile; the promise may already be unusable when the
 /// isolate is terminating.
 extern "C" fn settle_wasm_compilation(
-    _isolate: *mut v8::Isolate,
+    _isolate: v8::UnsafeRawIsolatePtr,
     context: v8::Local<v8::Context>,
     resolver: v8::Local<v8::PromiseResolver>,
     result: v8::Local<v8::Value>,
     success: v8::WasmAsyncSuccess,
 ) {
     // SAFETY: V8 passes a live context for this callback
-    let scope = &mut unsafe { v8::CallbackScope::new(context) };
+    v8::callback_scope!(unsafe scope, context);
     if success == v8::WasmAsyncSuccess::Success {
         let _ = resolver.resolve(scope, result);
     } else {
         let _ = resolver.reject(scope, result);
     }
-}
-
-/// Scenes load no modules at run time, so `import()` rejects at once, without the error
-/// handling that would read properties of the scene's error objects.
-fn refuse_dynamic_import<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    _host_defined_options: v8::Local<'s, v8::Data>,
-    _resource_name: v8::Local<'s, v8::Value>,
-    _specifier: v8::Local<'s, v8::String>,
-    _import_attributes: v8::Local<'s, v8::FixedArray>,
-) -> Option<v8::Local<'s, v8::Promise>> {
-    let resolver = v8::PromiseResolver::new(scope)?;
-    let promise = resolver.get_promise(scope);
-    let message = v8::String::new(scope, "dynamic import is not available to scenes")?;
-    let error = v8::Exception::type_error(scope, message);
-    resolver.reject(scope, error);
-    Some(promise)
 }

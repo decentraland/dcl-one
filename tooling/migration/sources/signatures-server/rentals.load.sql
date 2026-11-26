@@ -1,0 +1,58 @@
+-- Upstream ids kept. Skipped: a signature the node holds under another id,
+-- an asset the previous step did not land, and a second open listing of an
+-- asset (the node's one-open-per-asset rule; within a batch the latest wins).
+
+-- Listings leaving `open` first, so the open-per-asset check below sees them
+-- closed when the same batch carries their open replacement. Only open rows
+-- match, so the rent-over-cancellation rule of the upsert has no case here.
+UPDATE signatures.rentals r
+   SET status = s.status::signatures.rental_status, updated_at = s.updated_at AT TIME ZONE 'UTC'
+  FROM stage s
+ WHERE r.id = s.id AND r.signature = s.signature AND r.status = 'open' AND s.status <> 'open'
+   AND r.updated_at <= s.updated_at AT TIME ZONE 'UTC';
+
+WITH accepted AS (
+INSERT INTO signatures.rentals
+    (id, contract_address, token_id, network, chain_id, expiration, nonces, signature,
+     rental_contract_address, status, target, rented_days, period_chosen, created_at, updated_at, started_at)
+SELECT s.id, s.contract_address, s.token_id, s.network, s.chain_id, s.expiration AT TIME ZONE 'UTC',
+       s.nonces, s.signature, s.rental_contract_address, s.status::signatures.rental_status, s.target,
+       s.rented_days, s.period_chosen, s.created_at AT TIME ZONE 'UTC', s.updated_at AT TIME ZONE 'UTC',
+       s.started_at AT TIME ZONE 'UTC'
+FROM stage s
+JOIN signatures.rental_assets a ON a.contract_address = s.contract_address AND a.token_id = s.token_id
+WHERE NOT EXISTS (SELECT 1 FROM signatures.rentals r WHERE r.signature = s.signature AND r.id <> s.id)
+  AND NOT (s.status = 'open' AND EXISTS (
+        SELECT 1 FROM signatures.rentals r
+        WHERE r.contract_address = s.contract_address AND r.token_id = s.token_id
+          AND r.status = 'open' AND r.id <> s.id))
+  -- two open listings of one asset in this batch: only the latest lands
+  AND NOT (s.status = 'open' AND EXISTS (
+        SELECT 1 FROM stage o
+        WHERE o.contract_address = s.contract_address AND o.token_id = s.token_id
+          AND o.status = 'open' AND (o.updated_at, o.id) > (s.updated_at, s.id)))
+ON CONFLICT (id) DO UPDATE
+   SET expiration = EXCLUDED.expiration, nonces = EXCLUDED.nonces,
+       rental_contract_address = EXCLUDED.rental_contract_address, status = EXCLUDED.status,
+       target = EXCLUDED.target, rented_days = EXCLUDED.rented_days,
+       period_chosen = EXCLUDED.period_chosen, created_at = EXCLUDED.created_at,
+       updated_at = EXCLUDED.updated_at, started_at = EXCLUDED.started_at,
+       -- upstream keeps no reason: a node cancellation keeps its own while
+       -- upstream also says cancelled, any other status clears it
+       cancel_reason = CASE WHEN EXCLUDED.status = 'cancelled' THEN signatures.rentals.cancel_reason END
+ WHERE signatures.rentals.signature = EXCLUDED.signature
+   -- a newer node row is kept, except that a rent of the listing wins over a
+   -- cancellation: an upstream `executed` or `claimed` replaces a `cancelled`
+   -- row of any age, and the row takes the upstream `updated_at`, so later
+   -- upstream versions and the listing's periods still match it
+   AND (signatures.rentals.updated_at <= EXCLUDED.updated_at
+        OR (signatures.rentals.status = 'cancelled' AND EXCLUDED.status IN ('executed', 'claimed')))
+RETURNING id, signature
+)
+
+INSERT INTO signatures.rental_listings (id, lessor, tenant)
+SELECT s.id, s.lessor, s.tenant
+FROM stage s
+JOIN accepted r ON r.id = s.id AND r.signature = s.signature
+ON CONFLICT (id) DO UPDATE
+   SET lessor = EXCLUDED.lessor, tenant = COALESCE(EXCLUDED.tenant, signatures.rental_listings.tenant);

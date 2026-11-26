@@ -27,3 +27,8 @@ never a peer).
   ([shared UI library ADR](2026-10-30-shared-ui-library.md)).
 - Exception: `library/uuav/` keeps its `uuav-*` crate names and its own
   toolchain pin ([UUAV ADR](2026-11-03-uuav-native-video.md)).
+- Exception: `rendering/avatar-preview/` is a second workspace next to the
+  Explorer's that links its crates by path
+  ([avatar preview ADR](2026-11-05-avatar-preview-renderer.md)).
+- Exception: `services/catalyst/comms-e2e/` is a tool crate that nothing links and the
+  root `lib.rs` does not re-export ([comms-e2e ADR](2026-11-19-comms-e2e-tool-crate.md)).

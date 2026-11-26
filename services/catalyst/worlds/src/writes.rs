@@ -9,11 +9,13 @@
 //! `PATCH`, `DELETE`) to a worlds router answers 503 with the social error
 //! envelope and a `Retry-After`; the reads keep answering.
 //!
-//! Two non-GET requests are reads and stay open: `POST /entities/active`
-//! (the newest scene per named world) and `POST
+//! Three non-GET requests are reads and stay open: `POST /entities/active`
+//! (the newest scene per named world), `POST
 //! /world/{name}/permissions/{perm}/parcels` (the addresses holding a grant
-//! over the parcels); so does `POST /admin/federation/worlds/refresh`, a poll of the
-//! admitted peers that writes mirror rows, never user authority. The scene
+//! over the parcels) and the world-storage `POST /exports` (a download of
+//! the scene's values); so does `POST /admin/federation/worlds/refresh`, a poll of the
+//! admitted peers that writes mirror rows, never user authority, and so does
+//! `POST /reprocess-ab`, which only asks the asset-bundle converter to build. The scene
 //! host (`/scene-state`: a WebSocket, an operator kick and a reload) and
 //! archipelago (`/ws`, the challenge and heartbeat: admission and presence)
 //! are not user authority and are not wrapped.
@@ -24,9 +26,8 @@ use axum::http::{Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 
-use crate::shared::writes::{Refusal, refusal};
-
-pub const DISABLED_MESSAGE: &str = "worlds writes are disabled on this node (WORLDS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts world publishes, permission edits and storage writes";
+pub const DISABLED_MESSAGE: &str =
+    "worlds writes are disabled on this node (WORLDS_WRITES_ENABLED=false)";
 
 /// Whether `method` on `path` (route-local, after any nest prefix) is a
 /// write this gate refuses while disabled.
@@ -37,7 +38,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
     if *method == Method::POST
         && matches!(
             path,
-            "/entities/active" | "/admin/federation/worlds/refresh"
+            "/entities/active" | "/admin/federation/worlds/refresh" | "/exports" | "/reprocess-ab"
         )
     {
         return false;
@@ -54,15 +55,7 @@ pub fn is_gated(method: &Method, path: &str) -> bool {
 
 /// The 503 the gate answers: the social error envelope with a `Retry-After`.
 pub fn disabled_response() -> Response {
-    refused_response(&Refusal::Off)
-}
-
-/// The 503 for `refusal`: the switch's own message while it is off, the
-/// restore stamp that holds it and its age while it is on.
-pub fn refused_response(refusal: &Refusal) -> Response {
-    let message = refusal.message("worlds", DISABLED_MESSAGE);
-    let body =
-        serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": message });
+    let body = serde_json::json!({ "ok": false, "error": "Service Unavailable", "message": DISABLED_MESSAGE });
     (
         StatusCode::SERVICE_UNAVAILABLE,
         [
@@ -75,10 +68,8 @@ pub fn refused_response(refusal: &Refusal) -> Response {
 }
 
 async fn gate(State(enabled): State<bool>, req: Request, next: Next) -> Response {
-    if is_gated(req.method(), req.uri().path())
-        && let Some(refusal) = refusal(enabled)
-    {
-        return refused_response(&refusal);
+    if !enabled && is_gated(req.method(), req.uri().path()) {
+        return disabled_response();
     }
     next.run(req).await
 }
@@ -116,6 +107,7 @@ mod tests {
                 "/admin/federation/worlds/refresh",
                 post(|| async { "polled" }),
             )
+            .route("/exports", post(|| async { "exported" }))
             .route(
                 "/admin/federation/worlds/{p}/{w}/hidden",
                 put(|| async { "hidden" }),
@@ -173,6 +165,8 @@ mod tests {
             "/world/foo.dcl.eth/permissions/deployment/parcels"
         ));
         assert!(!is_gated(&Method::POST, "/admin/federation/worlds/refresh"));
+        assert!(!is_gated(&Method::POST, "/exports"));
+        assert!(!is_gated(&Method::POST, "/reprocess-ab"));
     }
 
     #[tokio::test]
@@ -222,6 +216,10 @@ mod tests {
             call(&app, "POST", "/admin/federation/worlds/refresh").await,
             (StatusCode::OK, "polled".to_string())
         );
+        assert_eq!(
+            call(&app, "POST", "/exports").await,
+            (StatusCode::OK, "exported".to_string())
+        );
     }
 
     #[tokio::test]
@@ -242,33 +240,5 @@ mod tests {
         let res = disabled_response();
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(res.headers().get(header::RETRY_AFTER).unwrap(), "3600");
-    }
-
-    /// A switch that is on still holds writes while a restore stamp is
-    /// stale, and the 503 names the stamp and its age; reads keep answering.
-    #[tokio::test]
-    async fn a_stale_restore_stamp_holds_writes_and_names_it() {
-        use crate::shared::writes::restore::{
-            lab::{HOUR, StampLab},
-            scoped,
-        };
-        let lab = StampLab::fresh();
-        let app = app(true);
-        scoped(lab.stamps.clone(), async {
-            let (status, _) = call(&app, "POST", "/entities").await;
-            assert_eq!(status, StatusCode::OK, "fresh stamps let the write through");
-            lab.advance(26 * HOUR);
-            let (status, body) = call(&app, "POST", "/entities").await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(v["error"], "Service Unavailable");
-            assert_eq!(
-                v["message"],
-                "worlds writes are held on this node: the last complete backup (backup.json) is 27 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-            );
-            let (status, _) = call(&app, "GET", "/values/k").await;
-            assert_eq!(status, StatusCode::OK);
-        })
-        .await;
     }
 }

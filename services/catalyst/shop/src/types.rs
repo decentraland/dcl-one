@@ -51,6 +51,28 @@ impl fmt::Display for ChainId {
     }
 }
 
+/// A chain id that does not fit the integer column it is stored in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("chain id {0} does not fit its column")]
+pub struct ChainIdOverflow(pub u64);
+
+/// `id` as the `bigint` (`i64`) or `integer` (`i32`) column that stores it.
+pub fn chain_id_column<T: TryFrom<u64>>(id: u64) -> Result<T, ChainIdOverflow> {
+    T::try_from(id).map_err(|_| ChainIdOverflow(id))
+}
+
+impl From<ChainIdOverflow> for sqlx::Error {
+    fn from(e: ChainIdOverflow) -> Self {
+        sqlx::Error::Encode(Box::new(e))
+    }
+}
+
+impl From<ChainIdOverflow> for crate::evm::errors::ApiError {
+    fn from(e: ChainIdOverflow) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("an address is 0x followed by 40 hex digits")]
@@ -59,6 +81,21 @@ pub enum ParseError {
     Decimal,
     #[error("a NAME is 2-15 ASCII letters or digits")]
     Name,
+}
+
+/// Whether `text` is `0x` followed by exactly 40 hex digits (either case).
+/// `0X` is refused; callers trim or lowercase before asking.
+pub fn is_hex_address(text: &str) -> bool {
+    text.strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// A transaction hash as stored: `raw` trimmed, then `0x` plus 64 hex digits,
+/// lowercased; `None` for anything else.
+pub fn normalize_tx_hash(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    let hex = text.strip_prefix("0x")?;
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| text.to_lowercase())
 }
 
 /// An EVM address, compared by its bytes and always printed lowercase.
@@ -693,6 +730,13 @@ pub struct TokenRecord {
     pub owner: EvmAddress,
 }
 
+/// The off-chain marketplace asset type codes as stored (`shop.trade_assets`)
+/// and signed; [`TradeAssetType::from_code`] reads them.
+pub const ASSET_TYPE_ERC20: i32 = 1;
+pub const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
+pub const ASSET_TYPE_ERC721: i32 = 3;
+pub const ASSET_TYPE_COLLECTION_ITEM: i32 = 4;
+
 /// The off-chain marketplace asset types (`CreditsManagerPolygon`,
 /// `DecentralandMarketplacePolygonAssetTypes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -964,11 +1008,15 @@ pub enum SettlementOperation {
     /// or batch `/credits/authorize`); the group's lines are the plan. The
     /// contract lets the buyer spend whatever part of `value` a call leaves in
     /// later `useCredits` calls until it expires, so the rule bounds it by the
-    /// group's own quoted need (`sizing`).
+    /// group's own quoted need (`sizing`). `leg` is the Credits part in cents
+    /// of a one-line purchase whose rest the buyer pays in MANA: the bound is
+    /// then that part's share of the line's MANA price, with no buffer
+    /// (`policy::partial_credit_cap`).
     AuthorizeCredit {
         chain_id: ChainId,
         value: ManaWei,
         sizing: CreditSizing,
+        leg: Option<UsdCents>,
     },
     /// `CreditsManager.useCredits`, submitted directly or relayed as a
     /// meta-transaction. `max_uncredited` above zero is a mixed payment.
@@ -983,4 +1031,64 @@ pub enum SettlementOperation {
     CreditListing { trade: SignedTrade },
     /// The buyer pays MANA directly; no credit is touched.
     Mana { call: ExternalCall },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chain_id_past_its_column_is_refused() {
+        assert_eq!(chain_id_column::<i32>(137), Ok(137));
+        assert_eq!(
+            chain_id_column::<i32>(1 << 31),
+            Err(ChainIdOverflow(1 << 31))
+        );
+        assert_eq!(
+            chain_id_column::<i64>(u64::MAX),
+            Err(ChainIdOverflow(u64::MAX))
+        );
+    }
+
+    #[test]
+    fn the_asset_type_codes_are_the_ones_from_code_reads() {
+        for (code, kind) in [
+            (ASSET_TYPE_ERC20, TradeAssetType::Erc20),
+            (ASSET_TYPE_USD_PEGGED_MANA, TradeAssetType::UsdPeggedMana),
+            (ASSET_TYPE_ERC721, TradeAssetType::Erc721),
+            (ASSET_TYPE_COLLECTION_ITEM, TradeAssetType::CollectionItem),
+        ] {
+            assert_eq!(TradeAssetType::from_code(code as u64), kind);
+        }
+    }
+
+    #[test]
+    fn tx_hashes_are_trimmed_checked_and_lowercased() {
+        let hash = format!("0x{}", "Ab".repeat(32));
+        assert_eq!(
+            normalize_tx_hash(&format!(" {hash}\n")),
+            Some(hash.to_lowercase())
+        );
+        assert_eq!(normalize_tx_hash(&hash.replacen("0x", "0X", 1)), None);
+        assert_eq!(normalize_tx_hash(&hash[..65]), None);
+        assert_eq!(normalize_tx_hash(&format!("{hash}0")), None);
+        assert_eq!(normalize_tx_hash(&format!("0x{}g", "a".repeat(63))), None);
+        assert_eq!(normalize_tx_hash(&"a".repeat(66)), None);
+        assert_eq!(normalize_tx_hash(""), None);
+    }
+
+    #[test]
+    fn hex_address_shape_is_0x_and_forty_hex_digits() {
+        let lower = format!("0x{}", "ab".repeat(20));
+        assert!(is_hex_address(&lower));
+        assert!(is_hex_address(
+            &lower.to_ascii_uppercase().replacen("0X", "0x", 1)
+        ));
+        assert!(!is_hex_address(&lower.replacen("0x", "0X", 1)));
+        assert!(!is_hex_address(&lower[..41]));
+        assert!(!is_hex_address(&format!("{lower}0")));
+        assert!(!is_hex_address(&format!(" {lower}")));
+        assert!(!is_hex_address(&format!("0x{}g", "a".repeat(39))));
+        assert!(!is_hex_address(""));
+    }
 }

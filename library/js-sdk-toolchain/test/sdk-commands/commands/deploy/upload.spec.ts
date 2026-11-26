@@ -1,14 +1,11 @@
-import {
-  ContentClient,
-  PartialDeploymentNotSupportedError,
-  PartialDeploymentValidationError
-} from '../../../../packages/@dcl/sdk-commands/node_modules/dcl-catalyst-client'
+import type { ContentClient } from 'dcl-catalyst-client'
+import { PartialDeploymentNotSupportedError, PartialDeploymentValidationError } from 'dcl-catalyst-client'
+import type { UploadResult } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/upload'
 import {
   MAX_SINGLE_REQUEST_BYTES,
   MIN_PARTIAL_DEPLOYMENT_BYTES,
   PARTIAL_BATCH_BYTES,
   PARTIAL_BATCH_CONCURRENCY,
-  UploadResult,
   uploadDeployment
 } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/upload'
 import { HttpStatusError } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/utils'

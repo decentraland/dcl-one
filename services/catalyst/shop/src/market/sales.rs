@@ -1,20 +1,13 @@
-//! `/v1/sales` over the collections subgraph `sales` reader (first ≤ 100,
-//! 60 s; past the graph's 5,000 skip by keyset up to `readers::DEEP_WINDOW`;
-//! the total is a capped count) and `/v1/sales/summary` over the seller's
-//! sales, every one up to `readers::DEEP_WINDOW` per network (5 min): a
-//! seller with more gets the unavailable envelope rather than a summary that
-//! silently stops at the bound.
+//! Published MANA sales and seller summaries. Each request reads the required
+//! networks, its results and its total in one marketplace snapshot.
 
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
-use super::graph;
-use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
 use super::wire::{ApiError, ChainId, DataOnly, DataTotal, InvalidParameterError, Network, Params};
-use super::{MarketplaceState, SharedState, Source, unavailable};
+use super::{MarketplaceState, SharedState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaleSortBy {
@@ -30,7 +23,7 @@ pub enum SaleType {
 }
 
 impl SaleType {
-    fn as_str(&self) -> &'static str {
+    pub(super) fn as_str(&self) -> &'static str {
         match self {
             SaleType::Order => "order",
             SaleType::Bid => "bid",
@@ -58,7 +51,7 @@ pub struct SaleFilters {
     pub network: Option<Network>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "ts",
     derive(ts_rs::TS),
@@ -137,131 +130,11 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<SaleFilters, InvalidP
     })
 }
 
-const SALE_FIELDS: &str = "id type buyer seller price timestamp txHash searchContractAddress searchItemId searchTokenId searchCategory";
-
-pub fn graph_where(f: &SaleFilters) -> Value {
-    let mut w = json!({});
-    if let Some(t) = f.sale_type {
-        w["type"] = json!(t.as_str());
-    }
-    if let Some(v) = &f.buyer {
-        w["buyer"] = json!(v);
-    }
-    if let Some(v) = &f.seller {
-        w["seller"] = json!(v);
-    }
-    if let Some(v) = &f.contract_address {
-        w["searchContractAddress"] = json!(v);
-    }
-    if let Some(v) = &f.item_id {
-        w["searchItemId"] = json!(v);
-    }
-    if let Some(v) = &f.token_id {
-        w["searchTokenId"] = json!(v);
-    }
-    if let Some(v) = &f.min_price {
-        w["price_gte"] = json!(v);
-    }
-    if let Some(v) = &f.max_price {
-        w["price_lte"] = json!(v);
-    }
-    if !f.categories.is_empty() {
-        w["searchCategory_in"] = json!(f.categories);
-    }
-    if let Some(v) = f.from {
-        w["timestamp_gte"] = json!((v / 1000).to_string());
-    }
-    if let Some(v) = f.to {
-        w["timestamp_lte"] = json!((v / 1000).to_string());
-    }
-    w
-}
-
-pub fn sale_from_graph(s: &Value, network: Network) -> Sale {
-    Sale {
-        id: readers::str_of(s, "id"),
-        item_id: readers::opt_str_of(s, "searchItemId"),
-        contract_address: readers::str_of(s, "searchContractAddress"),
-        buyer: readers::str_of(s, "buyer"),
-        chain_id: network.chain_id(),
-        network,
-        price: readers::str_of(s, "price"),
-        seller: readers::str_of(s, "seller"),
-        timestamp: seconds_to_ms(readers::int_of(s, "timestamp")),
-        token_id: readers::opt_str_of(s, "searchTokenId"),
-        tx_hash: readers::str_of(s, "txHash"),
-        sale_type: readers::str_of(s, "type"),
-    }
-}
-
 pub async fn list_sales(
     state: &MarketplaceState,
     f: &SaleFilters,
 ) -> Result<(Vec<Sale>, i64), Response> {
-    let (first, skip) = readers::deep_page(f.first, f.skip, 100)?;
-    let networks: Vec<(graph::Network, &str)> = match f.network {
-        Some(n) => vec![(n.graph(), readers::require_collections(state, n.graph())?)],
-        None => readers::require_both_collections(state)?,
-    };
-    let where_ = graph_where(f);
-    let (order_by, direction) = match f.sort_by {
-        Some(SaleSortBy::MostExpensive) => ("price", "desc"),
-        _ => ("timestamp", "desc"),
-    };
-    let mut rows: Vec<Sale> = Vec::new();
-    let mut total = 0;
-    let mut offset = 0;
-    let count = networks.len();
-    for (network, url) in networks {
-        let page = GraphPage {
-            entity: "sales",
-            filter_type: "Sale_filter",
-            fields: SALE_FIELDS,
-            where_: where_.clone(),
-            order_by,
-            direction,
-            first,
-            skip,
-        };
-        let (got, skip_after) =
-            readers::source_rows(state, network, url, Ttl::S60, &page, first, skip, count)
-                .await
-                .map_err(|e| readers::upstream_failed("/v1/sales", &e))?;
-        offset = skip_after;
-        total += readers::count_to(
-            state,
-            network,
-            url,
-            "sales",
-            "Sale_filter",
-            where_.clone(),
-            readers::count_cap(first, skip),
-        )
-        .await
-        .map_err(|e| readers::upstream_failed("/v1/sales", &e))?;
-        rows.extend(
-            got.iter()
-                .map(|s| sale_from_graph(s, Network::from(network))),
-        );
-    }
-    rows.sort_by(|a, b| {
-        let primary = match f.sort_by {
-            Some(SaleSortBy::MostExpensive) => b
-                .price
-                .parse::<u128>()
-                .unwrap_or(0)
-                .cmp(&a.price.parse::<u128>().unwrap_or(0)),
-            _ => b.timestamp.cmp(&a.timestamp),
-        };
-        primary.then(a.id.cmp(&b.id))
-    });
-    Ok((
-        rows.into_iter()
-            .skip(offset as usize)
-            .take(first as usize)
-            .collect(),
-        total,
-    ))
+    super::sale_reads::list(state, f).await
 }
 
 pub async fn get_sales(
@@ -297,6 +170,9 @@ pub struct SalesSummaryCollection {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub sold: i64,
     pub earned_wei: String,
+    pub earned_usd: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub unpriced_sales: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -324,6 +200,7 @@ pub struct SalesSummaryRoyalties {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub resales: i64,
     pub volume_wei: String,
+    pub royalties_wei: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -341,16 +218,15 @@ pub struct SalesSummary {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub resales: i64,
     pub earned_wei: String,
+    pub earned_usd: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub unpriced_sales: i64,
     pub by_collection: Vec<SalesSummaryCollection>,
     pub by_item: Vec<SalesSummaryItem>,
     pub royalties: SalesSummaryRoyalties,
 }
 
 const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
-/// The reader's bound: the seller's newest sales per network read (by
-/// keyset past the graph's window); a seller with more is not summarised.
-pub const SUMMARY_MAX_SALES: i64 = readers::DEEP_WINDOW;
-
 pub fn parse_summary_filters(pairs: &[(String, String)]) -> Result<SalesSummaryFilters, ApiError> {
     let p = Params::new(pairs);
     let seller = p
@@ -383,144 +259,15 @@ pub fn parse_summary_filters(pairs: &[(String, String)]) -> Result<SalesSummaryF
     })
 }
 
-/// The old SQL's aggregate in memory: every leg over the seller's sales,
-/// the window on collections/totals, lifetime mints by item, and the
-/// royalties leg over resales of items the seller created.
-pub fn summarize(
-    seller_sales: &[Value],
-    creator_resales: &[Value],
-    f: &SalesSummaryFilters,
-) -> SalesSummary {
-    let in_window = |s: &Value| {
-        let ts = readers::int_of(s, "timestamp") * 1000;
-        f.from.is_none_or(|from| ts >= from) && f.to.is_none_or(|to| ts <= to)
-    };
-    let price = |s: &Value| readers::str_of(s, "price").parse::<u128>().unwrap_or(0);
-    let windowed: Vec<&Value> = seller_sales.iter().filter(|s| in_window(s)).collect();
-    let mut by_collection: std::collections::BTreeMap<String, (i64, u128)> = Default::default();
-    for s in &windowed {
-        let e = by_collection
-            .entry(readers::str_of(s, "searchContractAddress"))
-            .or_default();
-        e.0 += 1;
-        e.1 = e.1.saturating_add(price(s));
-    }
-    let mut by_item: std::collections::BTreeMap<(String, String), i64> = Default::default();
-    for s in seller_sales
-        .iter()
-        .filter(|s| readers::str_of(s, "type") == "mint")
-    {
-        if let Some(item) = readers::opt_str_of(s, "searchItemId") {
-            *by_item
-                .entry((readers::str_of(s, "searchContractAddress"), item))
-                .or_default() += 1;
-        }
-    }
-    let royalties: Vec<&Value> = creator_resales.iter().filter(|s| in_window(s)).collect();
-    SalesSummary {
-        total: windowed.len() as i64,
-        mints: windowed
-            .iter()
-            .filter(|s| readers::str_of(s, "type") == "mint")
-            .count() as i64,
-        resales: windowed
-            .iter()
-            .filter(|s| matches!(readers::str_of(s, "type").as_str(), "order" | "bid"))
-            .count() as i64,
-        earned_wei: windowed
-            .iter()
-            .fold(0u128, |acc, s| acc.saturating_add(price(s)))
-            .to_string(),
-        by_collection: by_collection
-            .into_iter()
-            .map(
-                |(contract_address, (sold, earned))| SalesSummaryCollection {
-                    contract_address,
-                    sold,
-                    earned_wei: earned.to_string(),
-                },
-            )
-            .collect(),
-        by_item: by_item
-            .into_iter()
-            .map(
-                |((contract_address, item_id), sold_lifetime)| SalesSummaryItem {
-                    contract_address,
-                    item_id,
-                    sold_lifetime,
-                },
-            )
-            .collect(),
-        royalties: SalesSummaryRoyalties {
-            resales: royalties.len() as i64,
-            volume_wei: royalties
-                .iter()
-                .fold(0u128, |acc, s| acc.saturating_add(price(s)))
-                .to_string(),
-        },
-    }
-}
-
-const SUMMARY_FIELDS: &str = "id type price timestamp searchContractAddress searchItemId";
-
-async fn all_networks_page(
-    state: &MarketplaceState,
-    where_: Value,
-    route: &'static str,
-) -> Result<Vec<Value>, Response> {
-    let mut out = Vec::new();
-    for (network, url) in readers::require_both_collections(state)? {
-        let page = GraphPage {
-            entity: "sales",
-            filter_type: "Sale_filter",
-            fields: SUMMARY_FIELDS,
-            where_: where_.clone(),
-            order_by: "timestamp",
-            direction: "desc",
-            first: 0,
-            skip: 0,
-        };
-        let rows = readers::top_rows(state, network, url, Ttl::M5, &page, SUMMARY_MAX_SALES + 1)
-            .await
-            .map_err(|e| readers::upstream_failed(route, &e))?;
-        if rows.len() as i64 > SUMMARY_MAX_SALES {
-            return Err(unavailable(
-                Source::CollectionsSubgraph(network),
-                &format!(
-                    "this seller has more than {SUMMARY_MAX_SALES} sales on {}, more than the bounded reader summarises",
-                    network.db_name()
-                ),
-            ));
-        }
-        out.extend(rows);
-    }
-    Ok(out)
-}
-
-/// The seller's sales rows the summary is built from (the bounded reader:
-/// a seller past `SUMMARY_MAX_SALES` on a network is the unavailable
-/// envelope), for the store dashboard's per-item window figures.
-pub async fn seller_sales_rows(
-    state: &MarketplaceState,
-    seller: &str,
-    route: &'static str,
-) -> Result<Vec<Value>, Response> {
-    all_networks_page(state, json!({ "seller": seller.to_lowercase() }), route).await
-}
-
 pub async fn sales_summary(
     state: &MarketplaceState,
     f: &SalesSummaryFilters,
 ) -> Result<SalesSummary, Response> {
-    let seller_sales =
-        all_networks_page(state, json!({ "seller": f.seller }), "/v1/sales/summary").await?;
-    let creator_resales = all_networks_page(
-        state,
-        json!({ "type_in": ["order", "bid"], "item_": { "creator": f.seller } }),
-        "/v1/sales/summary",
-    )
-    .await?;
-    Ok(summarize(&seller_sales, &creator_resales, f))
+    let _slot = super::sale_reads::seller_slot(state).await?;
+    let (mut snapshot, nets) = super::sale_reads::snapshot(state, None).await?;
+    Ok(super::sale_reads::seller_stats(&mut snapshot, nets, f)
+        .await?
+        .summary)
 }
 
 pub async fn get_sales_summary(
@@ -606,88 +353,20 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_aggregates_like_the_old_sql() {
-        let sale = |t: &str, price: &str, ts: i64, contract: &str, item: Option<&str>| json!({ "id": format!("{t}-{ts}"), "type": t, "price": price, "timestamp": ts.to_string(), "searchContractAddress": contract, "searchItemId": item });
-        let seller = vec![
-            sale("mint", "10", 100, "0xa", Some("1")),
-            sale("mint", "5", 200, "0xa", Some("1")),
-            sale("order", "7", 300, "0xb", Some("2")),
-            sale("mint", "1", 50, "0xc", None),
-        ];
-        let resales = vec![
-            sale("order", "3", 150, "0xa", Some("1")),
-            sale("bid", "4", 10, "0xa", Some("1")),
-        ];
-        let f = SalesSummaryFilters {
-            seller: "0xs".into(),
-            from: Some(100_000),
-            to: Some(300_000),
-        };
-        let s = summarize(&seller, &resales, &f);
-        assert_eq!(
-            (s.total, s.mints, s.resales, s.earned_wei.as_str()),
-            (3, 2, 1, "22")
-        );
-        assert_eq!(
-            s.by_collection,
-            vec![
-                SalesSummaryCollection {
-                    contract_address: "0xa".into(),
-                    sold: 2,
-                    earned_wei: "15".into()
-                },
-                SalesSummaryCollection {
-                    contract_address: "0xb".into(),
-                    sold: 1,
-                    earned_wei: "7".into()
-                }
-            ]
-        );
-        assert_eq!(
-            s.by_item,
-            vec![SalesSummaryItem {
-                contract_address: "0xa".into(),
-                item_id: "1".into(),
-                sold_lifetime: 2
-            }],
-            "lifetime mints ignore the window and need an item"
-        );
-        assert_eq!(
-            s.royalties,
-            SalesSummaryRoyalties {
-                resales: 1,
-                volume_wei: "3".into()
-            }
-        );
-        let v = serde_json::to_value(&s).unwrap();
-        assert!(
-            v.get("earnedWei").is_some()
-                && v["royalties"].get("volumeWei").is_some()
-                && v["byItem"][0].get("soldLifetime").is_some()
-        );
-    }
-
-    #[test]
-    fn the_sales_where_speaks_the_graph_and_a_row_keeps_the_shape() {
-        let f = parse_filters(&pairs(&[
+    fn sales_filters_keep_milliseconds_and_normalize_the_seller() {
+        let filters = parse_filters(&pairs(&[
             ("type", "mint"),
             ("from", "1700000000000"),
             ("category", "wearable"),
             ("seller", "0xABCDEF0123456789012345678901234567890123"),
         ]))
         .unwrap();
-        let w = graph_where(&f);
-        assert_eq!(w["type"], "mint");
-        assert_eq!(w["timestamp_gte"], "1700000000");
-        assert_eq!(w["searchCategory_in"], json!(["wearable"]));
-        assert_eq!(w["seller"], "0xabcdef0123456789012345678901234567890123");
-        let s = sale_from_graph(
-            &json!({ "id": "s1", "type": "order", "buyer": "0xb", "seller": "0xs", "price": "9", "timestamp": "1700000000", "txHash": "0xt", "searchContractAddress": "0xc", "searchItemId": "3", "searchTokenId": "77", "searchCategory": "wearable" }),
-            Network::Matic,
-        );
+        assert_eq!(filters.sale_type, Some(SaleType::Mint));
+        assert_eq!(filters.from, Some(1_700_000_000_000));
+        assert_eq!(filters.categories, ["wearable"]);
         assert_eq!(
-            serde_json::to_value(&s).unwrap(),
-            json!({ "id": "s1", "itemId": "3", "contractAddress": "0xc", "buyer": "0xb", "chainId": 137, "network": "MATIC", "price": "9", "seller": "0xs", "timestamp": 1_700_000_000_000i64, "tokenId": "77", "txHash": "0xt", "type": "order" })
+            filters.seller.as_deref(),
+            Some("0xabcdef0123456789012345678901234567890123")
         );
     }
 }

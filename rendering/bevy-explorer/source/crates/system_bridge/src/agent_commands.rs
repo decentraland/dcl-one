@@ -119,10 +119,6 @@ struct LoginIdentityCommand {
     /// the curated default look a first login's new profile wears, 1-based
     #[arg(long)]
     look: Option<u32>,
-    /// the lambdas endpoint to fetch the account's profile from (the catalyst the sign-in
-    /// deployed it to), else the centralized catalyst's
-    #[arg(long)]
-    profiles: Option<String>,
 }
 
 fn login_identity_cmd(
@@ -141,7 +137,6 @@ fn login_identity_cmd(
             command.default_on_error,
             command.guest,
             pick,
-            command.profiles.clone(),
             sx,
         ));
         let responder = input.take_responder();
@@ -160,11 +155,18 @@ fn login_identity_cmd(
 
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/logout")]
-struct LogoutCommand;
+struct LogoutCommand {
+    /// also drop the stored login, so the next start opens on sign-in (a person signing out)
+    #[arg(long)]
+    forget: bool,
+}
 
 fn logout_cmd(mut input: ConsoleCommand<LogoutCommand>, mut events: EventWriter<SystemApi>) {
-    if let Some(Ok(_)) = input.take() {
+    if let Some(Ok(command)) = input.take() {
         events.write(SystemApi::Logout);
+        if command.forget {
+            events.write(SystemApi::ForgetLogin);
+        }
         input.reply_ok("");
     }
 }
@@ -194,10 +196,15 @@ fn live_scenes_cmd(
                         .iter()
                         .map(|s| {
                             format!(
-                                "{} [{}{}{}]",
+                                "{} [{}{}{}{}]",
                                 s.title,
                                 s.hash,
                                 if s.is_portable { ", portable" } else { "" },
+                                if s.is_smart_wearable {
+                                    ", smart wearable"
+                                } else {
+                                    ""
+                                },
                                 if s.is_broken { ", broken" } else { "" },
                             )
                         })

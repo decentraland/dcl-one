@@ -14,9 +14,7 @@ use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 
 use super::store::{PriceOverride, PriceSnapshot, SNAPSHOT_MAX_AGE};
-use super::{SharedState, unavailable};
-
-pub const MANA_ID: &str = "decentraland";
+use super::{MANA_ID, SharedState, unavailable};
 
 struct PriceQuery {
     ids: Vec<String>,
@@ -98,10 +96,10 @@ fn parse_query(pairs: Vec<(String, String)>) -> Result<PriceQuery, PriceError> {
                 if raw.eq_ignore_ascii_case("full") {
                     q.precision = None;
                 } else if let Ok(n) = raw.parse::<i64>() {
-                    if !(0..=18).contains(&n) {
-                        return Err(PriceError::InvalidPrecision);
+                    match u32::try_from(n) {
+                        Ok(p) if p <= 18 => q.precision = Some(p),
+                        _ => return Err(PriceError::InvalidPrecision),
                     }
-                    q.precision = Some(n as u32);
                 }
             }
             _ => {}
@@ -254,7 +252,8 @@ fn usd_only(cur: &str, raw: Option<f64>, precision: Option<u32>) -> Option<Value
 fn number(raw: f64, precision: Option<u32>) -> Option<Value> {
     let v = match precision {
         Some(p) => {
-            let factor = 10f64.powi(p as i32);
+            // Saturates: 10^p is already infinite long before i32::MAX.
+            let factor = 10f64.powi(i32::try_from(p).unwrap_or(i32::MAX));
             (raw * factor).round() / factor
         }
         None => raw,

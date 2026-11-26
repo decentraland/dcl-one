@@ -71,6 +71,7 @@ describe('component library mappings', () => {
       )
       expect(result.ok && result.resolved.usageFor).toEqual({
         variantProperties: { Size: 'Default', Scroll: 'Yes' },
+        booleanProperties: {},
         basis: 'requested'
       })
     })

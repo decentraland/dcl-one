@@ -244,8 +244,7 @@ pub const SELF_MIRROR_WALLET_ID: &str = "self_mirror";
 /// How often the stale-view sweep runs, in ticks (1 s at a 50 ms base tick). Paired with
 /// `VIEW_STALE_TICKS` it bounds eviction latency: a view is swept between
 /// `VIEW_STALE_TICKS + 1` and `VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL` ticks after it was last
-/// stamped (3.05 s to 4.0 s). That sum times the base tick must stay below
-/// `DEFAULT_DISCONNECTION_CLEAN_TIMEOUT_MS` for `PlayerLeft` to precede slot reuse.
+/// stamped (3.05 s to 4.0 s). Disconnect cleanup retires retained views immediately.
 pub const SWEEP_CHECK_INTERVAL: u32 = 20;
 
 /// How many ticks a view may go unstamped before the sweep evicts it (3 s at a 50 ms base
@@ -300,15 +299,6 @@ impl PeerSimulation {
     pub fn new(simulation_steps: &[u32], resync_with_delta: bool) -> Self {
         let base_tick_ms = simulation_steps[0];
         let tier_divisors = simulation_steps.iter().map(|s| s / base_tick_ms).collect();
-
-        let sweep_worst_case_ms = (VIEW_STALE_TICKS + SWEEP_CHECK_INTERVAL) * base_tick_ms;
-        if sweep_worst_case_ms >= DEFAULT_DISCONNECTION_CLEAN_TIMEOUT_MS {
-            tracing::warn!(
-                sweep_worst_case_ms,
-                disconnection_clean_timeout_ms = DEFAULT_DISCONNECTION_CLEAN_TIMEOUT_MS,
-                "stale-view sweep worst case is not below the disconnection clean timeout; a peer index may be reused before its observers receive PlayerLeft"
-            );
-        }
 
         Self {
             observer_views: HashMap::new(),
@@ -433,7 +423,9 @@ impl PeerSimulation {
                 listener.get_visible_subjects(boards.board, grids, observer_id, &mut collector);
                 true
             } else {
-                let snap = observer_snapshot.as_ref().unwrap();
+                let snap = observer_snapshot
+                    .as_ref()
+                    .expect("an observer without a listener has a snapshot");
                 aoi.get_visible_subjects(
                     boards.board,
                     grids,
@@ -531,10 +523,9 @@ impl PeerSimulation {
                     },
                     PacketMode::Reliable,
                 );
-                self.observer_views
-                    .get_mut(&observer_id)
-                    .unwrap()
-                    .remove(&entry.subject);
+                if let Some(views) = self.observer_views.get_mut(&observer_id) {
+                    views.remove(&entry.subject);
+                }
                 is_new = true;
                 if let Some(requests) = resync.as_deref_mut() {
                     requests.remove(&entry.subject);
@@ -754,35 +745,34 @@ impl PeerSimulation {
             discrete_event_sent = true;
         }
 
-        let emote_start_is_effective = match (&scan.last_emote_start, &scan.last_emote_stop) {
-            (Some(start), stop) => start.seq > stop.as_ref().map(|s| s.seq).unwrap_or(0),
-            _ => false,
-        };
+        let effective_start = scan
+            .last_emote_start
+            .as_ref()
+            .filter(|start| start.seq > scan.last_emote_stop.as_ref().map(|s| s.seq).unwrap_or(0));
 
-        if emote_start_is_effective {
-            let es = scan.last_emote_start.as_ref().unwrap();
-            if let Some(emote) = es.emote.clone().filter(|e| e.emote_id.is_some()) {
-                let dup = view
-                    .last_sent_emote
-                    .as_ref()
-                    .map(|l| l.emote_id == emote.emote_id && l.start_seq == emote.start_seq)
-                    .unwrap_or(false);
-                if !dup {
-                    let es = resolve_event_pose(es, latest);
-                    self.send_emote_started(observer_id, view, entry.subject, es, &emote);
-                    if let Some(r) = resync.as_deref_mut() {
-                        r.remove(&entry.subject);
-                    }
-                    view.last_sent_emote = Some(emote);
-                    if es.seq > last_sent_state.seq {
-                        last_sent_state = es.clone();
-                    }
-                    discrete_event_sent = true;
+        if let Some(es) = effective_start
+            && let Some(emote) = es.emote.clone().filter(|e| e.emote_id.is_some())
+        {
+            let dup = view
+                .last_sent_emote
+                .as_ref()
+                .map(|l| l.emote_id == emote.emote_id && l.start_seq == emote.start_seq)
+                .unwrap_or(false);
+            if !dup {
+                let es = resolve_event_pose(es, latest);
+                self.send_emote_started(observer_id, view, entry.subject, es, &emote);
+                if let Some(r) = resync.as_deref_mut() {
+                    r.remove(&entry.subject);
                 }
+                view.last_sent_emote = Some(emote);
+                if es.seq > last_sent_state.seq {
+                    last_sent_state = es.clone();
+                }
+                discrete_event_sent = true;
             }
         }
 
-        if !emote_start_is_effective {
+        if effective_start.is_none() {
             self.try_sync_emote_stop(
                 observer_id,
                 entry.subject,
@@ -1160,11 +1150,13 @@ impl PeerSimulation {
         }
     }
 
-    pub fn cleanup_observer_views(&mut self, peer_id: u32) {
+    /// Forget the departing observer's view and return everyone who retained it as a subject.
+    pub fn cleanup_observer_views(&mut self, peer_id: u32) -> Vec<u32> {
         self.observer_views.remove(&peer_id);
-        for views in self.observer_views.values_mut() {
-            views.remove(&peer_id);
-        }
+        self.observer_views
+            .iter_mut()
+            .filter_map(|(&observer, views)| views.remove(&peer_id).map(|_| observer))
+            .collect()
     }
 
     fn sweep_stale_views(&mut self, observer_id: u32, tick_counter: u32) {

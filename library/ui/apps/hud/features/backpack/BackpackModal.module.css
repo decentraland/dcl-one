@@ -1,0 +1,37 @@
+/* The page in a centred 1600×1000 card on the 1920×1080 canvas; the page lays itself out for that
+   size (its own in-modal rules). */
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  pointer-events: none;
+}
+.dim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  pointer-events: auto;
+}
+.frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1600px;
+  height: 1000px;
+  transform: translate(-50%, -50%) scale(var(--ui-scale));
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  font-family: var(--font-family);
+}
+.close {
+  position: absolute;
+  top: 13px;
+  right: 20px;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--scrim-close);
+  border: none;
+  pointer-events: auto;
+}

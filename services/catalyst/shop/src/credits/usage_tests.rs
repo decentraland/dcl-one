@@ -110,11 +110,11 @@ fn credit_used_log(
     })
 }
 
-fn salt() -> String {
+pub(super) fn salt() -> String {
     format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2))
 }
 
-fn usage_settings(
+pub(super) fn usage_settings(
     rpc: &str,
     chain_id: i64,
     contract: &str,
@@ -131,7 +131,7 @@ fn usage_settings(
     }
 }
 
-async fn authorization(
+pub(super) async fn authorization(
     pool: &PgPool,
     id: &str,
     addr: &str,
@@ -159,7 +159,7 @@ async fn balance_is(pool: &PgPool, addr: &str, want: &str) -> bool {
         .unwrap()
 }
 
-async fn auth_status(pool: &PgPool, id: &str) -> String {
+pub(super) async fn auth_status(pool: &PgPool, id: &str) -> String {
     sqlx::query_scalar("SELECT status FROM credits.authorizations WHERE id = $1")
         .bind(id)
         .fetch_one(pool)
@@ -770,7 +770,9 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
 
 #[test]
 fn the_tick_and_the_sweep_share_one_expiry_bound() {
-    assert!(super::checkout::OUTBOX_TICK_SQL.contains(&super::usage::expiry_bound_sql("$2", "$5")));
+    assert!(
+        super::fulfillment::OUTBOX_TICK_SQL.contains(&super::usage::expiry_bound_sql("$2", "$5"))
+    );
 }
 
 /// `cargo test --lib credits::tests::live -- --ignored`: the CreditUsed
@@ -821,5 +823,293 @@ async fn live_usage_index_over_the_production_manager() {
     );
     assert!(out.published && rows == distinct, "{out:?}");
     assert!(index.ready_at(chrono::Utc::now()).await.is_some());
+    db.drop().await;
+}
+
+/// The job's pass (`UsageIndex::gated_pass`) folds into the ledger, so it writes only while
+/// OPS_WRITES_ENABLED is on: with the switch off it indexes the log and neither folds nor
+/// publishes, and the authorize lane stays closed; the switch on folds the same usage and
+/// publishes.
+#[tokio::test]
+async fn the_usage_pass_folds_and_publishes_only_while_the_switch_lets_it() {
+    use crate::shared::writes::PassGate;
+    let Some(db) = OwnDatabase::create("usage_hold").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let chain_id: i64 = 137;
+    let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 500, "authorized", later).await;
+    let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
+        chain_id,
+        head: 2_000,
+        finalized: 1_990,
+        limit: 1_000,
+        t_base: chrono::Utc::now().timestamp() - 20_000,
+        logs: vec![credit_used_log(
+            &contract,
+            1_500,
+            0,
+            &wallet.address,
+            &pledge,
+            10u128.pow(19),
+            10u128.pow(19),
+        )],
+        get_logs: 0,
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let stub = axum::Router::new()
+        .route("/", axum::routing::post(chain_rpc))
+        .with_state(chain.clone());
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let index = Arc::new(super::usage::UsageIndex::new(
+        Credits::new(pool.clone()).with_usage_index(chain_id),
+        Outbound::for_tests(),
+        usage_settings(&rpc, chain_id, &contract, 50),
+    ));
+    let gate = Arc::new(PassGate::new(super::usage::JOB_NAME));
+
+    let out = index.gated_pass(None, &gate, false).await.unwrap();
+    assert!(
+        !out.published && out.indexed_to == 1_990,
+        "switch off: {out:?}"
+    );
+    assert_eq!(out.consumed, 0, "switch off: {out:?}");
+    assert_eq!(
+        auth_status(&pool, &pledge).await,
+        "authorized",
+        "off: the used credit is indexed, not folded"
+    );
+    assert!(index.ready_at(chrono::Utc::now()).await.is_none());
+
+    let out = index.gated_pass(None, &gate, true).await.unwrap();
+    assert!(out.published && out.consumed == 1, "switch on: {out:?}");
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(index.ready_at(chrono::Utc::now()).await.is_some());
+
+    // A skipped fold says why in the job's report.
+    let jobs = crate::jobs::Jobs::new();
+    {
+        let (index, gate) = (index.clone(), gate.clone());
+        jobs.spawn("usage-switch-off", move |ctx| async move {
+            index.gated_pass(Some(&ctx), &gate, false).await.map(|_| ())
+        });
+    }
+    let done = |r: &crate::jobs::JobReport| {
+        matches!(
+            r.state,
+            crate::jobs::JobState::Finished | crate::jobs::JobState::Failed
+        )
+    };
+    let mut reports = jobs.report();
+    for _ in 0..200 {
+        if reports.iter().all(done) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        reports = jobs.report();
+    }
+    assert!(
+        reports
+            .iter()
+            .all(|r| matches!(r.state, crate::jobs::JobState::Finished)),
+        "the pass finishes"
+    );
+    let progress = |name: &str| {
+        reports
+            .iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.progress.clone())
+            .unwrap_or_default()
+    };
+    let off = progress("usage-switch-off");
+    assert!(
+        off.contains("not folded, not published") && off.contains("OPS_WRITES_ENABLED=false"),
+        "{off}"
+    );
+    db.drop().await;
+}
+
+/// A usage index over a chain stub holding one CreditUsed log of `pledge`
+/// (10 MANA at block 1_500), for `wallet`.
+pub(super) async fn one_used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+) -> super::usage::UsageIndex {
+    used_credit_index(pool, wallet, pledge, 10u128.pow(19)).await
+}
+
+/// [`one_used_credit_index`] with `used` wei consumed.
+pub(super) async fn used_credit_index(
+    pool: &PgPool,
+    wallet: &str,
+    pledge: &str,
+    used: u128,
+) -> super::usage::UsageIndex {
+    let chain_id: i64 = 137;
+    let contract = format!("0x{}", &uuid::Uuid::new_v4().simple().to_string()[..32]) + "00000000";
+    let chain: SharedChain = Arc::new(std::sync::Mutex::new(ChainStub {
+        chain_id,
+        head: 2_000,
+        finalized: 1_990,
+        limit: 1_000,
+        t_base: chrono::Utc::now().timestamp() - 20_000,
+        logs: vec![credit_used_log(
+            &contract,
+            1_500,
+            0,
+            wallet,
+            pledge,
+            10u128.pow(19),
+            used,
+        )],
+        get_logs: 0,
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rpc = format!("http://{}", listener.local_addr().unwrap());
+    let stub = axum::Router::new()
+        .route("/", axum::routing::post(chain_rpc))
+        .with_state(chain);
+    tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    super::usage::UsageIndex::new(
+        Credits::new(pool.clone()).with_usage_index(chain_id),
+        Outbound::for_tests(),
+        usage_settings(&rpc, chain_id, &contract, 50),
+    )
+}
+
+async fn credit_used_spends(pool: &PgPool, pledge: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM credits.ledger WHERE kind = 'spend' AND tx_ref = $1")
+        .bind(format!("credit-used:{pledge}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A used credit's own pledge does not count against its debit: a 60-credit
+/// pledge on a 100-credit wallet settles in one pass and leaves 40, and a
+/// second pass moves nothing.
+#[tokio::test]
+async fn a_used_credit_above_half_the_balance_debits_once_in_one_pass() {
+    let Some(db) = OwnDatabase::create("usage_own_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let pledge = salt();
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
+
+    let out = index.run_pass(None, true).await.unwrap();
+    assert!(
+        out.published && out.consumed == 1 && out.failed == 0,
+        "{out:?}"
+    );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(balance_is(&pool, &wallet.address, "40").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+
+    let again = index.run_pass(None, true).await.unwrap();
+    assert!(
+        again.published && again.consumed == 0 && again.failed == 0,
+        "{again:?}"
+    );
+    assert_eq!(auth_status(&pool, &pledge).await, "consumed");
+    assert!(
+        balance_is(&pool, &wallet.address, "40").await,
+        "the second pass debits nothing"
+    );
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 1);
+    db.drop().await;
+}
+
+/// Another live pledge still counts against the debit: with 50 credits held
+/// by a second `authorized` pledge, a 60-credit used credit on a 100-credit
+/// wallet is refused, and its authorization stays `authorized`.
+#[tokio::test]
+async fn a_used_credit_another_pledge_leaves_uncovered_keeps_its_authorization() {
+    let Some(db) = OwnDatabase::create("usage_other_pledge").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let wallet = scratch_wallet();
+    seed_wallet(&pool, &wallet.address, "0", "100").await;
+    let (pledge, other) = (salt(), salt());
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(&pool, &pledge, &wallet.address, 600, "authorized", later).await;
+    authorization(&pool, &other, &wallet.address, 500, "authorized", later).await;
+    let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
+
+    let out = index.run_pass(None, true).await.unwrap();
+    assert!(
+        out.published && out.consumed == 0 && out.failed == 1,
+        "{out:?}"
+    );
+    assert_eq!(
+        auth_status(&pool, &pledge).await,
+        "authorized",
+        "the refused debit rolls the early flip back"
+    );
+    assert_eq!(auth_status(&pool, &other).await, "authorized");
+    assert!(balance_is(&pool, &wallet.address, "100").await);
+    assert_eq!(credit_used_spends(&pool, &pledge).await, 0);
+    let settlements: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.usage_settlements WHERE authorization_id = $1",
+    )
+    .bind(&pledge)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(settlements, 0);
+    db.drop().await;
+}
+
+/// `serve` runs the CreditUsed index through `State::spawn_jobs`, beside the other credits
+/// writers; `catalyst index` builds no credits state.
+#[tokio::test]
+async fn the_credits_jobs_carry_the_usage_index_when_it_is_configured() {
+    let Some(db) = OwnDatabase::create("usage_jobs").await else {
+        return;
+    };
+    let names = |enabled: bool| {
+        let pool = db.pool.clone();
+        async move {
+            let mut settings = Settings::parse(RawSettings::default()).unwrap();
+            settings.usage = super::usage::Settings {
+                enabled,
+                ..usage_settings(
+                    "http://127.0.0.1:9",
+                    137,
+                    "0x00000000000000000000000000000000000000aa",
+                    1,
+                )
+            };
+            let state: SharedState = Arc::new(State::with_sources(
+                pool,
+                Outbound::for_tests(),
+                settings,
+                Arc::new(super::tests::FakeMarket::default()),
+                Arc::new(MockBroker::configured()),
+                None,
+            ));
+            let jobs = crate::jobs::Jobs::new();
+            state.spawn_jobs(&jobs);
+            let names: Vec<String> = jobs.report().into_iter().map(|j| j.name).collect();
+            jobs.shutdown(std::time::Duration::from_secs(5)).await;
+            names
+        }
+    };
+    let on = names(true).await;
+    assert!(on.iter().any(|n| n == super::usage::JOB_NAME), "{on:?}");
+    let off = names(false).await;
+    assert!(!off.iter().any(|n| n == super::usage::JOB_NAME), "{off:?}");
     db.drop().await;
 }

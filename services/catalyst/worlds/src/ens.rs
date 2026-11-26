@@ -50,21 +50,21 @@ pub struct EnsContracts {
 impl EnsContracts {
     /// `ETH_NETWORK`'s contracts; `None` for a network ENS is not read on.
     pub fn for_network(network: &str) -> Option<Self> {
+        use crate::shared::network::ChainPair;
         let registry = address!("00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
         let base_registrar = address!("57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85");
-        match network {
-            "mainnet" => Some(Self {
+        Some(match ChainPair::from_eth_network(network)? {
+            ChainPair::Mainnet => Self {
                 registry,
                 base_registrar,
                 name_wrapper: address!("D4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401"),
-            }),
-            "sepolia" => Some(Self {
+            },
+            ChainPair::Testnet => Self {
                 registry,
                 base_registrar,
                 name_wrapper: address!("0635513f179D50A207757E05759CbD106d7dFcE8"),
-            }),
-            _ => None,
-        }
+            },
+        })
     }
 }
 
@@ -95,15 +95,6 @@ pub fn resolvable(name: &str) -> bool {
             && !label.starts_with('-')
             && !label.ends_with('-')
             && bytes.get(2..4) != Some(b"--".as_slice())
-    })
-}
-
-/// Whether a JSON-RPC error is the call's own revert.
-pub(crate) fn is_revert(e: &RpcError) -> bool {
-    matches!(e, RpcError::Response { code, message }
-    if *code == 3 || {
-        let m = message.to_ascii_lowercase();
-        m.contains("revert") || m.contains("vm execution error")
     })
 }
 
@@ -302,7 +293,7 @@ pub(crate) fn call_params((contract, data): &Call) -> Value {
 fn decode(answer: Result<String, RpcError>) -> Result<Option<EvmAddress>, String> {
     let hex = match answer {
         Ok(hex) => hex,
-        Err(e) if is_revert(&e) => return Ok(None),
+        Err(e) if e.is_revert() => return Ok(None),
         Err(e) => return Err(format!("ENS ownerOf: {e}")),
     };
     let bytes = hex::decode(hex.trim_start_matches("0x"))
@@ -673,7 +664,7 @@ mod tests {
             ))
             .contains("ETH_NETWORK=polygon")
         );
-        for network in ["mainnet", "sepolia"] {
+        for network in ["mainnet", "Ethereum", "sepolia", "ethereum-sepolia"] {
             assert!(EnsResolver::configured(http(), Some("http://rpc.example"), network).is_ok());
         }
     }

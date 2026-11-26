@@ -7,7 +7,8 @@
 //! the one module `service` registers; every procedure is answered from
 //! `social.*` over the ONE pool (`db`) and fans its events out in-process
 //! (`pubsub`; local delivery). Online status is reconstructed independently on
-//! every replica from the complete Pulse topology over the existing comms NATS link.
+//! every replica from Pulse islands, verified World room events over NATS, and
+//! complete LiveKit occupancy reads.
 //!
 //! Voice needs LiveKit: call persistence and media operations use the gatekeeper's
 //! `VoiceRooms` seam (`comms::gatekeeper::voice::rooms`), which its state
@@ -29,21 +30,26 @@
 //! method on `/social-rpc/health/live`,
 //! `GET /social-rpc/v1/users/{address}/privacy-settings` and a 404
 //! `{"error":"Not Found"}` for every other `/social-rpc/*` path or method,
-//! those wrapped routes carry `Access-Control-Allow-Origin: *`. The configured
-//! GET metrics path reads a filtered view of the existing recorder without CORS;
-//! then the bearer-gated
-//! `/admin/social/*` (`admin`). The procedures' HTTP twins on the social-api
+//! those wrapped routes carry `Access-Control-Allow-Origin: *`. The admin router
+//! serves the bearer-gated `/admin/social/*` endpoints. The procedures' HTTP twins on the social-api
 //! host are `http::router`, which `social::router` mounts beside the
 //! communities routes.
 
 pub mod admin;
+pub mod auth;
 pub mod context;
 pub mod db;
 mod fanout;
 pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
+mod declarations;
 pub mod limits;
+pub use declarations::FAMILIES;
 mod metrics;
+#[cfg(test)]
+pub(crate) fn metrics_builder() -> anyhow::Result<dcl_metrics::PrometheusBuilder> {
+    dcl_metrics::Registry::new(&[FAMILIES])?.builder(dcl_metrics::PrometheusBuilder::new())
+}
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;
@@ -59,10 +65,10 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{any, erase, get};
 use axum::extract::{Path, State as AxumState};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get};
 use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde_json::json;
@@ -83,12 +89,13 @@ use crate::shared::rpc::ws::{AxumWsTransport, OrdinaryQueueConfig};
 /// replace).
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// `AUTH_WINDOW_SECS`: how long the first frame may take to arrive and how
-    /// far its timestamp may sit from the server clock.
+    /// `AUTH_WINDOW_SECS`: how long the first frame may take to arrive, and how
+    /// old its signature may be, when the `WS_AUTH_*` settings are unset.
     pub auth_window_secs: i64,
     /// WS_AUTH_TIMEOUT_IN_MS; unset keeps the legacy AUTH_WINDOW_SECS fallback.
     pub ws_auth_timeout_ms: Option<f64>,
-    /// WS_AUTH_SIGNATURE_EXPIRATION_IN_MS, independent from the first-frame timer.
+    /// WS_AUTH_SIGNATURE_EXPIRATION_IN_MS, independent from the first-frame timer;
+    /// unset keeps the legacy AUTH_WINDOW_SECS fallback.
     pub ws_auth_signature_expiration_ms: Option<f64>,
     /// WS_IDLE_TIMEOUT_IN_SECONDS; zero disables automatic ping/idle expiry.
     pub ws_idle_timeout_secs: u64,
@@ -122,11 +129,6 @@ pub struct Settings {
     /// Source COMMIT_HASH string; absent returns empty, without build fallback.
     pub commit_hash: Option<String>,
     pub current_version: Option<String>,
-    pub metrics_path: Option<String>,
-    pub metrics_bearer_token: Option<String>,
-    pub metrics_reset_at_night: bool,
-    /// Existing process recorder; this route installs no exporter or listener.
-    pub metrics_handle: Option<crate::comms::metrics::PrometheusHandle>,
     pub profile_source: Option<Arc<crate::communities::profiles::RegistryReader>>,
 }
 
@@ -152,10 +154,6 @@ impl Default for Settings {
             writes_enabled: true,
             commit_hash: None,
             current_version: None,
-            metrics_path: None,
-            metrics_bearer_token: None,
-            metrics_reset_at_night: false,
-            metrics_handle: None,
             profile_source: None,
         }
     }
@@ -175,9 +173,17 @@ impl Settings {
         };
         Duration::from_millis(ms)
     }
-    pub(crate) fn auth_signature_expiration_ms(&self) -> f64 {
-        self.ws_auth_signature_expiration_ms
-            .unwrap_or(self.auth_window_secs as f64 * 1000.0)
+    /// The handshake signature window: `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`,
+    /// else `AUTH_WINDOW_SECS` (300 s, the source's default), past and future. Zero,
+    /// negative or NaN accepts only the current millisecond; an infinite one bounds neither side.
+    pub(crate) fn auth_signature_expiration(&self) -> Duration {
+        let ms = self
+            .ws_auth_signature_expiration_ms
+            .unwrap_or(self.auth_window_secs as f64 * 1000.0);
+        if ms.is_nan() || ms <= 0.0 {
+            return Duration::ZERO;
+        }
+        Duration::try_from_secs_f64(ms / 1000.0).unwrap_or(Duration::MAX)
     }
 }
 
@@ -226,11 +232,6 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         metrics::register();
-        if settings.metrics_reset_at_night {
-            tracing::warn!(
-                "WKC_METRICS_RESET_AT_NIGHT is configured; social-view reset remains unsupported; the shared recorder is preserved"
-            );
-        }
         ctx.admission().configure(settings.admission);
         ctx.friendship_limiter()
             .configure(settings.friendship_limits);
@@ -247,7 +248,8 @@ impl State {
         }
     }
 
-    pub(crate) fn initial_fanout_ready(&self) -> bool {
+    /// Whether Social RPC can admit sockets after initial fanout setup.
+    pub fn initial_fanout_ready(&self) -> bool {
         self.fanout_ready
             .lock()
             .as_ref()
@@ -366,7 +368,7 @@ fn build_rpc_server(
             .release(&address, &transport.close_handle());
         if forget_ctx.mark_offline(&address) {
             let voice_ctx = forget_ctx.clone();
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 voice_ctx
                     .end_private_voice_chat_on_disconnect(&address)
                     .await;
@@ -382,10 +384,13 @@ fn build_rpc_server(
 /// as upstream's `wrap`), and the admin routes.
 pub fn router(state: Arc<State>) -> Router {
     Router::new()
-        .route("/social-rpc", get(ws::ws_upgrade).fallback(not_found))
+        .route(
+            "/social-rpc",
+            get(ws::ws_upgrade).fallback(erase(not_found)),
+        )
         .route(
             "/social-rpc/v1/stream",
-            get(stream::ws_upgrade).fallback(not_found),
+            get(stream::ws_upgrade).fallback(erase(not_found)),
         )
         .route("/social-rpc/info", get(info))
         .route("/social-rpc/health", get(health))
@@ -393,19 +398,20 @@ pub fn router(state: Arc<State>) -> Router {
         // upstream's `app.get` takes GET alone; HEAD falls to its `ANY /*`
         .route(
             "/social-rpc/status",
-            get(status).head(not_found).fallback(not_found),
+            get(status)
+                .head(erase(not_found))
+                .fallback(erase(not_found)),
         )
         .route(
             "/social-rpc/v1/users/{address}/privacy-settings",
-            get(privacy_settings).head(not_found).fallback(not_found),
+            get(privacy_settings)
+                .head(erase(not_found))
+                .fallback(erase(not_found)),
         )
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))
         .nest("/admin/social", admin::router())
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            metrics::serve_if_requested,
-        ))
+        .layer(axum::middleware::from_fn(metrics::record_request))
         .with_state(state)
 }
 

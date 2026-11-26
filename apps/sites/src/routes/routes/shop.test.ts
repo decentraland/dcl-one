@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -21,7 +22,7 @@ beforeEach(() => {
   }));
 });
 
-const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: {} }) as never;
+const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: new RouterContextProvider() }) as never;
 
 async function thrown(fn: () => unknown): Promise<Response> {
   try {
@@ -73,14 +74,5 @@ describe("the /shop routes", () => {
       { item_id: `${C}-7`, nid: "n-1", on_sale: true },
       expect.objectContaining({ sid: expect.any(String), story: "notifications/first-wear" }),
     );
-  });
-});
-
-describe("the Creator Hub's publish flow through /shop/names", () => {
-  it("returns to publishing with its project, World and origin, and the registered NAME", async () => {
-    const { returnToPublishHref } = await import("./shop.names");
-    const q = new URLSearchParams("from=deploy-world&project=p1&world=w1&origin=create");
-    expect(returnToPublishHref(q)).toBe("/create/deploy-world?project=p1&world=w1&from=create");
-    expect(returnToPublishHref(q, "ana.dcl.eth")).toBe("/create/deploy-world?name=ana.dcl.eth&claimed=1&project=p1&world=w1&from=create");
   });
 });

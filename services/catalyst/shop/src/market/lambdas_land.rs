@@ -16,19 +16,20 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::postgres::PgRow;
+use sqlx::{PgConnection, Row};
 
-use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
+use crate::chain_index::names::{NamesError, Purpose};
+use crate::land_authz::{LandNetwork, land_network};
 use crate::shared::http_util::{fetcher_error, lambdas_internal_error};
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination,
     parse_pagination_with, parse_query_string,
 };
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, ready_cursor};
+use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, fresh_fold_on};
 use super::graph::{self, OwnedLand};
-use super::nft_index::DCL_REGISTRAR;
-use super::nft_reads::land_ready;
+use super::nft_reads::land_snapshot;
 use super::{SharedState, Source, bad_request, unavailable};
 
 /// `/genesis-parcels`' pagination: a page over `max` clamps to it, a
@@ -62,10 +63,15 @@ fn land_index_unavailable() -> Response {
     )
 }
 
-async fn nft_index_ready(pool: &sqlx::PgPool) -> bool {
-    ready_cursor(pool, INDEXER_NFT, ChainNet::Ethereum, Utc::now())
-        .await
-        .is_some()
+/// [`nft_index_ready`] on the caller's connection: the land snapshot a
+/// LAND read already holds, so the check takes no second connection from the
+/// pool and sees the state the read does. A database error is an error, not
+/// an index that is not ready.
+async fn nft_index_ready_on(conn: &mut PgConnection, chain_id: i64) -> Result<bool, sqlx::Error> {
+    Ok(cursor(conn, INDEXER_NFT, ChainNet::Ethereum)
+        .await?
+        .and_then(|c| fresh_fold_on(&c, chain_id, Utc::now()))
+        .is_some())
 }
 
 /// The owner's parcels and estates, newest transfer first (the old
@@ -93,6 +99,19 @@ ORDER BY moved.block_number DESC NULLS LAST, moved.log_index DESC NULLS LAST, tr
 LIMIT $2 OFFSET $3";
 
 const USER_LANDS_COUNT_SQL: &str = "SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address IN ($2, $3) AND tr.owner = $1";
+
+async fn user_lands_count(
+    conn: &mut PgConnection,
+    net: LandNetwork,
+    owner: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(USER_LANDS_COUNT_SQL)
+        .bind(owner)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
+        .fetch_one(conn)
+        .await
+}
 
 fn land_image(
     base: &str,
@@ -182,8 +201,31 @@ pub async fn user_lands(
         Err(msg) => return bad_request(&msg),
     };
     let owner = addr.to_lowercase();
-    let land_ready = land_ready(&state.pool).await;
-    if !land_ready || !nft_index_ready(&state.pool).await {
+    // The nft index check, the count and the page all read the land
+    // snapshot: one connection, one state.
+    let net = land_network(&state.settings.eth_network);
+    let mut land = match net {
+        Some(net) => land_snapshot(&state.pool, net).await,
+        None => None,
+    };
+    let land_ready = land.is_some();
+    let nft_ready = match land.as_mut() {
+        Some(snapshot) => match nft_index_ready_on(
+            &mut snapshot.tx,
+            state.settings.market.indexes.chain_id_ethereum,
+        )
+        .await
+        {
+            Ok(ready) => ready,
+            Err(e) => {
+                tracing::error!(error = %e, "user lands: cannot read the nft index cursor");
+                return lambdas_internal_error();
+            }
+        },
+        None => false,
+    };
+    // A snapshot that will not be read is released before any fallback.
+    let (Some(mut land), Some(net)) = (land.filter(|_| nft_ready), net) else {
         if state.settings.marketplace_subgraph_url.is_some() {
             return user_lands_from_reader(&state, &addr, &owner, page).await;
         }
@@ -194,18 +236,11 @@ pub async fn user_lands(
             Source::NftIndex,
             "LAND names, descriptions and orders read the ethereum nft index, which is not published yet",
         );
-    }
-    let count = || {
-        sqlx::query_scalar::<_, i64>(USER_LANDS_COUNT_SQL)
-            .bind(&owner)
-            .bind(LAND_REGISTRY_MAINNET)
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .fetch_one(&state.pool)
     };
     // A negative bound counts from the end of the list: its length first.
     let (offset, limit, counted) = match page.sql_window() {
         Some((offset, limit)) => (offset, limit, None),
-        None => match count().await {
+        None => match user_lands_count(&mut land.tx, net, &owner).await {
             Ok(total) => {
                 let r = page.range(total.max(0) as usize);
                 (r.start as i64, r.len() as i64, Some(total))
@@ -220,9 +255,9 @@ pub async fn user_lands(
         .bind(&owner)
         .bind(limit)
         .bind(offset)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
-        .fetch_all(&state.pool)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
+        .fetch_all(&mut *land.tx)
         .await
     {
         Ok(rows) => rows,
@@ -234,7 +269,9 @@ pub async fn user_lands(
     let total: i64 = match (counted, rows.first()) {
         (Some(total), _) => total,
         (None, Some(r)) => r.get("total"),
-        (None, None) => count().await.unwrap_or(0),
+        (None, None) => user_lands_count(&mut land.tx, net, &owner)
+            .await
+            .unwrap_or(0),
     };
     let base = &state.settings.land_image_base_url;
     let elements: Vec<Value> = rows
@@ -247,8 +284,8 @@ pub async fn user_lands(
                 name: r.get("name"),
                 x: r.get("x"),
                 y: r.get("y"),
-                // `parse_land_data` stores an empty and a missing
-                // description alike (NULL), so a data record answers `""`.
+                // For parcels, parse_land_data stores empty and missing
+                // descriptions as NULL; has_data makes that answer an empty string.
                 description: r.get::<bool, _>("has_data").then(|| {
                     Some(
                         r.get::<Option<String>, _>("description")
@@ -287,6 +324,39 @@ SELECT (SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address = 
         JOIN land_authz.token_right p ON p.token_address = $2 AND p.token_id = el.land_token_id \
         WHERE e.token_address = $3 AND e.owner = $1 AND p.x IS NOT NULL)";
 
+/// One page of `owner`'s Genesis parcels and their total, on the land
+/// snapshot the caller checked ([`land_snapshot`]): both legs read one state,
+/// so the estate leg never joins these registries' estates to another
+/// registry's links.
+pub(crate) async fn genesis_parcels_page(
+    conn: &mut PgConnection,
+    net: LandNetwork,
+    owner: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<PgRow>, i64), sqlx::Error> {
+    let rows = sqlx::query(GENESIS_PARCELS_SQL)
+        .bind(owner)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *conn)
+        .await?;
+    let total: i64 = match rows.first() {
+        Some(r) => r.get("total"),
+        None => {
+            sqlx::query_scalar(GENESIS_PARCELS_COUNT_SQL)
+                .bind(owner)
+                .bind(net.land_registry)
+                .bind(net.estate_registry)
+                .fetch_one(&mut *conn)
+                .await?
+        }
+    };
+    Ok((rows, total))
+}
+
 /// `GET /lambdas/users/{address}/genesis-parcels`: an ownership list, not a
 /// claim about delegated deployment permissions.
 pub async fn user_genesis_parcels(
@@ -298,40 +368,27 @@ pub async fn user_genesis_parcels(
     if !super::is_valid_eth_address(&owner) {
         return bad_request("Address must be a valid Ethereum address");
     }
-    if !land_ready(&state.pool).await {
+    let Some(net) = land_network(&state.settings.eth_network) else {
         return land_index_unavailable();
-    }
+    };
+    let Some(mut land) = land_snapshot(&state.pool, net).await else {
+        return land_index_unavailable();
+    };
     let (page_size, page_num) = parse_pagination(&req, MAX_PAGE_SIZE as i64);
-    let rows = match sqlx::query(GENESIS_PARCELS_SQL)
-        .bind(&owner)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
-        .bind(page_size)
-        .bind(page_offset(page_num, page_size))
-        .fetch_all(&state.pool)
-        .await
+    let (rows, total) = match genesis_parcels_page(
+        &mut land.tx,
+        net,
+        &owner,
+        page_size,
+        page_offset(page_num, page_size),
+    )
+    .await
     {
-        Ok(rows) => rows,
+        Ok(page) => page,
         Err(err) => {
             tracing::warn!(owner = %owner, error = %err, "owned Genesis parcels lookup failed");
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-    };
-    let total: i64 = match rows.first() {
-        Some(r) => r.get("total"),
-        None => match sqlx::query_scalar::<_, i64>(GENESIS_PARCELS_COUNT_SQL)
-            .bind(&owner)
-            .bind(LAND_REGISTRY_MAINNET)
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .fetch_one(&state.pool)
-            .await
-        {
-            Ok(total) => total,
-            Err(err) => {
-                tracing::warn!(owner = %owner, error = %err, "owned Genesis parcels count failed");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        },
     };
     let elements: Vec<Value> = rows
         .iter()
@@ -348,14 +405,13 @@ pub async fn user_genesis_parcels(
 }
 
 /// `GET /lambdas/names/{name}/owner`: the holder of the DCL name (`.dcl.eth`
-/// optional), matched case-insensitively; 404 when nobody holds it.
+/// optional), matched case-insensitively, from the node's NAME source as a
+/// display read; 404 when nobody holds it.
 pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<String>) -> Response {
-    // Preserve the public route's existing fallback posture on cursor faults.
-    let ready = nft_index_ready(&state.pool).await;
-    match read_name_owner(&state, &name, ready).await {
+    match read_name_owner(&state, &name, Purpose::Display).await {
         Ok(Some(owner)) => Json(json!({"owner":owner.as_str()})).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(NameOwnerError::Unavailable(source, message)) => unavailable(source, message),
+        Err(NameOwnerError::Unavailable(source, message)) => unavailable(source, &message),
         Err(NameOwnerError::Fetcher(name)) => fetcher_error(&name),
         Err(NameOwnerError::Store(error)) => {
             tracing::error!(%error, "name owner query failed");
@@ -365,77 +421,62 @@ pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<Strin
 }
 
 enum NameOwnerError {
-    Unavailable(Source, &'static str),
-    /// The marketplace subgraph failed for this (normalized) name: lamb2's 502.
+    /// The source cannot answer for this purpose now.
+    Unavailable(Source, String),
+    /// The NAME source failed for this (normalized) name: lamb2's 502.
     Fetcher(String),
     Store(String),
 }
 
-/// One source-complete owner lookup shared by the public lambdas route and
-/// comms. Shop retains ownership of its NFT SQL and source selection.
+/// One owner lookup through the node's NAME source, shared by the public
+/// lambdas route (a display read) and comms' Admin Toolkit (an
+/// authorization: it picks the target of a moderation write). The index
+/// reads a published database whether or not this process walks it.
 async fn read_name_owner(
     state: &super::MarketplaceState,
     name: &str,
-    ready: bool,
+    purpose: Purpose,
 ) -> Result<Option<crate::shared::identity::Address>, NameOwnerError> {
     let normalized = name.trim().to_lowercase();
     let dcl_name = normalized.strip_suffix(".dcl.eth").unwrap_or(&normalized);
-    if !ready {
-        if state.settings.marketplace_subgraph_url.is_none() {
-            return Err(NameOwnerError::Unavailable(
-                Source::NftIndex,
-                "DCL names read the ethereum nft index, which is not published yet",
-            ));
+    let source = state.name_source();
+    let authority = state
+        .names()
+        .map_err(|e| NameOwnerError::Unavailable(source, e.to_string()))?;
+    match authority.name_owner(dcl_name, purpose).await {
+        Ok(answer) => answer
+            .value
+            .map(|owner| {
+                crate::shared::identity::Address::parse(&owner)
+                    .map_err(|error| NameOwnerError::Store(error.to_string()))
+            })
+            .transpose(),
+        Err(NamesError::NotEstablished(message)) => {
+            Err(NameOwnerError::Unavailable(source, message))
         }
-        return match graph::name_owner(&state.index, dcl_name).await {
-            Ok(Some(owner)) => crate::shared::identity::Address::parse(&owner)
-                .map(Some)
-                .map_err(|error| NameOwnerError::Store(error.to_string())),
-            Ok(None) => Ok(None),
-            Err(e) => {
-                tracing::warn!(name = %dcl_name, error = %e, "marketplace names reader failed");
-                Err(NameOwnerError::Fetcher(dcl_name.to_string()))
-            }
-        };
-    }
-    let owner: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT n.owner FROM shop.nft n \
-         WHERE lower(n.ens_subdomain) = lower($1) AND n.ens_subdomain IS NOT NULL \
-           AND n.network = 'ethereum' AND n.contract_address = $2 AND n.owner IS NOT NULL \
-         ORDER BY n.token_id LIMIT 1",
-    )
-    .bind(dcl_name)
-    .bind(DCL_REGISTRAR)
-    .fetch_optional(&state.pool)
-    .await
-    .map(Option::flatten);
-    match owner {
-        Ok(Some(owner)) if !owner.is_empty() => crate::shared::identity::Address::parse(&owner)
-            .map(Some)
-            .map_err(|error| NameOwnerError::Store(error.to_string())),
-        Ok(_) => Ok(None),
-        Err(error) => Err(NameOwnerError::Store(error.to_string())),
+        // A failed read, of either source, is lamb2's 502 for the name.
+        Err(NamesError::Failed(e)) => {
+            tracing::warn!(name = %dcl_name, error = %e, "DCL NAME source failed");
+            Err(NameOwnerError::Fetcher(dcl_name.to_string()))
+        }
     }
 }
 
-#[async_trait::async_trait]
-impl crate::comms::interfaces::NameOwnerReader for super::MarketplaceState {
-    async fn name_owner(
+impl super::MarketplaceState {
+    /// The owner of `name` as the gatekeeper's Admin Toolkit asks it (`serve`
+    /// hands it to comms as its `NameOwnerReader`): an authorization, so the
+    /// index must be current, and an unavailable source is an error, never a
+    /// verified absence.
+    pub async fn name_owner(
         &self,
         name: &str,
     ) -> Result<Option<crate::shared::identity::Address>, String> {
-        // A moderation write cannot infer an absent/unready source from a
-        // failed readiness read, even when a subgraph fallback is configured.
-        let ready = super::chain_walk::cursor(&self.pool, INDEXER_NFT, ChainNet::Ethereum)
-            .await
-            .map_err(|error| error.to_string())?
-            .is_some_and(|cursor| super::chain_walk::is_ready(&cursor, Utc::now()));
-        read_name_owner(self, name, ready)
+        read_name_owner(self, name, Purpose::Authorize)
             .await
             .map_err(|error| match error {
-                NameOwnerError::Unavailable(_, message) => message.to_string(),
+                NameOwnerError::Unavailable(_, message) => message,
                 NameOwnerError::Fetcher(name) => {
-                    format!("the marketplace names reader did not answer for {name}")
+                    format!("the DCL NAME source did not answer for {name}")
                 }
                 NameOwnerError::Store(error) => error,
             })
@@ -448,7 +489,6 @@ mod tests {
 
     #[tokio::test]
     async fn moderation_name_owner_store_fault_is_unavailable_even_with_a_fallback() {
-        use crate::comms::interfaces::NameOwnerReader;
         let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         pool.close().await;
         let state = super::super::MarketplaceState::new(
@@ -459,7 +499,7 @@ mod tests {
                 ..super::super::Settings::for_tests()
             },
         );
-        assert!(NameOwnerReader::name_owner(&state, "Alice").await.is_err());
+        assert!(state.name_owner("Alice").await.is_err());
     }
 
     #[test]

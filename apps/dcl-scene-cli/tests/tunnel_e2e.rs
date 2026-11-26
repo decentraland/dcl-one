@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 mod common {
     pub mod wait;
     pub mod wallet;
@@ -95,6 +97,7 @@ async fn spawn_tunnel_service() -> SocketAddr {
     let addr = listener.local_addr().unwrap();
     let cfg = Config {
         public_base_url: Some(format!("http://{addr}")),
+        allow_anonymous: true,
         ..Config::default()
     };
     let app = router(Arc::new(AppState::new(cfg)));

@@ -10,7 +10,7 @@ pub(crate) use net::{
     DocAnswer, ProgressState, UploadDestination, UploadEntity, UploadProgress, VERBOSE_HINT,
     all_world_scene_pages, client, denied_parcels_in, deployment_permission_in_doc,
     entity_content_hashes, entity_title, host_of, parse_world_scenes, read_server_message, refusal,
-    send_text, stored_cids, unreachable_server, upload_entity_to, with_headers,
+    send_text, stored_cids, unreachable_server, upload_entity_with_chain_to, with_headers,
     world_scenes_page_url,
 };
 pub use net::{
@@ -40,6 +40,11 @@ pub struct DeployOptions {
     pub target_content: Option<String>,
     pub sign_key: Option<PathBuf>,
     pub skip_build: bool,
+    /// Skip the local checks before signing (media permissions, the per-file
+    /// size limit); also implied by a custom target, whose limits are its own.
+    pub skip_validations: bool,
+    /// Send every file, even those the server already stores.
+    pub force_upload: bool,
     pub dry_run: bool,
     pub timestamp: Option<i64>,
     pub entity_out: Option<PathBuf>,
@@ -51,6 +56,9 @@ pub struct DeployOptions {
     pub no_browser: bool,
     pub ci: bool,
     pub port: Option<u16>,
+    /// Where the signing server listens and whom it answers:
+    /// [`crate::linker::signing_bind`] of `--host`.
+    pub signing: crate::linker::SigningBind,
     /// A caller hosting the signing routes on its own server (the preview
     /// server's `/deploy/sign/`); `None` (the CLI) serves the page itself.
     pub host_signer: Option<crate::linker::HostSigner>,
@@ -60,6 +68,18 @@ pub struct DeployOptions {
     /// A delegated identity that signs headlessly instead of hosting a
     /// browser signing page, while unexpired.
     pub identity: Option<DeployIdentity>,
+    /// `--[no-]optimize-textures` and `--[no-]keep-source-textures`, stored
+    /// as the project setting; with it on, models' textures are published as
+    /// UASTC KTX2, staged after the build and before the payload is read
+    /// ([`crate::textures`]).
+    pub textures: crate::textures::Overrides,
+    /// A program drives the run: no browser, stdout carries one JSON line
+    /// when the signing server is ready and one with the final state, and
+    /// the CLI ends with the deployment.
+    pub programmatic: bool,
+    /// What `X-Deploy-Token` must carry to cancel through `DELETE
+    /// /api/deploy`; random per run when `None`.
+    pub deploy_token: Option<String>,
 }
 
 /// A throwaway key the wallet authorized once, and the proof it did; signs
@@ -131,11 +151,15 @@ pub fn catalyst_rotation() -> Vec<String> {
 /// one of these — a bundler's module-path comment, a `require('../package.json')`
 /// — without the explorer ever fetching it, so such a mention is not a lost
 /// asset.
-const DEVELOPER_DCL_IGNORE: [&str; 22] = [
+const DEVELOPER_DCL_IGNORE: [&str; 27] = [
     ".*",
     "package.json",
     "package-lock.json",
     "yarn-lock.json",
+    // The pnpm workspace file can hold local paths.
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
     "build.json",
     "export",
     "tsconfig.json",
@@ -154,6 +178,9 @@ const DEVELOPER_DCL_IGNORE: [&str; 22] = [
     "*.md",
     "*.mdc",
     "*.map",
+    // Editor and agent files scene templates ship without a leading dot.
+    "cursor.config",
+    "cursorignore",
 ];
 
 /// Built-in ignore rules over files scene code could otherwise name as
@@ -278,13 +305,13 @@ fn collect_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// The chunk files a dcl-scene-cli loader stub evaluates: every
-/// `var __dclOne…ChunkPath = '<rel>'` declaration with a non-empty path
+/// `var __dcl…ChunkPath = '<rel>'` declaration with a non-empty path
 /// (see `split::loader_stub`). Any other entry point declares none.
 fn stub_chunk_paths(entry: &str) -> Vec<String> {
     entry
         .lines()
         .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("var __dclOne")?;
+            let rest = line.trim_start().strip_prefix("var __dcl")?;
             let (_, rest) = rest.split_once("ChunkPath = '")?;
             let (rel, _) = rest.split_once('\'')?;
             (!rel.is_empty()).then(|| rel.to_string())
@@ -634,6 +661,23 @@ mod media_permission_tests {
     use serde_json::json;
 
     #[test]
+    fn skip_validations_lets_a_mismatched_media_permission_through() {
+        let t = TempTree::new("skip-validations");
+        t.write(
+            "scene.json",
+            r#"{"runtimeVersion":"7","main":"bin/index.js","display":{"title":"X"},"scene":{"parcels":["0,0"],"base":"0,0"},"requiredPermissions":["ALLOW_MEDIA_HOSTNAMES"]}"#,
+        );
+        t.write("bin/index.js", "1");
+        let project = Project::load(&t.0).unwrap();
+        let err = crate::ux::render(&build_metadata(&project).unwrap_err(), false, false);
+        assert!(err.contains("allowedMediaHostnames"), "{err}");
+        assert!(build_metadata_checked(&project, false).is_ok());
+        assert!(prepare(&project).is_err());
+        let prepared = prepare_checked(&project, false).unwrap();
+        assert_eq!(prepared.pointers, vec!["0,0".to_string()]);
+    }
+
+    #[test]
     fn media_schema_dependency_is_checked_before_signing() {
         for hosts in [
             json!(null),
@@ -666,6 +710,11 @@ mod media_permission_tests {
 }
 
 pub fn build_metadata(project: &Project) -> Result<JsValue> {
+    build_metadata_checked(project, true)
+}
+
+/// `validate` false skips the media-permission check (`--skip-validations`).
+pub fn build_metadata_checked(project: &Project, validate: bool) -> Result<JsValue> {
     let scene_path = project.root.join("scene.json");
     let raw = std::fs::read_to_string(&scene_path)
         .with_context(|| format!("reading {}", scene_path.display()))?;
@@ -678,7 +727,9 @@ pub fn build_metadata(project: &Project) -> Result<JsValue> {
             .why("deploy uses a strict parser to hash-match the upstream toolchain"),
         )
     })?;
-    validate_media_permissions(&serde_json::from_str::<serde_json::Value>(&raw)?)?;
+    if validate {
+        validate_media_permissions(&serde_json::from_str::<serde_json::Value>(&raw)?)?;
+    }
     let JsValue::Object(entries) = scene else {
         return Err(UserError::new(
             "scene.json must be a JSON object",
@@ -785,18 +836,25 @@ fn uses_release(root: &Path) -> bool {
     matches!(crate::build_script::command(root), Ok(None))
 }
 
-/// The payload's paths: the tree's publishable files plus any the release
-/// build alone emits (a chunk only the production build splits out).
-fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
-    if !uses_release(root) {
-        return rels;
-    }
-    for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
-        if !rels.contains(&rel) {
-            rels.push(rel);
+/// The payload's paths before the texture overlay: the tree's publishable
+/// files plus any the release build alone emits (a chunk only the production
+/// build splits out).
+pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
+    if uses_release(root) {
+        for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
+            if !rels.contains(&rel) {
+                rels.push(rel);
+            }
         }
     }
     rels
+}
+
+/// The payload's paths: the tree's publishable files plus any the release
+/// build alone emits, with the optimized-texture overlay applied when the
+/// project enables one. Read each through [`payload_path`].
+pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
+    crate::textures::payload_publishable(root, tree_payload_files(root, rels))
 }
 
 /// Where a payload path is read from. rustc keeps debug and release
@@ -806,8 +864,17 @@ fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
 /// builds stop clobbering one file — and a publish stops rewriting the very
 /// tree the page just fingerprinted. Every look at the payload — the sizes
 /// the preview states, the hashes the forecast asks about, the bytes the
-/// deploy signs — goes through here, so they describe the same file.
+/// deploy signs — goes through here, so they describe the same file. A
+/// model or KTX2 file the texture overlay staged is read from the stage.
 pub fn payload_path(root: &Path, rel: &str) -> PathBuf {
+    match crate::textures::payload_source(root, rel) {
+        Some(staged) => staged,
+        None => tree_payload_path(root, rel),
+    }
+}
+
+/// [`payload_path`] before the texture overlay: the release copy or the tree.
+pub(crate) fn tree_payload_path(root: &Path, rel: &str) -> PathBuf {
     if !uses_release(root) {
         return root.join(rel);
     }
@@ -819,6 +886,12 @@ pub fn payload_path(root: &Path, rel: &str) -> PathBuf {
 }
 
 pub fn prepare(project: &Project) -> Result<Prepared> {
+    prepare_checked(project, true)
+}
+
+/// `validate` false skips the media-permission check and the per-file size
+/// limit (`--skip-validations`, or a custom target with limits of its own).
+pub fn prepare_checked(project: &Project, validate: bool) -> Result<Prepared> {
     crate::build_script::command(&project.root)?;
     let rel_paths = with_release_files(&project.root, collect_publishable_files(&project.root)?);
     let main = project.main_output()?;
@@ -843,7 +916,7 @@ pub fn prepare(project: &Project) -> Result<Prepared> {
         let p = payload_path(&project.root, rel);
         let bytes =
             std::fs::read(&p).with_context(|| format!("reading content file {}", p.display()))?;
-        if bytes.len() > MAX_FILE_SIZE_BYTES {
+        if validate && bytes.len() > MAX_FILE_SIZE_BYTES {
             return Err(UserError::new(
                 format!(
                     "{rel} is {}, over the 50 MB per-file limit",
@@ -858,7 +931,7 @@ pub fn prepare(project: &Project) -> Result<Prepared> {
         Ok((rel.clone(), hash, bytes))
     });
     let files = hashed.into_iter().collect::<Result<Vec<_>>>()?;
-    let metadata = build_metadata(project)?;
+    let metadata = build_metadata_checked(project, validate)?;
     let pointers = extract_pointers(&metadata)?;
     Ok(Prepared {
         files,
@@ -1090,6 +1163,8 @@ mod tests {
             "bin/index.js",
             "bin/index.js.map",
             "yarn.lock",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
             "builder.json",
             "package.json",
             "package-lock.json",
@@ -1106,12 +1181,13 @@ mod tests {
             "assets/model.glb",
             ".dclignore-not-really/x.png",
             ".hidden.png",
+            "cursor.config",
+            "cursorignore",
         ]);
         let got = collect_publishable_files(&t.0).unwrap();
         assert_eq!(
             got,
             vec![
-                "yarn.lock",
                 "scene.json",
                 "builder.json",
                 "src/tex.png",

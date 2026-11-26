@@ -120,7 +120,6 @@ fn queue_emote_reports(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn flush_emote_reports(
     mut queues: Query<(
         Entity,
@@ -190,7 +189,6 @@ fn flush_emote_reports(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn write_entry(
     scene: &mut RendererSceneContext,
     id: SceneEntityId,

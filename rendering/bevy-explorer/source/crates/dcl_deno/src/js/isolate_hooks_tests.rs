@@ -18,7 +18,7 @@ fn scene() -> (JsRuntime, dcl_js::KillFlag) {
     let handle = RT.with(|rt| rt.handle().clone());
     let _guard = handle.enter();
     let kill_flag = dcl_js::KillFlag::default();
-    let (mut runtime, _) = create_runtime(false, false, "isolate-hooks", false, kill_flag.clone());
+    let (runtime, _) = create_runtime(false, false, "isolate-hooks", kill_flag.clone());
     {
         let state = runtime.op_state();
         let mut state = state.borrow_mut();
@@ -37,7 +37,7 @@ fn eval(runtime: &mut JsRuntime, script: &str) -> Result<String, String> {
     let value = runtime
         .execute_script("<test>", script.to_owned())
         .map_err(|e| e.to_string())?;
-    let scope = &mut runtime.handle_scope();
+    deno_core::scope!(scope, runtime);
     Ok(v8::Local::new(scope, value).to_rust_string_lossy(scope))
 }
 

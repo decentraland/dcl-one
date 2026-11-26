@@ -44,7 +44,7 @@ impl CommsState {
             return;
         }
         let state = self.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             match &revocation {
                 RoomRevocation::WorldAddress { world, address } => {
                     let rooms = match live_world_rooms(&state, world).await {
@@ -94,6 +94,8 @@ impl CommsState {
                         tracing::error!(%error,%address,"operator-block removal intent was not accepted; worlds write is already committed");
                         return;
                     }
+                    let wallet = super::streaming::cast::Keys::Minter(address.as_str());
+                    super::streaming::cast::recheck_keys(&state, wallet).await;
                 }
             }
             tracing::info!(
@@ -206,25 +208,26 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
             worlds.insert(world.key().to_owned(), world);
         }
     }
-    let after = state.world_access_cursor.lock().unwrap().clone();
+    let after = state.world_access_cursor.lock().clone();
     let mut selected: Vec<_> = worlds
         .values()
         .filter(|world| after.as_deref().is_none_or(|after| world.key() > after))
         .take(WORLD_BATCH)
         .cloned()
         .collect();
-    if selected.len() < WORLD_BATCH && after.is_some() {
+    if selected.len() < WORLD_BATCH
+        && let Some(after) = after.as_deref()
+    {
         let remaining = WORLD_BATCH - selected.len();
         selected.extend(
             worlds
                 .values()
-                .filter(|world| world.key() <= after.as_deref().unwrap())
+                .filter(|world| world.key() <= after)
                 .take(remaining)
                 .cloned(),
         );
     }
-    *state.world_access_cursor.lock().unwrap() =
-        selected.last().map(|world| world.key().to_owned());
+    *state.world_access_cursor.lock() = selected.last().map(|world| world.key().to_owned());
     selected
 }
 
@@ -334,7 +337,8 @@ mod completion_tests {
         };
         let world = format!("locked-{}.dcl.eth", uuid::Uuid::new_v4());
         let revision = queue(&pool, &world).await;
-        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '10 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
+        // Long enough to observe the lock wait before the lease expires.
+        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '3 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
             .bind(&world).fetch_one(&pool).await.unwrap();
         let mut blocker = pool.begin().await.unwrap();
         sqlx::query(
@@ -426,10 +430,7 @@ mod recheck_regressions {
             .connect_with(base.connect_options().as_ref().clone().database("postgres"))
             .await
             .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         use futures::FutureExt;
         let mut server = None;
         let outcome = std::panic::AssertUnwindSafe(async {
@@ -438,12 +439,11 @@ mod recheck_regressions {
                 .connect_with(base.connect_options().as_ref().clone().database(&name))
                 .await
                 .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             sqlx::query("INSERT INTO social.world_access_rechecks(world_name,next_attempt_at) VALUES ('a-fault.dcl.eth',timestamp '2000-01-01'),('b-later.dcl.eth',timestamp '2000-01-02')")
                 .execute(&pool).await.unwrap();
             sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")
                 .execute(&pool).await.unwrap();
-            let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let calls = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
             let app = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post({
                 let calls = calls.clone();
                 move |axum::extract::Path(method): axum::extract::Path<String>, axum::Json(body): axum::Json<serde_json::Value>| {
@@ -453,7 +453,7 @@ mod recheck_regressions {
                             return axum::Json(serde_json::json!({"rooms":[{"name":"world-a-fault.dcl.eth"},{"name":"world-b-later.dcl.eth"},{"name":"world-c-live.dcl.eth"}]}));
                         }
                         assert_eq!(method, "ListParticipants");
-                        calls.lock().unwrap().push(body["room"].as_str().unwrap().to_owned());
+                        calls.lock().push(body["room"].as_str().unwrap().to_owned());
                         axum::Json(serde_json::json!({"participants":[]}))
                     }
                 }
@@ -490,7 +490,7 @@ mod recheck_regressions {
             .await
             .unwrap();
             assert_eq!(pending, 2, "failed policy must retain retryable schedules");
-            assert!(calls.lock().unwrap().is_empty());
+            assert!(calls.lock().is_empty());
             // Retry the actual durable obligations on the next maintenance tick.
             sqlx::query(
                 "UPDATE social.world_access_rechecks SET next_attempt_at=timestamp '2000-01-01'",
@@ -510,7 +510,7 @@ mod recheck_regressions {
                 ]
             );
             {
-                let calls = calls.lock().unwrap();
+                let calls = calls.lock();
                 assert_eq!(
                     calls
                         .iter()
@@ -753,7 +753,7 @@ mod roster_regressions {
     /// Nobody is evicted on an undecided setting.
     #[tokio::test]
     async fn a_failed_access_read_retains_the_pass_and_evicts_nobody() {
-        let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let calls = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
         let fixture = axum::Router::new().route(
             "/twirp/livekit.RoomService/{method}",
             axum::routing::post({
@@ -761,7 +761,7 @@ mod roster_regressions {
                 move |axum::extract::Path(method): axum::extract::Path<String>| {
                     let calls = calls.clone();
                     async move {
-                        calls.lock().unwrap().push(method.clone());
+                        calls.lock().push(method.clone());
                         axum::Json(match method.as_str() {
                             "ListRooms" => serde_json::json!({"rooms":[{"name":"world-faulted.dcl.eth"}]}),
                             "ListParticipants" => serde_json::json!({"participants":[{"identity":format!("0x{:040x}", 1),"sid":"PA_1"}]}),
@@ -802,7 +802,6 @@ mod roster_regressions {
         assert_eq!(
             calls
                 .lock()
-                .unwrap()
                 .iter()
                 .filter(|method| *method != "ListRooms")
                 .count(),

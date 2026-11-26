@@ -5,64 +5,23 @@
 //! path no route matches (an unknown name or another case). The router's
 //! other paths (`/outfits`, `/explorer`, `/v1/trades`) keep the shared CORS.
 
-use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::shared::cors;
 
-const MAX_AGE: &str = "36000";
-
 /// The page the peer's nginx answers for a path it does not route to lamb2.
 const NGINX_NOT_FOUND: &str = "<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>\n";
 
-/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
-/// no exposed headers; a preflight is 204 with the requested headers
-/// reflected and no `Allow-Methods`. Every other path gets the shared CORS.
+/// [`cors::lambdas_cors`] for the Lambdas routes and the legacy status alias.
 pub async fn cors_middleware(req: Request, next: Next) -> Response {
-    if !req.uri().path().starts_with("/lambdas/") {
-        return cors::cors_middleware(req, next).await;
+    let path = req.uri().path();
+    if path.starts_with("/lambdas/") || path == "/lamb2/status" {
+        return cors::lambdas_cors(req, next).await;
     }
-    let has_origin = req.headers().contains_key(header::ORIGIN);
-    let mut resp = if req.method() == Method::OPTIONS {
-        let requested_headers = req
-            .headers()
-            .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
-            .cloned();
-        let mut resp = Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .unwrap();
-        let h = resp.headers_mut();
-        if let Some(requested) = requested_headers {
-            h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, requested);
-            h.insert(
-                header::VARY,
-                HeaderValue::from_static("Access-Control-Request-Headers"),
-            );
-        }
-        h.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static(MAX_AGE),
-        );
-        resp
-    } else {
-        next.run(req).await
-    };
-    let h = resp.headers_mut();
-    if has_origin {
-        h.insert(
-            header::ACCESS_CONTROL_ALLOW_ORIGIN,
-            HeaderValue::from_static("*"),
-        );
-    }
-    h.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    resp
+    cors::cors_middleware(req, next).await
 }
 
 /// `/lambdas/{*rest}`: a path under `/lambdas/` that no route matches.
@@ -79,6 +38,8 @@ pub async fn not_found() -> Response {
 mod tests {
     use super::*;
     use crate::market::tests::support::state_without_db;
+    use axum::body::Body;
+    use axum::http::Method;
     use tower::ServiceExt;
 
     async fn send(request: Request) -> Response {
@@ -142,7 +103,36 @@ mod tests {
         );
     }
 
-    /// The router's paths outside `/lambdas/` keep the node's shared CORS.
+    #[tokio::test]
+    async fn the_legacy_status_path_answers_with_the_lambdas_status() {
+        let before = chrono::Utc::now().timestamp_millis();
+        let response = send(
+            Request::get("/lamb2/status")
+                .header(header::ORIGIN, "https://example.org")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["version"], "test");
+        assert_eq!(body["commitHash"], "unknown");
+        assert!(
+            (before..=chrono::Utc::now().timestamp_millis())
+                .contains(&body["currentTime"].as_i64().unwrap())
+        );
+    }
+
+    /// The root Shop paths use the node's shared CORS.
     #[tokio::test]
     async fn other_paths_keep_the_shared_cors() {
         let resp = send(

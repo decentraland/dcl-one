@@ -5630,82 +5630,31 @@
       "id": "uws_http:GET:/metrics",
       "owner": "inventory-auxiliary",
       "status": "known_gap",
-      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter. Application registration preserves all44 HELP/TYPE declarations, exactly16 initial scalar zeros and28 metadata-only families. All nine histogram vectors and bounded HTTP/RPC/socket/subscriber event boundaries have actual-source comparisons; ordinary and guarded accepted frames share one observer without admission double-counting.",
+      "result": "The public Social RPC metrics path returns the ordinary 404 response. Social records HTTP, RPC, WebSocket, subscriber and application measurements into the private Catalyst Serve Prometheus listener.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "scope": "Compared exact pinned installed metrics.js path/auth/render/reset sequence; existing recorder handle passed by root serve."
+          "test": "status_privacy_health_and_fallback_emit_source_http_labels",
+          "scope": "Public scrape path returns 404 and Social continues recording HTTP outcomes."
         },
         {
-          "path": "services/catalyst/social/src/rpc/tests/auxiliary_source_cases.rs",
-          "test": "uws_auxiliary_routes_match_executed_source_configuration_and_authentication",
-          "scope": "19 cases execute the real pinned status/privacy factories and installed metrics handler. Local replay covers16 cases:3 raw status config variants,4 privacy cases and9 metrics path/auth variants. Dependency-error text and abort capture are excluded from local equivalence; sample values come from an injected source registry and existing local recorder, not global value identity."
+          "path": "services/catalyst/social/src/rpc/declarations.rs",
+          "test": "all_nine_social_histograms_export_the_source_bucket_vectors",
+          "scope": "All nine source histogram vectors survive the move to the process recorder."
         },
         {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "source_registration_has_exact_metadata_and_only_sixteen_initial_zeros",
-          "scope": "Checks source declared-family set and exclusion of other domain names, including histogram sample suffixes."
+          "path": "services/catalyst/src/serve_lifecycle.rs",
+          "scope": "The Serve recorder composes Social service declarations."
         },
         {
-          "path": "services/catalyst/tests/fixtures/conformance/social/metrics-inventory.json",
-          "scope": "Per-family source name,type,labels,buckets and candidate literal sites; static presence is not runtime acceptance."
-        },
-        {
-          "path": "services/catalyst/comms/src/metrics.rs",
-          "test": "social_message_histogram_matches_source_wire_buckets_counts_and_sums",
-          "scope": "Eighty-four actual installed source metric-component observations, independently regenerated exactly, compare parsed TYPE, labels, all finite/+Inf buckets, count and sum with the existing real exporter. Root14 metrics tests pass. This checks the distribution representation, not socket event counts or every declared family."
-        },
-        {
-          "path": "services/catalyst/shared/src/rpc/ws.rs",
-          "scope": "Production path review distinguishes ordinary sends from guarded RPC frames. Source native send-result/drain callbacks and candidate physical flush/byte-budget-release events have different measurement boundaries; neither existing literal sites nor this code review proves event-count parity."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "source_registration_has_exact_metadata_and_only_sixteen_initial_zeros",
-          "scope": "Actual source registry metadata and initial samples; no invented labelled/histogram zeros."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "ordinary_social_api_metrics_match_actual_source_listener_boundaries",
-          "scope": "Nine real source HTTP listener cases,72route catalog and candidate router observations; preflight/early oversize remain outside instrumentation, actual native envelopes excluded by internal response marker."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/service/metrics_json.rs",
-          "test": "decoded_payload_json_matches_every_captured_source_type_and_variant",
-          "scope": "293 source-decoded variants across107 protocol types compare JSON sizes; source dependencies controlled."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/tests/subscription_lifecycle.rs",
-          "test": "duplicate_rpc_streams_send_the_pinned_final_notice_and_source_metrics",
-          "scope": "Actual source wrapper/subscriber duplicate/drop/update observations pair local in-memory dRPC; no broker/kernel/deployed timing claim."
-        },
-        {
-          "path": "services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json",
-          "scope": "Independently regenerated byte-exact through actual pinned source registry, wrappers, subscription components and loopback HTTP listener. Controlled wall-clock/provider inputs; no deployed/runtime identity claim."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "http_method_labels_preserve_source_casing_and_bound_direct_callers",
-          "scope": "Direct instrumentation callers share the finite method normalization; ordinary/uWS casing remains source-compatible for standard methods."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "real_http_extension_methods_share_bounded_counter_and_histogram_labels",
-          "scope": "128 distinct extension methods through actual native, source-gateway and uWS HTTP paths share other counter and histogram labels."
-        },
-        {
-          "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "websocket_close_code_labels_have_a_fixed_standard_and_source_allowlist",
-          "scope": "All u16 close-code inputs map into the finite standard/source allowlist plus other."
+          "path": "docs/adr/2026-11-24-shared-service-metrics.md",
+          "scope": "Deployment decision and private scrape target."
         }
       ],
       "gaps": [
-        "WKC_METRICS_RESET_AT_NIGHT=true still does not rotate the Social view; the existing global lifetime recorder is retained. The ordinary source HTTP metrics listener also has an unimplemented reset schedule.",
-        "Node/V8 default collectors and native uWS buffer/drop/drain observations are different. Tokio Sink::start_send acceptance is observed before flush; it is not a native uWS send-result or buffer measurement.",
-        "Auth completion after disconnect, forwarding exceptions, subscriber stale reconciliation, source LOG_LEVEL filtering and producer failures represented as ordinary generator termination have unmatched or incomplete event boundaries. Declarations/initial zeros do not prove production emitters.",
-        "Intentional cardinality bounds: the nine standard HTTP methods retain source casing; every extension method uses other in request counters and both histograms. Unknown client close codes use other after a finite standard/source allowlist. Raw source label values are not preserved for those inputs."
+        "Public scrape access, source bearer-token configuration and per-view resets were retired when service metrics moved to the private process listener."
       ],
-      "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
+      "remaining_verification": "Deployments with existing scrape jobs must point them at the private Serve listener."
     },
     {
       "id": "uws_http:GET:/status",
@@ -8330,7 +8279,7 @@
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Client BAN and update preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain. The real PostgreSQL COMMIT-response barrier exercises caller cancellation, helper deadline and real SQL-error cleanup: backend disappearance precedes relay release, independent same-key acquisition and a clean maxpool1 replacement succeed, and protected join writes never run. This direct-join proof does not execute every other handler at that wire boundary."
+      "description": "Client BAN and update preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede the places replacement and atomic bulk acceptance. Eight of the nine actual-source PostgreSQL trigger captures independently match exactly; update-place-insert-failure differs deliberately: the places replacement is one transaction, so a failed insert keeps the places that upstream lost; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain. The real PostgreSQL COMMIT-response barrier exercises caller cancellation, helper deadline and real SQL-error cleanup: backend disappearance precedes relay release, independent same-key acquisition and a clean maxpool1 replacement succeed, and protected join writes never run. This direct-join proof does not execute every other handler at that wire boundary."
     },
     {
       "id": "community-voice-raw-cache-aliases",

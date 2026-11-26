@@ -155,6 +155,19 @@ describe('figma-key-guard', () => {
       )
       expect(lines.join('\n')).not.toContain(FAKE_KEY)
       expect(lines.join('\n')).not.toContain('AbC123')
+      expect(lines).toContain(
+        'hint: if this is a public Figma URL, it lands in two pull requests: its key-guard-allow.json entry merged to main first, then the URL; a private file URL is removed instead'
+      )
+    })
+  })
+
+  describe('when only the key leaks', () => {
+    it('should not print the two-PR URL hint', async () => {
+      await put('src/leak.ts', `const k = '${FAKE_KEY}'\n`)
+
+      const { lines } = guard({ key: FAKE_KEY, range: null })
+
+      expect(lines.some((line) => line.startsWith('hint:'))).toBe(false)
     })
   })
 
@@ -220,22 +233,31 @@ describe('figma-key-guard', () => {
       expect(findings).toEqual([{ check: 'url', location: 'docs/other.md' }])
     })
 
-    it('should fail a different Figma URL added to the allowlisted file', async () => {
-      await put('docs/public.md', `see ${FILE_URL}\nand ${otherUrl}\n`)
+    describe('and a different Figma URL is added to the allowlisted file', () => {
+      beforeEach(async () => {
+        await put('docs/public.md', `see ${FILE_URL}\nand ${otherUrl}\n`)
+      })
 
-      const { findings, lines } = guard({ key: FAKE_KEY, range: null })
+      it('should fail the different Figma URL without echoing its file id', () => {
+        const { findings, lines } = guard({ key: FAKE_KEY, range: null })
 
-      expect(findings).toEqual([{ check: 'url', location: 'docs/public.md' }])
-      expect(lines.join('\n')).not.toContain('ZzOther9')
-    })
+        expect(findings).toEqual([{ check: 'url', location: 'docs/public.md' }])
+        expect(lines.join('\n')).not.toContain('ZzOther9')
+      })
 
-    it('should fail a different Figma URL in the allowlisted file with no key configured', async () => {
-      await put('docs/public.md', `see ${FILE_URL}\nand ${otherUrl}\n`)
+      describe('and no key is configured', () => {
+        it('should report the key check as skipped', () => {
+          expect(guard({ range: null }).lines).toContain(
+            'check key: SKIPPED (FIGMA_FILE_KEY not set)'
+          )
+        })
 
-      const { findings, lines } = guard({ range: null })
-
-      expect(lines).toContain('check key: SKIPPED (FIGMA_FILE_KEY not set)')
-      expect(findings).toEqual([{ check: 'url', location: 'docs/public.md' }])
+        it('should still fail the different Figma URL', () => {
+          expect(guard({ range: null }).findings).toEqual([
+            { check: 'url', location: 'docs/public.md' }
+          ])
+        })
+      })
     })
 
     it('should ignore an entry that pins no file id', async () => {
@@ -303,17 +325,7 @@ describe('when scanning another revision from the object store', () => {
     expect(findings).toEqual([])
   })
 
-  it('should take the url allowlist from the scanned revision when asked to', async () => {
-    git('checkout', '-q', 'pr')
-    await put('docs/public.md', `see ${FILE_URL}\n`)
-    await put(
-      'library/ui/figma/key-guard-allow.json',
-      JSON.stringify([
-        { path: 'docs/public.md', check: 'url', id: 'AbC123', reason: 'public file' }
-      ])
-    )
-    commit('pr allowlists a public file')
-    git('checkout', '-q', 'main')
+  describe('and the scanned revision allowlists a public file', () => {
     const scan = (allowlistRev?: string) =>
       guard({
         worktree: false,
@@ -322,8 +334,26 @@ describe('when scanning another revision from the object store', () => {
         allowlistRev
       })
 
-    expect(scan().findings.map((finding) => finding.check)).toEqual(['url'])
-    expect(scan('pr').findings).toEqual([])
+    beforeEach(async () => {
+      git('checkout', '-q', 'pr')
+      await put('docs/public.md', `see ${FILE_URL}\n`)
+      await put(
+        'library/ui/figma/key-guard-allow.json',
+        JSON.stringify([
+          { path: 'docs/public.md', check: 'url', id: 'AbC123', reason: 'public file' }
+        ])
+      )
+      commit('pr allowlists a public file')
+      git('checkout', '-q', 'main')
+    })
+
+    it('should flag the url without an allowlist revision', () => {
+      expect(scan().findings.map((finding) => finding.check)).toEqual(['url'])
+    })
+
+    it('should take the url allowlist from the scanned revision given as allowlist revision', () => {
+      expect(scan('pr').findings).toEqual([])
+    })
   })
 
   it('should reject a --tree value without a path', () => {
@@ -514,12 +544,14 @@ describe('when an untrusted path carries the private key', () => {
     expectNoKey(result)
   })
 
-  it('should capture child-process stderr when an allowlist revision contains the key', () => {
-    const result = scanner('--no-worktree', '--no-range', '--allowlist-from', FAKE_KEY)
+  describe('and an allowlist revision contains the key', () => {
+    it('should capture child-process stderr without leaking the key', () => {
+      const result = scanner('--no-worktree', '--no-range', '--allowlist-from', FAKE_KEY)
 
-    expect(result.status).toBe(0)
-    expectNoKey(result)
-    expect(result.stderr).not.toContain('fatal:')
+      expect(result.status).toBe(0)
+      expectNoKey(result)
+      expect(result.stderr).not.toContain('fatal:')
+    })
   })
 
   // The workflow runs a copy of the guard read from TRUSTED_SHA; the summary names that commit, not HEAD.
@@ -534,10 +566,12 @@ describe('when an untrusted path carries the private key', () => {
     expect(result.stdout).not.toContain(git('rev-parse', 'HEAD'))
   })
 
-  it('should name the checkout HEAD without --revision', () => {
-    const result = scanner('--no-worktree', '--no-range')
+  describe('and no --revision is given', () => {
+    it('should name the checkout HEAD', () => {
+      const result = scanner('--no-worktree', '--no-range')
 
-    expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${git('rev-parse', 'HEAD')}`)
+      expect(result.stdout.split('\n')[0]).toBe(`figma-key-guard at ${git('rev-parse', 'HEAD')}`)
+    })
   })
 
   it.each([
@@ -568,11 +602,17 @@ describe('when an untrusted path carries the private key', () => {
     expectNoKey(result)
   })
 
-  it('should redact the key in any letter case, several times, and leave other text alone', () => {
+  it('should redact the key in any letter case, several times', () => {
     expect(redact(`a/${FAKE_KEY}/b/${FAKE_KEY.toLowerCase()}.json`, FAKE_KEY)).toBe(
       'a/<DCL_FIGMA_FILE>/b/<DCL_FIGMA_FILE>.json'
     )
+  })
+
+  it('should leave text without the key alone', () => {
     expect(redact('plain/path.json', FAKE_KEY)).toBe('plain/path.json')
+  })
+
+  it('should leave text alone with no key set', () => {
     expect(redact('no key set', undefined)).toBe('no key set')
   })
 
@@ -630,29 +670,25 @@ describe('when selecting a main push range', () => {
         *) return 1 ;;
       esac
     }\n`
-    const result = spawnSync(
-      'bash',
-      ['-e', '-c', mock + workflow().jobs['key-scan']!.steps[0]!.run!],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          WORKFLOW_PATH: '.github/workflows/ui-library.yml',
-          WORKFLOW_ID: '42',
-          REPOSITORY: 'example/repository',
-          HEAD_REPO: 'example/repository',
-          RUN_ID: '123',
-          EVENT: 'push',
-          CONCLUSION: 'success',
-          HEAD_SHA: head,
-          HEAD_BRANCH: 'main',
-          DEFAULT_BRANCH: 'main',
-          JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
-          GITHUB_OUTPUT: output
-        }
+    const result = spawnSync('bash', ['-e', '-c', mock + workflow().jobs.prepare!.steps[0]!.run!], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WORKFLOW_PATH: '.github/workflows/ui-library.yml',
+        WORKFLOW_ID: '42',
+        REPOSITORY: 'example/repository',
+        HEAD_REPO: 'example/repository',
+        RUN_ID: '123',
+        EVENT: 'push',
+        CONCLUSION: 'success',
+        HEAD_SHA: head,
+        HEAD_BRANCH: 'main',
+        DEFAULT_BRANCH: 'main',
+        JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
+        GITHUB_OUTPUT: output
       }
-    )
+    })
     const text = readFileSync(output, 'utf8')
     return { ...result, output: text, base: /^base=(.*)$/m.exec(text)?.[1] }
   }
@@ -697,7 +733,7 @@ describe('when selecting a main push range', () => {
     }
   )
 
-  describe('when the jobs list holds boundary-named jobs the trust filter must reject', () => {
+  describe('and the jobs list holds boundary-named jobs the trust filter must reject', () => {
     const decoysFor = (head: string, other: string): Job[] => [
       {
         run_id: 999,
@@ -725,7 +761,7 @@ describe('when selecting a main push range', () => {
       }
     ]
 
-    it('should fail closed when only another run, another head, a failed job or an unprefixed name carries one', async () => {
+    it('should fail closed on boundary names carried only by another run, another head, a failed job or an unprefixed name', async () => {
       const head = git('rev-parse', 'HEAD')
       const result = await boundary(head, '', decoysFor(head, 'a'.repeat(40)))
 
@@ -749,59 +785,62 @@ describe('when selecting a main push range', () => {
     })
   })
 
-  it('should include the root commit when the first push has no previous head', async () => {
-    await put('README.md', FAKE_KEY)
-    git('add', '-A')
-    git(
-      '-c',
-      'user.email=dev@example.com',
-      '-c',
-      'user.name=Dev',
-      '-c',
-      'commit.gpgsign=false',
-      'commit',
-      '--amend',
-      '-qm',
-      'synthetic key in root'
-    )
-    const leaked = git('rev-parse', '--short=12', 'HEAD')
-    await put('README.md', 'clean\n')
-    commit('remove key from tip')
-    const head = git('rev-parse', 'HEAD')
-    const result = await boundary(head, `UI key push boundary ${'0'.repeat(40)}..${head}`)
-    expect(result.status, result.stderr).toBe(0)
-    const scan = workflow().jobs['key-scan']!.steps.find((step) => step.id === 'scan')!.run!
-    const args = path.join(root, 'scanner-args')
-    const selected = spawnSync(
-      'bash',
-      [
-        '-e',
+  describe('and the first push has no previous head', () => {
+    it('should include the root commit in the scanned range', async () => {
+      await put('README.md', FAKE_KEY)
+      git('add', '-A')
+      git(
         '-c',
-        // This repository stands in for trusted/: the step's fresh copy of the guard is not needed here.
-        `git() { case " $* " in *' cat-file '*) return 0;; esac; command git "$@"; }\n` +
-          `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` +
-          scan
-      ],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          BASE: result.base!,
-          HEAD_SHA: head,
-          RUNNER_TEMP: root,
-          ARGS: args,
-          FIGMA_FILE_KEY: FAKE_KEY
+        'user.email=dev@example.com',
+        '-c',
+        'user.name=Dev',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--amend',
+        '-qm',
+        'synthetic key in root'
+      )
+      const leaked = git('rev-parse', '--short=12', 'HEAD')
+      await put('README.md', 'clean\n')
+      commit('remove key from tip')
+      const head = git('rev-parse', 'HEAD')
+      const result = await boundary(head, `UI key push boundary ${'0'.repeat(40)}..${head}`)
+      expect(result.status, result.stderr).toBe(0)
+      const scan = workflow().jobs['key-scan']!.steps.find((step) => step.id === 'scan')!.run!
+      const args = path.join(root, 'scanner-args')
+      const selected = spawnSync(
+        'bash',
+        [
+          '-e',
+          '-c',
+          // This repository stands in for trusted/, which already holds the commits: neither the step's fresh copy
+          // of the guard nor its bundle fetch is needed here.
+          `git() { case " $* " in *' cat-file '*|*' fetch '*) return 0;; esac; command git "$@"; }\n` +
+            `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` +
+            scan
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            BASE: result.base!,
+            HEAD_SHA: head,
+            RUNNER_TEMP: root,
+            ARGS: args,
+            FIGMA_FILE_KEY: FAKE_KEY
+          }
         }
-      }
-    )
-    expect(selected.status, selected.stderr).toBe(0)
-    const argv = readFileSync(args, 'utf8').trim().split('\n')
-    const range = argv[argv.indexOf('--range') + 1]!
-    expect(range).toBe(head)
-    expect(guard({ worktree: false, range, key: FAKE_KEY }).findings).toContainEqual({
-      check: 'key',
-      location: `${leaked}:README.md`
+      )
+      expect(selected.status, selected.stderr).toBe(0)
+      const argv = readFileSync(args, 'utf8').trim().split('\n')
+      const range = argv[argv.indexOf('--range') + 1]!
+      expect(range).toBe(head)
+      expect(guard({ worktree: false, range, key: FAKE_KEY }).findings).toContainEqual({
+        check: 'key',
+        location: `${leaked}:README.md`
+      })
     })
   })
 })
@@ -870,11 +909,15 @@ describe('when build output holds an LFS pointer', () => {
 })
 
 describe('when an artifact or a range contains a pointer whose object is not local', () => {
-  it('should fail without invoking the LFS client or downloading content', async () => {
+  let marker: string
+  let previous: string | undefined
+
+  beforeEach(async () => {
+    previous = process.env.PATH
     const actualGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
     const bin = path.join(root, 'bin')
     await mkdir(bin)
-    const marker = path.join(root, 'download-called')
+    marker = path.join(root, 'download-called')
     const wrapper = path.join(bin, 'git')
     await writeFile(
       wrapper,
@@ -889,18 +932,25 @@ describe('when an artifact or a range contains a pointer whose object is not loc
       'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'f'.repeat(64) + '\nsize 1\n'
     )
     commit('pointer')
-    const previous = process.env.PATH
     process.env.PATH = bin + path.delimiter + previous
-    try {
-      expect(
-        guard({ range: 'base..HEAD', worktree: false, artifacts: ['outside'] }).findings.map(
-          (item) => item.check
-        )
-      ).toEqual(['lfs', 'lfs'])
-      expect(() => readFileSync(marker)).toThrow()
-    } finally {
-      process.env.PATH = previous
-    }
+  })
+
+  afterEach(() => {
+    if (previous === undefined) delete process.env.PATH
+    else process.env.PATH = previous
+  })
+
+  it('should fail the artifact and the range on the lfs check', () => {
+    expect(
+      guard({ range: 'base..HEAD', worktree: false, artifacts: ['outside'] }).findings.map(
+        (item) => item.check
+      )
+    ).toEqual(['lfs', 'lfs'])
+  })
+
+  it('should not invoke the LFS client or download content', () => {
+    guard({ range: 'base..HEAD', worktree: false, artifacts: ['outside'] })
+    expect(() => readFileSync(marker)).toThrow('ENOENT')
   })
 })
 
@@ -1048,5 +1098,70 @@ describe('when listing the LFS objects a scan will read', () => {
         .split('\n')
         .map((line) => JSON.parse(line))
     ).toEqual([{ oid: /sha256:([0-9a-f]+)/.exec(pointer)![1], size: Buffer.byteLength('listed') }])
+  })
+})
+
+// The key scan job gets the prefetched objects as downloaded data, outside the checkout's own store.
+describe('when the LFS objects come from a separate store', () => {
+  // Inside .git only so that commit's git add leaves it out; it is not the checkout's own store.
+  const store = () => path.join(root, '.git/downloaded-lfs')
+  async function putObject(directory: string, content: string, stored = content) {
+    const oid = createHash('sha256').update(content).digest('hex')
+    const file = path.join(directory, oid.slice(0, 2), oid.slice(2, 4), oid)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, stored)
+    return `${POINTER_PREFIX}${oid}\nsize ${Buffer.byteLength(content)}\n`
+  }
+  const run = (...args: string[]) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(import.meta.dirname, 'key-guard.mjs'),
+        '--root',
+        root,
+        '--range',
+        'base..HEAD',
+        '--no-worktree',
+        ...args
+      ],
+      { encoding: 'utf8', env: { ...process.env, FIGMA_FILE_KEY: FAKE_KEY } }
+    )
+
+  it('should read a pointer payload from --lfs-store and find the key in it', async () => {
+    await put('apps/sites/public/leak.bin', await putObject(store(), `x ${FAKE_KEY} x`))
+    commit('pointer stored elsewhere')
+    const result = run('--lfs-store', store())
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain(`FAIL key ${short('HEAD')}:apps/sites/public/leak.bin`)
+    expect(result.stdout).not.toContain(FAKE_KEY)
+  })
+
+  it('should ignore the checkout store in favour of the store --lfs-store names', async () => {
+    const pointer = await storeObject(FAKE_KEY)
+    await put('apps/sites/public/local.bin', pointer)
+    commit('pointer stored only in the checkout')
+    const result = run('--lfs-store', store())
+    expect(result.stdout).toContain(`FAIL lfs ${short('HEAD')}:apps/sites/public/local.bin`)
+    expect(result.stdout).not.toContain('FAIL key')
+  })
+
+  it('should reject an object in --lfs-store whose bytes do not match its pointer', async () => {
+    await put('apps/sites/public/swapped.bin', await putObject(store(), FAKE_KEY, 'clean bytes'))
+    commit('swapped object')
+    const result = run('--lfs-store', store())
+    expect(result.stdout).toContain(`FAIL lfs ${short('HEAD')}:apps/sites/public/swapped.bin`)
+    expect(result.status).toBe(1)
+  })
+
+  it('should fail with no directory after --lfs-store', () => {
+    const result = run('--lfs-store')
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('--lfs-store takes a directory')
+  })
+
+  it('should not take the next option as the --lfs-store directory', () => {
+    const result = run('--lfs-store', '--range', 'HEAD')
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('--lfs-store takes a directory')
   })
 })

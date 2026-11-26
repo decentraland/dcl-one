@@ -7,7 +7,7 @@ use common::{
     inputs::{CommonInputAction, SystemAction, CAMERA_SET, CAMERA_ZOOM, MOVE_SET, POINTER_SET},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
+        AppConfig, CameraView, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
         PLAYER_CAMERA_FOV,
     },
 };
@@ -54,25 +54,29 @@ pub struct PhotoModeChanged {
 #[derive(Component)]
 struct HiddenForPhotoMode(Display);
 
-pub(crate) fn register(app: &mut App) {
-    app.init_resource::<PhotoCameraSettings>()
-        .add_event::<PhotoModeRequest>()
-        .add_event::<PhotoModeChanged>()
-        .add_systems(
-            Update,
-            (
-                read_photo_mode_keys,
-                apply_photo_mode_requests,
-                hide_scene_ui_in_photo_mode,
+pub(crate) struct PhotoModePlugin;
+
+impl Plugin for PhotoModePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PhotoCameraSettings>()
+            .add_event::<PhotoModeRequest>()
+            .add_event::<PhotoModeChanged>()
+            .add_systems(
+                Update,
+                (
+                    read_photo_mode_keys,
+                    apply_photo_mode_requests,
+                    hide_scene_ui_in_photo_mode,
+                )
+                    .chain()
+                    .in_set(SceneSets::Input)
+                    .after(update_pointer_lock),
             )
-                .chain()
-                .in_set(SceneSets::Input)
-                .after(update_pointer_lock),
-        )
-        .add_systems(
-            PostUpdate,
-            move_photo_camera.in_set(PostUpdateSets::CameraUpdate),
-        );
+            .add_systems(
+                PostUpdate,
+                move_photo_camera.in_set(PostUpdateSets::CameraUpdate),
+            );
+    }
 }
 
 /// The keys read inside photo mode: the nametag and HUD keys and the cursor lock toggle. A scene
@@ -113,7 +117,6 @@ fn read_photo_mode_keys(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn apply_photo_mode_requests(
     mut commands: Commands,
     mut requests: EventReader<PhotoModeRequest>,
@@ -151,7 +154,7 @@ pub(crate) fn apply_photo_mode_requests(
         if primary.scene_override.is_some() || out_of_world {
             return;
         }
-        let first_person = primary.distance < 0.05;
+        let first_person = primary.view() == CameraView::FirstPerson;
         let start = PhotoCamera::start_transform(&transform, first_person, &settings);
         let fov = match &*projection {
             Projection::Perspective(p) => p.fov,
@@ -214,7 +217,6 @@ pub(crate) fn apply_photo_mode_requests(
 
 /// Scene UI is hidden for the whole of photo mode; roots that appear, or are restyled for a new
 /// HUD inset, meanwhile are hidden too.
-#[allow(clippy::type_complexity)]
 fn hide_scene_ui_in_photo_mode(
     mut commands: Commands,
     photo: Query<(), (With<PhotoMode>, With<PrimaryCamera>)>,
@@ -250,7 +252,6 @@ fn hide_scene_ui_in_photo_mode(
 
 /// Reads this frame's input into the photo camera and writes the rendered camera. Waits for the
 /// opening transition to land before the follow target takes over.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn move_photo_camera(
     time: Res<Time>,
     settings: Res<PhotoCameraSettings>,

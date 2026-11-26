@@ -1,21 +1,21 @@
 // Minimap "Camera" style: a live top-down render of the world, shown through the transparent
-// cutout the React minimap carves out (EngineViewport region='map').
+// cutout the React minimap carves out (EngineViewport region='map') once it hears `minimapReady`.
 //
 // The DOM styles (parcel / satellite) are drawn entirely in React from map tiles and never
 // reach this file — React tells us which style is active via `minimapConfig`, and we only hold
 // a camera while it's 'imposters'. That matters: a TextureCamera is a second render pass, so
 // leaving one alive for a map nobody is looking at costs a frame budget for nothing.
 //
-// The circular mask is drawn HERE rather than in React. React is transparent around the map
-// (the world shows through), so if the engine drew a square the corners would spill over the
-// world outside the circle — there is no React pixel to cover them.
+// The map is drawn in the square the HUD reports: the inside of its map frame. The corners are
+// rounded HERE rather than in React, because the frame's rounded border is the only React pixel
+// over them.
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
 import { CameraLayer, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import type { MinimapRotation, MinimapStyle } from '../../../src/engine/protocol'
+import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -38,6 +38,10 @@ const MAX_RESOLUTION = 512
 // engine. Same thresholds the pose stream uses in `world.ts`.
 const MOVE_EPSILON_M = 0.05
 const MOVE_EPSILON_DEG = 0.5
+// Scene frames between placing a new camera and telling the page its view is up; the page keeps the
+// map covered until then. The engine makes the camera in a frame and shows its picture in the UI on
+// a retry it makes every 10 frames, and a scene frame lasts at least an engine frame.
+const READY_FRAMES = 15
 
 let rect: Rect | null = null
 let dpr = 1
@@ -47,9 +51,11 @@ let rotation: MinimapRotation = 'north'
 let visibleMeters = 256
 let appliedMeters = 0
 let appliedResolution = 0
+// Frames left before the current camera is announced; 0 once it has been, or with no camera.
+let readyIn = 0
 
-/** The square render target for the current rect: physical pixels, clamped. The map is a
- *  circle inside a square hole, so the larger side is what has to be covered. */
+/** The square render target for the current rect: physical pixels, clamped. The larger side is
+ *  what has to be covered. */
 function targetResolution(): number {
   if (rect == null) return MIN_RESOLUTION
   const px = Math.max(rect.width, rect.height) * dpr
@@ -100,12 +106,27 @@ function createCamera(): void {
   lastX = NaN
   lastZ = NaN
   lastYaw = NaN
+  readyIn = READY_FRAMES
 }
 
 function disposeCamera(): void {
   if (cameraEntity == null) return
   engine.removeEntity(cameraEntity)
   cameraEntity = null
+  readyIn = 0
+}
+
+/** Makes the camera, or answers at once for one already drawn: a page that reloaded finds the
+ *  scene's camera still there. */
+function render(ctx: Ctx): void {
+  if (cameraEntity != null && readyIn === 0) ctx.send({ kind: 'minimapReady' })
+  else createCamera()
+}
+
+function announce(ctx: Ctx): void {
+  if (readyIn === 0 || Number.isNaN(lastX)) return
+  readyIn -= 1
+  if (readyIn === 0) ctx.send({ kind: 'minimapReady' })
 }
 
 /** Keep the camera over the player, turned the way the map is turned, at the current zoom. */
@@ -157,7 +178,7 @@ export function registerMinimap(ctx: Ctx): void {
     rect = msg.rect
     // Older pages don't send it; 1 is the safe read (CSS px == physical px).
     dpr = msg.dpr ?? 1
-    if (shouldRender()) createCamera()
+    if (shouldRender()) render(ctx)
     else disposeCamera()
   })
 
@@ -165,12 +186,13 @@ export function registerMinimap(ctx: Ctx): void {
     style = msg.style
     rotation = msg.rotation
     visibleMeters = msg.visibleMeters
-    if (shouldRender()) createCamera()
+    if (shouldRender()) render(ctx)
     else disposeCamera()
   })
 
   ctx.push(() => {
     sync()
+    announce(ctx)
   })
 }
 
@@ -196,7 +218,8 @@ export function renderMinimap(): ReactEcs.JSX.Element | null {
           position: { top: 0, left: 0 },
           width: r.width,
           height: r.height,
-          borderRadius: 9999
+          // the corners of the HUD's map frame, inside its 1 px border
+          borderRadius: 4
         }}
         uiBackground={{ videoTexture: { videoPlayerEntity: cameraEntity }, textureMode: 'stretch' }}
       />

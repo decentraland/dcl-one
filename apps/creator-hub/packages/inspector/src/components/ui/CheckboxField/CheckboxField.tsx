@@ -1,0 +1,74 @@
+import React, { useCallback, useId, useMemo } from 'react';
+import { cx } from '../../../lib/utils/cx';
+import { Message, MessageType } from '../Message';
+import { Label } from '../Label';
+import { isMixedValue } from '../utils';
+import { type Props } from './types';
+
+import './CheckboxField.css';
+
+const CheckboxField = React.forwardRef<HTMLInputElement, Props>((props, forwardedRef) => {
+  const {
+    className,
+    checked,
+    label,
+    error,
+    disabled,
+    onChange,
+    type = 'checkbox',
+    color = 'primary',
+    value,
+    id: idProp,
+    ...rest
+  } = props;
+  const generatedId = useId();
+  const id = idProp ?? generatedId;
+
+  const isIndeterminate = useMemo(() => isMixedValue(value), [value]);
+
+  const setRef = useCallback(
+    (node: HTMLInputElement | null) => {
+      if (node) {
+        node.indeterminate = isIndeterminate;
+      }
+      if (typeof forwardedRef === 'function') {
+        forwardedRef(node);
+      } else if (forwardedRef) {
+        forwardedRef.current = node;
+      }
+    },
+    [forwardedRef, isIndeterminate],
+  );
+
+  return (
+    <div className={cx('Checkbox Field', className, { disabled }, color !== 'primary' && color)}>
+      <div
+        className={cx('InputContainer', {
+          disabled: disabled,
+          error: !!error,
+          indeterminate: isIndeterminate,
+        })}
+      >
+        <input
+          id={id}
+          type={type}
+          ref={setRef}
+          checked={isIndeterminate ? false : !!checked}
+          onChange={onChange}
+          disabled={disabled}
+          {...rest}
+        />
+        <Label
+          text={label}
+          htmlFor={id}
+        />
+      </div>
+      <Message
+        text={error}
+        type={MessageType.ERROR}
+      />
+    </div>
+  );
+});
+
+export default React.memo(CheckboxField);

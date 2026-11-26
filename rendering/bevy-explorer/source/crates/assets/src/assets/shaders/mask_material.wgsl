@@ -1,24 +1,44 @@
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_vertex_output,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    mesh_view_bindings::globals,
+    pbr_functions::main_pass_post_lighting_processing,
+    mesh_view_bindings::{globals, lights, view},
     mesh_functions,
+    shadows,
+    view_transformations,
 }
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, reveal_discard}
-#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount}
+#import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard, toon_outline}
+#import "embedded://shaders/toon.wgsl"::facial_feature_lighting
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
+#import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+
+// same softened sun shadows as the avatar body (see bound_material.wgsl), so a face never stays
+// shadowed where the body's shadow has faded out
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // the far bound of the last cascade is the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
+}
 
 #ifdef ENVIRONMENT_MAP
-#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
-#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level, sky_envmap_light}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
-// (see sky_envmap_lookup.wgsl)
+// the sky envmaps are the only ambient light: the Trilight ambient, and the sky reflections
+// levelled towards the flat ambient light (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);
     let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
     return sky_envmap_level(radiances, input, upper, lights.ambient_color);
+}
+
+// the ambient diffuse at full strength, the reflection added on top (see sky_envmap_lookup.wgsl)
+override fn environment_map::environment_map_light(input: ptr<function, lighting::LightingInput>, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapLight {
+    return sky_envmap_light(input, clusterable_object_index_ranges, found_diffuse_indirect);
 }
 
 override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
@@ -53,9 +73,18 @@ fn fragment(
     let sample_index = 0u;
 #endif
 
-    if reveal_discard(mesh_functions::get_tag(in.instance_index), in.world_position.y, in.instance_index) {
+    // a mask carries the tag of the body it is drawn on
+    let mesh_tag = mesh_functions::get_tag(in.instance_index);
+
+    if reveal_discard(mesh_tag, in.world_position.y, in.instance_index) {
         discard;
     }
+
+    // the camera-to-player dither, the same call bound_material.wgsl makes for the body: by the
+    // avatar's capsule, so a mask drops the pixels the head under it drops
+    let dither = camera_dither(mesh_tag, in.position.xy, in.world_position.xyz, in.instance_index, scene_bounds.base_opacity, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
+    let cap_brightness = dither.transparency;
+    let dither_opacity = dither.opacity;
 
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
 
@@ -84,21 +113,29 @@ fn fragment(
     pbr_input.material.base_color = color;
 
     var out: FragmentOutput;
-    // apply lighting
-    out.color = apply_pbr_lighting(pbr_input);
+    // apply lighting: the face features' own, by the ambient light (toon.wgsl)
+    out.color = facial_feature_lighting(pbr_input);
 
-    out.color = apply_outline(
-        in.position,
-        out.color, 
-        vec3(1., 0., 0.),
-        false,
-        sample_index,
-        1.0,
-    );
+    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u {
+        // the avatar outline, in the tone of the mask's own colour
+        out.color = toon_outline(
+            in.position,
+            out.color,
+            color.rgb,
+            in.instance_index,
+            -view_transformations::depth_ndc_to_view_z(in.position.z),
+            sample_index,
+            dither_opacity,
+        );
+    }
 
     // apply in-shader post processing (fog, alpha-premultiply, and also tonemapping, debanding if the camera is non-hdr)
     // note this does not include fullscreen postprocessing effects like bloom.
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+
+    // a fading mask is capped as the fading body is, so bloom doesn't fill the discarded pixels
+    let cap_factor = max(max(out.color.r, out.color.g), max(out.color.b, 1.0));
+    out.color = mix(out.color, vec4<f32>(out.color.rgb / cap_factor, out.color.a), saturate(cap_brightness * 2.0));
 
     return out;
 }

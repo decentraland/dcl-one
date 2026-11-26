@@ -30,6 +30,12 @@ sol! {
     function buy(ItemToBuy[] itemsToBuy) external;
 
     function executeOrder(address nftAddress, uint256 assetId, uint256 price) external;
+    function createOrder(
+        address nftAddress,
+        uint256 assetId,
+        uint256 priceInWei,
+        uint256 expiresAt
+    ) external;
 
     function placeBid(
         address _tokenAddress,
@@ -527,7 +533,7 @@ pub fn modelled_coupons(chain_id: u64) -> &'static [Address] {
     }
 }
 
-const DISCOUNT_TYPE_RATE: u64 = 1;
+const DISCOUNT_TYPE_RATE: u64 = crate::coupons::signature::DISCOUNT_TYPE_RATE as u64;
 const DISCOUNT_TYPE_FLAT: u64 = 2;
 const ONE_MILLION: u64 = 1_000_000;
 
@@ -635,6 +641,16 @@ impl SaleMethod {
     }
 }
 
+/// The signature of the inner method a registered sale target never relays:
+/// `createOrder` on Marketplace and MarketplaceV2. `None` for every other call.
+pub fn refused_method(full_data: &[u8], kind: SaleKind) -> Option<&'static str> {
+    if !matches!(kind, SaleKind::Marketplace | SaleKind::MarketplaceV2) {
+        return None;
+    }
+    let inner = decode_meta_tx_full(full_data)?.function_signature;
+    (inner.get(..4)? == createOrderCall::SELECTOR).then_some(createOrderCall::SIGNATURE)
+}
+
 /// The price a meta-transaction aimed at a registered sale target settles at:
 /// `None` for one of the target's reviewed non-sale methods (nothing to
 /// price); the decoded price for a sale; zero (fail closed) when the wrapper
@@ -654,6 +670,12 @@ pub fn get_sale_price(full_data: &[u8], chain_id: u64, kind: SaleKind) -> Option
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

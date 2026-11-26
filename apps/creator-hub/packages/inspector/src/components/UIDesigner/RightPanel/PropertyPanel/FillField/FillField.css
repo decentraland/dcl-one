@@ -1,0 +1,47 @@
+.ui-designer-fill-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ui-designer-fill-modes {
+  display: flex;
+  gap: 2px;
+  align-self: flex-start;
+}
+
+.ui-designer-fill-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: var(--ui-designer-radius-field);
+}
+
+.ui-designer-fill-mode[data-mode="none"]::before,
+.ui-designer-fill-mode[data-mode="file"]::before,
+.ui-designer-fill-mode[data-mode="avatar"]::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+}
+
+.ui-designer-fill-mode[data-mode="none"]::before {
+  mask-image: url("./icons/none.svg");
+}
+
+.ui-designer-fill-mode[data-mode="file"]::before {
+  mask-image: url("./icons/image.svg");
+}
+
+.ui-designer-fill-mode[data-mode="avatar"]::before {
+  mask-image: url("./icons/avatar.svg");
+}
+
+.ui-designer-fill-mode svg {
+  width: 16px;
+  height: 16px;
+}

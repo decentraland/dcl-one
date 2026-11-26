@@ -95,7 +95,7 @@ pub(super) fn textsearch_column_sql() -> &'static str {
 /// empty string, which the SQL turns into a NULL query (no NOTICE, no match).
 pub(super) fn tsquery(search: &str) -> String {
     static WORD: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").expect("literal regex compiles"));
     WORD.find_iter(search)
         .map(|word| format!("{}:*", word.as_str()))
         .collect::<Vec<_>>()
@@ -124,12 +124,15 @@ pub(super) const RAW_INT_IS_CASTABLE_RE: &str = r"^-?[0-9]{1,10}$";
 /// catalogue probe (`place_positions_path_gin`) bounds the answer by the
 /// catalogue, not by the owner's holdings, so a large holding neither loads
 /// its parcels into memory nor reaches the list's `@> ANY` clause.
-pub async fn operated_positions_in_catalogue(
-    pool: &sqlx::PgPool,
+pub async fn operated_positions_in_catalogue<'e, E>(
+    executor: E,
     land_registry: &str,
     estate_registry: &str,
     owner: &str,
-) -> Result<Vec<String>, sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_scalar(
         "SELECT DISTINCT format('%s,%s', p.x, p.y) \
          FROM (SELECT tr.x, tr.y FROM land_authz.token_right tr \
@@ -147,7 +150,7 @@ pub async fn operated_positions_in_catalogue(
     .bind(land_registry)
     .bind(owner)
     .bind(estate_registry)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
 }
 
@@ -678,7 +681,10 @@ mod tests {
         let (clause, binds) = build_where(&f, true);
         assert_eq!(binds.len(), 6, "search takes $1, the gate $2..$6: {clause}");
         assert!(clause.contains("LIKE ANY ($2::text[])"), "{clause}");
-        assert!(clause.contains("title !~ $3"), "{clause}");
+        assert!(
+            clause.contains("plain) END), '\\s+', ' ', 'g') !~ $3"),
+            "{clause}"
+        );
         assert!(clause.contains("<> ALL ($5::text[])"), "{clause}");
         assert!(clause.contains("<> $6)"), "{clause}");
         assert!(

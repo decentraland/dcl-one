@@ -1,0 +1,72 @@
+@media (prefers-reduced-motion: no-preference) {
+  .reminderShake {
+    transform-origin: top center;
+    animation: bellShake 600ms ease-in-out;
+  }
+}
+
+@keyframes bellShake {
+  15% {
+    transform: rotate(14deg);
+  }
+  30% {
+    transform: rotate(-14deg);
+  }
+  45% {
+    transform: rotate(10deg);
+  }
+  60% {
+    transform: rotate(-8deg);
+  }
+  75% {
+    transform: rotate(4deg);
+  }
+  85% {
+    transform: rotate(-2deg);
+  }
+}
+
+/* My Events: the review status over the cover's top right; an event still in review has its cover dimmed. */
+.mine {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+}
+
+.status {
+  composes: text6c6162656c2f78732d63617073 from '../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-feedback-warning);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--dcl-radius-full);
+  background: currentcolor;
+}
+
+.mine[data-cover] .status {
+  position: absolute;
+  z-index: 2;
+  top: var(--dcl-space-12);
+  right: var(--dcl-space-12);
+}
+
+.mine[data-status='approved'] .status {
+  color: var(--dcl-feedback-success);
+}
+
+.mine[data-status='rejected'] .status {
+  color: var(--dcl-feedback-error);
+}

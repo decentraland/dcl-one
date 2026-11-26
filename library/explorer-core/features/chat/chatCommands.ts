@@ -1,0 +1,271 @@
+// Chat slash-commands — parity with bevy-ui-scene's `sendChatMessage` (ChatsAndLogs.tsx) and
+// unity-explorer's IChatCommand set. Pure parser: turns a raw input line into an action the session
+// dispatches (teleport / changeRealm / reload / console) or a system message to echo in chat.
+//
+// `/goto`, `/goto-local` and `/world` take the destinations of ../lobby/goto.ts's grammar and
+// reuse the teleport/changeRealm bridge plumbing; `/reload` and `/commands` go through thin bridge handlers (reloadScene / consoleCommand). `/help` is a
+// client-rendered system message; `/commands` surfaces the engine's own console command list.
+// Any other `/word args` goes to the engine console as the line typed (`engine_console_command`),
+// so the engine splits it by its one rule (`console::line::split`), except the
+// HUD_HIDDEN_COMMANDS below; the engine itself only registers dev/cheat commands in preview mode.
+
+import { type GotoTarget, isGenesisParcel, isWorldName, isWorldParcel, parseGotoTarget, worldName, worldOfRealm } from '../lobby/goto'
+
+export type ChatCommand =
+  /** Not a command (no leading `/`) — send as a normal chat message. */
+  | { kind: 'send'; text: string }
+  /** `/goto <destination>`, `/goto-local <destination>` or `/world <world>`: `local` stays in the
+   *  realm the player is in. `resolveGoto` turns it into the request to send. */
+  | { kind: 'goto'; target: GotoTarget; local: boolean }
+  /** `/reload` — reload the current scene. */
+  | { kind: 'reload' }
+  /** `/commands` — list the engine console commands. */
+  | { kind: 'commands' }
+  | { kind: 'debug'; target: string }
+  /** Any other `/command args` — run `line` on the engine console, which splits it. `command` is
+   *  the name without its slash; `hasArgs` says whether anything follows it. */
+  | { kind: 'console'; command: string; hasArgs: boolean; line: string }
+  /** `/help` (and invalid usage) — echo this text as a system message. */
+  | { kind: 'system'; message: string }
+
+// Each command's usage, as /help lists it and an invalid destination answers.
+const GOTO_USAGE =
+  '/goto <x,y | x,y/spawn | random | crowd | world | world/x,y | world/spawn | world/x,y/spawn>\n  Teleport inside of Genesis or World\n  x,y is in the realm you are in; random and crowd are in Genesis City; genesis or main is the city, any other name is a world'
+const GOTO_LOCAL_USAGE = '/goto-local <x,y | x,y/spawn | spawn>\n  Teleport inside of the current realm'
+const WORLD_USAGE = '/world <world>\n  Jump to a world (alias of /goto world)'
+const usageReply = (usage: string): string => `🔴 Invalid parameters, usage:\n${usage}`
+const invalid = (usage: string): ChatCommand => ({ kind: 'system', message: usageReply(usage) })
+
+/** The `/help` body — the client (DCL) commands, plain text (chat has no bold). */
+export const HELP_TEXT = [
+  'Available commands:',
+  '/help — show this help',
+  GOTO_USAGE,
+  GOTO_LOCAL_USAGE,
+  WORLD_USAGE,
+  '/reload — reload the current scene',
+  '/commands — list the engine console commands',
+  '/debug [section | help] — open the debug panel, find a section, or list its sections',
+  '/<command> [args] — run any engine console command (see /commands; /help <command> for its usage)',
+].join('\n')
+
+/** Engine console commands chat never runs nor lists: other HUDs' and harnesses' tooling, and
+ *  spawn/kill (`/spawn <url> true` starts a scene with super-user rights). */
+export const HUD_HIDDEN_COMMANDS: ReadonlySet<string> = new Set([
+  // scene inspector — read
+  'set_scene',
+  'scene_stats',
+  'scene_target',
+  'scene_logs',
+  'scene_entities',
+  'entity_components',
+  'inspect_component',
+  'scene_tree',
+  'crdt_snapshot',
+  'crdt_initial',
+  'component_names',
+  'component_default',
+  'component_schema',
+  'screenshot',
+  // scene inspector — write / assets
+  'set_component',
+  'set_component_raw',
+  'new_entity',
+  'save_composite',
+  'delete_component',
+  'delete_entity',
+  'freeze_scene',
+  'unfreeze_scene',
+  'tick_scene',
+  'highlight',
+  'scene_content',
+  'asset_catalog',
+  'init_asset',
+  // preview-scene tooling
+  'lock_preview',
+  'unlock_preview',
+  'show_ui',
+  // session / agent harness
+  'login_guest',
+  'login_previous',
+  'login_identity',
+  'logout',
+  'chat',
+  // portable scenes (a spawn can be privileged)
+  'spawn',
+  'kill',
+  // console no-op / native quit
+  'clear',
+  'exit',
+])
+
+/** The line the engine console runs for a typed command: its name lower-cased, the rest as typed. */
+function consoleLine(name: string, rest: string): ChatCommand {
+  return { kind: 'console', command: name, hasArgs: rest !== '', line: rest === '' ? `/${name}` : `/${name} ${rest}` }
+}
+
+/** Render an engine console reply as a chat system line. A bare `help` (`/commands`) drops the
+ *  HUD-hidden commands; the engine's unknown-command rejection is cut to its first sentence (its
+ *  "Recognized commands: [...]" tail is the whole registry). `args` is only asked whether it is
+ *  empty. */
+export function formatConsoleReply(command: string, args: readonly unknown[], output: string): string {
+  if (command === 'help' && args.length === 0) {
+    return output
+      .split('\n')
+      .filter((line) => {
+        const m = line.match(/^\s*\/(\S+)/)
+        return m == null || !HUD_HIDDEN_COMMANDS.has(m[1])
+      })
+      .join('\n')
+      .trim()
+  }
+  const unknown = output.match(/^Command not recognized: `[^`]*`/)
+  if (unknown != null) return `${unknown[0]}. Type /commands for the list.`
+  return output.trim() || `(no output for /${command})`
+}
+
+// A command takes one destination: a space after a comma is dropped ("10, 20"), and what is left
+// holds no other space.
+function destination(rest: string): string | null {
+  const arg = rest.replace(/,\s+/g, ',')
+  return arg === '' || /\s/.test(arg) ? null : arg
+}
+
+function parseGoto(rest: string): ChatCommand {
+  const arg = destination(rest)
+  return arg == null ? invalid(GOTO_USAGE) : { kind: 'goto', target: parseGotoTarget(arg), local: false }
+}
+
+// A parcel, a parcel and a spawn point, or a spawn point of the scene the player stands in (which
+// the grammar reads as a world name).
+function parseGotoLocal(rest: string): ChatCommand {
+  const arg = destination(rest)
+  if (arg == null) return invalid(GOTO_LOCAL_USAGE)
+  const target = parseGotoTarget(arg)
+  if (target.random || target.crowd) return invalid(GOTO_LOCAL_USAGE)
+  if (target.world == null) return { kind: 'goto', target, local: true }
+  if (target.parcel != null || target.spawnPoint != null || /[,/]/.test(target.world)) return invalid(GOTO_LOCAL_USAGE)
+  return { kind: 'goto', target: { ...target, world: null, spawnPoint: target.world }, local: true }
+}
+
+// A world's name alone, whatever it spells ("random" is a world here).
+function parseWorld(rest: string): ChatCommand {
+  const arg = destination(rest)
+  if (arg == null || arg.includes(',') || arg.includes('/')) return invalid(WORLD_USAGE)
+  return { kind: 'goto', target: { world: arg, parcel: null, spawnPoint: null, random: false, crowd: false }, local: false }
+}
+
+/** Where the player is, for `resolveGoto`. */
+export interface GotoHere {
+  /** The realm's kind: Genesis City, a world, or any other (a scene preview, a realm of its own,
+   *  or not known yet), which has no Genesis City to go back to and no known bounds. */
+  kind: 'genesis' | 'world' | 'other'
+  /** The world's name (`name.dcl.eth`, lowercase) in a world; null anywhere else. */
+  realm: string | null
+  parcel: { x: number; y: number }
+  /** The address a travel under way is headed to, which `kind` and `realm` then describe: the
+   *  player has yet to enter that realm. Null when no travel is under way. */
+  heading: string | null
+}
+
+/** What a `/goto` asks of the engine, or the line to answer with instead. `reply` is the answer
+ *  once the request succeeds; `world` is the world travelled to, as the player typed it (none for
+ *  Genesis City or a realm's address). */
+export type GotoPlan =
+  | { kind: 'reply'; message: string }
+  /** A teleport inside the realm the player is in. */
+  | { kind: 'teleport'; x: number; y: number; spawnPoint?: string; reply: string }
+  /** A realm change, to `parcel` or to the realm's own spawn. */
+  | { kind: 'travel'; realm: string; parcel?: { x: number; y: number }; spawnPoint?: string; reply: string; world?: string }
+
+const outside = (p: { x: number; y: number }): GotoPlan => ({ kind: 'reply', message: `🔴 Error: Parcel (${p.x}, ${p.y}) is outside of the bounds.` })
+const teleported = (p: { x: number; y: number }): string => `🟢 You teleported to ${p.x},${p.y}.`
+const REALM_URL = /^https?:\/\//i
+/** The names `/goto` reads as Genesis City, in any case. */
+const GENESIS_NAMES: ReadonlySet<string> = new Set(['genesis', 'main'])
+/** Where a travel to Genesis City lands when it names no parcel: Genesis Plaza. The realm's own
+ *  spawn is the account's home, which may be anywhere. */
+const GENESIS_PLAZA = { x: 0, y: 0 }
+
+/**
+ * A parcel alone is a parcel of the realm the player is in, held to its bounds: Genesis City's, a
+ * world's, or none in a realm of any other kind (a scene preview's parcels are the creator's own).
+ * A player in a world stays in it; Genesis City is reached from there by its name (`genesis/x,y`).
+ * A world the player is already in is a teleport inside it. `genesisRealm` is the Genesis City
+ * realm's address. `random` and `crowd` come with the parcel the caller picked for them, which is
+ * Genesis City's from any realm, unless `local`. During a travel the realm is the
+ * one travelled to, and a place inside it is asked of that travel again, as its landing: the
+ * engine moves nobody when a travel fails.
+ */
+export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, genesisRealm: string): GotoPlan {
+  const spawnPoint = target.spawnPoint ?? undefined
+  const inGenesis = (p: { x: number; y: number }): boolean => isGenesisParcel(p.x, p.y)
+  const inWorld = (p: { x: number; y: number }): boolean => isWorldParcel(p.x, p.y)
+  if (target.world == null) {
+    const parcel = target.parcel ?? here.parcel
+    const genesisPlace = target.random || target.crowd
+    const toGenesis = !local && genesisPlace && here.kind !== 'genesis'
+    const inside = here.kind === 'genesis' || toGenesis ? inGenesis(parcel) : here.kind === 'other' || inWorld(parcel)
+    if (target.parcel != null && !inside) return outside(parcel)
+    if (toGenesis) return { kind: 'travel', realm: genesisRealm, parcel, spawnPoint, reply: teleported(parcel) }
+    if (here.heading != null) return { kind: 'travel', realm: here.heading, parcel, spawnPoint, reply: teleported(parcel) }
+    return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
+  }
+
+  const name = target.world
+  const toGenesis = GENESIS_NAMES.has(name.toLowerCase())
+  const url = REALM_URL.test(name)
+  // a realm's address goes as it is, which the grammar reads whole: no parcel or spawn point comes
+  // with it. Anything else has to be a world's name
+  if (!toGenesis && !url && !isWorldName(name)) return { kind: 'reply', message: usageReply(GOTO_USAGE) }
+  // a parcel of Genesis City or of a world, within its bounds
+  if (target.parcel != null && !(toGenesis ? inGenesis(target.parcel) : inWorld(target.parcel))) return outside(target.parcel)
+  const realm = toGenesis ? genesisRealm : url ? name : worldName(name)
+  // a world is the same one by its name or by its address on a worlds server
+  const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === worldOfRealm(realm)
+  if (there) {
+    if (target.parcel == null && spawnPoint == null) return { kind: 'reply', message: `🟡 You are already in ${name}!` }
+    if (here.heading == null) {
+      const parcel = target.parcel ?? here.parcel
+      return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
+    }
+  }
+  const world = toGenesis || url ? undefined : name
+  const reply = world != null ? `🟢 Welcome to the ${world} world!` : `🟢 Welcome to ${toGenesis ? 'Genesis City' : name}!`
+  return { kind: 'travel', realm, parcel: target.parcel ?? (toGenesis ? GENESIS_PLAZA : undefined), spawnPoint, reply, world }
+}
+
+/** Parse a raw chat input into an action. Non-`/` lines pass through as `send`. */
+export function parseChatCommand(input: string): ChatCommand {
+  const text = input.trim()
+  if (!text.startsWith('/')) return { kind: 'send', text }
+
+  const [word, ...restParts] = text.split(/\s+/)
+  const rest = text.slice(word.length).trim()
+  const name = word.slice(1).toLowerCase()
+  switch (name) {
+    case 'help':
+      // `/help <command>` → the engine's per-command usage (its registry keys carry the slash).
+      if (restParts.length > 0) return consoleLine('help', `/${restParts[0].replace(/^\//, '')}`)
+      return { kind: 'system', message: HELP_TEXT }
+    case 'debug': return { kind: 'debug', target: rest.trim() }
+    case 'commands':
+      return { kind: 'commands' }
+    case 'reload':
+      // Bare `/reload` targets the player's scene (the engine's bare `/reload` reloads every scene,
+      // this HUD's bridge included); with a hash it is the engine command.
+      if (restParts.length > 0) return consoleLine('reload', rest)
+      return { kind: 'reload' }
+    case 'goto':
+      return parseGoto(rest)
+    case 'goto-local':
+      return parseGotoLocal(rest)
+    case 'world':
+      return parseWorld(rest)
+    default:
+      if (name === '' || HUD_HIDDEN_COMMANDS.has(name)) {
+        return { kind: 'system', message: `Unknown command ${word}. Type /help for the list.` }
+      }
+      return consoleLine(name, rest)
+  }
+}

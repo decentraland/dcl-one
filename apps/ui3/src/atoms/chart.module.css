@@ -1,0 +1,181 @@
+/*
+ * Shared look of the SVG charts. Every colour and text size is a custom property with a default, so a host
+ * sets `--chart-*` on the class it passes to the chart (and on `tooltipClassName` for the tooltip).
+ */
+.root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.grid {
+  stroke: var(--chart-grid, rgba(255, 255, 255, 0.2));
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.axisLine,
+.tick {
+  stroke: var(--chart-axis, rgba(240, 240, 240, 1));
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.tickLabel {
+  fill: var(--chart-axis-text, #a09ba8);
+  font-family: var(--chart-font, inherit);
+  font-size: var(--chart-tick-size, 12px);
+  font-weight: 400;
+  letter-spacing: var(--chart-tick-spacing, 0.03333em);
+}
+
+.line {
+  fill: none;
+  stroke-width: var(--chart-line-width, 2);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mark {
+  stroke: var(--chart-surface, #000);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.mark[data-mark="hollow"] {
+  fill: var(--chart-surface, #000);
+}
+
+.reference {
+  pointer-events: none;
+}
+
+.referenceLine {
+  fill: none;
+  stroke: var(--chart-reference, #a99afe);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  shape-rendering: crispEdges;
+}
+
+.referenceLabel {
+  fill: var(--chart-label, #fcfcfc);
+  stroke: none;
+  font-family: var(--chart-font, inherit);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.00938em;
+}
+
+.bar {
+  stroke: var(--chart-bar-gap-color, none);
+  stroke-width: var(--chart-bar-gap, 0);
+}
+
+.band {
+  fill: var(--chart-band, #fff);
+  fill-opacity: 0.1;
+  pointer-events: none;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: var(--chart-tooltip-z, var(--z-overlay, 1500));
+  pointer-events: none;
+  /* Its own layer: its shadow and gradients paint the same wherever it sits. */
+  will-change: transform;
+}
+
+.tooltipPaper {
+  border-radius: var(--chart-tooltip-radius, 6px);
+  background: var(--chart-tooltip-bg, #1d1c20);
+  color: var(--chart-tooltip-text, rgba(240, 240, 240, 1));
+  box-shadow: var(
+    --chart-tooltip-shadow,
+    0 2px 1px -1px rgba(0, 0, 0, 0.2),
+    0 1px 1px 0 rgba(0, 0, 0, 0.14),
+    0 1px 3px 0 rgba(0, 0, 0, 0.12)
+  );
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+}
+
+.tooltipTable {
+  border-spacing: 0;
+}
+
+.tooltipTable td {
+  padding: 0;
+  vertical-align: middle;
+  color: var(--chart-tooltip-muted, rgba(240, 240, 240, 0.7));
+}
+
+.tooltipTable thead td {
+  border-bottom: 1px solid var(--chart-tooltip-divider, rgba(255, 255, 255, 0.12));
+}
+
+.tooltipTable tr:first-of-type td {
+  padding-top: 8px;
+}
+
+.tooltipTable tr:last-of-type td {
+  padding-bottom: 8px;
+}
+
+.tooltipTable td.tooltipLabel {
+  padding-left: 8px;
+}
+
+.tooltipTable td.tooltipValue {
+  padding-left: 32px;
+  color: var(--chart-tooltip-text, rgba(240, 240, 240, 1));
+}
+
+.tooltipTable td:first-of-type {
+  padding-left: 16px;
+}
+
+.tooltipTable td:last-of-type {
+  padding-right: 16px;
+}
+
+.tooltipMark {
+  display: block;
+  box-sizing: content-box;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--chart-tooltip-bg, #1d1c20);
+  border-radius: 50%;
+  box-shadow: var(
+    --chart-tooltip-shadow,
+    0 2px 1px -1px rgba(0, 0, 0, 0.2),
+    0 1px 1px 0 rgba(0, 0, 0, 0.14),
+    0 1px 3px 0 rgba(0, 0, 0, 0.12)
+  );
+}
+
+.dataTable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

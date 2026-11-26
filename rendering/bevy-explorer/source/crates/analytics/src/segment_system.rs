@@ -211,11 +211,8 @@ fn configured_key(key: Option<&'static str>) -> &'static str {
         .unwrap_or(SHARED_WRITE_KEY)
 }
 
-// The browser build goes through the first-party proxy, which ad blockers leave alone.
-#[cfg(target_arch = "wasm32")]
+// Browser ad blockers and DNS filters can block the default Segment host.
 pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.e.decentraland.org/v1/batch";
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.segment.io/v1/batch";
 const SEGMENT_EVENT_SIZE_LIMIT_BYTES: usize = 32000;
 const SEGMENT_BATCH_SIZE_LIMIT_BYTES: usize = 500000;
 
@@ -283,13 +280,20 @@ impl SegmentMetricsEvents {
                 self.events.pop_front();
                 continue;
             }
-            let item = build_segment_event_batch_item(
+            let item = match build_segment_event_batch_item(
                 user_id.to_owned(),
                 &queued.common,
                 &queued.event,
                 queued.queued_at,
                 queued.message_id.clone(),
-            );
+            ) {
+                Ok(item) => item,
+                Err(e) => {
+                    error!("Event not serializable: {e}");
+                    self.events.pop_front();
+                    continue;
+                }
+            };
             let json = serde_json::to_string(&item).expect("Failed to serialize event body");
             if json.len() > SEGMENT_EVENT_SIZE_LIMIT_BYTES {
                 error!("Event too large: {}", json.len());
@@ -398,6 +402,23 @@ impl SegmentConfig {
         self.common.dcl_is_guest = dcl_is_guest;
     }
 
+    /// The fields a client event goes out with: these, plus the wallet's chain read now. `None`
+    /// when the node would refuse the event: no usable chain (a guest, before login, an expired
+    /// delegation) or a wallet that is not the identity these fields name.
+    pub(crate) fn client_event_common(
+        &self,
+        wallet: &wallet::Wallet,
+    ) -> Option<SegmentEventCommonExplorerFields> {
+        let address = format!("{:#x}", wallet.address()?);
+        if !address.eq_ignore_ascii_case(&self.common.dcl_eth_address) {
+            return None;
+        }
+        let auth_chain = login_auth_chain(wallet, Utc::now())?;
+        let mut common = self.common.clone();
+        common.auth_chain = Some(auth_chain);
+        Some(common)
+    }
+
     /// Signed out: what comes next is nobody's, as before the sign-in.
     pub fn reset_identity(&mut self) {
         self.common.reset_identity();
@@ -406,6 +427,63 @@ impl SegmentConfig {
     pub fn update_position(&mut self, position: String) {
         self.common.position = position;
     }
+}
+
+/// A client event held until there is a usable chain (`vertical_height_reached`, a pending
+/// `move_to_parcel`) is tried again only after the wallet or [`SegmentConfig`] changes: only a
+/// login, a new delegation or a new identity makes an unusable chain usable.
+#[derive(Default)]
+pub(crate) struct ChainRetry {
+    unusable: bool,
+}
+
+impl ChainRetry {
+    /// Every run, before anything returns early, so that no change is missed.
+    pub(crate) fn observe(&mut self, wallet: Option<&Res<wallet::Wallet>>, config_changed: bool) {
+        if config_changed || wallet.is_some_and(|wallet| wallet.is_changed()) {
+            self.unusable = false;
+        }
+    }
+
+    /// [`SegmentConfig::client_event_common`], or `None` while the last unusable chain stands.
+    pub(crate) fn client_event_common(
+        &mut self,
+        config: &SegmentConfig,
+        wallet: Option<&wallet::Wallet>,
+    ) -> Option<SegmentEventCommonExplorerFields> {
+        if self.unusable {
+            return None;
+        }
+        let common = wallet.and_then(|wallet| config.client_event_common(wallet));
+        self.unusable = common.is_none();
+        common
+    }
+}
+
+/// The wallet's `[SIGNER, ECDSA_EPHEMERAL]` chain as the JSON array the node verifies in
+/// `context.auth_chain`; no key, only the public delegation. `None` for a guest (no delegation)
+/// or a guest account (no wallet of its own), and once the delegation has expired.
+fn login_auth_chain(wallet: &wallet::Wallet, now: DateTime<Utc>) -> Option<String> {
+    if wallet.address().is_none() || wallet.is_any_guest() {
+        return None;
+    }
+    let chain = serde_json::to_string(&wallet.auth_chain().ok()?).ok()?;
+    (!chain_expired(&chain, now)).then_some(chain)
+}
+
+/// The ephemeral link's `Expiration:` is past; an unreadable one is left to the node.
+fn chain_expired(chain: &str, now: DateTime<Utc>) -> bool {
+    let Ok(serde_json::Value::Array(links)) = serde_json::from_str(chain) else {
+        return false;
+    };
+    links
+        .iter()
+        .filter(|link| link["type"] == "ECDSA_EPHEMERAL")
+        .filter_map(|link| link["payload"].as_str())
+        .flat_map(str::lines)
+        .filter_map(|line| line.strip_prefix("Expiration:"))
+        .filter_map(|at| DateTime::parse_from_rfc3339(at.trim()).ok())
+        .any(|at| at.to_utc() <= now)
 }
 
 /// A scene being developed: the sdk's or an editor's preview (`preview=true`, `--preview`), or a
@@ -535,7 +613,7 @@ async fn send_segment_batch(write_key: &str, events: &[String]) -> Result<(), Se
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::data_definition::{SegmentEventFirstMoveInWorld, SegmentEventTimeSpentInWorld};
 
@@ -639,6 +717,55 @@ mod tests {
         assert_eq!(batch[0]["properties"]["dcl_eth_address"], "0xabc");
         assert_eq!(batch[1]["properties"]["dcl_eth_address"], "unauthenticated");
         assert_eq!(batch[1]["properties"]["dcl_is_guest"], false);
+    }
+
+    // A wallet signed in with its own delegation, valid from `now_millis` for thirty days.
+    pub(crate) fn signed_in(
+        now_millis: i64,
+        guest_account: bool,
+    ) -> (wallet::Wallet, SegmentConfig) {
+        let mut root = wallet::Wallet::default();
+        root.finalize_as_guest();
+        let address = root.address().unwrap();
+        let (ephemeral, delegates) =
+            wallet::local_guest::sign_identity(&wallet::local_guest::new_root_key(), now_millis)
+                .unwrap();
+        let mut wallet = wallet::Wallet::default();
+        wallet.finalize(address, ephemeral, delegates, guest_account);
+        let mut config = SegmentConfig::new("user".into(), "s".into(), "1.0".into(), None, false);
+        config.update_identity(format!("{address:#x}"), guest_account);
+        (wallet, config)
+    }
+
+    // A client event goes with the chain read now; without one the node would refuse it, so
+    // there are no fields to send it with: before login, a guest, a guest account, an expired
+    // delegation, or a wallet that is not the identity being reported.
+    #[test]
+    fn client_events_need_the_wallets_own_live_chain() {
+        let (wallet, config) = signed_in(Utc::now().timestamp_millis(), false);
+        let common = config.client_event_common(&wallet).unwrap();
+        let chain: serde_json::Value =
+            serde_json::from_str(common.auth_chain.as_deref().unwrap()).unwrap();
+        assert_eq!(chain[0]["type"], "SIGNER");
+        assert_eq!(chain[0]["payload"], common.dcl_eth_address.as_str());
+        assert_eq!(chain[1]["type"], "ECDSA_EPHEMERAL");
+        assert_eq!(chain.as_array().unwrap().len(), 2);
+        assert!(config.common().auth_chain.is_none());
+
+        let (wallet, config) = signed_in(Utc::now().timestamp_millis(), true);
+        assert!(config.client_event_common(&wallet).is_none());
+        let (wallet, config) = signed_in(0, false);
+        assert!(config.client_event_common(&wallet).is_none());
+
+        let (wallet, mut config) = signed_in(Utc::now().timestamp_millis(), false);
+        config.reset_identity();
+        assert!(config.client_event_common(&wallet).is_none());
+
+        let mut guest = wallet::Wallet::default();
+        assert!(config.client_event_common(&guest).is_none());
+        guest.finalize_as_guest();
+        config.update_identity(format!("{:#x}", guest.address().unwrap()), true);
+        assert!(config.client_event_common(&guest).is_none());
     }
 
     // A boot asked for a scene being developed says so before the realm resolves (the realm

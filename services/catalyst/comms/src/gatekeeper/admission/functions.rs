@@ -222,10 +222,7 @@ mod tests {
             std::process::id(),
             uuid::Uuid::new_v4().simple()
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         use futures::FutureExt;
         let outcome = std::panic::AssertUnwindSafe(async {
             let pool = sqlx::postgres::PgPoolOptions::new()
@@ -233,7 +230,6 @@ mod tests {
                 .connect_with(options.database(&name))
                 .await
                 .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
             for signature in &signatures {
                 sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {signature}")))

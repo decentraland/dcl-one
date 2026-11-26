@@ -79,14 +79,21 @@ volume_setting!(
 volume_setting!(
     VoiceVolumeSetting,
     "Voice",
-    "The volume of incoming voice audio from other players.",
+    "The volume of nearby players' voices.",
     |cfg: &mut AudioSettings, val: i32| cfg.voice = val,
     |cfg: &AudioSettings| cfg.voice
 );
 volume_setting!(
+    VoiceChatVolumeSetting,
+    "Voice Chat",
+    "The volume of private calls and community voice streams.",
+    |cfg: &mut AudioSettings, val: i32| cfg.voice_chat = val,
+    |cfg: &AudioSettings| cfg.voice_chat
+);
+volume_setting!(
     SystemVolumeSetting,
     "System",
-    "The volume of system interactions (menu buttons, etc).",
+    "The volume of interface sounds: menu buttons, chat pings and call alerts.",
     |cfg: &mut AudioSettings, val: i32| cfg.system = val,
     |cfg: &AudioSettings| cfg.system
 );

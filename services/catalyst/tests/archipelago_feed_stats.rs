@@ -1,8 +1,9 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/feed_stats.rs
-#[path = "support/archipelago.rs"]
-mod archipelago;
+use crate::archipelago;
 use catalyst::comms::archipelago::AppState;
-use catalyst::comms::archipelago::feed::{DISCOVERY_FRESHNESS_MS, Routed, dispatch, route_island};
+use catalyst::comms::archipelago::feed::{
+    DISCOVERY_FRESHNESS_MS, Routed, dispatch as dispatch_feed, route_island,
+};
 use catalyst::comms::protocol::archipelago::Position;
 use catalyst::comms::protocol::archipelago::archipelago::{
     IslandChangedMessage, IslandData, IslandStatusMessage, ServiceDiscoveryMessage, ServiceStatus,
@@ -10,6 +11,17 @@ use catalyst::comms::protocol::archipelago::archipelago::{
 use chrono::Utc;
 use prost::Message as _;
 use serde_json::Value;
+
+async fn dispatch(state: &AppState, subject: &str, bytes: &[u8]) -> Routed {
+    let result = dispatch_feed(state, subject, bytes);
+    if result == Routed::Topology {
+        archipelago::topology(state, bytes.to_vec()).await;
+    }
+    if result == Routed::Discovery {
+        archipelago::discovery(state, bytes.to_vec()).await;
+    }
+    result
+}
 
 async fn start_server() -> (u16, AppState) {
     let state = archipelago::state(archipelago::settings()).await;
@@ -77,11 +89,16 @@ async fn the_islands_endpoints_serve_the_topology_the_feed_announced() {
         "no topology announced yet"
     );
 
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [16.0, 0.0, 32.0], [1, 2], "r".into());
+    archipelago::heartbeat(
+        &state,
+        "0xaaaa".into(),
+        [16.0, 0.0, 32.0],
+        [1, 2],
+        "r".into(),
+    )
+    .await;
     assert_eq!(
-        dispatch(&state, "engine.islands", &topology(&["0xaaaa", "0xghost"])),
+        dispatch(&state, "engine.islands", &topology(&["0xaaaa", "0xghost"])).await,
         Routed::Topology
     );
 
@@ -92,7 +109,7 @@ async fn the_islands_endpoints_serve_the_topology_the_feed_announced() {
     assert_eq!(islands.len(), 1);
     assert_eq!(islands[0]["id"], "I42");
     assert_eq!(islands[0]["maxPeers"], 0);
-    assert_eq!(islands[0]["center"], serde_json::json!([16.0, 0.0, 32.0]));
+    assert_eq!(islands[0]["center"], serde_json::json!([16, 0, 32]));
     assert_eq!(islands[0]["radius"], 12.5);
     let peers = islands[0]["peers"].as_array().expect("peers array");
     assert_eq!(
@@ -126,7 +143,7 @@ async fn core_status_reports_the_engines_own_discovery_heartbeat() {
 
     let now = Utc::now().timestamp_millis();
     assert_eq!(
-        dispatch(&state, "engine.discovery", &discovery(now, 7)),
+        dispatch(&state, "engine.discovery", &discovery(now, 7)).await,
         Routed::Discovery
     );
     let (_, body) = get_json(port, "/core-status").await;
@@ -137,7 +154,8 @@ async fn core_status_reports_the_engines_own_discovery_heartbeat() {
         &state,
         "engine.discovery",
         &discovery(now - DISCOVERY_FRESHNESS_MS - 1_000, 7),
-    );
+    )
+    .await;
     let (_, body) = get_json(port, "/core-status").await;
     assert_eq!(
         body["healthy"], false,
@@ -152,10 +170,8 @@ async fn core_status_reports_the_engines_own_discovery_heartbeat() {
 #[tokio::test]
 async fn stats_health_counts_local_peers_and_announced_islands() {
     let (port, state) = start_server().await;
-    state
-        .peers
-        .upsert_peer("0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into());
-    dispatch(&state, "engine.islands", &topology(&["0xaaaa"]));
+    archipelago::heartbeat(&state, "0xaaaa".into(), [0.0, 0.0, 0.0], [0, 0], "r".into()).await;
+    dispatch(&state, "engine.islands", &topology(&["0xaaaa"])).await;
 
     let (status, body) = get_json(port, "/stats/health").await;
     assert_eq!(status, 200);
@@ -163,7 +179,7 @@ async fn stats_health_counts_local_peers_and_announced_islands() {
     assert_eq!(body["peers_total"], 1);
     assert_eq!(body["islands_total"], 1);
     assert!(body["uptime_secs"].is_i64());
-    assert_eq!(body["feed_connected"], false);
+    assert_eq!(body["feed_connected"], true);
     assert_eq!(body["feed_delivered"], 0);
     assert_eq!(body["feed_no_session_socket"], 0);
     assert_eq!(body["feed_deduplicated"], 0);
@@ -186,7 +202,7 @@ async fn stats_health_carries_the_feed_counters_the_runbook_reads() {
         Routed::NoSessionSocket
     );
     assert_eq!(
-        dispatch(&state, "engine.discovery", b"\xff\xff\xff\xff"),
+        dispatch(&state, "engine.discovery", b"\xff\xff\xff\xff").await,
         Routed::Undecodable
     );
     state.feed.on_deduplicated();
@@ -204,23 +220,25 @@ async fn stats_health_carries_the_feed_counters_the_runbook_reads() {
 }
 
 #[tokio::test]
-async fn assignment_pressure_counts_coalescing_and_rejects_oversize() {
+async fn assignment_pressure_preserves_fifo_and_rejects_oversize() {
     use catalyst::comms::archipelago::registry::{MAX_ASSIGNMENT_BYTES, SocketEvent};
     let (port, state) = start_server().await;
     let (link, mut events, _) = state.registry.on_peer_connected("wallet", "session");
     let deliver =
         |assignment: &IslandChangedMessage| route_island(&state, "wallet", "session", assignment);
     assert_eq!(deliver(&island("first")), Routed::Delivered);
-    assert_eq!(deliver(&island("last")), Routed::Coalesced);
+    assert_eq!(deliver(&island("last")), Routed::Delivered);
     let oversized = IslandChangedMessage {
         conn_str: "x".repeat(MAX_ASSIGNMENT_BYTES),
         ..island("oversized")
     };
     assert_eq!(deliver(&oversized), Routed::TooLarge);
-    let SocketEvent::IslandChanged(bytes, _) = events.try_recv().unwrap() else {
-        panic!("expected the last valid assignment");
-    };
-    assert_eq!(bytes, island("last").encode_to_vec());
+    for name in ["first", "last"] {
+        let SocketEvent::IslandChanged(bytes, _) = events.try_recv().unwrap() else {
+            panic!("expected an accepted assignment");
+        };
+        assert_eq!(bytes, island(name).encode_to_vec());
+    }
     assert!(
         link.needs_assignment(),
         "queue acceptance is not a WebSocket write"
@@ -228,25 +246,30 @@ async fn assignment_pressure_counts_coalescing_and_rejects_oversize() {
     let (status, body) = get_json(port, "/stats/health").await;
     assert_eq!(status, 200);
     assert_eq!(body["feed_delivered"], 2);
-    assert_eq!(body["feed_assignment_coalesced"], 1);
+    assert_eq!(body["feed_assignment_coalesced"], 0);
     assert_eq!(body["feed_assignment_oversized"], 1);
     assert_eq!(body["feed_undecodable"], 0);
     assert_eq!(body["socket_assignments_written"], 0);
     assert_eq!(body["socket_write_timeout"], 0);
-    assert_eq!(state.peers.island_of("wallet").as_deref(), Some("last"));
+    assert_eq!(
+        state.enforcement.island_of("wallet").as_deref(),
+        Some("last")
+    );
 }
 
 #[tokio::test]
 async fn an_undecodable_feed_message_costs_only_itself() {
     let (_port, state) = start_server().await;
     assert_eq!(
-        dispatch(&state, "engine.islands", b"\xff\xff\xff\xff"),
+        dispatch(&state, "engine.islands", b"\xff\xff\xff\xff").await,
         Routed::Undecodable
     );
     assert_eq!(
-        dispatch(&state, "engine.something_else", b""),
+        dispatch(&state, "engine.something_else", b"").await,
         Routed::Ignored
     );
     assert_eq!(state.feed.undecodable_count(), 1);
-    assert_eq!(state.feed.islands_count(), 0);
+    assert!(
+        catalyst::comms::stats::render::public_islands(&state.statistics.snapshot()).is_empty()
+    );
 }

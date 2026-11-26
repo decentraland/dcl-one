@@ -1,11 +1,9 @@
 //! The lambdas land routes over the index: the operators of a parcel (what
 //! comms' `COMMS_LAND_OPERATORS_URL` fetches), the reverse lookup of an
-//! update operator, the per-address permission flags (single and batch) and
-//! the index status. Each names its source per the module doc: the index
-//! once ready; before that the land-manager subgraph (`LAND_SUBGRAPH_URL`,
-//! `chain_index::land_graph`, lamb2's only source) for the operators, the
-//! single permissions route and the reverse lookup, and the marketplace
-//! reader's owner leg for the batch; the unavailable envelope otherwise.
+//! update operator, the per-address permission flags (single and batch), the
+//! Creator Hub's LAND list ([`super::lands_access`]) and the index status. Each reads the index once it is ready and answers the
+//! unavailable envelope (`Source::LandAuthzIndex`) before that: no subgraph
+//! stands in for it.
 
 use std::collections::HashSet;
 
@@ -17,14 +15,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
 
-use super::resolve::operator_flags;
 use super::{
-    DecisionSource, LandOperators, ParcelPermissionFlags, SharedState, Unavailable, Verdict,
-    can_deploy_batch, indexer, is_address,
+    LAMBDAS_FOLD_WINDOW, NOT_READY_MSG, SharedState, Unavailable, Verdict, can_deploy_batch,
+    indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
-use crate::chain_index::{ChainIndex, land_graph};
-use crate::shared::http_util::{bad_request, fetcher_error, internal_server_error, lambdas_error};
+use crate::shared::http_util::{bad_request, internal_server_error, lambdas_error};
 use crate::shared::parcel::is_inside_world_limits;
 use crate::shared::query_params::{JsPagination, js_parse_int, parse_query_string};
 use crate::shared::{cors, nul_guard};
@@ -34,8 +30,6 @@ const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid r
 /// never a truncated batch.
 pub const MAX_BATCH_PARCELS: usize = 100;
 pub const SOURCE_HEADER: &str = "x-land-authz-source";
-const NOT_READY_MSG: &str = "LAND rights are unavailable on this node: the land-authz index has no published fold yet (it is replaying the registries' logs, or the indexer is off) and no LAND subgraph is configured";
-const NO_SOURCE_MSG: &str = "LAND rights are unavailable on this node: the land-authz index is not ready and no marketplace subgraph is configured";
 
 pub fn router(state: SharedState) -> Router {
     Router::new()
@@ -52,9 +46,13 @@ pub fn router(state: SharedState) -> Router {
             "/lambdas/users/{address}/parcels/permissions",
             post(parcels_permissions_batch).layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .route(
+            "/lambdas/users/{address}/lands-access",
+            post(user_lands_access).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
         .route("/lambdas/land-authz/status", get(status))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(cors::lambdas_cors))
         .with_state(state)
 }
 
@@ -70,14 +68,6 @@ fn not_ready() -> Response {
     unavailable(Source::LandAuthzIndex, NOT_READY_MSG)
 }
 
-/// The land-manager subgraph reader, when the chain index carries its URL.
-fn land_graph_reader(state: &SharedState) -> Option<&ChainIndex> {
-    state
-        .market
-        .as_deref()
-        .filter(|m| land_graph::configured(m))
-}
-
 /// lamb2's answer to any error it does not map (`errorHandler.ts`): 500 and
 /// no `message`.
 fn upstream_internal_error() -> Response {
@@ -90,17 +80,10 @@ fn upstream_internal_error() -> Response {
 
 fn unavailable_response(why: &Unavailable) -> Response {
     match why {
-        Unavailable::NoSource => unavailable(Source::LandAuthzIndex, NO_SOURCE_MSG),
+        Unavailable::NotReady => not_ready(),
         Unavailable::Index(e) => {
             tracing::warn!(error = %e, "land-authz: index read failed");
             internal_server_error()
-        }
-        Unavailable::Reader(e) => {
-            tracing::warn!(error = %e, "land-authz: marketplace LAND reader failed");
-            unavailable(
-                Source::MarketplaceSubgraph,
-                "the marketplace LAND reader did not answer",
-            )
         }
     }
 }
@@ -128,10 +111,8 @@ fn validate_path_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
 }
 
 /// `GET /lambdas/parcels/{x}/{y}/operators`: the subject and the four legs
-/// from the index; 404 for an unindexed parcel; before the index is ready
-/// the land-manager subgraph, as the old route (owner-only from the
-/// marketplace reader would misreport the operators); the envelope with
-/// neither. A failed subgraph or index read answers lamb2's bare 500.
+/// from the index; 404 for an unindexed parcel; the envelope before the
+/// index is ready. A failed index read answers lamb2's bare 500.
 async fn parcel_operators(
     State(state): State<SharedState>,
     Path((x, y)): Path<(String, String)>,
@@ -140,27 +121,14 @@ async fn parcel_operators(
         Ok(c) => c,
         Err(resp) => return *resp,
     };
-    if state.ready().await.is_none() {
-        let Some(market) = land_graph_reader(&state) else {
-            return not_ready();
-        };
-        return match land_graph::parcel_operators(market, xi, yi).await {
-            Ok(Some(ops)) => Json(json!({
-                "owner": ops.owner,
-                "operator": ops.operator,
-                "updateOperator": ops.update_operator,
-                "updateManagers": ops.update_managers,
-                "approvedForAll": ops.approved_for_all,
-            }))
-            .into_response(),
-            Ok(None) => parcel_or_estate_not_found(xi, yi),
-            Err(e) => {
-                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on parcel operators");
-                upstream_internal_error()
-            }
-        };
-    }
-    match state.store().rights(xi as i32, yi as i32).await {
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
+        return not_ready();
+    };
+    match state
+        .store()
+        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
+        .await
+    {
         Ok(Some(rights)) => Json(json!({
             "owner": rights.subject.owner,
             "operator": rights.subject.operator,
@@ -180,8 +148,8 @@ async fn parcel_operators(
 /// `GET /lambdas/users/{address}/lands-permissions`: the parcels whose own
 /// update operator is `address`, paged as lamb2's `fetchAndPaginate`
 /// ([`JsPagination`], no `pageSize` maximum: `Number.MAX_VALUE`),
-/// `totalAmount` from the same query. A failed LAND subgraph answers
-/// lamb2's 502 `FetcherError`.
+/// `totalAmount` from the same query; the envelope before the index is
+/// ready.
 async fn user_lands_permissions(
     State(state): State<SharedState>,
     Path(addr): Path<String>,
@@ -193,28 +161,15 @@ async fn user_lands_permissions(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    if state.ready().await.is_none() {
-        let Some(market) = land_graph_reader(&state) else {
-            return not_ready();
-        };
-        return match land_graph::parcels_by_update_operator(market, &update_operator).await {
-            Ok(elements) => {
-                let total = elements.len() as i64;
-                let page: Vec<Value> = elements[p.range(elements.len())].to_vec();
-                Json(json!({ "elements": page, "totalAmount": total, "pageNum": p.page_num, "pageSize": p.page_size })).into_response()
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on lands-permissions");
-                fetcher_error(&addr)
-            }
-        };
-    }
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
+        return not_ready();
+    };
     let store = state.store();
     // A negative bound counts from the end of the list: its length first.
     let window = match p.sql_window() {
         Some(window) => Ok(window),
         None => store
-            .parcels_with_update_operator_page(&update_operator, 0, 0)
+            .parcels_with_update_operator_page_on(&mut snapshot.tx, &update_operator, 0, 0)
             .await
             .map(|(_, total)| {
                 let r = p.range(total.max(0) as usize);
@@ -224,7 +179,12 @@ async fn user_lands_permissions(
     let page = match window {
         Ok((offset, limit)) => {
             store
-                .parcels_with_update_operator_page(&update_operator, limit, offset)
+                .parcels_with_update_operator_page_on(
+                    &mut snapshot.tx,
+                    &update_operator,
+                    limit,
+                    offset,
+                )
                 .await
         }
         Err(e) => Err(e),
@@ -253,27 +213,6 @@ async fn user_lands_permissions(
     }
 }
 
-/// The flags on the wire. From the index every leg is decided; from the
-/// marketplace subgraph only `owner` is (its Parcel and Estate carry no
-/// operator, updateOperator, updateManager or approvedForAll: probed
-/// 2026-09-25), so those four legs are `null`, an undecided leg, never a
-/// `false` that reads as a denial. The write decision behind them stays
-/// fail-closed (`can_deploy` denies what it cannot see).
-fn flags_value(flags: ParcelPermissionFlags, source: &DecisionSource) -> Value {
-    let mut v = serde_json::to_value(flags).expect("flags serialize");
-    if matches!(source, DecisionSource::SubgraphOwnerOnly) {
-        for leg in [
-            "operator",
-            "updateOperator",
-            "updateManager",
-            "approvedForAll",
-        ] {
-            v[leg] = Value::Null;
-        }
-    }
-    v
-}
-
 fn with_source(mut resp: Response, source: &'static str) -> Response {
     resp.headers_mut().insert(
         HeaderName::from_static(SOURCE_HEADER),
@@ -283,10 +222,9 @@ fn with_source(mut resp: Response, source: &'static str) -> Response {
 }
 
 /// `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: five
-/// booleans, never `null`. From the index once ready (the flags
-/// [`can_deploy`](super::can_deploy) decides from); before that from the
-/// land-manager subgraph's operators, lamb2's `getParcelPermissions`; with
-/// neither, lamb2's 500.
+/// booleans, never `null`, from the index (the flags
+/// [`can_deploy`](super::can_deploy) decides from); the envelope before it
+/// is ready.
 async fn parcel_permissions(
     State(state): State<SharedState>,
     Path((address, x, y)): Path<(String, String, String)>,
@@ -300,36 +238,14 @@ async fn parcel_permissions(
         return bad_request("Address must be a valid Ethereum address");
     }
     let addr = address.to_lowercase();
-    if state.ready().await.is_none() {
-        let Some(market) = land_graph_reader(&state) else {
-            tracing::warn!(
-                "land-authz: parcel permissions have no source (index not ready, no LAND_SUBGRAPH_URL)"
-            );
-            return upstream_internal_error();
-        };
-        let source = Source::LandSubgraph.name();
-        return match land_graph::parcel_operators(market, xi, yi).await {
-            Ok(Some(ops)) => {
-                let mut flags = operator_flags(
-                    &addr,
-                    &LandOperators {
-                        operator: ops.operator,
-                        update_operator: ops.update_operator,
-                        update_managers: ops.update_managers,
-                        approved_for_all: ops.approved_for_all,
-                    },
-                );
-                flags.owner = ops.owner.eq_ignore_ascii_case(&addr);
-                with_source(Json(flags).into_response(), source)
-            }
-            Ok(None) => with_source(parcel_or_estate_not_found(xi, yi), source),
-            Err(e) => {
-                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on parcel permissions");
-                upstream_internal_error()
-            }
-        };
-    }
-    match state.store().rights(xi as i32, yi as i32).await {
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
+        return not_ready();
+    };
+    match state
+        .store()
+        .rights_on(&mut snapshot.tx, xi as i32, yi as i32)
+        .await
+    {
         Ok(Some(rights)) => with_source(
             Json(rights.flags_for(&addr)).into_response(),
             "land-authz-index",
@@ -345,6 +261,76 @@ async fn parcel_permissions(
 #[derive(Debug, serde::Deserialize)]
 pub struct BatchParcelPermissionsRequest {
     pub parcels: Vec<String>,
+}
+
+/// The token ids of the wallet's rentals, which the Creator Hub reads from
+/// the rentals source; the body and both lists are optional.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LandsAccessRequest {
+    pub tenant_token_ids: Vec<String>,
+    pub lessor_token_ids: Vec<String>,
+}
+
+/// A token id as the registries mint it: a decimal of at most 78 digits.
+fn is_token_id(raw: &str) -> bool {
+    !raw.is_empty() && raw.len() <= 78 && raw.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// `POST /lambdas/users/{address}/lands-access`: the Creator Hub's LAND list
+/// ([`super::lands_access`]), every list read in one snapshot of the index;
+/// the envelope before it is ready.
+async fn user_lands_access(
+    State(state): State<SharedState>,
+    Path(address): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let address = address.to_lowercase();
+    if !is_address(&address) {
+        return bad_request("Address must be a valid Ethereum address");
+    }
+    // No body is no rentals; a body is JSON whatever its content type says.
+    let body: LandsAccessRequest = if body.iter().all(u8::is_ascii_whitespace) {
+        LandsAccessRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(body) => body,
+            Err(e) => return bad_request(&format!("Invalid body: {e}")),
+        }
+    };
+    for (field, ids) in [
+        ("tenantTokenIds", &body.tenant_token_ids),
+        ("lessorTokenIds", &body.lessor_token_ids),
+    ] {
+        if ids.len() > super::lands_access::MAX_RENTAL_TOKEN_IDS {
+            return bad_request(&format!(
+                "{field} holds more than {} token ids",
+                super::lands_access::MAX_RENTAL_TOKEN_IDS
+            ));
+        }
+        if let Some(bad) = ids.iter().find(|id| !is_token_id(id)) {
+            return bad_request(&format!("{field}: \"{bad}\" is not a token id"));
+        }
+    }
+    let Some(mut snapshot) = state.ready_snapshot_within(LAMBDAS_FOLD_WINDOW).await else {
+        return not_ready();
+    };
+    match super::lands_access::lands_access_on(
+        &mut snapshot.tx,
+        &state.settings.land_registry,
+        &state.settings.estate_registry,
+        &address,
+        &body.tenant_token_ids,
+        &body.lessor_token_ids,
+    )
+    .await
+    {
+        Ok(access) => with_source(Json(access).into_response(), "land-authz-index"),
+        Err(e) => {
+            tracing::error!(error = %e, "land-authz: lands-access read failed");
+            upstream_internal_error()
+        }
+    }
 }
 
 /// Per-entry rule is exactly `validate_coords` (integer parse plus the
@@ -396,15 +382,15 @@ async fn parcels_permissions_batch(
         Ok(decisions) => {
             let source = decisions
                 .first()
-                .map(|d| d.source.clone())
-                .unwrap_or(DecisionSource::SubgraphOwnerOnly);
+                .map(|d| d.source.header_value())
+                .unwrap_or(super::INDEX_SOURCE);
             let elements: Vec<Value> = coords
                 .iter()
                 .zip(decisions)
                 .map(|(&(x, y), d)| {
                     let permissions = match d.verdict {
                         Verdict::Unknown => Value::Null,
-                        _ => flags_value(d.flags, &d.source),
+                        _ => serde_json::to_value(d.flags).expect("flags serialize"),
                     };
                     json!({ "x": x, "y": y, "permissions": permissions })
                 })
@@ -413,7 +399,7 @@ async fn parcels_permissions_batch(
             if coords.is_empty() {
                 resp
             } else {
-                with_source(resp, source.header_value())
+                with_source(resp, source)
             }
         }
         Err(why) => unavailable_response(&why),
@@ -421,7 +407,9 @@ async fn parcels_permissions_batch(
 }
 
 /// `GET /lambdas/land-authz/status`: the cursor row and the readiness rule
-/// applied to it now, for operators and the tests. Always 200.
+/// applied to it now, for operators and the tests. Always 200. The cursor's
+/// own registries are shown: a cursor indexed from other registries than
+/// this node's is never ready for it.
 async fn status(State(state): State<SharedState>) -> Response {
     let settings = &state.settings;
     let observation = match indexer::cursor_observed(&state.pool, &settings.network).await {
@@ -431,9 +419,14 @@ async fn status(State(state): State<SharedState>) -> Response {
             return internal_server_error();
         }
     };
-    let ready = observation
-        .as_ref()
-        .is_some_and(|o| indexer::index_ready(&o.cursor, o.observed_at.and_utc()));
+    let ready = observation.as_ref().is_some_and(|o| {
+        indexer::observation_ready_within(
+            o,
+            &settings.land_registry,
+            &settings.estate_registry,
+            LAMBDAS_FOLD_WINDOW,
+        )
+    });
     let fold_age_secs = observation.as_ref().and_then(|o| {
         o.cursor
             .folded_at
@@ -446,9 +439,10 @@ async fn status(State(state): State<SharedState>) -> Response {
         "estateRegistry": settings.estate_registry,
         "indexerEnabled": settings.is_configured(),
         "ready": ready,
-        "readyWindowSecs": indexer::READY_WINDOW.num_seconds(),
-        "fallback": state.market.as_ref().is_some_and(|m| m.settings.marketplace_subgraph_url.is_some()).then_some("marketplace-subgraph:owner-only"),
+        "readyWindowSecs": LAMBDAS_FOLD_WINDOW.num_seconds(),
         "cursor": row.map(|r| json!({
+            "landRegistry": r.land_registry,
+            "estateRegistry": r.estate_registry,
             "lastBlock": r.last_block,
             "foldedBlock": r.folded_block,
             "foldedAt": r.folded_at.map(|t| t.and_utc().to_rfc3339()),

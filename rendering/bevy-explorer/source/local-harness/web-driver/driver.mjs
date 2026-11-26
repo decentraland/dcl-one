@@ -3,7 +3,7 @@
 //
 //   - Console commands. `console(line)` runs `await window.engine_console_command(line)` in the
 //     app frame.
-//   - Trusted input. The page (react-web/src/lib/hudAutomation.ts) calls
+//   - Trusted input. The page (library/explorer-core/lib/hudAutomation.ts) calls
 //     `window.__dclTrustedInput(json)` for a click, a key or text to insert instead of
 //     dispatching DOM events. The runner installs that function in every frame with
 //     `Runtime.addBinding` and answers each request with `Input.dispatchMouseEvent`,
@@ -24,7 +24,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -36,6 +36,10 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const CLOSE_TIMEOUT_MS = 5_000;
 const POLL_MS = 100;
 const PRESENT_TIMEOUT_MS = 5_000;
+/** A frame's viewport, as JSON. */
+const VIEWPORT = 'JSON.stringify([window.innerWidth, window.innerHeight])';
+/** Resolves with true once the frame has run two animation frames. */
+const ANIMATION_FRAMES = 'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))';
 
 // The bits of the `modifiers` field of CDP's input events.
 const MODIFIER_BITS = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
@@ -44,6 +48,11 @@ const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
 // The targets that hold frames of the page: the page itself and an out-of-process iframe. Others
 // (workers) are let go.
 const FRAME_TARGETS = new Set(['page', 'iframe']);
+// What a console command fails with when the document it runs in is replaced or closed before it
+// answers, as a click that loads the page again does.
+export const APP_GONE = 'the app frame went away before it answered: its document was replaced or closed';
+// How Chrome answers a call into a context that has just been destroyed.
+const CONTEXT_GONE = /context was destroyed|target navigated or closed|cannot find context/i;
 
 // Chrome as the benchmark runner finds it (local-harness/benchmark/src/chrome.rs `find`).
 function chromeCandidates(env) {
@@ -83,21 +92,109 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
-/** The credential a console line carries: the first argument of `/login_identity` or
- *  `/hud_login` that is neither a flag nor the value of one that takes a value, an AuthIdentity
- *  (an ephemeral private key and a signed delegation valid for days), or undefined. The e2e
- *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
-export function secretOf(line) {
-  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
-  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
-  return token?.replace(/^["']|["']$/g, '');
+/** A whole run of base64 characters (either alphabet). */
+const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{4,}={0,2}/g;
+const BASE64_WORD = /^[A-Za-z0-9+/_-]+={0,2}$/;
+/** Where an AuthIdentity's JSON may start once its base64 is decoded, as the commands parse it:
+ *  any whitespace, then `{` and a quote. */
+const OBJECT_START = /^\s*\{\s*"/;
+/** What makes it one: that object's first key, closed and followed by its colon. */
+const OBJECT_KEY = /^\s*\{\s*"[\x20\x21\x23-\x5b\x5d-\x7e]{1,64}"\s*:/;
+/** JSON text: printable ASCII and whitespace. */
+const JSON_TEXT = /^[\t\n\r\x20-\x7e]*$/;
+/** Where an identity's words end on its line: at the next word that starts with `-`, a flag or a
+ *  typo of one. */
+const NEXT_FLAG = /\s+-/;
+/** The quotes and punctuation a hand-typed line may close a word with. */
+const CLOSERS = /["'`,;)\]]+$/;
+/** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
+ *  `{` to its end, closed or cut. */
+const RAW_JSON = /\{.*/s;
+/** Shorter than this, it could be part of other text; an identity is hundreds of characters. */
+const MIN_SECRET = 16;
+/** An object's start with no readable key (a typo in each first key) is an identity this long. */
+const LONG_IDENTITY = 128;
+
+const decoded = (base64) => Buffer.from(base64, 'base64').toString('latin1');
+
+/** Whether the bytes `length` base64 characters at `offset` of `joined` add are JSON text: a piece
+ *  of the identity as it was meant, not one a typo changed. */
+function jsonTextAt(joined, offset, length) {
+  const from = offset === 0 ? 0 : Math.floor((offset * 3) / 4) + 1;
+  return JSON_TEXT.test(decoded(joined.slice(0, offset + length)).slice(from));
 }
 
-/** `text` with the line's credential replaced wherever it appears, for what the command line
+/** The identity a line carries from `start`, if one starts there (its base64 `minimum` characters
+ *  long or more, and with its first key readable when `keyed`): the text it spans on the line, up
+ *  to the next flag (wrapped, split, quoted or mistyped, all of it), its pieces of base64, and how
+ *  far into the line they go (a second identity after its padding is found on its own). */
+function identityAt(line, start, first, minimum, keyed) {
+  const rest = line.slice(start);
+  const flag = NEXT_FLAG.exec(rest);
+  const span = (flag == null ? rest : rest.slice(0, flag.index)).trimEnd().replace(CLOSERS, '');
+  let joined = first;
+  const pieces = [[0, first]];
+  const word = /\s+(\S+)/y;
+  word.lastIndex = first.length;
+  let end = first.length;
+  for (let next = word.exec(span); next != null; next = word.exec(span)) {
+    const piece = next[1].replace(CLOSERS, '');
+    if (joined.endsWith('=') || !BASE64_WORD.test(piece)) break;
+    pieces.push([joined.length, piece]);
+    joined += piece;
+    end = word.lastIndex;
+  }
+  if (joined.length < minimum || (keyed && !OBJECT_KEY.test(decoded(joined.slice(0, 128))))) return undefined;
+  return { span, pieces, joined, end: start + end };
+}
+
+/** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
+ *  found by what it decodes to wherever a hand-typed line puts it: after flags, as a flag's value,
+ *  quoted, glued to other text, twice, wrapped, split or mistyped, or as raw JSON (the commands
+ *  refuse such a line, but after it was logged). Once one starts, the line is a secret up to the
+ *  next flag, so no piece of it is left; each piece is one of its own too, when its bytes are JSON
+ *  text, for text that quotes it alone. Nothing else is one, so an empty or short word, or a
+ *  realm's name, never turns lines into `<redacted>`. The e2e suite's `driver/console.ts` has the
+ *  same rule, which its tests keep in step. */
+export function secretsOf(line) {
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return [];
+  const secrets = new Set();
+  let covered = 0;
+  for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
+    if (index < covered) continue;
+    // the run holds an identity when any object's start in it has its first key readable; it then
+    // starts at the run's first object start, so a typo in the outer key leaves nothing before
+    // the inner object in clear. With no key readable (a typo in each), a long one is one still.
+    let first = -1;
+    let keyed = false;
+    for (let at = 0; at + 4 <= run.length && !keyed; at++) {
+      if (!OBJECT_START.test(decoded(run.slice(at, at + 64)))) continue;
+      if (first < 0) first = at;
+      keyed = identityAt(line, index + at, run.slice(at), MIN_SECRET, true) != null;
+    }
+    if (first < 0) continue;
+    const identity = identityAt(line, index + first, run.slice(first), keyed ? MIN_SECRET : LONG_IDENTITY, false);
+    if (identity == null) continue;
+    secrets.add(identity.span);
+    for (const [offset, piece] of identity.pieces) if (piece.length >= MIN_SECRET && jsonTextAt(identity.joined, offset, piece.length)) secrets.add(piece);
+    covered = identity.end;
+  }
+  const raw = RAW_JSON.exec(line)?.[0].trimEnd();
+  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw);
+  return [...secrets];
+}
+
+/** `text` with each of `secrets` replaced wherever it appears, the longest first, so one that
+ *  holds another is never left in part. */
+function replaceSecrets(secrets, text) {
+  return [...secrets].sort((a, b) => b.length - a.length).reduce((out, secret) => out.split(secret).join('<redacted>'), text);
+}
+
+/** `text` with the line's credentials replaced wherever they appear, for what the command line
  *  prints: a reply, an error or a timeout may quote the line. */
 export function redact(line, text) {
-  const secret = secretOf(line);
-  return secret === undefined ? text : text.split(secret).join('<redacted>');
+  return replaceSecrets(secretsOf(line), text);
 }
 
 /** Does a call of the binding from this execution context count? Only from a default (not an
@@ -112,6 +209,11 @@ const debug = process.env.DCL_WEB_DRIVER_DEBUG
   : () => {};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Whether two [width, height] pairs are equal.
+function sameSize(a, b) {
+  return a[0] === b[0] && a[1] === b[1];
+}
 
 // `promise`, or a rejection with `message` after `ms`.
 async function within(promise, ms, message) {
@@ -194,27 +296,34 @@ class Pipe {
 class Driver {
   #proc;
   #profile;
+  #keepProfile;
   #origin;
   #pipe;
   #exit;
   #stderr = [];
   #sessions = new Map();
   #contexts = new Map();
+  // what waits for a context to go away, by the context's key
+  #ends = new Map();
   #page = null;
   #app = null;
+  // the page's viewport at the window's size, and whether the app frame fills it (resizeView)
+  #windowView = null;
   #held = new Set();
-  #shown = new WeakSet();
+  // each document's first drawn frame, as #presented waits for it
+  #shown = new WeakMap();
   #console = [];
-  // the credentials the lines run so far carried (`secretOf`): a page may quote one
+  // the credentials the lines run so far carried (`secretsOf`): a page may quote one
   #secrets = new Set();
   #queue = Promise.resolve();
   #closing = null;
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
   product = '';
 
-  constructor(proc, profile, url) {
+  constructor(proc, profile, keepProfile, url) {
     this.#proc = proc;
     this.#profile = profile;
+    this.#keepProfile = keepProfile;
     this.#origin = new URL(url).origin;
     this.url = url;
     this.#pipe = new Pipe(proc.stdio[3], proc.stdio[4], (event) => this.#onEvent(event));
@@ -297,7 +406,7 @@ class Driver {
       case 'Target.detachedFromTarget':
         this.#sessions.delete(params.sessionId);
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === params.sessionId) this.#contexts.delete(key);
+          if (context.session.id === params.sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.executionContextCreated': {
@@ -315,11 +424,11 @@ class Driver {
         break;
       }
       case 'Runtime.executionContextDestroyed':
-        this.#contexts.delete(`${sessionId}:${params.executionContextId}`);
+        this.#forget(`${sessionId}:${params.executionContextId}`);
         break;
       case 'Runtime.executionContextsCleared':
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === sessionId) this.#contexts.delete(key);
+          if (context.session.id === sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.consoleAPICalled':
@@ -385,9 +494,7 @@ class Driver {
 
   // a credential a line carried is replaced before the cut, so a cut cannot leave a part of it
   #redactSecrets(text) {
-    let out = text;
-    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>');
-    return out;
+    return replaceSecrets(this.#secrets, text);
   }
 
   #log(sessionId, kind, text) {
@@ -409,45 +516,136 @@ class Driver {
     return Buffer.from(data, 'base64');
   }
 
+  /** Lay the page out at `width` x `height` CSS px, inside the same window; `null` returns it to
+   *  the window's size. Resolves once the page is at that size, the app frame too when it filled
+   *  the page at the window's size, and the app frame has run two animation frames since. Rejects
+   *  once `timeout` has passed. */
+  async resizeView(size, { timeout = PRESENT_TIMEOUT_MS } = {}) {
+    const deadline = Date.now() + timeout;
+    const late = () => `the app frame did not settle at ${size ? size.join('x') : "the window's size"} within ${timeout} ms`;
+    // the window's own view, and whether the app frame fills it: read once, before any override
+    while (this.#windowView == null) {
+      const view = await within(this.#readView(), Math.max(1, deadline - Date.now()), late);
+      if (view) this.#windowView = { size: view.page, fills: sameSize(view.page, view.app) };
+      else if (Date.now() >= deadline) throw new Error(late());
+      else await sleep(POLL_MS);
+    }
+    if (size === null) await this.#send('Emulation.clearDeviceMetricsOverride', {}, this.#page);
+    else await this.#send('Emulation.setDeviceMetricsOverride', { width: size[0], height: size[1], deviceScaleFactor: 0, mobile: false }, this.#page);
+    const want = size ?? this.#windowView.size;
+    for (;;) {
+      // retries until the deadline: one read can find the page and the app frame at different sizes
+      const left = () => Math.max(1, deadline - Date.now());
+      const view = await within(this.#readView(), left(), late);
+      const settled = view && sameSize(view.page, want) && (!this.#windowView.fills || sameSize(view.app, want));
+      if (settled && (await within(this.#evaluateInApp(view.context, ANIMATION_FRAMES, true), left(), late)) === true) return;
+      if (Date.now() >= deadline) throw new Error(late());
+      await sleep(POLL_MS);
+    }
+  }
+
+  /** The page's and the app frame's viewports, and the app frame's context; null while there is
+   *  no app frame to ask. */
+  async #readView() {
+    const page = await this.#send('Runtime.evaluate', { expression: VIEWPORT, returnByValue: true }, this.#page);
+    const context = await this.#findApp();
+    const app = context && (await this.#evaluateInApp(context, VIEWPORT, false));
+    return app == null ? null : { page: JSON.parse(page.result.value), app: JSON.parse(app), context };
+  }
+
+  /** `expression`'s value in the app frame's `context`; undefined when the evaluate fails or the
+   *  context goes away first, without waiting for its answer. */
+  async #evaluateInApp(context, expression, awaitPromise) {
+    const gone = this.#gone(context);
+    try {
+      const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise, returnByValue: true }, context.session);
+      const answer = await Promise.race([evaluated, gone.promise]).catch(() => undefined);
+      return answer?.result?.value;
+    } finally {
+      gone.cancel();
+    }
+  }
+
   // --- the app frame: ready and console commands ---
 
-  // The context that has the console and the binding: the app frame's, not the shell's.
-  async #findApp() {
+  #forget(key) {
+    this.#contexts.delete(key);
+    const ends = this.#ends.get(key);
+    this.#ends.delete(key);
+    for (const end of ends ?? []) end();
+  }
+
+  // A rejection with APP_GONE once `context` goes away. Chrome may never answer a call into an
+  // out-of-process frame whose target detaches, so a command must not wait on that answer alone.
+  #gone(context) {
+    const key = `${context.session.id}:${context.id}`;
+    let end;
+    const promise = new Promise((_, reject) => {
+      end = () => reject(new Error(APP_GONE));
+    });
+    promise.catch(() => {});
+    if (!this.#contexts.has(key)) {
+      end();
+      return { promise, cancel: () => {} };
+    }
+    if (!this.#ends.has(key)) this.#ends.set(key, new Set());
+    this.#ends.get(key).add(end);
+    return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
+  }
+
+  // The context that has the console and the binding: the app frame's, not the shell's. With
+  // `startScreen`, the page's own commands stand in for the console, which the engine adds later.
+  async #findApp({ startScreen = false } = {}) {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
     this.#app = null;
+    const hasConsole = startScreen
+      ? `(typeof window.engine_console_command === 'function' || typeof window.__dclPageCommands === 'object')`
+      : `typeof window.engine_console_command === 'function'`;
     for (const context of [...this.#contexts.values()]) {
       if (!acceptsBinding(context, this.#origin)) continue;
       const answer = await this.#send(
         'Runtime.evaluate',
         {
-          expression: `typeof window.engine_console_command === 'function' && typeof window.${BINDING} === 'function'`,
+          expression: `${hasConsole} && typeof window.${BINDING} === 'function'`,
           contextId: context.id,
           returnByValue: true
         },
         context.session
       ).catch(() => null); // a context that went away while asking
-      if (answer?.result?.value === true) return (this.#app = context);
+      // a start-screen match is not kept: a later call without the opt-in waits for the console
+      if (answer?.result?.value === true) return startScreen ? context : (this.#app = context);
     }
     return null;
   }
 
   /** Resolves once a context of the page's origin has both `window.engine_console_command` and
-   *  `window.__dclTrustedInput`. */
-  async ready({ timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  `window.__dclTrustedInput`, and the page has drawn that document (`#presented`): input
+   *  can then be aimed at it. With `startScreen`, the page's own commands
+   *  (`window.__dclPageCommands`) do in place of the console, so `/hud_login` can run before the
+   *  engine starts. */
+  async ready({ timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const deadline = Date.now() + timeout;
     const exited = this.#exit.then((info) => {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
     for (;;) {
-      const app = await Promise.race([this.#findApp(), exited]);
-      if (app) return;
+      const app = await Promise.race([this.#findApp({ startScreen }), exited]);
+      if (app) {
+        const left = Math.max(1, deadline - Date.now());
+        await within(
+          Promise.race([this.#presented(app), exited]),
+          left,
+          () => `${this.url} did not draw its ${this.#origin} frame in the ${left} ms that remained of ${timeout} ms`
+        );
+        return;
+      }
       if (Date.now() >= deadline) {
         const seen = [...this.#contexts.values()]
           .filter((context) => context.isDefault)
           .map((context) => context.origin);
         throw new Error(
-          `${this.url} did not get window.engine_console_command and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
+          `${this.url} did not get ${startScreen ? 'window.engine_console_command or window.__dclPageCommands' : 'window.engine_console_command'} and window.${BINDING} in a ${this.#origin} frame within ${timeout} ms (frames: ${seen.join(', ') || 'none'})`
         );
       }
       await Promise.race([sleep(POLL_MS), exited]);
@@ -455,18 +653,22 @@ class Driver {
   }
 
   /** `await window.engine_console_command(line)` in the app frame: what it resolves with, or a
-   *  rejection with the message the page failed with. */
-  async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
+   *  rejection with the message the page failed with. With `startScreen`, a page command runs
+   *  before the engine starts, as `ready({ startScreen })` allows. */
+  async console(line, { timeout = DEFAULT_TIMEOUT_MS, startScreen = false } = {}) {
     const started = Date.now();
-    const secret = secretOf(line);
-    if (secret !== undefined) this.#secrets.add(secret);
-    await this.ready({ timeout });
-    const context = await this.#findApp();
+    for (const secret of secretsOf(line)) this.#secrets.add(secret);
+    await this.ready({ timeout, startScreen });
+    const context = await this.#findApp({ startScreen });
     if (!context) throw new Error('the app frame went away');
     // a rejection arrives as a value, so the page's message is not wrapped in a protocol error
     const expression = `(async (line) => {
       try {
-        return { ok: true, value: await window.engine_console_command(line) };
+        if (typeof window.engine_console_command === 'function') return { ok: true, value: await window.engine_console_command(line) };
+        const name = line.trim().split(/\\s+/, 1)[0] || '';
+        const command = window.__dclPageCommands?.[name.startsWith('/') ? name : \`/\${name}\`];
+        if (!command) throw new Error(\`the engine has not started, and \${name} is not a page command\`);
+        return { ok: true, value: await command.run(line.trim().slice(name.length)) };
       } catch (e) {
         const error = e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e);
         return { ok: false, error: error ?? String(e) };
@@ -476,14 +678,24 @@ class Driver {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
-    const answer = await within(
-      Promise.race([
-        this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session),
-        exited
-      ]),
-      Math.max(1, timeout - (Date.now() - started)),
-      () => `\`${line}\` did not finish within ${timeout} ms`
-    );
+    const gone = this.#gone(context);
+    const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session)
+      .catch((error) => {
+        if (!CONTEXT_GONE.test(error.message)) throw error;
+        // the answer can come before the event that says so: no later command may go to it
+        this.#forget(`${context.session.id}:${context.id}`);
+        throw new Error(APP_GONE);
+      });
+    let answer;
+    try {
+      answer = await within(
+        Promise.race([evaluated, exited, gone.promise]),
+        Math.max(1, timeout - (Date.now() - started)),
+        () => `\`${line}\` did not finish within ${timeout} ms`
+      );
+    } finally {
+      gone.cancel();
+    }
     if (answer.exceptionDetails) {
       throw new Error(answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text);
     }
@@ -540,21 +752,32 @@ class Driver {
   // A frame that has only just appeared is not hit-testable until its first frame is composited:
   // a click sent before then goes to the frame under it and is lost (about one first click in five
   // with several browsers starting at once). A screenshot of the page waits for that frame, so one
-  // is taken before the first click on each document; the engine's own start-up takes longer than
-  // that, but a fixture's does not.
-  async #presented(context) {
-    if (this.#shown.has(context)) return;
-    this.#shown.add(context);
-    const shot = this.#send('Page.captureScreenshot', { format: 'jpeg', quality: 1, optimizeForSpeed: true }, this.#page);
-    // best effort: a window that cannot be drawn must not hold up the input
-    await within(shot, PRESENT_TIMEOUT_MS, () => 'no first frame').catch((error) => debug(error.message));
+  // is taken of each document, once. `ready()` waits for it for as long as its caller gives the
+  // page to start: a browser's first start on a machine draws its first frame seconds after the
+  // page's scripts have run, and the page waits less than that for a click's answer.
+  #presented(context) {
+    let shown = this.#shown.get(context);
+    if (shown === undefined) {
+      shown = this.#send('Page.captureScreenshot', { format: 'jpeg', quality: 1, optimizeForSpeed: true }, this.#page).then(
+        () => {},
+        // best effort: a page the browser cannot capture must not hold up the input
+        (error) => debug('no first frame:', error.message)
+      );
+      this.#shown.set(context, shown);
+    }
+    return shown;
   }
 
   async #click(context, { x, y, button }) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('a trusted click needs numeric "x" and "y"');
     const bit = MOUSE_BUTTONS[button];
     if (bit == null) throw new Error(`unknown button \`${button}\`: use left, right or middle`);
-    await this.#presented(context);
+    // settled already for a document `ready()` has seen; a call from another waits here, for less
+    // than the page waits for its answer, and only once for each document
+    await within(this.#presented(context), PRESENT_TIMEOUT_MS, () => 'no first frame').catch((error) => {
+      debug(error.message);
+      this.#shown.set(context, Promise.resolve());
+    });
     const offset = await this.#frameOffset(context);
     const at = { x: offset.x + x, y: offset.y + y, modifiers: this.#modifiers };
     const mouse = (type, extra) => this.#send('Input.dispatchMouseEvent', { type, ...at, ...extra }, this.#page);
@@ -635,7 +858,8 @@ class Driver {
 
   // --- closing ---
 
-  /** `Browser.close`, a kill after 5 s, and the temporary profile removed. */
+  /** `Browser.close`, a kill after 5 s, and the temporary profile removed; a profile the caller
+   *  named stays. */
   close() {
     this.#closing ??= (async () => {
       this.#pipe.send('Browser.close').catch(() => {});
@@ -647,6 +871,7 @@ class Driver {
       }
       this.#pipe.fail(new Error('the driver is closed'));
       for (const stream of this.#proc.stdio) stream?.destroy();
+      if (this.#keepProfile) return;
       try {
         await rm(this.#profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch (error) {
@@ -667,12 +892,16 @@ class Driver {
   }
 }
 
-/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own. */
-export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900] } = {}) {
+/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own.
+ *  `profile` names a directory for Chrome's profile that is kept when the driver closes, so the
+ *  page's storage and caches carry over to the next launch with it; without one, each launch
+ *  has a temporary profile of its own. One Chrome at a time uses a profile. */
+export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900], profile: kept } = {}) {
   if (typeof url !== 'string' || url === '') throw new TypeError('launch needs the url to open');
   const executable = chrome ?? findChrome();
   if (executable == null) throw new Error(noChromeMessage(process.env));
-  const profile = await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-'));
+  const profile = kept == null ? await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-')) : path.resolve(kept);
+  if (kept != null) await mkdir(profile, { recursive: true });
   const flags = [
     '--remote-debugging-pipe',
     `--user-data-dir=${profile}`,
@@ -689,7 +918,7 @@ export async function launch({ url, chrome, headless = true, args = [], windowSi
     ...args
   ];
   const proc = spawn(executable, flags, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
-  const driver = new Driver(proc, profile, url);
+  const driver = new Driver(proc, profile, kept != null, url);
   try {
     await driver.open();
   } catch (error) {
