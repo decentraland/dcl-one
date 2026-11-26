@@ -1011,6 +1011,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     1 m to each side, turns so much from one metre to the next that tufts lit by it stood out
     from their neighbours as light and dark patches; over 4 m the bumps average out and the
     tufts of a patch share their light, at the price of not following each bump's shading.
+    That light is worked out as if the camera looked straight down the slope's normal, so a
+    tuft looks the same from every angle, as Unity's does with its highlights off: bevy's
+    diffuse light and highlight both change with the view, which showed as a sheen coming and
+    going as the camera turned. The ground keeps bevy's view-dependent light, so seen low it
+    can differ from the grass on it.
   - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
     under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
     the colour changes over metres and the tufts of a patch share it. A tuft is that colour from

@@ -278,6 +278,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let normal = normalize(in.world_normal);
     pbr_input.N = normal;
     pbr_input.world_normal = normal;
+    // Lit as seen from straight above its slope, wherever the camera is: bevy's diffuse light
+    // and its highlight both change with the view direction, and unity-explorer's grass, its
+    // highlights off, looks the same from every angle.
+    pbr_input.V = normal;
 
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
