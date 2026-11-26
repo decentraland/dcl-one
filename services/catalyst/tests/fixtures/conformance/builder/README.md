@@ -318,10 +318,12 @@ env, so no `.env` file is read. Then it:
    role's address and both the script and the replay check it. Anyone can
    derive these keys: never configure the addresses as an admin or committee
    member anywhere.
-7. Writes the captures to a staging folder beside the output folder and
-   replaces the output folder with it only after every check passed, so a
-   failed run leaves the output untouched and a passing one leaves no capture
-   of a removed or renamed case behind.
+7. Writes the captures to a staging folder beside the output folder and,
+   only after every check passed, moves the output folder aside, moves the
+   staging folder into its place and then deletes the old one, so a failed
+   run leaves the output untouched and a passing one leaves no capture of a
+   removed or renamed case behind. It refuses an output folder that holds
+   anything but `.json` files.
 
 To capture, check upstream out at the pin in a scratch folder and write into
 a folder of its own:
