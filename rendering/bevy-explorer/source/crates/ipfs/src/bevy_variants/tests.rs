@@ -621,19 +621,20 @@ async fn scene_with_served_texture(label: &str) -> (Arc<IpfsIo>, PathBuf, PathBu
     (io, dir, content_path("tex.png"))
 }
 
-/// With variants off, a deployed file a variant could stand in for counts under its entity's
+/// With variants off, each deployed file a variant could stand in for counts under its entity's
 /// kind as an original; other files do not count.
 #[tokio::test]
 async fn with_variants_off_a_deployed_texture_counts_as_an_original() {
     let (io, dir) = io_with_cache("load-counts-off");
-    deployed_scene(&io, &["tex.png", "main.js"]).await;
+    deployed_scene(&io, &["tex.png", "other.png", "main.js"]).await;
     io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
     assert!(!read_variant(&io, "tex.png").await);
+    assert!(!read_variant(&io, "other.png").await);
     assert!(!read_variant(&io, "main.js").await);
     assert_eq!(
         io.bevy_variants.load_counts(),
         [
-            (VariantEntityKind::Scene, counts(1, 0)),
+            (VariantEntityKind::Scene, counts(2, 0)),
             (VariantEntityKind::Wearable, VariantLoadCounts::default()),
             (VariantEntityKind::Emote, VariantLoadCounts::default()),
         ]

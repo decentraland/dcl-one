@@ -40,8 +40,8 @@
 //! wearable or emote), with variants off too, with whether a variant answered its latest read: a
 //! reload or a colliders-only load of the file replaces its outcome, and a variant that fails to
 //! load leaves it counted as its original. The kind is the first one the entity's manifest was
-//! asked for as, so a smart wearable's scene counts as the wearable and a scene's emote `.glb`
-//! as the scene. The session's counts are the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`], measured every
+//! asked for as, so a scene's emote `.glb` counts as the scene; a smart wearable's scene, read
+//! as `{wearable}-sw-{shape}`, has no kind and is not counted. The session's counts are the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`], measured every
 //! frame.
 //!
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
@@ -448,7 +448,7 @@ struct Fallback {
 }
 
 /// An entity's content type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VariantEntityKind {
     Scene,
     Wearable,
