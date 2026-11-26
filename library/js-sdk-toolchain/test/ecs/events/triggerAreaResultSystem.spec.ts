@@ -1,10 +1,9 @@
+import type { IEngine, Entity } from '../../../packages/@dcl/ecs/src'
 import {
   Engine,
-  IEngine,
   components,
   TriggerAreaEventType,
-  createTriggerAreaEventsSystem,
-  Entity
+  createTriggerAreaEventsSystem
 } from '../../../packages/@dcl/ecs/src'
 import { Quaternion, Vector3 } from '../../../packages/@dcl/sdk/math'
 

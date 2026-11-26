@@ -28,6 +28,9 @@ pub enum AppError {
     #[error("{0}")]
     PayloadTooLarge(String),
 
+    #[error("{0}")]
+    TooManyRequests(String),
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
@@ -52,6 +55,7 @@ impl AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
             AppError::PayloadTooLarge(msg) => (StatusCode::PAYLOAD_TOO_LARGE, msg.clone()),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.clone()),
             AppError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg.clone()),
             AppError::Internal(detail) => {
                 tracing::error!(detail, "internal error on a content route");

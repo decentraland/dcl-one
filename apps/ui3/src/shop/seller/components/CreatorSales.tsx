@@ -8,7 +8,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import type { ChainId } from "@shop/model/chain";
 import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "@shop/model/money";
@@ -75,7 +75,7 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
         <p role="status">
           {pct}% off “{collection.name}” until {formatDate(now() + days * DAY)}.
         </p>
-        <Button size="sm" variant="ghost" onClick={onClose}>
+        <Button size="sm" variant="outline" onClick={onClose}>
           Close
         </Button>
       </div>
@@ -142,10 +142,10 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
           ) : null}
           {problem ? <p className="mk-field__error">{PROBLEM_TEXT[problem]}</p> : null}
           <div className="mk-actions">
-            <Button disabled={!!problem} onClick={() => setReviewing(true)}>
+            <Button size="md" disabled={!!problem} onClick={() => setReviewing(true)}>
               Review discount
             </Button>
-            <Button variant="ghost" onClick={onClose}>
+            <Button size="md" variant="outline" onClick={onClose}>
               Cancel
             </Button>
           </div>
@@ -172,10 +172,10 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
             ) : null}
           </ul>
           <div className="mk-actions">
-            <Button disabled={write.busy || discounted === 0} onClick={submit}>
+            <Button size="md" disabled={write.busy || discounted === 0} onClick={submit}>
               {write.busy ? "Starting…" : "Start discount"}
             </Button>
-            <Button variant="ghost" disabled={write.busy} onClick={() => setReviewing(false)}>
+            <Button size="md" variant="outline" disabled={write.busy} onClick={() => setReviewing(false)}>
               Back
             </Button>
           </div>

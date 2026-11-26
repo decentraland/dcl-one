@@ -1,6 +1,6 @@
 import path from 'path'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 
 async function downloadFile(
   components: Pick<CliComponents, 'fs' | 'logger' | 'fetch'>,

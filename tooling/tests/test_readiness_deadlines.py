@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -58,19 +59,28 @@ class FinalReadinessSampleTest(unittest.TestCase):
         self.assertEqual(checks[-1], 10)
 
     def test_http_services_that_answer_during_the_final_sleep_are_ready(self):
-        checks = []
-        def response(*args, **kwargs):
-            checks.append(self.clock)
-            if self.clock < .3:
-                raise urllib.error.URLError('starting')
-            return contextlib.nullcontext(SimpleNamespace(status=200))
-        with patch.object(dev, 'settings', return_value={'port': 5210}), \
-                patch.object(dev, 'pc', return_value=SimpleNamespace(returncode=0, stdout='[]')), \
-                patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
-                patch.object(dev, 'wait_first_mirror_pass', return_value=0):
-            self.assertEqual(dev.wait_ready(.3), 0)
-        self.assertEqual(self.clock, .3)
-        self.assertEqual(checks[-2:], [.3, .3])
+        for profile, api_path in [('mirror', '/about'), ('offline', '/health'), ('testnet', '/health')]:
+            with self.subTest(profile=profile):
+                self.clock = 0
+                checks = []
+
+                def response(url, timeout):
+                    checks.append((self.clock, url))
+                    if self.clock < .3:
+                        raise urllib.error.URLError('starting')
+                    if url.endswith('/health'):
+                        body = io.BytesIO(b'{"details":{"postgres":{"status":"pass"},"comms":{"status":"pass"}}}')
+                        body.status = 200
+                        return body
+                    return contextlib.nullcontext(SimpleNamespace(status=200))
+
+                with patch.object(dev, 'settings', return_value={'port': 5210, 'profile': profile}), \
+                        patch.object(dev, 'pc', return_value=SimpleNamespace(returncode=0, stdout='[]')), \
+                        patch.object(dev.urllib.request, 'urlopen', side_effect=response), \
+                        patch.object(dev, 'wait_first_mirror_pass', return_value=0):
+                    self.assertEqual(dev.wait_ready(.3), 0)
+                self.assertEqual(checks[-2:], [(.3, f'http://127.0.0.1:5210{api_path}'),
+                                               (.3, 'http://127.0.0.1:5212/')])
 
     def test_postgres_ready_during_the_final_sleep_installs_collation(self):
         def sql(*args):

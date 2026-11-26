@@ -1,7 +1,8 @@
-import { WebSocketTransport, IWebSocket } from '@dcl/rpc/dist/transports/WebSocket'
-import { WebSocket } from 'ws'
-import { PreviewComponents } from '../types'
-import { DataLayer } from './rpc'
+import type { IWebSocket } from '@dcl/rpc/dist/transports/WebSocket'
+import { WebSocketTransport } from '@dcl/rpc/dist/transports/WebSocket'
+import type { WebSocket } from 'ws'
+import type { PreviewComponents } from '../types'
+import type { DataLayer } from './rpc'
 
 // TODO: dataLayer should be an optional component after WKC supports it
 export async function handleDataLayerWs(components: PreviewComponents, ws: WebSocket, dataLayer: DataLayer) {

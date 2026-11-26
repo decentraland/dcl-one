@@ -558,6 +558,8 @@
   gap: 20px;
 }
 .shop-lb-maptop .shop-lb-toggle button { width: 38px; height: 32px; }
+/* The map's age, shown in this bar only on phones (below): elsewhere it sits in the map's own corner. */
+.shop-lb-maptop__age { display: none; }
 .shop-lb-maptop .shop-lb-toggle button[aria-pressed="false"] { background: #43404a; }
 .shop-lb-maptop .shop-lb-toggle button[aria-pressed="true"] { background: #2b2830; }
 .shop-lb--map > .shop-land-note { margin-top: 16px; }
@@ -619,6 +621,10 @@
   .shop-lb--map { padding: 0 0 32px; }
   .shop-lb-map { margin-top: -16px; }
   .shop-lb-maptop { top: 12px; right: 12px; left: 12px; flex-wrap: wrap; gap: 10px; padding: 8px 12px; }
+  /* The bar covers the map's status corner: its age moves into the bar, as its last row. */
+  .shop-lb-map .shop-landmap__status { display: none; }
+  .shop-lb-maptop__age { display: flex; flex-basis: 100%; }
+  .shop-lb-maptop__age:empty { display: none; }
   .shop-lb-maptop__filters { flex-wrap: wrap; gap: 8px 14px; }
   .shop-lb-maptop .shop-lb-square { font-size: 13px; }
   .shop-lb--map > .shop-land-note { margin: 16px; }

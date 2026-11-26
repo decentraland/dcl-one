@@ -6,7 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { bulkPick, fetchLists } from "../lib/favorites";
 import { ListEditor } from "./ListEditor";
 import { LoadFailure, Loading, useWrite, WriteStatus } from "./kit";
@@ -50,12 +50,12 @@ export default function SaveToLists({ itemKey, itemName, onClose }: { itemKey: s
           }}
         />
       ) : (
-        <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
+        <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
           Create a list
         </Button>
       )}
       <div className="mk-actions">
-        <Button
+        <Button size="md"
           disabled={write.busy || (pickedFor.length === 0 && unpickedFrom.length === 0)}
           onClick={() =>
             void write.run("Saving…", "Saved.", async () => {
@@ -69,7 +69,7 @@ export default function SaveToLists({ itemKey, itemName, onClose }: { itemKey: s
         >
           Save
         </Button>
-        <Button variant="ghost" onClick={onClose} disabled={write.busy}>
+        <Button size="md" variant="outline" onClick={onClose} disabled={write.busy}>
           Cancel
         </Button>
       </div>
