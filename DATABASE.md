@@ -1791,6 +1791,37 @@ checkout and a claim takes the checkout first, so the edges add no lock
 cycle. Changing the
 key format, the frozen statuses or either statement updates this section.
 
+## Daily MANA/USD closes
+
+Shop stores one row per UTC day from July 8, 2021 in `shop.mana_usd_daily`.
+The writer uses each UTC day's last Polygon MANA/USD observation, with one
+finalized block hash per pass. Phase selection follows marketplace-server at
+`9c3683cb`, using the latest phase with a first round by that day's close. A phase can
+start producing rounds before the proxy switches to it. Each recorded observation keeps its
+phase-aware round ID and exact decimal rate. The day stores a null rate when
+its last observation is non-positive or the oracle made no observation
+during that UTC day. A round that repeats an older round's answer counts as
+unpriced.
+
+The mainnet sales index process runs one leased writer. Each pass reads at most
+fourteen consecutive days and commits each completed day. A failed read
+resumes at the first unrecorded day. Once caught up, the job adds one row a day.
+
+The rate endpoint scans the date key over at most fifteen years (approximately
+5,500 rows) and returns only priced days, matching the legacy response. Seller
+summaries join the days of their sales by the same key. They sum gross MANA at
+historical rates, round to six decimal places, and count sales with no rate.
+`royaltiesWei` totals settled royalty legs on resales by other sellers. It
+returns null when creator attribution or a required payment split lacks
+proof. Ethereum v1 attribution reads the item and collection fields saved by
+their respective last completed Ethereum mirror passes. The database refreshes
+each small attribution table with the pass marker in one transaction, keeping
+proven values available during a new catalogue sweep. The first completed pass
+after the schema object pass installs these tables seeds each copy. The
+resale count and volume describe sales attributed to the creator, including
+their own. The sales publication and all these inputs are read in the same
+transaction.
+
 ## Shop open-trades reads that name a contract
 
 Workload: the item page's listing read and the checkout's store-mint and
@@ -2050,12 +2081,13 @@ misses events. `user_address` is the photo's owner, lowercase. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
 
-## Seasonal photo rewards workload
+## Seasonal goal rewards workload
 
 `shop::credits::goals` reads Camera photo facts and Social subscription facts
 using the existing database pool. `credits.seasons` and `credits.season_goals`
-hold season windows, MANA limits and the `take-photo` assignment. These tables
-have no active monetary seed. `credits.program_opt_outs` records enrollment
+hold season windows, MANA limits and assignments for `take-photo`, `log-in`,
+`visit-location` and `visit-event-and-stay`. These tables have no active
+monetary seed. `credits.program_opt_outs` records enrollment
 withdrawal separately from the paid wallet's identity.
 
 The worker writes one durable `credits.photo_goal_receipts` row per processed
@@ -2105,6 +2137,41 @@ table records `generated_at` for the minimum solve-time check and keeps a
 two-hour challenge lifetime. Both challenge and failure updates take the
 same wallet lock. The additive `0043_credits_captcha_generated_at` step
 preserves existing challenges and establishes their solve-time baseline.
+
+### Room-driven goals
+
+On an Ops-writing node, the verified LiveKit join and leave facts for an
+enrolled wallet go to `credits.goal_room_events` before webhook
+acknowledgement. The event ID deduplicates redelivery. A leased worker reads
+up to 100 pending facts and up to 100 due timers per pass. An indexed
+30-day retention sweep removes old room facts in bounded batches. Goal
+progress, fact acknowledgement, signed grants and completion notices
+commit together under the same wallet lock used by opt-out and claims.
+
+`credits.goal_login_days` deduplicates login by UTC date, wallet, season and
+week. Enrollment commits the date as pending with the signed enrollment.
+Processing it separately lets flags or signing recover without rejecting
+enrollment. A new login step and its grant and notice clear the pending date
+in one transaction. The room worker retries up to 100 pending dates per
+pass through the partial pending index. Reads include the counted dates
+from the same read-only snapshot as progress and balance. A join in the
+scheduled world completes that week's location goal.
+Room joins pin the approved Explore event occurrence against the canonical
+world or the parcel set of the verified scene deployment. A mirrored event
+must have been observed in a complete scan from the configured source that
+started at or after the join. A missing deployment or an uncovered mirror
+keeps event resolution pending while other goals can advance. A matching
+leave or a fresh, complete LiveKit roster for the exact participant session
+supplies the time within the pinned occurrence and assignment window. The
+worker unions overlapping intervals for each event and completes one step
+per distinct event with five minutes of confirmed time. It awards room goals
+while the corresponding season and week are still claimable.
+`credits.goal_event_visits` holds those intervals and the pending timers
+across restarts. The due index contains only visits awaiting a timer check.
+
+Step `0079_credits_seasonal_visit_goals` widens the existing season-goal
+constraint. The object pass creates the room facts, login days and visit tables.
+`METRICS.md` records the synthetic queue and timer read measurements.
 
 ## Camera reel import workload
 
@@ -2297,6 +2364,14 @@ ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_
 ```
 
 See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) for index sizes, build times and reads. Production table sizes have not been measured.
+
+### Latest sale per token
+
+`/v1/nfts` serves `soldAt` and its recently sold sort from every public sale: orders, accepted bids, single-asset trades and Polygon store mints. `shop.nft_last_sale` holds each token's latest public sale under the rule in `sale_reads/public_sales.sql`: a positive price in the network's MANA, and a trade only when it moved one asset. The sales fold writes the table in the transaction that publishes each window. A window's sales replace a token's older row. A changed history deletes the ledger past the prefix the fold keeps, and in the same transaction each token whose latest sale lay past that prefix takes its latest earlier sale or leaves the table. A reverted sale is therefore never kept.
+
+`sale_publication.last_sale_through` records the block through which the table holds every published sale. `last_sale_generation` records the publication generation the table was kept for. Each pass applies the ledger past `last_sale_through`, at most 5,000,000 blocks at a time. Once the table is current, that is the new window itself. After step `0078_shop_nft_last_sale` adds the columns, or after a rebuild, it is the earlier history. A receipt can be retried after its block is covered and set the token ID of a trade's mint. The pass then recomputes those tokens' latest sale from the ledger and keeps a later sale. Every writer rotates the generation when it replaces the history or corrects a published sale. A writer from before step 0078 does so without touching the table or these columns, so they no longer match. The table is then not read, and the next pass of a current writer deletes the network's rows and refills them from the start. It does the same when the coverage is cleared. The schema object pass creates the table.
+
+A `/v1/nfts` read checks the publication of each network its page can return, on the read's own snapshot (`sale_fold::last_sale_networks`). The publication must be valid and fresh, as the sales reads require, its table must be kept for its generation, and `last_sale_through` must reach its block. For such a network, `sold_at` is the later of the token's latest legacy `OrderSuccessful` (`shop.nft.sold_at`, or the LAND source's subquery) and its row in `shop.nft_last_sale`, joined on the primary key. Elsewhere, including on a testnet node, `sold_at` keeps the legacy order alone. On a walker, a shallow NAME page of any sort reads the index instead of the marketplace graph when the Ethereum latest sales are admitted on the snapshot that supplies its rows, because the graph's `soldAt` counts other sales. Such a page follows the index path's rules: the `first + skip` window, and the trades mirror's readiness on the same snapshot when it filters or sorts on orders. Admission is checked once, at the request's clock, and the page's values and order use that answer. The page reads the graph when the names index or those latest sales are not ready, and answers the error when the check cannot run. The recently sold sort still reads and sorts every held token, and the join adds one primary-key lookup or hash probe per token. See the [synthetic fixture measurements](METRICS.md#latest-sale-per-token).
 
 ### Badge processor
 
@@ -3362,11 +3437,126 @@ and an emote's social outcome as `simple_outcome`, `multiple_outcome` or
 helper does. `sold_at` is the newest primary sale only; secondary sales come
 with the sales index.
 
-The catalogue routes still decide readiness from the mirror's passes
-(`shop.mirror_state`), so no network is taken from the mirror while they do.
+**Reading the catalogue.** These readers of `shop.collections` and
+`shop.items` open one `REPEATABLE READ` transaction first
+(`market::catalogue::begin`):
+- descriptive: `/v1/collections`, the `/v1/contracts` collection list,
+  `/lambdas/collections`, the lambdas wearables and emotes catalogue, the
+  creator search, and the campaign collection tags;
+- priced: `/v1/catalog` (v1 and v2), `/v1/items`, `/v3/catalog/items`,
+  `/v1/trendings`, the item leg of `/v1/prices`, every `/v3/catalog` shop feed,
+  the search suggest, credits pricing, and the coupon favourites job;
+- authorizing: the import check.
 
-**Switching a network from the mirror.** Run this after the catalogue routes
-follow the index and the NFT and sales walks take their contracts from it.
+In that transaction the reader reads, in one statement per request, per
+network: the ownership marker, the `collections` cursor, the projection's
+row, the mirrors' passes, whether the catalogue holds rows of the network,
+and whether a collections event was walked past the publication. It decides
+readiness by the source that owns each network, then reads its rows in the
+same snapshot, so a rewind, a republication or a hand-back that commits
+meanwhile never splits an answer. A reader that joins the open trades
+(credits pricing included) reads their pass and verdicts in the same
+snapshot, at the read's instant. That instant also decides the rows' open
+trades, trade floor and coupon window, on every page of the read.
+
+The statement is uncached and probes primary keys only:
+`collection_projection (network)`, `chain_cursor (indexer, network)`,
+`mirror_state (mirror, network)`, the first row of `collections` and of
+`items` by their `(network, …)` keys, and the first `collection_event` past
+the publication by `(network, block_number, log_index)`.
+
+The transaction holds a pooled connection, so a reader never waits on
+anything else while it holds it:
+- pool work that reads no catalogue row runs before the transaction opens or
+  after it is released; what does read the catalogue reuses the transaction;
+- a route with an external call (the sales reader's subgraph query, the
+  EIP-1654 signer check) first opens a short read for the gate and its page
+  memo, so a refusal or a warm page answers at once. On a miss it releases
+  the read for the call, then opens it again, checking readiness again, and
+  reads the whole page on that read (the suggested feed rebuilds its personal
+  rows there too) and files it under the copy that read saw. The answer's
+  `as_of` comes only from the reads that supplied its rows: the short read on
+  a warm page, the final read on a miss;
+- a request never waits on another's memo fetch while it holds the
+  connection.
+
+A read that writes (the campaign tags) runs `SERIALIZABLE`: two replacements
+of one tag's set cannot both commit, even when the tag was empty, and the one
+that fails starts again on a new snapshot.
+
+These readers of the same tables are outside the gate, and read whichever
+source wrote the rows:
+- the relay contract allowlist and `/v1/contracts/{address}`;
+- the sale, bid and royalty notices;
+- the owned-items pass check;
+- the MANA facts and quote;
+- the policy entry's facts;
+- the NFT pages' catalogue joins, and the bids, lists, listings, users,
+  neighbours, stores, coupons and subscriptions reads;
+- the NFT walk's contract set;
+- the sales index: its walk's contract set, `sale_fold`, `sale_history` and
+  the reads that join the catalogue (public sales, item rankings, collection
+  counts, seller evidence, wallet assets and the creator sales scope);
+- the activity's NFT transfers and cancelled trades;
+- the trade-events walk's item metadata;
+- the explorer lambdas (`lambdas_explorer.rs`) and explore's OpenSea metadata
+  (`explore/src/opensea.rs`);
+- Social's badge jobs (deployments, recount and sales);
+- the storage collector's image references.
+
+A network the index owns follows the publish marker. A pass walks before it
+folds and publishes, so `folded_block = last_block` would refuse every read
+while one runs; the marker does not. Every purpose needs:
+- the cursor bound to the chain this node serves for that network (a
+  testnet node reads none from a mainnet walk), out of quarantine, not
+  diverged;
+- its whole history walked, and a fold published;
+- the projection standing at that fold (`projected_through = folded_block`);
+- no collection waiting for its creation read (`pending = 0`).
+
+On top of that:
+- a priced read (a minter price, `available`, a credit price) needs the
+  publication within 30 minutes;
+- an authorizing read (the import check) needs that too, and no collections
+  event walked past the publication;
+- a descriptive read serves the last publication however old.
+
+Between a fold and its publication (the pass reads the chain's heads in
+between), `projected_through` is ahead of `folded_block`, and the network
+refuses reads until the publication.
+
+The mirrors' rule covers every network the index does not own that a read
+may return rows of. Every stored pass there must be bound to the chain this
+node serves, a network with no subgraph configured included, since its rows
+are read too. Each network the read may return rows of (the catalogue holds
+rows of it), configured or not, needs a complete pass of each mirror the
+route reads; so does each configured network the index does not own. A
+priced read needs the items pass within its money budget. A descriptive or
+authorizing read (the import check) takes any complete pass. A network
+holding rows with no pass and no subgraph configured names its subgraph,
+since no pass can come.
+
+With no subgraph configured, a network an index owns answers. An unscoped
+priced read names the subgraph of the network without a source; a
+descriptive or authorizing read serves the passes the tables record. The
+lambdas catalogue falls back to asking the subgraphs only when the mirrors
+refused and the index owns no network; it never stands in for a network the
+index owns.
+
+A memo over catalogue rows is filed under what its read saw: each mirror's
+pass on each network it may take rows from, configured or not (the oldest
+alone would not move when a newer network's pass does), and each owned
+network's publication and projection generation. The creator directory is a
+display aggregate that keeps its stated staleness (15 minutes, kept up to an hour), so it is filed
+under which source serves each network: an ownership change files it anew.
+
+**Switching a network from the mirror.** Run this only once three things
+hold:
+- every reader above follows the index, the other readers included;
+- the projection is published atomically with the fold, so the refusal
+  between a fold and its publication is gone;
+- the NFT and sales walks take their contracts from the index.
+
 Deploys are manual, one process at a time:
 
 1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
@@ -4601,7 +4791,7 @@ windows below are a lower bound for a table folded in another order.
 | newest, `itemRarity=mythic` (85,000 tokens) | 204 ms | 222 ms | walks `nft_mint_order_idx` |
 | name, `category=wearable` | 380 ms | 78 ms | the items sorted by name, then `nft_item_idx` |
 | name, no category | 0.7 to 1.2 s | 96 ms | the same, and 300,000 names sorted |
-| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` |
+| recently sold, `category=wearable` | 1.6 to 3.3 s | 80 ms | every held token read and sorted: no index orders `sold_at` (before `shop.nft_last_sale`; see [Latest sale per token](#latest-sale-per-token)) |
 | recently sold, no category | 2.1 to 2.9 s | 94 ms | the same |
 | cheapest or recently listed, `category=wearable` | 736 to 740 ms | 65 ms | the listed part (8,200 listed tokens with their lookups); the unlisted part reads 24 rows |
 | the same, no category | 791 ms | 82 ms | the same, with names and LAND |

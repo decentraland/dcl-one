@@ -9,6 +9,54 @@ use crate::shared::identity::Address;
 use crate::shared::notifications::SendFailure;
 use crate::{comms, explore, shop, social};
 
+/// Fan out durable room input. Both receivers deduplicate the webhook ID,
+/// so a failed second write is safe to retry after the first has committed.
+pub(super) struct CreditsRoomEvents {
+    pub(super) credits: shop::credits::SharedState,
+    pub(super) events_mirror: Option<String>,
+    pub(super) badges: Option<Arc<dyn comms::gatekeeper::events::RoomEventStore>>,
+}
+
+#[async_trait::async_trait]
+impl comms::gatekeeper::events::RoomEventStore for CreditsRoomEvents {
+    async fn store_room_event(
+        &self,
+        event: &comms::protocol::bus::room_events::RoomEvent,
+    ) -> anyhow::Result<()> {
+        use comms::protocol::bus::room_events::{RoomEventKind, RoomType};
+        if let Some(badges) = &self.badges {
+            badges.store_room_event(event).await?;
+        }
+        let world = match event.room_type() {
+            RoomType::World => true,
+            RoomType::Scene => false,
+            RoomType::Unknown => return Ok(()),
+        };
+        let joined = match event.kind() {
+            RoomEventKind::Joined => true,
+            RoomEventKind::Left => false,
+            RoomEventKind::Unspecified => return Ok(()),
+        };
+        shop::credits::goals::rooms::store(
+            &self.credits,
+            shop::credits::goals::rooms::RoomEvent {
+                event_id: &event.event_id,
+                identity: &event.identity,
+                room: &event.room,
+                participant_sid: &event.participant_sid,
+                joined,
+                world,
+                realm: &event.realm_name,
+                scene_id: (!event.scene_id.is_empty()).then_some(&event.scene_id),
+                event_time_ms: event.event_time_ms,
+            },
+            self.events_mirror.as_deref(),
+        )
+        .await?;
+        Ok(())
+    }
+}
+
 /// The gatekeeper's live room members, counted by Explore's destinations feed.
 pub(super) struct CommsParticipants(pub(super) comms::gatekeeper::SharedState);
 
@@ -212,5 +260,133 @@ pub(super) struct ShopNameOwners(pub(super) Arc<shop::market::MarketplaceState>)
 impl comms::interfaces::NameOwnerReader for ShopNameOwners {
     async fn name_owner(&self, name: &str) -> Result<Option<Address>, String> {
         self.0.name_owner(name).await
+    }
+}
+
+#[cfg(test)]
+mod credits_room_event_tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use comms::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn a_failed_credits_write_retries_the_webhook_without_duplicating_badge_facts() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        use comms::{
+            gatekeeper, rooms,
+            world_identity::{RealmId, WorldName},
+        };
+        let Some(db) = OwnedDatabase::new("credits_room_events", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let owner = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let world = WorldName::parse("party.dcl.eth").unwrap();
+        let room = rooms::worlds_service_world_room(&world);
+        sqlx::query("INSERT INTO credits.wallets(address,has_started_program) VALUES($1,true)")
+            .bind(owner)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO credits.seasons(id,name,start_date,end_date,max_mana_wei)
+             VALUES (1,'Test',timezone('UTC',now())-interval '1 day',timezone('UTC',now())+interval '1 day',0);
+             INSERT INTO credits.season_goals(season_id,goal_id,title,thumbnail,total_steps,reward_wei,start_week,end_week)
+             VALUES (1,'log-in','Log in','login.png',1,0,1,3);
+             INSERT INTO social.badge_definitions(id,name,description,category,is_tier,criteria_steps,assets,published_at)
+             VALUES ('room-badge','Room badge','Presence','Explorer',false,1,
+                     '{\"2d\":{\"normal\":\"room-badge/2d/normal.png\"}}',timezone('UTC',now()));
+             INSERT INTO social.presence_badges(badge_id,location_kind,world_name,window_start,window_end,mode,required_seconds)
+             VALUES ('room-badge','world','party.dcl.eth',timezone('UTC',now())-interval '1 hour',
+                     timezone('UTC',now())+interval '1 hour','visit',0);
+             ALTER TABLE credits.goal_room_events ADD CONSTRAINT reject_goal_event CHECK (false);",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let outbound = crate::http::Outbound::for_tests();
+        let credits = Arc::new(shop::credits::State::new(
+            pool.clone(),
+            outbound.clone(),
+            shop::credits::Settings::for_tests(),
+            shop::credits::Sources {
+                market: None,
+                price: None,
+                economy: None,
+            },
+            None,
+        ));
+        let settings = gatekeeper::Settings::for_tests();
+        let body = serde_json::to_vec(&serde_json::json!({
+            "id": "EV_retry", "createdAt": chrono::Utc::now().timestamp(), "event": "participant_joined",
+            "room": {"name": room}, "participant": {"identity": owner, "sid": "PA_one", "metadata": "{}"}
+        })).unwrap();
+        let auth = gatekeeper::webhook::test_support::webhook_jwt(
+            &body,
+            &settings.livekit.api_key,
+            &settings.livekit.api_secret,
+        );
+        let node = gatekeeper::CommsState::new(
+            pool.clone(),
+            outbound,
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes {
+                room: Ok(rooms::ResolvedRoom {
+                    room,
+                    realm: RealmId::World(world),
+                    scene_id: None,
+                    deployment: None,
+                }),
+                scene: Ok(None),
+            }),
+            Arc::new(comms::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        )
+        .with_room_event_store(Arc::new(CreditsRoomEvents {
+            credits,
+            events_mirror: None,
+            badges: Some(Arc::new(social::badges::presence::EventSink::new(
+                pool.clone(),
+                Default::default(),
+            ))),
+        }));
+        let app = gatekeeper::router(Arc::new(node));
+        let post = || {
+            app.clone().oneshot(
+                Request::post("/livekit-webhook")
+                    .header("authorization", &auth)
+                    .header("content-type", "application/webhook+json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(
+            post().await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let facts = || {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT (SELECT count(*) FROM social.presence_events),
+                        (SELECT count(*) FROM credits.goal_room_events)",
+            )
+            .fetch_one(pool)
+        };
+        assert_eq!(facts().await.unwrap(), (1, 0));
+        sqlx::query("ALTER TABLE credits.goal_room_events DROP CONSTRAINT reject_goal_event")
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(post().await.unwrap().status(), StatusCode::OK);
+        assert_eq!(post().await.unwrap().status(), StatusCode::OK);
+        assert_eq!(facts().await.unwrap(), (1, 1));
+        db.drop().await;
     }
 }
