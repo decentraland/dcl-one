@@ -213,8 +213,7 @@ function EmptyResults({ search }: { search: boolean }): React.JSX.Element {
   )
 }
 
-// `onClose` is set where the panel lies over the avatar (the lobby's modal): it puts the selection away.
-function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose?: () => void }): React.JSX.Element {
+function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Element {
   if (!item) {
     return (
       <aside className={`${styles.detail} ${styles.detailEmpty}`} style={{ '--panel-art': `url(${rarityPanel(null)})` } as React.CSSProperties}>
@@ -226,11 +225,6 @@ function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose
   const category = 'category' in item ? item.category : 'emote'
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
-      {onClose != null && (
-        <Button size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
-          <MaskIcon src={closeIcon} size={10} />
-        </Button>
-      )}
       <div className={styles.detailImage}>
         <CatalystImg src={item.thumbnail} urn={item.urn} />
       </div>
@@ -898,8 +892,8 @@ export function BackpackPage({
               </div>
             )}
 
-          {/* Right: the selected wearable/emote. Not in Saved Outfits, nor beside an empty wearables grid. */}
-          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} onClose={modal ? () => setSelected(null) : undefined} />}
+          {/* Right: the selected wearable/emote. Not in the lobby's modal, which has no room for it, nor in Saved Outfits, nor beside an empty wearables grid. */}
+          {!modal && !inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} />}
           </section>
           </div>
         </div>

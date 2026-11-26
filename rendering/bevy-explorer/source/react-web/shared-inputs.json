@@ -9399,11 +9399,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "6e2097c65a81e85878f649531262f6bffe365793fd1ead67f23087048b2767c8"
+      "sha256": "4571edd7c5f653cdd35e7fa654dbcdec5d85eecdd409f1bbe9ceddcf2ccc0864"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "78ae93395c2d85b096d77643454a340a6cda4024082a665c2c9f4466a50d4d43"
+      "sha256": "90ee95cf13171dce094be4dcf5a61128f30e61b88aff1f2b020cd19352ff4a06"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -10755,7 +10755,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
-      "sha256": "e1d0d30c8127f1415b2c9415123badd4e80481b6f05a7f52236ac380a9126536"
+      "sha256": "7b9d08bc8ff7466a73d19baea08823dbcef59e2a52f7ff9d31adf18d962e0193"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackColors.test.tsx",
