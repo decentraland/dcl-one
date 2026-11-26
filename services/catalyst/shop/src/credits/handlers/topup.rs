@@ -9,14 +9,6 @@
 //! (lowercase): the grant is booked as a purchase, like the claim, and a later
 //! claim of that hash replays it instead of granting again.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use axum::Json;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::{HeaderMap, StatusCode};

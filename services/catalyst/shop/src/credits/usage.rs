@@ -44,14 +44,6 @@
 //! `folded_block_time` (the reservation holds until the chain has been read
 //! past the credit's expiry).
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 

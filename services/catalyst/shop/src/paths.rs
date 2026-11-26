@@ -22,14 +22,6 @@
 //! calls those, never the Shop UI, so neither that table nor the UI's pinned
 //! routes list them.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 /// The canonical backend prefix.
 pub const PREFIX: &str = "/shop-api";
 

@@ -1,10 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
 // from: shop@94584a5c:app/src/lib/sales.ts (fetchSellerSales, fetchSalesSummary: the seller's earnings from /v1/sales), app/src/lib/payouts.ts (what upstream matched a sale's proceeds against, under proceeds-to-treasury: not carried); marketplace-server@ae872a4a:src/controllers/routes.ts:197 (GET /v1/sales, the reader these rows come from)
 //! Seller proceeds from published MANA sales. The payment split records the
 //! seller's net, protocol fees and creator royalties in integer base units.

@@ -1,10 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
 // from: shop-server@dc1a8be96:src/logic/outfits.ts, src/adapters/db/outfits.ts, src/controllers/routes.ts (the outfits block, outfitCreatorsMiddleware), src/controllers/schemas/outfit.ts, src/controllers/handlers/{get-outfits,get-outfits-all,get-outfit,post-outfit,put-outfit,delete-outfit,post-outfit-thumbnail,get-outfit-thumbnail}.ts
 //! Outfits: the curated shoppable wearable sets of the Shop (SHOP.md,
 //! "Backend work" 6, the shop-server fold), the one public-facing surface

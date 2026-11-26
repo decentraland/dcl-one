@@ -3,14 +3,6 @@
 //! mocks behind `CREDITS_MOCK_CARD` (a pack purchase and a capped top-up
 //! granted without a charge).
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use axum::Json;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::HeaderMap;

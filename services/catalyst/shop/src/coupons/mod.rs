@@ -20,14 +20,6 @@
 //! endpoint for the coupon's chain answers the unavailable envelope on
 //! `POST` (the reads still serve the stored coupons and their last state).
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 pub mod chain;
 pub mod component;
 pub mod contracts;

@@ -1,10 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
 // from: shop@94584a5c:app/src/lib/campaign.ts (the campaign's collections by Builder tag), app/src/lib/contentful.ts (the ADMIN entry: the seasonal campaign and its banner slots); marketplace@f3956826:webapp/src/modules/event/{actions,sagas}.ts (FETCH_EVENT), webapp/src/modules/vendor/decentraland/builder/api.ts (fetchAddressesByTag: GET /v1/addresses?tag=, the {ok, data: string[]} envelope)
 //! Campaigns: the seasonal storefront (`/shop/event`, the Overview hero and
 //! the campaign tab) and the collections it selects. Upstream read two

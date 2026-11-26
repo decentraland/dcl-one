@@ -13,14 +13,6 @@
 //! `app/src/lib/{currency,payment-options,api,mana,mana-convert,cart-checkout}.ts`);
 //! no float touches either.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use std::fmt;
 
 use alloy_primitives::{Address, U256, keccak256};

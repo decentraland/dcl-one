@@ -603,7 +603,7 @@ pub fn credits_to_wei(credits: f64) -> Option<u128> {
     if !credits.is_finite() {
         return None;
     }
-    Some(credits.max(0.0).floor() as u128 * USD_WEI_PER_CREDIT)
+    Some((credits.max(0.0).floor() as u128).saturating_mul(USD_WEI_PER_CREDIT))
 }
 
 fn unified_min_price_bound_wei(min_credits: f64) -> Option<u128> {
@@ -2304,6 +2304,7 @@ mod tests {
             (7, 7, 50)
         );
         assert_eq!(credits_to_wei(2.7), Some(2 * USD_WEI_PER_CREDIT));
+        assert_eq!(credits_to_wei(1e40), Some(u128::MAX));
         assert_eq!(unified_min_price_bound_wei(0.0), None);
         assert_eq!(
             unified_min_price_bound_wei(3.0),

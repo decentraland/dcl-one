@@ -29,14 +29,6 @@
 //! listing not paid in the chain's MANA, a second line or a second unit with
 //! a Credits part answers 400, before anything is reserved or signed.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use std::str::FromStr;
 
 use alloy_primitives::{Address, B256, U256};

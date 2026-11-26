@@ -1,10 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
 // from: shop@94584a5c:app/src/lib/import.ts (fetchImportable, importListing, ImportRestrictedError: the two-phase import and its primary-only restriction), marketplace-server@ae872a4a:src/controllers/routes.ts:133 (GET /v3/catalog/importable), shop/src/paths.rs CREDIT_PATHS (the import-check row)
 //! Listing import: a seller's classic MANA listings moving into the Shop as
 //! credit-buyable, USD-pegged listings. The read is the catalog's

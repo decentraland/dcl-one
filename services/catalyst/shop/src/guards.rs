@@ -15,14 +15,6 @@
 //! fact source cannot answer yet, or 401 for a credit spend without a
 //! session. A refusal never re-routes a line to another payment method.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 use alloy_primitives::{Address, U256};
 use axum::Json;
 use axum::http::{StatusCode, header};

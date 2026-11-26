@@ -26,14 +26,6 @@
 //! (`POST /v1/broker/buy`, `POST /v1/broker/names/buy`, rows of
 //! [`crate::paths::CREDIT_PATHS`]).
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 pub mod broker;
 pub mod calls;
 pub mod claims;

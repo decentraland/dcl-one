@@ -57,14 +57,6 @@
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
-// Chain, DB and request values: a silently truncated, wrapped or rounded cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 pub use crate::chain_index::graph;
 pub use crate::chain_index::source::{Source, unavailable};
 

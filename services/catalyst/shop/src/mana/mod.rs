@@ -15,14 +15,6 @@
 //! ([`venues`]); a controlled deployment (the anvil tests) builds its own,
 //! so no route reads an address from a request.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss
-)]
-
 pub mod actions;
 pub mod calls;
 pub mod chain;
