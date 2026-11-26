@@ -9,11 +9,9 @@ use serde_json::{Value, json};
 
 #[cfg(test)]
 use crate::interfaces::StreamingNotification;
+use crate::world_identity::WorldName;
 #[cfg(test)]
-use crate::{
-    Address,
-    world_identity::{Parcel, WorldName},
-};
+use crate::{Address, world_identity::Parcel};
 #[cfg(test)]
 use chrono::NaiveDateTime;
 
@@ -46,10 +44,18 @@ async fn cleanup(
             .bind(&event.world_name).fetch_all(&mut *tx).await?;
         admin_keys.extend(current);
     }
-    let mut ended = None;
+    let mut ended = Vec::new();
     if event.cleaned_at.is_none() {
-        let ingress:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id=$1 AND active AND ingress_id <> '')")
-            .bind(&event.place_id).fetch_one(&mut *tx).await?;
+        // A removed world ends the key of each of its scenes, by its key as
+        // `WorldName` spells it. A name no world can have names no scene room:
+        // the key under its catalogue place still ends, and the cleanup commits.
+        let world = event.world.then(|| {
+            let name = event.world_name.as_deref().unwrap_or_default();
+            name.trim().to_lowercase()
+        });
+        let world = world.as_deref();
+        let ingress =
+            streaming::removed_place_has_ingress(&mut *tx, &event.place_id, world).await?;
         if ingress && !state.livekit.configured {
             return Err(ApiError::http(503, "LiveKit ingress unavailable"));
         }
@@ -93,11 +99,12 @@ async fn cleanup(
         sqlx::query("UPDATE social.scene_admins SET active=false,removed_at=$2 WHERE active AND added_at <= $2 AND (($3 AND place_id=ANY($4::text[])) OR (NOT $3 AND place_id=$1 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE disabled IS FALSE AND world IS FALSE AND base_position=$1)))")
             .bind(&event.base_position).bind(event.removed_at).bind(event.world).bind(&admin_keys)
             .execute(&mut *tx).await?;
-        ended = streaming::end_removed_place(&mut tx, &event.place_id, event.removed_at).await?;
+        ended =
+            streaming::end_removed_place(&mut tx, &event.place_id, world, event.removed_at).await?;
         RemovedPlaces::mark_cleaned(&mut tx, event.event_id).await?;
     }
     tx.commit().await?;
-    if let Some(id) = ended {
+    for id in ended {
         streaming::settle_cleanup(state, id, &event.place_id);
     }
     if !event.notify {
@@ -517,6 +524,12 @@ mod tests {
             _: &WorldName,
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
 
@@ -2258,6 +2271,27 @@ mod tests {
             sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)")
                 .bind(key).bind(admin.as_str()).bind(at).execute(&pool).await.unwrap();
         }
+        // Each scene's key ends; another world's key stays.
+        let parsed = WorldName::parse(&world).unwrap();
+        let other = WorldName::parse(&format!("x{world}")).unwrap();
+        let scene_room = |world: &WorldName, scene: &str| {
+            crate::rooms::worlds_service_scene_room(
+                world,
+                &crate::world_identity::SceneId::parse(scene).unwrap(),
+            )
+        };
+        let mut keys = Vec::new();
+        for (place, room) in [
+            (grant.clone(), scene_room(&parsed, "bafy")),
+            (format!("{world}-b"), scene_room(&parsed, "bafyb")),
+            (format!("{world}-c"), scene_room(&other, "bafy")),
+        ] {
+            let id: uuid::Uuid = sqlx::query_scalar("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', $2, '', $3, 'test', $4) RETURNING id")
+                .bind(place).bind(uuid::Uuid::new_v4().to_string()).bind(room)
+                .bind(event.removed_at - chrono::Duration::seconds(1))
+                .fetch_one(&pool).await.unwrap();
+            keys.push(id);
+        }
         // A grant made after the removal, before a late cleanup: it stays.
         let later = Address::parse("0xcccccccccccccccccccccccccccccccccccccccc").unwrap();
         state
@@ -2282,6 +2316,58 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(bans, [format!("{world}:1,1"), format!("{world}x:0,0")]);
+        let mut still = Vec::new();
+        for id in &keys {
+            let active: bool =
+                sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            still.push(active);
+        }
+        assert_eq!(still, [false, false, true], "the world's scene keys end");
+    }
+
+    /// A world event whose name no world can have is still cleaned: the key
+    /// under its catalogue place ends, whatever room it streams into.
+    #[tokio::test]
+    async fn a_world_removal_without_a_valid_name_is_cleaned() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (state, _, event) = setup(pool.clone()).await;
+        sqlx::query("UPDATE explore.place_removal_pending SET world = true, world_name = 'not a world' WHERE event_id = $1")
+            .bind(event.event_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let room = crate::rooms::worlds_service_scene_room(
+            &WorldName::parse("unnamed.dcl.eth").unwrap(),
+            &crate::world_identity::SceneId::parse("bafy").unwrap(),
+        );
+        let key: uuid::Uuid = sqlx::query_scalar("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', $2, '', $3, 'test', $4) RETURNING id")
+            .bind(&event.place_id).bind(uuid::Uuid::new_v4().to_string()).bind(room)
+            .bind(event.removed_at - chrono::Duration::seconds(1))
+            .fetch_one(&pool).await.unwrap();
+        // Only the notice may fail; the cleanup commits first.
+        let _ = cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event).await;
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id = $1",
+        )
+        .bind(event.event_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(true);
+        assert!(cleaned);
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!active);
     }
 
     #[tokio::test]

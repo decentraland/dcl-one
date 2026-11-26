@@ -312,6 +312,14 @@ pub async fn open_trade_orders(
     state: &MarketplaceState,
     wanted: &[(String, String, String, String)],
 ) -> Result<std::collections::HashMap<(String, String, String), Order>, ApiError> {
+    Ok(open_trade_orders_on(state, &state.pool, wanted).await?)
+}
+
+pub(super) async fn open_trade_orders_on<'e>(
+    state: &MarketplaceState,
+    conn: impl sqlx::PgExecutor<'e>,
+    wanted: &[(String, String, String, String)],
+) -> Result<std::collections::HashMap<(String, String, String), Order>, sqlx::Error> {
     let mut out = std::collections::HashMap::new();
     if wanted.is_empty() {
         return Ok(out);
@@ -343,7 +351,7 @@ pub async fn open_trade_orders(
         .bind(column(1))
         .bind(column(2))
         .bind(column(3))
-        .fetch_all(&state.pool)
+        .fetch_all(conn)
         .await?;
     for r in &rows {
         let order = trade_row_order(r);
@@ -393,7 +401,15 @@ pub async fn trades_leg(
         None => &[ChainNet::Ethereum, ChainNet::Matic],
     };
     let (mut guarded, check) = if owned_items::walks_here(state) {
-        match owned_items::snapshot(&state.pool, nets, Rule::Fresh, false).await {
+        match owned_items::snapshot(
+            &state.pool,
+            state.settings.catalogue(),
+            nets,
+            Rule::Fresh,
+            false,
+        )
+        .await
+        {
             Ok(tx) => (Some(tx), OwnerCheck::Checked),
             Err(ReadError::NotReady(..)) => (None, OwnerCheck::Partial),
             Err(ReadError::Db(e)) => return Err(ApiError::internal(e.to_string()).into_response()),

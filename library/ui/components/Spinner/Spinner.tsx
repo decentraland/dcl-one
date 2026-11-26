@@ -1,22 +1,30 @@
 import type { CSSProperties, HTMLAttributes } from 'react'
 import styles from './Spinner.module.css'
 
-export type SpinnerProps = {
+type RingSpinner = {
+  /** `dark` draws the track for a light surface, `light` for a dark one (Figma "Property 1"). */
+  variant?: 'dark' | 'light'
+  size?: 16 | 20 | 24 | 30 | 40
+}
+
+type HudSpinner = {
   /**
-   * `dark` draws the track for a light surface, `light` for a dark one (Figma "Property 1"). The others are
-   * the Explorer HUD's rings, for dark surfaces. `thin`: a faint track a tenth of its size thick and a rounded
+   * The Explorer HUD's rings, for dark surfaces. `thin`: a faint track a tenth of its size thick and a rounded
    * arc in the primary colour. `thick`: the Figma ring stroked on the edge of its box, so it spills half its
    * stroke past the size. `chase`: no track; an arc grows to a circle, its tail chases its head, and it turns
    * orange, ruby and purple, a second each.
    */
-  variant?: 'dark' | 'light' | 'thin' | 'thick' | 'chase'
-  /** The ring's diameter in px. Without it the ring takes its variant's size: the Figma 30, or 28 for the HUD's. */
+  variant: 'thin' | 'thick' | 'chase'
+  /** The ring's diameter in px. Without it the ring is 28 px. */
   size?: number
+}
+
+export type SpinnerProps = (RingSpinner | HudSpinner) & {
   label?: string
 } & Omit<HTMLAttributes<HTMLSpanElement>, 'children' | 'role'>
 
-function sized(style: CSSProperties | undefined, size: number | undefined, extra?: CSSProperties): CSSProperties | undefined {
-  return size === undefined ? style : { ...style, width: size, height: size, ...extra }
+function sized(style: CSSProperties | undefined, size: number | undefined): CSSProperties | undefined {
+  return size === undefined ? style : { ...style, width: size, height: size }
 }
 
 export function Spinner({ variant = 'dark', size, label = 'Loading', className, style, ...rest }: SpinnerProps) {
@@ -58,6 +66,5 @@ export function Spinner({ variant = 'dark', size, label = 'Loading', className, 
         </svg>
       </span>
     )
-  // The Figma ring is 30 px with a 4 px track; a sized ring keeps that proportion.
-  return <span {...named} style={sized(style, size, size === undefined ? undefined : { borderWidth: (size * 2) / 15 })} />
+  return <span {...named} data-size={size ?? 30} style={style} />
 }

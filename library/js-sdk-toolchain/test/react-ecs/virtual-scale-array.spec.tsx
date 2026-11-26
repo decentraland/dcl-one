@@ -1,4 +1,4 @@
-import { Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
 import { YGUnit } from '../../packages/@dcl/ecs'
 import { components } from '../../packages/@dcl/ecs/src'
 import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'

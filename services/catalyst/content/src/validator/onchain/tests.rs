@@ -978,10 +978,21 @@ async fn a_block_the_rpc_never_answers_is_undecided_after_three_reads() {
     for (what, fault, needle) in faults {
         chain.clear();
         fault(&chain, usize::MAX);
+        let recorder = crate::series::test_support::recorder();
+        let metrics = dcl_metrics::set_default_local_recorder(&recorder);
         let err = access(Some(&chain.url), None)
             .l1_verification_block(TS)
             .await
             .unwrap_err();
+        drop(metrics);
+        let retries: f64 = recorder
+            .handle()
+            .render()
+            .lines()
+            .filter(|line| line.starts_with("dcl_block_fetch_retries_total{network="))
+            .filter_map(|line| line.rsplit_once(' ')?.1.parse::<f64>().ok())
+            .sum();
+        assert_eq!(retries, 2.0, "{what}: each read after the first");
         assert!(
             matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("block lookup") && m.contains(needle)),
             "{what}: {err}"

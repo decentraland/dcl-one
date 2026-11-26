@@ -111,6 +111,17 @@
     --button-hover: var(--dcl-neutrals-shadow);
     --button-pressed: var(--dcl-neutrals-shadow);
   }
+  .root[data-tone='danger'][data-variant='primary'] {
+    --button-background: var(--dcl-system-red-dark-2);
+    --button-hover: color-mix(in srgb, var(--dcl-system-red-dark-2) 85%, var(--dcl-neutrals-black));
+    --button-pressed: var(--dcl-system-red-dark-2);
+  }
+  .root[data-tone='danger'][data-variant='outline'] {
+    --button-color: var(--dcl-feedback-error-subtle);
+    --button-border: currentColor;
+    --button-hover: var(--dcl-transparencies-white-10);
+    box-shadow: none;
+  }
   .root[data-variant='text'] {
     --button-background: transparent;
     --button-color: var(--dcl-neutrals-snow);
@@ -137,7 +148,7 @@
     ):not([aria-disabled='true']) {
     color: var(--dcl-neutrals-white);
   }
-  .root[data-variant='outline']:is(
+  .root[data-variant='outline']:not([data-tone='danger']):is(
       :hover,
       :active,
       [data-force-state='hover'],

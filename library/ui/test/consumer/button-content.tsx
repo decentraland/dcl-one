@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { useState } from 'react'
-import { Button } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 const leading = <span style={{ display: 'block', width: 20, height: 20 }} data-marker="leading" />,
   trailing = <span style={{ display: 'block', width: 20, height: 20 }} data-marker="trailing" />
@@ -112,6 +112,15 @@ function Fixture() {
       </Button>
       <output>{calls}</output>
       <span id="target">Destination</span>
+      {([16, 20, 24, 30, 40] as const).map((size) => (
+        <Spinner key={size} size={size} label={`Loading at ${size}px`} />
+      ))}
+      <Button tone="danger" size="sm" variant="outline">
+        Remove listing
+      </Button>
+      <Button tone="danger" size="md">
+        Confirm removal
+      </Button>
     </main>
   )
 }
