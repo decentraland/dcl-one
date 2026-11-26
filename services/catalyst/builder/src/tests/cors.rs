@@ -3,8 +3,7 @@
 //! front-ends when it is unset) may read the answers, any other origin may
 //! not; a preflight is answered before authentication, the database and the
 //! request budgets; a signed request is answered as it would be without an
-//! `Origin`, since signatures, not origins, authorize; and the public file
-//! route answers every origin, as the Marketplace and players read it.
+//! `Origin`, since signatures, not origins, authorize.
 //! Every node here has a pool that never connects.
 
 use std::sync::Arc;
@@ -23,10 +22,9 @@ const EXACT: &str = "https://partner.example";
 const FOREIGN: &str = "https://decentraland.example.attacker.example";
 const ORIGINS: &str =
     r" regex:^https://(.{1,50}\.)?decentraland\.example$ ; https://partner.example ;";
-const HASH: &str = "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy";
 const EXPOSED: &str =
     "etag,cache-control,content-language,content-type,expires,last-modified,pragma,retry-after";
-const METHODS: &str = "GET,HEAD,POST,PUT,PATCH,DELETE";
+const METHODS: &str = "GET,HEAD,PUT,DELETE";
 
 fn raw(origin: Option<&str>, method: Option<&str>) -> crate::RawSettings {
     crate::RawSettings {
@@ -110,9 +108,7 @@ fn listed_routes(id: Uuid) -> Vec<(&'static str, String)> {
     vec![
         ("GET", format!("/v1/collections/{id}")),
         ("PUT", format!("/v1/items/{id}")),
-        ("POST", "/v1/validator/claims".to_string()),
-        ("GET", format!("/v1/storage/contents/{HASH}/exists")),
-        ("POST", "/v1/newsletter".to_string()),
+        ("DELETE", format!("/v1/items/{id}")),
     ]
 }
 
@@ -163,18 +159,11 @@ async fn a_preflight_is_answered_before_authentication_the_database_and_any_budg
     .await;
     let id = Uuid::new_v4();
     let signed = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-9,x-identity-timestamp,x-identity-metadata";
-    let validator = "content-type,x-wearable-validator-signature,x-wearable-validator-timestamp";
     for mount in ["", "/builder-api"] {
         for (path, method, headers) in [
             (format!("{mount}/v1/items/{id}"), "PUT", signed),
             (format!("{mount}/v1/collections/{id}"), "GET", signed),
-            (format!("{mount}/v1/items/{id}/files"), "POST", signed),
-            (format!("{mount}/v1/validator/claims"), "POST", validator),
-            (
-                format!("{mount}/v1/collections/{id}/validation-result"),
-                "POST",
-                validator,
-            ),
+            (format!("{mount}/v1/items/{id}"), "DELETE", signed),
         ] {
             for _ in 0..3 {
                 let (status, answered, body) =
@@ -274,10 +263,10 @@ fn the_settings_are_read_as_builder_server_is_deployed_and_refuse_what_the_node_
         |origin: Option<&str>, method: Option<&str>| crate::Settings::parse(raw(origin, method));
     let any = parsed(Some("*"), None).unwrap();
     assert!(any.cors.allows("https://attacker.example"));
-    let listed = parsed(Some(ORIGINS), Some(" get, POST ,head ")).unwrap();
+    let listed = parsed(Some(ORIGINS), Some(" get, PUT ,head ")).unwrap();
     assert!(listed.cors.allows(DAPP) && listed.cors.allows(EXACT));
     assert!(!listed.cors.allows("https://partner.example/"));
-    assert_eq!(listed.cors.methods(), "GET,POST,HEAD");
+    assert_eq!(listed.cors.methods(), "GET,PUT,HEAD");
     assert_eq!(parsed(None, Some("*")).unwrap().cors.methods(), METHODS);
     for (origin, method) in [
         (Some(r"regex:^https://(?=x)decentraland\.example$"), None),
@@ -285,6 +274,7 @@ fn the_settings_are_read_as_builder_server_is_deployed_and_refuse_what_the_node_
         (Some(" ; "), None),
         (None, Some("BREW")),
         (None, Some("GET,")),
+        (None, Some("POST")),
     ] {
         let error = parsed(origin, method).unwrap_err().to_string();
         assert!(
