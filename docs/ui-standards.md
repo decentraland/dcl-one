@@ -395,8 +395,7 @@ formatting skip `apps/hud`. Their tests live beside them: `react-web`'s Vitest
 runs all of them against its host, `apps/ui3`'s `play-shared` project runs them
 again against `/play`'s host (`apps/ui3/src/play/host.ts`), and `library/ui`'s `hud` project runs the UI tests that need
 no package only the hosts install (all but `apps/hud/test/hosted/`) against a
-web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
-foundations yet.
+web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites root (`apps/sites/src/routes/root.tsx`) loads the shared foundations' colours, spacing and layout, so `/play` and its app document resolve the `--dcl-*` tokens shared components read; it does not load `foundations.css` itself, because the Inter faces are the app's own.
 
 ### Integration
 
