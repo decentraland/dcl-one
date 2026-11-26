@@ -73,7 +73,7 @@ async fn write_gate(
 }
 
 /// A JSON object body, or credits-server's `Invalid request body`.
-fn json_object(body: &Bytes) -> Result<Map<String, JsonValue>, StudioError> {
+pub(super) fn json_object(body: &Bytes) -> Result<Map<String, JsonValue>, StudioError> {
     match serde_json::from_slice(body) {
         Ok(JsonValue::Object(map)) => Ok(map),
         _ => Err(StudioError::Invalid("Invalid request body".into())),
@@ -107,7 +107,7 @@ async fn create_studio(
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct PageQuery {
+pub(super) struct PageQuery {
     limit: Option<String>,
     offset: Option<String>,
 }
@@ -115,7 +115,7 @@ struct PageQuery {
 impl PageQuery {
     /// credits-server's reading: a positive limit up to [`MAX_PAGE_SIZE`] and
     /// a non-negative offset; anything else is the default.
-    fn page(&self) -> (i64, i64) {
+    pub(super) fn page(&self) -> (i64, i64) {
         let number = |v: &Option<String>| v.as_deref().and_then(|v| v.trim().parse::<i64>().ok());
         let limit = number(&self.limit)
             .filter(|l| *l > 0)
