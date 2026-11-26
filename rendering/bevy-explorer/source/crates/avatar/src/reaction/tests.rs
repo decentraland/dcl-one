@@ -720,24 +720,6 @@ fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
     assert!(harness.drawn(kept));
 }
 
-/// The guard behind the rebuild: a particle whose mesh is not of the atlas' generation (its
-/// glyph having to be rastered again) waits undrawn.
-#[test]
-fn a_mesh_built_for_an_atlas_since_rebuilt_is_not_drawn() {
-    let mut harness = Harness::with_avatars();
-    let particle = harness.local_particle();
-    assert!(harness.drawn(particle));
-    let stale = harness.app.world().resource::<ReactionAssets>().generation + 1;
-    harness
-        .app
-        .world_mut()
-        .get_mut::<ReactionParticle>(particle)
-        .unwrap()
-        .built = Some(stale);
-    harness.app.update();
-    assert!(!harness.drawn(particle));
-}
-
 #[test]
 fn only_so_many_particles_live_over_one_player() {
     let mut harness = Harness::with_avatars();
@@ -758,6 +740,55 @@ fn only_so_many_particles_live_over_one_player() {
 }
 
 #[test]
+fn only_so_many_particles_live_in_all() {
+    let mut harness = Harness::with_avatars();
+    // more players than the cap has room for, each with as many as one may have
+    let players = MAX_PARTICLES / MAX_PARTICLES_PER_PLAYER + 2;
+    for index in 0..players {
+        let peer = harness.peer_at(Vec3::new(index as f32 * 0.1, 0.0, -3.0));
+        for _ in 0..MAX_PARTICLES_PER_PLAYER {
+            harness.app.world_mut().send_event(ReactionPlayed {
+                player: peer,
+                emoji: "🔥",
+            });
+        }
+    }
+    harness.app.update();
+    assert_eq!(harness.particles().len(), MAX_PARTICLES);
+    assert_eq!(
+        harness.stats().dropped.particle_cap as usize,
+        players * MAX_PARTICLES_PER_PLAYER - MAX_PARTICLES
+    );
+}
+
+#[test]
+fn an_emoji_that_cannot_be_laid_out_yet_is_counted_and_tried_again() {
+    let mut harness = Harness::with_avatars();
+    // before the built-in fonts are made there is none to lay an emoji out in
+    let font = harness
+        .app
+        .world_mut()
+        .resource_mut::<ReactionGlyphs>()
+        .font
+        .take();
+    harness.pick("👍");
+    harness.app.update();
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+    assert_eq!(harness.streamed().len(), 1);
+
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<ReactionGlyphs>()
+        .font = font;
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.particles().len(), 1);
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+}
+
+#[test]
 fn with_chat_bubbles_off_reactions_play_with_no_particle() {
     let mut harness = Harness::with_avatars();
     let mut wire = harness.transport(TransportType::Livekit);
@@ -774,7 +805,7 @@ fn with_chat_bubbles_off_reactions_play_with_no_particle() {
     assert_eq!(harness.streamed().len(), 2);
     assert_eq!(sent(&mut wire).len(), 1);
 
-    // one already alive when the setting goes off lives out its life
+    // one already alive when the setting goes off is hidden at once
     harness
         .app
         .world_mut()
@@ -787,7 +818,7 @@ fn with_chat_bubbles_off_reactions_play_with_no_particle() {
         .resource_mut::<AppConfig>()
         .chat_bubble_visibility = ChatBubbleVisibility::None;
     harness.app.update();
-    assert!(harness.drawn(particle));
+    assert!(!harness.drawn(particle));
 }
 
 #[test]

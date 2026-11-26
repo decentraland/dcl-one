@@ -131,6 +131,9 @@ impl Plugin for ReactionPlugin {
         .add_console_command::<diagnostics::ReactionSimulateCommand, _>(
             diagnostics::reaction_simulate,
         )
+        .add_console_command::<diagnostics::ReactionAtlasRebuildCommand, _>(
+            diagnostics::reaction_atlas_rebuild,
+        )
         .add_debug_section(diagnostics::SECTION);
     }
 }
@@ -181,6 +184,9 @@ struct Dropped {
     particle_cap: u32,
     /// Reactions that played with no particle: nothing shows over their player.
     not_shown: u32,
+    /// Reactions that played with no particle: their emoji could not be laid out, or there was
+    /// no font yet to lay it out in.
+    no_glyphs: u32,
 }
 
 /// On a reaction's particle. Its player is the one it is [`DespawnWith`].
@@ -231,8 +237,7 @@ struct ReactionGlyphs {
 }
 
 struct EmojiGlyphs {
-    /// `None` for an emoji that can't be laid out.
-    text: Option<Shaped>,
+    text: Shaped,
     /// Its mesh, and the generation of the atlas the mesh samples.
     mesh: Option<(Handle<Mesh>, u32)>,
 }
@@ -259,7 +264,8 @@ impl EmojiShaper<'_> {
         }
         // nothing is laid out before the built-in fonts are made
         let font = font.as_ref()?;
-        let glyphs = laid.entry(emoji).or_insert_with(|| {
+        if !laid.contains_key(emoji) {
+            // one that can't be laid out now is tried again the next time it plays
             let text = shaper.shape(
                 &ATLAS,
                 font,
@@ -267,13 +273,11 @@ impl EmojiShaper<'_> {
                 &[Span::new(emoji, Color::WHITE)],
                 ATLAS.raster_font_size,
                 None,
-            );
-            if text.is_none() {
-                warn!("can't lay out the reaction {emoji:?}");
-            }
-            EmojiGlyphs { text, mesh: None }
-        });
-        glyphs.text.as_ref().map(|text| glyph_use(&ATLAS, [text]))
+            )?;
+            laid.insert(emoji, EmojiGlyphs { text, mesh: None });
+        }
+        laid.get(emoji)
+            .map(|glyphs| glyph_use(&ATLAS, [&glyphs.text]))
     }
 
     /// The emoji's mesh for the atlas as it is now. `None` while its glyphs are being
@@ -286,10 +290,7 @@ impl EmojiShaper<'_> {
                 return Some(mesh.clone());
             }
         }
-        let (_, colour) = self
-            .shaper
-            .glyphs(&ATLAS, glyphs.text.as_ref()?, budget)
-            .ok()?;
+        let (_, colour) = self.shaper.glyphs(&ATLAS, &glyphs.text, budget).ok()?;
         let mesh = self.meshes.add(emoji_mesh(&colour)?);
         glyphs.mesh = Some((mesh.clone(), generation));
         Some(mesh)
@@ -496,8 +497,7 @@ fn flush_reactions(
     }
 }
 
-/// Each reaction played gets a particle, unless the user has chat bubbles, and reactions with
-/// them, off, or nothing shows over its player as it plays, or as many particles as may be are
+/// Each reaction played gets a particle, unless the user has chat bubbles and reactions off, or nothing shows over its player as it plays, or as many particles as may be are
 /// alive already. One with no particle takes no room in the glyph atlas.
 fn spawn_reaction_particles(
     mut commands: Commands,
@@ -538,6 +538,8 @@ fn spawn_reaction_particles(
             continue;
         }
         let Some(glyph_use) = shaper.glyph_use(reaction.emoji) else {
+            debug!("no glyphs for the reaction {:?}", reaction.emoji);
+            stats.dropped.no_glyphs += 1;
             continue;
         };
         commands.spawn((
@@ -639,10 +641,11 @@ fn build_reaction_glyphs(
 }
 
 /// Move each particle on from its player's anchor as the avatar stands this frame, and show
-/// it while its player's reactions show.
+/// it while its player's reactions show and the user has them on.
 fn simulate_reaction_particles(
     mut commands: Commands,
     time: Res<Time>,
+    config: Res<AppConfig>,
     assets: Res<ReactionAssets>,
     places: ReactionPlaces,
     mut particles: Query<(
@@ -656,6 +659,8 @@ fn simulate_reaction_particles(
     )>,
 ) {
     let view = places.view();
+    // switched off, those alive are hidden for what is left of their second
+    let switched_on = config.chat_bubble_visibility != ChatBubbleVisibility::None;
     for (entity, owner, mut particle, mut transform, mut tag, mut mesh, mut visibility) in
         &mut particles
     {
@@ -670,7 +675,9 @@ fn simulate_reaction_particles(
         }
 
         let pose = particle.motion.pose().filter(|_| {
-            place.is_some_and(|(_, shown)| shown) && particle.built == Some(assets.generation)
+            switched_on
+                && place.is_some_and(|(_, shown)| shown)
+                && particle.built == Some(assets.generation)
         });
         let Some(pose) = pose else {
             if *visibility != Visibility::Hidden {

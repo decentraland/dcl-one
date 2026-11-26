@@ -974,8 +974,9 @@ impl GlyphAtlas {
         self.generation
     }
 
-    /// Ask for the rebuild that a glyph with no room left asks for, for a test of what a
-    /// rebuild does to what draws from the atlas.
+    /// Have the atlas rebuilt at its next upkeep, as a glyph with no room left does: its
+    /// textures are replaced and the glyphs nothing draws are freed. With none to free, the
+    /// atlas is left as it is.
     pub fn request_rebuild(&mut self) {
         self.rebuild_requested = true;
     }
