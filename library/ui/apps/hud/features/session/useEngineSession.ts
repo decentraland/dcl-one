@@ -278,10 +278,9 @@ export interface BackpackState {
   warnAboutClearingExtraOutfits: boolean
   /** The saved outfits have arrived: until then no slot says whether it holds one. */
   outfitsLoaded: boolean
-  /** The save or delete asked of the scene and not yet ended, which no other may join; null when none. */
+  /** The save or delete asked of the scene and not yet ended; null when none. */
   outfitOperation: OutfitOperation | null
-  /** The slot whose outfit is being put on, from the request to its end; null when none. It may overlap
-   *  an operation. */
+  /** The slot whose outfit is being put on, from the request to its end; null when none. */
   outfitEquipping: number | null
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
@@ -2382,7 +2381,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitBusy': {
-          // An end clears only the work it names: an equip may run beside a save or a delete.
+          // An end clears only the work it names.
           const { slot, action, busy } = msg
           if (action === 'equip') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
           else setOutfitOperation((prev) => (busy ? { slot, action } : prev?.slot === slot && prev.action === action ? null : prev))

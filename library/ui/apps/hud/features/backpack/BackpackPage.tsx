@@ -13,7 +13,6 @@ import emptyCategoryArt from '../../assets/backpack/empty-category.webp'
 import emotesDeck from '../../assets/backpack/emotes-deck.webp'
 import outfitEmptyArt from '../../assets/backpack/outfit-empty.webp'
 import outfitArt from '../../assets/backpack/outfit-container.webp'
-import outfitBusyArt from '../../assets/backpack/outfit-outline.webp'
 import addGradient from '../../assets/backpack/add-gradient.webp'
 import nameBannerArt from '../../assets/backpack/outfits-name-banner.webp'
 import deleteIcon from '../../assets/backpack/icon-delete.webp'
@@ -275,7 +274,6 @@ function OutfitSlotCard({
   equipped,
   loading,
   busy,
-  operationLocked,
   equipping,
   inert,
   onSave,
@@ -289,10 +287,8 @@ function OutfitSlotCard({
   equipped: boolean
   loading: boolean
   busy: 'save' | 'delete' | null
-  /** A save or a delete runs in some slot: none offers Save or its delete button. */
-  operationLocked: boolean
   equipping: boolean
-  /** Another slot's outfit is being put on: this one answers nothing. */
+  /** Another slot's outfit is being saved, deleted or put on: this one answers nothing. */
   inert: boolean
   onSave: () => void
   onEquip: () => void
@@ -309,7 +305,7 @@ function OutfitSlotCard({
     return (
       <div
         className={`${styles.outfitSlot} ${styles.outfitBusy}`}
-        style={{ backgroundImage: `url(${outfitBusyArt})` }}
+        style={{ backgroundImage: `url(${outfit ? outfitArt : outfitEmptyArt})` }}
         role="group"
         aria-label={`${busy === 'save' ? 'Saving' : 'Deleting'} outfit ${index + 1}`}
         aria-busy="true"
@@ -319,13 +315,12 @@ function OutfitSlotCard({
     )
   }
   if (!outfit) {
-    const locked = operationLocked || inert
     return (
       <button
         type="button"
-        className={`${styles.outfitSlot} ${styles.outfitEmpty} ${firstEmpty && !locked ? styles.outfitFirstEmpty : ''} ${locked ? styles.outfitLocked : ''}`.trim()}
+        className={`${styles.outfitSlot} ${styles.outfitEmpty} ${firstEmpty && !inert ? styles.outfitFirstEmpty : ''} ${inert ? styles.outfitLocked : ''}`.trim()}
         style={{ backgroundImage: `url(${outfitEmptyArt})` }}
-        disabled={locked}
+        disabled={inert}
         onClick={onSave}
         aria-label={`Save outfit in slot ${index + 1}`}
       >
@@ -351,11 +346,9 @@ function OutfitSlotCard({
       {/* the card's own button starts under the delete button's strip: the two never share an area */}
       <button type="button" className={styles.outfitThumbs} disabled={equipping || inert} onDoubleClick={onEquip} aria-label={`Outfit ${index + 1}`} />
       <span className={styles.outfitRing} aria-hidden="true" />
-      {!operationLocked && (
-        <button type="button" className={styles.outfitDelete} disabled={inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
-          <MaskIcon src={deleteIcon} size={24} />
-        </button>
-      )}
+      <button type="button" className={styles.outfitDelete} disabled={inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
+        <MaskIcon src={deleteIcon} size={24} />
+      </button>
       <button type="button" className={styles.outfitEquipBtn} disabled={equipping || inert} aria-busy={equipping} aria-label="EQUIP" onClick={onEquip}>
         {equipping ? <Spinner size={20} color="var(--text)" /> : 'EQUIP'}
       </button>
@@ -453,8 +446,6 @@ export function BackpackPage({
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<Wearable | Emote | null>(null)
-  // The slot whose delete waits for the player's answer; it shows as deleting meanwhile.
-  const [confirmingDelete, setConfirmingDelete] = useState<number | null>(null)
   // The emote wheel slot (0–9) an assigned emote will go into; the left list selects it.
   const [emoteSlot, setEmoteSlot] = useState(1)
   const [emotePage, setEmotePage] = useState(0)
@@ -627,13 +618,12 @@ export function BackpackPage({
   }
 
   const confirmDeleteOutfit = (slot: number): void => {
-    setConfirmingDelete(slot)
     void showConfirm({ title: 'Are you sure you want to delete this Outfit?', cancelLabel: 'CANCEL', confirmLabel: 'YES' }).then((yes) => {
-      setConfirmingDelete(null)
       if (yes) backpack.deleteOutfit(slot)
     })
   }
-  const outfitOperationLocked = confirmingDelete != null || backpack.outfitOperation != null
+  // The slot being worked on, if any: every other slot answers nothing until it ends.
+  const outfitWorkSlot = backpack.outfitOperation?.slot ?? backpack.outfitEquipping
 
   const inOutfits = tab === 'wearables' && section === 'outfits'
   // The COLOR button for categories that edit a colour, once the bridge has reported that colour.
@@ -747,10 +737,9 @@ export function BackpackPage({
                               firstEmpty={firstEmpty}
                               equipped={saved != null && outfitMatchesEquipped(saved)}
                               loading={!backpack.outfitsLoaded}
-                              busy={confirmingDelete === i ? 'delete' : backpack.outfitOperation?.slot === i ? backpack.outfitOperation.action : null}
-                              operationLocked={outfitOperationLocked}
+                              busy={backpack.outfitOperation?.slot === i ? backpack.outfitOperation.action : null}
                               equipping={backpack.outfitEquipping === i}
-                              inert={backpack.outfitEquipping != null && backpack.outfitEquipping !== i}
+                              inert={outfitWorkSlot != null && outfitWorkSlot !== i}
                               onSave={() => backpack.saveOutfit(i)}
                               onEquip={() => backpack.equipOutfit(i)}
                               onDelete={() => confirmDeleteOutfit(i)}

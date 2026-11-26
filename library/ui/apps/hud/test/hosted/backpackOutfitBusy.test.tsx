@@ -198,16 +198,12 @@ describe('the Saved Outfits slots', () => {
       expect(deleteOutfit).not.toHaveBeenCalled()
     })
 
-    it('should show the slot as being deleted', () => {
-      expect(screen.getByRole('group', { name: 'Deleting outfit 1' })).toHaveAttribute('aria-busy', 'true')
+    it('should keep showing the outfit while the question is open', () => {
+      expect(screen.getByRole('button', { name: 'Outfit 1', hidden: true })).toBeInTheDocument()
     })
 
-    it('should take the delete button off the other saved outfit', () => {
-      expect(screen.queryByRole('button', { name: 'Delete Outfit 2' })).toBeNull()
-    })
-
-    it('should not let the player save into an empty slot', () => {
-      expect(screen.getByRole('button', { name: 'Save outfit in slot 3' })).toBeDisabled()
+    it('should not show the slot as being deleted', () => {
+      expect(screen.queryByRole('group', { name: 'Deleting outfit 1', hidden: true })).toBeNull()
     })
 
     describe('and the player cancels', () => {
@@ -260,13 +256,12 @@ describe('the Saved Outfits slots', () => {
       expect(screen.getByRole('button', { name: 'Save outfit in slot 4' })).toBeDisabled()
     })
 
-    it('should take the delete buttons off the saved outfits', () => {
-      expect(screen.queryByRole('button', { name: /^Delete Outfit/ })).toBeNull()
+    it('should not let the player delete a saved outfit', () => {
+      expect(screen.getByRole('button', { name: 'Delete Outfit 1' })).toBeDisabled()
     })
 
-    it('should still let the player equip a saved outfit', async () => {
-      await userEvent.click(within(screen.getByRole('button', { name: 'Outfit 1' }).parentElement!).getByRole('button', { name: 'EQUIP' }))
-      expect(equipOutfit).toHaveBeenCalledExactlyOnceWith(0)
+    it('should not let the player equip a saved outfit', () => {
+      expect(within(screen.getByRole('button', { name: 'Outfit 1' }).parentElement!).getByRole('button', { name: 'EQUIP' })).toBeDisabled()
     })
   })
 
@@ -277,6 +272,10 @@ describe('the Saved Outfits slots', () => {
 
     it('should show that slot as being deleted', () => {
       expect(screen.getByRole('group', { name: 'Deleting outfit 2' })).toHaveAttribute('aria-busy', 'true')
+    })
+
+    it('should not let the player equip another outfit', () => {
+      expect(within(screen.getByRole('button', { name: 'Outfit 1' }).parentElement!).getByRole('button', { name: 'EQUIP' })).toBeDisabled()
     })
   })
 

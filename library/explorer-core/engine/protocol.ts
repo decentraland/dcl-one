@@ -2373,7 +2373,7 @@ export interface OutfitSaveFailedMessage {
 }
 
 /** A save, a delete or an equip of the saved outfit in `slot` runs in the scene from `busy: true` until
- *  `busy: false`, which follows every outcome (scene → page). An equip may overlap a save or a delete. */
+ *  `busy: false`, which follows every outcome (scene → page). */
 export interface OutfitBusyMessage {
   kind: 'outfitBusy'
   slot: number

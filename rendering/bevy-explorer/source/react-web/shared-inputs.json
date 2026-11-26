@@ -6783,7 +6783,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "6dbbcfebee7a8a094b58bd6b34782d85c78c1e7013ad913dc9f0432d02638349"
+      "sha256": "e3f81fc17e60f882fa470c51e37176986d097fa9b926b4c0060cd47716ea253a"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -7532,10 +7532,6 @@
     {
       "path": "library/ui/apps/hud/assets/backpack/outfit-empty.webp",
       "sha256": "25651966e3d215f240e56bacdf7b62bedfa479b4bbb741259ef83036680c1fcf"
-    },
-    {
-      "path": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
-      "sha256": "032dc0254293e981d0f102facc11192e1b24bb2093a793ec52621888521778d8"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/outfits-name-banner.webp",
@@ -9407,7 +9403,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "fb28fa11a157857ca39e55b1c03fbfa5e2da1eb2700d1be1f3c07e7515aa1bb2"
+      "sha256": "78ae93395c2d85b096d77643454a340a6cda4024082a665c2c9f4466a50d4d43"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -10395,7 +10391,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "301b94c6ed27af74970b8de6540a86c76ebf5917d3cb7d40c1034b7c679df7f2"
+      "sha256": "09403ada9bd57da1ce3efef0d2cb8561e52c0c7797d8cbe1139aa354dd6e1168"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10783,7 +10779,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
-      "sha256": "1a9afebd98a5fa0be96340037a4acd18729d1d7682aa84876e94ee360cf640f5"
+      "sha256": "5080e65c4347803eb7cbee197e0bfab4b9a5a817c0c50d8b7134e9747376e31f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
@@ -18926,21 +18922,6 @@
     {
       "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
       "to": "library/ui/apps/hud/assets/backpack/outfit-empty.webp",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
       "kind": "test:runtime"
     },
     {
@@ -50751,21 +50732,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/backpack/outfit-empty.webp",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/outfit-outline.webp",
       "kind": "test:asset"
     },
     {
