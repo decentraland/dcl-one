@@ -1007,6 +1007,12 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
         .manifests
         .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
+    // the base settled long ago, so the deadline counts from the request alone
+    io.bevy_variants.route.send_modify(|route| {
+        if let Base::On(_, settled_at) = &mut route.base {
+            *settled_at = web_time::Instant::now() - MANIFEST_DEADLINE * 2;
+        }
+    });
     let requested = |ago: Duration| {
         io.bevy_variants
             .requested_at
