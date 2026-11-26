@@ -74,6 +74,10 @@ const MASK_CUTOFF: f32 = 0.5;
 // The ground's own normal turns so much from one metre to the next that neighbouring tufts lit
 // by it stand out from each other as light and dark patches.
 const NORMAL_REACH: f32 = 4.0;
+// The view the grass is lit from lies along its normal, this much short of it: bevy raises
+// 1 - N.V to a power without clamping it, and along the normal itself rounding puts N.V a hair
+// above 1 on some pixels, which that power turns into a NaN, drawn black.
+const VIEW_ALONG_NORMAL: f32 = 0.9999;
 
 fn hash_u32(value: u32) -> u32 {
     var x = value;
@@ -281,7 +285,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // Lit as seen from straight above its slope, wherever the camera is: bevy's diffuse light
     // and its highlight both change with the view direction, and unity-explorer's grass, its
     // highlights off, looks the same from every angle.
-    pbr_input.V = normal;
+    pbr_input.V = normal * VIEW_ALONG_NORMAL;
 
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
