@@ -141,10 +141,12 @@ values to pass arbitrary colours or palette values from props.
 
 - Build components from custom browser primitives (native elements, ARIA attributes and DOM events). Do not introduce Base UI or another component kit, headless or styled, as the base of a component.
 - Look in the shared library before building or importing a component: `@dcl/one-ui` exports the shared components, and [`docs/ui-components.md`](ui-components.md) lists them with their consumers. Use the shared component when one covers the need; when it needs another look, add or extend a variant on it.
-- When no shared component covers the need:
+- When no shared component covers a need that more than one surface has:
   - if the component is in the Figma library, build it in `library/ui/components` from the template and export it from `library/ui/index.ts`;
-  - if it is not in the Figma library, request it in [the shared UI backlog](https://github.com/decentraland/dcl-one/issues/644) so design adds it there, then build it in `library/ui`. A change that cannot wait says in its PR which component is missing and links the request.
-- Do not add a component to `apps/ui3/src/atoms` or `apps/ui3/src/components`, and do not add an import of one in new code. Code that already imports one keeps it until its surface migrates ([migration status](ui-components.md)). A surface that cannot resolve `@dcl/one-ui` yet reuses its existing components and says so in the PR.
+  - if it is not in the Figma library, ask design for it with an issue in this repository before building it: search the open issues first and add to the one that already asks for it, or open one and list it in [the shared UI backlog](https://github.com/decentraland/dcl-one/issues/644). A change that cannot wait says in its PR which component is missing and links the issue.
+- A component one app uses is [app-specific UI](#app-specific-ui): it goes in `library/ui/apps/<app>/` and needs no request.
+- `apps/ui3` is not the destination of any UI. Do not add a component to `apps/ui3/src/components`. In a surface that imports `@dcl/one-ui` (Sites and the web Shop), added code does not import an `apps/ui3` atom or component; code that already imports one keeps it until that component migrates.
+- Three surfaces cannot import `@dcl/one-ui` yet and keep building from their own kit until they can ([single-source ADR](adr/2026-11-24-library-ui-single-source.md), which records what blocks each): Creator Hub and the inspector build from the `apps/ui3` atoms, which keep receiving the components those two need, and the Explorer HUD with its in-world Shop builds from `library/ui/apps/hud/design` and the HUD's tokens, under `rendering/bevy-explorer/source/react-web/AGENTS.md` and its `review.md`. A component added to one of those kits for a need a shared component already covers still says why in its PR.
 - Put components shared by multiple apps or the Bevy HUD in `library/ui/components`.
 - Once `library/ui` is implemented, put components and styles used by one app
   only in `library/ui/apps/<app>/`; until then they stay in the app. See
@@ -221,13 +223,13 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 
 ### Review checklist
 
-A review of a change to web UI, by a person or an agent, checks each point and reports a miss as a finding:
+A review of a change to web UI, by a person or an agent, checks each point and reports a miss as a finding. The points apply to the surfaces that import `@dcl/one-ui`: Sites, the web Shop and `library/ui` outside `library/ui/apps/hud`. For Creator Hub and the inspector only the first point's ban on new files under `apps/ui3/src/components` applies, and a review of the Explorer HUD or its in-world Shop follows `rendering/bevy-explorer/source/react-web/review.md` instead ([Composition](#composition) says why).
 
-- No new file under `apps/ui3/src/atoms` or `apps/ui3/src/components`, and no new import of them (`@ui/atoms/…`, `@ui/components/…`) in added code.
+- No new component file under `apps/ui3/src/components`, and no new import of an `apps/ui3` atom or component (`@ui/atoms/…`, `@ui/components/…`) in added code. A test, or a file that only moved, is not a new component.
 - No new component that duplicates one `@dcl/one-ui` exports. Compare the added components with [`docs/ui-components.md`](ui-components.md).
 - A new shared component lives in `library/ui/components`, is exported from `library/ui/index.ts`, and has tests, a gallery page and a row in `docs/ui-components.md`.
 - Shared components are imported from `@dcl/one-ui`, not from a path inside it; stylesheets and the modules the `--shared-imports` check accepts are the exceptions.
-- A component missing from both the shared library and the Figma library has a linked request in the shared UI backlog.
+- A component more than one surface needs, missing from both the shared library and the Figma library, has a linked issue that asks design for it. App-specific UI in `library/ui/apps/<app>/` needs none.
 - Colours, spacing, radii and type sizes come from `--dcl-*` tokens where one has the value.
 
 ## App-specific UI
