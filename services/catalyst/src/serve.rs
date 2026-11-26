@@ -1189,6 +1189,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         &explore,
         explorer_api.onboarding.clone(),
         analytics,
+        communities::mirror::thumbnail_source(
+            &config.social.communities_mirror_thumbnail_url,
+            &local,
+        )
+        .context("COMMUNITIES_MIRROR_THUMBNAIL_URL")?,
     )?;
     social
         .rpc
@@ -1352,9 +1357,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         &config.social.communities_upstream_url,
         "COMMUNITIES_UPSTREAM_URL",
     )? {
-        let thumbnail_base =
-            explore::MirrorSource::checked(&config.social.communities_mirror_thumbnail_url, &local)
-                .context("COMMUNITIES_MIRROR_THUMBNAIL_URL")?;
+        let thumbnail_base = social
+            .communities
+            .settings
+            .thumbnail_upstream
+            .clone()
+            .context("COMMUNITIES_MIRROR_THUMBNAIL_URL is required when mirroring communities")?;
         social.communities.set_mirror_source(upstream.base());
         communities::mirror::spawn_job(
             social.communities.clone(),

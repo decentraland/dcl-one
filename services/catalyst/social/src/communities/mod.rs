@@ -103,6 +103,8 @@ pub struct Settings {
     /// carry `?v=<hash>`, so a caching CDN must key on `v` only and strip
     /// other query parameters.
     pub cdn_url: String,
+    /// Public upstream asset base for a temporary redirect when imported artwork is missing here.
+    pub thumbnail_upstream: Option<crate::explore::MirrorSource>,
     /// Where profile pictures are served (`profiles::FaceUrls`).
     pub faces: profiles::FaceUrls,
     /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default true: upstream's
@@ -151,6 +153,7 @@ impl Settings {
             compliance: compliance::Settings::default(),
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
+            thumbnail_upstream: None,
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
             places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),

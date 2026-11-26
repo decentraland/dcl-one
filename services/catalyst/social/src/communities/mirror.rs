@@ -163,6 +163,22 @@ pub fn upstream_thumbnail(base: &MirrorSource, id: Uuid) -> String {
     super::thumbnail_url(base.base(), &id.to_string())
 }
 
+/// This base is sent to clients in Location, so it must be a public, credential-free base URL.
+pub fn thumbnail_source(raw: &str, local: &[&str]) -> Result<Option<MirrorSource>> {
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    let url = url::Url::parse(raw.trim())?;
+    anyhow::ensure!(
+        url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "community thumbnail redirects require a public base URL without user information, query or fragment"
+    );
+    MirrorSource::checked(raw, local).map(Some)
+}
+
 /// Communities copied in: inserted new, or updated only where the row is
 /// already mirrored (a local community with the same id is left as is and
 /// gets no provenance row). `updated_at` moves only when a copied field

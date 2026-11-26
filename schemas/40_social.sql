@@ -402,6 +402,32 @@ CREATE TABLE social.community_thumbnails (
     CONSTRAINT community_thumbnails_pkey PRIMARY KEY (community_id)
 );
 
+-- SQL imports take local authority. Keep their source identity after the mirror row is removed.
+CREATE TABLE social.community_imports (
+    community_id uuid PRIMARY KEY REFERENCES social.communities (id) ON DELETE CASCADE
+);
+
+-- Older imports recorded their members and ranking inputs before recording the community itself.
+-- These optional tables belong to the import tool. Check only unmarked communities by indexed ID.
+DO $community_imports$
+DECLARE
+    ledger regclass;
+BEGIN
+    FOR ledger IN
+        SELECT c.oid::regclass FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'dcl_migration'
+          AND c.relname IN ('social_community_member_loaded', 'social_community_ranking_loaded')
+          AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')
+    LOOP
+        EXECUTE format('INSERT INTO social.community_imports (community_id)
+            SELECT c.id FROM social.communities c WHERE c.origin = ''local''
+              AND NOT EXISTS (SELECT 1 FROM social.community_imports i WHERE i.community_id = c.id)
+              AND EXISTS (SELECT 1 FROM %s l WHERE l.community_id = c.id)
+            ON CONFLICT DO NOTHING', ledger);
+    END LOOP;
+END
+$community_imports$;
+
 -- Presence in the community voice room ('voice-chat-community-' ||
 -- community_id); presence is not permission. Participant/moderator counts and
 -- "has an active voice chat" derive from this table.

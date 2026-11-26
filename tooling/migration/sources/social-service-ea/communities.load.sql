@@ -24,6 +24,9 @@ ON CONFLICT (id) DO UPDATE SET
     origin = 'local'
 WHERE t.origin = 'upstream' OR t.updated_at <= EXCLUDED.updated_at;
 
+INSERT INTO social.community_imports (community_id)
+SELECT id FROM stage ON CONFLICT DO NOTHING;
+
 DELETE FROM social.community_mirror m
 USING stage s
 WHERE m.community_id = s.id;

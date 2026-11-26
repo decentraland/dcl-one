@@ -2614,6 +2614,120 @@ fn settings_fold_restricted_names_and_validate_moderators() {
     }
 }
 
+#[tokio::test]
+async fn raw_thumbnail_prefers_local_bytes_and_redirects_imported_misses() {
+    let settings = Settings {
+        thumbnail_upstream: super::mirror::thumbnail_source(
+            "https://upstream.example.org/assets",
+            &[],
+        )
+        .unwrap(),
+        ..Settings::for_tests()
+    };
+    let Some(rig) = Rig::new(settings).await else {
+        return;
+    };
+    let owner = wallet();
+    let imported = rig.community(&owner, false).await;
+    let native = rig.community(&owner, false).await;
+    // Take over the first community with the actual SQL importer, which keeps local authority.
+    let mut tx = rig.pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE TEMP TABLE stage ON COMMIT DROP AS SELECT * FROM social.communities WHERE id = $1",
+    )
+    .bind(imported)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/sources/social-service-ea/communities.load.sql"
+    )))
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let get = |id: CommunityId, conditional: bool| {
+        let mut request = Request::get(format!("/social/communities/{id}/raw-thumbnail.png?v=old"));
+        if conditional {
+            request = request.header(header::IF_NONE_MATCH, "*");
+        }
+        rig.app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+    };
+    let expected = format!(
+        "https://upstream.example.org/assets/social/communities/{imported}/raw-thumbnail.png"
+    );
+    let response = get(imported, false).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.headers()[header::LOCATION], expected);
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "public, max-age=60"
+    );
+    assert_eq!(
+        get(native, false).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(CommunityId::new(), false).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let bytes = png(1500);
+    let mut tx = rig.pool.begin().await.unwrap();
+    let hash = super::thumbnail::store_thumbnail(&mut tx, &rig.state.storage, imported, &bytes)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let response = get(imported, false).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+    assert!(response.headers().get(header::LOCATION).is_none());
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), bytes.len())
+            .await
+            .unwrap()
+            .as_ref(),
+        bytes.as_slice()
+    );
+    assert_eq!(
+        get(imported, true).await.unwrap().status(),
+        StatusCode::NOT_MODIFIED
+    );
+
+    rig.state.storage.denylist().operator_insert(&hash);
+    assert_eq!(
+        get(imported, true).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    rig.state.storage.denylist().operator_remove(&hash);
+    rig.state.storage.delete(&hash).await.unwrap();
+    let response = get(imported, true).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(response.headers()[header::LOCATION], expected);
+
+    let offline = Rig::with_pool(
+        Settings::for_tests(),
+        State::explore_for_tests,
+        rig.pool.clone(),
+    )
+    .await;
+    let response = offline
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/social/communities/{imported}/raw-thumbnail.png"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 /// The raw thumbnail's caching: long only for the current hash's URL, short
 /// with an ETag otherwise, and an update moves the versioned URL.
 #[tokio::test]

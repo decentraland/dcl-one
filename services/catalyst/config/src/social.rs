@@ -255,8 +255,8 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMUNITIES_UPSTREAM_URL", default_value = "")]
     pub communities_upstream_url: String,
 
-    /// The base the upstream serves community thumbnails under (the mirror
-    /// posture's).
+    /// Public upstream asset base for imported community thumbnail redirects and mirror probes.
+    /// Empty disables redirects. Use a public URL without credentials, query or fragment.
     #[arg(long, env = "COMMUNITIES_MIRROR_THUMBNAIL_URL", default_value = "")]
     pub communities_mirror_thumbnail_url: String,
 
