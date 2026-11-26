@@ -71,7 +71,7 @@ export function ProfileCard({
       onCancelRequest={(u) => act('cancel', u.address)}
       onAcceptRequest={(u) => openFriendRequest('accept', u)}
       onBlock={(u) => void confirmBlock(splitName(u.name).base).then((ok) => ok && act('block', u.address))}
-      onReport={(u) => void reportUser(session.profile.data?.address, u.address)}
+      onReport={(u) => void reportUser(session.profile.data?.address, u.address, session.openExternalUrl)}
       onMention={session.chat.mention}
       onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
       onCall={(u) => (onCall != null ? onCall(u.address) : startCallWith(session, u.address))}

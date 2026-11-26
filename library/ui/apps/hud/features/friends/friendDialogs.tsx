@@ -2,6 +2,7 @@
 // reference client.
 import { Avatar, showConfirm } from '../../design'
 import { siteUrl } from '@hud-host'
+import { openExternal, type OpenExternalUrl } from '../gallery/reelActions'
 import { knownUserColor } from '../session/profileStore'
 import styles from './FriendRequestPopup.module.css'
 
@@ -39,8 +40,8 @@ export function confirmUnblock(name: string): Promise<boolean> {
   })
 }
 
-/** Confirm, then open the report form for `reported` in a new tab. */
-export async function reportUser(me: string | undefined, reported: string): Promise<void> {
+/** Confirm, then open the report form for `reported`: in a new tab on the web, in the system browser on native. */
+export async function reportUser(me: string | undefined, reported: string, openExternalUrl: OpenExternalUrl): Promise<void> {
   const ok = await showConfirm({
     title: 'You will be redirected to a web form',
     body: 'Fill out the form with as much detail as you can, including evidence of what happened.',
@@ -48,5 +49,5 @@ export async function reportUser(me: string | undefined, reported: string): Prom
   })
   if (!ok) return
   const url = siteUrl(`/report/players?player_address=${encodeURIComponent(me ?? '')}&reported_address=${encodeURIComponent(reported)}`)
-  window.open(url, '_blank', 'noopener')
+  openExternal(url, openExternalUrl)
 }

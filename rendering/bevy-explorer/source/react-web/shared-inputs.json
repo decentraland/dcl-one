@@ -5203,6 +5203,10 @@
           "kind": "regular"
         },
         {
+          "name": "friendDialogs.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "gate.test.tsx",
           "kind": "regular"
         },
@@ -9787,7 +9791,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
-      "sha256": "0f5e337f9a534741f09267429f1d636def7525735459ce6e87a1b042f0e41452"
+      "sha256": "2d3361bf21f0cb2ce98db358fa0488c760ae7762ebaba813bcb137673d38821e"
     },
     {
       "path": "library/ui/apps/hud/features/friends/friendToasts.tsx",
@@ -10315,7 +10319,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "55e5436297185f114c2c065a36ff42d9752aa34efb20ba41074d8d4fb9530c6c"
+      "sha256": "d4c9924dc689d0960ffaf45a91410797a4c31dfa5cbfc4260f9f88da7cd8df47"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -10343,7 +10347,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "89f2a300c4f4d65dc70eed5a8651d597c025931152de18200a25c999321d5d4f"
+      "sha256": "1f1ec8256355db181b455cbe2598015fc0099d217cadb131ada3dabfe58ed164"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -10728,6 +10732,10 @@
     {
       "path": "library/ui/apps/hud/test/fpsMeter.test.tsx",
       "sha256": "420bb571282af0c37f0ea0fdac71e7861d44d9a3a39caa157a336eab16e71b98"
+    },
+    {
+      "path": "library/ui/apps/hud/test/friendDialogs.test.ts",
+      "sha256": "592a4061e8a4ed817a422c981d9bfffc0e8719f0894af4731de763f8c0f486eb"
     },
     {
       "path": "library/ui/apps/hud/test/gate.test.tsx",
@@ -23868,6 +23876,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "to": "library/ui/apps/hud/features/gallery/reelActions.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "native:runtime"
     },
@@ -38955,6 +38978,21 @@
       "from": "library/ui/apps/hud/test/fpsMeter.test.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/friendDialogs.test.ts",
+      "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/friendDialogs.test.ts",
+      "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/friendDialogs.test.ts",
+      "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/gate.test.tsx",
@@ -49254,6 +49292,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/fpsMeter.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/friendDialogs.test.ts",
       "kind": "type"
     },
     {

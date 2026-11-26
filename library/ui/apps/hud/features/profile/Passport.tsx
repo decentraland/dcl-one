@@ -132,7 +132,7 @@ export function Passport({
       onAcceptRequest={() => openFriendRequest('accept', friendUser)}
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
-      onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onReport={() => void reportUser(session.profile.data?.address, userId, session.openExternalUrl)}
       onJump={
         !isSelf && canJumpToFriend(session.friends, userId)
           ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
