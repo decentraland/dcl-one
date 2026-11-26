@@ -23,6 +23,12 @@ struct Fake {
     orders: Vec<HeaderMap>,
     widgets: Vec<Value>,
     widget_status: Option<StatusCode>,
+    /// Refresh calls received, answered or not.
+    refreshes: usize,
+    refresh_delay: std::time::Duration,
+    refresh_status: Option<StatusCode>,
+    /// A 401 to every call, whatever the token (a key or environment mismatch).
+    reject_all: bool,
 }
 
 type Shared = Arc<Mutex<Fake>>;
@@ -41,7 +47,8 @@ impl Fake {
 }
 
 fn authorized(fake: &Fake, headers: &HeaderMap) -> bool {
-    headers.get("access-token").and_then(|v| v.to_str().ok()) == fake.current()
+    !fake.reject_all
+        && headers.get("access-token").and_then(|v| v.to_str().ok()) == fake.current()
         && headers["x-api-key"] == "transak-api-key-example"
 }
 
@@ -55,6 +62,15 @@ async fn fake_transak() -> (String, Shared) {
         assert_eq!(headers["api-secret"], "transak-api-secret-example");
         assert_eq!(headers["x-api-key"], "transak-api-key-example");
         assert_eq!(body, json!({ "apiKey": "transak-api-key-example" }));
+        let (delay, status) = {
+            let mut fake = fake.lock().unwrap();
+            fake.refreshes += 1;
+            (fake.refresh_delay, fake.refresh_status)
+        };
+        tokio::time::sleep(delay).await;
+        if let Some(status) = status {
+            return (status, axum::Json(json!({ "error": "refresh-detail" })));
+        }
         let mut fake = fake.lock().unwrap();
         let token = format!("token-{}", fake.issued.len());
         fake.issued.push(token.clone());
@@ -190,6 +206,16 @@ async fn widget(app: Router, body: Value) -> (StatusCode, Value) {
     send(app, Method::POST, WIDGET_PATH, HeaderMap::new(), Some(body)).await
 }
 
+/// The stored token, refreshed long enough ago that a 401 may replace it.
+async fn age(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "UPDATE shop.transak_access_token SET refreshed_at = refreshed_at - interval '1 minute'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 async fn stored(pool: &sqlx::PgPool) -> String {
     sqlx::query_scalar("SELECT access_token FROM shop.transak_access_token")
         .fetch_one(pool)
@@ -249,6 +275,7 @@ async fn a_refused_token_is_replaced_once_across_replicas() {
     let (one, two) = (replica(&db.pool, &url), replica(&db.pool, &url));
     assert_eq!(read_order(one.clone(), "order-1").await.0, StatusCode::OK);
 
+    age(&db.pool).await;
     Fake::refresh_elsewhere(&fake);
     let (status, body) = read_order(two.clone(), "order-2").await;
     assert_eq!(
@@ -258,6 +285,7 @@ async fn a_refused_token_is_replaced_once_across_replicas() {
     );
     assert_eq!(fake.lock().unwrap().issued.len(), 3);
 
+    age(&db.pool).await;
     Fake::refresh_elsewhere(&fake);
     let (a, b) = tokio::join!(read_order(one, "order-3"), read_order(two, "order-4"));
     assert_eq!((a.0, b.0), (StatusCode::OK, StatusCode::OK), "{a:?} {b:?}");
@@ -667,4 +695,132 @@ fn the_open_paths_keep_every_historical_read() {
         crate::market::OPEN_PATHS.contains(&WIDGET_PATH)
             && crate::market::OPEN_PATHS.contains(&TOKEN_PATH)
     );
+}
+
+#[tokio::test]
+async fn a_persistent_401_refreshes_at_most_once_per_30_seconds() {
+    let Some(db) = OwnDb::create("transak_401").await else {
+        return;
+    };
+    let (url, fake) = fake_transak().await;
+    fake.lock().unwrap().reject_all = true;
+    let app = replica(&db.pool, &url);
+    for id in ["order-1", "order-2", "order-3"] {
+        let (status, body) = read_order(app.clone(), id).await;
+        assert_eq!(
+            (status, body["message"].as_str()),
+            (
+                StatusCode::BAD_GATEWAY,
+                Some("Transak order could not be read")
+            ),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        fake.lock().unwrap().refreshes,
+        1,
+        "a 401 on a token minted moments ago is not a stale token: no refresh loop"
+    );
+    age(&db.pool).await;
+    assert_eq!(read_order(app, "order-4").await.0, StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        fake.lock().unwrap().refreshes,
+        2,
+        "30 s later, one more try"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_failed_refresh_is_remembered_and_backs_the_other_replicas_off() {
+    let Some(db) = OwnDb::create("transak_failed").await else {
+        return;
+    };
+    let (url, fake) = fake_transak().await;
+    fake.lock().unwrap().refresh_status = Some(StatusCode::INTERNAL_SERVER_ERROR);
+    let app = replica(&db.pool, &url);
+    let calls = (0..6).map(|_| widget(app.clone(), json!({})));
+    for (status, body) in futures::future::join_all(calls).await {
+        assert_eq!(
+            (status, body["message"].as_str()),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some("Error refreshing access token, status: 500")
+            ),
+        );
+        assert!(!body.to_string().contains("refresh-detail"));
+    }
+    assert_eq!(
+        fake.lock().unwrap().refreshes,
+        1,
+        "the queued callers fail without calling Transak"
+    );
+    assert_eq!(
+        widget(app, json!({})).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        fake.lock().unwrap().refreshes,
+        1,
+        "nor does the next caller, for 10 s"
+    );
+    let backing_off: bool = sqlx::query_scalar(
+        "SELECT refreshing_until > timezone('UTC', now()) + interval '5 seconds' FROM shop.transak_access_token",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(
+        backing_off,
+        "the claim stays, so the other replicas back off too"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn callers_waiting_on_a_slow_refresh_hold_no_connection() {
+    let Some(db) = OwnDb::create("transak_slow").await else {
+        return;
+    };
+    let (url, fake) = fake_transak().await;
+    fake.lock().unwrap().refresh_delay = std::time::Duration::from_millis(2500);
+    // Two connections in all, and a caller that cannot get one within a second fails.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(1))
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let (one, two) = (replica(&pool, &url), replica(&pool, &url));
+    let calls = (0..8).map(|i| {
+        let app = if i % 2 == 0 { one.clone() } else { two.clone() };
+        read_order(app, ["order-a", "order-b", "order-c", "order-d"][i % 4])
+    });
+    for (status, body) in futures::future::join_all(calls).await {
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(fake.lock().unwrap().refreshes, 1);
+    pool.close().await;
+    db.drop().await;
+}
+
+#[test]
+fn expires_at_in_any_shape_keeps_the_new_token() {
+    let now = chrono::Utc::now().timestamp();
+    let at = |v: Option<Value>| expiry(v.as_ref()).and_utc().timestamp();
+    let week = now + 7 * 24 * 3600;
+    assert_eq!(at(Some(json!(week))), week);
+    assert_eq!(at(Some(json!(week as f64 + 0.75))), week);
+    assert_eq!(at(Some(json!(week.to_string()))), week);
+    assert_eq!(at(Some(json!(week * 1000))), week, "milliseconds");
+    for unreadable in [
+        None,
+        Some(json!(null)),
+        Some(json!("soon")),
+        Some(json!(now - 60)),
+        Some(json!(-1)),
+    ] {
+        let hour = at(unreadable.clone()) - now;
+        assert!((3590..=3610).contains(&hour), "{unreadable:?}: {hour}");
+    }
 }

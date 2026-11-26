@@ -14,10 +14,18 @@
 //! issued token is automatically invalidated", Transak's widget URL migration
 //! guide). Upstream therefore kept one token in Redis for every instance. Here
 //! it is one row, `shop.transak_access_token`, that every replica reads:
-//! - a refresh runs only under the `transak-access-token` advisory lock;
-//! - a call Transak refuses with 401 refreshes only while the stored token is
-//!   still the refused one, so replicas never invalidate each other's fresh
-//!   token. The call is then sent once more.
+//! - **One refresh at a time.** A replica claims the refresh by setting
+//!   `refreshing_until` in one statement, only while no claim is live and the
+//!   token still needs replacing. It then calls Transak holding no
+//!   transaction or connection, and stores the token.
+//! - **Waiters hold nothing.** Within a replica, the other tasks wait on a
+//!   mutex. Other replicas poll the row.
+//! - **Failures back off.** A failed refresh fails the replica's waiting tasks
+//!   at once and keeps the claim for 10 s, so nobody calls Transak again in
+//!   the meantime.
+//! - **401s.** A call Transak refuses with 401 refreshes only while the stored
+//!   token is still the refused one, and at most once per 30 s (a 401 on a
+//!   newer token is not a stale token), then is sent once more.
 //!
 //! The token is never logged.
 //!
@@ -40,6 +48,7 @@
 //! Without the six `TRANSAK_*` settings, every route answers the unavailable
 //! envelope naming them.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
@@ -83,6 +92,8 @@ pub struct TransakSettings {
     api_secret: String,
     refresh_auth: String,
     referrer_domain: String,
+    /// This replica's side of the token refresh ([`RefreshGate`]).
+    gate: Arc<tokio::sync::Mutex<RefreshGate>>,
 }
 
 impl std::fmt::Debug for TransakSettings {
@@ -169,6 +180,7 @@ impl TransakSettings {
             api_secret: api_secret.to_string(),
             refresh_auth: refresh_auth.to_string(),
             referrer_domain,
+            gate: Arc::default(),
         }))
     }
 
@@ -182,6 +194,7 @@ impl TransakSettings {
             api_secret: "transak-api-secret-example".to_string(),
             refresh_auth: "transak-refresh-bearer-example-0123456789".to_string(),
             referrer_domain: "shop.example.com".to_string(),
+            gate: Arc::default(),
         }
     }
 }
@@ -243,6 +256,31 @@ fn sent(error: crate::http::SendError) -> Failure {
     }
 }
 
+/// A refresh claims the row for this long; it covers Transak's call
+/// ([`CALL_TIMEOUT`]) with room to store the token.
+const LEASE: Duration = Duration::from_secs(15);
+
+/// After a failed refresh, this replica fails its callers at once for this
+/// long, and the claim stays this long, so the other replicas back off too.
+const RETRY_AFTER_FAILURE: Duration = Duration::from_secs(10);
+
+/// A 401 on a token issued less than this long ago is not a stale token (a
+/// key or environment mismatch, or another holder of the partner account
+/// refreshing too): it does not refresh again.
+const MIN_REFRESH_AFTER_401: Duration = Duration::from_secs(30);
+
+/// How often a replica waiting on another's refresh rereads the row.
+const POLL: Duration = Duration::from_millis(250);
+
+/// One replica's side of the refresh: a single task refreshes at a time and
+/// the queued tasks hold no connection. A failure is remembered for
+/// [`RETRY_AFTER_FAILURE`], so the tasks queued behind it fail at once
+/// instead of each calling Transak again.
+#[derive(Default)]
+struct RefreshGate {
+    failed: Option<(std::time::Instant, Failure)>,
+}
+
 /// How the shared token is wanted.
 #[derive(Clone, Copy)]
 enum Want<'a> {
@@ -255,61 +293,140 @@ enum Want<'a> {
     New,
 }
 
-/// The shared access token (see the module doc).
+/// The shared row as a reader sees it.
+#[derive(sqlx::FromRow)]
+struct Stored {
+    access_token: Option<String>,
+    /// More than 60 s before `expires_at`.
+    fresh: bool,
+    /// Refreshed less than [`MIN_REFRESH_AFTER_401`] ago.
+    recent: bool,
+}
+
+impl Stored {
+    /// The stored token, if it serves `want`.
+    fn serves(&self, want: Want<'_>) -> Option<String> {
+        let token = self.access_token.as_deref().filter(|_| self.fresh)?;
+        match want {
+            Want::Fresh => Some(token.to_string()),
+            Want::Replacing(refused) if token != refused => Some(token.to_string()),
+            _ => None,
+        }
+    }
+}
+
+async fn read_row(state: &SharedState) -> Result<Option<Stored>, Failure> {
+    sqlx::query_as::<_, Stored>(
+        "SELECT access_token, \
+             coalesce(expires_at > timezone('UTC', now()) + interval '60 seconds', false) AS fresh, \
+             coalesce(refreshed_at > timezone('UTC', now()) - make_interval(secs => $1), false) AS recent \
+         FROM shop.transak_access_token",
+    )
+    .bind(MIN_REFRESH_AFTER_401.as_secs_f64())
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(store_failed)
+}
+
+/// Claims the refresh for [`LEASE`] in one statement: only while no other
+/// replica's claim is live and the row still needs what `want` asks (no fresh
+/// token, or still the refused one; `New` always).
+async fn claim(state: &SharedState, want: Want<'_>) -> Result<bool, Failure> {
+    let (always, refused) = match want {
+        Want::Fresh => (false, None),
+        Want::Replacing(refused) => (false, Some(refused)),
+        Want::New => (true, None),
+    };
+    let claimed: Option<bool> = sqlx::query_scalar(
+        "INSERT INTO shop.transak_access_token AS t (singleton, refreshing_until) \
+         VALUES (true, timezone('UTC', now()) + make_interval(secs => $1)) \
+         ON CONFLICT (singleton) DO UPDATE SET refreshing_until = EXCLUDED.refreshing_until \
+         WHERE (t.refreshing_until IS NULL OR t.refreshing_until <= timezone('UTC', now())) \
+           AND ($2 OR t.access_token IS NULL \
+                OR t.expires_at <= timezone('UTC', now()) + interval '60 seconds' \
+                OR t.access_token = $3) \
+         RETURNING true",
+    )
+    .bind(LEASE.as_secs_f64())
+    .bind(always)
+    .bind(refused)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(store_failed)?;
+    Ok(claimed.is_some())
+}
+
+/// The shared access token (see the module doc). No transaction or connection
+/// is held while Transak is called or while a caller waits.
 async fn token(
     state: &SharedState,
     transak: &TransakSettings,
     want: Want<'_>,
 ) -> Result<String, Failure> {
-    if let Want::Fresh = want {
-        let stored: Option<String> = sqlx::query_scalar(
-            "SELECT access_token FROM shop.transak_access_token \
-             WHERE expires_at > timezone('UTC', now()) + interval '60 seconds'",
-        )
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(store_failed)?;
-        if let Some(token) = stored {
+    if let Want::Fresh = want
+        && let Some(token) = read_row(state).await?.and_then(|row| row.serves(want))
+    {
+        return Ok(token);
+    }
+    let mut gate = transak.gate.lock().await;
+    if let Some((at, failure)) = &gate.failed
+        && at.elapsed() < RETRY_AFTER_FAILURE
+    {
+        return Err(failure.clone());
+    }
+    let deadline = tokio::time::Instant::now() + LEASE;
+    loop {
+        let row = read_row(state).await?;
+        if !matches!(want, Want::New)
+            && let Some(token) = row.as_ref().and_then(|row| row.serves(want))
+        {
             return Ok(token);
         }
-    }
-    let mut tx = state.pool.begin().await.map_err(store_failed)?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('transak-access-token', 0))")
-        .execute(&mut *tx)
-        .await
-        .map_err(store_failed)?;
-    let current: Option<(String, bool)> = sqlx::query_as(
-        "SELECT access_token, expires_at > timezone('UTC', now()) + interval '60 seconds' \
-         FROM shop.transak_access_token",
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(store_failed)?;
-    if let Some((stored, fresh)) = current {
-        let keep = match want {
-            Want::Fresh => fresh,
-            Want::Replacing(refused) => fresh && stored != refused,
-            Want::New => false,
-        };
-        if keep {
-            return Ok(stored);
+        if let (Want::Replacing(refused), Some(row)) = (want, &row)
+            && row.recent
+            && row.access_token.as_deref() == Some(refused)
+        {
+            return Err(format!(
+                "Transak refused a token issued less than {} s ago",
+                MIN_REFRESH_AFTER_401.as_secs()
+            ));
         }
+        if claim(state, want).await? {
+            return match refresh(state, transak).await {
+                Ok((token, expires_at)) => {
+                    sqlx::query(
+                        "UPDATE shop.transak_access_token SET access_token = $1, expires_at = $2, \
+                             refreshed_at = timezone('UTC', now()), refreshing_until = NULL",
+                    )
+                    .bind(&token)
+                    .bind(expires_at)
+                    .execute(&state.pool)
+                    .await
+                    .map_err(store_failed)?;
+                    gate.failed = None;
+                    tracing::info!(%expires_at, "refreshed the shared Transak access token");
+                    Ok(token)
+                }
+                Err(failure) => {
+                    // The claim stays until the retry time: the others back off too.
+                    let _ = sqlx::query(
+                        "UPDATE shop.transak_access_token \
+                         SET refreshing_until = timezone('UTC', now()) + make_interval(secs => $1)",
+                    )
+                    .bind(RETRY_AFTER_FAILURE.as_secs_f64())
+                    .execute(&state.pool)
+                    .await;
+                    gate.failed = Some((std::time::Instant::now(), failure.clone()));
+                    Err(failure)
+                }
+            };
+        }
+        // Another replica holds the claim: wait for its token.
+        if tokio::time::Instant::now() >= deadline {
+            return Err("another replica is refreshing the Transak token".to_string());
+        }
+        tokio::time::sleep(POLL).await;
     }
-    let (token, expires_at) = refresh(state, transak).await?;
-    sqlx::query(
-        "INSERT INTO shop.transak_access_token (singleton, access_token, expires_at, refreshed_at) \
-         VALUES (true, $1, $2, timezone('UTC', now())) \
-         ON CONFLICT (singleton) DO UPDATE SET access_token = EXCLUDED.access_token, \
-             expires_at = EXCLUDED.expires_at, refreshed_at = EXCLUDED.refreshed_at",
-    )
-    .bind(&token)
-    .bind(expires_at)
-    .execute(&mut *tx)
-    .await
-    .map_err(store_failed)?;
-    tx.commit().await.map_err(store_failed)?;
-    tracing::info!(%expires_at, "refreshed the shared Transak access token");
-    Ok(token)
 }
 
 /// `POST {TRANSAK_API_URL}/v2/refresh-token`, as upstream's `getAccessToken`.
@@ -344,14 +461,30 @@ async fn refresh(
         .pointer("/data/accessToken")
         .and_then(Value::as_str)
         .filter(|token| !token.is_empty());
-    let expires_at = body
-        .pointer("/data/expiresAt")
-        .and_then(Value::as_i64)
-        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0));
-    match (token, expires_at) {
-        (Some(token), Some(expires_at)) => Ok((token.to_string(), expires_at.naive_utc())),
-        _ => Err("Transak's token reply has no accessToken or expiresAt".to_string()),
+    match token {
+        Some(token) => Ok((token.to_string(), expiry(body.pointer("/data/expiresAt")))),
+        None => Err("Transak's token reply has no accessToken".to_string()),
     }
+}
+
+/// Transak's `expiresAt`, in seconds, as a number or a numeric string (a
+/// millisecond value is read as such). Transak has already invalidated the
+/// previous token by now, so a missing, unreadable or past value keeps the
+/// new token with a conservative hour rather than discarding it.
+fn expiry(value: Option<&Value>) -> chrono::NaiveDateTime {
+    let now = chrono::Utc::now();
+    let seconds = match value {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+    .filter(|s| s.is_finite() && *s > 0.0)
+    .map(|s| if s > 1e11 { s / 1000.0 } else { s });
+    seconds
+        .and_then(|s| chrono::DateTime::from_timestamp(s.floor() as i64, 0))
+        .filter(|at| *at > now)
+        .unwrap_or(now + chrono::Duration::hours(1))
+        .naive_utc()
 }
 
 /// Sends `request(token)` with the shared token. A 401 replaces the token

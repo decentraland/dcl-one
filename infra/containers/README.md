@@ -251,11 +251,20 @@ six settings:
 - `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
 
 Without them, the routes answer 503 naming them. A partial set fails startup.
-Replicas share one access token in `shop.transak_access_token`. Transak
-invalidates the previous token on each refresh, so another service holding
-the same partner account (marketplace-server during a cutover) invalidates
-the node's token whenever it refreshes. The node then refreshes once on the
-next 401.
+Run `catalyst schema migrate` before deploying: it creates
+`shop.transak_access_token`, the one access token the replicas share.
+
+**Never configure a node with the Transak partner key marketplace-server is
+serving with.** Transak invalidates the previous token on each refresh, and
+marketplace-server never refreshes on a 401. The node's first refresh would
+leave marketplace-server's Redis token dead, and production Transak with it,
+until that token expires (up to 7 days) or someone calls marketplace-server's
+`PUT /v1/transak/access-token`. Use separate partner credentials, or set the
+six `TRANSAK_*` only at the cutover, once marketplace-server has stopped
+serving Transak. No posture or default config sets them, so a node keeps the
+unavailable envelope until an operator does. When marketplace-server
+refreshes, the node itself recovers: its next 401 refreshes once, at most
+once per 30 s.
 
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror

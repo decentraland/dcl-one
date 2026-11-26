@@ -378,20 +378,27 @@ CREATE TABLE shop.picks (
 -- The per-list page (WHERE list_id ORDER BY created_at DESC).
 CREATE INDEX picks_list_id_idx ON shop.picks (list_id, created_at DESC);
 
--- The Transak partner access token every replica shares (`market::transak`).
--- Transak invalidates the previous token whenever it issues a new one, so a
--- replica refreshes it only under the `transak-access-token` advisory lock,
--- and only if the stored token is still the one it found expired or refused;
--- the others read it. One row. `expires_at` is Transak's expiry (UTC); a
--- reader refreshes 60 s before it. The token is a bearer, never logged.
-CREATE TABLE shop.transak_access_token (
-    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    access_token text NOT NULL,
-    expires_at timestamp without time zone NOT NULL,
-    refreshed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
-);
 -- The catalog's pick counts: GROUP BY item_id WHERE item_id = ANY($1).
 CREATE INDEX picks_item_idx ON shop.picks (item_id);
+
+-- The Transak partner access token every replica shares (`market::transak`).
+-- Transak invalidates the previous token whenever it issues a new one, so one
+-- replica refreshes it at a time. It claims the row by setting
+-- `refreshing_until` in one statement, while no claim is live and the token
+-- still needs replacing. It calls Transak holding no transaction, then stores
+-- the token and clears the claim. A failed refresh keeps the claim for 10 s,
+-- so the others back off. The other replicas read the row.
+-- `access_token` and `expires_at` are NULL until the first refresh.
+-- `refreshed_at` limits refreshes driven by a 401 to one per 30 s. One row.
+-- The token is a bearer, never logged.
+CREATE TABLE shop.transak_access_token (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    access_token text,
+    expires_at timestamp without time zone,
+    refreshed_at timestamp without time zone,
+    refreshing_until timestamp without time zone,
+    CONSTRAINT transak_access_token_complete CHECK ((access_token IS NULL) = (expires_at IS NULL))
+);
 
 CREATE TABLE shop.list_acl (
     list_id uuid NOT NULL REFERENCES shop.lists(id) ON DELETE CASCADE,

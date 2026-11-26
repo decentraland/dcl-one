@@ -142,7 +142,11 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "TRANSAK_API_GATEWAY_URL")]
     pub transak_api_gateway_url: Option<String>,
 
-    /// Transak's partner API key, sent as `x-api-key`.
+    /// Transak's partner API key, sent as `x-api-key`. Never the key
+    /// marketplace-server is serving with: each refresh invalidates the
+    /// other's token, and marketplace-server does not recover. Use separate
+    /// partner credentials, or set the six TRANSAK_* only once
+    /// marketplace-server has stopped serving Transak.
     #[arg(long, env = "TRANSAK_API_KEY", hide_env_values = true)]
     pub transak_api_key: Option<String>,
 
