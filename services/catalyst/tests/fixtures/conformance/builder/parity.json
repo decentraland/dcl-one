@@ -26,7 +26,7 @@
       ]
     },
     "signature-window": {
-      "text": "Every signed operation: upstream accepts a timestamp up to 30 minutes old or ahead; the node accepts at most 60 seconds old and 60 seconds ahead, the window of every signed route on the node, and refuses the rest with the same 401.",
+      "text": "Every signed operation: upstream accepts a timestamp up to 30 minutes old or ahead; the node accepts at most 60 seconds old and 60 seconds ahead, the window of every auth-chain-signed route on the node, and refuses the rest with the same 401.",
       "captures": [],
       "anchors": []
     },
