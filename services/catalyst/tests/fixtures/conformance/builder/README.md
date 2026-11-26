@@ -59,8 +59,8 @@ exercises the operation of the method it asks for. Upstream and the replay
 run with the same `CORS_ORIGIN`. A capture's response records
 `content-type`, `cache-control` and `location`, and the other headers its case
 is about. A capture with `repeat` was the last of that many plus one equal
-requests in a row, each of which the capture required to answer its case's
-`repeat_status`; the replay sends it as many times first, with the signer's
+requests in a row: the capture required each earlier one to answer its case's
+`repeat_status` and the last one its `status`; the replay sends it as many times first, with the signer's
 review budgets fresh before and after. A volatile leaf is recorded as
 `<<VOLATILE>>`, which matches any value on replay. A capture whose
 volatile timestamps were equal before masking lists them in
