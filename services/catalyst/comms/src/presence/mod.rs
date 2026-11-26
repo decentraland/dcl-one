@@ -367,6 +367,26 @@ impl Presence {
             .collect();
         Some((read_at, wallets))
     }
+    /// Positive evidence of a specific session from a fresh, complete
+    /// LiveKit roster. Webhook invalidation makes an older roster unusable.
+    pub fn session_observed_at(
+        &self,
+        room: &str,
+        participant_sid: &str,
+        wallet: &str,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let state = self.state.lock();
+        let roster = state.complete.rooms.iter().find(|r| r.name == room)?;
+        (roster.observed.fresh(PUBLIC_TTL)
+            && state.complete.unknown_generation == state.unknown_generation
+            && state.generations.get(room) == Some(&roster.generation)
+            && roster
+                .participants
+                .iter()
+                .any(|p| p.sid == participant_sid && p.identity.eq_ignore_ascii_case(wallet)))
+        .then_some(roster.observed.utc)
+    }
+
     fn admission_count(&self, scope: &Scope) -> Option<i64> {
         let state = self.state.lock();
         if let Some(sample) = state.admission.get(scope).filter(|sample| {
@@ -596,6 +616,34 @@ mod occupants_tests {
             .room_occupants("party.dcl.eth", Some("bafyscene"))
             .unwrap();
         assert!(none.is_empty(), "no Genesis scene room of that realm");
+    }
+
+    #[test]
+    fn session_proof_requires_the_exact_participant_and_current_room_generation() {
+        let presence = Presence::new();
+        let room = "world-party.dcl.eth";
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", room, false);
+        let (session, at) = {
+            let mut state = presence.state.lock();
+            let roster = &state.complete.rooms[0];
+            let session = roster.participants[0].sid.clone();
+            let at = roster.observed.utc;
+            let generation = roster.generation;
+            state.generations.insert(room.to_owned(), generation);
+            (session, at)
+        };
+        assert_eq!(
+            presence.session_observed_at(room, &session, "0xab"),
+            Some(at)
+        );
+        assert_eq!(
+            presence.session_observed_at(room, "wrong-session", "0xab"),
+            None
+        );
+        assert_eq!(presence.session_observed_at(room, &session, "0xcd"), None);
+        presence.invalidate_room(room);
+        assert_eq!(presence.session_observed_at(room, &session, "0xab"), None);
     }
 
     #[test]

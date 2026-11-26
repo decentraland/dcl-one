@@ -690,7 +690,6 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 
     seed(&db.pool).await;
     seed_indexes(&db.pool).await;
-    state.mirror_ready.clear();
 
     // Comms consumes Shop's same name owner result, including the ready local
     // index when no subgraph exists and case-insensitive optional suffixes.
@@ -1676,6 +1675,89 @@ async fn assert_lambdas_profile_dependency_failure(state: &SharedState, layer: &
 }
 
 #[tokio::test]
+async fn cold_wearables_answer_the_base_leg_on_a_one_connection_pool() {
+    // The base wearables read the pool before the catalogue read holds its
+    // connection: on a one-connection pool, cold, the base leg must not
+    // time out into an empty list while the snapshot waits.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    seed(&pool).await;
+    let mut answers = Vec::new();
+    for cap in [2, 1] {
+        let narrow = PgPoolOptions::new()
+            .max_connections(cap)
+            .acquire_timeout(std::time::Duration::from_millis(400))
+            .connect_with((*pool.connect_options()).clone())
+            .await
+            .unwrap();
+        let state = Arc::new(crate::market::MarketplaceState::new(
+            narrow,
+            crate::http::Outbound::for_tests(),
+            Settings::for_tests(),
+        ));
+        let (status, body) = get(&state, "/lambdas/collections/wearables?textSearch=eyes").await;
+        assert_eq!(status, StatusCode::OK, "pool of {cap}: {body}");
+        let ids: Vec<String> = body["wearables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["urn:decentraland:off-chain:base-avatars:eyes_00".to_string()],
+            "pool of {cap}"
+        );
+        answers.push(body);
+        state.pool.close().await;
+    }
+    assert_eq!(answers[0], answers[1]);
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn a_burst_of_cold_identical_pages_answers_on_a_small_pool() {
+    // Requests that wait on another's memo fetch hold no connection: the
+    // leader reads the definitions through the pool while they wait.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    seed(&pool).await;
+    let narrow = PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(crate::market::MarketplaceState::new(
+        narrow.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    for uri in [
+        "/lambdas/collections/emotes?textSearch=dance",
+        "/lambdas/collections",
+    ] {
+        let answers = futures::future::join_all((0..8).map(|_| get(&state, uri))).await;
+        for (status, body) in &answers {
+            assert_eq!(*status, StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body, &answers[0].1, "{uri}: one page for all");
+        }
+        if uri.contains("emotes") {
+            assert_eq!(
+                answers[0].1["emotes"][0]["emoteDataADR74"]["category"], "dance",
+                "{}",
+                answers[0].1
+            );
+        }
+    }
+    drop(state);
+    narrow.close().await;
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
     // A node that walks the nft index: the user pages read their owner's
     // copies from the same closed pool first, and answer the same 500.
@@ -1691,6 +1773,7 @@ async fn catalogue_and_user_pages_fail_when_the_content_read_fails() {
         .test_allow_loopback
         .store(true, std::sync::atomic::Ordering::Relaxed);
     for path in [
+        "/lambdas/collections".to_string(),
         "/lambdas/collections/wearables?textSearch=hat".to_string(),
         "/lambdas/collections/emotes?textSearch=dance".to_string(),
         format!("/lambdas/users/{OWNER}/wearables?includeDefinitions"),
@@ -2262,6 +2345,92 @@ async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_aft
     assert_eq!(body["source"], "land-authz-index", "{body}");
     let (status, body) = answer("statement timeout".into()).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
+}
+
+/// On a network the collections index owns, the nft leg of `/v1/prices`
+/// files its histogram under the catalogue copy its fill read: rewriting an
+/// item's rarity at the same nft publication (a republication of the
+/// catalogue alone) misses the memo. A withdrawal between the gate and the
+/// fill answers the index's 503, not a 500.
+#[tokio::test]
+async fn nft_prices_follow_the_catalogue_copy_on_an_owned_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::catalogue::owning;
+    seed_mirrors(&db.pool).await;
+    seed_indexes(&db.pool).await;
+    super::trade_events::tests::publish_cursors(&db.pool).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+         VALUES ('matic', $1, 10, '0x0a', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'open', $2, 5000, $3, 1, 1, 20, 1)",
+    )
+    .bind(COFFEE)
+    .bind(OWNER)
+    .bind(chrono::Utc::now().timestamp_millis() + 86_400_000)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            data_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    owning::own(&db.pool, "matic", 137, 100, 60).await;
+    let epic = super::prices::parse_filters(&[
+        ("assetType".to_string(), "nft".to_string()),
+        ("category".to_string(), "wearable".to_string()),
+        ("itemRarity".to_string(), "epic".to_string()),
+    ])
+    .unwrap();
+    let priced = |state: Arc<MarketplaceState>, f: super::prices::PriceFilters| async move {
+        match super::prices::prices(&state, &f).await {
+            Ok(h) => h.into_iter().map(|(k, v)| (k.0, v)).collect::<Vec<_>>(),
+            Err(r) => {
+                let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                panic!("prices refused: {}", String::from_utf8_lossy(&bytes))
+            }
+        }
+    };
+    assert_eq!(
+        priced(state.clone(), epic.clone()).await,
+        [("5000".to_string(), 1)]
+    );
+
+    // The catalogue alone republishes: the hat is no longer epic.
+    sqlx::query(
+        "UPDATE shop.items SET rarity = 'common' WHERE contract_address = $1 AND item_id = 1",
+    )
+    .bind(COFFEE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    owning::own(&db.pool, "matic", 137, 100, 60).await;
+    assert_eq!(priced(state.clone(), epic.clone()).await, []);
+
+    // Withdrawn after the gate: the fill's own check names the index.
+    owning::rewind(&db.pool, "matic").await;
+    let wearables = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Wearable),
+        ..Default::default()
+    };
+    let refused = super::nft_reads::nft_prices(&state, &wearables)
+        .await
+        .unwrap_err();
+    let response = super::prices::nft_prices_error(refused);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.headers().contains_key("retry-after"));
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["source"], "collections-index", "{body}");
     db.drop().await;
 }
 
