@@ -67,6 +67,19 @@ pub(crate) fn market_settings(
         .with_historical_admin_token(Config::non_empty(
             &config.marketplace.historical_admin_token,
         ))
+        .with_wert(
+            shop::market::wert::WertSettings::parse(
+                config.marketplace.wert_private_key.as_deref(),
+                config
+                    .marketplace
+                    .wert_publication_fees_private_key
+                    .as_deref(),
+                config.marketplace.wert_api_url.as_deref(),
+                config.marketplace.wert_api_key.as_deref(),
+                self_hosts,
+            )
+            .context("WERT_* configuration")?,
+        )
         .with_transak(
             shop::market::transak::TransakSettings::parse(
                 config.marketplace.transak_api_url.as_deref(),

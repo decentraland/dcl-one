@@ -109,6 +109,29 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "HISTORICAL_ADMIN_TOKEN", hide_env_values = true)]
     pub historical_admin_token: Option<String>,
 
+    // The Wert card on-ramp (`POST /v1/wert/sign`): all four, or none (the
+    // route then answers 503 naming them).
+    /// Wert's Ed25519 partner key (32 bytes, hex) for card purchases into a
+    /// contract; read from WERT_PRIVATE_KEY_FILE alone.
+    #[arg(long, env = "WERT_PRIVATE_KEY", hide_env_values = true)]
+    pub wert_private_key: Option<String>,
+
+    /// The key a `publicationFees` signature uses; WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE alone.
+    #[arg(
+        long,
+        env = "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        hide_env_values = true
+    )]
+    pub wert_publication_fees_private_key: Option<String>,
+
+    /// Wert's partner API, which creates the widget session (`{WERT_API_URL}/create-session`).
+    #[arg(long, env = "WERT_API_URL")]
+    pub wert_api_url: Option<String>,
+
+    /// Wert's partner API key, sent as `x-api-key`.
+    #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
+    pub wert_api_key: Option<String>,
+
     // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
     // then answer 503 naming them).
     /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).

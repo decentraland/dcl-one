@@ -231,6 +231,16 @@ database needs schema step 0094 and the registry review repair before the
 full Polygon history is available. Moving the marketplace API host to this
 gateway preserves the worker's request paths.
 
+The Wert card on-ramp (`POST /v1/wert/sign` under `/shop-api` and `/marketplace-api`)
+needs four settings:
+- `WERT_PRIVATE_KEY_FILE` and `WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE`: Wert's 32-byte
+  Ed25519 partner keys in hex. The plain variables are refused.
+- `WERT_API_URL`: Wert's partner API, over https.
+- `WERT_API_KEY`, or `WERT_API_KEY_FILE`.
+
+Without them, the route answers 503 naming them. A partial set fails startup. The
+route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
+
 The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
 `PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
 six settings:

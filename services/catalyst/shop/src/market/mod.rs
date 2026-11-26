@@ -132,6 +132,7 @@ pub mod transak;
 pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
+pub mod wert;
 pub mod wire;
 
 #[cfg(test)]
@@ -266,6 +267,8 @@ pub struct MarketSettings {
     pub trade_rpc_urls: listings::RpcEndpoints,
     pub admin_token: Option<String>,
     pub historical_admin_token: Option<String>,
+    /// The Wert card on-ramp's keys and API (`WERT_*`); `None` answers 503.
+    pub wert: Option<wert::WertSettings>,
     /// The Transak card on-ramp's credentials (`TRANSAK_*`); `None` answers 503.
     pub transak: Option<transak::TransakSettings>,
     pub catalog_cache_ttl: Duration,
@@ -305,6 +308,7 @@ impl std::fmt::Debug for MarketSettings {
                 "historical_admin_token",
                 &self.historical_admin_token.is_some(),
             )
+            .field("wert", &self.wert.is_some())
             .field("transak", &self.transak.is_some())
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
@@ -324,6 +328,7 @@ impl Default for MarketSettings {
             trade_rpc_urls: listings::RpcEndpoints::default(),
             admin_token: None,
             historical_admin_token: None,
+            wert: None,
             transak: None,
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
@@ -372,6 +377,7 @@ impl MarketSettings {
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty()),
             historical_admin_token: None,
+            wert: None,
             transak: None,
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
@@ -384,6 +390,12 @@ impl MarketSettings {
 
     pub fn with_historical_admin_token(mut self, token: Option<String>) -> Self {
         self.historical_admin_token = token;
+        self
+    }
+
+    /// The Wert card on-ramp ([`wert::WertSettings::parse`]).
+    pub fn with_wert(mut self, wert: Option<wert::WertSettings>) -> Self {
+        self.wert = wert;
         self
     }
 
@@ -1278,14 +1290,16 @@ pub fn router(state: SharedState) -> Router {
 }
 
 /// The POST and PUT routes that write no market data, so they answer while
-/// data writes are off: the historical holdings reads, and the Transak widget
-/// and token refresh, which write only the shared access token.
+/// data writes are off: the historical holdings reads, the Wert signature
+/// (it only signs and asks Wert for a session), and the Transak widget and
+/// token refresh (they write only the shared access token).
 const OPEN_PATHS: &[&str] = &[
     historical::READ_PATHS[0],
     historical::READ_PATHS[1],
     historical::READ_PATHS[2],
     historical::READ_PATHS[3],
     historical::READ_PATHS[4],
+    wert::PATH,
     transak::WIDGET_PATH,
     transak::TOKEN_PATH,
 ];
@@ -1453,6 +1467,10 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
+        .route(
+            wert::PATH,
+            post(wert::sign).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route(
             transak::WIDGET_PATH,
             post(transak::widget_url).layer(DefaultBodyLimit::max(64 * 1024)),
