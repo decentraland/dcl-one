@@ -264,6 +264,41 @@ fn response_blob_and_form_data_work() {
     assert_eq!(outcome, r#"[true,"a.txt","hello"]"#);
 }
 
+/// deno_web registers these; a scene shares no lock or channel state with another.
+#[test]
+fn lock_manager_and_broadcast_ops_are_disabled() {
+    let mut runtime = client_runtime();
+    for op in [
+        "op_lock_manager_request",
+        "op_lock_manager_await_lock",
+        "op_lock_manager_await_steal",
+        "op_lock_manager_is_stolen",
+        "op_lock_manager_cancel",
+        "op_lock_manager_release",
+        "op_lock_manager_query",
+        "op_broadcast_subscribe",
+        "op_broadcast_unsubscribe",
+        "op_broadcast_serialize",
+        "op_broadcast_deserialize",
+        "op_broadcast_free",
+        "op_broadcast_send",
+        "op_broadcast_recv",
+    ] {
+        // The async ones reject instead of throwing.
+        eval(
+            &mut runtime,
+            format!(
+                "globalThis.__outcome = 'no error';
+                (async () => Deno.core.ops.{op}())().catch((e) => {{ globalThis.__outcome = String(e); }});"
+            ),
+        )
+        .unwrap();
+        run_event_loop(&mut runtime);
+        let err = eval(&mut runtime, "globalThis.__outcome".to_owned()).unwrap();
+        assert!(err.contains("disabled"), "{op}: {err}");
+    }
+}
+
 #[test]
 fn broadcast_channels_do_not_cross_scenes() {
     use std::sync::mpsc;
@@ -297,7 +332,7 @@ fn broadcast_channels_do_not_cross_scenes() {
                 r#"Deno.core.ops.op_broadcast_send(0, "x", new Uint8Array(1))"#.to_owned(),
             )
             .unwrap_err();
-            assert!(!err.is_empty());
+            assert!(err.contains("disabled"), "{err}");
             sent_sx.send(()).unwrap();
         })
         .join()
