@@ -5607,14 +5607,14 @@
           "replay": [
             "status: fixture=301 candidate=200",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=\"conformance model glb\""
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=\"conformance model glb\""
           ],
           "explained_by": {
             "status: fixture=301 candidate=200": "deliberate:item-files-from-disk",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"": "deliberate:item-files-from-disk",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>": "deliberate:item-files-from-disk",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=\"conformance model glb\"": "deliberate:item-files-from-disk"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>": "deliberate:item-files-from-disk",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=\"conformance model glb\"": "deliberate:item-files-from-disk"
           }
         },
         {
@@ -5624,15 +5624,15 @@
             "status: fixture=301 candidate=404",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
           ],
           "explained_by": {
             "status: fixture=301 candidate=404": "deliberate:item-files-private-until-published",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"": "deliberate:item-files-private-until-published",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"": "deliberate:item-files-private-until-published",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-private-until-published",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-private-until-published"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-private-until-published",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-private-until-published"
           }
         },
         {
@@ -5642,15 +5642,15 @@
             "status: fixture=301 candidate=200",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"private, no-store\"",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"conformance draft model glb\""
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"conformance draft model glb\""
           ],
           "explained_by": {
             "status: fixture=301 candidate=200": "deliberate:item-files-from-disk",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"private, no-store\"": "deliberate:item-files-from-disk",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"": "deliberate:item-files-from-disk",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-from-disk",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"conformance draft model glb\"": "deliberate:item-files-from-disk"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-from-disk",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"conformance draft model glb\"": "deliberate:item-files-from-disk"
           }
         },
         {
@@ -5660,15 +5660,15 @@
             "status: fixture=301 candidate=404",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
           ],
           "explained_by": {
             "status: fixture=301 candidate=404": "deliberate:item-files-private-until-published",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"": "deliberate:item-files-private-until-published",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"": "deliberate:item-files-private-until-published",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-private-until-published",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-private-until-published"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=<missing>": "deliberate:item-files-private-until-published",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-private-until-published"
           }
         },
         {
@@ -5678,15 +5678,15 @@
             "status: fixture=301 candidate=404",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=<missing>",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=<missing>",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\""
           ],
           "explained_by": {
             "status: fixture=301 candidate=404": "deliberate:item-files-absent",
             "header cache-control: fixture=\"public,max-age=31536000,immutable\" candidate=\"no-store\"": "deliberate:item-files-absent",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/json\"": "deliberate:item-files-absent",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=<missing>": "deliberate:item-files-absent",
-            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-absent"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=<missing>": "deliberate:item-files-absent",
+            "body bytes differ: fixture=\"Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay\" candidate=\"{\\\"data\\\":{},\\\"error\\\":\\\"Not Found\\\",\\\"ok\\\":false}\"": "deliberate:item-files-absent"
           }
         },
         {
@@ -5726,12 +5726,12 @@
           "replay": [
             "status: fixture=301 candidate=200",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>"
           ],
           "explained_by": {
             "status: fixture=301 candidate=200": "deliberate:item-files-from-disk",
             "header content-type: fixture=\"text/plain; charset=utf-8\" candidate=\"application/octet-stream\"": "deliberate:item-files-from-disk",
-            "header location: fixture=\"https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>": "deliberate:item-files-from-disk"
+            "header location: fixture=\"https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei\" candidate=<missing>": "deliberate:item-files-from-disk"
           }
         },
         {

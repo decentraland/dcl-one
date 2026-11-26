@@ -12,7 +12,7 @@
     "headers": {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "public,max-age=31536000,immutable",
-      "location": "https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei"
+      "location": "https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei"
     },
     "body_bytes_b64": ""
   },
