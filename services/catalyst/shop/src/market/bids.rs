@@ -205,6 +205,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
         COALESCE(recv_item.item_id, div(TOKEN_NUM, SHIFT::numeric)::text) AS item_id, \
         recv.contract_address, COALESCE(recv.extra, '') AS fingerprint, \
         (recv_erc721.token_id IS NOT NULL AND NOT LAND_CONTRACT) AS uses_nft_owner, \
+        (recv_erc721.token_id IS NOT NULL AND LAND_CONTRACT) AS uses_land_owner, \
         CASE WHEN recv_erc721.token_id IS NULL THEN COALESCE(i.creator, '') \
              WHEN LAND_CONTRACT THEN COALESCE(tr.owner, '') ELSE COALESCE(n.owner, '') END AS seller, \
         CASE WHEN EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) THEN 'cancelled' \
@@ -273,6 +274,29 @@ fn trades_bids_scope(extra: &str) -> String {
             ),
         );
     format!("SELECT * FROM ({sql}) b WHERE TRUE{extra}")
+}
+
+/// Whether the land-authz index of the node's LAND network may answer on
+/// `conn`'s snapshot: published, recent, bound to the served registries and
+/// with no event past its fold (`land_authz::indexer::observation_ready`).
+async fn land_ready_on(
+    conn: &mut PgConnection,
+    state: &MarketplaceState,
+) -> Result<bool, sqlx::Error> {
+    let Some(land) = state.land_network() else {
+        return Ok(false);
+    };
+    Ok(
+        crate::land_authz::indexer::cursor_observed(&mut *conn, land.network)
+            .await?
+            .is_some_and(|observed| {
+                crate::land_authz::indexer::observation_ready(
+                    &observed,
+                    land.land_registry,
+                    land.estate_registry,
+                )
+            }),
+    )
 }
 
 /// The mirror's bids of `f` at `now`, on `conn`.
@@ -347,21 +371,21 @@ pub(super) async fn trades_rows(
                         })
                 }
             };
-            if ready {
-                continue;
-            }
-            // Test the full scope before seller and pagination. An unpublished
-            // owner can otherwise make a bid disappear from the seller's count.
-            let scope = trades_bids_scope(&format!(
-                "{extra} AND lower(b.network) = '{}' AND b.uses_nft_owner",
-                net.db_name()
-            ));
-            let affected = query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
-                .fetch_one(&mut *conn)
-                .await
-                .map_err(read_error)?
-                .get("affected");
-            if affected {
+            // Check ownership source coverage before seller and pagination.
+            let affected = |owner: &str| {
+                let scope = trades_bids_scope(&format!(
+                    "{extra} AND lower(b.network) = '{}' AND {owner}",
+                    net.db_name()
+                ));
+                query(format!("SELECT EXISTS ({scope}) AS affected"), &binds)
+            };
+            if !ready
+                && affected("b.uses_nft_owner")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(read_error)?
+                    .get::<bool, _>("affected")
+            {
                 return Err(nft_unavailable(
                     net,
                     &format!(
@@ -369,6 +393,16 @@ pub(super) async fn trades_rows(
                         net.db_name()
                     ),
                 ));
+            }
+            if net == ChainNet::Ethereum
+                && !land_ready_on(&mut *conn, state).await.map_err(read_error)?
+                && affected("b.uses_land_owner")
+                    .fetch_one(&mut *conn)
+                    .await
+                    .map_err(read_error)?
+                    .get::<bool, _>("affected")
+            {
+                return Err(super::nft_reads::land_unavailable());
             }
         }
     }

@@ -9392,6 +9392,17 @@ async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publica
         )
         .await;
         let url = format!("/v1/bids?network=ETHEREUM&contractAddress={contract}&seller={owner}");
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours'")
+            .execute(pool)
+            .await
+            .unwrap();
+        let (status, body) = get(app.clone(), &url).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "land-authz-index", "{body}");
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now())")
+            .execute(pool)
+            .await
+            .unwrap();
         let (status, body) = get(app.clone(), &url).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["data"]["total"], 1, "{body}");

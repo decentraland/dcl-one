@@ -5427,8 +5427,8 @@ bids are one short read-only snapshot, released before the subgraph is
 awaited, whose instant the subgraph's filter takes. On an NFT walker, a
 mirrored ERC721 bid that reads `shop.nft` requires a fresh NFT ownership
 publication for the served chain. LAND and Estate sellers come from
-`land_authz.token_right` independently of NFT publication. NFT-index 503s
-are counted by network in `catalyst_shop_bid_nft_unavailable_reads_total`.
+`land_authz.token_right` and require a ready LAND fold independently of NFT
+publication. NFT-index 503s are counted by network in `catalyst_shop_bid_nft_unavailable_reads_total`.
 The check runs before any seller filter or pagination, so a pending owner
 change cannot move bids between seller pages or totals.
 
