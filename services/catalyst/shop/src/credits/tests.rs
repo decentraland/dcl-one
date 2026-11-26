@@ -707,7 +707,7 @@ async fn cleanup(pool: &PgPool, addr: &str) {
     }
 }
 
-fn unique(tag: &str) -> String {
+pub(super) fn unique(tag: &str) -> String {
     format!("{tag}-{}", uuid::Uuid::new_v4().simple())
 }
 
@@ -4012,7 +4012,7 @@ async fn mock_topup_is_gated_validated_capped_and_idempotent() {
     cleanup(&pool, &wallet.address).await;
 }
 
-const WEBHOOK_SECRET: &str = "whsec_query_counts";
+pub(super) const WEBHOOK_SECRET: &str = "whsec_query_counts";
 
 fn stripe_headers(body: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -4029,7 +4029,7 @@ fn stripe_headers(body: &str) -> HeaderMap {
     headers
 }
 
-async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
+pub(super) async fn deliver(app: &Router, body: &str) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method("POST")
         .uri("/credits/stripe/webhook");
@@ -4335,7 +4335,7 @@ fn session_event(
 }
 
 /// One pack order of 50 credits for 500 USD cents, opened as a Checkout Session.
-async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
+pub(super) async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
     let pack = PackRow {
         sku: "settle-pack".into(),
         title: "Settle".into(),
@@ -10634,7 +10634,7 @@ async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
 
 /// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
 /// session on 200; a read answers `session`. Both are counted.
-async fn stub_stripe(
+pub(super) async fn stub_stripe(
     expire_status: StatusCode,
     session: Value,
 ) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {

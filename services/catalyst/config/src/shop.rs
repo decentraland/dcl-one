@@ -625,9 +625,14 @@ pub struct ShopConfig {
     #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
     pub shop_feature_flags_refresh_secs: u64,
 
-    /// The availability alert outbox worker's cadence.
+    /// The cadence of the Shop's email outboxes: the availability alerts and the purchase receipts.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
+
+    /// Where the purchase receipt's images are served from; empty uses `SHOP_BASE_URL/email`, the
+    /// Shop app's `public/email`.
+    #[arg(long, env = "SHOP_EMAIL_ASSETS_URL", default_value = "")]
+    pub shop_email_assets_url: String,
 
     /// How often the watcher compares the waited-for items against the items mirror.
     #[arg(long, env = "SHOP_NOTIFY_WATCH_INTERVAL_SECS", default_value_t = 60)]

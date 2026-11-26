@@ -220,6 +220,36 @@ CREATE UNIQUE INDEX purchases_order_id_uidx ON credits.purchases (order_id) WHER
 -- The reconciler's paid-vs-granted sums per wallet and /admin/credits/purchases?address=.
 CREATE INDEX purchases_address_idx ON credits.purchases (address, id DESC);
 
+-- The purchase receipt email: one row per Stripe purchase, written in the
+-- transaction that grants it (`credits/receipts.rs`), so a grant that rolls
+-- back leaves none and a redelivered event adds none. The
+-- `credits-purchase-receipts` job sends it after the commit. `buyer_email` is
+-- the address the buyer typed into Checkout when the settling event carried
+-- it; a terminal row drops it.
+CREATE TABLE credits.purchase_receipts (
+    purchase_id bigint NOT NULL,
+    buyer_email text,
+    status text NOT NULL DEFAULT 'pending',
+    attempts integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_error text,
+    provider_message_id text,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    sent_at timestamp without time zone,
+    CONSTRAINT purchase_receipts_pkey PRIMARY KEY (purchase_id),
+    CONSTRAINT purchase_receipts_purchase_fkey FOREIGN KEY (purchase_id)
+        REFERENCES credits.purchases (id) ON DELETE CASCADE,
+    CONSTRAINT purchase_receipts_status_check CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
+    CONSTRAINT purchase_receipts_attempts_check CHECK (attempts >= 0),
+    CONSTRAINT purchase_receipts_email_check CHECK (status = 'pending' OR buyer_email IS NULL)
+);
+
+-- The worker's due set: WHERE status = 'pending' AND next_attempt_at <= now
+-- ORDER BY next_attempt_at, purchase_id LIMIT 50 FOR UPDATE SKIP LOCKED.
+CREATE INDEX purchase_receipts_due_idx ON credits.purchase_receipts (next_attempt_at, purchase_id)
+    WHERE status = 'pending';
+
 -- Stripe reversals per PaymentIntent, recorded whether or not its purchase is
 -- credited yet: Stripe does not order deliveries, so a `charge.refunded` or
 -- `charge.dispute.*` can arrive before the settlement that credits the

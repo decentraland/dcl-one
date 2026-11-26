@@ -1269,7 +1269,7 @@ pub(crate) async fn item_meta<'e>(
 
 /// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
 pub(crate) async fn item_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     network: &str,
     chain_id: i64,
     keys: &[(String, String)],
@@ -1288,7 +1288,7 @@ pub(crate) async fn item_metas(
     .bind(&contracts)
     .bind(&items)
     .bind(chain_id as i32)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
@@ -1311,14 +1311,14 @@ pub(crate) async fn item_metas(
 
 /// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
 pub(crate) async fn nft_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
     chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
     let found =
-        super::nft_reads::asset_metas(pool, land_image_base, network, chain_id, keys).await?;
+        super::nft_reads::asset_metas(conn, land_image_base, network, chain_id, keys).await?;
     Ok(found
         .into_iter()
         .map(|((contract, token), n)| {
