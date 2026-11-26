@@ -2348,18 +2348,6 @@ struct SignedFetchMeta {
     hash_payload: Option<String>,
 }
 
-fn delegated_signed_fetch_meta(
-    meta: String,
-    body_hash: Option<String>,
-) -> Result<String, serde_json::Error> {
-    let Some(hash) = body_hash else {
-        return Ok(meta);
-    };
-    let mut value: serde_json::Value = serde_json::from_str(&meta)?;
-    value["hashPayload"] = hash.into();
-    Ok(value.to_string())
-}
-
 fn validate_signed_fetch(
     uri: &str,
     body_hash: Option<&str>,
@@ -2479,10 +2467,15 @@ fn handle_sign_request(
                 let scope_header = delegation.scope_header.clone();
                 let ephemeral = delegation.wallet.clone();
                 let task = IoTaskPool::get().spawn_compat(async move {
-                    let meta = delegated_signed_fetch_meta(meta, hash_payload)?;
-                    let mut headers = sign_request(&method, &uri, &ephemeral, meta).await?;
-                    headers.push(("x-authoritative-scope".to_owned(), scope_header));
-                    Ok(headers)
+                    wallet::delegation::sign_delegated(
+                        &method,
+                        &uri,
+                        &ephemeral,
+                        &meta,
+                        hash_payload,
+                        &scope_header,
+                    )
+                    .await
                 });
                 tasks.push((response.clone(), task));
                 continue;
@@ -3436,11 +3429,11 @@ mod signed_fetch_body_tests {
         let (_, hash_payload) =
             validate_signed_fetch("https://storage.decentraland.org", Some(digest), false).unwrap();
         assert_eq!(
-            delegated_signed_fetch_meta(original.to_owned(), None).unwrap(),
+            wallet::delegation::delegated_meta(original, None).unwrap(),
             original
         );
         let meta: serde_json::Value = serde_json::from_str(
-            &delegated_signed_fetch_meta(original.to_owned(), hash_payload).unwrap(),
+            &wallet::delegation::delegated_meta(original, hash_payload).unwrap(),
         )
         .unwrap();
         assert_eq!(meta["sceneId"], "Mixed");

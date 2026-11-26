@@ -10740,6 +10740,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-core",
  "anyhow",
+ "base64 0.22.1",
  "bevy",
  "bevy_console",
  "bevy_dui",

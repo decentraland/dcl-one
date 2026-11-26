@@ -68,13 +68,15 @@ WebSockets, access to private resolved addresses is preview-only.
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
 credentials in cleartext.
 
-The gateway flag leaves Pulse, social RPC, Ethereum RPC and storage on their explicit
+The gateway flag leaves Pulse, social RPC, Ethereum RPC, storage and Credits on their explicit
 overrides or base-domain defaults. The default base domain is `decentraland.org`.
 Pulse also accepts the `PULSE_SERVER` environment variable. Configure a private deployment with
 `--pulse-server <host[:port]>`, `--social-rpc wss://example.org/social-rpc`,
 `--ethereum-rpc wss://example.org/rpc` and `--storage https://storage.example.org`
 as appropriate for that deployment. Storage delegates authorize an origin, so select
-the intended storage origin explicitly. The authentication page and public Reels links
+the intended storage origin explicitly. A headless server that pays scene rewards signs its
+Credits requests the same way: set `--credits https://credits.example.org` when it is not the
+base domain's, over HTTPS only. The authentication page and public Reels links
 also keep their configured destinations, set with `--auth-page https://example.org/auth`
 and `--reels https://example.org/reels` when needed.
 

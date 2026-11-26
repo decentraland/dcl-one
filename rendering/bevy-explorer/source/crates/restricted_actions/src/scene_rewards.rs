@@ -75,7 +75,7 @@ pub(crate) fn validate(request: &GrantRewardRequest) -> Result<ValidRequest, Gra
 
 /// Building, signing and sending the request, and reading credits-server's answer.
 mod remote {
-    use bevy::log::warn;
+    use bevy::log::{error, warn};
     use common::rpc::{GrantRewardAnswer, GrantRewardError};
     use serde::Deserialize;
 
@@ -163,21 +163,28 @@ mod remote {
         }
     }
 
-    fn http_client() -> &'static reqwest::Client {
-        static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-        CLIENT.get_or_init(|| {
-            reqwest::Client::builder()
-                // a redirect would carry the claim header to wherever it points
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .expect("a client with a timeout and no redirects always builds")
-        })
+    /// A response body is a few hundred bytes; anything past this is not credits-server's answer.
+    const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+
+    /// The client for credits-server: no redirects, since a redirect would carry the claim header
+    /// wherever it points, and a 15 s timeout. None if it cannot be built, which only refuses.
+    fn http_client() -> Option<&'static reqwest::Client> {
+        static CLIENT: std::sync::OnceLock<Option<reqwest::Client>> = std::sync::OnceLock::new();
+        CLIENT
+            .get_or_init(|| {
+                platform::http_client_builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .map_err(|error| error!("scene reward: cannot build the HTTP client: {error}"))
+                    .ok()
+            })
+            .as_ref()
     }
 
-    /// Every header of one reward request: the delegation's two-link signed-fetch chain over POST, the
-    /// URL's path and metadata carrying the body's SHA-256, the delegation's claim as
-    /// `x-authoritative-scope`, and the content type.
+    /// Every header of one reward request: the delegation's signed-fetch chain over POST, the URL's
+    /// path and metadata carrying the body's SHA-256, its claim as `x-authoritative-scope`, and the
+    /// content type.
     pub(super) async fn signed_headers(
         url: &str,
         body: &[u8],
@@ -186,16 +193,23 @@ mod remote {
         use sha2::{Digest, Sha256};
 
         let uri = url.parse::<http::Uri>()?;
-        let mut meta = serde_json::from_str::<serde_json::Value>(&delegation.meta)?;
-        meta["hashPayload"] = format!("{:x}", Sha256::digest(body)).into();
-        let mut headers =
-            wallet::sign_request("post", &uri, &delegation.wallet, meta.to_string()).await?;
-        headers.push((
-            "x-authoritative-scope".to_owned(),
-            delegation.scope_header.clone(),
-        ));
+        let mut headers = delegation
+            .sign("post", &uri, Some(format!("{:x}", Sha256::digest(body))))
+            .await?;
         headers.push(("content-type".to_owned(), "application/json".to_owned()));
         Ok(headers)
+    }
+
+    /// The response body, or None when it is longer than credits-server ever answers.
+    async fn capped_body(mut response: reqwest::Response) -> Option<Vec<u8>> {
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.ok()? {
+            if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                return None;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Some(body)
     }
 
     /// Sign and send one reward request. Every failure after the request may have left is
@@ -206,14 +220,18 @@ mod remote {
         delegation: wallet::delegation::CreditsDelegation,
     ) -> GrantRewardAnswer {
         let unavailable = || GrantRewardAnswer::refused(GrantRewardError::Unavailable);
+        let Some(client) = http_client() else {
+            return unavailable();
+        };
         let headers = match signed_headers(&url, &body, &delegation).await {
             Ok(headers) => headers,
             Err(error) => {
-                warn!("scene reward: signing failed: {error}");
+                // a local key failing to sign is this engine's bug, never the scene's
+                error!("scene reward: signing failed: {error}");
                 return unavailable();
             }
         };
-        let mut request = http_client().post(url);
+        let mut request = client.post(url);
         for (name, value) in headers {
             request = request.header(name, value);
         }
@@ -225,19 +243,28 @@ mod remote {
             }
         };
         let status = response.status().as_u16();
-        match response.bytes().await {
-            Ok(bytes) => interpret(status, &bytes),
-            Err(_) => unavailable(),
+        match capped_body(response).await {
+            Some(bytes) => interpret(status, &bytes),
+            None => unavailable(),
         }
     }
 
-    /// The credits-server route, over https only: the claim never goes out in cleartext.
+    /// The credits-server route under `base`, over https only: the claim never goes out in
+    /// cleartext, so an http override sends nothing.
+    pub(super) fn grant_url_for(base: &str, program_id: &str) -> Option<String> {
+        base.starts_with("https://").then(|| {
+            format!(
+                "{}/scene-rewards/programs/{program_id}/grants",
+                base.trim_end_matches('/')
+            )
+        })
+    }
+
     pub(super) fn grant_url(program_id: &str) -> Option<String> {
-        let url = common::base_domain::url(
-            common::base_domain::Service::Credits,
-            &format!("/scene-rewards/programs/{program_id}/grants"),
-        );
-        url.starts_with("https://").then_some(url)
+        grant_url_for(
+            &common::base_domain::service(common::base_domain::Service::Credits),
+            program_id,
+        )
     }
 }
 
@@ -557,5 +584,218 @@ mod tests {
                 String::from_utf8_lossy(body)
             );
         }
+    }
+
+    // ---- the network boundary, against local listeners ----
+
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{Arc, Mutex},
+    };
+
+    /// What a listener received: the request line, lowercased headers and the body.
+    #[derive(Debug, Default, Clone)]
+    struct Received {
+        line: String,
+        headers: std::collections::HashMap<String, String>,
+        body: Vec<u8>,
+    }
+
+    /// A one-request-per-connection HTTP listener on loopback that answers every request with
+    /// `reply` and records what it received.
+    fn listener(reply: Vec<u8>) -> (String, Arc<Mutex<Vec<Received>>>) {
+        let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", socket.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        std::thread::spawn(move || {
+            for stream in socket.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                let head_end = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                    if let Some(i) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(i);
+                    }
+                };
+                let Some(head_end) = head_end else { continue };
+                let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
+                let mut lines = head.split("\r\n");
+                let line = lines.next().unwrap_or_default().to_owned();
+                let headers: std::collections::HashMap<_, _> = lines
+                    .filter_map(|l| l.split_once(':'))
+                    .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_owned()))
+                    .collect();
+                let length: usize = headers
+                    .get("content-length")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                let mut body = raw[head_end + 4..].to_vec();
+                while body.len() < length {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&buf[..n]);
+                }
+                record.lock().unwrap().push(Received {
+                    line,
+                    headers,
+                    body,
+                });
+                let _ = stream.write_all(&reply);
+            }
+        });
+        (base, seen)
+    }
+
+    fn http_reply(status: &str, extra: &str, body: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 {status}\r\n{extra}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    /// A Credits delegation for throwaway key 1, its claim naming that key.
+    fn delegation() -> wallet::delegation::CreditsDelegation {
+        use base64::Engine;
+        let address = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
+        let payload = [
+            "Decentraland Authoritative Delegation",
+            "Audience: credits",
+            &format!("Ephemeral: {address}"),
+            "World: boundary.dcl.eth",
+            "SceneId: bafkreiboundary",
+            "Parcel: 0,0",
+            "Expiration: 2099-01-01T00:00:00.000Z",
+        ]
+        .join("\n");
+        let envelope = serde_json::json!({
+            "v": 1,
+            "ephemeral": {
+                "privateKey": "0000000000000000000000000000000000000000000000000000000000000001",
+                "publicKey": "unused",
+                "address": address,
+            },
+            "scope": { "payload": payload, "signature": "0xsig" },
+        });
+        wallet::delegation::CreditsDelegation::parse(
+            &base64::engine::general_purpose::STANDARD.encode(envelope.to_string()),
+        )
+        .unwrap()
+    }
+
+    fn run<F: std::future::Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    const ROUTE: &str = "/scene-rewards/programs/0b5c8d7e-1f2a-4b3c-9d4e-5f6a7b8c9d0e/grants";
+
+    #[test]
+    fn the_server_receives_the_signed_path_the_hashed_body_and_the_claim() {
+        let (base, seen) = listener(http_reply(
+            "201 Created",
+            "",
+            r#"{"ok":true,"replayed":false,"receiptId":"9f1c-r","credits":5,"usdCents":50}"#,
+        ));
+        let valid = validate(&request(PROGRAM, RECIPIENT, "door-1")).unwrap();
+        let body = request_body(&valid, true);
+        let answer = run(send(format!("{base}{ROUTE}"), body.clone(), delegation()));
+        assert_eq!(
+            answer,
+            GrantRewardAnswer::paid(false, "9f1c-r".to_owned(), 5)
+        );
+
+        let received = seen
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("the request reached the server");
+        assert_eq!(received.line, format!("POST {ROUTE} HTTP/1.1"));
+        assert_eq!(received.body, body);
+        // the digest the signature covers is the digest of the bytes that arrived
+        use sha2::{Digest, Sha256};
+        let meta: serde_json::Value =
+            serde_json::from_str(&received.headers["x-identity-metadata"]).unwrap();
+        assert_eq!(
+            meta["hashPayload"],
+            format!("{:x}", Sha256::digest(&received.body))
+        );
+        assert_eq!(meta["signer"], "dcl:authoritative-server");
+        // two links, the ephemeral signing this method and this path
+        let link: serde_json::Value =
+            serde_json::from_str(&received.headers["x-identity-auth-chain-1"]).unwrap();
+        assert!(link["payload"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("post:{ROUTE}:")));
+        assert!(!received.headers.contains_key("x-identity-auth-chain-2"));
+        assert!(!received.headers["x-authoritative-scope"].is_empty());
+    }
+
+    #[test]
+    fn a_redirect_is_never_followed_with_the_claim() {
+        let (elsewhere, stolen) = listener(http_reply("200 OK", "", "{}"));
+        let (base, seen) = listener(http_reply(
+            "302 Found",
+            &format!("location: {elsewhere}/steal\r\n"),
+            "",
+        ));
+        let valid = validate(&request(PROGRAM, RECIPIENT, "door-1")).unwrap();
+        let answer = run(send(
+            format!("{base}{ROUTE}"),
+            request_body(&valid, true),
+            delegation(),
+        ));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert!(stolen.lock().unwrap().is_empty());
+        assert_eq!(
+            answer,
+            GrantRewardAnswer::refused(GrantRewardError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn an_answer_longer_than_credits_server_gives_is_unavailable() {
+        let padding = "x".repeat(20 * 1024);
+        let (base, _) = listener(http_reply(
+            "201 Created",
+            "",
+            &format!(
+                r#"{{"ok":true,"replayed":false,"receiptId":"r","credits":5,"pad":"{padding}"}}"#
+            ),
+        ));
+        let valid = validate(&request(PROGRAM, RECIPIENT, "door-1")).unwrap();
+        let answer = run(send(
+            format!("{base}{ROUTE}"),
+            request_body(&valid, true),
+            delegation(),
+        ));
+        assert_eq!(
+            answer,
+            GrantRewardAnswer::refused(GrantRewardError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn only_an_https_credits_service_is_ever_sent_to() {
+        let (base, seen) = listener(http_reply("200 OK", "", "{}"));
+        assert_eq!(grant_url_for(&base, PROGRAM), None);
+        assert!(seen.lock().unwrap().is_empty());
+        assert_eq!(
+            grant_url_for("https://credits.example/", PROGRAM).as_deref(),
+            Some("https://credits.example/scene-rewards/programs/0b5c8d7e-1f2a-4b3c-9d4e-5f6a7b8c9d0e/grants")
+        );
     }
 }

@@ -1,6 +1,7 @@
-// World-storage delegation: an orchestrator-minted, short-lived credential that lets a
-// headless authoritative server sign world-storage requests without ever holding the
-// authoritative key. Wire envelope (base64 JSON, mirrors hammurabi-headless):
+// Orchestrator-minted, short-lived delegations that let a headless authoritative server sign
+// requests to one service for one scene without ever holding the authoritative key: World
+// storage, and Credits (scene rewards). Both share the wire envelope (base64 JSON, mirrors
+// hammurabi-headless), its decoding and the delegated signer:
 // { "v": 1, "ephemeral": { "privateKey", "publicKey", "address" },
 //   "scope": { "payload", "signature" } }
 // The scene-scope fields (World/SceneId/Parcel/Expiration) are derived from the signed
@@ -37,6 +38,79 @@ pub struct DelegationScope {
     pub signature: String,
 }
 
+/// A decoded envelope whose ephemeral key derives the address the envelope names.
+struct Envelope {
+    scope: DelegationScope,
+    signer: PrivateKeySigner,
+    /// lowercased, derived from the key
+    address: String,
+}
+
+/// Decode a base64 delegation envelope of `kind` and check its version and that its key derives
+/// its address. Errors never echo decoded content: it contains the ephemeral private key.
+fn decode_envelope(encoded: &str, kind: &str) -> Result<Envelope, anyhow::Error> {
+    let json = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| anyhow::anyhow!("{kind} delegation is not valid base64"))?;
+    let envelope: DelegationEnvelope = serde_json::from_slice(&json)
+        .map_err(|_| anyhow::anyhow!("{kind} delegation envelope is malformed"))?;
+    if envelope.v != 1 {
+        anyhow::bail!("unsupported {kind} delegation version {}", envelope.v);
+    }
+    let signer =
+        PrivateKeySigner::from_str(envelope.ephemeral.private_key.trim_start_matches("0x"))
+            .map_err(|_| anyhow::anyhow!("{kind} delegation ephemeral key is invalid"))?;
+    let address = format!("{:#x}", signer.address());
+    if envelope.ephemeral.address.to_lowercase() != address {
+        anyhow::bail!("{kind} delegation ephemeral address does not match its key");
+    }
+    Ok(Envelope {
+        scope: envelope.scope,
+        signer,
+        address,
+    })
+}
+
+impl Envelope {
+    /// The ephemeral's standalone wallet (authorized only by the scope claim) and the
+    /// pre-encoded `x-authoritative-scope` value, base64(json(scope)).
+    fn into_signer(self) -> Result<(Wallet, String), anyhow::Error> {
+        let scope_header =
+            base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&self.scope)?);
+        let mut wallet = Wallet::default();
+        wallet.finalize(self.signer.address(), self.signer, Vec::default(), false);
+        Ok((wallet, scope_header))
+    }
+}
+
+/// `meta` with the body's SHA-256 added as `hashPayload` when there is a body, every other
+/// claim-derived field kept as the delegation built it.
+pub fn delegated_meta(meta: &str, body_hash: Option<String>) -> Result<String, serde_json::Error> {
+    let Some(hash) = body_hash else {
+        return Ok(meta.to_owned());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(meta)?;
+    value["hashPayload"] = hash.into();
+    Ok(value.to_string())
+}
+
+/// Sign a request with a delegation: the signed-fetch chain of its ephemeral `wallet` over
+/// `method` and the URI's path, with the delegation's `meta` (plus `hashPayload` for a body), and
+/// its claim as `x-authoritative-scope`. Storage and Credits requests are both signed here.
+pub async fn sign_delegated(
+    method: &str,
+    uri: &http::Uri,
+    wallet: &Wallet,
+    meta: &str,
+    body_hash: Option<String>,
+    scope_header: &str,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    let meta = delegated_meta(meta, body_hash)?;
+    let mut headers = crate::sign_request(method, uri, wallet, meta).await?;
+    headers.push(("x-authoritative-scope".to_owned(), scope_header.to_owned()));
+    Ok(headers)
+}
+
 #[derive(Clone)]
 pub struct StorageDelegation {
     /// standalone ephemeral signer (owner = ephemeral address; authorized only by the scope claim)
@@ -57,15 +131,11 @@ impl StorageDelegation {
     /// request metadata (the verifier keys on the claim's world/sceneId/parcel).
     /// Errors never echo decoded content — it contains the ephemeral private key.
     pub fn parse(encoded: &str, realm_hostname: &str) -> Result<Self, anyhow::Error> {
-        let json = base64::engine::general_purpose::STANDARD
-            .decode(encoded.trim())
-            .map_err(|_| anyhow::anyhow!("storage delegation is not valid base64"))?;
-        let envelope: DelegationEnvelope = serde_json::from_slice(&json)
-            .map_err(|_| anyhow::anyhow!("storage delegation envelope is malformed"))?;
-        if envelope.v != 1 {
-            anyhow::bail!("unsupported storage delegation version {}", envelope.v);
+        let envelope = decode_envelope(encoded, "storage")?;
+        // an audience-bound claim (Credits) never fills a storage slot, whatever fields it shares
+        if envelope.scope.payload.lines().next() == Some(AUDIENCE_DELEGATION_PREFIX) {
+            anyhow::bail!("storage delegation is an audience-bound claim");
         }
-
         let value_for = |prefix: &str| -> Option<String> {
             envelope
                 .scope
@@ -86,20 +156,7 @@ impl StorageDelegation {
         let expiration = chrono::DateTime::parse_from_rfc3339(&expiration_iso)
             .map_err(|_| anyhow::anyhow!("delegation claim has unparseable Expiration"))?
             .timestamp_millis();
-
-        let local_wallet =
-            PrivateKeySigner::from_str(envelope.ephemeral.private_key.trim_start_matches("0x"))
-                .map_err(|_| anyhow::anyhow!("delegation ephemeral key is invalid"))?;
-        let claimed = envelope.ephemeral.address.to_lowercase();
-        let derived = format!("{:#x}", local_wallet.address());
-        if claimed != derived {
-            anyhow::bail!("delegation ephemeral address does not match its key");
-        }
-        let mut wallet = Wallet::default();
-        wallet.finalize(local_wallet.address(), local_wallet, Vec::default(), false);
-
-        let scope_header = base64::engine::general_purpose::STANDARD
-            .encode(serde_json::to_string(&envelope.scope)?);
+        let (wallet, scope_header) = envelope.into_signer()?;
 
         // deliberately the DELEGATION's world/sceneId/parcel — the storage service derives
         // the placeId the scope claim is bound to from these (hammurabi parity, including
@@ -161,23 +218,23 @@ const AUDIENCE_CLAIM_FIELDS: [&str; 6] = [
     "Parcel:",
     "Expiration:",
 ];
-pub const CREDITS_AUDIENCE: &str = "credits";
+const CREDITS_AUDIENCE: &str = "credits";
 
 /// A scene's Credits delegation: an orchestrator-minted ephemeral key and the root-signed
 /// `Audience: credits` claim that authorizes it for one scene until it expires. The engine signs
 /// only reward requests to credits-server with it, never a scene's own signed fetch.
 #[derive(Clone)]
 pub struct CreditsDelegation {
-    pub wallet: Wallet,
+    wallet: Wallet,
     /// pre-encoded `x-authoritative-scope` header value: base64(json(scope))
-    pub scope_header: String,
+    scope_header: String,
     /// `x-identity-metadata` JSON before the body digest is added
-    pub meta: String,
-    pub world: String,
-    pub scene_id: String,
-    pub parcel: String,
+    meta: String,
+    world: String,
+    scene_id: String,
+    parcel: String,
     /// unix millis
-    pub expiration: i64,
+    expiration: i64,
 }
 
 impl CreditsDelegation {
@@ -186,14 +243,7 @@ impl CreditsDelegation {
     /// the `Ephemeral` the key it came with. The value formats are credits-server's to enforce.
     /// Errors never echo decoded content (it holds the key).
     pub fn parse(encoded: &str) -> Result<Self, anyhow::Error> {
-        let json = base64::engine::general_purpose::STANDARD
-            .decode(encoded.trim())
-            .map_err(|_| anyhow::anyhow!("credits delegation is not valid base64"))?;
-        let envelope: DelegationEnvelope = serde_json::from_slice(&json)
-            .map_err(|_| anyhow::anyhow!("credits delegation envelope is malformed"))?;
-        if envelope.v != 1 {
-            anyhow::bail!("unsupported credits delegation version {}", envelope.v);
-        }
+        let envelope = decode_envelope(encoded, "credits")?;
 
         let mut lines = envelope.scope.payload.split('\n');
         if lines.next() != Some(AUDIENCE_DELEGATION_PREFIX) {
@@ -226,21 +276,13 @@ impl CreditsDelegation {
             .map_err(|_| anyhow::anyhow!("credits delegation claim has unparseable Expiration"))?
             .timestamp_millis();
 
-        let local_wallet =
-            PrivateKeySigner::from_str(envelope.ephemeral.private_key.trim_start_matches("0x"))
-                .map_err(|_| anyhow::anyhow!("credits delegation ephemeral key is invalid"))?;
-        let derived = format!("{:#x}", local_wallet.address());
-        if envelope.ephemeral.address.to_lowercase() != derived || values["Ephemeral:"] != derived {
+        if values["Ephemeral:"] != envelope.address {
             anyhow::bail!("credits delegation claim does not authorize its own key");
         }
-        let mut wallet = Wallet::default();
-        wallet.finalize(local_wallet.address(), local_wallet, Vec::default(), false);
-
         let world = values["World:"].to_owned();
         let scene_id = values["SceneId:"].to_owned();
         let parcel = values["Parcel:"].to_owned();
-        let scope_header = base64::engine::general_purpose::STANDARD
-            .encode(serde_json::to_string(&envelope.scope)?);
+        let (wallet, scope_header) = envelope.into_signer()?;
         // credits-server reads only `signer` (a scene's own signer is refused) and the body
         // digest added per request; the location it trusts is the claim's
         let meta = serde_json::json!({
@@ -263,16 +305,34 @@ impl CreditsDelegation {
         })
     }
 
-    pub fn is_expired(&self, now_millis: i64) -> bool {
+    fn is_expired(&self, now_millis: i64) -> bool {
         now_millis >= self.expiration
+    }
+
+    /// Sign a request to credits-server with this delegation (see [`sign_delegated`]).
+    pub async fn sign(
+        &self,
+        method: &str,
+        uri: &http::Uri,
+        body_hash: Option<String>,
+    ) -> Result<Vec<(String, String)>, anyhow::Error> {
+        sign_delegated(
+            method,
+            uri,
+            &self.wallet,
+            &self.meta,
+            body_hash,
+            &self.scope_header,
+        )
+        .await
     }
 }
 
 /// A scene's Credits assignment: the orchestrator's id for this add-scene, and the delegation it
 /// holds, if one has arrived. The id ties every renewal to the assignment that asked for it.
-pub struct CreditsSlot {
-    pub assignment: String,
-    pub delegation: Option<CreditsDelegation>,
+struct CreditsSlot {
+    assignment: String,
+    delegation: Option<CreditsDelegation>,
 }
 
 /// Why a Credits delegation was not stored. Never echoes decoded content.
@@ -606,6 +666,13 @@ mod test {
         for lines in [repeated, missing, unknown, spaced] {
             assert!(parse_credits(&lines).is_err());
         }
+    }
+
+    #[test]
+    fn a_credits_claim_is_never_parsed_as_a_storage_delegation() {
+        let encoded = credits_claim_for(&credits_lines("2030-01-01T00:00:00.000Z"));
+        assert!(CreditsDelegation::parse(&encoded).is_ok());
+        assert!(StorageDelegation::parse(&encoded, "https://realm").is_err());
     }
 
     #[test]
