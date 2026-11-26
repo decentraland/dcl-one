@@ -6881,7 +6881,7 @@
           "kind": "regular"
         },
         {
-          "name": "DownloadActions.test.ts",
+          "name": "DownloadActions.test.tsx",
           "kind": "regular"
         },
         {
@@ -15922,11 +15922,11 @@
     },
     {
       "path": "library/ui/apps/sites/download/DownloadActions.module.css",
-      "sha256": "ef57b2a0762374b1996e8b7420fef59e73ed4fb0b20b92d9189a789e1e485a74"
+      "sha256": "f246e8ecd276b71be9fc7623ba2a317c67f1b5bff1fcc9c984635bd5be077915"
     },
     {
       "path": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "sha256": "62ba8bc9771c7808b4cc972ada9bdad040e703784dcb9a2897f0ec1f04db4791"
+      "sha256": "8b5cbc536d35e039264f5ac11fa1680aae379160dd6f5797bb00f0692466d160"
     },
     {
       "path": "library/ui/apps/sites/download/DownloadPage.module.css",
@@ -54795,17 +54795,17 @@
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/download/DownloadActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
