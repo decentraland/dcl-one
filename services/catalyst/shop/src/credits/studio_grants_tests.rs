@@ -827,18 +827,26 @@ async fn an_operator_is_paced() {
         let (status, _) = grant(&app, &stranger, &studio, &player.address, 1, "pace-key-01").await;
         assert_eq!(status, StatusCode::NOT_FOUND, "a stranger is never counted");
     }
-    for i in 0..limit {
+    // The bucket refills continuously (one grant a second at these settings),
+    // so the first refusal comes after at least the window's grants, a few
+    // more when the requests are slow; it must come within a bound.
+    let mut allowed = 0;
+    let refused = loop {
         let (status, v) = grant(&app, &operator, &studio, &player.address, 1, "pace-key-01").await;
-        let want = if i == 0 {
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            break v;
+        }
+        let want = if allowed == 0 {
             StatusCode::CREATED
         } else {
             StatusCode::OK
         };
-        assert_eq!(status, want, "attempt {i}: {v}");
-    }
-    let (status, v) = grant(&app, &operator, &studio, &player.address, 1, "pace-key-01").await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
-    assert_eq!(v["retryAfterSeconds"], 60);
+        assert_eq!(status, want, "attempt {allowed}: {v}");
+        allowed += 1;
+        assert!(allowed <= 3 * limit, "never paced after {allowed} attempts");
+    };
+    assert!(allowed >= limit, "paced after {allowed} of {limit}");
+    assert_eq!(refused["retryAfterSeconds"], 60);
     let (status, v) = grant(&app, &other, &studio, &player.address, 1, "pace-key-02").await;
     assert_eq!(
         status,
@@ -1247,5 +1255,74 @@ async fn an_operator_is_never_answered_with_anothers_grant() {
         (StatusCode::OK, json!(true)),
         "{v}"
     );
+    db.drop().await;
+}
+
+/// A grant stored by the first release, whose hash has no granter, is still
+/// answered to a retry from the operator that made it: the response the
+/// operator lost is not turned into a refusal across the upgrade. Another
+/// operator, or a changed amount, is refused as a reused key.
+#[tokio::test]
+async fn a_first_release_grant_is_replayed_to_its_own_operator() {
+    let Some(db) = OwnDatabase::create("studio_grant_legacy").await else {
+        return;
+    };
+    let app = app(grant_state(db.pool.clone(), Some(500)));
+    let first = scratch_wallet();
+    let second = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Legacy", 10, &first).await;
+    add_operator(&app, &studio, &second.address).await;
+    let (status, made) = grant(&app, &first, &studio, &player.address, 2, "legacy-key-1").await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    // As the first release stored it.
+    let legacy =
+        super::studio_grants::legacy_grant_request_hash(&player.address, 20, "Event winner", None);
+    let rewritten = sqlx::query(
+        "UPDATE credits.studio_budget_entries SET request_hash = $1 \
+         WHERE studio_id = $2::uuid AND idempotency_key = 'legacy-key-1' AND created_by = $3",
+    )
+    .bind(&legacy)
+    .bind(&studio)
+    .bind(&first.address)
+    .execute(&db.pool)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(rewritten, 1);
+    let before = written(&db.pool).await;
+
+    let (status, v) = grant(&app, &first, &studio, &player.address, 2, "legacy-key-1").await;
+    assert_eq!(
+        (status, v["replayed"].clone()),
+        (StatusCode::OK, json!(true)),
+        "{v}"
+    );
+    assert_eq!(v["creditId"], made["creditId"]);
+    for (operator, credits, who) in [
+        (&second, 2, "another operator"),
+        (&first, 3, "a changed amount"),
+    ] {
+        let (status, v) = grant(
+            &app,
+            operator,
+            &studio,
+            &player.address,
+            credits,
+            "legacy-key-1",
+        )
+        .await;
+        assert_eq!(
+            (status, v["code"].clone()),
+            (StatusCode::CONFLICT, json!("IDEMPOTENCY_KEY_REUSED")),
+            "{who}: {v}"
+        );
+    }
+    assert_eq!(
+        written(&db.pool).await,
+        before,
+        "the replay and the refusals wrote nothing"
+    );
+    assert_eq!(balance_cents(&db.pool, &studio).await, 80);
     db.drop().await;
 }

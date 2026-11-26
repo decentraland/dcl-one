@@ -148,6 +148,20 @@ pub fn grant_request_hash(
     hex::encode(Sha256::digest(request.to_string().as_bytes()))
 }
 
+/// The fingerprint grants were stored with before the granter joined it
+/// (the first release of studio grants): the same request without the
+/// granter. A retry of such a grant is still answered, but only to the
+/// operator the entry names as its granter (`created_by`).
+pub fn legacy_grant_request_hash(
+    recipient: &str,
+    usd_cents: i64,
+    reason: &str,
+    annotation: Option<&str>,
+) -> String {
+    let request = json!(["grant", recipient, usd_cents, reason, annotation]);
+    hex::encode(Sha256::digest(request.to_string().as_bytes()))
+}
+
 impl StudioGrantRequest<'_> {
     fn hash(&self) -> String {
         grant_request_hash(
@@ -157,6 +171,20 @@ impl StudioGrantRequest<'_> {
             self.reason,
             self.annotation,
         )
+    }
+
+    /// Whether an entry stored as (`stored_hash`, `created_by`) is this
+    /// request: its hash, or the first release's hash from the same granter.
+    fn repeats(&self, stored_hash: &str, created_by: &str) -> bool {
+        stored_hash == self.hash()
+            || (created_by == self.granter
+                && stored_hash
+                    == legacy_grant_request_hash(
+                        self.recipient,
+                        self.usd_cents,
+                        self.reason,
+                        self.annotation,
+                    ))
     }
 }
 
@@ -363,7 +391,7 @@ impl Credits {
 
         // A repeat is answered before the studio's current state is judged.
         let existing = sqlx::query(
-            "SELECT request_hash, ledger_id::text AS credit_id FROM credits.studio_budget_entries \
+            "SELECT request_hash, created_by, ledger_id::text AS credit_id FROM credits.studio_budget_entries \
              WHERE studio_id = $1::uuid AND idempotency_key = $2",
         )
         .bind(req.studio_id)
@@ -372,9 +400,11 @@ impl Credits {
         .await?;
         if let Some(existing) = existing {
             let credit_id: Option<String> = existing.get("credit_id");
-            let (true, Some(credit_id)) =
-                (existing.get::<String, _>("request_hash") == hash, credit_id)
-            else {
+            let repeats = req.repeats(
+                &existing.get::<String, _>("request_hash"),
+                &existing.get::<String, _>("created_by"),
+            );
+            let (true, Some(credit_id)) = (repeats, credit_id) else {
                 return Err(StudioError::IdempotencyKeyReused(
                     req.idempotency_key.into(),
                 ));
@@ -497,6 +527,37 @@ mod tests {
         ] {
             assert_ne!(hash, other);
         }
+    }
+
+    #[test]
+    fn the_first_releases_hash_is_kept_for_its_retries() {
+        // The hash the first release stored (its `grant_request_hash`), pinned
+        // as computed outside this code: SHA-256 of
+        // `["grant","0x…aa",100,"why",null]`.
+        let a = "0x00000000000000000000000000000000000000aa";
+        assert_eq!(
+            legacy_grant_request_hash(a, 100, "why", None),
+            "a271bed1708beb8d96468b6778fd17c2f03825c261f398fad79f954392640bbb"
+        );
+        let g = "0x00000000000000000000000000000000000000cc";
+        let req = StudioGrantRequest {
+            studio_id: "s",
+            recipient: a,
+            granter: g,
+            usd_cents: 100,
+            reason: "why",
+            annotation: None,
+            idempotency_key: "key-00001",
+            max_cents: Some(1000),
+        };
+        let legacy = legacy_grant_request_hash(a, 100, "why", None);
+        assert!(req.repeats(&req.hash(), "anyone"));
+        assert!(
+            req.repeats(&legacy, g),
+            "the same granter's first-release grant"
+        );
+        assert!(!req.repeats(&legacy, a), "another granter's");
+        assert!(!req.repeats(&legacy_grant_request_hash(a, 110, "why", None), g));
     }
 
     #[test]
