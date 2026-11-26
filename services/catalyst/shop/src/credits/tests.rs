@@ -7,6 +7,14 @@
 //! `sql_capture` statement budgets are not carried (no capture hook in v2);
 //! the observable results they guarded are.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;

@@ -7,7 +7,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 
 use axum::Json;
@@ -82,9 +83,14 @@ fn unity_pack(p: &PackRow) -> Option<UnityCreditPack> {
         return None;
     }
     let credits = p.credits.parse::<f64>().ok()?.round() as i64;
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the Unity wire carries USD as a number; operator-set prices are far below 2^53 cents"
+    )]
+    let usd = p.price_cents as f64 / 100.0;
     Some(UnityCreditPack {
         id: p.sku.clone(),
-        usd: p.price_cents as f64 / 100.0,
+        usd,
         credits,
         recommended: false,
         order: p.sort_order,

@@ -48,7 +48,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -592,6 +593,7 @@ impl UsageIndex {
     /// `credits_usage_index_ready` and `credits_usage_index_lag_seconds`
     /// as [`Self::ready_at`] reads the lane at `now`; the lag is from the
     /// last folded block's time, set only while the lane is open.
+    #[allow(clippy::cast_precision_loss, reason = "a lag in seconds for a gauge")]
     pub async fn record_readiness(&self, now: DateTime<Utc>) {
         let ready = self.ready_at(now).await;
         let lag = ready

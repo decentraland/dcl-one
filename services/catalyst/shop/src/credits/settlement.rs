@@ -2,7 +2,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 // from: credits-server@465e628bc:src/logic/usd-reconciler.ts (settle on indexed consumption, recover a released intent), src/logic/credits-revoker.ts (revokeCredits by credit hash), offchain-marketplace-contract@87350c63e:src/credits/CreditsManagerPolygon.sol (the flags, roles and allowlist the gate reads); docs/shop/CONTRACTS.md ("Checks a dedicated manager must pass", "No spendable remainder")
 //! Everything after the signature:

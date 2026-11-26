@@ -2,7 +2,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 // from: catalyrst/crates/catalyrst-credits/src/handlers/orders.rs, credits-server src/controllers/handlers/create-checkout-session.ts, credits-server src/logic/checkout-return-url.ts
 //! The explorer's order flow: `POST /credits/checkout` opens a Stripe

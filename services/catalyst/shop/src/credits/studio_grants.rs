@@ -124,6 +124,7 @@ pub fn grant_request_hash(
 
 /// The largest integer a JSON number carries exactly (`Number.MAX_SAFE_INTEGER`).
 pub const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+const MAX_SAFE_INTEGER_F64: f64 = 9_007_199_254_740_991.0;
 
 /// Whole Credits to grant: a positive whole number whose cents stay exact,
 /// as credits-server requires (`Number.isSafeInteger(credits)` and
@@ -143,12 +144,16 @@ pub fn parse_grant_credits(value: Option<&JsonValue>) -> Result<i64, StudioError
 
 /// A JSON number that is a whole number within the safe-integer range, in
 /// any spelling; the cents are then computed on the integer.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the float is whole and within ±(2^53 − 1), so the cast is exact"
+)]
 fn whole_number(value: &JsonValue) -> Option<i64> {
     value.as_i64().or_else(|| {
         let f = value.as_f64()?;
         // Within ±(2^53 − 1) every f64 is exactly an integer or not, so the
         // conversion below is exact.
-        (f.fract() == 0.0 && f.abs() <= MAX_SAFE_INTEGER as f64).then_some(f as i64)
+        (f.fract() == 0.0 && f.abs() <= MAX_SAFE_INTEGER_F64).then_some(f as i64)
     })
 }
 

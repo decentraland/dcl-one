@@ -2,7 +2,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 use crate::evm::eip712::{hash_dynamic, struct_hash, typed_data_digest, word_address, word_u64};
 use alloy_primitives::Address;

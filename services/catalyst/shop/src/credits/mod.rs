@@ -82,6 +82,14 @@
 //! `LANDILER_ESCROW_ADDRESS` (the economy module's own), and
 //! `USAGE_GRANTS_PG_CONNECTION_STRING`.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 pub mod admin;
 pub mod admin_store;
 pub mod alerts;
@@ -899,13 +907,13 @@ impl State {
                     std::time::Duration::from_secs(10),
                 ))
             });
-        let gate: Arc<dyn settlement::IssuanceGate> = match &chain {
-            Some(chain) => Arc::new(settlement::ChainGate::new(
-                chain.clone(),
-                settings.usage.chain_id as u64,
-            )),
-            None => Arc::new(settlement::ClosedGate),
-        };
+        let gate: Arc<dyn settlement::IssuanceGate> =
+            match (&chain, u64::try_from(settings.usage.chain_id)) {
+                (Some(chain), Ok(chain_id)) => {
+                    Arc::new(settlement::ChainGate::new(chain.clone(), chain_id))
+                }
+                _ => Arc::new(settlement::ClosedGate),
+            };
         let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
             Some(chain) => Arc::new(feed::ChainFeed::new(
                 chain.clone(),

@@ -13,7 +13,8 @@
 #![deny(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
 )]
 
 use axum::Json;
@@ -166,7 +167,7 @@ async fn rate_at(pool: &sqlx::PgPool, block_timestamp: i64) -> Result<Option<Str
          ORDER BY taken_at DESC LIMIT 1",
     )
     .bind(at.naive_utc())
-    .bind(UNPRICED_MAX_AGE_SECS as f64)
+    .bind(crate::price::store::SNAPSHOT_MAX_AGE.as_secs_f64())
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|r| r.get::<String, _>("rate")))

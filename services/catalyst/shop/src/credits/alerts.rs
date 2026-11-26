@@ -587,7 +587,7 @@ impl Delivery {
 
 /// The retry wait after `attempts` failed posts.
 fn backoff(attempts: i32) -> chrono::Duration {
-    let doublings = attempts.saturating_sub(1).clamp(0, 16) as u32;
+    let doublings = u32::try_from(attempts.saturating_sub(1).clamp(0, 16)).unwrap_or(0);
     BACKOFF
         .checked_mul(1 << doublings)
         .map_or(MAX_BACKOFF, |wait| wait.min(MAX_BACKOFF))
@@ -619,7 +619,7 @@ async fn retry(
     .bind(lease_until)
     .execute(&credits.pool)
     .await?;
-    Ok(result.rows_affected() as usize)
+    Ok(usize::try_from(result.rows_affected()).unwrap_or(usize::MAX))
 }
 
 /// Ends this pass's expired hold and refunds the unposted claim.
@@ -805,7 +805,7 @@ fn settled_message(payloads: &[&Value], shop: &str) -> String {
         plural(items, "item"),
         grouped(credits_of(cents)),
         usd(cents),
-        plural(buyers as i64, "buyer"),
+        plural(i64::try_from(buyers).unwrap_or(i64::MAX), "buyer"),
     );
     for payload in payloads {
         text.push_str("\n      • ");
@@ -836,8 +836,10 @@ fn settled_line(payload: &Value, shop: &str) -> String {
     // the items only when every line carries one.
     let bought = match payload["registeredName"].as_str() {
         Some(name) if lines == 1 => format!("NAME @{}", slack_label(name)),
-        _ if items.len() as i64 == lines && lines == 1 => items_list(&items, shop),
-        _ if items.len() as i64 == lines => format!("{count}: {}", items_list(&items, shop)),
+        _ if i64::try_from(items.len()) == Ok(lines) && lines == 1 => items_list(&items, shop),
+        _ if i64::try_from(items.len()) == Ok(lines) => {
+            format!("{count}: {}", items_list(&items, shop))
+        }
         _ => count,
     };
     let cents = payload["usdCents"].as_i64().unwrap_or(0);
@@ -976,7 +978,7 @@ fn round_div(n: i64, d: i64) -> i64 {
         return 0;
     }
     let q = (2 * n.unsigned_abs() + d.unsigned_abs()) / (2 * d.unsigned_abs());
-    let q = q as i64;
+    let q = i64::try_from(q).unwrap_or(i64::MAX);
     if (n < 0) != (d < 0) { -q } else { q }
 }
 
@@ -1004,7 +1006,7 @@ fn grouped(n: i64) -> String {
 fn usd(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.unsigned_abs();
-    format!("{sign}${}.{:02}", grouped((abs / 100) as i64), abs % 100)
+    format!("{sign}${}.{:02}", grouped((cents / 100).abs()), abs % 100)
 }
 
 /// 18-decimal MANA to at most four decimals, truncated: a settlement figure
@@ -1104,6 +1106,13 @@ pub fn spawn(jobs: &Jobs, credits: Credits, delivery: Delivery, writes_enabled: 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod unit_tests {
     use super::*;
 

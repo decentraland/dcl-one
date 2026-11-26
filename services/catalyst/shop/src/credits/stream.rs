@@ -154,6 +154,10 @@ impl BalanceChanges {
 
     /// Takes every read permit, for a test that holds the streams' reads.
     #[cfg(test)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "CONCURRENT_READS is a small constant"
+    )]
     pub(crate) fn hold_reads(&self) -> tokio::sync::OwnedSemaphorePermit {
         self.reads
             .clone()
@@ -563,6 +567,13 @@ impl Follow {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
