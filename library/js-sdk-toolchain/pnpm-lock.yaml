@@ -175,7 +175,7 @@ overrides:
   react@^18.2.0: 18.3.1
   react-reconciler@^0.29.0: 0.29.0
   scheduler@^0.23.0: 0.23.0
-  '@dcl/asset-packs': 2.17.2
+  '@dcl/asset-packs': 2.30.2
   '@dcl/hashing': workspace:*
   '@dcl/quests-client>@dcl/sdk': '-'
   protobufjs: 7.6.6
@@ -331,8 +331,8 @@ importers:
   packages/@dcl/sdk-commands:
     dependencies:
       '@dcl/asset-packs':
-        specifier: 2.17.2
-        version: 2.17.2(@dcl/ecs@packages+@dcl+ecs)
+        specifier: 2.30.2
+        version: 2.30.2(@dcl/ecs@packages+@dcl+ecs)
       '@dcl/crypto':
         specifier: ^3.4.4
         version: 3.9.0
@@ -658,8 +658,8 @@ packages:
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
 
-  '@dcl/asset-packs@2.17.2':
-    resolution: {integrity: sha512-/YMQEBYkdZCcpPOP58l8fYDduGqtNnO0JYgOwI0RNMZ8MW/Dl902RW5KExhlGBfto+X2BwFH3aY8yAG/qbW2OQ==}
+  '@dcl/asset-packs@2.30.2':
+    resolution: {integrity: sha512-WYFNgshEjKdhaOE7x0PVwO2B46ta47ErL2yECwMTWu/pzwHN34v0Vw8asm4/bAHuD66hK+kMHaabg1n+jgMJTA==}
     peerDependencies:
       '@dcl/ecs': ^7.15.2
 
@@ -4162,10 +4162,9 @@ snapshots:
 
   '@bcoe/v8-coverage@0.2.3': {}
 
-  '@dcl/asset-packs@2.17.2(@dcl/ecs@packages+@dcl+ecs)':
+  '@dcl/asset-packs@2.30.2(@dcl/ecs@packages+@dcl+ecs)':
     dependencies:
       '@dcl/ecs': link:packages/@dcl/ecs
-      mitt: 3.0.1
 
   '@dcl/catalyst-contracts@4.4.2': {}
 
@@ -4206,7 +4205,7 @@ snapshots:
   '@dcl/inspector@7.59.0(@dcl/ecs@packages+@dcl+ecs)':
     dependencies:
       '@babel/parser': 7.28.5
-      '@dcl/asset-packs': 2.17.2(@dcl/ecs@packages+@dcl+ecs)
+      '@dcl/asset-packs': 2.30.2(@dcl/ecs@packages+@dcl+ecs)
       ts-deepmerge: 8.0.0
     transitivePeerDependencies:
       - '@dcl/ecs'
