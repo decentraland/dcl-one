@@ -42,6 +42,8 @@ describe('ProfileBadges', () => {
       await user.hover(slot)
       const tip = screen.getByRole('tooltip')
       expect(tip.textContent).toBe('WalkerWalk 10 kmUnlocked on Mar 3, 2026')
+      // 224px of text plus the 8px padding on each side keeps the 240px tip.
+      expect(tip.style.getPropertyValue('--tt-max-width')).toBe('224px')
       await user.unhover(slot)
       expect(screen.queryByRole('tooltip')).toBeNull()
     })

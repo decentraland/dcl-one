@@ -25,8 +25,8 @@ type ProfileBadgesProps = {
   errorText?: string
 }
 
-/** The widest the tip gets before its text wraps. */
-const TIP_MAX_WIDTH = 240
+/** The widest the tip's text gets before it wraps: with the tip's 8px padding on each side, a 240px tip. */
+const TIP_MAX_WIDTH = 224
 
 function Badge({ badge }: { badge: ProfileBadgeItem }) {
   // The slot is the tip's anchor, so the open tip describes the focused slot itself.
