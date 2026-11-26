@@ -15,7 +15,7 @@
   ],
   "deliberate_gaps": {
     "timestamped-signatures-only": {
-      "text": "Every signed operation: upstream also accepts a request whose auth chain signs only its method and its path below /v1 (lowercased), whatever x-identity-timestamp or x-identity-metadata header the request carries or omits, valid until the delegated key expires. The node accepts only the timestamped payload over its own method and path, at most five minutes old and one minute ahead, and refuses such a request with upstream's 401 {ok:false, data:{message}, error:'Unauthenticated'}.",
+      "text": "Every signed operation: upstream also accepts a request whose auth chain signs only its method and its path below /v1 (lowercased), whatever x-identity-timestamp or x-identity-metadata header the request carries or omits, valid until the delegated key expires. The node accepts only the timestamped payload over its own method and path, at most 60 seconds old and 60 seconds ahead, and refuses such a request with upstream's 401 {ok:false, data:{message}, error:'Unauthenticated'}.",
       "captures": [
         "source/14-collection-untimestamped-read.json",
         "source/15-collection-untimestamped-write.json",
