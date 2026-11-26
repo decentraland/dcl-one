@@ -43,12 +43,16 @@ entities behind its cursors and processed snapshots.
 - **Passes stay full.** Each pass rereads the whole history and starts
   `SYNC_ITEM_REPLAY_INTERVAL_SECS` after the previous one started (default
   1200; 0 turns the replay off).
+- **Only a builder node replays.** A node with `CREATE_WRITES_ENABLED=false`
+  runs no pass whatever the interval: every builder write answers 503 there,
+  so nothing reads the proof.
 
 ## Consequences
 
 - Each pass reads about 81 MB in 160 requests from each source (measured on
-  November 20, 2026), so the default costs about 5.8 GB a day per source
-  catalyst.
+  November 20, 2026), so the default costs each source catalyst about
+  5.8 GB a day for each builder node that syncs from it. Content mirrors
+  without creator writes cost nothing.
 - A pass lasts about as long as each of its readers' share of the source
   walks, about 2 minutes a walk at the default page pause. Coverage stays
   continuous while the larger of the interval and a pass, plus a pass,

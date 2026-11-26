@@ -46,6 +46,7 @@ pub struct ContentConfig {
     /// default 1200 costs each source about 5.8 GB a day, 600 about 11.6 GB,
     /// 1440 about 4.9 GB. A pass proves item coverage for 30 minutes from its
     /// start; off, the builder can't tell a new third-party item URN is unused.
+    /// A node with `CREATE_WRITES_ENABLED=false` never runs it.
     #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 1200)]
     pub sync_item_replay_interval_secs: u64,
 
