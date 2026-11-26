@@ -2,7 +2,7 @@
    with the colour, or the colour alone, opens a light popup 406px wide with preset toggles and hue, saturation
    and brightness bars. Sizes are the HUD canvas's px (1920 by 1080). These rules sit outside the cascade layer:
    its buttons and range inputs are native controls a host's reset would restyle. The swatch's 55 % white
-   border, the selected orange, the shadow, the layer and the 7px, 7.5px, 8px, 11px and 13px corners have no
+   border, the selected orange, the shadow, the layer and the 7px, 7.5px, 11px and 13px corners have no
    token. */
 .root {
   position: relative;
@@ -13,7 +13,7 @@
   align-items: center;
   gap: 5px;
   height: 40px;
-  padding: 5px 8px;
+  padding: 5px var(--dcl-space-8);
   border: 0;
   border-radius: var(--dcl-radius-md);
   background: var(--dcl-neutrals-snow);
@@ -21,7 +21,7 @@
   cursor: pointer;
 }
 .triggerText {
-  font-size: 16px;
+  font-size: var(--dcl-font-size-body-md);
   font-weight: 500;
   letter-spacing: 0.02em;
 }
@@ -86,7 +86,7 @@
 }
 .label {
   height: 20px;
-  font-size: 14px;
+  font-size: var(--dcl-font-size-body-sm);
   font-weight: 500;
   letter-spacing: 0.04em;
   line-height: 20px;
@@ -148,7 +148,7 @@
   position: relative;
   flex: 1;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--dcl-radius-sm);
 }
 .hueTrack {
   background: linear-gradient(90deg, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff);

@@ -665,7 +665,7 @@
   },
   "library/ui/components/ColorPicker/ColorPicker.module.css": {
     "primitives": 0,
-    "tokens": 13
+    "tokens": 17
   },
   "library/ui/components/CommunityCard/CommunityCard.module.css": {
     "primitives": 0,
@@ -705,7 +705,7 @@
   },
   "library/ui/components/HintsButton/HintsButton.module.css": {
     "primitives": 0,
-    "tokens": 7
+    "tokens": 11
   },
   "library/ui/components/InputExplorerNames/InputExplorerNames.module.css": {
     "primitives": 0,
@@ -793,7 +793,7 @@
   },
   "library/ui/components/RailButton/RailButton.module.css": {
     "primitives": 0,
-    "tokens": 7
+    "tokens": 12
   },
   "library/ui/components/ScrollThumb/ScrollThumb.module.css": {
     "primitives": 0,

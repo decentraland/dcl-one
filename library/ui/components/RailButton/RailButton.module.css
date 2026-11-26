@@ -2,7 +2,7 @@
    Hovering it shows its tip only; the selected one draws a 2px white ring outside the circle, 46px across,
    and the ring casts the shadow. These rules sit outside the cascade layer: the button is a native control a
    host's reset would restyle, and callers size and place it by class. The circle's black, the shadows, the
-   inner ring's 70 % white, the 10px count and the dot's green have no token. */
+   inner ring's 70 % white and the dot's green have no token. */
 .root {
   position: relative;
   display: flex;
@@ -12,7 +12,7 @@
   height: 42px;
   padding: 0;
   border: none;
-  border-radius: 999px; /* = HUD --r-pill */
+  border-radius: var(--dcl-radius-full);
   background: rgba(0, 0, 0, 0.7); /* = HUD --rail-bg */
   box-shadow: 2px 2px 2.5px rgba(0, 0, 0, 0.25); /* = HUD --shadow-rail-button */
   color: var(--dcl-neutrals-snow);
@@ -30,7 +30,7 @@
   position: absolute;
   inset: -2px;
   border: 2px solid var(--dcl-neutrals-white);
-  border-radius: 999px; /* = HUD --r-pill */
+  border-radius: var(--dcl-radius-full);
   box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.25); /* = HUD --shadow-rail-button-selected */
   pointer-events: none;
 }
@@ -60,11 +60,11 @@
   padding: 0 3px;
   box-sizing: border-box;
   border: 2px solid var(--dcl-neutrals-shadow);
-  border-radius: 999px; /* = HUD --r-pill */
+  border-radius: var(--dcl-radius-full);
   background: var(--dcl-brand-ruby);
   color: var(--dcl-neutrals-snow);
   font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
-  font-size: 10px; /* = HUD --type-10 */
+  font-size: var(--dcl-font-size-caption);
   font-weight: 600;
   line-height: 12px;
 }
@@ -81,7 +81,7 @@
   z-index: 2;
   width: 7.3px;
   height: 7.3px;
-  border-radius: 999px; /* = HUD --r-pill */
+  border-radius: var(--dcl-radius-full);
   background: #30cd00; /* = HUD --voice-live */
   box-shadow: 0 0 0 2.4px var(--dcl-neutrals-shadow);
 }

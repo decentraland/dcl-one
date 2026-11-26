@@ -1,7 +1,7 @@
 /* Not in Figma: the Explorer HUD's control hints, a 38px dark square that opens a 482px list above it, and the
    key outline its rows show. These rules sit outside the cascade layer: the button is a native control a
    host's reset would restyle, and the caller places the button with its own class. The button's 22 % black,
-   its 6 % white hover and the sizes have no token. */
+   its 6 % white hover, the box sizes, the half-pixel offsets and the 19px line height have no token. */
 .root {
   position: relative;
   width: 38px;
@@ -30,15 +30,15 @@
   z-index: 3;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--dcl-space-16);
   width: 482px;
   margin: 0;
-  padding: 24.5px 24px 24.5px 23.5px;
+  padding: 24.5px var(--dcl-space-24) 24.5px 23.5px;
   list-style: none;
   border-radius: var(--dcl-radius-md);
   background: var(--dcl-neutrals-shadow);
   color: var(--dcl-neutrals-snow);
-  font-size: 16px; /* = HUD --type-16 */
+  font-size: var(--dcl-font-size-body-md);
   font-weight: 600; /* = HUD --fw-semibold */
   line-height: 19px;
 }
@@ -64,6 +64,6 @@
   box-sizing: border-box;
   border: 1.5px solid var(--dcl-neutrals-snow);
   border-radius: var(--dcl-radius-xs);
-  font-size: 14px; /* = HUD --type-14 */
+  font-size: var(--dcl-font-size-body-sm);
   line-height: 1;
 }
