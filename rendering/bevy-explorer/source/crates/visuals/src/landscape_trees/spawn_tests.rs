@@ -422,8 +422,8 @@ fn bush01_has_no_solid() {
 #[test]
 fn stones_collide_with_their_mesh() {
     let mesh = Handle::<Mesh>::default();
-    for prototype in 0..PROTOTYPES.len() {
-        let stone = PROTOTYPES[prototype].asset.starts_with("stone");
+    for (prototype, kind) in PROTOTYPES.iter().enumerate() {
+        let stone = kind.asset.starts_with("stone");
         match prototype_solid(prototype, &mesh) {
             Some(Solid::Mesh(handle)) => {
                 assert!(stone, "{prototype}");
