@@ -1,5 +1,6 @@
 //! Exercise the dormant v3 release against genuine v2 layouts and receipts.
 //! Current v3 apply/migrate/bootstrap execution is checked in social_voice_upgrade.
+#![allow(clippy::unwrap_used, reason = "test support")]
 use std::{
     fs,
     io::Write,

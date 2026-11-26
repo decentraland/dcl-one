@@ -85,7 +85,9 @@ pub struct CreditUsageDiff {
     pub replayed: bool,
     #[serde(rename = "newBalance")]
     pub new_balance: String,
-    /// `purchase` (the group's charged cents) or `remainder` (a later use of the same credit).
+    /// `purchase` (the group's charged cents), `remainder` (a later use of the
+    /// same credit) or `deferred` (an earlier use of the credit is not settled
+    /// yet; a pass covering it settles both in order).
     pub kind: String,
 }
 
