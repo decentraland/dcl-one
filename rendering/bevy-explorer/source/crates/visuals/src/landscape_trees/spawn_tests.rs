@@ -24,7 +24,7 @@ use super::{
     tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT, SPAWN_BUDGET, TREE_DISTANCE,
 };
 use crate::{
-    solids::{prototype_solids, Solid},
+    solids::{prototype_capsules, prototype_solid, Solid},
     terrain::TerrainSurface,
 };
 
@@ -67,6 +67,7 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
         genesis,
         worlds,
         scenes: default(),
+        meshes: default(),
     })
     .insert_resource(TerrainSurface::settled(&targets))
     .insert_resource(pointers);
@@ -393,9 +394,10 @@ fn realm_switch_swaps_layout() {
 
 #[test]
 fn bush01_has_no_solid() {
-    assert!(prototype_solids(0).is_empty());
+    let mesh = Handle::<Mesh>::default();
+    assert!(prototype_solid(0, &mesh).is_none());
     for prototype in 1..PROTOTYPES.len() {
-        assert!(!prototype_solids(prototype).is_empty(), "{prototype}");
+        assert!(prototype_solid(prototype, &mesh).is_some(), "{prototype}");
     }
 
     let mut app = open_land(6, Vec3::ZERO);
@@ -415,11 +417,32 @@ fn bush01_has_no_solid() {
     }
 }
 
-/// Unity's collider prefabs, carried into bevy's axes (z negated): Tree01's crown sphere,
-/// Rock01's stretched capsule and Bush02's trunk.
+/// A stone collides with its own mesh, so the player stands on the rock rather than on a capsule
+/// around it; the trees and bushes keep their capsules.
 #[test]
-fn colliders_match_unity_prefabs() {
-    let tree01 = prototype_solids(5);
+fn stones_collide_with_their_mesh() {
+    let mesh = Handle::<Mesh>::default();
+    for prototype in 0..PROTOTYPES.len() {
+        let stone = PROTOTYPES[prototype].asset.starts_with("stone");
+        match prototype_solid(prototype, &mesh) {
+            Some(Solid::Mesh(handle)) => {
+                assert!(stone, "{prototype}");
+                assert_eq!(handle, mesh);
+            }
+            Some(Solid::Capsules(capsules)) => {
+                assert!(!stone, "{prototype}");
+                assert!(!capsules.is_empty());
+            }
+            None => assert_eq!(prototype, 0),
+        }
+    }
+}
+
+/// The trunk and crown colliders in bevy's axes (z negated): Tree01's crown sphere and Bush02's
+/// upright trunk.
+#[test]
+fn capsules_carry_into_bevy_axes() {
+    let tree01 = prototype_capsules(5);
     assert_eq!(tree01.len(), 4);
     let crown = tree01
         .iter()
@@ -431,18 +454,8 @@ fn colliders_match_unity_prefabs() {
         .abs_diff_eq(Vec3::new(1.5728973, 9.667379, -1.2116734), 1e-4));
     assert!(crown.top.abs_diff_eq(crown.base, 1e-4));
 
-    let rock01 = prototype_solids(2);
-    assert_eq!(rock01.len(), 1);
-    // radius 0.5 scaled by the larger horizontal scale, height 2 by the vertical one: the
-    // segment is what the height leaves past the two caps
-    let radius = 0.5000001 * 1.7924199;
-    let half = 2.0 * 1.01659 * 0.5 - radius;
-    assert!((rock01[0].radius - radius).abs() < 1e-5);
-    assert!(rock01[0].base.abs_diff_eq(Vec3::new(0.0, -half, 0.0), 1e-4));
-    assert!(rock01[0].top.abs_diff_eq(Vec3::new(0.0, half, 0.0), 1e-4));
-
     // Bush02's trunk: a capsule along x turned upright, 1.149 m long with 0.055 m caps
-    let bush02 = prototype_solids(1);
+    let bush02 = prototype_capsules(1);
     assert_eq!(bush02.len(), 1);
     let trunk = &bush02[0];
     assert!((trunk.base.distance(trunk.top) - (1.1490948 - 2.0 * 0.054864246)).abs() < 1e-4);

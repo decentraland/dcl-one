@@ -3,10 +3,16 @@
 
 use std::sync::LazyLock;
 
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+};
 use common::sets::PostUpdateSets;
 use dcl_component::SceneEntityId;
-use scene_runner::update_world::mesh_collider::{ColliderId, SceneColliderData};
+use scene_runner::update_world::{
+    gltf_container::mesh_to_parry_shape,
+    mesh_collider::{ColliderId, SceneColliderData, SharedShape},
+};
 
 use crate::terrain::{update_collider, TerrainCollider};
 
@@ -32,33 +38,35 @@ pub(crate) struct Capsule {
 }
 
 /// The entity's collision shapes, in its local space.
-#[derive(Component, Clone, Copy)]
-pub(crate) struct Solid(pub &'static [Capsule]);
+#[derive(Component, Clone)]
+pub(crate) enum Solid {
+    /// Capsules and spheres (the trees and bushes).
+    Capsules(&'static [Capsule]),
+    /// The mesh's own triangles at the entity's scale (the stones), so the collider follows the
+    /// rock's lumps rather than a capsule around them.
+    Mesh(Handle<Mesh>),
+}
 
-/// A collider of a prototype's collider prefab as the reference stores it, in its frame (x east,
-/// z north): the collider's object's local position, rotation (x, y, z, w) and scale, then the
-/// collider in that object's space.
+/// A collider of a prototype's collider prefab as stored in its frame (x east, z north): the
+/// collider's object's local position and rotation (x, y, z, w), then the collider in that
+/// object's space.
 struct PrefabCollider {
     position: [f32; 3],
     rotation: [f32; 4],
-    scale: [f32; 3],
     shape: PrefabShape,
 }
 
 enum PrefabShape {
-    /// `height` runs end to end, caps included, along local axis `direction` (0 x, 1 y, 2 z).
+    /// Centred on its object, `height` running end to end, caps included, along local x.
     Capsule {
-        center: [f32; 3],
         radius: f32,
         height: f32,
-        direction: usize,
     },
     Sphere {
         radius: f32,
     },
 }
 
-/// A capsule along its object's x axis, unscaled.
 const fn capsule(
     position: [f32; 3],
     rotation: [f32; 4],
@@ -68,13 +76,7 @@ const fn capsule(
     PrefabCollider {
         position,
         rotation,
-        scale: [1.0; 3],
-        shape: PrefabShape::Capsule {
-            center: [0.0; 3],
-            radius,
-            height,
-            direction: 0,
-        },
+        shape: PrefabShape::Capsule { radius, height },
     }
 }
 
@@ -82,41 +84,35 @@ const fn sphere(position: [f32; 3], rotation: [f32; 4], radius: f32) -> PrefabCo
     PrefabCollider {
         position,
         rotation,
-        scale: [1.0; 3],
         shape: PrefabShape::Sphere { radius },
     }
 }
 
-/// The stones' collider: an upright capsule of radius 0.5 and height 2, stretched by `scale`.
-const fn stone(position: [f32; 3], scale: [f32; 3]) -> PrefabCollider {
-    PrefabCollider {
-        position,
-        rotation: [0.0, 0.0, 0.0, 1.0],
-        scale,
-        shape: PrefabShape::Capsule {
-            center: [0.000000059604645, 0.0, -0.00000008940697],
-            radius: 0.5000001,
-            height: 2.0,
-            direction: 1,
-        },
-    }
+/// How a prototype collides.
+enum PrefabSolid {
+    /// Its prefab's colliders; none for a prototype the player walks through.
+    Colliders(&'static [PrefabCollider]),
+    /// Its model's mesh.
+    ModelMesh,
 }
 
-/// By prototype, in the layout's order. Bush01 has no collider.
+use PrefabSolid::{Colliders, ModelMesh};
+
+/// By prototype, in the layout's order. Bush01 has no collider; the stones collide with their mesh.
 // the numbers as the prefabs store them, quarter turns included
 #[allow(clippy::approx_constant)]
-const PREFABS: [&[PrefabCollider]; 8] = [
-    &[],
-    &[capsule(
+const PREFABS: [PrefabSolid; 8] = [
+    Colliders(&[]),
+    Colliders(&[capsule(
         [0.006637088, 0.53919345, -0.0029117058],
         [0.000000026692538, 0.0000000041955577, 0.7071068, 0.7071068],
         0.054864246,
         1.1490948,
-    )],
-    &[stone([0.0, 0.0, 0.0], [1.71718, 1.01659, 1.7924199])],
-    &[stone([0.0, 0.0, 0.011], [1.2314928, 0.96884936, 1.2854519])],
-    &[stone([0.0, 0.0, 0.011], [1.5168672, 0.94172555, 1.0701506])],
-    &[
+    )]),
+    ModelMesh,
+    ModelMesh,
+    ModelMesh,
+    Colliders(&[
         capsule(
             [0.0, 0.7581423, -0.035903018],
             [0.000000026692538, 0.000000004652657, 0.7071068, 0.7071068],
@@ -140,8 +136,8 @@ const PREFABS: [&[PrefabCollider]; 8] = [
             [0.000000037748947, 0.0, 0.0, 1.0],
             5.3309493,
         ),
-    ],
-    &[
+    ]),
+    Colliders(&[
         capsule(
             [-0.040914174, 0.71437424, 0.017361246],
             [0.000000026692538, 0.000000004419805, 0.7071068, 0.7071068],
@@ -171,8 +167,8 @@ const PREFABS: [&[PrefabCollider]; 8] = [
             [0.000000037748947, 0.0, 0.0, 1.0],
             5.3004665,
         ),
-    ],
-    &[
+    ]),
+    Colliders(&[
         capsule(
             [0.10291743, 2.5611644, 0.012515802],
             [0.00000002562954, -0.040001597, 0.7330966, 0.67894715],
@@ -219,58 +215,72 @@ const PREFABS: [&[PrefabCollider]; 8] = [
             0.36880827,
             4.86461,
         ),
-    ],
+    ]),
 ];
 
 impl PrefabCollider {
-    /// The collider as a capsule in the prefab root's space, with z negated into bevy's axes.
-    /// A scaled capsule takes its axis's scale on its height and the larger other scale on its
-    /// radius; a scaled sphere takes the largest scale. A capsule shorter than its diameter is a
-    /// sphere.
+    /// The collider as a capsule in the prefab root's space, with z negated into bevy's axes. A
+    /// capsule shorter than its diameter is a sphere.
     fn capsule(&self) -> Capsule {
         let rotation = Quat::from_array(self.rotation);
         let position = Vec3::from_array(self.position);
-        let scale = Vec3::from_array(self.scale).abs();
-        let (center, radius, half) = match self.shape {
-            PrefabShape::Capsule {
-                center,
-                radius,
-                height,
-                direction,
-            } => {
-                let across = (0..3)
-                    .filter(|axis| *axis != direction)
-                    .map(|axis| scale[axis])
-                    .fold(0.0, f32::max);
-                let radius = radius * across;
-                let mut half = Vec3::ZERO;
-                half[direction] = (height * scale[direction] * 0.5 - radius).max(0.0);
-                (Vec3::from_array(center) * scale, radius, half)
+        let (radius, half) = match self.shape {
+            PrefabShape::Capsule { radius, height } => {
+                (radius, Vec3::X * (height * 0.5 - radius).max(0.0))
             }
-            PrefabShape::Sphere { radius } => {
-                (Vec3::ZERO, radius * scale.max_element(), Vec3::ZERO)
-            }
+            PrefabShape::Sphere { radius } => (radius, Vec3::ZERO),
         };
         let to_bevy = |point: Vec3| {
             let point = position + rotation * point;
             Vec3::new(point.x, point.y, -point.z)
         };
         Capsule {
-            base: to_bevy(center - half),
-            top: to_bevy(center + half),
+            base: to_bevy(-half),
+            top: to_bevy(half),
             radius,
         }
     }
 }
 
-static PROTOTYPE_SOLIDS: LazyLock<[Vec<Capsule>; 8]> = LazyLock::new(|| {
-    PREFABS.map(|colliders| colliders.iter().map(PrefabCollider::capsule).collect())
+static PROTOTYPE_CAPSULES: LazyLock<[Vec<Capsule>; 8]> = LazyLock::new(|| {
+    PREFABS.map(|solid| match solid {
+        Colliders(colliders) => colliders.iter().map(PrefabCollider::capsule).collect(),
+        ModelMesh => Vec::new(),
+    })
 });
 
-/// The colliders of a layout prototype, in its local space.
-pub(crate) fn prototype_solids(prototype: usize) -> &'static [Capsule] {
-    &PROTOTYPE_SOLIDS[prototype]
+/// The capsules of a layout prototype, in its local space; none for a stone.
+pub(crate) fn prototype_capsules(prototype: usize) -> &'static [Capsule] {
+    &PROTOTYPE_CAPSULES[prototype]
 }
+
+/// A layout prototype's solid, `mesh` being its model's mesh; None when it has no collider.
+pub(crate) fn prototype_solid(prototype: usize, mesh: &Handle<Mesh>) -> Option<Solid> {
+    match &PREFABS[prototype] {
+        Colliders([]) => None,
+        Colliders(_) => Some(Solid::Capsules(prototype_capsules(prototype))),
+        ModelMesh => Some(Solid::Mesh(mesh.clone())),
+    }
+}
+
+/// The most colliders an entity holds, so its collider ids run from 0 to below this.
+const MAX_SOLIDS: usize = {
+    let mut max = 1;
+    let mut index = 0;
+    while index < PREFABS.len() {
+        if let Colliders(colliders) = &PREFABS[index] {
+            if colliders.len() > max {
+                max = colliders.len();
+            }
+        }
+        index += 1;
+    }
+    max
+};
+
+/// The step a stone's scale is rounded to for its collider, so instances of one stone at close
+/// scales share one shape: within 2.5% of the drawn scale.
+const SHAPE_SCALE_STEP: f32 = 0.05;
 
 fn collider_id(entity: Entity, index: usize) -> ColliderId {
     ColliderId::new(
@@ -280,52 +290,129 @@ fn collider_id(entity: Entity, index: usize) -> ColliderId {
     )
 }
 
-/// Colliders for the solids over the ground collider's patch, rebuilt when the patch changes or
-/// solids move.
+fn remove_colliders(data: &mut SceneColliderData, entity: Entity) {
+    for index in 0..MAX_SOLIDS {
+        data.remove_collider(&collider_id(entity, index));
+    }
+}
+
+/// The stones' collider shapes by mesh and rounded scale.
+type MeshShapes = HashMap<(AssetId<Mesh>, IVec3), SharedShape>;
+
+/// Sets an entity's colliders; false when its mesh has not loaded yet.
+fn build_colliders(
+    data: &mut SceneColliderData,
+    entity: Entity,
+    solid: &Solid,
+    transform: &Transform,
+    meshes: &Assets<Mesh>,
+    shapes: &mut MeshShapes,
+) -> bool {
+    match solid {
+        Solid::Capsules(capsules) => {
+            for (index, capsule) in capsules.iter().enumerate() {
+                data.set_physics_capsule(
+                    &collider_id(entity, index),
+                    transform.transform_point(capsule.base),
+                    transform.transform_point(capsule.top),
+                    capsule.radius * transform.scale.x,
+                );
+            }
+            true
+        }
+        Solid::Mesh(mesh) => {
+            let steps = (transform.scale / SHAPE_SCALE_STEP).round().as_ivec3();
+            let key = (mesh.id(), steps);
+            let shape = match shapes.get(&key) {
+                Some(shape) => shape.clone(),
+                None => {
+                    let Some(model) = meshes.get(mesh) else {
+                        return false;
+                    };
+                    let scaled = model.clone().scaled_by(steps.as_vec3() * SHAPE_SCALE_STEP);
+                    let Some(shape) = mesh_to_parry_shape(&scaled) else {
+                        warn!("landscape stone mesh has no triangles; no collider");
+                        return true;
+                    };
+                    shapes.insert(key, shape.clone());
+                    shape
+                }
+            };
+            data.set_physics_shape(
+                &collider_id(entity, 0),
+                shape,
+                transform.translation,
+                transform.rotation,
+            );
+            true
+        }
+    }
+}
+
+/// Colliders for the solids over the ground collider's patch: all of them rebuilt when the
+/// patch moves, else only the solids that spawned or moved, and those whose mesh was still
+/// loading.
+#[allow(clippy::too_many_arguments)]
 fn update_colliders(
     collider: Single<(Ref<TerrainCollider>, &mut SceneColliderData)>,
     solids: Query<(Entity, &Solid, &Transform)>,
-    moved: Query<(), (With<Solid>, Changed<Transform>)>,
+    moved: Query<Entity, (With<Solid>, Changed<Transform>)>,
     mut removed: RemovedComponents<Solid>,
-    mut built: Local<HashMap<Entity, usize>>,
+    meshes: Res<Assets<Mesh>>,
+    mut built: Local<HashSet<Entity>>,
+    mut waiting: Local<HashSet<Entity>>,
+    mut shapes: Local<MeshShapes>,
 ) {
     let (patch, mut data) = collider.into_inner();
-    let remove = |data: &mut SceneColliderData, entity: Entity, count: usize| {
-        for index in 0..count {
-            data.remove_collider(&collider_id(entity, index));
-        }
-    };
     for entity in removed.read() {
-        if let Some(count) = built.remove(&entity) {
-            remove(&mut data, entity, count);
+        waiting.remove(&entity);
+        if built.remove(&entity) {
+            remove_colliders(&mut data, entity);
         }
-    }
-    if !patch.is_changed() && moved.is_empty() {
-        return;
     }
     let Some((min, max)) = patch.patch() else {
         return;
     };
-    let mut current = HashMap::new();
-    for (entity, Solid(capsules), transform) in &solids {
+    let rebuild_all = patch.is_changed();
+    if !rebuild_all && moved.is_empty() && waiting.is_empty() {
+        return;
+    }
+    // the solids that spawned or moved, and those still waiting for their mesh
+    let changed: Vec<Entity> = if rebuild_all {
+        Vec::new()
+    } else {
+        moved
+            .iter()
+            .chain(waiting.iter().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    let mut update = |entity: Entity, solid: &Solid, transform: &Transform| {
         let position = transform.translation.xz();
         if position.cmplt(min).any() || position.cmpgt(max).any() {
-            continue;
+            waiting.remove(&entity);
+            if built.remove(&entity) {
+                remove_colliders(&mut data, entity);
+            }
+            return;
         }
-        for (index, capsule) in capsules.iter().enumerate() {
-            data.set_physics_capsule(
-                &collider_id(entity, index),
-                transform.transform_point(capsule.base),
-                transform.transform_point(capsule.top),
-                capsule.radius * transform.scale.x,
-            );
+        if build_colliders(&mut data, entity, solid, transform, &meshes, &mut shapes) {
+            waiting.remove(&entity);
+            built.insert(entity);
+        } else {
+            waiting.insert(entity);
         }
-        current.insert(entity, capsules.len());
+    };
+    if rebuild_all {
+        for (entity, solid, transform) in &solids {
+            update(entity, solid, transform);
+        }
+    } else {
+        for entity in changed {
+            if let Ok((entity, solid, transform)) = solids.get(entity) {
+                update(entity, solid, transform);
+            }
+        }
     }
-    for (entity, count) in built.iter() {
-        if !current.contains_key(entity) {
-            remove(&mut data, *entity, *count);
-        }
-    }
-    *built = current;
 }

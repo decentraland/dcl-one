@@ -24,7 +24,7 @@ use scene_runner::{initialize_scene::ScenePointers, vec3_to_parcel};
 use serde_json::json;
 
 use crate::{
-    solids::{prototype_solids, Solid},
+    solids::prototype_solid,
     terrain::{TerrainSet, TerrainSurface},
 };
 use layout::{
@@ -137,6 +137,8 @@ pub(crate) struct LandscapeTreeAssets {
     pub worlds: Handle<TreeLayout>,
     /// By prototype.
     pub scenes: [Handle<Scene>; 8],
+    /// By prototype, the model's first mesh: the stones collide with it.
+    pub meshes: [Handle<Mesh>; 8],
 }
 
 /// The surfaces' materials, the models' own materials they replace, and the textures they use.
@@ -180,6 +182,16 @@ fn setup(
         .collect();
     let mut by_model_material = HashMap::new();
     let mut model_materials = Vec::new();
+    let meshes = std::array::from_fn(|index| {
+        let path = format!("{ASSET_DIR}/{}.glb", PROTOTYPES[index].asset);
+        asset_server.load(
+            GltfAssetLabel::Primitive {
+                mesh: 0,
+                primitive: 0,
+            }
+            .from_asset(path),
+        )
+    });
     let scenes = std::array::from_fn(|index| {
         let prototype = &PROTOTYPES[index];
         let path = format!("{ASSET_DIR}/{}.glb", prototype.asset);
@@ -203,6 +215,7 @@ fn setup(
         genesis: asset_server.load(format!("{LAYOUT}#{GENESIS_LABEL}")),
         worlds: asset_server.load(format!("{LAYOUT}#{WORLDS_LABEL}")),
         scenes,
+        meshes,
     });
     commands.insert_resource(TreeMaterials {
         surfaces,
@@ -484,9 +497,8 @@ fn update_trees(
             SceneRoot(assets.scenes[prototype].clone()),
             transform,
         ));
-        let solids = prototype_solids(prototype);
-        if !solids.is_empty() {
-            tree.insert(Solid(solids));
+        if let Some(solid) = prototype_solid(prototype, &assets.meshes[prototype]) {
+            tree.insert(solid);
         }
     }
 

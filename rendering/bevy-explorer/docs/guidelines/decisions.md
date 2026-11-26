@@ -1042,8 +1042,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
   seen and is not shipped.
 - **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
-  Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes, material
-  values and occupancy rule, and differ in these ways.
+  Worlds'), prototypes, scale ranges, footprints, first level of detail, the trees' and bushes'
+  collider shapes, material values and occupancy rule, and differ in these ways.
   - Each instance is an entity, spawned when it is within 150 m of the player (horizontally) and
     checked again when the player changes parcel; bevy batches the shared meshes. Unity hands the
     whole layout to a GPU instancing package that draws a prototype's full mesh only while it
@@ -1063,6 +1063,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     they load.
   - Their colliders are built over the ground collider's 64 m patch around the player, like the
     ground's, rather than parcel by parcel around each character.
+  - The stones collide with their own mesh, at their scale rounded to 0.05. Unity's stone collider
+    is one upright capsule as wide as the rock's widest side, which left the player standing up to
+    a metre above a big stone's top.
 - **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
   camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
   nearest to the player takes no place: its bones stay at rest and the place goes to the next
