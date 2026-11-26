@@ -856,12 +856,12 @@ async fn the_owner_sync_answers_the_chain_creator_and_stores_nothing() {
 /// A delivery the fake warehouse received: its `x-token` and its body.
 type Delivery = (Option<String>, Value);
 
-/// A loopback warehouse that records each delivery and answers 500 while
-/// `failing`, 200 otherwise.
+/// A loopback warehouse that records each delivery and answers the status
+/// [`FakeWarehouse::answer`] set, 200 until one is set.
 #[derive(Clone, Default)]
 struct FakeWarehouse {
     received: Arc<std::sync::Mutex<Vec<Delivery>>>,
-    failing: Arc<std::sync::atomic::AtomicBool>,
+    status: Arc<std::sync::atomic::AtomicU16>,
 }
 
 impl FakeWarehouse {
@@ -878,10 +878,9 @@ impl FakeWarehouse {
                             .and_then(|v| v.to_str().ok())
                             .map(str::to_string);
                         fake.received.lock().unwrap().push((token, body));
-                        if fake.failing.load(std::sync::atomic::Ordering::SeqCst) {
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                        } else {
-                            axum::http::StatusCode::OK
+                        match fake.status.load(std::sync::atomic::Ordering::SeqCst) {
+                            0 => axum::http::StatusCode::OK,
+                            status => axum::http::StatusCode::from_u16(status).unwrap(),
                         }
                     }
                 },
@@ -895,6 +894,11 @@ impl FakeWarehouse {
 
     fn received(&self) -> Vec<Delivery> {
         self.received.lock().unwrap().clone()
+    }
+
+    fn answer(&self, status: u16) {
+        self.status
+            .store(status, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -953,9 +957,7 @@ async fn accepted_terms_are_stored_and_forwarded_to_the_warehouse() {
 #[tokio::test]
 async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once() {
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let Some(pool) = own_pool(6).await else {
         return;
     };
@@ -987,9 +989,7 @@ async fn a_failed_forward_keeps_the_acceptance_and_a_later_pass_delivers_it_once
         0,
         "not due yet"
     );
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = next_attempt_at - interval '1 hour' WHERE collection_id = $1")
         .bind(id)
         .execute(&node.pool)
@@ -1029,9 +1029,7 @@ async fn an_acceptance_is_stored_without_a_warehouse_and_attempts_are_bounded() 
         0
     );
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let configured = node_over(
         pool.clone(),
         Options {
@@ -1050,6 +1048,63 @@ async fn an_acceptance_is_stored_without_a_warehouse_and_attempts_are_bounded() 
     }
     assert_eq!(pending_terms(&pool, id).await, vec![(false, 6)]);
     assert_eq!(warehouse.received().len(), 6, "at most six attempts");
+}
+
+#[tokio::test]
+async fn an_acceptance_the_warehouse_refuses_is_never_sent_again_and_a_throttled_one_is() {
+    let warehouse = FakeWarehouse::default();
+    let Some(pool) = own_pool(6).await else {
+        return;
+    };
+    let node = node_over(
+        pool,
+        Options {
+            warehouse: Some(warehouse.url().await),
+            ..Options::default()
+        },
+    )
+    .await;
+    for (status, retried) in [
+        (400, false),
+        (401, false),
+        (403, false),
+        (404, false),
+        (408, true),
+        (429, true),
+        (502, true),
+        (503, true),
+    ] {
+        warehouse.answer(status);
+        let (id, _, _) = draft(&node, 0).await;
+        let (answered, _) = call(
+            &node.app,
+            Some(OWNER_KEY),
+            "POST",
+            &format!("/v1/collections/{id}/tos"),
+            Some(json!({ "email": "jane.doe@example.com" })),
+        )
+        .await;
+        assert_eq!(answered, 200, "{status}");
+        sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
+            .bind(id)
+            .execute(&node.pool)
+            .await
+            .unwrap();
+        let sent = warehouse.received().len();
+        crate::terms::forward_due(&node.state).await.unwrap();
+        assert_eq!(
+            (
+                warehouse.received().len() - sent,
+                pending_terms(&node.pool, id).await
+            ),
+            if retried {
+                (1, vec![(false, 2)])
+            } else {
+                (0, vec![(false, crate::terms::MAX_ATTEMPTS)])
+            },
+            "{status}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1866,9 +1921,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
         return;
     };
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let on = |writes: bool| {
         let (pool, url) = (pool.clone(), warehouse.url());
         async move {
@@ -1894,9 +1947,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
     )
     .await;
     assert_eq!(status, 200);
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     let sent = warehouse.received().len();
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
         .bind(id)
@@ -1921,9 +1972,7 @@ async fn the_terms_forward_waits_while_creator_writes_are_off() {
 #[tokio::test]
 async fn an_acceptance_waiting_for_the_warehouse_keeps_every_batch_it_covers() {
     let warehouse = FakeWarehouse::default();
-    warehouse
-        .failing
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(500);
     let Some(pool) = own_pool(6).await else {
         return;
     };
@@ -1949,9 +1998,7 @@ async fn an_acceptance_waiting_for_the_warehouse_keeps_every_batch_it_covers() {
         .await;
         assert_eq!(status, 200);
     }
-    warehouse
-        .failing
-        .store(false, std::sync::atomic::Ordering::SeqCst);
+    warehouse.answer(200);
     sqlx::query("UPDATE builder.terms_acceptances SET next_attempt_at = timezone('UTC', now()) - interval '1 second' WHERE collection_id = $1")
         .bind(id)
         .execute(&node.pool)

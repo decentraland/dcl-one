@@ -1917,7 +1917,8 @@ Invariants:
 - A delete leaves no upload record that no item names, and touches no row
   of another collection.
 - The forward is at least once: at most six attempts, the wait doubling from
-  a minute; a row the warehouse took is never claimed again.
+  a minute; a row the warehouse took is never claimed again, and one it
+  refused with a status other than 5xx, 408 or 429 gets no attempt left.
 
 Upgrade: step `0087_builder_collection_lock` adds `collections.lock`; the
 schema's object pass creates `builder.terms_acceptances` and its indexes.
