@@ -39,14 +39,16 @@
 //!
 //! Metrics (declared in [`crate::metrics`], label `lane` = [`Lane::job`]):
 //! `upstream_forward_sends_total{lane,outcome}` counts each recorded send
-//! (`accepted`, `rejected`, `retried`, `failed`, `superseded`; rows
-//! [`Forwarder::close_foreign`] closes count as `failed`);
+//! (`accepted`, `rejected`, `retried`, `failed`, `superseded`); rows
+//! [`Forwarder::close_foreign`] closes count separately as `abandoned`.
 //! `upstream_forward_open_rows{lane}` and
 //! `upstream_forward_oldest_open_age_seconds{lane}` (from `created_at`, 0
 //! when none) describe the current target's queued and sending rows. The
 //! lease holder samples every five seconds, independently of sends and sweeps,
-//! and zeroes both gauges when sampling stops. Alert on increasing `rejected`
-//! or `failed` counts. Set the queue age threshold below [`Lane::max_age_ms`]
+//! and zeroes the gauges when sampling stops. A fresh, positive
+//! `upstream_forward_open_sample_timestamp_seconds{lane}` marks a usable sample.
+//! Alert on increasing `rejected` or `failed` counts.
+//! Set the queue age threshold below [`Lane::max_age_ms`]
 //! to allow for time that elapsed between signing and queueing.
 
 use std::collections::HashSet;
@@ -71,7 +73,9 @@ use super::SharedState;
 use super::errors::json_error;
 use crate::http::{HttpClientCfg, Outbound, read_body_capped};
 use crate::jobs::{JobContext, Jobs};
-use crate::metrics::{FORWARD_OLDEST_OPEN_AGE, FORWARD_OPEN_ROWS, FORWARD_SENDS};
+use crate::metrics::{
+    FORWARD_OLDEST_OPEN_AGE, FORWARD_OPEN_ROWS, FORWARD_OPEN_SAMPLE_TIMESTAMP, FORWARD_SENDS,
+};
 use crate::storage::Storage;
 
 /// The longest one send may take, upload and answer included.
@@ -194,7 +198,25 @@ impl Retry {
 }
 
 /// The `outcome` label values of `upstream_forward_sends_total`.
-const SEND_OUTCOMES: [&str; 5] = ["accepted", "rejected", "retried", "failed", "superseded"];
+const SEND_OUTCOMES: [&str; 6] = [
+    "accepted",
+    "rejected",
+    "retried",
+    "failed",
+    "superseded",
+    "abandoned",
+];
+
+/// Clears this lease holder's sample even if its worker unwinds.
+struct OpenGaugeScope(&'static str);
+
+impl Drop for OpenGaugeScope {
+    fn drop(&mut self) {
+        FORWARD_OPEN_SAMPLE_TIMESTAMP.handle([self.0]).set(0.0);
+        FORWARD_OPEN_ROWS.handle([self.0]).set(0.0);
+        FORWARD_OLDEST_OPEN_AGE.handle([self.0]).set(0.0);
+    }
+}
 
 /// One lane's sender: the deploy path queues rows for [`Forwarder::target`]
 /// and calls [`Forwarder::kick`]; [`Forwarder::spawn`] runs the worker.
@@ -374,6 +396,10 @@ impl Forwarder {
     /// Sample during sends and sweeps. On lease loss the sample stops immediately,
     /// while the worker can still return a claimed row to the queue.
     async fn sample_open(&self, cancel: &CancellationToken) {
+        let _gauges = OpenGaugeScope(self.lane.job);
+        FORWARD_OPEN_SAMPLE_TIMESTAMP
+            .handle([self.lane.job])
+            .set(0.0);
         let sample = async {
             let mut ticker = tokio::time::interval(TICK);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -383,36 +409,50 @@ impl Forwarder {
             }
         };
         cancel.run_until_cancelled(sample).await;
-        FORWARD_OPEN_ROWS.handle([self.lane.job]).set(0.0);
-        FORWARD_OLDEST_OPEN_AGE.handle([self.lane.job]).set(0.0);
     }
 
-    /// Sets the open-row gauges for this target: one aggregate over the
-    /// lane's due index (`target`, `status IN ('queued', 'sending')`). A
-    /// failed read is logged and leaves the previous values.
+    /// Publishes the open-row gauges, invalidating the sample on a failed read.
     async fn observe_open(&self) {
-        let sql = format!(
-            "SELECT count(*), \
-                    GREATEST(0, EXTRACT(EPOCH FROM (timezone('UTC', now()) - min(created_at))))::float8 \
-             FROM {} WHERE target = $1 AND status IN ('queued', 'sending')",
-            self.lane.table
-        );
-        let query = sqlx::query_as::<_, (i64, f64)>(sqlx::AssertSqlSafe(sql)).bind(&self.target);
-        match tokio::time::timeout(OBSERVATION_TIMEOUT, query.fetch_one(&self.pool)).await {
+        let timestamp = FORWARD_OPEN_SAMPLE_TIMESTAMP.handle([self.lane.job]);
+        match tokio::time::timeout(OBSERVATION_TIMEOUT, self.read_open()).await {
             Ok(Ok((open, age))) => {
                 FORWARD_OPEN_ROWS.handle([self.lane.job]).set(open as f64);
                 FORWARD_OLDEST_OPEN_AGE.handle([self.lane.job]).set(age);
+                timestamp.set(now_ms() as f64 / 1000.0);
             }
             Ok(Err(e)) => {
+                timestamp.set(0.0);
                 tracing::warn!(job = self.lane.job, error = %e, "reading the open forwarding rows failed");
             }
             Err(_) => {
+                timestamp.set(0.0);
                 tracing::warn!(
                     job = self.lane.job,
                     "reading the open forwarding rows timed out"
                 );
             }
         }
+    }
+
+    async fn read_open(&self) -> sqlx::Result<(i64, f64)> {
+        let mut tx = self.pool.begin().await?;
+        // PostgreSQL can keep running a dropped client future's statement.
+        // Bound the scan on the server as well, below the outer timeout.
+        sqlx::query("SET LOCAL statement_timeout = '1500ms'")
+            .execute(&mut *tx)
+            .await?;
+        let sql = format!(
+            "SELECT count(*), \
+                    GREATEST(0, EXTRACT(EPOCH FROM (timezone('UTC', now()) - min(created_at))))::float8 \
+             FROM {} WHERE target = $1 AND status IN ('queued', 'sending')",
+            self.lane.table
+        );
+        let sample = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(&self.target)
+            .fetch_one(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(sample)
     }
 
     /// Claims and sends due rows one at a time, at most [`PASS_LIMIT`], until
@@ -729,7 +769,7 @@ impl Forwarder {
                 .execute(pool)
                 .await?;
             FORWARD_SENDS
-                .handle([lane, "failed"])
+                .handle([lane, "abandoned"])
                 .increment(closed.rows_affected());
             Ok(closed)
         })

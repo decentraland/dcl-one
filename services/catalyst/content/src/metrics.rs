@@ -51,10 +51,18 @@ pub(crate) const FORWARD_OLDEST_OPEN_AGE: GaugeFamily<1> = GaugeFamily::new(
     &["lane"],
 );
 
+pub(crate) const FORWARD_OPEN_SAMPLE_TIMESTAMP: GaugeFamily<1> = GaugeFamily::new(
+    "upstream_forward_open_sample_timestamp_seconds",
+    "Unix timestamp of the queue sample by lane; 0 when sampling failed or stopped.",
+    Some(Unit::Seconds),
+    &["lane"],
+);
+
 pub const FAMILIES: &[Descriptor] = &[
     FORWARD_SENDS.descriptor,
     FORWARD_OPEN_ROWS.descriptor,
     FORWARD_OLDEST_OPEN_AGE.descriptor,
+    FORWARD_OPEN_SAMPLE_TIMESTAMP.descriptor,
     SPOOL_FAILURES.descriptor,
     SYNC_HEARTBEAT.descriptor,
     OVERSIZED_POINTER_CHANGES.descriptor,

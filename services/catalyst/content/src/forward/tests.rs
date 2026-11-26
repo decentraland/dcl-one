@@ -1264,12 +1264,7 @@ async fn open_queue_age_is_sampled_while_a_send_is_stalled() {
     let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let scrape = recorder.handle();
-    let age = || {
-        scrape.render().lines().find_map(|line| {
-            line.strip_prefix("upstream_forward_oldest_open_age_seconds{lane=\"content-forward\"} ")
-                .and_then(|value| value.parse::<f64>().ok())
-        })
-    };
+    let age = || queue_gauge(&scrape.render(), "oldest_open_age_seconds");
     let jobs = crate::jobs::Jobs::new();
     lab.forwarder.spawn(&jobs);
     tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, lab.upstream.posted(1))
@@ -1296,15 +1291,97 @@ async fn open_queue_age_is_sampled_while_a_send_is_stalled() {
         sampled.is_ok(),
         "queue age did not advance during the stalled send"
     );
-    assert!(sending_scrape.contains("upstream_forward_open_rows{lane=\"content-forward\"} 1"));
+    assert_eq!(queue_gauge(&sending_scrape, "open_rows"), Some(1.0));
+    assert!(
+        queue_gauge(&sending_scrape, "open_sample_timestamp_seconds")
+            .is_some_and(|sample| sample > 0.0)
+    );
     assert_eq!(row.0, "queued", "shutdown must release the claim");
     assert_eq!(row.1, 0, "a cancelled send does not spend an attempt");
     assert_eq!(age(), Some(0.0));
-    assert!(
-        scrape
-            .render()
-            .contains("upstream_forward_open_rows{lane=\"content-forward\"} 0")
+    assert_eq!(queue_gauge(&scrape.render(), "open_rows"), Some(0.0));
+    assert_eq!(
+        queue_gauge(&scrape.render(), "open_sample_timestamp_seconds"),
+        Some(0.0)
     );
+}
+
+fn queue_gauge(scrape: &str, name: &str) -> Option<f64> {
+    let prefix = format!("upstream_forward_{name}{{lane=\"content-forward\"}} ");
+    scrape.lines().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+#[test]
+fn a_sampler_unwind_clears_the_queue_metrics() {
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let lane = [CONTENT_LANE.job];
+    let result = std::panic::catch_unwind(|| {
+        let _scope = OpenGaugeScope(CONTENT_LANE.job);
+        FORWARD_OPEN_ROWS.handle(lane).set(1.0);
+        FORWARD_OLDEST_OPEN_AGE.handle(lane).set(180.0);
+        FORWARD_OPEN_SAMPLE_TIMESTAMP.handle(lane).set(123.0);
+        panic!("worker unwound");
+    });
+    assert!(result.is_err());
+    let scrape = recorder.handle().render();
+    for gauge in [
+        "open_rows",
+        "oldest_open_age_seconds",
+        "open_sample_timestamp_seconds",
+    ] {
+        assert_eq!(queue_gauge(&scrape, gauge), Some(0.0));
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_queue_sample_times_out_in_postgres_and_loses_freshness() {
+    let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+        return;
+    };
+    let (storage, directory) = temp_storage().await;
+    let worker = forwarder(
+        pool.clone(),
+        storage,
+        CONTENT_LANE,
+        "https://upstream.example",
+        1,
+    );
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let scrape = recorder.handle();
+    let sample = || queue_gauge(&scrape.render(), "open_sample_timestamp_seconds");
+
+    worker.observe_open().await;
+    assert!(sample().is_some_and(|value| value > 0.0));
+
+    let mut blocker = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE content.forward_outbox IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let error = tokio::time::timeout(TICK, worker.read_open())
+        .await
+        .expect("PostgreSQL bounds the statement")
+        .expect_err("the lock prevents sampling");
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("57014")
+    );
+    worker.observe_open().await;
+    assert_eq!(sample(), Some(0.0));
+    blocker.rollback().await.unwrap();
+
+    worker.observe_open().await;
+    assert!(sample().is_some_and(|value| value > 0.0));
+    drop(worker);
+    tokio::fs::remove_dir_all(directory).await.unwrap();
 }
 
 #[tokio::test]
@@ -1419,11 +1496,28 @@ async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
         .await
         .unwrap();
     }
-    // (Another test's job may close the first row before this call does.)
-    lab.forwarder
+    // Another test's worker may close this row first. Compare the counter with
+    // the number of rows this worker actually closed.
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
+    let closed = lab
+        .forwarder
         .close_foreign(&CancellationToken::new())
         .await
         .unwrap();
+    let scrape = recorder.handle().render();
+    if closed > 0 {
+        let count = scrape
+            .lines()
+            .find(|line| {
+                line.starts_with("upstream_forward_sends_total{")
+                    && line.contains("lane=\"content-forward\"")
+                    && line.contains("outcome=\"abandoned\"")
+            })
+            .and_then(|line| line.rsplit_once(' ')?.1.parse::<u64>().ok());
+        assert_eq!(count, Some(closed));
+    }
+    assert!(!scrape.contains("outcome=\"failed\""));
     let mut states = Vec::new();
     for id in &ids {
         let (status, _, error, _, target) = lab.row(id).await.unwrap();
