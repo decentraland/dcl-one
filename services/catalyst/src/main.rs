@@ -656,6 +656,10 @@ fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()>
     Ok(())
 }
 
+#[allow(
+    clippy::print_stdout,
+    reason = "subcommands print their reports, JSON and SQL to stdout"
+)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Serve(config) => catalyst::serve::serve(*config).await,

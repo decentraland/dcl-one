@@ -98,6 +98,8 @@ undocumented_unsafe_blocks = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
 
 [workspace.dependencies]
 # The shared crates in ../../library, named once here so members write
