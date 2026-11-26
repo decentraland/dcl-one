@@ -47,10 +47,11 @@ impl Default for StageLight {
             pitch: 0.6,
             shadow: 0.35,
             shadow_reach: 6.0,
-            exposure: -0.4,
+            // where the toon avatar and wearables come out as bright as in the Unity renderer
+            exposure: 0.1,
             glow: 1.0,
-            platform_base: 0.5,
-            platform_emission: 1.67,
+            platform_base: 0.36,
+            platform_emission: 1.18,
         }
     }
 }

@@ -27,3 +27,6 @@ overrides:
   '@magic-sdk/provider>web3-core': '-'
   # unstorage loads anymatch only in its fs driver; WalletConnect uses fs-lite or the browser's IndexedDB.
   'unstorage>anymatch': '-'
+  # @dcl/asset-packs lists glob for its own build scripts; no published file loads it.
+  '@dcl/asset-packs>glob': '-'
+  '@dcl/asset-packs>@types/glob': '-'

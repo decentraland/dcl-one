@@ -1,5 +1,5 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
-  Entity,
   Material,
   MeshRenderer,
   Transform,

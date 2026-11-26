@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import { formatMana, parseManaWei, type ManaWei } from "@shop/model/money";
 import { shopPath } from "../../routes";
@@ -231,13 +231,13 @@ export function SalesHistory({ address }: { address: string }) {
             </tbody>
           </table>
           <div className="mk-actions">
-            <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>
+            <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(page - 1)}>
               Previous
             </Button>
             <span className="mk-hint">
               Page {page + 1} of {pages}
             </span>
-            <Button size="sm" variant="ghost" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
+            <Button size="sm" variant="outline" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>
               Next
             </Button>
           </div>

@@ -336,6 +336,19 @@ impl<S: LogSource> LogSource for Shadowed<'_, S> {
         self.inner.window(from, to, groups, chunk).await
     }
 
+    async fn archive_window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        budget: usize,
+    ) -> Result<Window, RpcError> {
+        self.inner
+            .archive_window(from, to, groups, chunk, budget)
+            .await
+    }
+
     async fn block_times(
         &self,
         logs: &[RpcLog],

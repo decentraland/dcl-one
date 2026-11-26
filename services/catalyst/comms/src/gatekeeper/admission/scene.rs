@@ -42,6 +42,10 @@ pub const WORLD_PERMISSIONS_UNAVAILABLE_MSG: &str = "the world permission store 
 pub const WORLD_ACCESS_UNAVAILABLE_MSG: &str =
     "the world permission store is unavailable, so world access cannot be decided";
 pub const LAND_OPERATORS_UNAVAILABLE_MSG: &str = "the land permission service is unavailable, so this ban target cannot be checked for protection";
+/// The attached land-authz index has no fresh published fold: the wording of
+/// any authority decision that names it (`AuthorityNotEstablished::land_index_not_ready`).
+pub const LAND_INDEX_UNREADY_MSG: &str =
+    "could not determine authority: backing store land-authz-index unavailable";
 pub const PLACE_LOOKUP_UNAVAILABLE_MSG: &str =
     "the place catalog is unavailable, so this request cannot be bound to its room";
 const PLACE_MISMATCH_MSG: &str =
@@ -139,6 +143,29 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, 503);
         assert_eq!(error.message, LAND_OPERATORS_UNAVAILABLE_MSG);
+        // The attached index not being published keeps its own name.
+        let unready = state_with(StubPolicy {
+            land: Err(crate::shared::identity::AuthorityNotEstablished::land_index_not_ready()),
+            ..Default::default()
+        });
+        let error = try_fetch_land_operators(&unready, "1,2").await.unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (503, LAND_INDEX_UNREADY_MSG)
+        );
+    }
+
+    /// The listing's and the ban's wording is the one every authority
+    /// decision gives the unready index.
+    #[test]
+    fn the_unready_index_message_is_the_decision_wording() {
+        let decision = ApiError::from(
+            crate::shared::identity::AuthorityNotEstablished::land_index_not_ready(),
+        );
+        assert_eq!(
+            (decision.code, decision.message.as_str()),
+            (503, LAND_INDEX_UNREADY_MSG)
+        );
     }
 
     #[test]

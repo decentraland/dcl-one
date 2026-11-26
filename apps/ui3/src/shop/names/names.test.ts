@@ -32,13 +32,40 @@ import {
   NAME_PRICE_WEI,
 } from "./names";
 import { interimNameOffer, NameAlreadyRegisteredError, serverNameOffer } from "./offer";
-import { fetchBannedNames } from "@shop/names/api";
+import { fetchBannedNames, fetchNameResales, type NameResaleQuery } from "@shop/names/api";
+import type { ShopClient } from "@shop/api/shop";
 import { listsTransport } from "./reads";
 import { encodePurchaseOffer } from "@shop/model/wire";
 import { nameRegistration } from "@shop/payment/fixtures";
 
 const MAINNET = LAND_NETWORKS[CHAIN.ETHEREUM]!;
 const BUYER = "0x0000000000000000000000000000000000000b0b";
+
+describe("the NAME browse query", () => {
+  const browse = async (range: Partial<NameResaleQuery>) => {
+    const queries: Record<string, unknown>[] = [];
+    const client = {
+      market: {
+        nfts: async (query: Record<string, unknown>) => {
+          queries.push(query);
+          return { data: [], total: 0 };
+        },
+      },
+    } as unknown as ShopClient;
+    const q: NameResaleQuery = { search: "", sort: "cheapest", onlyOnSale: false, minPrice: "", maxPrice: "", page: 1, ...range };
+    await fetchNameResales(q, { client });
+    return queries[0]!;
+  };
+
+  it("sends the price range in MANA as typed, the unit /v1/nfts reads", async () => {
+    expect(await browse({ minPrice: " 10 ", maxPrice: "12.5" })).toMatchObject({ category: "ens", minPrice: "10", maxPrice: "12.5", isOnSale: true });
+    expect(await browse({ minPrice: "0.000000000000000001" })).toMatchObject({ minPrice: "0.000000000000000001" });
+    const unbounded = await browse({ minPrice: "0", maxPrice: "abc" });
+    expect(unbounded).not.toHaveProperty("minPrice");
+    expect(unbounded).not.toHaveProperty("maxPrice");
+    expect(unbounded).not.toHaveProperty("isOnSale");
+  });
+});
 
 describe("NAME input", () => {
   it("validates 2-15 ASCII letters or digits, reporting the most specific problem", () => {

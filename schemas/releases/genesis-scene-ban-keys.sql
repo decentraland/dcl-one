@@ -1,6 +1,7 @@
 BEGIN;
 -- Genesis scene bans move from the scene entity to its place, the effective
--- base parcel (social.scene_base_parcel) that its admins use, so a redeploy
+-- base parcel (social.scene_base_parcel over the declared base that content
+-- stores at entity_metadata -> 'v') that its admins use, so a redeploy
 -- of the same place keeps them (schemas/40_social.sql). Two entities of one
 -- place keep the newest ban of a wallet, also against a row the place has.
 -- Every moved entity row is removed. A deployment counts while it is not
@@ -11,7 +12,7 @@ BEGIN;
 -- migrate`. Rollback needs the matching backup.
 WITH mapping AS (
     SELECT d.entity_id,
-           social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') AS ban_key
+           social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS ban_key
       FROM content.deployments d
      WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL
        AND d.entity_id IN (SELECT place_id FROM social.scene_bans)

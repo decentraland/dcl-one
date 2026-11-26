@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { preload } from "react-dom";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
 import { useCampaignHero } from "../components/CampaignBanner";
 import heroDesktop from "../frames/assets/hero-credits-outfits.webp?url";

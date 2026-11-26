@@ -1,4 +1,4 @@
-import { ComponentDefinition } from '../../engine/component'
+import type { ComponentDefinition } from '../../engine/component'
 
 export namespace CrdtUtils {
   export type ComponentID = ComponentDefinition<any>['componentId']

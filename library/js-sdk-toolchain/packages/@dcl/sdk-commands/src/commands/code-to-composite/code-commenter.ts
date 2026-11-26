@@ -1,7 +1,7 @@
 import path from 'path'
 import { globSync } from 'fs'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 
 const COMMENT_MARKER = 'COMMENTED BY "@dcl/sdk-commands code-to-composite" COMMAND'
 

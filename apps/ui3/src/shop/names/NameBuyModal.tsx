@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../components/Modal";
 import type { UnityCreditPack } from "@catalyst-api/credits/UnityCreditPack";
 import { isShopApiError } from "@shop/api/client";
@@ -284,10 +284,10 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
             </fieldset>
             <RailNotes inChoose rail={rail} creditsState={creditsState} creditsClosed={closedCredits} shortBy={shortBy} iapMode={iapMode} name={name} client={client} wallet={wallet} navigate={navigate} wrongNetwork={wrongNetwork} ethChain={ethChain} />
             <div className="shop-land-actions">
-              <Button onClick={() => setPhase("confirm")} disabled={!chosenReady}>
+              <Button size="md" onClick={() => setPhase("confirm")} disabled={!chosenReady}>
                 Continue
               </Button>
-              <Button variant="secondary" onClick={onClose}>
+              <Button size="md" variant="secondary" onClick={onClose}>
                 Cancel
               </Button>
             </div>
@@ -327,15 +327,15 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
                   <RailNotes rail={rail} creditsState={creditsState} creditsClosed={closedCredits} shortBy={0} iapMode={iapMode} name={name} client={client} wallet={wallet} navigate={navigate} wrongNetwork ethChain={ethChain} />
                 ) : null}
                 <div className="shop-land-actions">
-                  <Button type="submit" disabled={!matches || !chosenReady}>
+                  <Button size="md" type="submit" disabled={!matches || !chosenReady}>
                     Buy
                   </Button>
                   {view.options.length > 1 || mixed ? (
-                    <Button variant="secondary" onClick={() => setPhase("choose")}>
+                    <Button size="md" variant="secondary" onClick={() => setPhase("choose")}>
                       Back
                     </Button>
                   ) : (
-                    <Button variant="secondary" onClick={onClose}>
+                    <Button size="md" variant="secondary" onClick={onClose}>
                       Cancel
                     </Button>
                   )}
@@ -375,7 +375,7 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
               </a>
             ) : null}
             <div className="shop-land-actions">
-              <Button onClick={() => navigate("/shop/my-items")}>My items</Button>
+              <Button size="md" onClick={() => navigate("/shop/my-items")}>My items</Button>
             </div>
           </>
         ) : null}
@@ -394,11 +394,11 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
               </a>
             ) : null}
             <div className="shop-land-actions">
-              <Button variant="secondary" onClick={() => navigate("/shop/my-items")}>
+              <Button size="md" variant="secondary" onClick={() => navigate("/shop/my-items")}>
                 My items
               </Button>
               {iapMode ? null : (
-                <Button as="a" href="/download/creator-hub">
+                <Button size="md" href="/download/creator-hub">
                   Use it for your World
                 </Button>
               )}
@@ -414,9 +414,9 @@ export default function NameBuyModal({ name, offer, onClose, client: givenClient
             </div>
             <div className="shop-land-actions">
               {error.retryUnsafe ? (
-                <Button onClick={onClose}>Close</Button>
+                <Button size="md" onClick={onClose}>Close</Button>
               ) : (
-                <Button onClick={() => setPhase(view.options.length > 1 || mixed ? "choose" : "confirm")}>Try again</Button>
+                <Button size="md" onClick={() => setPhase(view.options.length > 1 || mixed ? "choose" : "confirm")}>Try again</Button>
               )}
             </div>
           </>
