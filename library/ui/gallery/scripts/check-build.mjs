@@ -6,7 +6,10 @@
 //   2. every runtime page draws every example in its iframe canvas with a nonzero box and no example error, and at
 //      1280px and 375px keeps its layout (LAYOUT): the page fits the viewport, every picture loads and paints inside
 //      its own box, and no in-flow text covers other text; so do the foundations pages and the HUD Showcase; at 375px
-//      the gallery page around it fits a 375px window too;
+//      the gallery page around it fits a 375px window too; the components Showcase, the first runtime page listed,
+//      passes the same checks on its own document and draws every other runtime page, in the sidebar's order, each
+//      with its examples drawn and none failed, a page with a canvas of its own in a canvas of the chosen width (the
+//      layout inside that nested canvas is checked on the page itself, not here);
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
@@ -171,6 +174,38 @@ const EXAMPLES = `(() => {
     }),
     error: section.querySelector('[data-example-error]')?.textContent ?? null
   }))
+})()`
+
+// The gallery's name for the components Showcase (COMPONENT_OVERVIEW in src/componentPages.ts).
+const COMPONENT_OVERVIEW = 'Showcase'
+// The pages the components Showcase draws, in order, or null while one is still loading. A page positioned against
+// the viewport has a canvas of its own, loaded as it nears the window: the check loads each now, waits for it and
+// reads its document, with the width of that canvas. A page is drawn when it has examples and each one draws a nonzero
+// box; `error` is its first example error. LAYOUT does not read these nested documents: each of those pages gets its
+// layout check on its own page.
+const SHOWCASE_PAGES = `(() => {
+  const pages = []
+  for (const page of ${CANVAS}.querySelectorAll('[data-showcase-page]')) {
+    const frame = page.querySelector('iframe')
+    let root = page
+    if (frame) {
+      if (frame.loading === 'lazy') frame.loading = 'eager'
+      root = frame.contentDocument
+      if (!root || root.readyState !== 'complete' || !root.querySelector('#root')?.children.length) return null
+    }
+    const examples = [...root.querySelectorAll('[data-example]')]
+    pages.push({
+      name: page.dataset.showcasePage,
+      width: frame ? frame.clientWidth : null,
+      error: root.querySelector('[data-example-error]')?.textContent ?? null,
+      drawn: !page.querySelector('[data-showcase-empty]') && examples.length > 0 &&
+        examples.every((section) => [...section.querySelectorAll('[data-stage] *')].some((node) => {
+          const box = node.getBoundingClientRect()
+          return box.width > 0 && box.height > 0
+        }))
+    })
+  }
+  return pages
 })()`
 
 // How far, in CSS pixels, a picture the component positions may overhang its slot.
@@ -367,6 +402,12 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
     if (hosted && listed.generated.length)
       throw new Error(`the hosted preview lists ${listed.generated.length} generated pages`)
 
+    // The Showcase leads the runtime pages, as the HUD's leads its sections.
+    const [overview, ...runtimePages] = listed.runtime
+    if (overview !== COMPONENT_OVERVIEW || !runtimePages.length)
+      throw new Error(
+        `the sidebar lists the runtime pages ${listed.runtime.join(', ') || '(none)'}: ${COMPONENT_OVERVIEW} must lead them`
+      )
     const examples = []
     for (const name of listed.runtime) {
       for (const width of [1280, 375]) {
@@ -400,7 +441,27 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
               `the ${name} gallery page is ${page[0]}px wide in a ${page[1]}px window: ${page[2].join('; ') || 'the canvas'}`
             )
         }
-        if (width === 1280) examples.push(...drawn.map((example) => `${name}/${example.id}`))
+        if (name === overview) {
+          const shown = await waitFor(
+            session,
+            SHOWCASE_PAGES,
+            `the pages of the ${overview} page at ${width}px`
+          )
+          const names = shown.map((page) => page.name)
+          if (names.join() !== runtimePages.join())
+            throw new Error(
+              `the ${overview} page at ${width}px draws ${names.join(', ') || 'no page'}; the sidebar lists ${runtimePages.join(', ')}`
+            )
+          for (const page of shown) {
+            if (page.error) throw new Error(`${overview} ${page.name} failed: ${page.error}`)
+            if (!page.drawn) throw new Error(`the ${overview} page draws nothing for ${page.name}`)
+            // A canvas of its own is a viewport of the chosen width, as on the page itself.
+            if (page.width !== null && page.width !== width)
+              throw new Error(
+                `the ${overview} page draws ${page.name} in a ${page.width}px canvas at ${width}px`
+              )
+          }
+        } else if (width === 1280) examples.push(...drawn.map((example) => `${name}/${example.id}`))
       }
     }
 
@@ -581,7 +642,7 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
     summary = {
       entry: `${base}${hosted ? 'index.html' : 'gallery/'}`,
       hosted,
-      runtimePages: listed.runtime.length,
+      runtimePages: runtimePages.length,
       examples: examples.length,
       foundations: foundations.length,
       hudPages: pages.length,

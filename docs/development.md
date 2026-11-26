@@ -202,12 +202,35 @@ Rollback:
 
 ```sh
 gh auth login   # import CI artifacts, or build locally:
-make bevy-web && python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web
+nix develop .#wasm --command make bevy-web && python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web
 gh workflow run bevy-explorer-ci.yml --ref main   # no matching or expired artifact
 ```
 
 See [production rules](../infra/containers/README.md#sites-explorer-build-input).
 `/play/app.html?mock=1` runs the HUD without the WebGPU engine.
+
+### A scene as its owner
+
+Preview refuses the signed requests of the admin tools (Cast, Stream, admins and bans). To try them,
+publish the scene to the stack as the personal world of a throwaway owner and enter it in `/play`:
+
+1. Start the stack with `FOUNDATION_DEV_PROFILE=offline`, set `"personal_worlds": 5` in
+   `.cache/dev/settings.json`, then `foundation-dev down` and `up`.
+2. Import a web build of this checkout, as above, so `/play` runs the engine under test.
+3. Build the scene (`npm install`, `npx sdk-commands build`) and publish it:
+
+```sh
+pnpm --dir apps/sites drive:scene-world --scene <scene folder> [--checkout-sdk] [--drive < commands.txt]
+```
+
+`--checkout-sdk` builds a copy under `.cache/dev/scene-world/` with `library/js-sdk-toolchain`'s
+packages (`make install build` there first). The owner's key stays in `.cache/dev/scene-owner.json`
+for a week. The command waits until the gatekeeper names the owner an admin and prints the world and
+its `/play` URL. A page opened before a new deploy keeps the old scene id, which the admin check
+refuses, so open a new one. `--drive` opens that URL in Chrome through
+`local-harness/web-driver`, signs in as the owner with `/hud_login` and runs the commands on stdin:
+console commands (`/click_at`, `/media_state`), `sleep <seconds>`, `screenshot <file>` and `log`, one
+JSON line each. A scene's video host must be in its `scene.json` `allowedMediaHostnames`.
 
 ## Serving over HTTPS
 
