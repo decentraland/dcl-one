@@ -2203,7 +2203,7 @@ async fn a_batch_entity_id_is_any_ipfs_v2_hash() {
         "?partial=true",
         &other_prefix,
         &chain,
-        &[wrong.clone()],
+        std::slice::from_ref(&wrong),
         true,
     );
     let (status, _, body) = call(&router, request).await;

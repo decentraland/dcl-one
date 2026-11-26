@@ -72,8 +72,8 @@
 //! (it only skips `/get-scene-adapter`'s deployment check); upstream's Cast
 //! skips the place permission check for them when that setting is on.
 
+use parking_lot::Mutex;
 use std::collections::BTreeSet;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use axum::Json;
@@ -396,7 +396,7 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> Vec<Rev
         Keys::Minter(wallet) => ("lower(generated_by) = $1", wallet),
         Keys::Place(place) => ("place_id = $1", place),
         Keys::After(cursor) => {
-            after = cursor.lock().unwrap().clone();
+            after = cursor.lock().clone();
             ("place_id > $1 ORDER BY place_id LIMIT 20", after.as_str())
         }
         Keys::All => ("place_id > $1", ""),
@@ -425,7 +425,7 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> Vec<Rev
     let mut revoked = Vec::new();
     for access in &rows {
         if let Keys::After(cursor) = keys {
-            cursor.lock().unwrap().clone_from(&access.place_id);
+            cursor.lock().clone_from(&access.place_id);
         }
         match keep_or_revoke(state, access).await {
             Ok(Checked::Kept | Checked::Gone) => {}
@@ -438,7 +438,7 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> Vec<Rev
     if let Keys::After(cursor) = keys
         && rows.len() < 20
     {
-        cursor.lock().unwrap().clear();
+        cursor.lock().clear();
     }
     revoked
 }
@@ -474,7 +474,7 @@ pub(crate) async fn listen<F: Future<Output = ()>>(pool: &PgPool, check: impl Fn
     let waiting = Mutex::new(BTreeSet::new());
     let ready = tokio::sync::Notify::new();
     let wake = |payload: &str| {
-        waiting.lock().unwrap().insert(payload.to_owned());
+        waiting.lock().insert(payload.to_owned());
         ready.notify_one();
     };
     let subscription = async {
@@ -514,7 +514,7 @@ pub(crate) async fn listen<F: Future<Output = ()>>(pool: &PgPool, check: impl Fn
     let checks = async {
         loop {
             ready.notified().await;
-            let batch = std::mem::take(&mut *waiting.lock().unwrap());
+            let batch = std::mem::take(&mut *waiting.lock());
             for payload in batch {
                 check(payload).await;
             }

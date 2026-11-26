@@ -42,8 +42,20 @@ export type TooltipProps = {
   enterDelay?: number
   /** The tip is the name of the wrapped control, not its description: for a control with no text of its own. */
   labelChild?: boolean
-  /** Edge of the anchor the tip lines up with. Needs `keepInViewport`. */
+  /**
+   * Edge of the anchor the tip lines up with. Needs `keepInViewport`, except with `appearance="hud"`, where `end`
+   * puts the right edge of a tip above or below its anchor on the anchor's.
+   */
   align?: TooltipAlign
+  /**
+   * Not in Figma. `hud` is the Explorer HUD's tip: 14px type, opened by the pointer alone and placed by the
+   * stylesheet, so the floating options do not apply to it.
+   */
+  appearance?: 'default' | 'hud'
+  /** `hud` only. `rail` is the sidebar's tip: tighter corners, closer to its button and with no fade. */
+  variant?: 'default' | 'rail'
+  /** `hud` only. A paragraph instead of a name: it wraps, keeps its line breaks and hangs from the anchor's left edge. */
+  multiline?: boolean
   /** Put the tip edge that faces the anchor, and the edge the tip starts at on the other axis, on a whole device pixel. Needs `keepInViewport`. */
   snap?: boolean
   /** Distance between the tip and the anchor, in pixels. */
@@ -147,7 +159,10 @@ export function Tooltip({
   labelChild = false,
   align = 'center',
   snap = false,
-  gap = GAP
+  gap = GAP,
+  appearance = 'default',
+  variant = 'default',
+  multiline = false
 }: TooltipProps) {
   const ref = useRef<HTMLSpanElement>(null)
   const tipRef = useRef<HTMLSpanElement>(null)
@@ -158,15 +173,17 @@ export function Tooltip({
   const portalBody = useSyncExternalStore(subscribeToHydration, clientBody, serverBody)
   const controlled = openProp !== undefined
   const anchored = anchor !== undefined
+  const hud = appearance === 'hud'
   const floating =
-    portal ||
-    controlled ||
-    anchored ||
-    interactive ||
-    keepInViewport ||
-    closeOnScroll ||
-    onOpenChange !== undefined ||
-    enterDelay !== undefined
+    !hud &&
+    (portal ||
+      controlled ||
+      anchored ||
+      interactive ||
+      keepInViewport ||
+      closeOnScroll ||
+      onOpenChange !== undefined ||
+      enterDelay !== undefined)
   const [openState, setOpen] = useState(false)
   const [position, setPosition] = useState<TipPosition>(UNPLACED)
   const open = !!portalBody && !disabled && (controlled ? openProp : openState)
@@ -422,6 +439,10 @@ export function Tooltip({
     bare && styles.bare,
     arrow && styles.arrow,
     arrow && `${HOOK_TIP}--arrow`,
+    hud && styles.hud,
+    hud && variant === 'rail' && styles.hudRail,
+    hud && multiline && styles.hudMultiline,
+    hud && align === 'end' && variant !== 'rail' && !multiline && styles.hudEnd,
     tipClassName
   ]
     .filter(Boolean)
@@ -450,7 +471,9 @@ export function Tooltip({
   return (
     <span
       ref={ref}
-      className={[styles.root, HOOK_WRAP, className].filter(Boolean).join(' ')}
+      className={[hud ? styles.hudRoot : styles.root, HOOK_WRAP, className]
+        .filter(Boolean)
+        .join(' ')}
       aria-describedby={floating && open && !labelChild ? id : undefined}
       onMouseEnter={floating ? enter : undefined}
       onMouseLeave={floating ? leave : undefined}

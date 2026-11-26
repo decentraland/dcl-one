@@ -5,11 +5,11 @@
 import { useState } from 'react'
 import { catalystThumbUrl } from '@explorer-core/lib/identity'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
-import { MaskIcon } from '../../design'
 import { EmoteSlot } from './EmoteSlot'
 import type { EmotesState } from '../session/useEngineSession'
 import closeIcon from '../../assets/chat/close-thin.png'
 import styles from './EmotesWheel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const CENTER = 257 // wheel viewport is 514×514 (then HUD-scaled)
 const RADIUS = 182 // centre → slot centre

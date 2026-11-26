@@ -41,6 +41,14 @@
     }
   }
 
+  /* Not in Figma: the Explorer HUD's card action. */
+  .sm {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px; /* the HUD's control radius; no token */
+    transition: background-color 100ms;
+  }
+
   .icon {
     display: block;
   }

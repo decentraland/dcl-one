@@ -29,6 +29,8 @@ pub(crate) fn validate_sku(raw: &str) -> Result<String, ApiError> {
 /// reversals go by, whichever Stripe event settled it.
 #[derive(Debug, Clone)]
 pub struct SettledPurchase {
+    /// `credits.purchases.id`, the key of its receipt.
+    pub id: i64,
     pub address: String,
     pub credits: String,
     pub sku: String,
@@ -38,6 +40,11 @@ pub struct SettledPurchase {
     /// The payment intent the purchase holds after the flip: the one it
     /// already had (an unpaid completion records it), else the event's.
     pub payment_intent: Option<String>,
+    /// What the payment charged, in cents of `currency`, and how many
+    /// packs it bought (the credits and the cents are already the totals).
+    pub amount_cents: i64,
+    pub currency: String,
+    pub quantity: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +86,8 @@ pub enum ReversalOutcome {
         shortfall: String,
         /// Whether `shortfall` is strictly positive (decided in NUMERIC).
         has_shortfall: bool,
+        /// A dispute's reversal; else a refund's.
+        dispute: bool,
     },
     NothingToReverse,
     NoPaidPurchase,
@@ -516,12 +525,16 @@ impl Credits {
 
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
             return Ok(MarkPaidOutcome::Granted(SettledPurchase {
+                id: row.get("id"),
                 address: row.get("address"),
                 credits: row.get("credits"),
                 sku: row.get("sku"),
                 order_id: row.get("order_id"),
                 checkout_session: row.get("stripe_checkout_session"),
                 payment_intent: row.get("payment_intent"),
+                amount_cents,
+                currency: currency.clone(),
+                quantity: row.get("quantity"),
             }));
         }
         if !SETTLEABLE_STATUSES.contains(&status.as_str()) {
@@ -772,6 +785,7 @@ impl Credits {
             removed: outcome.removed,
             shortfall: outcome.shortfall,
             has_shortfall: outcome.has_shortfall,
+            dispute: status_label == Some("disputed"),
         })
     }
 
@@ -821,7 +835,7 @@ macro_rules! mark_paid_sql {
     ($column:literal) => {
         concat!(
             "WITH cur AS ( \
-                 SELECT id, address, credits::text AS credits, amount_cents, currency, status, stripe_event_id, \
+                 SELECT id, address, credits::text AS credits, amount_cents, quantity, currency, status, stripe_event_id, \
                         sku, order_id, stripe_checkout_session, stripe_payment_intent \
                  FROM credits.purchases WHERE ",
             $column,
@@ -834,7 +848,7 @@ macro_rules! mark_paid_sql {
                      AND cur.amount_cents = $3 AND lower(cur.currency) = lower($5::text) \
                  RETURNING p.id \
              ) \
-             SELECT cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
+             SELECT cur.id, cur.address, cur.credits, cur.amount_cents, cur.quantity, cur.currency, cur.status, cur.stripe_event_id, \
                     cur.sku, cur.order_id, cur.stripe_checkout_session, \
                     COALESCE(cur.stripe_payment_intent, $4::text) AS payment_intent, \
                     EXISTS (SELECT 1 FROM upd) AS updated \

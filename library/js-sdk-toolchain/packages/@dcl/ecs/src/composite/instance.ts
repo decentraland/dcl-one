@@ -1,12 +1,12 @@
 import { AvatarEquippedData, AvatarShape, componentDefinitionByName } from '../components'
 import { componentNumberFromName } from '../components/component-number'
-import { TransformType } from '../components/manual/Transform'
-import { Entity } from '../engine/entity'
-import { ComponentDefinition, IEngine, LastWriteWinElementSetComponentDefinition } from '../engine/types'
+import type { TransformType } from '../components/manual/Transform'
+import type { Entity } from '../engine/entity'
+import type { ComponentDefinition, IEngine, LastWriteWinElementSetComponentDefinition } from '../engine/types'
 import { Schemas } from '../schemas'
 import { ReadWriteByteBuffer } from '../serialization/ByteBuffer'
 import { getCompositeRootComponent } from './components'
-import { ComponentData, CompositeComponent, CompositeDefinition } from './proto/gen/composite.gen'
+import type { ComponentData, CompositeComponent, CompositeDefinition } from './proto/gen/composite.gen'
 import * as path from './path'
 
 /**

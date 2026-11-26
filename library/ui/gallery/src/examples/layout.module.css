@@ -56,6 +56,13 @@
   padding-block: var(--dcl-space-48);
 }
 
+/* Tips kept in the page take room while hidden: this keeps them from widening a narrow page, with room below for a
+   paragraph. */
+.tooltipClip {
+  overflow: hidden;
+  padding-bottom: 120px;
+}
+
 .backdrop {
   position: relative;
   width: 100%;
@@ -117,4 +124,52 @@
     grid-template-columns: 1fr;
     gap: var(--dcl-space-16);
   }
+}
+
+/* A row of examples that scrolls inside the stage instead of wrapping or widening the page. */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding-block: var(--dcl-space-8);
+  overflow-x: auto;
+}
+
+.strip > * {
+  flex: none;
+}
+
+/* Room below a row of selects for an open list, and the layer the host gives that list. */
+.selectRoom {
+  --z-overlay: 1;
+
+  align-items: flex-start;
+  min-height: 180px;
+}
+
+/* The Explorer HUD's page reset, for a HUD part that leaves its box model to its host. */
+.hudHost,
+.hudHost * {
+  box-sizing: border-box;
+}
+
+.hudHost {
+  max-width: 100%;
+}
+
+/* A column of fields that each take the column's width, with room for a ring drawn 6px outside a field. The
+   column is `minmax(0, 1fr)`, so a field narrower than its input's own width shrinks to the column. */
+.ringRoom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 360px;
+  padding: 10px;
+}
+
+/* Where a ScrollThumb example puts its track: the right edge of its positioned parent. */
+.thumbRight {
+  right: 0;
 }

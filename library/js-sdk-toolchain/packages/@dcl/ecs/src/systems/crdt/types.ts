@@ -1,4 +1,4 @@
-import { CrdtMessageBody, CrdtNetworkMessageBody } from '../../serialization/crdt/types'
+import type { CrdtMessageBody, CrdtNetworkMessageBody } from '../../serialization/crdt/types'
 
 /**
  * @public

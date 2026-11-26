@@ -11,8 +11,8 @@ on chains 1 and 137. No ownership read asks the collections subgraphs. The
 reader lives in the shop (`services/catalyst/shop/src/market/owned_items.rs`)
 and serves profiles and the Registry's profile batches, the lambdas wearable
 and emote lists, the explorer backpack, `/v1/users`, outfits, the `/v1/orders`
-owner guard and the wearable and emote pages of `/v1/nfts`. It reads only the
-shop's tables, so no cross-area SQL edge is added. Content deployment
+wearable order guard and the wearable and emote pages of `/v1/nfts`.
+LAND and Estate listing ownership comes from the land-authz fold. Content deployment
 validation keeps its own check, by RPC at the entity's block plus
 `shop.usage_grants`.
 
@@ -21,8 +21,10 @@ profile and orders reads do not wait for the items mirror; a v1 item by its
 collection's URN (`shop.collections`) and the wearable id of its Issue log.
 When a profile names no token, the first held token is the newest transfer.
 The orders guard checks the listing's exact token: a listing whose signer no
-longer holds that token drops out even when the signer holds another copy,
-and a token the index does not hold (LAND, an estate) passes.
+longer holds that token drops out even when the signer holds another copy.
+An order needs a published open trade-events verdict from a watched venue.
+A transfer ahead of the owner fold withholds that token's listings until
+publication.
 
 Every read checks the index's cursor in the same `REPEATABLE READ, READ ONLY`
 transaction as its rows. Two rules:
@@ -45,15 +47,12 @@ transaction as its rows. Two rules:
   on the networks they read (wearables both, emotes Polygon), and the lists
   also the items mirror's first complete pass; otherwise they answer the
   `nft-index` unavailable envelope. `/v1/orders` and
-  `/v1/orders/open-by-items` are the exception: while the index does not
-  meet the rule their v3 listings leg keeps only the Ethereum LAND and
-  Estate registries' listings, contracts the index never holds and the
-  owner guard never filters, so no listing the guard could drop is served
-  unguarded, and the legacy orders still answer with status 200. The total
-  counts what is served. That set is fixed, not read from `shop.nft`: a
-  rewind deletes the rows of the tokens it reaches, so a sold token's
-  collection could otherwise pass for one the index does not hold. The `x-listings-owner-check` response header names the case:
-  `checked` (the guard ran), `partial` (this one) or `unchecked` (below).
+  `/v1/orders/open-by-items` require proof of ownership for every off-chain
+  NFT listing and report `x-listings-owner-check: checked`. A walking node
+  reads both order legs on the same
+  [legacy book snapshot](2026-11-24-legacy-orders-from-the-nft-index.md).
+  A graph-backed legacy reader also requires the NFT or land-authz
+  publication for its off-chain listings.
 
 Neither rule compares `folded_block` with `last_block`: each pass advances
 `last_block` before it folds and publishes, so that equality is false for part
@@ -62,11 +61,9 @@ clears `folded_block` and deletes the fold's rows in one transaction, and only
 a pass that reaches the head sets it again, so a refill is never read as
 complete.
 
-A node that does not walk the index (the switch off, or a network other than
-mainnet) serves profiles and outfits as deployed, serves the v3 listings of
-`/v1/orders` without the owner guard (`x-listings-owner-check: unchecked`,
-so a client knows a listing may name a token its signer sold), and answers
-the envelope on the inventory routes. A mainnet mirror refuses to start
+A node without its own walker can serve off-chain listings from the same
+published ownership tables when another job updates them. Profile and
+outfit inventory readiness follows its own read rules. A mainnet mirror refuses to start
 with the index off, with a `TRADE_RPC_URLS` (inline, or read from
 `TRADE_RPC_URLS_FILE` once the secrets are resolved) that names no chain 137
 endpoint, or, when it fills its own catalogue (`MARKETPLACE_MIRRORS_ENABLED`),
@@ -100,15 +97,8 @@ under that sort still looks up the listing of each of its tokens, 7 to 8 s
 for a 32,000-token owner.
 Production data is unmeasured.
 
-Known gaps, accepted:
+Inventory memos:
 
-- Until the walk covers the testnets (#1693), a node that does not walk the
-  index, every testnet node included, serves open v3 listings with no owner
-  guard: a listing whose signer has since transferred its token stays in
-  `/v1/orders?status=open` and `/v1/orders/open-by-items`, and buying it
-  fails on chain. `x-listings-owner-check: unchecked` names the case, but
-  the marketplace frontend does not read it, and the in-process callers
-  (credits pricing, the activity feed) take the variants without it.
 - The memos are keyed by each network's published block and time, and a
   pass that reaches the head publishes a new time about every 5 seconds, so
   a memo rarely hits beyond one pass and every request, hits included,

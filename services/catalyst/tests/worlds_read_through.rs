@@ -35,8 +35,7 @@ use catalyst::worlds::mirror::MirrorSettings;
 use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 use catalyst::worlds::{Settings, WorldReadThrough, WorldsState};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 /// The readers' guard: longer than any fill here, so the answer is the fill's.
 const WAIT: Duration = Duration::from_secs(30);

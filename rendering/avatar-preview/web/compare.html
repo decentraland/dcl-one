@@ -14,7 +14,9 @@
     main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; height: calc(100% - 110px); box-sizing: border-box; }
     figure { margin: 0; display: flex; flex-direction: column; min-height: 0; }
     figcaption { padding: 4px 0; opacity: .8; }
-    iframe { flex: 1; width: 100%; border: 0; background: transparent; }
+    /* black behind the frames: the Unity renderer's canvas is partly transparent where a blended
+       material draws, and a coloured page behind it would add its colour to those pixels */
+    iframe { flex: 1; width: 100%; border: 0; background: #000; }
   </style>
 </head>
 <body>
@@ -68,7 +70,7 @@
     bevy.src = `${location.origin}/?${query}`;
 
     // defaults mirror stage::StageLight
-    const light = { illuminance: 8000, exposure: -0.4, yaw: 0.46, pitch: 0.6, shadow: 0.35, shadowReach: 6, glow: 1, platformBase: 0.5, platformEmission: 1.67 };
+    const light = { illuminance: 8000, exposure: 0.1, yaw: 0.46, pitch: 0.6, shadow: 0.35, shadowReach: 6, glow: 1, platformBase: 0.36, platformEmission: 1.18 };
     for (const k of Object.keys(light)) if (own.has(k)) light[k] = Number(own.get(k));
     const send = () => bevy.contentWindow && bevy.contentWindow.postMessage({ type: 'bevy_light', payload: light }, '*');
     for (const [k, v] of Object.entries(light)) {
