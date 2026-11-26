@@ -308,63 +308,14 @@ pub(super) async fn mark_world(pool: &PgPool, name: &str, error: Option<&str>) -
     Ok(())
 }
 
-/// Retires what the mirror wrote for worlds a complete catalogue pass no
-/// longer lists: their mirrored scenes, their world row when nothing local
-/// remains, and the catalogue row. Local scenes are never touched; blobs
-/// stay in the store (content-addressed, possibly shared).
-pub(super) async fn retire_unlisted(pool: &PgPool) -> Result<u64> {
-    let mut tx = pool.begin().await?;
-    let candidates: Vec<String> = sqlx::query_scalar(
-        "SELECT world_name FROM worlds.remote_worlds WHERE unlisted_at IS NOT NULL",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-    // Match publish/mirror lock order before touching scenes or shared places.
-    // Freeze the candidate set so a later catalogue change cannot add an
-    // unlocked world to any of the deletes below.
-    let locked: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM worlds.worlds WHERE name = ANY($1) ORDER BY name FOR UPDATE",
-    )
-    .bind(&candidates)
-    .fetch_all(&mut *tx)
-    .await?;
-    let retired: Vec<String> = sqlx::query_scalar(
-        r#"DELETE FROM worlds.world_scenes s
-           USING worlds.remote_worlds r
-           WHERE r.world_name = ANY($1) AND r.unlisted_at IS NOT NULL AND lower(s.world_name) = r.world_name
-             AND s.mirror_source IS NOT NULL
-           RETURNING lower(s.world_name)"#,
-    )
-    .bind(&locked)
-    .fetch_all(&mut *tx)
-    .await?;
-    let scenes = retired.len() as u64;
-    scene_identity::retire_orphans(&mut tx, &retired).await?;
+/// Drop catalogue bookkeeping once an unlisted world has no mirrored scenes left.
+pub(super) async fn prune_unlisted_catalogue(pool: &PgPool) -> Result<()> {
     sqlx::query(
-        r#"DELETE FROM worlds.worlds w
-           USING worlds.remote_worlds r
-           WHERE r.world_name = ANY($1) AND r.unlisted_at IS NOT NULL AND lower(w.name) = r.world_name
-             AND w.mirror_source IS NOT NULL
-             AND NOT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name)"#,
+        "DELETE FROM worlds.remote_worlds r WHERE r.unlisted_at IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM worlds.world_scenes s
+                           WHERE s.world_name = r.world_name AND s.mirror_source IS NOT NULL)",
     )
-    .bind(&locked)
-    .execute(&mut *tx)
+    .execute(pool)
     .await?;
-    let worlds = sqlx::query(
-        "DELETE FROM worlds.remote_worlds r WHERE world_name = ANY($1) AND unlisted_at IS NOT NULL AND (world_name = ANY($2) OR NOT EXISTS (SELECT 1 FROM worlds.worlds w WHERE w.name = r.world_name))",
-    )
-    .bind(&candidates)
-    .bind(&locked)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    tx.commit().await?;
-    if worlds > 0 {
-        tracing::info!(
-            worlds,
-            scenes,
-            "retired worlds the catalogue no longer lists"
-        );
-    }
-    Ok(scenes)
+    Ok(())
 }

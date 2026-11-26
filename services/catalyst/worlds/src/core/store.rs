@@ -53,7 +53,9 @@ pub use publication::{
     undeploy_scene, undeploy_world, world_disabled,
 };
 pub(super) use publication::{entity_timestamp, entity_timestamp_value};
-pub(crate) use publication::{local_scene_stands, retire_absent_forwards, retire_local_scenes};
+pub(crate) use publication::{
+    local_scene_stands, retire_absent_forwards, retire_absent_mirrored, retire_local_scenes,
+};
 pub use queries::{
     active_content_keys, admin_block_wallet, admin_list_blocked, admin_list_worlds_page,
     admin_query_access_log, admin_scenes, admin_set_world_blocked, admin_unblock_wallet,

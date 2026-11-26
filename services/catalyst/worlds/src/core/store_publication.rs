@@ -550,6 +550,25 @@ pub(crate) async fn retire_absent_forwards(
     .rows_affected())
 }
 
+/// Retires only the mirror rows from the source and entity snapshot checked upstream.
+pub(crate) async fn retire_absent_mirrored(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    source: &str,
+    entities: &[String],
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes
+         WHERE world_name = $1 AND mirror_source = $2 AND entity_id = ANY($3::text[])"
+    ))
+    .bind(world)
+    .bind(source)
+    .bind(entities)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
 pub fn world_disabled(world: &WorldName) -> ApiError {
     ApiError::forbidden(format!(

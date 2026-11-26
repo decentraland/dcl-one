@@ -301,9 +301,6 @@ async fn scenes_pass(
             .bind(&settings.source)
             .execute(pool)
             .await?;
-            if catalogue.complete {
-                out.retired_scenes = retire_unlisted(pool).await?;
-            }
             String::new()
         }
     };
@@ -455,6 +452,9 @@ async fn scenes_pass(
         super::index::invalidate_index_memo();
     }
     if !out.interrupted {
+        if catalogue.complete {
+            prune_unlisted_catalogue(pool).await?;
+        }
         out.complete = true;
         sqlx::query(
             r#"UPDATE worlds.mirror_passes
@@ -952,7 +952,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unlisting_locks_the_world_before_scenes_and_cannot_retire_a_concurrent_publish() {
+    async fn confirmed_retirement_locks_the_world_and_keeps_a_concurrent_publish() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
@@ -970,7 +970,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        sqlx::query("INSERT INTO worlds.remote_worlds (world_name,source,scene_ids,unlisted_at) VALUES ($1,'https://up.example',ARRAY['old'],now())").bind(&world).execute(&mut *seed).await.unwrap();
         seed.commit().await.unwrap();
 
         let mut publish = pool.begin().await.unwrap();
@@ -985,7 +984,17 @@ mod tests {
             .unwrap();
         let retiring = tokio::spawn({
             let pool = pool.clone();
-            async move { retire_unlisted(&pool).await }
+            let world = world.clone();
+            async move {
+                super::mirror_reconcile::retire_confirmed_empty(
+                    &pool,
+                    "https://up.example",
+                    &world,
+                    &[],
+                    &["old".into()],
+                )
+                .await
+            }
         });
         // Wait for actual lock contention, not a scheduler sleep that could
         // let either implementation win the race accidentally.
@@ -996,7 +1005,7 @@ mod tests {
                 if blocked { break; }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-        }).await.expect("the unlisting transaction waits for the publisher's world lock");
+        }).await.expect("the verified retirement transaction waits for the publisher's world lock");
         sqlx::query("SET LOCAL lock_timeout='500ms'")
             .execute(&mut *publish)
             .await

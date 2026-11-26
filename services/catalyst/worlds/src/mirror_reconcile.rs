@@ -360,29 +360,50 @@ async fn retire_empty_upstream(
             .collect::<Vec<_>>(),
     )
     .await?;
+    let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
+    retire_confirmed_empty(pool, source, world, &receipts, held).await
+}
+
+/// Applies absence already verified against the empty listing and each entity.
+pub(super) async fn retire_confirmed_empty(
+    pool: &PgPool,
+    source: &str,
+    world: &str,
+    receipts: &[i64],
+    held: &[String],
+) -> Result<Outcome> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT name FROM worlds.worlds WHERE name = $1 FOR UPDATE")
         .bind(world)
         .execute(&mut *tx)
         .await?;
-    let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
     let superseded =
-        crate::core::store::retire_absent_forwards(&mut tx, world, source, &receipts).await?;
-    let retired_mirrored = sqlx::query(
-        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source = $2
-           AND entity_id = ANY($3::text[])",
-    )
-    .bind(world)
-    .bind(source)
-    .bind(held)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+        crate::core::store::retire_absent_forwards(&mut tx, world, source, receipts).await?;
+    let retired_mirrored =
+        crate::core::store::retire_absent_mirrored(&mut tx, world, source, held).await?;
     let local_stands = has_local_publish(&mut tx, world).await?;
     let retired = retired_mirrored + superseded;
     if retired > 0 {
         crate::explore::places::derive::mark_world_dirty(&mut tx, world).await?;
         scene_identity::retire_orphans(&mut tx, &[world.to_owned()]).await?;
+    }
+    if retired_mirrored > 0 && superseded == 0 && !local_stands {
+        // An empty mirror cache can be evicted. A local owner is recorded on publish and
+        // survives handover, and independent evidence of local state also protects the row.
+        sqlx::query(
+            "DELETE FROM worlds.worlds w WHERE w.name = $1 AND w.mirror_source = $2
+               AND w.owner IS NULL AND NOT w.settings_set_here AND NOT w.access_set_here
+               AND w.blocked_since IS NULL
+               AND NOT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name)
+               AND NOT EXISTS (SELECT 1 FROM worlds.world_permissions p WHERE p.world_name = w.name)
+               AND NOT EXISTS (SELECT 1 FROM worlds.world_access_communities c WHERE c.world_name = w.name)
+               AND NOT EXISTS (SELECT 1 FROM worlds.retired_world_scenes s
+                               WHERE s.world_name = w.name AND s.mirror_source IS NULL)",
+        )
+        .bind(world)
+        .bind(source)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     if local_stands {

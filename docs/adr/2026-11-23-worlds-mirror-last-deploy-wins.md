@@ -92,14 +92,18 @@ trimming whitespace and trailing slashes.
   checks uncatalogued worlds with accepted local scenes or active mirrored
   scenes from that source, within any explicit name filter. A bounded pass
   checks its first-N catalogue names. A confirmed empty listing retires
-  the matching scenes and preserves the world settings and grants.
+  the matching scenes and preserves creator-owned settings and grants.
+  A previously listed world missing from the index goes through the same
+  per-world confirmation before its held scenes retire. A mirror-only
+  world with no local state can be evicted after its last scene is
+  confirmed absent.
 - **Catalogue coverage.** An `/index` response at the upstream ceiling of
   10,000 rows keeps the previous catalogue entries and records the pass as
   incomplete with a page-limit warning. The mirror continues reconciling
   its scheduled names using their per-world listings. Below the ceiling,
   the removal fuse still rejects unusually large drops. The operator
-  verifies complete catalogue coverage before enabling the scheduled mirror,
-  since a smaller response can also omit a live world without a signal.
+  verifies complete catalogue coverage before enabling the scheduled mirror.
+  An incomplete index can still prevent discovery of new worlds.
 - **Hosting.** Mirrored scenes are served as copies. Handover ends local
   authoritative SDK7 hosting and local collaborator and `logsPermissions`
   eligibility for those scenes. Mirrored scenes stop counting toward local
@@ -114,8 +118,9 @@ trimming whitespace and trailing slashes.
   is still active locally. Once the scene is handed over or retired, the
   receipt follows the regular 30-day retention window. A response lost after
   an upstream commit and a rejection provide no affirmative receipt, including
-  deployments relying on a grant the upstream does not know. In those cases
-  the ordinary timestamp and tie rules apply. A read-through fill leaves the
+  deployments relying on a grant the upstream does not know. A receipt
+  swept before this change also provides no evidence after upgrade. In
+  those cases the ordinary timestamp and tie rules apply. A read-through fill leaves the
   local publish in place.
 
 ## Consequences

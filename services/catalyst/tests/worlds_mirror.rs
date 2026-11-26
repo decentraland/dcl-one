@@ -1215,6 +1215,129 @@ async fn a_catalogue_that_would_unlist_most_of_the_mirror_is_refused() {
     scratch.teardown().await;
 }
 
+/// A small catalogue omission cannot revoke a handed-over world's creator state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_index_omission_preserves_creator_state_through_confirmed_retirement() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "indexed-creator-state").await;
+    let world = "retained-creator.dcl.eth";
+    let grant = "0x0000000000000000000000000000000000000160";
+    let community = uuid::Uuid::new_v4();
+    let at = now_ms() - 3_600_000;
+    let scene = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        deploy_upstream(&mut st, world, "Source title", &["0,0"], at).0
+    };
+    let identity = publish_here(&node.pool, world, &scene, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &scene, "accepted").await;
+    sqlx::query(
+        "UPDATE worlds.worlds SET title = 'Creator title', settings_set_here = true,
+           settings_set_by = owner, access_type = 'allow-list', access_set_here = true,
+           access_set_by = owner WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_permissions (world_name, permission, address)
+           VALUES ($1, 'deployment', $2), ($1, 'streaming', $2)",
+    )
+    .bind(world)
+    .bind(grant)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)",
+    )
+    .bind(world)
+    .bind(community)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await.as_deref(),
+        Some(fake.base.as_str())
+    );
+    fake.state.lock().index_hidden = Some(world.into());
+    let pass = node.pass(&ctx).await;
+    assert!(pass.catalogue.complete);
+    assert_eq!(pass.catalogue.unlisted, 1);
+    assert_eq!(
+        active_identity(&node.pool, world, &scene).await,
+        Some(identity)
+    );
+    assert_eq!(node.scene_rows(world).await.len(), 1);
+
+    {
+        let mut st = fake.state.lock();
+        st.worlds.remove(world);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert!(node.pass(&ctx).await.scenes.failed > 0);
+    assert!(identity_active(&node.pool, identity).await);
+    fake.state.lock().scenes_status = None;
+
+    assert_eq!(node.pass(&ctx).await.scenes.retired_scenes, 1);
+    assert!(node.scene_rows(world).await.is_empty());
+    assert!(!identity_active(&node.pool, identity).await);
+    assert_eq!(
+        node.get(&format!("/world/{world}/about")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    node.pass(&ctx).await; // A later cleanup must not cascade the creator's state.
+    let (title, access, settings_set_here, access_set_here): (String, String, bool, bool) =
+        sqlx::query_as("SELECT title, access_type, settings_set_here, access_set_here FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (title.as_str(), access.as_str()),
+        ("Creator title", "allow-list")
+    );
+    assert!(settings_set_here && access_set_here);
+    let grants: Vec<String> = sqlx::query_scalar(
+        "SELECT permission FROM worlds.world_permissions WHERE world_name = $1 AND address = $2 ORDER BY permission",
+    )
+    .bind(world)
+    .bind(grant)
+    .fetch_all(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(grants, ["deployment", "streaming"]);
+    let retained_community: uuid::Uuid = sqlx::query_scalar(
+        "SELECT community_id FROM worlds.world_access_communities WHERE world_name = $1",
+    )
+    .bind(world)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(retained_community, community);
+    let retained_scene: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2)",
+    )
+    .bind(world)
+    .bind(&scene)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert!(retained_scene);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
 /// At the upstream page ceiling, a world omitted from the index can still be active.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_capped_index_preserves_live_omissions_and_still_reconciles_confirmed_removals() {
