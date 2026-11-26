@@ -1058,7 +1058,6 @@ async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana
 
     // Before the mirrors have a pass the answer is the envelope, not a refusal.
     sqlx::query("DELETE FROM shop.mirror_state WHERE mirror IN ('collections', 'items') AND network = 'matic'").execute(&pool).await.unwrap();
-    state.mirror_ready.clear();
     let (status, body) = call(
         app(),
         "POST",
@@ -1070,7 +1069,6 @@ async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["source"], "collections-mirror");
     mark_mirrors_ready(&pool).await;
-    state.mirror_ready.clear();
     seed_item(&pool, &contract, "0", &creator).await;
     sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.25, timezone('UTC', now()) + interval '1 day')").execute(&pool).await.unwrap();
 

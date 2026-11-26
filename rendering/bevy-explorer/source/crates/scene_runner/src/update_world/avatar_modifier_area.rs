@@ -7,8 +7,8 @@ use common::{
     dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_RADIUS},
     sets::SceneSets,
     structs::{
-        ActiveAvatarArea, AttachPoints, AvatarControl, PermissionState, PlayerModifiers,
-        PrimaryPlayerRes, PrimaryUser,
+        ActiveAvatarArea, AttachPoints, AvatarControl, PermissionState, PlayerAddress,
+        PlayerModifiers, PrimaryPlayerRes, PrimaryUser,
     },
 };
 use comms::{global_crdt::ForeignPlayer, BlockedOrBanned, Transport};
@@ -20,7 +20,6 @@ use dcl_component::{
     SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::ComponentPosition;
-use wallet::Wallet;
 
 use crate::{
     permissions::Permission, renderer_context::RendererSceneContext, ContainingScene, SceneEntity,
@@ -86,6 +85,7 @@ pub(crate) fn update_avatar_modifier_area(
             Entity,
             &GlobalTransform,
             Option<&ForeignPlayer>,
+            Option<&PlayerAddress>,
             Option<&mut PlayerModifiers>,
             Has<HiddenNametag>,
         ),
@@ -103,7 +103,6 @@ pub(crate) fn update_avatar_modifier_area(
         ),
         Or<(With<AvatarModifierArea>, With<InputModifier>)>,
     >,
-    me: Res<Wallet>,
     mut perms: Permission<Entity>,
     mut active_hide_areas: Local<HashMap<Entity, PermissionState>>,
     contexts: Query<&RendererSceneContext>,
@@ -112,7 +111,9 @@ pub(crate) fn update_avatar_modifier_area(
     let scenes = containing_scene.get_area(player_res.0, PLAYER_COLLIDER_RADIUS);
 
     // for every player
-    for (player, gt, maybe_foreign, maybe_modifiers, has_hidden_nametag) in players.iter_mut() {
+    for (player, gt, maybe_foreign, maybe_address, maybe_modifiers, has_hidden_nametag) in
+        players.iter_mut()
+    {
         let Some(mut modifiers) = maybe_modifiers else {
             commands
                 .entity(player)
@@ -129,10 +130,7 @@ pub(crate) fn update_avatar_modifier_area(
         let player_position = gt.translation();
         let player_id = format!(
             "{:#x}",
-            maybe_foreign
-                .as_ref()
-                .map(|f| f.address)
-                .unwrap_or(me.address().unwrap_or_default())
+            maybe_address.map(|address| address.0).unwrap_or_default()
         );
 
         let mut needs_hidden_nametag = false;
@@ -651,7 +649,6 @@ mod tests {
             .init_resource::<CurrentRealm>()
             .init_resource::<PermissionManager>()
             .init_resource::<PermissionsInForce>()
-            .init_resource::<Wallet>()
             .add_event::<PermissionUsed>()
             .add_systems(
                 Update,
