@@ -35,8 +35,8 @@ use scene_runner::{
 use crate::{
     landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures, ScatterGround},
     terrain::{
-        TerrainParams, TerrainSet, TerrainSurface, GROUND_MAX_Y, GROUND_MIN_Y, GROUND_Y,
-        TERRAIN_TEXTURE,
+        ground_surface, TerrainParams, TerrainSet, TerrainSurface, GROUND_MAX_Y, GROUND_MIN_Y,
+        GROUND_Y, TERRAIN_TEXTURE,
     },
     trees::TreeWind,
 };
@@ -211,20 +211,14 @@ impl GrassAssets {
     }
 }
 
-/// The base of the grass material: matte, both faces drawn, unfogged like the ground, and cut
+/// The base of the grass material: the ground's surface, so that with the ground's normal (the
+/// shader's) a tuft takes the light exactly as the ground under it. Both faces drawn, and cut
 /// out (the shader discards by the blade mask; the mode has the prepasses run it).
 pub(crate) fn grass_base() -> StandardMaterial {
     StandardMaterial {
         alpha_mode: AlphaMode::Mask(0.5),
-        // no highlight and no sky reflection: unity-explorer's grass material has its specular
-        // highlights and environment reflections switched off
-        reflectance: 0.0,
-        // 1 - unity-explorer's grass smoothness
-        perceptual_roughness: 0.979,
-        metallic: 0.0,
         cull_mode: None,
-        fog_enabled: false,
-        ..default()
+        ..ground_surface()
     }
 }
 

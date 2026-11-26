@@ -1004,19 +1004,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Grass grows on the parcels whose square comes within the reach of the player, the nearest
     256, where Unity takes those in the camera's view. Only parcels the realm has confirmed empty
     and that lie inside the coast carry grass.
-  - Instances stand upright, where Unity tilts each to the terrain's normal: the normal would
-    cost the vertex shader four more height samples per vertex. They are lit with an upward
-    normal, as the ground under them.
+  - Instances stand upright, where Unity tilts each to the terrain's normal. They are lit as
+    the ground under their root: with the ground's normal there (four more height samples per
+    vertex) and the ground material's surface values, so a tuft and the ground it grows on take
+    the same light on any slope.
   - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
     under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
     the colour changes over metres and the tufts of a patch share it. A tuft is that colour from
     root to tip, as Unity draws it: the material's darkening, vertex darkening and colour-map
     height are not carried (they act through the package's shader, on its meshes' vertex data),
-    and its hue variation is switched off. The grass takes the sun, the ambient light and
-    shadows, and no highlight or sky reflection: Unity's grass material has specular highlights
-    and environment reflections switched off. Flowers and reeds are drawn with the grass
-    material, so they take none either, where Unity's flower material keeps its highlights.
-    They blend toward that colour by 0.241 over their lowest 0.178.
+    and its hue variation is switched off. Unity's grass material has specular highlights and
+    environment reflections switched off; here the grass keeps the ground's surface, whatever
+    that reflects, so that it never differs from the ground. Flowers and reeds blend toward
+    that colour by 0.241 over their lowest 0.178.
   - Flowers and reeds use the grass material's wind; the flower material's own wind values act
     through the package's shader, whose meaning is not known here.
   - Until the splat and both ground textures have loaded, and for good if one fails, no flowers

@@ -1,5 +1,5 @@
-// The empty-parcel terrain height under a point, for the shaders that stand on the terrain: the
-// ground's vertices and the grass. It matches `common::terrain::height`, reading per-parcel step
+// The empty-parcel terrain height and normal under a point, for the shaders that stand on the
+// terrain: the ground's vertices and the grass. It matches `common::terrain::height`, reading per-parcel step
 // values from `terrain_steps`.
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
@@ -130,4 +130,17 @@ fn terrain_height_unity(p: vec2<f32>) -> f32 {
 // bevy world x/z
 fn terrain_height(xz: vec2<f32>) -> f32 {
     return terrain_height_unity(vec2<f32>(xz.x, -xz.y));
+}
+
+const NORMAL_EPSILON: f32 = 0.5;
+
+// The terrain's normal at bevy world x/z: the ground is lit by it, and so is what grows on it.
+fn terrain_normal(xz: vec2<f32>) -> vec3<f32> {
+    let dx = vec2<f32>(NORMAL_EPSILON, 0.0);
+    let dz = vec2<f32>(0.0, NORMAL_EPSILON);
+    return normalize(vec3<f32>(
+        terrain_height(xz - dx) - terrain_height(xz + dx),
+        2.0 * NORMAL_EPSILON,
+        terrain_height(xz - dz) - terrain_height(xz + dz),
+    ));
 }

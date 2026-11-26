@@ -14,7 +14,7 @@
     mesh_view_bindings::view,
     view_transformations::position_world_to_clip,
 }
-#import "embedded://visuals/terrain_height.wgsl"::terrain_height
+#import "embedded://visuals/terrain_height.wgsl"::{terrain_height, terrain_normal}
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{Vertex, VertexOutput}
@@ -141,7 +141,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 #ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-    out.world_normal = vec3(0.0, 1.0, 0.0);
+    out.world_normal = terrain_normal(root.xz);
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     out.previous_world_position = vec4(
@@ -154,8 +154,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position.z = min(out.position.z, 1.0);
 #endif
 #else
-    // lit as the ground under them
-    out.world_normal = vec3(0.0, 1.0, 0.0);
+    // lit as the ground under the root: the ground's own normal there, over the whole instance
+    out.world_normal = terrain_normal(root.xz);
 #endif
 
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX
@@ -270,8 +270,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4(albedo, 1.0);
-    pbr_input.N = vec3(0.0, 1.0, 0.0);
-    pbr_input.world_normal = vec3(0.0, 1.0, 0.0);
+    // the ground's normal on both faces of a card
+    let normal = normalize(in.world_normal);
+    pbr_input.N = normal;
+    pbr_input.world_normal = normal;
 
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));

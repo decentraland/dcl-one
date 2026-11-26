@@ -7,7 +7,7 @@
 }
 
 #import "embedded://visuals/terrain_params.wgsl"::terrain
-#import "embedded://visuals/terrain_height.wgsl"::{hill_fade, terrain_height, terrain_height_unity}
+#import "embedded://visuals/terrain_height.wgsl"::{hill_fade, terrain_height, terrain_height_unity, terrain_normal}
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{Vertex, VertexOutput};
@@ -15,7 +15,6 @@
     #import bevy_pbr::forward_io::{Vertex, VertexOutput};
 #endif
 
-const NORMAL_EPSILON: f32 = 0.5;
 // parcels around the player drawn as per-parcel grids (terrain.rs GROUND_NEAR_MIN/MAX)
 const GROUND_NEAR_MIN: i32 = -13;
 const GROUND_NEAR_MAX: i32 = 12;
@@ -208,16 +207,6 @@ fn morphed_height(p: vec2<f32>) -> f32 {
     }
     let cell = max(lod_cell_from(parcel, morph.player), lod_cell_from(other, morph.player));
     return mix(height, grid_surface(p, cell, morph.player), morph.weight);
-}
-
-fn terrain_normal(xz: vec2<f32>) -> vec3<f32> {
-    let dx = vec2<f32>(NORMAL_EPSILON, 0.0);
-    let dz = vec2<f32>(0.0, NORMAL_EPSILON);
-    return normalize(vec3<f32>(
-        terrain_height(xz - dx) - terrain_height(xz + dx),
-        2.0 * NORMAL_EPSILON,
-        terrain_height(xz - dz) - terrain_height(xz + dz),
-    ));
 }
 
 @vertex

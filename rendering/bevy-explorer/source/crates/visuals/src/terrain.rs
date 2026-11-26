@@ -46,6 +46,17 @@ use scene_runner::{
     vec3_to_parcel,
 };
 
+/// How the ground takes the light: matte and unfogged. The grass is lit with the same values,
+/// so it reads as the ground it grows on.
+pub(crate) fn ground_surface() -> StandardMaterial {
+    StandardMaterial {
+        perceptual_roughness: 1.0,
+        metallic: 0.0,
+        fog_enabled: false,
+        ..Default::default()
+    }
+}
+
 pub(crate) const TERRAIN_TEXTURE: Handle<Image> =
     weak_handle!("540a82e9-5602-4123-9dc7-3d76e0aec0e5");
 
@@ -997,11 +1008,8 @@ fn spawn_ground(
         GROUND_MATERIAL_FLAT_COLOR.id(),
         TerrainFlatMaterial {
             base: StandardMaterial {
-                perceptual_roughness: 1.0,
-                metallic: 0.0,
                 depth_bias: -100.0,
-                fog_enabled: false,
-                ..Default::default()
+                ..ground_surface()
             },
             extension: TerrainExtension::new(&textures),
         },
