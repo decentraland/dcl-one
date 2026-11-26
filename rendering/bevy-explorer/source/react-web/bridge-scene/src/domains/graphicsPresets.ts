@@ -29,6 +29,7 @@ const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   'Lens Flare': ['Off', DEFAULT, 'On'],
   'Depth of Field': ['High', DEFAULT, 'High'],
   SSAO: ['Off', DEFAULT, 'Off'],
+  'Landscape Distance': [500, DEFAULT, 7000],
   Fog: ['On', DEFAULT, 'On'],
   'Sky Reflections': ['High', DEFAULT, 'High']
 }

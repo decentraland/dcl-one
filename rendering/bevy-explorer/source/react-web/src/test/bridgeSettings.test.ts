@@ -36,6 +36,7 @@ const webDefaults = (): Setting[] => [
   setting('Depth of Field', 2, ['Off', 'Low', 'High']),
   setting('Fog', 1, OFF_ON),
   setting('Sky Reflections', 1, ['Low', 'High']),
+  { ...setting('Landscape Distance', 1000), minValue: 500, maxValue: 7000 },
   setting('Scene Load Distance', 10)
 ]
 const nativeDefaults = (): Setting[] => [
@@ -84,8 +85,15 @@ describe('graphics presets', () => {
       'Anti-aliasing': 0,
       'Shadow settings': 0,
       'Light Count': 0,
-      'Lens Flare': 0
+      'Lens Flare': 0,
+      'Landscape Distance': 500
     })
+  })
+
+  it('sets the Landscape Distance: 500 m on Low, the default on Medium, 7000 m on High', () => {
+    expect(target(webDefaults(), 0, 'Landscape Distance')).toBe(500)
+    expect(target(webDefaults(), 1, 'Landscape Distance')).toBe(1000)
+    expect(target(nativeDefaults(), 2, 'Landscape Distance')).toBe(7000)
   })
 
   it('leaves load distance to the player, and skips what the engine does not publish', () => {
@@ -96,5 +104,6 @@ describe('graphics presets', () => {
   it('reads as Custom once a preset setting differs', () => {
     const medium = withValue(webDefaults(), 'Jiggle Bones', 1)
     expect(currentPreset(withValue(medium, 'Shadow Distance', 80))).toBe(3)
+    expect(currentPreset(withValue(medium, 'Landscape Distance', 2000))).toBe(3)
   })
 })
