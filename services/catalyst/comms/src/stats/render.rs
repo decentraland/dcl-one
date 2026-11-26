@@ -26,11 +26,14 @@ pub fn number(value: f64) -> String {
     // serde_json's shortest-roundtrip formatter chooses even decimal ties.
     // Adapt its digits to ECMAScript's fixed/scientific notation thresholds.
     let source = serde_json::to_string(&value.abs()).expect("finite number");
-    let (mantissa, exponent) = source
-        .split_once(['e', 'E'])
-        .map_or((source.as_str(), 0), |(m, e)| {
-            (m, e.parse::<i32>().unwrap())
-        });
+    let (mantissa, exponent) = match source.split_once(['e', 'E']) {
+        Some((m, e)) => (
+            m,
+            e.parse::<i32>()
+                .expect("serde_json writes an integer exponent"),
+        ),
+        None => (source.as_str(), 0),
+    };
     let mut point = mantissa.find('.').unwrap_or(mantissa.len()) as i32 + exponent;
     let mut digits = mantissa.replace('.', "");
     let leading = digits.bytes().take_while(|b| *b == b'0').count();
