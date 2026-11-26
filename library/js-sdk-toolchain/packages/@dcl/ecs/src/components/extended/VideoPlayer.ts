@@ -31,7 +31,8 @@ export function defineVideoPlayerComponent(
 ): LastWriteWinElementSetComponentDefinition<PBVideoPlayer> {
   const component = VideoPlayer(engine)
   function request(entity: Entity, value?: PBVideoPlayer): PBVideoPlayer | undefined {
-    if (value?.position === undefined) return value
+    if (value === undefined) return undefined
+    if (value.position === undefined) return { ...value }
     const previous = component.getOrNull(entity)?.positionRevision ?? value.positionRevision ?? 0
     return { ...value, positionRevision: (previous + 1) >>> 0 }
   }

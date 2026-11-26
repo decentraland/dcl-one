@@ -20,6 +20,29 @@ function setup() {
 }
 
 describe('VideoPlayer explicit seek intent', () => {
+  describe.each(['create', 'createOrReplace', 'getOrCreateMutable'] as const)('%s', (method) => {
+    it.each(['get', 'frozen'] as const)('accepts %s values without a position', (source) => {
+      const { engine, player, entity, flush } = setup()
+      const initial: ReturnType<typeof player.get> =
+        source === 'get' ? player.get(entity) : Object.freeze({ src: 'other.mp4', playing: false })
+      const target = engine.addEntity()
+      if (method === 'createOrReplace') player.create(target, { src: 'old.mp4', position: 10 })
+
+      const mutable = player[method](target, initial)
+      expect(mutable).not.toBe(initial)
+      expect(player.get(target)).toMatchObject(initial)
+      expect(player.get(target).positionRevision).toBeUndefined()
+      flush()
+
+      for (let revision = 1; revision <= 2; revision++) {
+        player.getMutable(target).position = 0
+        expect(flush()[0].value).toMatchObject({ src: initial.src, position: 0, positionRevision: revision })
+      }
+      expect(initial.position).toBeUndefined()
+      expect(Object.isFrozen(initial)).toBe(true)
+    })
+  })
+
   it('tracks repeated requests through the default engine export used by scenes', () => {
     const entity = engine.addEntity()
     VideoPlayer.create(entity, { src: 'video.mp4' })
