@@ -48,7 +48,6 @@ use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
 use crate::{
     bounds_calc::scene_regions,
-    genesis_occupancy::GenesisOccupancy,
     parcel_to_vec3,
     renderer_context::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
@@ -986,9 +985,6 @@ pub struct ScenePointers {
     // The realm lists its scenes up front (a World) and they have all resolved, so a parcel none
     // of them covers is empty rather than unknown; there is no pointer request to answer for it.
     all_scenes_known: bool,
-    // Genesis City's published occupancy, for a city realm: the landscape's answer for a parcel
-    // whose pointer has not resolved yet. A resolved pointer overrides it.
-    genesis: Option<GenesisOccupancy>,
     // each named scene's base parcel by hash, from its `scene.json` as the realm listed it: a far
     // LOD is placed from it without loading the scene's entity definition. Cleared with the
     // pointers; a hash a redeployment replaced keeps its entry until then
@@ -1006,7 +1002,6 @@ impl Default for ScenePointers {
             crcs: Default::default(),
             terrain: Default::default(),
             all_scenes_known: false,
-            genesis: None,
             bases: Default::default(),
             generation: 0,
         }
@@ -1014,13 +1009,11 @@ impl Default for ScenePointers {
 }
 
 /// A parcel's occupancy for the landscape: outside the realm's bounds empty, then its resolved
-/// pointer, then empty when every scene is known, then Genesis City's published occupancy, else
-/// unknown.
+/// pointer, then empty when every scene is known, else unknown.
 fn landscape_occupancy(
     pointers: &HashMap<IVec2, PointerResult>,
     realm_bounds: (IVec2, IVec2),
     all_scenes_known: bool,
-    genesis: Option<&GenesisOccupancy>,
     parcel: IVec2,
 ) -> Occupancy {
     if realm_bounds.0.cmpgt(realm_bounds.1).any() {
@@ -1033,9 +1026,7 @@ fn landscape_occupancy(
         Some(PointerResult::Exists { .. }) => Occupancy::Occupied,
         Some(PointerResult::Nothing) => Occupancy::Empty,
         None if all_scenes_known => Occupancy::Empty,
-        None => genesis
-            .and_then(|genesis| genesis.get(parcel))
-            .unwrap_or(Occupancy::Unknown),
+        None => Occupancy::Unknown,
     }
 }
 
@@ -1064,23 +1055,14 @@ impl ScenePointers {
     }
 
     /// A parcel's occupancy for the landscape (terrain and trees): its resolved pointer when there
-    /// is one, else Genesis City's published occupancy in a city realm, else unknown.
+    /// is one, else unknown.
     pub fn occupancy(&self, parcel: IVec2) -> Occupancy {
         landscape_occupancy(
             &self.pointers,
             self.realm_bounds,
             self.all_scenes_known,
-            self.genesis.as_ref(),
             parcel,
         )
-    }
-
-    /// Genesis City's published occupancy for a city realm, or None. Kept across `set_realm`; the
-    /// realm change sets it.
-    pub fn set_genesis_occupancy(&mut self, genesis: Option<GenesisOccupancy>) {
-        self.genesis = genesis;
-        self.generation += 1;
-        self.terrain.invalidate();
     }
 
     /// The realm's listed scenes are placed: parcels none of them covers are empty from now on.
@@ -1137,26 +1119,15 @@ impl ScenePointers {
             realm_bounds,
             terrain,
             all_scenes_known,
-            genesis,
             ..
         } = self;
-        let (pointers, realm_bounds, all_scenes_known, genesis) = (
-            &*pointers,
-            *realm_bounds,
-            *all_scenes_known,
-            genesis.as_ref(),
-        );
-        // the published occupancy places the whole city's occupied parcels up front, so the
-        // terrain bounds are the city's from the start
-        let published = genesis.into_iter().flat_map(GenesisOccupancy::occupied);
+        let (pointers, realm_bounds, all_scenes_known) =
+            (&*pointers, *realm_bounds, *all_scenes_known);
         terrain.resolve(
-            |parcel| landscape_occupancy(pointers, realm_bounds, all_scenes_known, genesis, parcel),
-            pointers
-                .iter()
-                .filter_map(|(parcel, result)| {
-                    matches!(result, PointerResult::Exists { .. }).then_some(*parcel)
-                })
-                .chain(published),
+            |parcel| landscape_occupancy(pointers, realm_bounds, all_scenes_known, parcel),
+            pointers.iter().filter_map(|(parcel, result)| {
+                matches!(result, PointerResult::Exists { .. }).then_some(*parcel)
+            }),
         )
     }
 
@@ -1480,17 +1451,6 @@ fn load_active_entities(
         }
         pointers.set_realm(bounds_min, bounds_max);
         pointers.reset_terrain(current_realm.config.lists_scenes());
-        // a city realm serves Genesis City: its published occupancy shapes the landscape until
-        // the pointers around the player resolve (a World's scenes all resolve together, and a
-        // preview serves its own parcels)
-        let city = !current_realm.about_url.is_empty()
-            && !current_realm.config.lists_scenes()
-            && !current_realm.is_local();
-        pointers.set_genesis_occupancy(if city {
-            GenesisOccupancy::for_realm(&current_realm.about_url)
-        } else {
-            None
-        });
         for mut context in global_crdt.iter_mut() {
             context.set_bounds(bounds_min, bounds_max);
         }

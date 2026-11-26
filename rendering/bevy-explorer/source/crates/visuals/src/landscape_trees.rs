@@ -1,8 +1,8 @@
 //! Trees, bushes and stones from unity-explorer's baked layout, so they stand where Unity's do.
 //!
-//! Only empty parcels carry them, as the realm's resolved pointers or, before those, Genesis City's
-//! published occupancy say: a parcel that is unknown, occupied or outside the terrain counts as
-//! occupied, and an instance whose footprint reaches such a parcel is hidden.
+//! Only empty parcels carry them, as the realm's resolved pointers say: a parcel that is unknown,
+//! occupied or outside the terrain counts as occupied, and an instance whose footprint reaches
+//! such a parcel is hidden.
 //! They stand within `TREE_DISTANCE` of the player, on the terrain.
 
 use bevy::{
@@ -452,8 +452,7 @@ fn update_trees(
     if let (true, Some(layout)) = (state.pending, layout) {
         state.centre = Some(centre);
         state.pending = false;
-        // unknown parcels stay clear until the realm or Genesis City's published occupancy says
-        // they are empty
+        // unknown parcels stay clear until the realm says they are empty
         let mut desired = desired_trees(layout, position, TREE_DISTANCE, |parcel| {
             surface.contains(parcel) && pointers.occupancy(parcel) == Occupancy::Empty
         });
