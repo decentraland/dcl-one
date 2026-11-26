@@ -677,7 +677,7 @@
   },
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
-    "tokens": 25
+    "tokens": 28
   },
   "library/ui/components/Modal/Modal.module.css": {
     "primitives": 0,
