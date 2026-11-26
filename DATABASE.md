@@ -2081,12 +2081,13 @@ misses events. `user_address` is the photo's owner, lowercase. The bootstrap
 defines the table; an existing database gains it from the object pass, so no
 step exists.
 
-## Seasonal photo rewards workload
+## Seasonal goal rewards workload
 
 `shop::credits::goals` reads Camera photo facts and Social subscription facts
 using the existing database pool. `credits.seasons` and `credits.season_goals`
-hold season windows, MANA limits and the `take-photo` assignment. These tables
-have no active monetary seed. `credits.program_opt_outs` records enrollment
+hold season windows, MANA limits and assignments for `take-photo`, `log-in`,
+`visit-location` and `visit-event-and-stay`. These tables have no active
+monetary seed. `credits.program_opt_outs` records enrollment
 withdrawal separately from the paid wallet's identity.
 
 The worker writes one durable `credits.photo_goal_receipts` row per processed
@@ -2136,6 +2137,41 @@ table records `generated_at` for the minimum solve-time check and keeps a
 two-hour challenge lifetime. Both challenge and failure updates take the
 same wallet lock. The additive `0043_credits_captcha_generated_at` step
 preserves existing challenges and establishes their solve-time baseline.
+
+### Room-driven goals
+
+On an Ops-writing node, the verified LiveKit join and leave facts for an
+enrolled wallet go to `credits.goal_room_events` before webhook
+acknowledgement. The event ID deduplicates redelivery. A leased worker reads
+up to 100 pending facts and up to 100 due timers per pass. An indexed
+30-day retention sweep removes old room facts in bounded batches. Goal
+progress, fact acknowledgement, signed grants and completion notices
+commit together under the same wallet lock used by opt-out and claims.
+
+`credits.goal_login_days` deduplicates login by UTC date, wallet, season and
+week. Enrollment commits the date as pending with the signed enrollment.
+Processing it separately lets flags or signing recover without rejecting
+enrollment. A new login step and its grant and notice clear the pending date
+in one transaction. The room worker retries up to 100 pending dates per
+pass through the partial pending index. Reads include the counted dates
+from the same read-only snapshot as progress and balance. A join in the
+scheduled world completes that week's location goal.
+Room joins pin the approved Explore event occurrence against the canonical
+world or the parcel set of the verified scene deployment. A mirrored event
+must have been observed in a complete scan from the configured source that
+started at or after the join. A missing deployment or an uncovered mirror
+keeps event resolution pending while other goals can advance. A matching
+leave or a fresh, complete LiveKit roster for the exact participant session
+supplies the time within the pinned occurrence and assignment window. The
+worker unions overlapping intervals for each event and completes one step
+per distinct event with five minutes of confirmed time. It awards room goals
+while the corresponding season and week are still claimable.
+`credits.goal_event_visits` holds those intervals and the pending timers
+across restarts. The due index contains only visits awaiting a timer check.
+
+Step `0079_credits_seasonal_visit_goals` widens the existing season-goal
+constraint. The object pass creates the room facts, login days and visit tables.
+`METRICS.md` records the synthetic queue and timer read measurements.
 
 ## Camera reel import workload
 
