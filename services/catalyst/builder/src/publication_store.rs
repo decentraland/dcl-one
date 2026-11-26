@@ -251,19 +251,40 @@ impl ItemsComponent {
             return Ok(state);
         }
         if let Some(contract) = contract {
-            for (token, item) in state.preparation.items.iter().enumerate() {
-                let item_id = Uuid::parse_str(&item.id)
-                    .map_err(|_| ApiError::internal("Invalid saved item id"))?;
-                let changed = sqlx::query("UPDATE builder.items SET is_published=true, blockchain_item_id=$2, urn_suffix=$3, \
-                    price=$4, beneficiary=$5, updated_at=timezone('UTC', now()) WHERE id=$1 AND collection_id=$6 AND eth_address=$7 AND NOT is_published")
-                    .bind(item_id).bind(token.to_string()).bind(self.network.item_urn(contract, &token.to_string()))
-                    .bind(&item.price).bind(&item.beneficiary).bind(id).bind(signer).execute(&mut *tx).await?.rows_affected();
-                if changed != 1 {
-                    return Err(ApiError::http(
-                        409,
-                        "Collection items changed during publication",
-                    ));
-                }
+            let items = &state.preparation.items;
+            let ids = items
+                .iter()
+                .map(|item| Uuid::parse_str(&item.id))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| ApiError::internal("Invalid saved item id"))?;
+            let tokens: Vec<String> = (0..items.len()).map(|token| token.to_string()).collect();
+            let urns: Vec<String> = tokens
+                .iter()
+                .map(|token| self.network.item_urn(contract, token))
+                .collect();
+            let prices: Vec<&str> = items.iter().map(|item| item.price.as_str()).collect();
+            let beneficiaries: Vec<&str> =
+                items.iter().map(|item| item.beneficiary.as_str()).collect();
+            let changed = sqlx::query(
+                "UPDATE builder.items i SET is_published = true, blockchain_item_id = p.token, urn_suffix = p.urn, \
+                 price = p.price, beneficiary = p.beneficiary, updated_at = timezone('UTC', now()) \
+                 FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[]) AS p (id, token, urn, price, beneficiary) \
+                 WHERE i.id = p.id AND i.collection_id = $6 AND i.eth_address = $7 AND NOT i.is_published",
+            )
+            .bind(&ids)
+            .bind(&tokens)
+            .bind(&urns)
+            .bind(&prices)
+            .bind(&beneficiaries)
+            .bind(id)
+            .bind(signer)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if usize::try_from(changed).ok() != Some(items.len()) {
+                return Err(ApiError::conflict(
+                    "Collection items changed during publication",
+                ));
             }
             sqlx::query(
                 "UPDATE builder.collections SET publication_pending=false, contract_address=$2, \

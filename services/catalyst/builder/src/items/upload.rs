@@ -133,15 +133,17 @@ impl ItemsComponent {
         files: Vec<(String, Bytes)>,
     ) -> Result<(u64, u64), ApiError> {
         let id = change.id();
+        let hashes: Vec<String> = files.iter().map(|(hash, _)| hash.clone()).collect();
         {
             let mut conn = self.pool.acquire().await?;
-            for (hash, _) in &files {
-                named(&mut conn, id, hash).await?;
-            }
+            named(&mut conn, id, &hashes).await?;
         }
         let mut sizes = Vec::with_capacity(files.len());
         for (hash, bytes) in files {
-            sizes.push((hash.clone(), bytes.len() as i64));
+            sizes.push(
+                i64::try_from(bytes.len())
+                    .map_err(|_| ApiError::internal(format!("{hash} is too large to record")))?,
+            );
             if !self.exists(&hash).await? {
                 self.blobs
                     .store(&hash, bytes)
@@ -154,27 +156,25 @@ impl ItemsComponent {
         lock_item(&mut tx, id, None).await?;
         access::confirm_item_change(&mut tx, &view, change).await?;
         lock_store_shared(&mut tx).await?;
-        let (mut added_bytes, mut added) = (0, 0);
-        for (hash, size) in sizes {
-            named(&mut tx, id, &hash).await?;
-            if !self.exists(&hash).await? {
+        named(&mut tx, id, &hashes).await?;
+        for hash in &hashes {
+            if !self.exists(hash).await? {
                 return Err(store_collected());
             }
-            let inserted = sqlx::query(
-                "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3) \
-                 ON CONFLICT (hash, uploaded_by) DO NOTHING",
-            )
-            .bind(&hash)
-            .bind(size)
-            .bind(change.signer())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            added += inserted;
-            added_bytes += inserted * size as u64;
         }
+        let added: Vec<i64> = sqlx::query_scalar(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) \
+             SELECT hash, size, $3 FROM unnest($1::text[], $2::bigint[]) AS u (hash, size) \
+             ON CONFLICT (hash, uploaded_by) DO NOTHING RETURNING size",
+        )
+        .bind(&hashes)
+        .bind(&sizes)
+        .bind(change.signer())
+        .fetch_all(&mut *tx)
+        .await?;
         tx.commit().await?;
-        Ok((added_bytes, added))
+        let bytes = added.iter().map(|size| size.unsigned_abs()).sum();
+        Ok((bytes, added.len() as u64))
     }
 
     async fn exists(&self, hash: &str) -> Result<bool, ApiError> {
@@ -185,26 +185,35 @@ impl ItemsComponent {
     }
 }
 
-/// The item names `hash` under a name other than its video's (400 otherwise).
-async fn named(conn: &mut sqlx::PgConnection, id: uuid::Uuid, hash: &str) -> Result<(), ApiError> {
-    let (named, as_file): (bool, bool) = sqlx::query_as(
-        "SELECT count(*) > 0, count(*) FILTER (WHERE file <> $3) > 0 \
-         FROM builder.item_contents WHERE item_id = $1 AND hash = $2",
+/// The item names each of `hashes` under a name other than its video's;
+/// 400 for the first that it doesn't.
+async fn named(
+    conn: &mut sqlx::PgConnection,
+    id: uuid::Uuid,
+    hashes: &[String],
+) -> Result<(), ApiError> {
+    let found: Vec<(String, bool, bool)> = sqlx::query_as(
+        "SELECT h.hash, count(c.hash) > 0, count(c.hash) FILTER (WHERE c.file <> $3) > 0 \
+         FROM unnest($2::text[]) WITH ORDINALITY AS h (hash, place) \
+         LEFT JOIN builder.item_contents c ON c.item_id = $1 AND c.hash = h.hash \
+         GROUP BY h.hash, h.place ORDER BY h.place",
     )
     .bind(id)
-    .bind(hash)
+    .bind(hashes)
     .bind(VIDEO_FILE)
-    .fetch_one(conn)
+    .fetch_all(conn)
     .await?;
-    if !named {
-        return Err(ApiError::bad_request("The item does not name this file")
-            .with_data(json!({ "hash": hash })));
-    }
-    if !as_file {
-        return Err(
-            ApiError::bad_request("The video is uploaded through the videos route")
-                .with_data(json!({ "hash": hash })),
-        );
+    for (hash, named, as_file) in found {
+        if !named {
+            return Err(ApiError::bad_request("The item does not name this file")
+                .with_data(json!({ "hash": hash })));
+        }
+        if !as_file {
+            return Err(
+                ApiError::bad_request("The video is uploaded through the videos route")
+                    .with_data(json!({ "hash": hash })),
+            );
+        }
     }
     Ok(())
 }
