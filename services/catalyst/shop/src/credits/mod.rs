@@ -16,7 +16,10 @@
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
 //! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`); the ops dashboard's reads
+//! `/credits`, `/credit-reasons`, `/admin/ledger-stats` and
+//! `/admin/purchase-audit` behind that bearer or a wallet signature from
+//! `CREDITS_READ_ADMIN_ADDRESSES` (`handlers/reports.rs`).
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -76,6 +79,7 @@ pub mod admin_store;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
+pub mod charge;
 pub mod checkout;
 pub mod digest;
 pub mod dto;
@@ -86,12 +90,15 @@ pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod ledger_stats;
 pub mod money;
 pub mod orders;
 pub mod packs;
 pub mod pricing;
+pub mod purchase_audit;
 pub mod purchase_intent;
 pub mod reconcile;
+pub mod reports;
 pub mod settlement;
 pub mod store;
 pub mod stripe;
@@ -101,6 +108,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod reports_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -142,6 +151,9 @@ pub struct RawSettings {
     pub writes_enabled: bool,
     /// `CATALYRST_CREDITS_ADMIN_TOKEN` (or `_FILE`): the operator bearer; unset refuses the admin routes.
     pub admin_token: Option<String>,
+    /// `CREDITS_READ_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
+    /// signed requests may read the credits reports.
+    pub read_admin_addresses: String,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
@@ -238,6 +250,7 @@ impl Default for RawSettings {
             goal_flags_source: goals::flags::Source::default(),
             writes_enabled: false,
             admin_token: None,
+            read_admin_addresses: String::new(),
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
             stripe_secret_key: None,
@@ -290,6 +303,9 @@ pub struct Settings {
     pub goal_flags_source: goals::flags::Source,
     pub writes_enabled: bool,
     pub admin_token: Option<String>,
+    /// Lowercased `CREDITS_READ_ADMIN_ADDRESSES`: the wallets that may read
+    /// the credits reports with a signed request (`admin::require_read_admin`).
+    pub read_admin_addresses: Vec<String>,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
     pub stripe_secret_key: Option<String>,
@@ -333,6 +349,23 @@ pub struct Settings {
 
 fn non_empty(v: Option<String>) -> Option<String> {
     v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// `CREDITS_READ_ADMIN_ADDRESSES`: blanks are skipped and an entry that is
+/// not a wallet address fails startup, so a typo can't silently lock the
+/// dashboard out or let a malformed entry stand in for an admin.
+pub fn parse_read_admin_addresses(raw: &str) -> anyhow::Result<Vec<String>> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            crate::shared::identity::Address::parse(s)
+                .map(|a| a.into_string())
+                .map_err(|_| {
+                    anyhow::anyhow!("CREDITS_READ_ADMIN_ADDRESSES: {s:?} is not a wallet address")
+                })
+        })
+        .collect()
 }
 
 pub fn parse_fulfillment_mode(raw: &str) -> anyhow::Result<String> {
@@ -555,6 +588,7 @@ impl Settings {
             goal_flags_source,
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
+            read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
             captcha_secret,
             captcha_verify_url,
             stripe_secret_key,
@@ -653,13 +687,15 @@ impl Settings {
 }
 
 /// `url` with `query` appended after `?`, or after `&` when it has one
-/// (credits-server's `appendQuery`).
+/// (credits-server's `appendQuery`). A `#` fragment stays last, so the query
+/// still reaches the page's server.
 fn append_query(url: &str, query: &str) -> String {
     if query.is_empty() {
         return url.to_string();
     }
-    let separator = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{separator}{query}")
+    let (base, fragment) = url.split_at(url.find('#').unwrap_or(url.len()));
+    let separator = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{separator}{query}{fragment}")
 }
 
 /// The sources a credits state is built over: the marketplace and price
@@ -1013,6 +1049,13 @@ pub fn router(state: SharedState) -> Router {
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
         .route("/credits/packs", get(handlers::packs::unity_list_packs))
+        .route("/credits", get(handlers::reports::list_credits))
+        .route("/credit-reasons", get(handlers::reports::credit_reasons))
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
         .route("/packs/{sku}/intent", post(handlers::packs::create_intent))
         .route("/credits/checkout", post(handlers::orders::create_checkout))
         .route(
@@ -1031,6 +1074,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/credits/authorize/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/credits/authorize/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/credits/orders/{order_id}/cancel",
@@ -1116,6 +1163,19 @@ pub fn shop_router(state: SharedState) -> Router {
         )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
         .route(
+            "/admin/credits",
+            get(handlers::reports::list_credits_canonical),
+        )
+        .route(
+            "/admin/credit-reasons",
+            get(handlers::reports::credit_reasons_canonical),
+        )
+        .route("/admin/ledger-stats", get(handlers::reports::ledger_stats))
+        .route(
+            "/admin/purchase-audit",
+            get(handlers::reports::purchase_audit),
+        )
+        .route(
             "/v1/packs/{sku}/payment-intents",
             post(handlers::packs::create_intent),
         )
@@ -1139,6 +1199,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/v1/credit-authorizations/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/v1/pack-orders/{order_id}/cancel",

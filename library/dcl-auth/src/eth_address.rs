@@ -6,6 +6,19 @@
 //! reads `0X...` as the address it lowercases to.
 pub type EthAddress = String;
 
+/// The last 20 bytes of keccak256 over the uncompressed point, without its `0x04` tag.
+pub(crate) fn from_verifying_key(key: &k256::ecdsa::VerifyingKey) -> [u8; 20] {
+    let point = key.to_sec1_point(false);
+    let hash = alloy_primitives::keccak256(&point.as_bytes()[1..]);
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&hash[12..]);
+    address
+}
+
+pub(crate) fn format_address(address: &[u8; 20]) -> String {
+    format!("0x{}", hex::encode(address))
+}
+
 pub fn is_eth_address(value: &str) -> bool {
     value.len() == 42
         && value.starts_with("0x")

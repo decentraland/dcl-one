@@ -9,10 +9,10 @@
 //! mirror that can use one) and the counters are persisted in
 //! `shop.mirror_state` after every page, so a `kill -9`
 //! resumes at that page; a page shorter than 1,000 completes the pass and
-//! moves `last_complete_pass_at`, which every route over a mirror requires
-//! ([`require_ready`]) before it answers: a mirror without a complete pass
-//! answers the unavailable envelope, never an empty catalogue presented as
-//! the truth. Readiness reads the marker, not the job switch: a restored or
+//! moves `last_complete_pass_at`, which the catalogue gate
+//! ([`super::catalogue::begin`]) requires of every network the mirrors serve
+//! before a route answers: a mirror without a complete pass answers the
+//! unavailable envelope, never an empty catalogue presented as the truth. Readiness reads the marker, not the job switch: a restored or
 //! read-only replica whose tables hold a complete pass serves it with
 //! `MARKETPLACE_MIRRORS_ENABLED=false` (the way presence and price serve
 //! their archives with the writer off); the switch only attaches the jobs,
@@ -21,7 +21,7 @@
 //! cover. The tables are a copy, so a route over them answers it stamped
 //! with `as_of`, the oldest network's last complete pass ([`stamp_copies`]),
 //! and the price-bearing routes follow the money rule on top
-//! ([`require_priced`]): past [`price_max_age`] they answer the envelope,
+//! ([`price_verdict`]): past [`price_max_age`] they answer the envelope,
 //! not a price the chain may no longer charge. v2 has no squid database
 //! (README.md, "Data sources"); these two tables are
 //! the local coverage the catalog, items, contracts and collections routes
@@ -51,7 +51,7 @@ use crate::jobs::{JobContext, Jobs, PeriodicCfg};
 use crate::shared::as_of;
 
 use super::graph::Network;
-use super::{MarketplaceState, Source, unavailable};
+use super::{MarketplaceState, Source};
 
 pub const DEFAULT_INTERVAL_SECS: u64 = 300;
 pub const DEFAULT_PAGES_PER_TICK: usize = 50;
@@ -790,139 +790,58 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     }
 }
 
-/// The copy `mirror` serves: the oldest last complete pass over the
-/// configured networks, whichever process wrote it; `None` while a network
-/// has none, or when no subgraph is configured (nothing says which networks
-/// a pass must cover). Cached 10 s.
-pub async fn ready(
-    state: &MarketplaceState,
-    mirror: Mirror,
-) -> Result<Option<NaiveDateTime>, sqlx::Error> {
-    let networks = state.settings.collection_networks();
-    if networks.is_empty() {
-        return Ok(None);
-    }
-    copy_for_chain(state, mirror, &networks).await
-}
-
-/// Includes every stored publication in the chain check because a route may
-/// query rows from both networks even when only one graph URL is configured.
-/// An unbound legacy copy remains available to descriptive graph readers.
-async fn copy_for_chain(
-    state: &MarketplaceState,
-    mirror: Mirror,
-    networks: &[Network],
-) -> Result<Option<NaiveDateTime>, sqlx::Error> {
+/// Whether every pass in a mirror's `rows` that names its chain names the
+/// one this node serves for that network (an unbound legacy pass counts).
+pub(crate) fn bound(state: &MarketplaceState, rows: &[PassRow]) -> bool {
     let pair = crate::land_authz::land_network(&state.settings.eth_network)
         .map(super::nft_index::Catalogue::from_land);
-    state
-        .mirror_ready
-        .get_or_fetch(mirror, || async move {
-            let rows: Vec<(String, Option<NaiveDateTime>, Option<i64>)> = sqlx::query_as(
-            "SELECT network, last_complete_pass_at, chain_id FROM shop.mirror_state WHERE mirror=$1"
-        ).bind(mirror.name()).fetch_all(&state.pool).await?;
-            let mut done = Vec::new();
-            for (network, at, chain) in rows {
-                if let Some(id) = chain {
-                    let expected = super::chain_walk::ChainNet::parse(&network)
-                        .and_then(|net| pair.map(|pair| pair.chain_id(net)));
-                    if Some(id) != expected {
-                        return Ok(None);
-                    }
-                }
-                if let Some(at) = at {
-                    done.push((network, at));
-                }
-            }
-            Ok(if networks.is_empty() {
-                done.iter().map(|(_, at)| *at).min()
-            } else {
-                oldest_pass(networks, &done)
-            })
+    rows.iter().all(|(network, _, chain)| {
+        chain.is_none_or(|id| {
+            super::chain_walk::ChainNet::parse(network)
+                .and_then(|net| pair.map(|pair| pair.chain_id(net)))
+                == Some(id)
         })
-        .await
+    })
 }
 
-fn oldest_pass(networks: &[Network], done: &[(String, NaiveDateTime)]) -> Option<NaiveDateTime> {
-    networks
-        .iter()
-        .map(|n| {
-            done.iter()
-                .find(|(d, _)| d == n.db_name())
-                .map(|(_, at)| *at)
-        })
-        .collect::<Option<Vec<_>>>()?
-        .into_iter()
-        .min()
-}
+/// One network's row of a mirror's `shop.mirror_state`: its last complete
+/// pass and the chain the pass was proven on.
+pub(crate) type PassRow = (String, Option<NaiveDateTime>, Option<i64>);
 
-/// The gate a mirror-served route passes first: `Ok` to read the table
-/// (and the answer is stamped with the copy's `as_of`), `Err` the envelope
-/// to answer instead. A descriptive read serves any copy the tables hold:
-/// with no subgraph configured, the networks `shop.mirror_state` records
-/// ([`copy_for_chain`]).
-pub async fn require_ready(state: &MarketplaceState, mirror: Mirror) -> Result<(), Response> {
-    ready_at(state, mirror, Accept::Recorded).await.map(|_| ())
-}
-
-/// Which copy a gate accepts when no collections subgraph is configured.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Accept {
-    /// None: prices need the configured networks' pass.
-    Configured,
-    /// The copy of the networks the tables record.
-    Recorded,
-}
-
-async fn ready_at(
+/// The source and message a mirror without the pass a read needs answers:
+/// none configured (`configured` false: nothing says which networks a pass
+/// must cover), the job off on this node, or a configured network without a
+/// complete pass.
+pub(crate) fn not_ready_reason(
     state: &MarketplaceState,
     mirror: Mirror,
-    accept: Accept,
-) -> Result<NaiveDateTime, Response> {
-    if state.settings.collection_networks().is_empty() {
-        let recorded = match accept {
-            Accept::Configured => None,
-            Accept::Recorded => copy_for_chain(state, mirror, &[]).await.map_err(|e| {
-                tracing::error!(error = %e, "mirror_state read failed");
-                super::internal_server_error()
-            })?,
-        };
-        if let Some(at) = recorded {
-            note_copy(state, mirror, at);
-            return Ok(at);
-        }
-        return Err(unavailable(
+    configured: bool,
+) -> (Source, String) {
+    if !configured {
+        return (
             Source::CollectionsSubgraph(Network::Matic),
-            &format!(
+            format!(
                 "no collections subgraph is configured, so the {} mirror has nothing to walk",
                 mirror.name()
             ),
-        ));
+        );
     }
-    match ready(state, mirror).await {
-        Ok(Some(at)) => {
-            note_copy(state, mirror, at);
-            Ok(at)
-        }
-        Ok(None) if !state.settings.market.mirrors_enabled => Err(unavailable(
+    if !state.settings.market.mirrors_enabled {
+        return (
             mirror.source(),
-            &format!(
+            format!(
                 "the {} mirror has no complete pass in this database and the mirror job is not enabled on this node",
                 mirror.name()
             ),
-        )),
-        Ok(None) => Err(unavailable(
-            mirror.source(),
-            &format!(
-                "the {} mirror has no complete pass yet for every configured network",
-                mirror.name()
-            ),
-        )),
-        Err(e) => {
-            tracing::error!(error = %e, "mirror_state read failed");
-            Err(super::internal_server_error())
-        }
+        );
     }
+    (
+        mirror.source(),
+        format!(
+            "the {} mirror has no complete pass yet for every configured network",
+            mirror.name()
+        ),
+    )
 }
 
 /// The money budget of the item prices the items copy carries: four items
@@ -953,17 +872,6 @@ pub fn price_verdict(
     Ok(())
 }
 
-/// The gate of a route whose answer carries item prices (the minter
-/// `price` and `available`, a price sort or filter): the items mirror's
-/// pass over every configured network, within the money budget
-/// ([`price_verdict`]) whether or not this node runs the job: a frozen copy
-/// (a restored replica, a fixture) holds prices of its age all the same.
-pub async fn require_priced(state: &MarketplaceState) -> Result<(), Response> {
-    let oldest = ready_at(state, Mirror::Items, Accept::Configured).await?;
-    price_verdict(oldest, Utc::now(), price_max_age(&state.settings))
-        .map_err(|why| unavailable(Mirror::Items.source(), &why))
-}
-
 /// The copies a request's handler read ([`stamp_copies`]): the oldest
 /// pass, and when the first of them goes stale.
 #[derive(Clone, Copy)]
@@ -987,9 +895,28 @@ pub fn stale_after(settings: &super::Settings, mirror: Mirror) -> Duration {
     )
 }
 
-fn note_copy(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
-    let budget = chrono::Duration::from_std(stale_after(&state.settings, mirror))
-        .unwrap_or(chrono::Duration::MAX);
+/// A mirror copy read by the catalogue gate ([`super::catalogue::begin`]),
+/// last completed at `at`.
+pub(crate) fn note_copy_at(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
+    note_read(at, stale_after(&state.settings, mirror));
+}
+
+/// The collections index's published fold, read by the catalogue gate: it
+/// goes stale past [`super::chain_walk::READY_WINDOW`], when a price may no
+/// longer be read from it.
+pub(crate) fn note_index_copy(folded_at: NaiveDateTime) {
+    note_read(
+        folded_at,
+        super::chain_walk::READY_WINDOW
+            .to_std()
+            .unwrap_or(Duration::MAX),
+    );
+}
+
+/// Records, for [`stamp_copies`], a copy read at `at` that goes stale after
+/// `stale_after`.
+fn note_read(at: NaiveDateTime, stale_after: Duration) {
+    let budget = chrono::Duration::from_std(stale_after).unwrap_or(chrono::Duration::MAX);
     let stale_at = at.checked_add_signed(budget).unwrap_or(NaiveDateTime::MAX);
     let _ = COPY_AS_OF.try_with(|c| {
         c.set(Some(match c.get() {
@@ -1005,8 +932,8 @@ fn note_copy(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
     });
 }
 
-/// Router middleware: an answer whose handler read a mirror through
-/// [`require_ready`] carries that copy's `as_of` (the oldest, when it read
+/// Router middleware: an answer whose handler read a mirror or the index
+/// through the catalogue gate carries that copy's `as_of` (the oldest, when it read
 /// both) and `stale_after_secs`; every other answer passes as it came. A
 /// `/lambdas/*` answer carries them as the `x-as-of` and
 /// `x-stale-after-secs` headers only: its body is lamb2's, which has no such
@@ -1073,19 +1000,6 @@ mod tests {
         assert_eq!(Mirror::Items.name(), "items");
     }
 
-    #[test]
-    fn the_copy_is_as_old_as_its_oldest_network_and_needs_every_one() {
-        let at = |s: i64| chrono::DateTime::from_timestamp(s, 0).unwrap().naive_utc();
-        let both = [Network::Ethereum, Network::Matic];
-        let done = vec![
-            ("ethereum".to_string(), at(200)),
-            ("matic".to_string(), at(100)),
-        ];
-        assert_eq!(oldest_pass(&both, &done), Some(at(100)));
-        assert_eq!(oldest_pass(&both, &done[..1]), None, "matic has no pass");
-        assert_eq!(oldest_pass(&[Network::Ethereum], &done), Some(at(200)));
-    }
-
     #[tokio::test]
     async fn mainnet_proof_retries_fit_within_the_default_price_budget() {
         let mut state = crate::market::tests::support::state_without_db();
@@ -1126,54 +1040,46 @@ mod tests {
         );
     }
 
-    /// Prices need the configured networks' pass: with no subgraph there is
-    /// none, whatever the tables hold (a descriptive read serves their copy,
-    /// `tests::without_a_subgraph_descriptive_reads_serve_the_recorded_copy`).
-    #[tokio::test]
-    async fn an_unconfigured_mirror_never_prices() {
-        let state = crate::market::tests::support::state_without_db();
-        assert_eq!(ready(&state, Mirror::Items).await.unwrap(), None);
-        let err = require_priced(&state).await.unwrap_err();
-        assert_eq!(err.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
-    }
-
     /// The switch attaches the job; the marker decides the reads, so a
     /// replica with a complete pass in its tables serves with the job off.
     #[tokio::test]
     async fn a_complete_pass_serves_with_the_mirror_job_off() {
-        let settings = super::super::Settings {
-            matic_collections_subgraph_url: Some("https://subgraph.example/matic".into()),
-            ..super::super::Settings::for_tests()
-        };
-        let Some(state) = crate::market::tests::support::state_with_db(settings).await else {
+        use crate::market::catalogue::{self, Access, Purpose};
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
-        let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
-            .lock()
-            .await;
+        let state = super::super::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings {
+                matic_collections_subgraph_url: Some("https://subgraph.example/matic".into()),
+                ..super::super::Settings::for_tests()
+            },
+        );
         assert!(!state.settings.market.mirrors_enabled);
-        let url = format!("https://subgraph.example/{}", uuid::Uuid::new_v4().simple());
-        sqlx::query("DELETE FROM shop.mirror_state WHERE mirror = 'items' AND network = 'matic'")
-            .execute(&state.pool)
-            .await
-            .unwrap();
-        let err = require_ready(&state, Mirror::Items).await.unwrap_err();
+        let read = || {
+            catalogue::begin(
+                &state,
+                Purpose::Describe,
+                &[Mirror::Items],
+                None,
+                Access::ReadOnly,
+            )
+        };
+        let err = read().await.err().unwrap();
         assert_eq!(
             err.status(),
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             "no pass in the tables"
         );
-        let mut c = Cursor::fresh(Mirror::Items, Network::Matic, &url);
-        c.last_complete_pass_at = Some(now_utc());
-        save(&state.pool, &c).await.unwrap();
-        state.mirror_ready.clear();
-        assert!(
-            require_ready(&state, Mirror::Items).await.is_ok(),
-            "the marker, not the switch, decides"
+        let mut c = Cursor::fresh(
+            Mirror::Items,
+            Network::Matic,
+            "https://subgraph.example/matic",
         );
-        sqlx::query("DELETE FROM shop.mirror_state WHERE mirror = 'items' AND network = 'matic'")
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        c.last_complete_pass_at = Some(now_utc());
+        save(&pool, &c).await.unwrap();
+        assert!(read().await.is_ok(), "the marker, not the switch, decides");
+        pool.close().await;
     }
 }
