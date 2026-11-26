@@ -156,7 +156,9 @@ export function gatewaySignedPath(gateway: Gateway, raw: string, serviceBases: I
 }
 
 function isDecentralandHost(host: string): boolean {
-  return DECENTRALAND_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
+  // a trailing DNS dot names the same host
+  const h = host.replace(/\.$/, '')
+  return DECENTRALAND_DOMAINS.some((d) => h === d || h.endsWith(`.${d}`))
 }
 
 // The proxy decodes escaped separators before normalizing its path.

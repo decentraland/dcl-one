@@ -72,6 +72,7 @@ describe('isTrustedGatewayPrefix', () => {
     // the apex is the website, not a gateway, even when the page is served from it
     expect(isTrustedGatewayPrefix('https://decentraland.org', 'decentraland.org', 'https://decentraland.org')).toBe(false)
     expect(isTrustedGatewayPrefix('https://play.decentraland.org', 'decentraland.org', 'https://play.decentraland.org')).toBe(false)
+    expect(isTrustedGatewayPrefix('https://decentraland.org.', 'decentraland.org', 'https://decentraland.org.')).toBe(false)
     expect(isTrustedGatewayPrefix('https://decentraland.org', 'decentraland.org')).toBe(false)
     expect(isTrustedGatewayPrefix('http://node.example.test', 'node.example.test', 'http://node.example.test')).toBe(true)
     for (const [prefix, domain] of [
