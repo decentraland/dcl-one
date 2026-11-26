@@ -3,6 +3,7 @@ name = "catalyst"
 version.workspace = true
 edition = "2024"
 description = "Decentraland Catalyst node: one application package"
+publish = false
 # The integration tests link as a few grouped binaries, each listed below: a file under tests/
 # runs only as a module of one of them (tooling/tests/test_dev_regressions.py checks it).
 autotests = false
@@ -55,6 +56,8 @@ unwrap_used = "deny"
 # (dcl-scene-cli and its dcl-* support crates) is also a workspace member, but the node never links:
 # select it with -p, not --workspace beside the node, since dcl-scene-authoring
 # turns on serde_json's preserve_order and would reorder the node's JSON in that build.
+# The comms-e2e tool is a member the node never links as well: select it with -p, since
+# with --workspace its dependency compiles the node with catalyst-comms/test-support.
 members = [
     "builder",
     "camera-reel",
@@ -120,6 +123,7 @@ dashmap = "6"
 moka = { version = "=0.12.10", features = ["future"] }
 hashlink = "0.11"
 dragonbox_ecma = "0.1.12"
+ed25519-dalek = "2.2"
 parking_lot = "0.12"
 hex = "0.4"
 libc = "0.2"

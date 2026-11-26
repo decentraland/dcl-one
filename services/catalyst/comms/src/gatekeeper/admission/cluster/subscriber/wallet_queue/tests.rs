@@ -482,7 +482,7 @@ async fn an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_walle
         "wallet",
         Box::pin(async move {
             release_rx.await.unwrap();
-            first.lock().unwrap().push(1);
+            first.lock().push(1);
         }),
         completion(&done),
         Some(retained.clone())
@@ -492,7 +492,7 @@ async fn an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_walle
         owner.clone(),
         "wallet",
         Box::pin(async move {
-            second.lock().unwrap().push(2);
+            second.lock().push(2);
         }),
         completion(&done),
         Some(retained.clone()),
@@ -509,7 +509,7 @@ async fn an_urgent_retry_keeps_its_cold_credit_and_cannot_overtake_earlier_walle
     );
     release_tx.send(()).unwrap();
     completed(&done, 3).await;
-    assert_eq!(*order.lock().unwrap(), vec![1, 2]);
+    assert_eq!(*order.lock(), vec![1, 2]);
     assert_eq!(
         queue.cold_credits.available_permits(),
         MAX_COLD_MAINTENANCE_WORK - 1

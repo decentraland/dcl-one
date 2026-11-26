@@ -7,7 +7,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Toggle, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
+import { Avatar, ControlButton, Translate, VerifiedBadge } from '../../design'
 import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { ReactionLane } from './ReactionLane'
@@ -44,6 +44,7 @@ import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 import { dmRefusal } from './dmStateCopy'
+import { DclLogo, MaskIcon, Switch, Tooltip, VoiceBars } from '@dcl/one-ui'
 
 const MAX_LEN = 500
 
@@ -469,12 +470,14 @@ function ScreenReactionsSwitch(): React.JSX.Element | null {
   return (
     <div className={styles.barOptions}>
       <span aria-hidden="true">Chat Reactions</span>
-      <Toggle
+      <Switch
+        appearance="hud"
         size="sm"
         checked={setting.value >= 1}
         disabled={setting.value < 0 || setting.disabled}
-        aria-label="Chat Reactions"
-        onChange={(on) => settings.set(CHAT_REACTIONS_SETTING, on ? 1 : 0)}
+        label="Chat Reactions"
+        labelHidden
+        onCheckedChange={(on) => settings.set(CHAT_REACTIONS_SETTING, on ? 1 : 0)}
       />
     </div>
   )
@@ -645,7 +648,7 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
       </button>
       <div className={styles.navRight}>
         {session != null && gate != null && (
-          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+          <Tooltip appearance="hud" label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
             <ControlButton
               variant="faint"
               aria-label="Call"

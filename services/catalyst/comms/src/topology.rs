@@ -7,9 +7,10 @@
 
 use crate::metrics::declarations;
 
+use parking_lot::Mutex;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -388,7 +389,7 @@ impl Topology {
         if received_at.elapsed() >= TOPOLOGY_RECEIPT_TTL {
             return Ok(());
         }
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         if current.view.received_at.is_some_and(|at| at > received_at) {
             return Ok(());
         }
@@ -409,7 +410,7 @@ impl Topology {
         let Some(wallet) = wallet_token(identity) else {
             return;
         };
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         let mut transitions = Vec::new();
         current
             .world
@@ -432,7 +433,7 @@ impl Topology {
             .filter(|(sid, _)| valid_world_sid(sid))
             .filter_map(|(sid, identity)| Some((sid.to_owned(), wallet_token(identity)?)))
             .collect();
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         let mut transitions = Vec::new();
         current
             .world
@@ -444,7 +445,7 @@ impl Topology {
     /// slow run. A later frame older than this hold is ignored, as any stale frame is.
     #[cfg(any(test, feature = "test-support"))]
     pub fn hold_for_tests<'a>(&self, wallets: impl IntoIterator<Item = &'a str>) {
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         current.view.islands = Arc::new(wallets.into_iter().filter_map(wallet_token).collect());
         current.view.received_at = Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
         self.settle(&mut current, true);
@@ -453,7 +454,7 @@ impl Topology {
     }
 
     pub fn snapshot(&self) -> WalletTopology {
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         self.settle(&mut current, false);
         current.view.clone()
     }
@@ -467,7 +468,7 @@ impl Topology {
         online: bool,
         deliver: impl FnOnce(),
     ) -> bool {
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         self.settle(&mut current, false);
         if !current.view.status_is_current(generation, wallet, online) {
             return false;
@@ -479,7 +480,7 @@ impl Topology {
     /// Unrelated wallet changes need not erase an already queued, still-true update.
     /// Compare its generation and current status again at queue consumption.
     pub fn queued_status_is_current(&self, generation: u64, wallet: &str, online: bool) -> bool {
-        let mut current = self.current.lock().unwrap();
+        let mut current = self.current.lock();
         self.settle(&mut current, false);
         current.view.status_is_current(generation, wallet, online)
     }
@@ -658,7 +659,7 @@ mod tests {
         state.observe_world(Instant::now(), [(oversized_sid.as_str(), B)], false);
         assert!(!online(&state, B));
         state.apply_world_event(&oversized_sid, A, false);
-        assert!(state.current.lock().unwrap().world.left.is_empty());
+        assert!(state.current.lock().world.left.is_empty());
 
         state.apply_world_event(&event_sid, A, true);
         state.observe_world(Instant::now(), [(read_sid.as_str(), B)], false);
@@ -675,7 +676,7 @@ mod tests {
             state.apply_world_event(&sid, B, true);
             state.apply_world_event(&sid, B, false);
         }
-        assert!(state.current.lock().unwrap().world.expiry.len() <= 64);
+        assert!(state.current.lock().world.expiry.len() <= 64);
         assert!(online(&state, A));
         tokio::time::advance(WORLD_OCCUPANCY_TTL).await;
         assert!(!online(&state, A));

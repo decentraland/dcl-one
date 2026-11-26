@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use base64::Engine;
@@ -67,19 +67,19 @@ struct FakeGateway {
 
 impl FakeGateway {
     fn minted(&self) -> Vec<MintCall> {
-        self.minted.lock().unwrap().clone()
+        self.minted.lock().clone()
     }
 
     fn removals(&self) -> Vec<RemoveCall> {
-        self.removals.lock().unwrap().clone()
+        self.removals.lock().clone()
     }
 
     fn fences(&self) -> Vec<TokenFence> {
-        self.fences.lock().unwrap().clone()
+        self.fences.lock().clone()
     }
 
     fn queue_removals(&self, outcomes: impl IntoIterator<Item = Result<Removal, String>>) {
-        *self.remove_outcomes.lock().unwrap() = outcomes.into_iter().collect();
+        *self.remove_outcomes.lock() = outcomes.into_iter().collect();
     }
 }
 
@@ -94,14 +94,14 @@ impl ClusterGateway for FakeGateway {
     }
     async fn is_denied(&self, wallet: &str) -> Result<bool, GatewayError> {
         self.access_entered.notify_one();
-        let pause = self.access_pause.lock().unwrap().clone();
+        let pause = self.access_pause.lock().clone();
         if let Some(pause) = pause {
             pause.notified().await;
         }
         if self.deny_error.load(Ordering::Relaxed) {
             return Err(GatewayError::new("ban store unreachable"));
         }
-        Ok(self.denied.lock().unwrap().contains(wallet))
+        Ok(self.denied.lock().contains(wallet))
     }
 
     async fn mint_connection_string(
@@ -114,7 +114,7 @@ impl ClusterGateway for FakeGateway {
         not_before_unix: Option<u64>,
     ) -> Result<String, GatewayError> {
         self.mint_entered.notify_one();
-        let pause = self.mint_pause.lock().unwrap().clone();
+        let pause = self.mint_pause.lock().clone();
         if let Some(pause) = pause {
             pause.notified().await;
         }
@@ -124,7 +124,7 @@ impl ClusterGateway for FakeGateway {
         if self.mint_error.load(Ordering::Relaxed) {
             return Err(GatewayError::new("livekit refused the mint"));
         }
-        self.minted.lock().unwrap().push(MintCall {
+        self.minted.lock().push(MintCall {
             wallet: wallet.to_string(),
             session: session.map(str::to_string),
             room: room.to_string(),
@@ -140,20 +140,20 @@ impl ClusterGateway for FakeGateway {
         identity: &str,
         revoke_tokens_minted_before: Option<i64>,
     ) -> Result<Removal, GatewayError> {
-        self.removals.lock().unwrap().push(RemoveCall {
+        self.removals.lock().push(RemoveCall {
             room: room.to_string(),
             identity: identity.to_string(),
             revoke_before: revoke_tokens_minted_before,
         });
         self.remove_entered.notify_one();
-        let pause = self.remove_pause.lock().unwrap().clone();
+        let pause = self.remove_pause.lock().clone();
         if let Some(pause) = pause {
             pause.notified().await;
         }
-        if let Some(error) = self.remove_errors.lock().unwrap().pop_front() {
+        if let Some(error) = self.remove_errors.lock().pop_front() {
             return Err(error);
         }
-        match self.remove_outcomes.lock().unwrap().pop_front() {
+        match self.remove_outcomes.lock().pop_front() {
             Some(Ok(removal)) => Ok(removal),
             Some(Err(error)) => Err(GatewayError::new(error)),
             None => Ok(Removal::Removed),
@@ -169,7 +169,7 @@ impl ClusterGateway for FakeGateway {
         fence: &TokenFence,
         not_before_unix: Option<u64>,
     ) -> Result<String, GatewayError> {
-        self.fences.lock().unwrap().push(fence.clone());
+        self.fences.lock().push(fence.clone());
         self.mint_connection_string(
             _admission,
             wallet,
@@ -186,13 +186,7 @@ impl ClusterGateway for FakeGateway {
         if self.holds_error.load(Ordering::Relaxed) {
             return Err(GatewayError::new("livekit lookup failed"));
         }
-        Ok(self
-            .holds
-            .lock()
-            .unwrap()
-            .get(room)
-            .copied()
-            .unwrap_or(false))
+        Ok(self.holds.lock().get(room).copied().unwrap_or(false))
     }
 
     async fn island_occupant(
@@ -201,7 +195,7 @@ impl ClusterGateway for FakeGateway {
         wallet: &str,
     ) -> Result<IslandOccupant, GatewayError> {
         let held = self.holds_participant(room, wallet).await?;
-        if let Some(session) = self.held_sessions.lock().unwrap().get(room) {
+        if let Some(session) = self.held_sessions.lock().get(room) {
             return Ok(IslandOccupant::Session(session.clone()));
         }
         Ok(if held {
@@ -235,7 +229,7 @@ impl IslandSockets for RecordingSockets {
             &crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
         >,
     ) -> IslandDelivery {
-        self.0.lock().unwrap().push(Delivered {
+        self.0.lock().push(Delivered {
             wallet: wallet.to_owned(),
             session: session.to_owned(),
             message: assignment.clone(),
@@ -319,12 +313,9 @@ fn harness_with_store(
     let replies = source.clone();
     let asked = lookups.clone();
     bus.respond_to_requests(Arc::new(move |subject, payload| {
-        asked
-            .lock()
-            .unwrap()
-            .push((subject.to_owned(), payload.to_vec()));
+        asked.lock().push((subject.to_owned(), payload.to_vec()));
         let lookup = ClusterLookup::decode(subject, payload).map_err(|_| RequestError::Invalid)?;
-        let current = replies.lock().unwrap();
+        let current = replies.lock();
         let snapshot = current
             .get(&lookup.wallet)
             .filter(|s| s.session.as_bytes() == payload)
@@ -341,7 +332,7 @@ fn harness_with_store(
             else {
                 return;
             };
-            let mut source = completed.lock().unwrap();
+            let mut source = completed.lock();
             let Some(plan) = source.get_mut(&completion.wallet) else {
                 return;
             };
@@ -366,7 +357,7 @@ fn harness_with_store(
         config,
         assignment_fence,
     );
-    *subscriber.test_clock.lock().unwrap() =
+    *subscriber.test_clock.lock() =
         Some((now_unix_ms().max(0) as u64, tokio::time::Instant::now()));
     let sockets = Arc::new(RecordingSockets::default());
     subscriber.attach_sockets(sockets.clone());
@@ -404,11 +395,11 @@ impl<L> RecordingLink<L> {
     }
 
     fn subscribed(&self) -> Vec<(String, Option<String>)> {
-        self.subscribed.lock().unwrap().clone()
+        self.subscribed.lock().clone()
     }
 
     fn requested(&self) -> Vec<String> {
-        self.requested.lock().unwrap().clone()
+        self.requested.lock().clone()
     }
 }
 
@@ -438,7 +429,6 @@ impl<L: NatsBus> NatsBus for RecordingLink<L> {
     ) -> NatsSubscription {
         self.subscribed
             .lock()
-            .unwrap()
             .push((subject.to_owned(), queue.map(str::to_owned)));
         self.link.subscribe(subject, queue, handler)
     }
@@ -448,7 +438,7 @@ impl<L: NatsBus> NatsBus for RecordingLink<L> {
     }
 
     async fn request(&self, subject: &str, payload: Vec<u8>) -> Result<Vec<u8>, RequestError> {
-        self.requested.lock().unwrap().push(subject.to_owned());
+        self.requested.lock().push(subject.to_owned());
         self.link.request(subject, payload).await
     }
 }
@@ -551,7 +541,7 @@ impl crate::gatekeeper::admission::cluster::fence::RealmAssignmentLease for Fake
         if self.commit_error {
             return Err(crate::gatekeeper::admission::cluster::fence::FenceError::Conflict);
         }
-        self.commits.lock().unwrap().push(assignment);
+        self.commits.lock().push(assignment);
         Ok(())
     }
 }
@@ -583,7 +573,7 @@ async fn fenced_realm_assignment_uses_live_source_and_commits_without_legacy_pub
             fencing_token: 3,
         }]
     );
-    let committed = commits.lock().unwrap();
+    let committed = commits.lock();
     assert_eq!(committed.len(), 1);
     assert_eq!(committed[0].island_id, "island-new");
     assert_eq!(committed[0].from_island_id.as_deref(), Some("island-old"));
@@ -608,8 +598,8 @@ async fn fenced_takeover_unit_model_settles_before_committing_replacement() {
 
     assert_eq!(h.gateway.removals().len(), 1);
     assert_eq!(h.gateway.fences().len(), 1);
-    assert_eq!(commits.lock().unwrap().len(), 1);
-    assert_eq!(commits.lock().unwrap()[0].island_id, "island-new");
+    assert_eq!(commits.lock().len(), 1);
+    assert_eq!(commits.lock()[0].island_id, "island-new");
     assert!(h.delivered().is_empty());
 }
 
@@ -639,8 +629,8 @@ async fn fenced_hints_resolve_current_state_and_owner_conflict_never_falls_back(
         "the old hint may recover only current source authority"
     );
     assert_eq!(h.gateway.fences().len(), 1);
-    assert_eq!(commits.lock().unwrap().len(), 1);
-    assert_eq!(commits.lock().unwrap()[0].island_id, "island-different");
+    assert_eq!(commits.lock().len(), 1);
+    assert_eq!(commits.lock()[0].island_id, "island-different");
     assert!(h.delivered().is_empty());
 }
 
@@ -658,7 +648,7 @@ async fn stale_lease_commit_exposes_neither_assignment_nor_legacy_frame() {
     h.feed(WALLET, &change("new", SESSION_A)).await;
 
     assert_eq!(h.gateway.minted().len(), 1);
-    assert!(commits.lock().unwrap().is_empty());
+    assert!(commits.lock().is_empty());
     assert!(h.delivered().is_empty());
 }
 
@@ -677,14 +667,13 @@ async fn a_fenced_connect_refills_a_cleared_claim_without_a_legacy_publish() {
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-current".into(), SESSION_A.into());
 
     h.connect(WALLET, SESSION_A).await;
 
     assert!(h.delivered().is_empty());
     assert_eq!(h.gateway.fences().len(), 1);
-    let committed = commits.lock().unwrap();
+    let committed = commits.lock();
     assert_eq!(committed.len(), 1);
     assert_eq!(committed[0].island_id, "island-current");
     assert_eq!(committed[0].from_island_id, None);
@@ -706,14 +695,13 @@ async fn a_fenced_connect_does_not_reissue_an_existing_current_assignment() {
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-current".into(), SESSION_A.into());
 
     h.connect(WALLET, SESSION_A).await;
 
     assert!(h.gateway.minted().is_empty());
     assert!(h.gateway.fences().is_empty());
-    assert!(commits.lock().unwrap().is_empty());
+    assert!(commits.lock().is_empty());
     assert!(h.delivered().is_empty());
 }
 
@@ -734,14 +722,13 @@ async fn a_fresh_same_room_token_suppresses_absent_or_different_session_recovery
             h.gateway
                 .held_sessions
                 .lock()
-                .unwrap()
                 .insert("island-current".into(), occupant.into());
         }
 
         h.connect(WALLET, SESSION_A).await;
 
         assert!(h.gateway.minted().is_empty());
-        assert!(commits.lock().unwrap().is_empty());
+        assert!(commits.lock().is_empty());
         assert!(h.delivered().is_empty());
     }
 }
@@ -764,14 +751,13 @@ async fn an_expired_or_unstamped_same_room_token_is_renewed_without_the_exact_pa
                 h.gateway
                     .held_sessions
                     .lock()
-                    .unwrap()
                     .insert("island-current".into(), occupant.into());
             }
 
             h.connect(WALLET, SESSION_A).await;
 
             assert_eq!(h.gateway.fences().len(), 1, "{previous_expires_at:?}");
-            let committed = commits.lock().unwrap();
+            let committed = commits.lock();
             assert_eq!(committed.len(), 1, "{previous_expires_at:?}");
             assert!(fenced_token_is_fresh(committed[0].token_expires_at_unix));
             assert!(h.delivered().is_empty());
@@ -795,17 +781,13 @@ async fn an_unknown_or_unreadable_occupant_blocks_even_expired_fenced_recovery()
         if lookup_error {
             h.gateway.holds_error.store(true, Ordering::Relaxed);
         } else {
-            h.gateway
-                .holds
-                .lock()
-                .unwrap()
-                .insert("island-current".into(), true);
+            h.gateway.holds.lock().insert("island-current".into(), true);
         }
 
         h.connect(WALLET, SESSION_A).await;
 
         assert!(h.gateway.minted().is_empty(), "{lookup_error}");
-        assert!(commits.lock().unwrap().is_empty(), "{lookup_error}");
+        assert!(commits.lock().is_empty(), "{lookup_error}");
         assert!(h.delivered().is_empty(), "{lookup_error}");
     }
 }
@@ -823,7 +805,7 @@ async fn a_source_change_during_fenced_recovery_discards_the_private_token() {
     let h = harness_with_fence(config(), Some(authority));
     h.snapshot(WALLET, "current", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_A);
     h.gateway.mint_entered.notified().await;
     h.snapshot(WALLET, "moved", SESSION_A);
@@ -831,7 +813,7 @@ async fn a_source_change_during_fenced_recovery_discards_the_private_token() {
     h.subscriber.settle().await;
 
     assert_eq!(h.gateway.minted().len(), 1);
-    assert!(commits.lock().unwrap().is_empty());
+    assert!(commits.lock().is_empty());
     assert!(h.delivered().is_empty());
 }
 
@@ -848,7 +830,7 @@ async fn a_source_change_during_fenced_cluster_mint_cannot_be_committed() {
     let h = harness_with_fence(config(), Some(authority));
     h.snapshot(WALLET, "current", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.bus.inject(
         &format!("peer.{WALLET}.cluster_change"),
         &change("current", SESSION_A).encode_to_vec(),
@@ -859,7 +841,7 @@ async fn a_source_change_during_fenced_cluster_mint_cannot_be_committed() {
     h.subscriber.settle().await;
 
     assert_eq!(h.gateway.minted().len(), 1);
-    assert!(commits.lock().unwrap().is_empty());
+    assert!(commits.lock().is_empty());
     assert!(h.delivered().is_empty());
 }
 
@@ -982,7 +964,7 @@ async fn a_session_that_cannot_own_a_fenced_lane_never_asks_the_authority() {
     h.feed(WALLET, &change("new", "")).await;
 
     assert!(h.gateway.fences().is_empty());
-    assert!(commits.lock().unwrap().is_empty());
+    assert!(commits.lock().is_empty());
     assert!(h.delivered().is_empty());
     assert!(h.gateway.minted().is_empty());
 }
@@ -1016,13 +998,8 @@ fn change(cluster_id: &str, session: &str) -> PeerClusterChange {
 
 impl Harness {
     fn snapshot(&self, wallet: &str, cluster: &str, session: &str) {
-        let previous = self
-            .source
-            .lock()
-            .unwrap()
-            .get(&wallet.to_lowercase())
-            .cloned();
-        self.source.lock().unwrap().insert(
+        let previous = self.source.lock().get(&wallet.to_lowercase()).cloned();
+        self.source.lock().insert(
             wallet.to_lowercase(),
             PeerClusterSnapshot {
                 selected_origin: 1,
@@ -1056,7 +1033,6 @@ impl Harness {
             && self
                 .source
                 .lock()
-                .unwrap()
                 .get(wallet)
                 .unwrap()
                 .pending_takeovers
@@ -1064,7 +1040,6 @@ impl Harness {
         {
             self.source
                 .lock()
-                .unwrap()
                 .get_mut(wallet)
                 .unwrap()
                 .pending_takeovers = vec![
@@ -1093,12 +1068,12 @@ impl Harness {
     }
 
     fn delivered(&self) -> Vec<Delivered> {
-        self.sockets.0.lock().unwrap().clone()
+        self.sockets.0.lock().clone()
     }
 
     /// Every lookup the subscriber asked Pulse, as (subject, payload).
     fn lookups(&self) -> Vec<(String, Vec<u8>)> {
-        self.lookups.lock().unwrap().clone()
+        self.lookups.lock().clone()
     }
 }
 
@@ -1245,7 +1220,7 @@ async fn a_banned_wallet_is_skipped_entirely() {
     let series = recorder.handle();
     let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let h = harness();
-    h.gateway.denied.lock().unwrap().insert(WALLET.into());
+    h.gateway.denied.lock().insert(WALLET.into());
     h.feed(WALLET, &change("c1", SESSION_A)).await;
     assert!(h.gateway.minted().is_empty());
     assert!(h.delivered().is_empty());
@@ -1569,7 +1544,7 @@ async fn an_assignment_with_no_sockets_attached_reaches_nobody_and_records_nothi
     let bus = h.bus.clone();
     let gateway = h.gateway.clone();
     let subscriber = h.subscriber.clone();
-    *subscriber.sockets.lock().unwrap() = None;
+    *subscriber.sockets.lock() = None;
     let feed = |cluster: &str| {
         h.snapshot(WALLET, cluster, SESSION_A);
         bus.inject(
@@ -1605,7 +1580,7 @@ async fn an_assignment_with_no_sockets_attached_reaches_nobody_and_records_nothi
     subscriber.attach_sockets(sockets.clone());
     feed("c3");
     subscriber.settle().await;
-    let delivered = sockets.0.lock().unwrap().clone();
+    let delivered = sockets.0.lock().clone();
     assert_eq!(delivered.len(), 1);
     assert_eq!(delivered[0].message.island_id, "island-c3");
     assert_eq!(
@@ -1786,11 +1761,7 @@ async fn a_connect_payload_that_is_not_a_session_key_cannot_query_authority() {
 async fn a_wallet_already_in_its_room_is_not_re_announced() {
     let h = harness();
     h.feed(WALLET, &change("c1", SESSION_A)).await;
-    h.gateway
-        .holds
-        .lock()
-        .unwrap()
-        .insert("island-c1".into(), true);
+    h.gateway.holds.lock().insert("island-c1".into(), true);
     h.connect(WALLET, SESSION_A).await;
     assert_eq!(h.delivered().len(), 1);
 }
@@ -1874,7 +1845,7 @@ async fn a_lost_event_recovers_from_current_source_state() {
 async fn an_unavailable_source_cannot_be_replaced_by_a_previous_assignment() {
     let h = harness();
     h.feed(WALLET, &change("old", SESSION_A)).await;
-    h.source.lock().unwrap().clear();
+    h.source.lock().clear();
     h.connect(WALLET, SESSION_A).await;
     assert_eq!(h.delivered().len(), 1);
     assert_eq!(h.gateway.holds_calls.load(Ordering::Relaxed), 0);
@@ -1885,7 +1856,7 @@ async fn snapshot_identity_and_source_fields_are_checked_before_minting() {
     for field in ["wallet", "session", "cluster", "source", "pass", "protobuf"] {
         let h = harness();
         h.snapshot(WALLET, "c1", SESSION_A);
-        let mut snapshot = h.source.lock().unwrap().get(WALLET).unwrap().clone();
+        let mut snapshot = h.source.lock().get(WALLET).unwrap().clone();
         match field {
             "wallet" => snapshot.wallet = SESSION_B.into(),
             "session" => snapshot.session = SESSION_B.into(),
@@ -1913,13 +1884,13 @@ async fn changes_at_the_source_during_mint_discard_the_token_without_a_local_eve
     ] {
         let h = harness();
         h.snapshot(WALLET, "c1", SESSION_A);
-        h.source.lock().unwrap().get_mut(WALLET).unwrap().pass = 10;
+        h.source.lock().get_mut(WALLET).unwrap().pass = 10;
         let release = Arc::new(Notify::new());
-        *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+        *h.gateway.mint_pause.lock() = Some(release.clone());
         h.subscriber.announce_connect(WALLET, SESSION_A);
         h.gateway.mint_entered.notified().await;
         {
-            let mut source = h.source.lock().unwrap();
+            let mut source = h.source.lock();
             let snapshot = source.get_mut(WALLET).unwrap();
             match field {
                 "owner" => snapshot.session = SESSION_B.into(),
@@ -1951,7 +1922,7 @@ async fn another_sessions_announcement_cannot_cancel_the_current_owners_recovery
     let h = harness();
     h.snapshot(WALLET, "c1", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_A);
     h.gateway.mint_entered.notified().await;
     h.subscriber.announce_connect(WALLET, SESSION_B);
@@ -1975,12 +1946,12 @@ async fn a_source_owner_change_rejects_a_held_mint_before_the_new_session_recove
     let h = harness();
     h.snapshot(WALLET, "c1", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_A);
     h.gateway.mint_entered.notified().await;
     h.snapshot(WALLET, "c2", SESSION_B);
     h.subscriber.announce_connect(WALLET, SESSION_B);
-    *h.gateway.mint_pause.lock().unwrap() = None;
+    *h.gateway.mint_pause.lock() = None;
     release.notify_one();
     h.subscriber.settle().await;
     assert_eq!(h.gateway.minted().len(), 2);
@@ -2063,17 +2034,13 @@ async fn a_room_join_or_failed_participant_check_during_mint_suppresses_recovery
         let h = harness();
         h.snapshot(WALLET, "c1", SESSION_A);
         let release = Arc::new(Notify::new());
-        *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+        *h.gateway.mint_pause.lock() = Some(release.clone());
         h.subscriber.announce_connect(WALLET, SESSION_A);
         h.gateway.mint_entered.notified().await;
         if lookup_error {
             h.gateway.holds_error.store(true, Ordering::Relaxed);
         } else {
-            h.gateway
-                .holds
-                .lock()
-                .unwrap()
-                .insert("island-c1".into(), true);
+            h.gateway.holds.lock().insert("island-c1".into(), true);
         }
         release.notify_one();
         h.subscriber.settle().await;
@@ -2089,7 +2056,6 @@ async fn an_attributed_displaced_occupant_allows_current_session_admission_witho
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-c1".into(), SESSION_A.into());
     h.connect(WALLET, SESSION_B).await;
     assert_eq!(h.gateway.minted()[0].session.as_deref(), Some(SESSION_B));
@@ -2098,7 +2064,6 @@ async fn an_attributed_displaced_occupant_allows_current_session_admission_witho
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-c1".into(), SESSION_B.into());
     h.connect(WALLET, SESSION_B).await;
     assert_eq!(h.gateway.minted().len(), 1);
@@ -2112,16 +2077,14 @@ async fn a_current_session_join_during_displaced_owner_recovery_discards_the_min
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-c1".into(), SESSION_A.into());
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_B);
     h.gateway.mint_entered.notified().await;
     h.gateway
         .held_sessions
         .lock()
-        .unwrap()
         .insert("island-c1".into(), SESSION_B.into());
     release.notify_one();
     h.subscriber.settle().await;
@@ -2248,7 +2211,7 @@ async fn invalid_or_oversized_feed_cannot_cancel_or_mutate_a_valid_recovery() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_A);
     h.gateway.mint_entered.notified().await;
     let oversized = change(&"x".repeat(MAX_PAYLOAD_BYTES), SESSION_B).encode_to_vec();
@@ -2279,7 +2242,7 @@ async fn all_concurrent_settle_waiters_observe_the_last_completion() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.bus.inject(
         &format!("peer.{WALLET}.cluster_change"),
         &change("current", SESSION_A).encode_to_vec(),
@@ -2402,7 +2365,7 @@ async fn a_mint_released_after_stop_cannot_publish() {
         });
         h.snapshot(WALLET, "old", SESSION_A);
         let release = Arc::new(Notify::new());
-        *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+        *h.gateway.mint_pause.lock() = Some(release.clone());
         h.bus.inject(
             &format!("peer.{WALLET}.cluster_change"),
             &change("old", SESSION_A).encode_to_vec(),
@@ -2427,7 +2390,7 @@ async fn an_old_stop_cancels_only_its_incarnation_when_start_races_the_drain() {
     });
     h.snapshot(WALLET, "old-active", SESSION_A);
     let old_release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(old_release.clone());
+    *h.gateway.mint_pause.lock() = Some(old_release.clone());
     for cluster in ["old-active", "old-queued"] {
         h.bus.inject(
             &format!("peer.{WALLET}.cluster_change"),
@@ -2438,10 +2401,10 @@ async fn an_old_stop_cancels_only_its_incarnation_when_start_races_the_drain() {
     let subscriber = h.subscriber.clone();
     let stopping = tokio::spawn(async move { subscriber.stop().await });
     tokio::task::yield_now().await;
-    assert!(h.subscriber.lifecycle.lock().unwrap().owner.is_none());
+    assert!(h.subscriber.lifecycle.lock().owner.is_none());
     h.subscriber.start();
     let new_release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(new_release.clone());
+    *h.gateway.mint_pause.lock() = Some(new_release.clone());
     h.snapshot(WALLET, "new", SESSION_B);
     h.bus.inject(
         &format!("peer.{WALLET}.cluster_change"),
@@ -2472,7 +2435,6 @@ async fn callbacks_cloned_before_unsubscribe_cannot_enter_a_restarted_subscriber
         .subscriber
         .lifecycle
         .lock()
-        .unwrap()
         .owner
         .as_ref()
         .unwrap()
@@ -2484,7 +2446,7 @@ async fn callbacks_cloned_before_unsubscribe_cannot_enter_a_restarted_subscriber
     h.subscriber.start();
     h.snapshot(WALLET, "new", SESSION_B);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.subscriber.announce_connect(WALLET, SESSION_B);
     h.gateway.mint_entered.notified().await;
     stale(
@@ -2503,7 +2465,7 @@ async fn graceful_stop_allows_already_accepted_work_to_finish() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let release = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(release.clone());
+    *h.gateway.mint_pause.lock() = Some(release.clone());
     h.bus.inject(
         &format!("peer.{WALLET}.cluster_change"),
         &change("current", SESSION_A).encode_to_vec(),
@@ -2512,7 +2474,7 @@ async fn graceful_stop_allows_already_accepted_work_to_finish() {
     let subscriber = h.subscriber.clone();
     let stopping = tokio::spawn(async move { subscriber.stop().await });
     tokio::task::yield_now().await;
-    assert!(h.subscriber.lifecycle.lock().unwrap().owner.is_none());
+    assert!(h.subscriber.lifecycle.lock().owner.is_none());
     release.notify_one();
     stopping.await.unwrap();
     assert_eq!(h.delivered()[0].message.island_id, "island-current");
@@ -2596,10 +2558,10 @@ fn moving_a_token_s_not_before_leaves_every_other_claim_alone() {
 }
 
 #[tokio::test]
-async fn poisoned_lane_registry_still_drains_new_work() {
+async fn panicked_lane_registry_still_drains_new_work() {
     let h = harness();
     let queue = h.subscriber.queue.clone();
-    queue.poison_for_test();
+    queue.panic_while_locked_for_test();
     let ran = Arc::new(AtomicBool::new(false));
     let flag = ran.clone();
     h.subscriber.spawn(WALLET.to_string(), move |_| {
@@ -2631,17 +2593,12 @@ async fn changed_assignment_version_during_access_refuses_stale_work() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let pause = Arc::new(Notify::new());
-    *h.gateway.access_pause.lock().unwrap() = Some(pause.clone());
+    *h.gateway.access_pause.lock() = Some(pause.clone());
     let subscriber = h.subscriber.clone();
     let work =
         tokio::spawn(async move { subscriber.process_peer_connect(WALLET, SESSION_A).await });
     h.gateway.access_entered.notified().await;
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .assignment_version += 1;
+    h.source.lock().get_mut(WALLET).unwrap().assignment_version += 1;
     pause.notify_one();
     work.await.unwrap();
     assert!(h.gateway.minted().is_empty());
@@ -2654,17 +2611,12 @@ async fn authoritative_floor_change_during_mint_discards_old_credential() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let pause = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(pause.clone());
+    *h.gateway.mint_pause.lock() = Some(pause.clone());
     let subscriber = h.subscriber.clone();
     let work =
         tokio::spawn(async move { subscriber.process_peer_connect(WALLET, SESSION_A).await });
     h.gateway.mint_entered.notified().await;
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .token_not_before = Some(now_unix_seconds() + 2);
+    h.source.lock().get_mut(WALLET).unwrap().token_not_before = Some(now_unix_seconds() + 2);
     pause.notify_one();
     work.await.unwrap();
     assert_eq!(h.gateway.minted().len(), 1);
@@ -2684,29 +2636,19 @@ fn retained_operation() -> crate::protocol::pulse::decentraland::pulse::PendingT
 async fn confirmed_remove_survives_changed_authority_and_does_not_repeat_rpc() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_B);
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .pending_takeovers = vec![retained_operation()];
+    h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
     let pause = Arc::new(Notify::new());
-    *h.gateway.remove_pause.lock().unwrap() = Some(pause.clone());
+    *h.gateway.remove_pause.lock() = Some(pause.clone());
     let subscriber = h.subscriber.clone();
     let work =
         tokio::spawn(async move { subscriber.process_peer_connect(WALLET, SESSION_B).await });
     h.gateway.remove_entered.notified().await;
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .assignment_version += 1;
+    h.source.lock().get_mut(WALLET).unwrap().assignment_version += 1;
     pause.notify_one();
     work.await.unwrap();
     assert!(h.gateway.minted().is_empty());
     assert!(h.delivered().is_empty());
-    *h.gateway.remove_pause.lock().unwrap() = None;
+    *h.gateway.remove_pause.lock() = None;
     h.subscriber
         .reconcile_current(WALLET, SESSION_B, false, None)
         .await;
@@ -2719,21 +2661,16 @@ async fn confirmed_remove_survives_changed_authority_and_does_not_repeat_rpc() {
 async fn cancelled_dispatched_removal_stays_unknown_after_long_elapsed_time() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_B);
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .pending_takeovers = vec![retained_operation()];
+    h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
     let pause = Arc::new(Notify::new());
-    *h.gateway.remove_pause.lock().unwrap() = Some(pause);
+    *h.gateway.remove_pause.lock() = Some(pause);
     let subscriber = h.subscriber.clone();
     let work =
         tokio::spawn(async move { subscriber.process_peer_connect(WALLET, SESSION_B).await });
     h.gateway.remove_entered.notified().await;
     work.abort();
     let _ = work.await;
-    *h.gateway.remove_pause.lock().unwrap() = None;
+    *h.gateway.remove_pause.lock() = None;
     tokio::time::advance(Duration::from_secs(100 * 365 * 86400)).await;
     h.subscriber.process_peer_connect(WALLET, SESSION_B).await;
     assert_eq!(h.gateway.removals().len(), 1);
@@ -2745,16 +2682,10 @@ async fn cancelled_dispatched_removal_stays_unknown_after_long_elapsed_time() {
 async fn definite_missing_room_creates_once_then_revalidates_and_removes_with_fresh_cutoff() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_B);
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .pending_takeovers = vec![retained_operation()];
+    h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
     h.gateway
         .remove_errors
         .lock()
-        .unwrap()
         .push_back(GatewayError::RoomMissing);
     h.subscriber
         .reconcile_current(WALLET, SESSION_B, false, None)
@@ -2770,16 +2701,10 @@ async fn definite_missing_room_creates_once_then_revalidates_and_removes_with_fr
 async fn definite_rejections_are_bounded_and_do_not_become_unknown_receipts() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_B);
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .pending_takeovers = vec![retained_operation()];
+    h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
     h.gateway
         .remove_errors
         .lock()
-        .unwrap()
         .extend([GatewayError::DefiniteRejection; 3]);
     h.subscriber
         .reconcile_current(WALLET, SESSION_B, false, None)
@@ -2798,12 +2723,7 @@ async fn a_backward_wall_clock_during_floor_wait_never_advertises_future_credent
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let floor = h.subscriber.admission_now_ms() / 1000 + 2;
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .token_not_before = Some(floor);
+    h.source.lock().get_mut(WALLET).unwrap().token_not_before = Some(floor);
     let subscriber = h.subscriber.clone();
     let work = tokio::spawn(async move {
         subscriber
@@ -2814,7 +2734,7 @@ async fn a_backward_wall_clock_during_floor_wait_never_advertises_future_credent
         tokio::task::yield_now().await;
     }
     {
-        let mut clock = h.subscriber.test_clock.lock().unwrap();
+        let mut clock = h.subscriber.test_clock.lock();
         clock.as_mut().unwrap().0 -= 10_000;
     }
     tokio::time::advance(Duration::from_secs(3)).await;
@@ -2828,14 +2748,9 @@ async fn a_backward_wall_clock_during_mint_discards_the_signed_candidate() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_A);
     let floor = 0;
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .token_not_before = Some(floor);
+    h.source.lock().get_mut(WALLET).unwrap().token_not_before = Some(floor);
     let pause = Arc::new(Notify::new());
-    *h.gateway.mint_pause.lock().unwrap() = Some(pause.clone());
+    *h.gateway.mint_pause.lock() = Some(pause.clone());
     let subscriber = h.subscriber.clone();
     let work = tokio::spawn(async move {
         subscriber
@@ -2844,7 +2759,7 @@ async fn a_backward_wall_clock_during_mint_discards_the_signed_candidate() {
     });
     h.gateway.mint_entered.notified().await;
     {
-        let mut clock = h.subscriber.test_clock.lock().unwrap();
+        let mut clock = h.subscriber.test_clock.lock();
         clock.as_mut().unwrap().0 -= 5_000;
     }
     pause.notify_one();
@@ -2857,14 +2772,9 @@ async fn a_backward_wall_clock_during_mint_discards_the_signed_candidate() {
 async fn positively_settled_late_removal_gets_a_fresh_cutoff_but_unknown_does_not() {
     let h = harness();
     h.snapshot(WALLET, "current", SESSION_B);
-    h.source
-        .lock()
-        .unwrap()
-        .get_mut(WALLET)
-        .unwrap()
-        .pending_takeovers = vec![retained_operation()];
+    h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
     let pause = Arc::new(Notify::new());
-    *h.gateway.remove_pause.lock().unwrap() = Some(pause.clone());
+    *h.gateway.remove_pause.lock() = Some(pause.clone());
     let subscriber = h.subscriber.clone();
     let work = tokio::spawn(async move {
         subscriber
@@ -2873,7 +2783,7 @@ async fn positively_settled_late_removal_gets_a_fresh_cutoff_but_unknown_does_no
     });
     h.gateway.remove_entered.notified().await;
     tokio::time::advance(Duration::from_secs(8)).await;
-    *h.gateway.remove_pause.lock().unwrap() = None;
+    *h.gateway.remove_pause.lock() = None;
     pause.notify_one();
     work.await.unwrap();
     let calls = h.gateway.removals();
@@ -2892,13 +2802,8 @@ async fn unknown_cleanup_entering_during_final_lookup_closes_ready_and_stamp_del
         } else {
             h.subscriber.admission_now_ms() / 1000 + 1
         };
-        h.source
-            .lock()
-            .unwrap()
-            .get_mut(WALLET)
-            .unwrap()
-            .token_not_before = Some(floor);
-        let expected = h.source.lock().unwrap().get(WALLET).unwrap().clone();
+        h.source.lock().get_mut(WALLET).unwrap().token_not_before = Some(floor);
+        let expected = h.source.lock().get(WALLET).unwrap().clone();
         let replies = h.source.clone();
         let subscriber = Arc::downgrade(&h.subscriber);
         let calls = AtomicUsize::new(0);
@@ -2918,7 +2823,7 @@ async fn unknown_cleanup_entering_during_final_lookup_closes_ready_and_stamp_del
                     )
                     .unwrap();
             }
-            Ok(replies.lock().unwrap().get(WALLET).unwrap().encode_to_vec())
+            Ok(replies.lock().get(WALLET).unwrap().encode_to_vec())
         }));
         if stamp_check {
             let stamp = PulseAdmissionStamp::from_snapshot(&expected, floor).unwrap();
@@ -2938,14 +2843,9 @@ async fn settled_cleanup_obeys_conservative_allowance_boundary() {
     for offset_ms in [-1_i64, 0, 1, 1500] {
         let h = harness();
         h.snapshot(WALLET, "current", SESSION_B);
-        h.source
-            .lock()
-            .unwrap()
-            .get_mut(WALLET)
-            .unwrap()
-            .pending_takeovers = vec![retained_operation()];
+        h.source.lock().get_mut(WALLET).unwrap().pending_takeovers = vec![retained_operation()];
         let pause = Arc::new(Notify::new());
-        *h.gateway.remove_pause.lock().unwrap() = Some(pause.clone());
+        *h.gateway.remove_pause.lock() = Some(pause.clone());
         let subscriber = h.subscriber.clone();
         let work = tokio::spawn(async move {
             subscriber
@@ -2957,7 +2857,7 @@ async fn settled_cleanup_obeys_conservative_allowance_boundary() {
         let target = (original * 1000 - 1000) as i64 + offset_ms;
         let remaining = target as u64 - h.subscriber.admission_now_ms();
         tokio::time::advance(Duration::from_millis(remaining)).await;
-        *h.gateway.remove_pause.lock().unwrap() = None;
+        *h.gateway.remove_pause.lock() = None;
         pause.notify_one();
         work.await.unwrap();
         let removals = h.gateway.removals();
@@ -3004,7 +2904,7 @@ async fn stamp_local_readiness_closes_clock_and_receipt_changes_after_authority_
     for unknown in [false, true] {
         let h = harness();
         h.snapshot(WALLET, "current", SESSION_A);
-        let expected = h.source.lock().unwrap().get(WALLET).unwrap().clone();
+        let expected = h.source.lock().get(WALLET).unwrap().clone();
         let nbf = island_token_not_before(0, h.subscriber.admission_now_ms());
         let stamp = PulseAdmissionStamp::from_snapshot(&expected, nbf).unwrap();
         assert!(h.subscriber.verify_stamp(&stamp).await);
@@ -3021,7 +2921,7 @@ async fn stamp_local_readiness_closes_clock_and_receipt_changes_after_authority_
                 )
                 .unwrap();
         } else {
-            h.subscriber.test_clock.lock().unwrap().as_mut().unwrap().0 -= 5000;
+            h.subscriber.test_clock.lock().as_mut().unwrap().0 -= 5000;
         }
         assert!(!h.subscriber.stamp_ready(&stamp).await);
         assert!(h.gateway.minted().is_empty());
@@ -3063,7 +2963,7 @@ async fn durable_soft_invalidation_case(phase: &str) {
     let (_broker, client, subscriber, gateway, source, sockets, responder, completions) =
         durable_nats_subscriber(store.clone(), &wallet, config()).await;
     let release = Arc::new(Notify::new());
-    *gateway.remove_pause.lock().unwrap() = Some(release.clone());
+    *gateway.remove_pause.lock() = Some(release.clone());
     let mut lock = None;
     if phase == "commit" {
         let mut tx = pool.begin().await.unwrap();
@@ -3096,7 +2996,7 @@ async fn durable_soft_invalidation_case(phase: &str) {
     }
     // Keep the authoritative old operation valid: only the actual NATS
     // ticket invalidation may suppress stale completion/retry here.
-    assert!(source.lock().unwrap().is_some());
+    assert!(source.lock().is_some());
     client
         .publish(
             format!("peer.{wallet}.cluster_change"),
@@ -3143,7 +3043,7 @@ async fn durable_soft_invalidation_case(phase: &str) {
     assert!(rows[0].1.is_some());
     assert_eq!(gateway.removals().len(), 1);
     assert!(gateway.minted().is_empty());
-    assert!(sockets.0.lock().unwrap().is_empty());
+    assert!(sockets.0.lock().is_empty());
     assert_eq!(
         completions.load(Ordering::SeqCst),
         0,
@@ -3165,16 +3065,8 @@ async fn durable_soft_invalidation_case(phase: &str) {
     }
     assert_eq!(gateway.removals().len(), 1);
     assert_eq!(gateway.minted().len(), 1);
-    assert_eq!(sockets.0.lock().unwrap().len(), 1);
-    assert!(
-        source
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .pending_takeovers
-            .is_empty()
-    );
+    assert_eq!(sockets.0.lock().len(), 1);
+    assert!(source.lock().as_ref().unwrap().pending_takeovers.is_empty());
     assert!(
         sqlx::query_scalar::<_, bool>(
             "SELECT acknowledged FROM social.island_takeover_receipts WHERE wallet=$1"
@@ -3319,10 +3211,10 @@ async fn durable_nats_subscriber(
     let responder = tokio::spawn(async move {
         loop {
             tokio::select! {
-                    Some(request)=requests.next()=>{let snapshot=responses.lock().unwrap().clone();if let (Some(reply),Some(snapshot))=(request.reply,snapshot){sender.publish(reply,snapshot.encode_to_vec().into()).await.unwrap();}},
+                    Some(request)=requests.next()=>{let snapshot=responses.lock().clone();if let (Some(reply),Some(snapshot))=(request.reply,snapshot){sender.publish(reply,snapshot.encode_to_vec().into()).await.unwrap();}},
                     Some(message)=completed.next()=>{
                 if let Ok(completion)=crate::protocol::pulse::decentraland::pulse::TakeoverCompleted::decode(message.payload.as_ref())
-                    && let Some(snapshot)=responses.lock().unwrap().as_mut() {
+                    && let Some(snapshot)=responses.lock().as_mut() {
                     snapshot.pending_takeovers.retain(|op|op.takeover_id!=completion.takeover_id);
                     snapshot.token_not_before=Some(snapshot.token_not_before.unwrap_or(0).max(completion.revoke_before));
                 }
@@ -3398,13 +3290,13 @@ async fn durable_deadline_case(hard: bool) {
     let (_broker, _client, subscriber, gateway, source, sockets, responder, completions) =
         durable_nats_subscriber(store.clone(), &wallet, cfg.clone()).await;
     let release = Arc::new(Notify::new());
-    *gateway.remove_pause.lock().unwrap() = Some(release.clone());
+    *gateway.remove_pause.lock() = Some(release.clone());
     subscriber.announce_connect(&wallet, SESSION_B);
     tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
         .await
         .unwrap();
     let id:uuid::Uuid=sqlx::query_scalar("SELECT dispatch_id FROM social.island_cleanup_dispatches WHERE wallet=$1 AND state='dispatched'").bind(&wallet).fetch_one(&pool).await.unwrap();
-    assert!(source.lock().unwrap().is_some());
+    assert!(source.lock().is_some());
     if hard {
         // Existing drain grace then owner cancellation; no extra lifetime.
         tokio::time::timeout(Duration::from_secs(3), subscriber.stop())
@@ -3439,7 +3331,7 @@ async fn durable_deadline_case(hard: bool) {
     }
     assert_eq!(gateway.removals().len(), 1);
     assert!(gateway.minted().is_empty());
-    assert!(sockets.0.lock().unwrap().is_empty());
+    assert!(sockets.0.lock().is_empty());
     assert_eq!(completions.load(Ordering::SeqCst), 0);
     assert_eq!(subscriber.queue.outstanding_work(), 0);
     assert!(store.snapshot(&wallet).await.is_err());
@@ -3455,7 +3347,7 @@ async fn durable_hard_queue_expiry_keeps_unknown_and_releases_original_owned_lan
     let (_broker, _client, subscriber, gateway, _source, sockets, responder, completions) =
         durable_nats_subscriber(store.clone(), &wallet, config()).await;
     let release = Arc::new(Notify::new());
-    *gateway.remove_pause.lock().unwrap() = Some(release);
+    *gateway.remove_pause.lock() = Some(release);
     subscriber.announce_connect(&wallet, SESSION_B);
     tokio::time::timeout(Duration::from_secs(2), gateway.remove_entered.notified())
         .await
@@ -3486,7 +3378,7 @@ async fn durable_hard_queue_expiry_keeps_unknown_and_releases_original_owned_lan
     );
     assert_eq!(gateway.removals().len(), 1);
     assert!(gateway.minted().is_empty());
-    assert!(sockets.0.lock().unwrap().is_empty());
+    assert!(sockets.0.lock().is_empty());
     assert_eq!(completions.load(Ordering::SeqCst), 0);
     assert!(store.snapshot(&wallet).await.is_err());
     subscriber.stop().await;

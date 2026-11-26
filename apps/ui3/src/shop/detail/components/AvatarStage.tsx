@@ -1,18 +1,20 @@
 // An avatar dressed in a set of items, in the wearable-preview iframe: the fitting room and the outfit pages, as
-// decentraland.org's Shop draws them (shop@32377959 FittingRoom, OutfitPreview). Unity where the
-// `unity-wearable-preview` flag and the device allow it, Babylon otherwise, and Babylon for the rest of the stage's life
-// once Unity fails or stays silent. Covered until the preview has drawn what it was last sent.
+// decentraland.org's Shop draws them (shop@32377959 FittingRoom, OutfitPreview). The Bevy avatar preview where the
+// `shop-bevy-avatar-preview` flag and the device allow it, then Unity where the `unity-wearable-preview` flag does,
+// Babylon otherwise; a renderer that fails or stays silent is not asked for again for the rest of the stage's life.
+// Covered until the preview has drawn what it was last sent.
 
 import { useEffect, useState, type ReactNode } from "react";
 
 import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
+import { frameRenderer, rendererOptions } from "../lib/frameRenderer";
 import { pickRenderer } from "../lib/pickRenderer";
 import PreviewFrame, { previewBase, UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions } from "./PreviewFrame";
 
 type Props = {
   /** What to draw. The renderer is the stage's to pick. */
-  options: Omit<PreviewFrameOptions, "unity" | "unityMode">;
-  /** Unity's mode: `builder`, the default, draws a mannequin in exactly these items. */
+  options: Omit<PreviewFrameOptions, "unity" | "bevy" | "unityMode">;
+  /** Unity's mode, and Bevy's: `builder`, the default, draws a mannequin in exactly these items. */
   unityMode?: "builder" | "marketplace";
   /** Over the stage until the preview has drawn what it was last sent. */
   cover?: ReactNode;
@@ -21,21 +23,23 @@ type Props = {
 };
 
 export default function AvatarStage({ options, unityMode = "builder", cover = null, unavailable }: Props) {
-  // Read on the client only: the device decides between Unity and Babylon, and whether to draw at all.
+  // Read on the client only: the device decides the renderer, and whether to draw at all.
   const [device, setDevice] = useState<"full" | "lite" | "none" | null>(null);
   useEffect(() => {
     const decision = pickRenderer();
     setDevice(decision.reason === "no-webgl" ? "none" : decision.renderer);
   }, []);
-  const unityFlag = useRemoteFlagState(REMOTE_FLAG.unityWearablePreview, device === "full");
-  // Unity failing sends the stage to Babylon for the rest of its life.
+  const full = device === "full";
+  const unityFlag = useRemoteFlagState(REMOTE_FLAG.unityWearablePreview, full);
+  const bevyFlag = useRemoteFlagState(REMOTE_FLAG.bevyAvatarPreview, full);
+  // A renderer failing sends the stage to the next one for the rest of its life.
+  const [bevyFailed, setBevyFailed] = useState(false);
   const [unityFailed, setUnityFailed] = useState(false);
 
-  // A lighter device draws with Babylon whatever the flag says, so it does not wait for it.
-  const settled = device === "lite" || (device === "full" && unityFlag !== null);
-  const unity = !unityFailed && device === "full" && unityFlag === true;
-  // Unity's mode is read once, from the mount URL: a new one is a new frame, drawn again from the start.
-  const frame = `${unity ? `unity:${unityMode}` : "babylon"}|${previewBase(options.urns)}`;
+  const renderer = device === null || device === "none" ? null : frameRenderer(full, { bevy: bevyFlag, unity: unityFlag }, { bevy: bevyFailed, unity: unityFailed });
+  const settled = renderer !== null;
+  // The renderer and its mode are read once, from the mount URL: a new one is a new frame, drawn again from the start.
+  const frame = `${renderer === "babylon" || renderer === null ? "babylon" : `${renderer}:${unityMode}`}|${previewBase(options.urns)}`;
   const scene = `${frame}|${JSON.stringify(options)}`;
   // Whether the preview has drawn or failed belongs to this visit to these options: coming back to options drawn or
   // failed before starts over, covered and mounted. Reset during render, so no frame shows the last visit's answer.
@@ -50,15 +54,15 @@ export default function AvatarStage({ options, unityMode = "builder", cover = nu
   if (device === "none") return <>{unavailable ?? cover}</>;
   return (
     <>
-      {mounted ? (
+      {mounted && renderer ? (
         <PreviewFrame
           key={frame}
-          options={{ ...options, unity: unity || undefined, unityMode: unity ? unityMode : undefined }}
-          loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
+          options={{ ...options, ...rendererOptions(renderer, unityMode) }}
+          loadTimeoutMs={renderer === "babylon" ? undefined : UNITY_LOAD_TIMEOUT_MS}
           onLoad={() => answer({ drawn: true })}
           // A fresh iframe has drawn nothing yet, even for the same items (Unity booting again).
           onReplaced={() => setVisit((v) => (v.scene === scene ? { ...v, drawn: false } : v))}
-          onError={() => (unity ? setUnityFailed(true) : answer({ failed: true }))}
+          onError={() => (renderer === "bevy" ? setBevyFailed(true) : renderer === "unity" ? setUnityFailed(true) : answer({ failed: true }))}
         />
       ) : null}
       {ready ? null : settled && !mounted ? (unavailable ?? cover) : cover}

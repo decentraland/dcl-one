@@ -685,7 +685,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
@@ -2393,6 +2393,15 @@ export interface OutfitSaveFailedMessage {
   message: string
 }
 
+/** A save, a delete or an equip of the saved outfit in `slot` runs in the scene from `busy: true` until
+ *  `busy: false`, which follows every outcome (scene → page). */
+export interface OutfitBusyMessage {
+  kind: 'outfitBusy'
+  slot: number
+  action: 'save' | 'delete' | 'equip'
+  busy: boolean
+}
+
 export interface GetOutfitsRequest {
   kind: 'getOutfits'
 }
@@ -2687,6 +2696,7 @@ export type SceneToPage =
   | GiftingPageMessage
   | OutfitsMessage
   | OutfitSaveFailedMessage
+  | OutfitBusyMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage

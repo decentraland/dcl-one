@@ -8,9 +8,6 @@
   border-radius: var(--r-md);
   overflow: hidden;
 }
-.searchRow input::placeholder {
-  color: #9a9a9a;
-}
 /* the search glass at 19px, 9px from the field's edge */
 .searchRow > * {
   gap: 7px;

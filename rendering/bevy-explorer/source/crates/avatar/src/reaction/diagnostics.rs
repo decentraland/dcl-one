@@ -12,14 +12,14 @@ use comms::{
 };
 use console::DebugSection;
 use dcl_component::proto_components::kernel::comms::rfc4;
-use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
+use scene_runner::update_world::text_shape::{GlyphAtlas, GlyphAtlases, Page};
 use serde_json::json;
 use system_bridge::SystemApi;
 use wallet::Wallet;
 
 use super::{
     traffic::{ReactionGuard, ReactionOutbox, ReactionQueue},
-    ReactionAssets, ReactionParticle, ReactionStats, ATLAS,
+    ReactionParticle, ReactionStats, ATLAS,
 };
 
 pub const SECTION: DebugSection = DebugSection {
@@ -92,8 +92,8 @@ pub const SECTION: DebugSection = DebugSection {
 /// that played with no particle, as many as may be alive), `notShown` (reactions that played
 /// with no particle, their player having no avatar or a hidden one, being far from the camera,
 /// or being the local user in first person) and `noGlyphs` (reactions that played with no
-/// particle, their emoji not laid out, the emoji font not made yet, or the emoji having no
-/// glyph in colour). The counts are of this session.
+/// particle, their emoji not laid out or having no glyph in colour). The counts are of this
+/// session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -104,17 +104,19 @@ pub fn reaction_state(
     config: Res<AppConfig>,
     outboxes: Query<&ReactionOutbox>,
     queues: Query<&ReactionQueue>,
-    assets: Res<ReactionAssets>,
     particles: Query<(&ReactionParticle, &Visibility)>,
     atlases: Res<GlyphAtlases>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
     };
-    let count = |test: fn(&ReactionParticle, &Visibility, u32) -> bool| {
+    // made when the first emoji is drawn from it
+    let atlas = atlases.get(&ATLAS.key);
+    let generation = atlas.map(GlyphAtlas::generation);
+    let count = |test: fn(&ReactionParticle, &Visibility, Option<u32>) -> bool| {
         particles
             .iter()
-            .filter(|(particle, visibility)| test(particle, visibility, assets.generation))
+            .filter(|(particle, visibility)| test(particle, visibility, generation))
             .count()
     };
     cmd.reply_ok(
@@ -134,12 +136,12 @@ pub fn reaction_state(
             "particles": [
                 count(|_, _, _| true),
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
-                count(|particle, _, generation| particle.built != Some(generation)),
+                count(|particle, _, generation| {
+                    particle.built.is_none() || particle.built != generation
+                }),
             ],
-            // read from the atlas, which is made when the first emoji is drawn from it: the
-            // assets follow it only while a particle is alive
-            "atlas": atlases
-                .get(&ATLAS.key)
+            // read from the atlas: the assets follow it only while a particle is alive
+            "atlas": atlas
                 .and_then(|atlas| atlas.page_image(Page::Color))
                 .map_or(0, |(_, size)| size),
             "streamed": stats.streamed,

@@ -19,7 +19,6 @@ mod traffic;
 #[cfg(test)]
 mod tests;
 
-use alloy_core::primitives::Address;
 use ban_block::{BanBlock, PlatformBanStatus};
 use bevy::{
     ecs::system::SystemParam,
@@ -32,8 +31,8 @@ use common::{
     rpc::RpcStreamSender,
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, AttachPoints, CameraView, ChatBubbleVisibility, PlayerReacted, PrimaryCamera,
-        PrimaryUser,
+        AppConfig, AttachPoints, CameraView, ChatBubbleVisibility, PlayerAddress, PlayerReacted,
+        PrimaryCamera, PrimaryUser,
     },
     util::DespawnWith,
 };
@@ -45,9 +44,11 @@ use comms::{
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
-use scene_runner::update_world::text_shape::{AtlasGlyphUse, AtlasKey, GlyphAtlasMaintenance};
+use scene_runner::update_world::text_shape::{
+    AtlasGlyphUse, AtlasKey, GlyphAtlas, GlyphAtlasMaintenance, GlyphAtlases,
+};
 use system_bridge::{ReactionData, SystemApi};
-use ui_core::EMOJI_FONT;
+use ui_core::EmojiFont;
 use wallet::Wallet;
 
 use self::{
@@ -147,14 +148,6 @@ struct ReactionPlayed {
     emoji: &'static str,
 }
 
-/// The address a player reacts under. A peer is who comms heard them as; the one other player
-/// who reacts is the local user.
-fn address_of(peer: Option<&ForeignPlayer>, wallet: &Wallet) -> Address {
-    peer.map(|peer| peer.address)
-        .or_else(|| wallet.address())
-        .unwrap_or_default()
-}
-
 /// What has happened to reactions this session, for the debug panel.
 #[derive(Resource, Default)]
 struct ReactionStats {
@@ -189,7 +182,7 @@ struct Dropped {
     /// Reactions that played with no particle: nothing shows over their player.
     not_shown: u32,
     /// Reactions that played with no particle, or lost it: their emoji could not be laid out,
-    /// or there was no font yet to lay it out in, or it has no glyph in colour.
+    /// or it has no glyph in colour.
     no_glyphs: u32,
 }
 
@@ -206,18 +199,8 @@ struct ReactionParticle {
 #[derive(Resource)]
 struct ReactionAssets {
     material: Handle<ReactionMaterial>,
-    /// The atlas pages as of the last build; the material binds the colour page.
+    /// The atlas pages as of the last build; the material binds the colour page, the second.
     bound: BoundPages,
-    /// The atlas' generation as of the last build.
-    generation: u32,
-}
-
-impl ReactionAssets {
-    /// The atlas page the material binds, and its size.
-    #[cfg(test)]
-    fn page(&self) -> Option<(AssetId<Image>, u32)> {
-        self.bound[1]
-    }
 }
 
 impl FromWorld for ReactionAssets {
@@ -227,7 +210,6 @@ impl FromWorld for ReactionAssets {
                 .resource_mut::<Assets<ReactionMaterial>>()
                 .add(ReactionMaterial { bitmap: None }),
             bound: [None; 2],
-            generation: 0,
         }
     }
 }
@@ -235,10 +217,6 @@ impl FromWorld for ReactionAssets {
 /// What drawing each emoji played so far takes.
 #[derive(Resource, Default)]
 struct ReactionGlyphs {
-    /// The font the emoji are laid out in, the colour emoji font: in a text font, an emoji
-    /// whose base character that font has (©, ™, ‼) is drawn from it, in one colour. It is
-    /// made at startup, after this is.
-    font: Option<Handle<Font>>,
     emoji: HashMap<&'static str, EmojiGlyphs>,
 }
 
@@ -264,26 +242,29 @@ enum NoMesh {
 #[derive(SystemParam)]
 struct EmojiShaper<'w> {
     shaper: GlyphShaper<'w>,
+    /// The font the emoji are laid out in: in a text font, an emoji whose base character that
+    /// font has (©, ™, ‼) is drawn from it, in one colour.
+    font: Res<'w, EmojiFont>,
     meshes: ResMut<'w, Assets<Mesh>>,
     glyphs: ResMut<'w, ReactionGlyphs>,
 }
 
 impl EmojiShaper<'_> {
     /// What keeps the emoji's glyphs in the atlas while a particle shows it. `None` for an
-    /// emoji that can't be laid out, or before there is a font to lay it out in.
+    /// emoji that can't be laid out.
     fn glyph_use(&mut self, emoji: &'static str) -> Option<AtlasGlyphUse> {
-        let Self { shaper, glyphs, .. } = self;
-        let ReactionGlyphs { font, emoji: laid } = &mut **glyphs;
-        if font.is_none() {
-            *font = EMOJI_FONT.get().cloned();
-        }
-        // nothing is laid out before the emoji font is made
-        let font = font.as_ref()?;
+        let Self {
+            shaper,
+            font,
+            glyphs,
+            ..
+        } = self;
+        let laid = &mut glyphs.emoji;
         if !laid.contains_key(emoji) {
             // one that can't be laid out now is tried again the next time it plays
             let text = shaper.shape(
                 &ATLAS,
-                font,
+                &font.0,
                 Entity::PLACEHOLDER,
                 &[Span::new(emoji, Color::WHITE)],
                 ATLAS.raster_font_size,
@@ -427,11 +408,10 @@ fn receive_reactions(
     mut commands: Commands,
     mut events: EventReader<ReactionEvent>,
     ban_block: BanBlock,
-    wallet: Res<Wallet>,
     mut senders: Query<(
         &mut ReactionGuard,
         Option<&mut ReactionQueue>,
-        Option<&ForeignPlayer>,
+        Option<&PlayerAddress>,
         Has<BlockedOrBanned>,
     )>,
     time: Res<Time<Real>>,
@@ -444,10 +424,10 @@ fn receive_reactions(
     for event in events.read() {
         stats.received += 1;
         // a sender who has already gone has no avatar to react
-        let Ok((mut guard, queue, peer, blocked)) = senders.get_mut(event.sender) else {
+        let Ok((mut guard, queue, address, blocked)) = senders.get_mut(event.sender) else {
             continue;
         };
-        let from = address_of(peer, &wallet);
+        let from = address.map(|address| address.0).unwrap_or_default();
         // the marker follows a block or ban by a frame or two, and a player who has just
         // appeared has none yet: their first message is asked about by address
         if blocked
@@ -484,19 +464,18 @@ fn receive_reactions(
 fn play_queued_reactions(
     mut commands: Commands,
     time: Res<Time>,
-    wallet: Res<Wallet>,
     ban_block: BanBlock,
     mut queues: Query<(
         Entity,
         &mut ReactionQueue,
-        Option<&ForeignPlayer>,
+        Option<&PlayerAddress>,
         Has<BlockedOrBanned>,
     )>,
     mut played: EventWriter<ReactionPlayed>,
     mut stats: ResMut<ReactionStats>,
 ) {
-    for (player, mut queue, peer, blocked) in &mut queues {
-        let from = address_of(peer, &wallet);
+    for (player, mut queue, address, blocked) in &mut queues {
+        let from = address.map(|address| address.0).unwrap_or_default();
         // blocked or banned since they were queued: asked by address as at intake, as the
         // marker follows by a frame or two
         if blocked
@@ -621,8 +600,7 @@ fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
-    players: Query<Option<&ForeignPlayer>>,
-    wallet: Res<Wallet>,
+    players: Query<Option<&PlayerAddress>>,
     config: Res<AppConfig>,
     mut stats: ResMut<ReactionStats>,
 ) {
@@ -642,11 +620,14 @@ fn pipe_reactions_to_scene(
     }
     for reaction in played.read() {
         // a player who went this frame is not streamed
-        let Ok(peer) = players.get(reaction.player) else {
+        let Ok(address) = players.get(reaction.player) else {
             continue;
         };
         let data = ReactionData {
-            from: format!("{:#x}", address_of(peer, &wallet)),
+            from: format!(
+                "{:#x}",
+                address.map(|address| address.0).unwrap_or_default()
+            ),
             emoji: reaction.emoji.to_owned(),
         };
         for sender in senders.iter() {
@@ -669,8 +650,6 @@ fn build_reaction_glyphs(
     mut stats: ResMut<ReactionStats>,
 ) {
     let generation = shaper.shaper.atlas(&ATLAS).generation();
-    assets.generation = generation;
-
     let mut budget = GlyphBudget::of(RASTERS_PER_FRAME);
     for (entity, mut particle, mut mesh) in &mut particles {
         if particle.built == Some(generation) {
@@ -705,7 +684,7 @@ fn simulate_reaction_particles(
     mut commands: Commands,
     time: Res<Time>,
     config: Res<AppConfig>,
-    assets: Res<ReactionAssets>,
+    atlases: Res<GlyphAtlases>,
     places: ReactionPlaces,
     mut particles: Query<(
         Entity,
@@ -718,6 +697,8 @@ fn simulate_reaction_particles(
     )>,
 ) {
     let view = places.view();
+    // a mesh built before the atlas was last rebuilt samples where its glyphs were
+    let generation = atlases.get(&ATLAS.key).map(GlyphAtlas::generation);
     // switched off, those alive are hidden for what is left of their second
     let switched_on = config.chat_bubble_visibility != ChatBubbleVisibility::None;
     for (entity, owner, mut particle, mut transform, mut tag, mut mesh, mut visibility) in
@@ -736,7 +717,8 @@ fn simulate_reaction_particles(
         let pose = particle.motion.pose().filter(|_| {
             switched_on
                 && place.is_some_and(|(_, shown)| shown)
-                && particle.built == Some(assets.generation)
+                && particle.built.is_some()
+                && particle.built == generation
         });
         let Some(pose) = pose else {
             if *visibility != Visibility::Hidden {

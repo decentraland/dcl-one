@@ -1,0 +1,16 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: a button label that swaps while its button is hovered or focused. */
+@layer dcl.components {
+  .hover {
+    display: none;
+  }
+  :hover > .idle,
+  :focus-visible > .idle {
+    display: none;
+  }
+  :hover > .hover,
+  :focus-visible > .hover {
+    display: inline;
+  }
+}

@@ -15,7 +15,7 @@ import reminderOn from '../../assets/map/panel/reminder-on.png'
 import shareIcon from '../../assets/map/panel/share.png'
 import timeIcon from '../../assets/lobby/time-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
-import { MaskIcon } from '../../design'
+import { CardActionButton, JumpInCTA, MaskIcon } from '@dcl/one-ui'
 import { useCreatorName } from '../places/useCreatorName'
 import styles from './LobbyCards.module.css'
 
@@ -81,19 +81,19 @@ export function ConnectedFriends({ friends, onHover }: { friends: ConnectedFrien
 
 function JumpInButton({ size, className, disabled, onClick, label }: { size: 'large' | 'small'; className: string; disabled?: boolean; onClick: () => void; label: string }): React.JSX.Element {
   return (
-    <button
-      type="button"
-      className={cx(styles.jumpIn, size === 'large' ? styles.jumpInLarge : styles.jumpInSmall, className)}
+    <JumpInCTA
+      appearance="hud"
+      size={size === 'large' ? 'xl' : 'md'}
+      className={cx(styles.jumpIn, className)}
       disabled={disabled}
       aria-label={label}
+      label="JUMP IN"
+      icon={<MaskIcon src={jumpIn} size={size === 'large' ? 24 : 22} />}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
       }}
-    >
-      <span className={styles.jumpInText}>JUMP IN</span>
-      <MaskIcon src={jumpIn} size={size === 'large' ? 24 : 22} />
-    </button>
+    />
   )
 }
 
@@ -269,15 +269,25 @@ export function UpcomingEventCard({
         </span>
       </span>
       <span className={styles.actions}>
-        <button type="button" className={styles.action} aria-label={interested ? 'Not interested' : 'Interested'} aria-pressed={interested} onClick={onInterested}>
-          <img src={interested ? reminderOn : reminderOff} alt="" width={24} height={24} />
-        </button>
-        <button type="button" className={styles.action} aria-label="Add to calendar" onClick={onCalendar}>
-          <img src={addToCalendar} alt="" width={24} height={24} />
-        </button>
-        <button type="button" className={styles.action} aria-label="Share" onClick={(e) => onShare(e.currentTarget)}>
-          <img src={shareIcon} alt="" width={24} height={24} />
-        </button>
+        <CardActionButton
+          size="sm"
+          aria-label={interested ? 'Not interested' : 'Interested'}
+          aria-pressed={interested}
+          onClick={onInterested}
+          icon={<img src={interested ? reminderOn : reminderOff} alt="" width={24} height={24} />}
+        />
+        <CardActionButton
+          size="sm"
+          aria-label="Add to calendar"
+          onClick={onCalendar}
+          icon={<img src={addToCalendar} alt="" width={24} height={24} />}
+        />
+        <CardActionButton
+          size="sm"
+          aria-label="Share"
+          onClick={(e) => onShare(e.currentTarget)}
+          icon={<img src={shareIcon} alt="" width={24} height={24} />}
+        />
       </span>
     </div>
   )

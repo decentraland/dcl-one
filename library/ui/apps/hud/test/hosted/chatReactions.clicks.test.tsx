@@ -236,11 +236,13 @@ describe('the Chat Reactions switch in the bar', () => {
     await userEvent.click(reactions())
     expect(vi.mocked(session.settings.load)).toHaveBeenCalled()
     const toggle = screen.getByRole('switch', { name: 'Chat Reactions' })
-    expect(toggle).toHaveAttribute('aria-checked', String(checked))
+    if (checked) expect(toggle).toBeChecked()
+    else expect(toggle).not.toBeChecked()
     await userEvent.click(toggle)
     expect(vi.mocked(session.settings.set)).toHaveBeenCalledWith(CHAT_REACTIONS_SETTING, asked)
     // the engine's answer moves it, not the press
-    expect(toggle).toHaveAttribute('aria-checked', String(checked))
+    if (checked) expect(toggle).toBeChecked()
+    else expect(toggle).not.toBeChecked()
     expect(bar()).toBeInTheDocument()
   })
 
