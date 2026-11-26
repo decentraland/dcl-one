@@ -111,7 +111,6 @@ let
   # build webrtc-sys (.github/workflows/cast-presenter.yml).
   clippy = crane.cargoClippy (common // {
     inherit cargoArtifacts cargoVendorDir;
-    pname = "${manifest.package.name}-clippy";
     src = lib.fileset.toSource {
       root = dir;
       fileset = lib.fileset.unions [ (dir + /Cargo.toml) (dir + /Cargo.lock) (dir + /build.rs) (dir + /clippy.toml) (dir + /src) (dir + /tests) ];
