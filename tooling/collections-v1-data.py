@@ -2,7 +2,7 @@
 """Extract the collections-v1 catalogue data the shop folds Ethereum's v1 collections with.
 
     collections-v1-data.py wearables <collections-graph checkout> <output json>
-    collections-v1-data.py symbols <ethereum rpc url> <collections-v1.json> <output json>
+    ETH_RPC_URL=<ethereum rpc url> collections-v1-data.py symbols <collections-v1.json> <output json>
 
 `wearables`: the collections subgraph gives a v1 item (an `AddWearable` of a v1 collection on
 Ethereum) the name, description, category, rarity and body shapes of the first static
@@ -13,15 +13,18 @@ name, description, category, rarity, bodyShapes}, ...]}, each array in its file'
 checkout must be at the revision upstream.lock.json pins; the script prints the revision it read.
 It reads the TypeScript sources as text and never runs them.
 
-`symbols`: each v1 collection's `symbol()` (immutable, set by its constructor), read with one
+`symbols`: each v1 collection's `symbol()` (immutable, set by its constructor), read from the
+endpoint in ETH_RPC_URL (never an argument: a keyed URL would show in the process list) with one
 batched `eth_call` at the latest block, as {address: symbol} in the order of collections-v1.json.
 
 Both write two-space indented JSON with a trailing newline.
 """
 import json
+import os
 import re
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 ORDER_FILE = "src/modules/metadata/wearable/index.ts"
@@ -127,11 +130,13 @@ def eth_call_symbols(rpc, addresses):
         {"jsonrpc": "2.0", "id": i, "method": "eth_call", "params": [{"to": a, "data": "0x95d89b41"}, "latest"]}
         for i, a in enumerate(addresses)
     ]
-    answer = subprocess.run(
-        ["curl", "-s", "-m", "60", rpc, "-H", "content-type: application/json", "--data", json.dumps(batch)],
-        capture_output=True, text=True, check=True,
-    ).stdout
-    replies = {r["id"]: r for r in json.loads(answer)}
+    request = urllib.request.Request(
+        rpc,
+        data=json.dumps(batch).encode(),
+        headers={"content-type": "application/json", "user-agent": "collections-v1-data"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        replies = {r["id"]: r for r in json.loads(response.read())}
     symbols = {}
     for i, address in enumerate(addresses):
         reply = replies.get(i, {})
@@ -158,8 +163,11 @@ def main():
         output.write_text(json.dumps(catalogue, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         count = sum(len(c["wearables"]) for c in catalogue)
         print(f"collections-graph {revision}: {len(catalogue)} arrays, {count} wearables -> {output}")
-    elif len(sys.argv) == 5 and sys.argv[1] == "symbols":
-        rpc, collections, output = sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+    elif len(sys.argv) == 4 and sys.argv[1] == "symbols":
+        rpc = os.environ.get("ETH_RPC_URL", "").strip()
+        if not rpc:
+            sys.exit("symbols reads the endpoint from ETH_RPC_URL")
+        collections, output = Path(sys.argv[2]), Path(sys.argv[3])
         addresses = [c["id"].lower() for c in json.loads(collections.read_text(encoding="utf-8"))]
         symbols = eth_call_symbols(rpc, addresses)
         output.write_text(json.dumps(symbols, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

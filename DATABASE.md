@@ -3694,7 +3694,10 @@ publication. On mainnet every one of the 438 items has a representation.
 
 A publication projects Ethereum when an event was walked past the block its
 rows stand at, or none stand. It then rebuilds the network's rows, about 480,
-from the whole log; otherwise it writes nothing.
+from the whole log; otherwise it writes nothing. A walk's first publication
+(each process or lease, and again after a failed pass) rebuilds them
+whatever was walked, so a change to the fold or a re-pinned vendored file
+reaches the rows, and the unrepresented gauge is set again.
 
 **Projection.** A network the operator hands the index
 (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`: `matic`, `ethereum` or empty,

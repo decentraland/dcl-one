@@ -36,9 +36,12 @@
 //! The projection is the Polygon one's ([`super::collections_projection`]):
 //! the same ownership marker, catalogue lock and publication hook. With so
 //! few rows, a publication rebuilds the network's rows when an event was
-//! walked past the block they stand at, and writes nothing otherwise.
+//! walked past the block they stand at, and writes nothing otherwise; a
+//! walk's first publication (each process or lease) rebuilds them whatever
+//! was walked, so a change to the fold or to the vendored data reaches them.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::{B256, U256, hex};
 use alloy_sol_types::{SolEvent, sol};
@@ -409,12 +412,20 @@ pub struct CollectionsV1Index {
     /// and `shop.items` (`MARKETPLACE_COLLECTIONS_INDEX_OWNS` lists
     /// `ethereum`); otherwise it keeps the log alone.
     project: bool,
+    /// Whether this instance's publications already rebuilt the rows once.
+    /// The first one rebuilds them whatever was walked, so a change to the
+    /// fold or to the vendored data reaches them with the next process (or
+    /// lease), and the unrepresented gauge is set again.
+    rebuilt: AtomicBool,
 }
 
 impl CollectionsV1Index {
     /// The walk, projecting the log into the catalogue when `project`.
     pub fn projecting(project: bool) -> Self {
-        Self { project }
+        Self {
+            project,
+            ..Self::default()
+        }
     }
 }
 
@@ -430,6 +441,12 @@ impl ChainIndex for CollectionsV1Index {
 
     fn start_block(&self) -> u64 {
         START_BLOCK
+    }
+
+    /// A pass that failed may not have committed its publication: the next
+    /// one rebuilds the rows again.
+    fn abandon(&self) {
+        self.rebuilt.store(false, Ordering::SeqCst);
     }
 
     async fn groups(
@@ -489,6 +506,11 @@ impl ChainIndex for CollectionsV1Index {
     /// in the transaction that publishes the fold at `upto`.
     async fn publish(&self, conn: &mut PgConnection, upto: i64) -> anyhow::Result<()> {
         if self.project {
+            if !self.rebuilt.swap(true, Ordering::SeqCst) {
+                // In the publishing transaction: no reader sees the block
+                // cleared, only the rebuilt rows.
+                super::collections_projection::invalidate(conn, ChainNet::Ethereum).await?;
+            }
             let out =
                 super::collections_projection::project_in(conn, ChainNet::Ethereum, upto).await?;
             if out.rebuilt {
@@ -842,6 +864,65 @@ mod tests {
         // nothing walked there: the rows are rebuilt all the same.
         assert!(project(&pool, upto + 30).await.rebuilt, "a rewind rebuilds");
         assert_eq!(rows(&pool).await, first);
+    }
+
+    /// A walk's first publication rebuilds the rows whatever was walked, so a
+    /// change to the fold or to the vendored data reaches them with the next
+    /// process or lease; later ones write nothing until an event is walked,
+    /// and a failed pass makes the next one rebuild again.
+    #[tokio::test]
+    async fn a_fresh_walk_rebuilds_the_rows_once() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let upto = 26_499_473;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(&mut conn, ChainNet::Ethereum, &walked())
+            .await
+            .unwrap();
+        drop(conn);
+        project(&pool, upto).await;
+        let name = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT name FROM shop.items WHERE network = 'ethereum' AND contract_address = $1 AND item_id = 1",
+            )
+            .bind(XMASH)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let fresh = name().await;
+        let stale = || async {
+            sqlx::query(
+                "UPDATE shop.items SET name = 'stale' WHERE network = 'ethereum' AND contract_address = $1 AND item_id = 1",
+            )
+            .bind(XMASH)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        let ix = CollectionsV1Index::projecting(true);
+        let publish = |at: i64| {
+            let (pool, ix) = (pool.clone(), &ix);
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                ix.publish(&mut tx, at).await.unwrap();
+                tx.commit().await.unwrap();
+            }
+        };
+        stale().await;
+        publish(upto + 1).await;
+        assert_eq!(name().await, fresh, "the first publication rebuilds");
+        stale().await;
+        publish(upto + 2).await;
+        assert_eq!(
+            name().await,
+            "stale",
+            "nothing walked since: nothing written"
+        );
+        ix.abandon();
+        publish(upto + 3).await;
+        assert_eq!(name().await, fresh, "after a failed pass it rebuilds again");
     }
 
     /// Once Ethereum is handed to the index, the catalogue routes serve its

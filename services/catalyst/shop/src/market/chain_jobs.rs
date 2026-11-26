@@ -1834,6 +1834,23 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
         );
     }
+    let ethereum_walk = settings.serves_mainnet(ChainNet::Ethereum)
+        && state.chain_rpc_url(ChainNet::Ethereum).is_some();
+    if settings.collections_enabled && settings.serves_mainnet(ChainNet::Ethereum) && !ethereum_walk
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Ethereum JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, else ETH_RPC_URL): the collections-v1 walk stays off"
+        );
+    }
+    if settings.collections_owned.contains(&ChainNet::Ethereum)
+        && !(settings.collections_enabled && ethereum_walk)
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but no collections-v1 walk runs (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint): Ethereum's catalogue stays the mirror's"
+        );
+    }
     if settings.third_party_registry_enabled
         && polygon_mainnet
         && state.polygon_mainnet_rpc_url().is_none()

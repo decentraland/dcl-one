@@ -53,7 +53,7 @@
       "files": {
         "collections-v1-symbols.json": {
           "from": "symbol() of each collections-v1.json contract, one batched eth_call at the latest block (2026-11-26); a v1 collection's symbol is set by its constructor and never changes",
-          "generator": "python3 tooling/collections-v1-data.py symbols <ethereum rpc url> services/catalyst/content/src/validator/onchain/contracts/collections-v1.json services/catalyst/content/src/validator/onchain/contracts/collections-v1-symbols.json",
+          "generator": "ETH_RPC_URL=<ethereum rpc url> python3 tooling/collections-v1-data.py symbols services/catalyst/content/src/validator/onchain/contracts/collections-v1.json services/catalyst/content/src/validator/onchain/contracts/collections-v1-symbols.json",
           "sha256": "bc441ef5dddc424d6b04215c5cdcffc202ed44876b070c8f33265648edc2b3fe"
         }
       }
