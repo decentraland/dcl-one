@@ -3,12 +3,12 @@
 //
 // Laid out on the startup screens' 1920x1080 canvas, scaled to fit.
 import { useEffect } from 'react'
-import { Button } from '../../design'
 import { prefetchPlaces } from '@explorer-core/features/places/placesApi'
 import type { LoginFlow } from '../session/useEngineSession'
 import logo from '../../assets/loading/logo-icon.webp'
 import avatars from '../../assets/startup/avatars.webp'
 import styles from './GuestOrSignUp.module.css'
+import { Button } from '@dcl/one-ui'
 
 // The kept click's label while the engine boots: the download percent (the long part), then STARTING.
 export function pendingLabel(flow: LoginFlow): string {
@@ -39,10 +39,10 @@ export function GuestOrSignUp({
       <img className={styles.logo} src={logo} alt="Decentraland" />
       <h1 className={styles.title}>Welcome to Decentraland!</h1>
       <p className={styles.description}>Discover a world shaped by its community!</p>
-      <Button size="start" className={styles.playAsGuest} disabled={locked} onClick={onGuest}>
+      <Button appearance="hud" size="start" className={styles.playAsGuest} disabled={locked} onClick={onGuest}>
         {queued && !flow.engineReady ? pendingLabel(flow) : 'Play as guest'}
       </Button>
-      <Button size="start" variant="darkOutline" className={styles.logInOrSignUp} disabled={locked} onClick={onLogInOrSignUp}>
+      <Button appearance="hud" size="start" variant="darkOutline" className={styles.logInOrSignUp} disabled={locked} onClick={onLogInOrSignUp}>
         Login or signup
       </Button>
       <img className={styles.avatars} src={avatars} alt="" draggable={false} />

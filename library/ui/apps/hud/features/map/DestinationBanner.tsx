@@ -1,9 +1,9 @@
 // The route under way, named at the bottom of the map, with the way to end it.
 
 import type { Destination } from '@explorer-core/features/map/navigation'
-import { MaskIcon } from '../../design/MaskIcon'
 import { PANEL_ART } from './mapArt'
 import styles from './MapNotices.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function DestinationBanner({ destination, onExit }: { destination: Destination; onExit: () => void }): React.JSX.Element {
   return (

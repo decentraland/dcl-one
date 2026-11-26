@@ -101,4 +101,58 @@ describe('TabsBar', () => {
       expect(rule('../Tabs/Tabs.module.css', '.underline:focus-visible')).toContain('outline-offset: -2px')
     })
   })
+  describe('when it takes the hud appearance', () => {
+    function Strip({ onPick }: { onPick?: (id: string) => void }) {
+      const [value, setValue] = useState('wearables')
+      const pick = (id: string) => {
+        setValue(id)
+        onPick?.(id)
+      }
+      return (
+        <TabsBar appearance="hud" variant="section" fill label="Backpack sections" className="placed">
+          <Tabs appearance="hud" label="Wearables" selected={value === 'wearables'} onClick={() => pick('wearables')} />
+          <Tabs appearance="hud" label="Heading" disabled />
+          <Tabs appearance="hud" label="Emotes" selected={value === 'emotes'} onClick={() => pick('emotes')} />
+        </TabsBar>
+      )
+    }
+
+    it('is a named tab list with the variant and fill classes, and tabs without the default look', () => {
+      render(<Strip />)
+      const list = screen.getByRole('tablist', { name: 'Backpack sections' })
+      expect(list.className).toMatch(/hudSection/)
+      expect(list.className).toMatch(/hudFill/)
+      expect(list.className).toMatch(/placed/)
+      expect(list.className).not.toMatch(/underline/)
+      const selected = screen.getByRole('tab', { name: 'Wearables', selected: true })
+      expect(selected.className).toMatch(/hud/)
+      expect(selected.className).not.toMatch(/root|underline/)
+      expect(selected).toHaveAttribute('tabindex', '0')
+      expect(screen.getByRole('tab', { name: 'Emotes' })).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('selects with the arrows and skips a disabled tab, wrapping round', async () => {
+      const picked: string[] = []
+      render(<Strip onPick={(id) => picked.push(id)} />)
+      screen.getByRole('tab', { name: 'Wearables' }).focus()
+      await userEvent.keyboard('{ArrowRight}')
+      expect(screen.getByRole('tab', { name: 'Emotes', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{ArrowRight}')
+      expect(screen.getByRole('tab', { name: 'Wearables', selected: true })).toHaveFocus()
+      await userEvent.keyboard('{End}')
+      expect(screen.getByRole('tab', { name: 'Emotes', selected: true })).toHaveFocus()
+      expect(picked).toEqual(['emotes', 'wearables', 'emotes'])
+    })
+
+    it('falls back to the pill look for a variant the hud does not draw, and to no label attribute without one', () => {
+      render(
+        <TabsBar appearance="hud" variant="compact" label="">
+          <Tabs appearance="hud" label="One" selected />
+        </TabsBar>
+      )
+      const list = screen.getByRole('tablist')
+      expect(list.className).toMatch(/hudPill/)
+      expect(list).not.toHaveAttribute('aria-label')
+    })
+  })
 })

@@ -13,10 +13,11 @@
 // here having already clicked something the attacker gave them.
 
 import { useState } from 'react'
-import { Button, DclLogo, ModalShell } from '../../design'
+import { ModalShell } from '../../design'
 import styles from './UntrustedLaunchGate.module.css'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 import { exitApplication } from './exitApplication'
+import { Button, DclLogo } from '@dcl/one-ui'
 
 const TITLE = 'This Launch Link Is Not Trusted'
 
@@ -46,7 +47,7 @@ export function UntrustedLaunchGate({
         actions={
           <>
             {/* autoFocus lands focus on the safe action rather than whatever the browser picks. */}
-            <Button autoFocus variant="primary" className={styles.exit} onClick={exitApplication}>
+            <Button appearance="hud" autoFocus variant="primary" className={styles.exit} onClick={exitApplication}>
               Exit Application
             </Button>
             {advanced ? (
@@ -55,12 +56,12 @@ export function UntrustedLaunchGate({
                   Continuing hands this address full control of your session for as long as this tab is
                   open. Only do this if you recognise it as your own.
                 </p>
-                <Button variant="ghost" className={styles.proceed} onClick={onProceed}>
+                <Button appearance="hud" variant="ghost" className={styles.proceed} onClick={onProceed}>
                   Continue anyway
                 </Button>
               </div>
             ) : (
-              <Button variant="secondary" onClick={() => setAdvanced(true)}>
+              <Button appearance="hud" variant="secondary" onClick={() => setAdvanced(true)}>
                 Advanced
               </Button>
             )}
