@@ -762,6 +762,24 @@ impl Default for LeaseSettings {
     }
 }
 
+/// The `pg_locks` condition, on alias `l`, that holds while a session holds
+/// lease `$name` of namespace `$namespace` (SQL expressions) in this
+/// database, as [`Leases`] takes it.
+#[macro_export]
+macro_rules! lease_lock_held {
+    ($namespace:literal, $name:literal) => {
+        concat!(
+            "l.locktype = 'advisory' AND l.granted AND l.objsubid = 2 \
+             AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+             AND l.classid = hashtext(",
+            $namespace,
+            ")::oid AND l.objid = hashtext(",
+            $name,
+            ")::oid"
+        )
+    };
+}
+
 /// This process's fleet-wide leases: one dedicated Postgres session holding
 /// a `pg_try_advisory_lock(hashtext(namespace), hashtext(name))` per job it
 /// runs. The session is opened on first use, detached from the pool (one
@@ -1820,6 +1838,35 @@ mod lease_tests {
     /// An error the database answers to a control operation (here a lock
     /// timeout) fails only that operation: the session and every lease on it
     /// stay.
+    #[tokio::test]
+    async fn another_session_finds_a_held_lease_in_pg_locks_until_it_is_released() {
+        let Some(pool) = catalyst_db::scratch::pool(6).await else {
+            return;
+        };
+        let leases = Arc::new(Leases::new(pool.clone(), settings("visible")));
+        let guard = leases
+            .try_acquire("sync")
+            .await
+            .unwrap()
+            .expect("a free name");
+        let pid = leases.backend_pid().await.expect("connected");
+        let namespace = leases.settings().namespace.clone();
+        let holder = || async {
+            sqlx::query_scalar::<_, i32>(concat!(
+                "SELECT l.pid FROM pg_locks l WHERE ",
+                crate::lease_lock_held!("$1", "$2")
+            ))
+            .bind(&namespace)
+            .bind("sync")
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(holder().await, Some(pid));
+        guard.release().await;
+        assert_eq!(holder().await, None);
+    }
+
     #[tokio::test]
     async fn a_database_error_in_a_control_operation_keeps_the_leases() {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
