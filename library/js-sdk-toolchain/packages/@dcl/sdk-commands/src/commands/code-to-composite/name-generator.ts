@@ -1,28 +1,30 @@
 import path from 'path'
-import {
+import type {
   IEngine,
   Entity,
-  Name,
-  MeshRenderer,
-  TextShape,
-  NftShape,
-  LightSource,
-  GltfContainer,
   ComponentDefinition,
-  AudioSource,
-  MeshCollider,
   PBLightSource,
   PBGltfContainer,
   PBMeshRenderer,
   PBTextShape,
   PBNftShape,
   PBAudioSource,
-  VideoPlayer,
   PBVideoPlayer,
   PBMeshCollider
 } from '@dcl/ecs/dist-cjs'
+import {
+  Name,
+  MeshRenderer,
+  TextShape,
+  NftShape,
+  LightSource,
+  GltfContainer,
+  AudioSource,
+  MeshCollider,
+  VideoPlayer
+} from '@dcl/ecs/dist-cjs'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 interface ComponentNameGenerator<T = any> {
   component: ComponentDefinition<T>
   getName: (componentData: T | null) => string | null

@@ -250,3 +250,47 @@
     }
   }
 }
+
+@layer dcl.components {
+  /* ShopChrome supplies the surrounding search, shortcuts and responsive rows. */
+  .routeRoot[data-layout='links'] {
+    display: block;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .routeRoot[data-layout='links'] .routeNavigation {
+    width: 100%;
+    padding: 0;
+  }
+  @media (width > 768px) {
+    .routeItem[data-mobile-only] {
+      display: none;
+    }
+  }
+
+  @media (forced-colors: none) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      color: transparent;
+      background-image: var(--dcl-gradient-rainbow);
+      background-size: 200% 100%;
+      background-clip: text;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      animation: campaignGradient 6s ease-in-out infinite alternate;
+    }
+  }
+
+  @keyframes campaignGradient {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 100%;
+    }
+  }
+}

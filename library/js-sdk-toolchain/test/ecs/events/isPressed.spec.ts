@@ -1,12 +1,7 @@
-import { Entity } from '../../../packages/@dcl/ecs/src/engine/entity'
+import type { Entity } from '../../../packages/@dcl/ecs/src/engine/entity'
 import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
-import {
-  Engine,
-  components,
-  PointerEventType,
-  InputAction,
-  PBPointerEventsResult
-} from '../../../packages/@dcl/ecs/src'
+import type { PBPointerEventsResult } from '../../../packages/@dcl/ecs/src'
+import { Engine, components, PointerEventType, InputAction } from '../../../packages/@dcl/ecs/src'
 
 describe('Events helpers isTriggered', () => {
   it('should detect no events', () => {

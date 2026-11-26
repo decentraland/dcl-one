@@ -52,6 +52,68 @@ fn test_states(
 }
 
 #[test]
+fn automatic_receiver_clears_the_last_frame_when_the_cast_ends() {
+    let mut app = min_app();
+    app.update();
+    let receiver = app.world_mut().spawn(ActiveReceiver).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let initial = app.world().get::<ReceiverImage>(receiver).unwrap();
+    let initial_image = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&initial.image)
+        .unwrap()
+        .clone();
+    let track = app.world_mut().spawn(TransmitterKind::VideoCast).id();
+    for _ in 0..4 {
+        app.update();
+    }
+    let handle = app
+        .world()
+        .get::<ReceiverImage>(receiver)
+        .unwrap()
+        .image
+        .clone();
+    app.world_mut()
+        .resource_mut::<Assets<Image>>()
+        .get_mut(&handle)
+        .unwrap()
+        .data = Some([12, 34, 56, 255].repeat(64));
+    app.world()
+        .get::<ActiveTransmitter>(track)
+        .unwrap()
+        .state
+        .send_replace(dcl_component::proto_components::sdk::components::VideoState::VsPlaying);
+    app.world_mut().entity_mut(track).despawn();
+    for _ in 0..4 {
+        app.update();
+    }
+    let output = app.world().get::<ReceiverImage>(receiver).unwrap();
+    assert_eq!(output.image, handle);
+    assert_eq!(
+        *output.state.borrow(),
+        dcl_component::proto_components::sdk::components::VideoState::VsLoading
+    );
+    let image = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&handle)
+        .unwrap();
+    assert_eq!(image.data, initial_image.data);
+    assert_eq!(image.data, Some([0, 0, 0, 255].repeat(64)));
+    assert_eq!(
+        image.texture_descriptor.size,
+        initial_image.texture_descriptor.size
+    );
+    assert_eq!(
+        image.texture_descriptor.usage,
+        initial_image.texture_descriptor.usage
+    );
+}
+
+#[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_add_receiver() {
     let mut app = min_app();
@@ -1519,4 +1581,173 @@ fn test_audios_on_transmission_kind_change() {
             .entity(*stream)
             .contains::<ActiveAudioTransmitter>());
     }
+}
+
+#[test]
+fn selected_receivers_share_their_track_and_never_bind_another_room() {
+    use crate::{SelectedVideoReceiver, SelectedVideoTransmitter, VideoTrackSource};
+    let mut app = min_app();
+    app.update();
+    let source = VideoTrackSource {
+        scene_hash: "scene-a".to_owned(),
+        identity: "speaker".to_owned(),
+        track_sid: "TR_camera".to_owned(),
+    };
+    let camera = app
+        .world_mut()
+        .spawn((source.clone(), TransmitterKind::Screenshare))
+        .id();
+    let automatic = app.world_mut().spawn(ActiveReceiver).id();
+    let screen_source = VideoTrackSource {
+        track_sid: "TR_screen".to_owned(),
+        ..source.clone()
+    };
+    let screen = app.world_mut().spawn(screen_source.clone()).id();
+    let first = app
+        .world_mut()
+        .spawn((ActiveReceiver, SelectedVideoReceiver(source.clone())))
+        .id();
+    let second = app
+        .world_mut()
+        .spawn((ActiveReceiver, SelectedVideoReceiver(source.clone())))
+        .id();
+    let other = app
+        .world_mut()
+        .spawn((ActiveReceiver, SelectedVideoReceiver(screen_source)))
+        .id();
+    let foreign = app
+        .world_mut()
+        .spawn((
+            ActiveReceiver,
+            SelectedVideoReceiver(VideoTrackSource {
+                scene_hash: "scene-b".to_owned(),
+                ..source.clone()
+            }),
+        ))
+        .id();
+    app.update();
+    app.update();
+    app.update();
+    let camera_image = app
+        .world()
+        .get::<SelectedVideoTransmitter>(camera)
+        .unwrap()
+        .image
+        .clone();
+    let screen_image = app
+        .world()
+        .get::<SelectedVideoTransmitter>(screen)
+        .unwrap()
+        .image
+        .clone();
+    assert_ne!(camera_image, screen_image);
+    assert!(app.world().get::<ActiveTransmitter>(camera).is_some());
+    assert_ne!(
+        app.world().get::<ReceiverImage>(automatic).unwrap().image,
+        camera_image
+    );
+    assert_eq!(
+        app.world().get::<ReceiverImage>(first).unwrap().image,
+        camera_image
+    );
+    assert_eq!(
+        app.world().get::<ReceiverImage>(second).unwrap().image,
+        camera_image
+    );
+    assert_eq!(
+        app.world().get::<ReceiverImage>(other).unwrap().image,
+        screen_image
+    );
+    assert_ne!(
+        app.world().get::<ReceiverImage>(foreign).unwrap().image,
+        camera_image
+    );
+    app.world_mut().entity_mut(first).remove::<ActiveReceiver>();
+    app.update();
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(camera)
+        .is_some());
+    app.world_mut()
+        .entity_mut(second)
+        .remove::<ActiveReceiver>();
+    app.update();
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(camera)
+        .is_none());
+    assert!(app.world().get::<ActiveTransmitter>(camera).is_some());
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(screen)
+        .is_some());
+    app.world_mut().entity_mut(screen).despawn();
+    app.update();
+    assert_ne!(
+        app.world().get::<ReceiverImage>(other).unwrap().image,
+        screen_image
+    );
+    assert!(app.world().get::<ReceiverImage>(first).is_none());
+}
+
+#[test]
+fn selected_receivers_rebind_on_late_arrival_and_source_change() {
+    use crate::{SelectedVideoReceiver, SelectedVideoTransmitter, VideoTrackSource};
+    let mut app = min_app();
+    app.update();
+    let source = VideoTrackSource {
+        scene_hash: "scene".to_owned(),
+        identity: "speaker".to_owned(),
+        track_sid: "TR_camera".to_owned(),
+    };
+    let receiver = app
+        .world_mut()
+        .spawn((ActiveReceiver, SelectedVideoReceiver(source.clone())))
+        .id();
+    app.update();
+    let fallback = app
+        .world()
+        .get::<ReceiverImage>(receiver)
+        .unwrap()
+        .image
+        .clone();
+    let camera = app.world_mut().spawn(source.clone()).id();
+    app.update();
+    let camera_image = app
+        .world()
+        .get::<ReceiverImage>(receiver)
+        .unwrap()
+        .image
+        .clone();
+    assert_ne!(fallback, camera_image);
+    let screen_source = VideoTrackSource {
+        track_sid: "TR_screen".to_owned(),
+        ..source
+    };
+    let screen = app.world_mut().spawn(screen_source.clone()).id();
+    app.world_mut()
+        .entity_mut(receiver)
+        .insert(SelectedVideoReceiver(screen_source));
+    app.update();
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(camera)
+        .is_none());
+    assert_eq!(
+        app.world().get::<ReceiverImage>(receiver).unwrap().image,
+        app.world()
+            .get::<SelectedVideoTransmitter>(screen)
+            .unwrap()
+            .image
+    );
+    assert_ne!(
+        app.world().get::<ReceiverImage>(receiver).unwrap().image,
+        camera_image
+    );
+    app.world_mut().entity_mut(receiver).despawn();
+    app.update();
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(screen)
+        .is_none());
 }
