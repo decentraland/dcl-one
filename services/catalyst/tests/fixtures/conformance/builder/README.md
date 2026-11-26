@@ -219,8 +219,8 @@ at the pinned revision or has staged, unstaged or untracked changes. It
 installs upstream's locked dependencies with `npm ci --ignore-scripts`, which
 replaces whatever `node_modules` held. Upstream and its migration process
 run with the capture's settings and only `PATH`, `HOME`, `TMPDIR` and `TZ`
-of the shell's environment, and the migration process runs in an empty
-directory; upstream's settings are loaded into its `decentraland-commons`
+of the shell's environment, and each runs in a new empty directory;
+upstream's settings are loaded into its `decentraland-commons`
 env, so no `.env` file is read. Then it:
 
 1. Creates its own database, `builder_capture_<pid>_<random>`, on the
