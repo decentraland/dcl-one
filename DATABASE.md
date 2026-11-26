@@ -5473,12 +5473,14 @@ Invariants:
   upgrade refolds it whole in the fold's own transaction (its own statement
   limit), then publishes it with the fold.
 
-Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
-nft cursor (published within 30 minutes on the networks read, from the chain
-the node serves on each, `IndexSettings::chain_id`), the trades mirror and
-its verdicts and, when an open LAND or estate order could be answered, the
-land-authz cursor; each statement is bounded by the `/v1/nfts` statement
-timeout:
+The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
+snapshot. An explicit network or chain-bound contract can narrow the NFT
+publish checks. A shared address reads both eligible networks. A live mainnet v3
+listing keeps its network in scope through an ownership rewind, and an
+unknown address keeps both networks in scope. LAND and estate ownership checks use
+the same snapshot. Open v3 listings check the trades mirror and the verdicts
+of the networks read. Legacy-only status and buyer filters skip those
+checks. Each statement uses the `/v1/nfts` statement timeout.
 
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
@@ -5514,6 +5516,14 @@ node serves again from its next publication. Workload: one row per
 publication; the triggers add one transition table per write statement,
 sized by the rows it changed. A reader calls
 `chain_walk::rows_published_on` on its snapshot.
+
+The NFT and sales folds, rewinds and rebuild clears lock the chain cursor
+before writing these projections. Rewind and clear take any notification
+cursor locks first. Publication takes the chain cursor before acknowledging
+pending writes. RPC reads run outside these transactions. In a mixed-version
+rollout, an older writer can still take a projection-write lock before the
+chain cursor and deadlock with a publisher. Drain the old walker before
+letting the replacement own the same cursor to avoid that overlap.
 
 Indexes: `legacy_order_token_idx` (`(contract_address, token_id)`: the
 fold's and the rewind's per-token rewrite, and a token filter, which names

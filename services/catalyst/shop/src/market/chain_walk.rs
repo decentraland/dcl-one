@@ -598,8 +598,8 @@ impl Spent {
 impl Owner {
     /// Locks the cursor row until the caller's commit and refuses unless the
     /// row still carries this generation, is bound to this chain and is not
-    /// in quarantine. Call it last, right before the commit, so the row lock
-    /// lasts only as long as the commit.
+    /// in quarantine. Take this lock before writing projection tables
+    /// covered by the publication trigger.
     pub async fn check(&self, conn: &mut PgConnection) -> anyhow::Result<()> {
         let row: Option<(i64, Option<i64>, Option<String>)> = sqlx::query_as(
             "SELECT owner_generation, chain_id, quarantine_reason FROM shop.chain_cursor \
@@ -1566,8 +1566,8 @@ async fn quarantine(pool: &PgPool, owner: &Owner, cur: &Cursor, why: &str) -> an
 /// 2. the projection's own cleanup runs down to `start_block - 1`, and the
 ///    producers' cursors move back;
 /// 3. the cursor restarts there, bound to the owner's chain, unpublished and
-///    out of quarantine, with the request cleared; its row is locked only
-///    for this last step and the commit.
+///    out of quarantine, with the request cleared. Book writers lock their
+///    cursor before projection writes, after notification cursor locks.
 ///
 /// A rebuild keeps the projection's chain and start block. It is refused,
 /// with the history kept and the cursor in quarantine, when the cursor is
@@ -1668,10 +1668,8 @@ async fn rebuild(
         return Ok(Some(why));
     }
     let mut tx = pool.begin().await?;
-    // Checked without a lock first, so a stale owner does no cleanup. The
-    // cursor row is locked last, after the cleanup and the producers' cursor
-    // moves, so it is held only for the commit; every writer takes the
-    // notification cursor rows before the chain cursor row.
+    // Reject stale owners before planning. The producers' cursors precede
+    // the chain cursor, which precedes projection-write locks for the books.
     let held: Option<(i64, bool, i64, Option<String>)> = sqlx::query_as(read(""))
         .bind(owner.indexer)
         .bind(owner.net.db_name())
@@ -1686,9 +1684,12 @@ async fn rebuild(
     let replay =
         super::notice_cursor::plan_replay(&mut tx, owner.indexer, owner.net, to, cur.last_block)
             .await?;
-    ix.clear(&mut tx, to)
-        .await
-        .context("the projection's cleanup for its rebuild")?;
+    let book = matches!(owner.indexer, INDEXER_NFT | INDEXER_SALES);
+    if !book {
+        ix.clear(&mut tx, to)
+            .await
+            .context("the projection's cleanup for its rebuild")?;
+    }
     if let Some(replay) = replay {
         replay.apply(&mut tx).await?;
     }
@@ -1701,6 +1702,11 @@ async fn rebuild(
         return Err(owner
             .fenced("its rebuild, or the checkpoint it read, changed".into())
             .into());
+    }
+    if book {
+        ix.clear(&mut tx, to)
+            .await
+            .context("the projection's cleanup for its rebuild")?;
     }
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
@@ -2048,8 +2054,8 @@ pub(crate) async fn recover(
         None => (cur.start_block - 1, None),
     };
     let mut tx = pool.begin().await?;
-    // Checked without a lock first, so a stale owner does no cleanup; the
-    // cursor row is locked by the rewind, after the producers' cursors.
+    // Reject stale owners before planning; the cursor lock is taken
+    // after notification cursor locks for projections that write book rows.
     let held: Option<(i64, i64, Option<String>)> = sqlx::query_as(
         "SELECT owner_generation, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
     )
@@ -2069,11 +2075,20 @@ pub(crate) async fn recover(
             .into());
     }
     let replay = super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
-    ix.rewind(&mut tx, to)
-        .await
-        .context("undoing the reorged range")?;
+    let book = matches!(name, INDEXER_NFT | INDEXER_SALES);
+    if !book {
+        ix.rewind(&mut tx, to)
+            .await
+            .context("undoing the reorged range")?;
+    }
     if let Some(replay) = replay {
         replay.apply(&mut tx).await?;
+    }
+    if book {
+        owner.check(&mut tx).await?;
+        ix.rewind(&mut tx, to)
+            .await
+            .context("undoing the reorged range")?;
     }
     rewind(
         &mut tx,
@@ -2154,6 +2169,11 @@ pub(crate) async fn commit_window(
             );
         }
     }
+    let book = matches!(owner.indexer, INDEXER_NFT | INDEXER_SALES);
+    if book {
+        // The fold also updates contract discoveries and the refold queue.
+        owner.check(&mut tx).await?;
+    }
     let written = ix.write(&mut tx, &usable, times).await?;
     advance(
         &mut tx,
@@ -2166,7 +2186,9 @@ pub(crate) async fn commit_window(
     .await
     .context("advancing the cursor")?;
     ix.record_coverage(&mut tx, expected, header).await?;
-    owner.check(&mut tx).await?;
+    if !book {
+        owner.check(&mut tx).await?;
+    }
     tx.commit().await?;
     Ok(written)
 }
