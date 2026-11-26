@@ -71,9 +71,9 @@ and main-thread time each frame there is spare time, whether or not the player c
 
 - Scenes from 80 m on change at most every two seconds; their SDK systems and tweens driven
   from script step in large intervals until the player comes nearer.
-- A scene 16 m or more behind the camera delivers up to a second of changes in one reply. Whether that
-  hitches when the camera turns is open until main-thread and scene-thread time are measured at
-  a dense spot with and without the cap.
+- A scene 16 m or more behind the camera delivers up to a second of changes in one reply.
+  Whether that hitches when the camera turns is open until main-thread and scene-thread time are
+  measured at a dense spot with and without the cap.
 - On native, a spawn whose replay holds 250 or more updates makes every capped scene due in
   the same frame. Walking through a busy area spawns scenes often, so the release can take back
   part of the saving there; the measurement reports the panel's `released` count to show how
