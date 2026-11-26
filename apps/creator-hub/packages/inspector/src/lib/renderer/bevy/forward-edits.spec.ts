@@ -1239,7 +1239,7 @@ describe('createForwardEditBridge', () => {
         await drain();
 
         expect(rootDeletes()).toEqual(['LightSource', 'Skybox', 'SkyboxTime']);
-        expect(clock()).toEqual(['12 0']);
+        expect(clock()).toEqual(['12 0 --force']);
       });
     });
 
@@ -1531,7 +1531,7 @@ describe('createForwardEditBridge', () => {
         await drain();
 
         expect(rootDeletes()).toEqual(['LightSource', 'Skybox', 'SkyboxTime']);
-        expect(clock()).toEqual(['12 0']);
+        expect(clock()).toEqual(['12 0 --force']);
         expect(lastVisibility(600)).toBe(false);
       });
     });
@@ -1629,7 +1629,7 @@ describe('createForwardEditBridge', () => {
       );
       expect(snapshotAt).toBeGreaterThanOrEqual(0);
       expect(deleteAt).toBeGreaterThan(snapshotAt);
-      expect(armSent.some(s => s.cmd === 'time' && s.args.join(' ') === '12 0')).toBe(true);
+      expect(armSent.some(s => s.cmd === 'time' && s.args.join(' ') === '12 0 --force')).toBe(true);
       armed.disconnect();
     });
   });

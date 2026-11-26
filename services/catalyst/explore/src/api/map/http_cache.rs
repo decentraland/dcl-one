@@ -4,7 +4,7 @@
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 
 pub const DEFAULT_MAX_AGE: u32 = 120;
 pub const DEFAULT_SWR: u32 = 180;
@@ -16,7 +16,7 @@ const HTTP_DATE_FMT: &str = "%a, %d %b %Y %H:%M:%S GMT";
 pub fn format_http_date(ms: i64) -> String {
     Utc.timestamp_millis_opt(ms)
         .single()
-        .unwrap_or_else(|| Utc.timestamp_millis_opt(0).single().unwrap())
+        .unwrap_or(DateTime::UNIX_EPOCH)
         .format(HTTP_DATE_FMT)
         .to_string()
 }

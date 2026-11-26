@@ -957,5 +957,24 @@ impl Upstream {
     }
 }
 
+/// The active entities for `values` (ids, or pointers) through `read_through` when one is
+/// configured, else as this node holds them; without those `denylist` lists, when given.
+pub async fn active_entity_docs(
+    pool: &PgPool,
+    read_through: Option<&ReadThrough>,
+    use_ids: bool,
+    values: &[String],
+    denylist: Option<&Denylist>,
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    let mut docs = match read_through {
+        Some(read_through) => read_through.active_docs(use_ids, values).await?,
+        None => local_docs(pool, use_ids, values).await?,
+    };
+    if let Some(denylist) = denylist {
+        queries::retain_non_denylisted(&mut docs, denylist);
+    }
+    Ok(docs)
+}
+
 #[cfg(test)]
 mod tests;

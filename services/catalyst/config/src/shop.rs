@@ -162,7 +162,7 @@ pub struct MarketplaceConfig {
     pub marketplace_third_party_registry_index_enabled: bool,
 
     /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
@@ -441,6 +441,29 @@ pub struct ShopConfig {
     #[arg(long, env = "CATALYRST_CREDITS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_credits_admin_token: Option<String>,
 
+    /// Wallets whose signed requests may read the credits reports (the
+    /// cross-wallet credits list and its grant reasons), comma-separated: the
+    /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
+    /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    /// A write admin (`CREDITS_WRITE_ADMIN_ADDRESSES`) reads them too.
+    #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_read_admin_addresses: String,
+
+    /// Wallets whose signed requests may change the studios (create, rename,
+    /// pause, operators, budget) and read what a read admin reads,
+    /// comma-separated: the old credits server's `READ_WRITE_ADMIN_ADDRESSES`.
+    /// Empty leaves the changes to the bearer. An entry that is not a wallet
+    /// address fails startup.
+    #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_write_admin_addresses: String,
+
+    /// Refuse a write admin's wallet-signed change that does not sign its
+    /// body's SHA-256 (`bodySha256` in the signed metadata). Off, such a change
+    /// is accepted with a warning, as the old server accepted it; a signed hash
+    /// that does not match the body is refused either way.
+    #[arg(long, env = "CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_admin_writes_require_bound_body: bool,
+
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
     pub credits_captcha_secret: Option<String>,
@@ -451,6 +474,11 @@ pub struct ShopConfig {
         default_value = "https://hcaptcha.com/siteverify"
     )]
     pub credits_captcha_verify_url: String,
+
+    /// The Slack incoming webhook the credits alerts are posted to (or
+    /// `_FILE`), a public https URL; unset, each alert is logged at error.
+    #[arg(long, env = "CREDITS_ALERTS_SLACK_WEBHOOK", hide_env_values = true)]
+    pub credits_alerts_slack_webhook: Option<String>,
 
     /// Enables the Stripe client (or `_FILE`); unset, the card routes answer 501/503.
     #[arg(long, env = "STRIPE_SECRET_KEY", hide_env_values = true)]
@@ -567,10 +595,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_relay_all_wallets: bool,
 
+    /// The Shop's page a paid pack order returns to, with `order=<id>` appended.
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
 
+    /// The Shop's page an abandoned pack order lands on, with
+    /// `order=<id>&canceled=1`: Stripe sends the buyer to the order's
+    /// cancel-return under `PUBLIC_URL` first, or straight here without one.
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL", default_value = "")]
     pub credits_checkout_cancel_url: String,
 
@@ -609,9 +641,14 @@ pub struct ShopConfig {
     #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
     pub shop_feature_flags_refresh_secs: u64,
 
-    /// The availability alert outbox worker's cadence.
+    /// The cadence of the Shop's email outboxes: the availability alerts and the purchase receipts.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
+
+    /// Where the purchase receipt's images are served from; empty uses `SHOP_BASE_URL/email`, the
+    /// Shop app's `public/email`.
+    #[arg(long, env = "SHOP_EMAIL_ASSETS_URL", default_value = "")]
+    pub shop_email_assets_url: String,
 
     /// How often the watcher compares the waited-for items against the items mirror.
     #[arg(long, env = "SHOP_NOTIFY_WATCH_INTERVAL_SECS", default_value_t = 60)]
@@ -623,6 +660,17 @@ pub struct ShopConfig {
 
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL_BUILDER")]
     pub credits_checkout_cancel_url_builder: Option<String>,
+
+    /// The most new studio budget (deposits and upward adjustments, every
+    /// studio together) one UTC day may add, in USD cents (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`). Unset or negative refuses new
+    /// budget.
+    #[arg(
+        long,
+        env = "CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_daily_studio_deposit_limit_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.

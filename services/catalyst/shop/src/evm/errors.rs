@@ -1,6 +1,6 @@
-//! The transactions-server error envelope: `{"ok": false, "error": <code>,
-//! "message": <text>}` with the upstream's status per code. A database error
-//! is logged and answered as `Unknown error`.
+//! The transactions-server error envelope uses `ok`, `message` and `code`.
+//! The `error` field also serves existing Shop clients. Database errors are
+//! logged and answered as `Unknown error`.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -18,6 +18,7 @@ pub mod code {
     /// The relayer's daily budget for free (non-sale) calls is spent.
     pub const RELAY_BUDGET_SPENT: &str = "relay_budget_spent";
     pub const HIGH_CONGESTION: &str = "high_congestion";
+    pub const EXPECTATION_FAILED: &str = "expectation_failed";
     pub const CONFLICT: &str = "conflict";
     pub const PAYMENT_RULE: &str = crate::guards::ERROR_CODE;
 }
@@ -55,12 +56,18 @@ pub enum ApiError {
     HighCongestion(String),
     #[error("{0}")]
     RelayReverted(String),
+    /// OpenZeppelin reports that no transaction was signed.
+    #[error("{0}")]
+    RelayerRefused(String),
     #[error("{0}")]
     RelayerFailed(String),
     #[error("{0}")]
     RelayerUnavailable(String),
     #[error("{0}")]
     RelayerTimeout(String),
+    /// A terminal relayer status for a transaction with a known hash.
+    #[error("{message}")]
+    BroadcastFailed { message: String, tx_hash: String },
     #[error("{0}")]
     Forbidden(String),
     #[error("{0}")]
@@ -90,12 +97,15 @@ impl ApiError {
             ApiError::InvalidSalePrice(_) => (400, Some(code::SALE_PRICE_TOO_LOW)),
             ApiError::InvalidContractAddress(_) => (400, Some(code::INVALID_CONTRACT_ADDRESS)),
             ApiError::InvalidTransaction(_) => (400, Some(code::INVALID_TRANSACTION)),
-            ApiError::RelayReverted(_) => (400, Some(code::INVALID_TRANSACTION)),
+            ApiError::RelayReverted(_) | ApiError::RelayerRefused(_) => {
+                (400, Some(code::INVALID_TRANSACTION))
+            }
             ApiError::QuotaReached { .. } => (429, Some(code::QUOTA_REACHED)),
             ApiError::RelayBudgetSpent { .. } => (429, Some(code::RELAY_BUDGET_SPENT)),
             ApiError::HighCongestion(_) => (503, Some(code::HIGH_CONGESTION)),
             ApiError::RelayerUnavailable(_) => (503, Some(code::UNKNOWN)),
             ApiError::RelayerTimeout(_) => (504, Some(code::UNKNOWN)),
+            ApiError::BroadcastFailed { .. } => (500, Some(code::EXPECTATION_FAILED)),
             ApiError::Forbidden(_) => (403, Some(code::UNKNOWN)),
             ApiError::NotFound(_) => (404, Some(code::UNKNOWN)),
             ApiError::MissingTransactionData(_) => (400, None),
@@ -112,12 +122,19 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         StatusCode::from_u16(self.parts().0).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
-}
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
+    pub fn into_not_sent_response(self) -> Response {
+        self.respond(true)
+    }
+
+    fn respond(self, not_sent: bool) -> Response {
         if let ApiError::PaymentRule(refused) = self {
-            return refused.into_response();
+            let mut body = refused.body();
+            if not_sent {
+                body["code"] = json!(code::PAYMENT_RULE);
+                body["not_sent"] = json!(true);
+            }
+            return refused.respond(body);
         }
         let (_, err_code) = self.parts();
         let message = match &self {
@@ -127,15 +144,20 @@ impl IntoResponse for ApiError {
             }
             other => other.to_string(),
         };
-        // ApiErrorBody::new repeats the message as the code (the old shape).
+        // Parse errors repeat the message in `error` for existing callers.
         let error = err_code
             .map(str::to_string)
             .unwrap_or_else(|| message.clone());
         let mut body = json!({ "ok": false, "error": error, "message": message });
-        // `code` aliases `error` in this standard envelope: it is the transactions server's own
-        // field, which its clients read. (A PaymentRule refusal keeps its own envelope above.)
-        if let Some(code) = err_code {
+        let legacy_code = match &self {
+            ApiError::RelayerRefused(_) => Some(code::EXPECTATION_FAILED),
+            _ => err_code.or(not_sent.then_some(code::INVALID_SCHEMA)),
+        };
+        if let Some(code) = legacy_code {
             body["code"] = json!(code);
+        }
+        if not_sent {
+            body["not_sent"] = json!(true);
         }
         let retry_at = match &self {
             ApiError::QuotaReached {
@@ -151,6 +173,12 @@ impl IntoResponse for ApiError {
             body["retryAt"] = json!(at);
         }
         (self.status(), Json(body)).into_response()
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        self.respond(false)
     }
 }
 
@@ -221,5 +249,21 @@ mod tests {
             json!({ "ok": false, "error": "bad json", "message": "bad json" }),
             "no code field for an unlabeled error"
         );
+    }
+
+    #[tokio::test]
+    async fn a_large_relayer_refusal_keeps_its_error_envelope() {
+        let message = "r".repeat(64 * 1024);
+        let resp = ApiError::RelayerRefused(message.clone()).into_not_sent_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(resp.into_body(), 128 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["code"], code::EXPECTATION_FAILED);
+        assert_eq!(body["error"], code::INVALID_TRANSACTION);
+        assert_eq!(body["message"], message);
+        assert_eq!(body["not_sent"], true);
     }
 }

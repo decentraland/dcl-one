@@ -154,6 +154,9 @@ impl Overlay {
 /// A file as last seen: a moved stamp means the inputs changed.
 type Stamp = (String, Option<FileKey>);
 
+/// Each rewritten model's key when a run read it.
+type ModelInputs = Arc<HashMap<String, FileKey>>;
+
 /// One project's last finished background run: what the preview serves.
 #[derive(Clone, Debug, Default)]
 struct Entry {
@@ -164,7 +167,7 @@ struct Entry {
     /// The inputs the overlay was built from; `None` forces the next run.
     stamps: Option<Vec<Stamp>>,
     /// Each rewritten model's size and time when the run read it.
-    model_inputs: Arc<HashMap<String, FileKey>>,
+    model_inputs: ModelInputs,
     /// The stage files the run read or publishes: what any sweep in this
     /// process keeps while the preview serves this run.
     keep: Arc<BTreeSet<PathBuf>>,
@@ -227,7 +230,7 @@ fn try_lock_stage(root: &Path) -> std::io::Result<Option<std::fs::File>> {
 
 /// The overlay the preview applies, when the project enables it, with the
 /// inputs of the models it rewrote.
-fn overlay(root: &Path) -> Option<(Arc<Overlay>, Arc<HashMap<String, FileKey>>)> {
+fn overlay(root: &Path) -> Option<(Arc<Overlay>, ModelInputs)> {
     let reg = registry();
     let entry = reg.get(root)?;
     let overlay = entry.overlay.clone().filter(|_| entry.enabled)?;
@@ -799,7 +802,8 @@ fn scan_model(
     rel: &str,
     read: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> std::result::Result<(Arc<ModelScan>, FileKey), String> {
-    static SCANS: OnceLock<Mutex<HashMap<PathBuf, (FileKey, Arc<ModelScan>)>>> = OnceLock::new();
+    type Scans = HashMap<PathBuf, (FileKey, Arc<ModelScan>)>;
+    static SCANS: OnceLock<Mutex<Scans>> = OnceLock::new();
     let scans = SCANS.get_or_init(Default::default);
     let key = file_key(path).ok_or_else(|| "model not readable".to_string())?;
     if let Some((had, scan)) = scans
@@ -1054,7 +1058,8 @@ fn stage_model(
     replacements: &BTreeMap<usize, String>,
 ) -> Result<(PathBuf, u64, bool)> {
     type RewriteKey = (PathBuf, FileKey, BTreeMap<usize, String>);
-    static REWRITES: OnceLock<Mutex<HashMap<RewriteKey, (PathBuf, u64, bool)>>> = OnceLock::new();
+    type Rewrites = HashMap<RewriteKey, (PathBuf, u64, bool)>;
+    static REWRITES: OnceLock<Mutex<Rewrites>> = OnceLock::new();
     let rewrites = REWRITES.get_or_init(Default::default);
     let memo_key = (path.to_path_buf(), key, replacements.clone());
     if let Some(hit) = rewrites

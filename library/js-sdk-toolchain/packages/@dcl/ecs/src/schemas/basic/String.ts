@@ -1,5 +1,5 @@
-import { ByteBuffer } from '../../serialization/ByteBuffer'
-import { ISchema } from '../ISchema'
+import type { ByteBuffer } from '../../serialization/ByteBuffer'
+import type { ISchema } from '../ISchema'
 
 /**
  * @internal

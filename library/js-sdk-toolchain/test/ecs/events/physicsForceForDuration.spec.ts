@@ -1,9 +1,8 @@
+import type { IEngine, PhysicsSystem } from '../../../packages/@dcl/ecs/src'
 import {
   components,
   createPhysicsSystem,
-  Engine,
-  IEngine,
-  PhysicsSystem
+  Engine
 } from '../../../packages/@dcl/ecs/src'
 
 describe('Physics applyForceToPlayerForDuration should', () => {

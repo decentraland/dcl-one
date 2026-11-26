@@ -13,7 +13,7 @@ import { setSplitPaymentForTests } from "@shop/payment/present";
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 
 import { requireContracts } from "../../checkout/chain/contracts";
-import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
+import { batchAuthorization, type createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
 import { webLock } from "../../checkout/lib/web-lock";

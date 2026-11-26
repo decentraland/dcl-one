@@ -1,4 +1,5 @@
-import { Entity, Schemas, engine, SyncComponents, NetworkEntity } from '../../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../../packages/@dcl/ecs/dist'
+import { Schemas, engine, SyncComponents, NetworkEntity } from '../../../packages/@dcl/ecs/dist'
 import { engineToCrdt } from '../../../packages/@dcl/sdk/network/state'
 import { serializeCrdtMessages } from '../../../packages/@dcl/sdk/internal/transports/logger'
 

@@ -1,4 +1,4 @@
-import { ILoggerComponent } from '@well-known-components/interfaces'
+import type { ILoggerComponent } from '@well-known-components/interfaces'
 import { styleText } from 'util'
 import { CliError } from '../logic/error'
 

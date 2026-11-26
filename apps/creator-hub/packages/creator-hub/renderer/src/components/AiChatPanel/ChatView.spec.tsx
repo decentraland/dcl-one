@@ -218,6 +218,25 @@ describe('ChatView chat history menu', () => {
       expect(document.activeElement).toBe(window);
     });
   });
+
+  describe('when the creator shares conversations', () => {
+    const note = /doesn't erase what you've shared/;
+    const sessions = [{ id: 's1', title: 'Door', updatedAt: Date.now() }];
+
+    it('should say that deleting a chat keeps what was shared', () => {
+      renderChat({ sessions, sharing: { status: 'on', conversationExcluded: false } });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+
+      expect(screen.getByText(note)).toBeTruthy();
+    });
+
+    it('should not mention sharing to a creator who does not share', () => {
+      renderChat({ sessions, sharing: { status: 'hidden', conversationExcluded: false } });
+      fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+
+      expect(screen.queryByText(note)).toBeNull();
+    });
+  });
 });
 
 describe('ChatView session recorder', () => {
