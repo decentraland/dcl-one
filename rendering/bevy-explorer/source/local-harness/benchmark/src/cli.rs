@@ -163,6 +163,10 @@ pub struct MeasureArgs {
         default_missing_value = "true"
     )]
     pub release_not_measured: Option<String>,
+    /// Extra page parameters for the baseline runs only, appended after --query (e.g.
+    /// bevyVariants=off)
+    #[arg(long = "base-query", env = "BASE_EXTRA_QUERY")]
+    pub base_query: Option<String>,
     /// The runner label that names the report section (runs_on.txt)
     #[arg(long, env = "RUNS_ON_LABEL")]
     pub label: Option<String>,
@@ -187,6 +191,10 @@ pub struct LegArgs {
     /// The latest release's web app
     #[arg(long)]
     pub release: Option<String>,
+    /// Extra page parameters for the baseline runs only, appended after --query (e.g.
+    /// bevyVariants=off)
+    #[arg(long = "base-query", env = "BASE_EXTRA_QUERY")]
+    pub base_query: Option<String>,
     /// The runner label that names the report section
     #[arg(long, env = "RUNS_ON_LABEL")]
     pub label: Option<String>,
@@ -323,6 +331,23 @@ impl Settings {
             }),
         })
     }
+
+    /// These settings with `extra` appended to the page parameters, in place of every parameter
+    /// of a key `extra` also sets.
+    pub(crate) fn with_extra_query(&self, extra: Option<&str>) -> Self {
+        let mut settings = self.clone();
+        if let Some(extra) = extra {
+            let key = |parameter: &str| parameter.split('=').next().unwrap_or_default().to_owned();
+            let extra_keys: Vec<String> = extra.split('&').map(key).collect();
+            let kept = self
+                .query
+                .iter()
+                .flat_map(|query| query.split('&'))
+                .filter(|parameter| !parameter.is_empty() && !extra_keys.contains(&key(parameter)));
+            settings.query = Some(kept.chain([extra]).collect::<Vec<_>>().join("&"));
+        }
+        settings
+    }
 }
 
 /// `decentraland-benchmark/chrome-profile` under the user's local application data
@@ -421,6 +446,50 @@ mod tests {
         assert!(s.profile.ends_with("decentraland-benchmark/chrome-profile"));
         assert_eq!(s.port, DEFAULT_PORT);
         assert_eq!(s.realm, "supportteam.dcl.eth");
+    }
+
+    #[test]
+    fn the_baseline_query_follows_the_shared_one() {
+        let measure = |arguments: &[&str]| match parse(&[&["measure"], arguments].concat()).command
+        {
+            Command::Measure(args) => args,
+            _ => unreachable!(),
+        };
+        let args = measure(&[
+            "--query",
+            "position=1,2",
+            "--base-query",
+            "bevyVariants=off",
+        ]);
+        let settings = Settings::from(&args.machine).unwrap();
+        let base = settings.with_extra_query(given(&args.base_query));
+        assert_eq!(settings.query.as_deref(), Some("position=1,2"));
+        assert_eq!(base.query.as_deref(), Some("position=1,2&bevyVariants=off"));
+        let args = measure(&["--base-query", "bevyVariants=off"]);
+        let settings = Settings::from(&args.machine).unwrap();
+        assert_eq!(
+            settings
+                .with_extra_query(given(&args.base_query))
+                .query
+                .as_deref(),
+            Some("bevyVariants=off")
+        );
+        assert_eq!(settings.with_extra_query(None).query, None);
+        // a key the base query sets replaces the query's
+        let args = measure(&[
+            "--query",
+            "bevyVariants=on&position=1,2",
+            "--base-query",
+            "bevyVariants=off",
+        ]);
+        let settings = Settings::from(&args.machine).unwrap();
+        assert_eq!(
+            settings
+                .with_extra_query(given(&args.base_query))
+                .query
+                .as_deref(),
+            Some("position=1,2&bevyVariants=off")
+        );
     }
 
     #[test]

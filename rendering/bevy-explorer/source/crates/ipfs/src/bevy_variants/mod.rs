@@ -36,6 +36,14 @@
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
 //! preview always shows the deployed files.
 //!
+//! Each deployed texture or `.glb` an entity reads counts once under the entity's content type (scene,
+//! wearable or emote), with variants off too, with whether a variant answered its latest read: a
+//! reload or a colliders-only load of the file replaces its outcome, and a variant that fails to
+//! load leaves it counted as its original. The kind is the first one the entity's manifest was
+//! asked for as, so a scene's emote `.glb` counts as the scene; a smart wearable's scene, read
+//! as `{wearable}-sw-{shape}`, has no kind and is not counted. The session's counts are the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`], measured every
+//! frame.
+//!
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
 //! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
 //! [`IpfsIo::bevy_lod_descriptor`]), and its far LOD, abgen's one simplified mesh for the scene
@@ -60,6 +68,7 @@ use std::{
 
 use bevy::{
     asset::{io::AssetReaderError, AssetLoadFailedEvent},
+    diagnostic::{Diagnostic, DiagnosticPath, Diagnostics, RegisterDiagnostic},
     gltf::Gltf,
     image::CompressedImageFormats,
     prelude::*,
@@ -438,6 +447,51 @@ struct Fallback {
     reason: String,
 }
 
+/// An entity's content type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariantEntityKind {
+    Scene,
+    Wearable,
+    Emote,
+}
+
+impl VariantEntityKind {
+    pub const ALL: [Self; 3] = [Self::Scene, Self::Wearable, Self::Emote];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Scene => "scene",
+            Self::Wearable => "wearable",
+            Self::Emote => "emote",
+        }
+    }
+}
+
+/// An entity kind's reads of files a variant could stand in for (a texture or a `.glb`), and how
+/// many of them a variant answered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VariantLoadCounts {
+    pub load_count: u64,
+    pub variant_load_count: u64,
+}
+
+/// The session's [`VariantLoadCounts`] in [`VariantEntityKind::ALL`] order: per kind, the
+/// diagnostic of its `load_count`, then of its `variant_load_count`.
+pub const VARIANT_LOAD_COUNT_DIAGNOSTICS: [[DiagnosticPath; 2]; 3] = [
+    [
+        DiagnosticPath::const_new("BEVY_VARIANTS_SCENE_LOAD_COUNT"),
+        DiagnosticPath::const_new("BEVY_VARIANTS_SCENE_VARIANT_LOAD_COUNT"),
+    ],
+    [
+        DiagnosticPath::const_new("BEVY_VARIANTS_WEARABLE_LOAD_COUNT"),
+        DiagnosticPath::const_new("BEVY_VARIANTS_WEARABLE_VARIANT_LOAD_COUNT"),
+    ],
+    [
+        DiagnosticPath::const_new("BEVY_VARIANTS_EMOTE_LOAD_COUNT"),
+        DiagnosticPath::const_new("BEVY_VARIANTS_EMOTE_VARIANT_LOAD_COUNT"),
+    ],
+];
+
 #[derive(Default)]
 struct Session {
     disabled: Option<String>,
@@ -454,9 +508,40 @@ struct Session {
     recent: VecDeque<Fallback>,
     /// Models reloading from their original after their `glb` variant failed, and since when.
     reloading: HashMap<PathBuf, web_time::Instant>,
+    /// The kind each entity's manifest was first asked for as, kept with variants off too. Not
+    /// on `IpfsContext.entities`: a manifest can be asked for before the entity's collection is
+    /// added.
+    entity_kinds: HashMap<String, VariantEntityKind>,
+    /// The latest read of each deployed (entity, file) a variant could stand in for.
+    counted_loads: HashMap<(String, String), CountedLoad>,
+    /// `counted_loads` totalled, indexed by `VariantEntityKind as usize`.
+    loads: [VariantLoadCounts; 3],
+}
+
+/// An entity's content file as counted: its entity's kind and whether a variant answered its
+/// latest read.
+#[derive(Clone, Copy, Debug)]
+struct CountedLoad {
+    kind: VariantEntityKind,
+    from_variant: bool,
 }
 
 impl Session {
+    /// Sets the counted outcome of an entity's file, replacing its earlier one in the totals.
+    fn count_load(&mut self, entity: &str, file: &str, load: CountedLoad) {
+        if let Some(earlier) = self
+            .counted_loads
+            .insert((entity.to_owned(), file.to_owned()), load)
+        {
+            let counts = &mut self.loads[earlier.kind as usize];
+            counts.load_count -= 1;
+            counts.variant_load_count -= u64::from(earlier.from_variant);
+        }
+        let counts = &mut self.loads[load.kind as usize];
+        counts.load_count += 1;
+        counts.variant_load_count += u64::from(load.from_variant);
+    }
+
     fn fallback(&mut self, scene: &str, file: &str, format: Option<&str>, reason: String) {
         debug!("bevy variant fallback for `{file}` in {scene}: {reason}");
         self.fallbacks += 1;
@@ -568,6 +653,30 @@ impl BevyVariants {
         }
     }
 
+    fn record_kind(&self, entity: &str, kind: VariantEntityKind) {
+        let mut session = self.session.lock_ignore_poison();
+        if !session.entity_kinds.contains_key(entity) {
+            session.entity_kinds.insert(entity.to_owned(), kind);
+        }
+    }
+
+    /// Counts an entity's deployed file a variant could stand in for under the entity's kind,
+    /// with whether a variant answered this read: a file read again counts once, with its latest
+    /// outcome.
+    fn count_load(&self, entity: &str, file: &str, from_variant: bool) {
+        let mut session = self.session.lock_ignore_poison();
+        let Some(kind) = session.entity_kinds.get(entity).copied() else {
+            return;
+        };
+        session.count_load(entity, file, CountedLoad { kind, from_variant });
+    }
+
+    /// The session's load counts of every entity kind, in [`VariantEntityKind::ALL`] order.
+    pub(crate) fn load_counts(&self) -> [(VariantEntityKind, VariantLoadCounts); 3] {
+        let session = self.session.lock_ignore_poison();
+        VariantEntityKind::ALL.map(|kind| (kind, session.loads[kind as usize]))
+    }
+
     fn is_bad(&self, variant: &str) -> bool {
         self.session.lock_ignore_poison().bad.contains(variant)
     }
@@ -637,6 +746,22 @@ impl BevyVariants {
             return None;
         }
         let served = session.served.remove(path)?;
+        // the variant never rendered: the file counts as its original
+        if let Some(load) = session
+            .counted_loads
+            .get(&(served.scene.clone(), served.file.clone()))
+            .copied()
+            .filter(|load| load.from_variant)
+        {
+            session.count_load(
+                &served.scene,
+                &served.file,
+                CountedLoad {
+                    from_variant: false,
+                    ..load
+                },
+            );
+        }
         session.bad.insert(served.variant.clone());
         session.fallback(
             &served.scene,
@@ -831,9 +956,10 @@ impl IpfsIo {
             .status(web_time::Instant::now())
     }
 
-    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
-    /// no-op when variants are off.
-    pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
+    /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. With
+    /// variants off it only records the entity's kind.
+    pub fn request_bevy_variants(self: &Arc<Self>, entity: &str, kind: VariantEntityKind) {
+        self.bevy_variants.record_kind(entity, kind);
         let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
             return;
         };
@@ -894,8 +1020,31 @@ impl IpfsIo {
         }
     }
 
-    /// The variant's bytes for an entity's content file, or None to read the original.
+    /// The variant's bytes for an entity's content file, or None to read the original; a read of
+    /// a deployed file a variant could stand in for counts under the entity's kind either way.
     pub(crate) async fn read_bevy_variant(
+        self: &Arc<Self>,
+        ipfs_path: &IpfsPath,
+        path: &Path,
+    ) -> Option<VariantRead> {
+        let read = self.variant_read(ipfs_path, path).await;
+        if let (Some(entity), Some(file)) = (ipfs_path.scene_hash(), ipfs_path.content_path()) {
+            let deployed = could_have_variant(file)
+                && self
+                    .context
+                    .read()
+                    .await
+                    .entities
+                    .get(entity)
+                    .is_some_and(|entity| entity.collection.hash(file).is_some());
+            if deployed {
+                self.bevy_variants.count_load(entity, file, read.is_some());
+            }
+        }
+        read
+    }
+
+    async fn variant_read(
         self: &Arc<Self>,
         ipfs_path: &IpfsPath,
         path: &Path,
@@ -1088,7 +1237,10 @@ pub(crate) struct BevyVariantsPlugin;
 
 impl Plugin for BevyVariantsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, detect_gpu_formats);
+        for path in VARIANT_LOAD_COUNT_DIAGNOSTICS.iter().flatten() {
+            app.register_diagnostic(Diagnostic::new(path.clone()));
+        }
+        app.add_systems(Update, (detect_gpu_formats, measure_variant_load_counts));
         app.add_plugins(debug_panel::BevyVariantsDebugPanelPlugin);
     }
 
@@ -1118,6 +1270,19 @@ impl Plugin for BevyVariantsPlugin {
                 ),
             );
         }
+    }
+}
+
+/// Measures the session's load counts into the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`].
+fn measure_variant_load_counts(ipfs: Res<IpfsResource>, mut diagnostics: Diagnostics) {
+    for ((_, counts), [load_count_path, variant_load_count_path]) in ipfs
+        .bevy_variants
+        .load_counts()
+        .iter()
+        .zip(&VARIANT_LOAD_COUNT_DIAGNOSTICS)
+    {
+        diagnostics.add_measurement(load_count_path, || counts.load_count as f64);
+        diagnostics.add_measurement(variant_load_count_path, || counts.variant_load_count as f64);
     }
 }
 

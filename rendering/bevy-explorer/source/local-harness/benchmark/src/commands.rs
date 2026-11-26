@@ -178,7 +178,17 @@ fn measure(args: MeasureArgs, ctx: &Context) -> Result<i32, Failure> {
         (RELEASE_BUILD, app_root(&args.release_dir)?),
     ];
 
-    measure_loop(ctx, &settings, &change, &others, runs, settle, label)?;
+    let base_settings = settings.with_extra_query(given(&args.base_query));
+    measure_loop(
+        ctx,
+        &settings,
+        &base_settings,
+        &change,
+        &others,
+        runs,
+        settle,
+        label,
+    )?;
     if flag(&args.release_not_measured) {
         write_release_not_measured(&settings)?;
     }
@@ -217,9 +227,10 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
         None => None,
     };
 
+    let base_settings = settings.with_extra_query(given(&args.base_query));
     warm_up(ctx, &settings, &change_root, CHANGE_BUILD)?;
     if let Some(base_root) = &base_root {
-        warm_up(ctx, &settings, base_root, BASE_BUILD)?;
+        warm_up(ctx, &base_settings, base_root, BASE_BUILD)?;
     }
     if let Some(root) = release_root.take() {
         release_root = optional_release(
@@ -229,7 +240,16 @@ fn leg(args: LegArgs, ctx: &Context) -> Result<i32, Failure> {
     }
 
     let others = [(BASE_BUILD, base_root), (RELEASE_BUILD, release_root)];
-    measure_loop(ctx, &settings, &change_root, &others, runs, settle, label)?;
+    measure_loop(
+        ctx,
+        &settings,
+        &base_settings,
+        &change_root,
+        &others,
+        runs,
+        settle,
+        label,
+    )?;
     if release_not_measured {
         write_release_not_measured(&settings)?;
     }
@@ -316,10 +336,11 @@ fn warm_up(ctx: &Context, settings: &Settings, root: &Path, build: &str) -> Resu
 
 /// The interleaved loop: change, then each other build given (base, release), and again, a settle
 /// pause after each launch, every run's files renamed to <build>_<i>.csv/.log; then the runner
-/// label the report keys on.
+/// label the report keys on. The base runs take `base_settings`.
 fn measure_loop(
     ctx: &Context,
     settings: &Settings,
+    base_settings: &Settings,
     change_root: &Path,
     others: &[(&str, Option<PathBuf>)],
     runs: u64,
@@ -333,7 +354,12 @@ fn measure_loop(
 
         for (build, root) in others {
             if let Some(root) = root {
-                measure_one(ctx, settings, root, build, i)?;
+                let build_settings = if *build == BASE_BUILD {
+                    base_settings
+                } else {
+                    settings
+                };
+                measure_one(ctx, build_settings, root, build, i)?;
                 ctx.pause(settle)?;
             }
         }

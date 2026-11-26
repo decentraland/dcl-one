@@ -7,6 +7,7 @@ use std::fmt::Write;
 
 use super::exceptions::ExceptionKindCounts;
 use super::fleet;
+use super::perf_summary::VARIANT_ENTITY_KINDS;
 use super::stats::{
     self, FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
     SessionsNotComparable, CPU_HICCUPS_METRIC, EXCEPTIONS_METRIC, FRAME_TIME_METRICS,
@@ -14,6 +15,7 @@ use super::stats::{
 };
 use super::{
     BuildBenchmarkRunsStatistics, MeasuredRuns, ReportOptions, RunnerCaveat, RunnerSection,
+    VariantLoadSums,
 };
 
 /// `intel-i5-chrome` is "Intel Core i5 (Chrome)": the parentheses keep the headline's ", " list
@@ -119,11 +121,12 @@ pub fn legend(expected_runs: u64, release: bool) -> String {
          {release_bullet}\
          - **🟢 faster / 🔴 slower** — a difference that passed every check: the runs are fully separated (every run of one build faster than every run of the other), and the median difference is at least **{lambda:.0}%** and at least **{min_ms} ms**.\n\
          - **⚪ within noise** — the builds' runs overlap, or the difference is tiny; it cannot be told apart from random variation. Treat it as no change.\n\
-         - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.\n\
+         - **— informational** — shown for context, never with a verdict: the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; the variant load rows compare shares of different read counts.\n\
          - **⚠️ no verdict** — the two builds' sessions were not comparable (very different sample counts, or too few usable runs), so no conclusion is drawn from them.\n\
          - **Exceptions per run** — the average number of exceptions in a run's log, not counting teardown ones logged while the app quits. Flagged only on a difference of at least {delta_min} per run and {ratio_min}× the other build; exception kinds the baseline never threw are called out under the table. The *Exception breakdown* groups all of them by the explorer's report category and exception type (as totals across the runs).\n\
          - **Hiccups per run / Peak memory** — from the `perf_summary` lines an explorer writes when its measured phase ends: frames over its hiccup threshold (the larger of 50 ms and two target frame times) and the peak engine memory. Hiccups follow the exceptions rule, given fully separated run ranges and the same hiccup threshold in both builds (⚠️ no verdict when the thresholds differ); memory the frame-time rule with a floor of {min_mib} MiB. The *Top scopes* list is the self time per run of the scopes the explorer's profiler recorded. Shown only when a run wrote them.\n\
          - **Time to world / First ring ready** — from the run's log: the seconds from app start to arriving in world, and from the spawn scene's spawn to it and every scene within one parcel of the player being ready. They follow the frame-time rule with a floor of {min_load_s} s, and need 2 runs of each build that logged the value. Shown only when a run logged them.\n\
+         - **Scene / Wearable / Emote loads from variants** — from the `perf_summary` lines: each content type's textures and `.glb` models the session read, and the share a Bevy variant answered, summed over the build's runs. Each build's share is of its own reads, so the rows have no Δ. Shown only when a run wrote the counts.\n\
          - A run that logged **unusually many exceptions** (at least {outlier_min} and {outlier_factor}× the median of its build's runs — e.g. a service was down during it) is excluded from all numbers and called out under the table.\n\
          - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.\n\
          </details>\n\
@@ -219,6 +222,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     frame_time_verdict_text(comparison.load_time_verdicts[m])
                 );
             }
+            out += &variant_load_rows(Some(base), change);
         }
         None => {
             out += "| Metric | |\n";
@@ -259,6 +263,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     );
                 }
             }
+            out += &variant_load_rows(None, change);
         }
     }
 
@@ -491,6 +496,52 @@ fn frame_time_cell(aggregate: &MedianAndRange) -> String {
     }
 }
 
+/// A row per content type whose Bevy variant load counts a build's summaries hold: each build's
+/// share of its own reads, for context, never with a Δ or a verdict.
+fn variant_load_rows(
+    base: Option<&BuildBenchmarkRunsStatistics>,
+    change: &BuildBenchmarkRunsStatistics,
+) -> String {
+    let mut out = String::new();
+    for (k, (_, kind)) in VARIANT_ENTITY_KINDS.iter().enumerate() {
+        let base_loads = base.and_then(|base| base.variant_loads[k]);
+        let change_loads = change.variant_loads[k];
+        if base_loads.is_none() && change_loads.is_none() {
+            continue;
+        }
+        let name = format!("{kind} loads from variants");
+        // no Δ: a `glb` variant's embedded images stand in for texture reads the original model
+        // makes, so the builds' read counts differ
+        let _ = if base.is_some() {
+            writeln!(
+                out,
+                "| {name} | {} | {} |  | — informational |",
+                variant_loads_cell(base_loads),
+                variant_loads_cell(change_loads)
+            )
+        } else {
+            writeln!(out, "| {name} | {} |", variant_loads_cell(change_loads))
+        };
+    }
+    out
+}
+
+/// `40% (120 of 300)`; `no reads` without reads.
+fn variant_loads_cell(loads: Option<VariantLoadSums>) -> String {
+    let Some(loads) = loads else {
+        return "-".to_owned();
+    };
+    if loads.load_count_sum == 0 {
+        return "no reads".to_owned();
+    }
+    format!(
+        "{:.0}% ({} of {})",
+        loads.variant_load_count_sum as f64 / loads.load_count_sum as f64 * 100.0,
+        loads.variant_load_count_sum,
+        loads.load_count_sum
+    )
+}
+
 /// Scopes the breakdown lists.
 const TOP_SCOPES_SHOWN: usize = 15;
 
@@ -663,6 +714,38 @@ fn decimal(hundredths: u128) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_variant_load_rows_show_each_builds_share_and_never_a_verdict() {
+        let sums = |load_count_sum, variant_load_count_sum| {
+            Some(VariantLoadSums {
+                load_count_sum,
+                variant_load_count_sum,
+            })
+        };
+        let stats = |variant_loads| {
+            let mut stats = super::super::build_benchmark_runs_statistics(&[]);
+            stats.variant_loads = variant_loads;
+            stats
+        };
+        let change = stats([sums(300, 120), sums(0, 0), sums(4, 4)]);
+        let base = stats([sums(400, 0), sums(0, 0), None]);
+        assert_eq!(
+            variant_load_rows(Some(&base), &change),
+            "| Scene loads from variants | 0% (0 of 400) | 40% (120 of 300) |  | — informational |\n\
+             | Wearable loads from variants | no reads | no reads |  | — informational |\n\
+             | Emote loads from variants | - | 100% (4 of 4) |  | — informational |\n"
+        );
+        // the change alone: its column only; a kind neither build holds has no row
+        assert_eq!(
+            variant_load_rows(None, &stats([sums(1, 1), None, None])),
+            "| Scene loads from variants | 100% (1 of 1) |\n"
+        );
+        assert_eq!(
+            variant_load_rows(Some(&stats([None; 3])), &stats([None; 3])),
+            ""
+        );
+    }
 
     #[test]
     fn labels_name_the_machine_and_chrome() {

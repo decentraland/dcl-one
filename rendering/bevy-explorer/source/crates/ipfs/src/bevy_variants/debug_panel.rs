@@ -25,6 +25,10 @@ impl Plugin for BevyVariantsDebugPanelPlugin {
                     ),
                     ("Scene manifests", "manifests"),
                     ("Variants served (downloaded / from cache)", "served"),
+                    (
+                        "Texture and model reads from a variant, by content type",
+                        "loadsByKind",
+                    ),
                     ("Variants served by format", "servedByFormat"),
                     ("Fallbacks to the original", "fallbacks"),
                     (
@@ -83,6 +87,20 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         .collect();
     manifests.sort();
 
+    let loads_by_kind = variants
+        .load_counts()
+        .iter()
+        .map(|(kind, counts)| {
+            format!(
+                "{}: {} of {}",
+                kind.name(),
+                counts.variant_load_count,
+                counts.load_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let session = variants.session.lock_ignore_poison();
     let state = match (variants.base(), &session.disabled, variants.bc.get()) {
         (None, _, _) => "off".to_owned(),
@@ -111,6 +129,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         "manifestCounts": counts,
         "manifests": (!manifests.is_empty()).then(|| manifests.join("\n")),
         "served": [session.downloaded, session.cached],
+        "loadsByKind": loads_by_kind,
         "servedByFormat": (!session.served_by_format.is_empty()).then(|| {
             session
                 .served_by_format

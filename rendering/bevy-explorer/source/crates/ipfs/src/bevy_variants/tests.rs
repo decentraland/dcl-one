@@ -261,7 +261,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
 #[tokio::test]
 async fn variants_are_off_by_default() {
     let (io, dir) = io_with_cache("off");
-    io.request_bevy_variants(SCENE);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
     assert!(io.bevy_variants.manifests.lock_ignore_poison().is_empty());
     let path = content_path("tex.png");
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
@@ -274,7 +274,7 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
     let (mut io, dir) = io_with_cache("preview");
     Arc::get_mut(&mut io).unwrap().is_preview = true;
     io.set_bevy_variants_base("https://abgen.example");
-    io.request_bevy_variants(SCENE);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
     let mut state = io.bevy_variants.manifest(SCENE).unwrap();
     let state = state
         .wait_for(|state| !matches!(state, ManifestState::Pending))
@@ -576,6 +576,125 @@ async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A deployed scene with `files`, all of the same original.
+async fn deployed_scene(io: &Arc<IpfsIo>, files: &[&str]) {
+    io.context.write().await.entities.insert(
+        SCENE.to_owned(),
+        IpfsEntity {
+            collection: ContentMap::from_content(
+                files
+                    .iter()
+                    .map(|file| ((*file).to_owned(), ORIGINAL_CID.to_owned())),
+            ),
+            metadata: None,
+        },
+    );
+}
+
+/// Whether a variant answered the read of the scene's `file`.
+async fn read_variant(io: &Arc<IpfsIo>, file: &str) -> bool {
+    let path = content_path(file);
+    let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
+    io.read_bevy_variant(&ipfs_path, &path).await.is_some()
+}
+
+fn counts(load_count: u64, variant_load_count: u64) -> VariantLoadCounts {
+    VariantLoadCounts {
+        load_count,
+        variant_load_count,
+    }
+}
+
+/// A scene whose `tex.png` has a BC7 variant served beside its original; the texture's path.
+async fn scene_with_served_texture(label: &str) -> (Arc<IpfsIo>, PathBuf, PathBuf) {
+    let (io, dir) = io_with_cache(label);
+    let (ktx2, cid) = bc7_variant();
+    let (base, _log) = serve(vec![
+        (format!("/{}", served_path(&cid)), ktx2),
+        (
+            format!("/contents/{ORIGINAL_CID}"),
+            b"original png".to_vec(),
+        ),
+    ])
+    .await;
+    scene_with_variant(&io, &base, &cid).await;
+    (io, dir, content_path("tex.png"))
+}
+
+/// With variants off, each deployed file a variant could stand in for counts under its entity's
+/// kind as an original; other files do not count.
+#[tokio::test]
+async fn with_variants_off_a_deployed_texture_counts_as_an_original() {
+    let (io, dir) = io_with_cache("load-counts-off");
+    deployed_scene(&io, &["tex.png", "other.png", "main.js"]).await;
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    assert!(!read_variant(&io, "tex.png").await);
+    assert!(!read_variant(&io, "other.png").await);
+    assert!(!read_variant(&io, "main.js").await);
+    assert_eq!(
+        io.bevy_variants.load_counts(),
+        [
+            (VariantEntityKind::Scene, counts(2, 0)),
+            (VariantEntityKind::Wearable, VariantLoadCounts::default()),
+            (VariantEntityKind::Emote, VariantLoadCounts::default()),
+        ]
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A file name the entity did not deploy never counts.
+#[tokio::test]
+async fn a_file_the_entity_did_not_deploy_does_not_count() {
+    let (io, dir) = io_with_cache("load-counts-undeployed");
+    deployed_scene(&io, &["tex.png"]).await;
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    assert!(!read_variant(&io, "missing.png").await);
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(0, 0));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// An entity's reads count only once its kind is known, under the first kind asked for.
+#[tokio::test]
+async fn reads_count_under_the_first_kind_asked_for() {
+    let (io, dir, path) = scene_with_served_texture("load-counts-kind").await;
+    read_all(&io, &path).await;
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(0, 0));
+    io.request_bevy_variants(SCENE, VariantEntityKind::Wearable);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    read_all(&io, &path).await;
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(0, 0));
+    assert_eq!(io.bevy_variants.load_counts()[1].1, counts(1, 1));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A file read again, as a reload or a colliders-only load reads it, counts once.
+#[tokio::test]
+async fn a_file_read_again_counts_once() {
+    let (io, dir, path) = scene_with_served_texture("load-counts-reread").await;
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    read_all(&io, &path).await;
+    read_all(&io, &path).await;
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(1, 1));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A variant that fails to load leaves its file counted as the original, which the reload
+/// reads.
+#[tokio::test]
+async fn a_failed_variant_counts_its_file_as_the_original() {
+    let (io, dir, path) = scene_with_served_texture("load-counts-failed").await;
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    read_all(&io, &path).await;
+    assert!(io
+        .bevy_variants
+        .decode_failed(&path, "x", &["ktx2-bc"])
+        .is_some());
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(1, 0));
+    assert_eq!(read_all(&io, &path).await, b"original png");
+    assert_eq!(io.bevy_variants.load_counts()[0].1, counts(1, 0));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Wearables and emotes register their entity with the catalyst's content url as its own base
 /// (`collectibles::request_collectibles`) and request its manifest as a scene does: the
 /// manifest is fetched from the variants base and the entity's files read as their variants.
@@ -636,7 +755,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     io.set_bevy_variants_base(&base);
     let _ = io.bevy_variants.bc.set(true);
 
-    io.request_bevy_variants(WEARABLE);
+    io.request_bevy_variants(WEARABLE, VariantEntityKind::Wearable);
     // A read waits for the manifest only until its deadline, then reads the original. The
     // deadline has its own test; this one reads after the manifest is there.
     let mut manifest = io.bevy_variants.manifest(WEARABLE).unwrap();
