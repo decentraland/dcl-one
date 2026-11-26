@@ -9665,6 +9665,10 @@
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
+      "sha256": "2858c028e60a766abcb43bcefc9abafb4b68136bc1e86e3b5d56e19af2916dce"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
       "sha256": "db397fc04bacb8259322faebed4fb992af1c65611916c5ddfa088e6757d5ebba"
     },
@@ -9941,6 +9945,10 @@
       "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
+      "sha256": "1ceb411fa61c5e8b7d56c2ad561d8692561a5c7b85c92f666bfc3ebe41819719"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
@@ -10082,7 +10090,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "7aa0e07e3c864d9fc70fe659c5dc977046ff4f81eb372d56acbc0af151613927"
+      "sha256": "2dabe9e28d6f3dcecc6a4fc86c7b700832931e23430c5be862ca0fa6054f1c6c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10151,6 +10159,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
@@ -10238,7 +10247,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "929660a2025341063297a8322c6b6d3eb6b991a5efec4e7d970c0b640f3eb27f"
+      "sha256": "01cd48d2523c82b8322985d1c73eac5c55b1bbbe5c899ad55370e49ee3d86d18"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10250,7 +10259,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockSwitches.ts",
-      "sha256": "a5d884dbb337003c8a30d535d091744fcb33d25c64f4a9a7be6121ad1692c08d"
+      "sha256": "61689481212b3b84e6ccf25b1621158b52de2fbb47ac86211d39c3aef233d5d0"
     },
     {
       "path": "library/explorer-core/engine/nameColor.test.ts",
@@ -10278,7 +10287,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "42b3577d4f707ecbc7b84ee5826e431e7ff322efd5556233b84c4ad0d67deea1"
+      "sha256": "d253ae22e3bb7feb9f4bec40829a181ca19d806ed1d3b8119e0adfe3d5ce5f28"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10378,7 +10387,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "16d88f89ad87c847f7f16c3f74efac6ee6378149ae9515282c1aee836ad8a22e"
+      "sha256": "21316003c0a94979682a6f3842c68784fb015052da0e8bd313406a5185261b6d"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
@@ -13874,7 +13883,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "20699c52913dccd7e6ffdd4e875408b2c01c892ae02afe073c5c8501ca1e6918"
+      "sha256": "b99d25fd5b0b7af07db14d4e1a20c7a4808fefe4fb16a5824dace337bbf19e61"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -13898,7 +13907,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "sha256": "128e7eeefbb2fa2019f20cdd70864c64a8558fd4c14c6b86e1493a4ea05777e5"
+      "sha256": "2b16cd31d13602bd813c689f02c524f5d6843d165d025a3d4f34c395f238e3ae"
     },
     {
       "path": "library/ui/apps/hud/features/settings/askBeforeLeaving.ts",
@@ -13970,11 +13979,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
-      "sha256": "dca6cbcfc2cacbd8747a86eea95202d53f117bb6b55bc9246760d18dec54332b"
+      "sha256": "7bcf0cd03ab4cd2fd3a23ac7a90ff045b579df0de3e791fe71b11fd6aa9fe854"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "ebf3a64b2ec6b28cb2035aa5b960a655e4044868fdbcf0a1f22b37785c1660a1"
+      "sha256": "b4ec6e0e6da967b6cffd766634837946f65e9139bafae04c724534771ee16269"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -14222,7 +14231,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "27f050a8dd94c3120a01d5ac543f83f0fcebc701ee3f634cc1536893dbbbc0c0"
+      "sha256": "b61c62674f62d5e68d57ae0704a41ae62de3067a194d6b7c874d480d2a09dbd0"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -14646,7 +14655,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "38db3d4beec64802b3263c1a9fa03709cbd52efe4e337cff463a111f2d55292d"
+      "sha256": "f94952f4edcae9b03179db9d739b48ee33194f586c515d37b373b22d1e84a4d9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",

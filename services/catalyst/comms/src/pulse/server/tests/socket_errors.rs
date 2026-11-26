@@ -214,6 +214,8 @@ enum Operation {
 /// Errors that concern one datagram, as each operating system reports them (see the transport's
 /// `ReadySocket`): the expected `kind` label is written out by hand.
 fn per_datagram_errors() -> Vec<(Operation, Error, &'static str)> {
+    // Only the Windows-specific errors extend the list.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut errors = vec![
         // A peer vanished: the ICMP port unreachable its closed port sent back.
         (

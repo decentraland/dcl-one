@@ -580,16 +580,17 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   // exactly what the scene has (a configured value, a disabled LightSource as
   // disabled, and nothing for a component it never set) and run the clock again,
   // which hands the time of day back to the scene's SkyboxTime or scene.json fixed
-  // time. The engine's `/time` with speed 0 overrides those, so the pin needs
-  // nothing else. Pause holds the clock at the time the sky shows (see
-  // holdSceneClock) and leaves the scene's lighting in place.
+  // time. A scene's time beats the engine's clock unless `/time` is given `--force`,
+  // so the pin passes it; any later `/time` that sets a time or a speed ends it.
+  // Pause holds the clock at the time the sky shows (see holdSceneClock) and leaves
+  // the scene's lighting in place.
   //
   // The scene's values come from the engine snapshot (scene code writes most of
   // them in main()). A root lighting component edited in the inspector since load
   // uses the editor's value, or stays unset if it was removed: such an edit is
   // saved at once, but while stopped it only reaches the viewport on Play.
   const ROOT_ENTITY = 0 as Entity;
-  const EDITOR_CLOCK = ['12', '0'];
+  const EDITOR_CLOCK = ['12', '0', '--force'];
   // Each edited component with the serial of its last edit. A reload clears the
   // marks of edits made before it started: they were saved by then, so the
   // reloaded scene starts from them and its code may set its own on top. An edit
@@ -654,8 +655,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   };
   // Pause: stop the day cycle where the sky is. `/time` with no arguments replies
   // with the current time in seconds (`elapsed: <s>`), and speed 0 holds it there.
-  // That also overrides a scene's own fixed time, with the same value, until Play
-  // resumes the clock and hands the sky back to the scene.
+  // A scene's own fixed time keeps the sky, at that same value, unless the player's "Allow
+  // overriding scene controls" setting is on: the stopped clock then holds it, at that value too.
   const holdSceneClock = () => {
     enqueue(ROOT_ENTITY, async () => {
       try {

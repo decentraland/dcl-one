@@ -246,14 +246,14 @@ fn spend_claim(claimer: &str, owner: &str) {
 /// Owners with a claim in flight on this node. One claim per owner runs at a
 /// time, so the owner's budget is read and spent atomically; a concurrent
 /// claim is refused at once instead of queueing on a pooled connection.
-static CLAIMS_IN_FLIGHT: LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+static CLAIMS_IN_FLIGHT: LazyLock<parking_lot::Mutex<std::collections::HashSet<String>>> =
     LazyLock::new(Default::default);
 
 struct ClaimSlot(String);
 
 impl ClaimSlot {
     fn take(owner: &str) -> Option<Self> {
-        let mut owners = CLAIMS_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owners = CLAIMS_IN_FLIGHT.lock();
         owners
             .insert(owner.to_string())
             .then(|| Self(owner.to_string()))
@@ -262,7 +262,7 @@ impl ClaimSlot {
 
 impl Drop for ClaimSlot {
     fn drop(&mut self) {
-        let mut owners = CLAIMS_IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut owners = CLAIMS_IN_FLIGHT.lock();
         owners.remove(&self.0);
     }
 }
