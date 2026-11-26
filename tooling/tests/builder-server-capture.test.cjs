@@ -339,6 +339,26 @@ test('the offline guard refuses an http request to an address outside loopback',
   assert.deepEqual(JSON.parse(result.stdout), { error: 'capture is offline: 192.0.2.10:8080', refused: ['192.0.2.10:8080'] })
 })
 
+test('the offline guard lets a socket connect to a loopback port with only a callback', () => {
+  const program = `
+    const net = require('node:net')
+    const { refused } = require(${JSON.stringify(guard)})
+    const server = net.createServer(socket => socket.end()).listen(0, () => {
+      const socket = new net.Socket().on('error', error => {
+        server.close()
+        console.log(JSON.stringify({ error: error.message, refused }))
+      })
+      socket.connect(server.address().port, () => {
+        socket.destroy()
+        server.close()
+        console.log(JSON.stringify({ connected: true, refused }))
+      })
+    })
+  `
+  const result = spawnSync(process.execPath, ['-e', program], { encoding: 'utf8' })
+  assert.deepEqual(JSON.parse(result.stdout), { connected: true, refused: [] })
+})
+
 test('the offline guard refuses to start under a proxy, in any spelling', () => {
   for (const [name, value] of [['HTTPS_PROXY', 'http://127.0.0.1:9'], ['http_proxy', 'http://127.0.0.1:9'], ['NODE_USE_ENV_PROXY', '1']]) {
     const env = { ...process.env, [name]: value, NODE_OPTIONS: `--require=${guard}` }
