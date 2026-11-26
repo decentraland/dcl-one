@@ -540,18 +540,13 @@ async fn drain(
         let (metas, wait) = {
             let mut snap = catalogue::read_snapshot(pool).await?;
             let metas = Metas::fetch(&mut snap, links, source, net, &rows).await?;
-            let wait = match source {
-                Source::Mint | Source::BidAccepted => Some(
-                    ItemWait::read(
-                        &mut snap,
-                        net,
-                        links.chain(source, net),
-                        DateTime::from_timestamp(now, 0).unwrap_or_default(),
-                    )
-                    .await?,
-                ),
-                _ => None,
-            };
+            let wait = ItemWait::read(
+                &mut snap,
+                net,
+                links.chain(source, net),
+                DateTime::from_timestamp(now, 0).unwrap_or_default(),
+            )
+            .await?;
             (metas, wait)
         };
         let mut batch: Vec<NewNotification> = Vec::with_capacity(rows.len());
@@ -612,31 +607,34 @@ async fn drain(
     Ok(emitted)
 }
 
-/// A sales-index row whose item the catalogue lacks waits, as the badge
-/// processor's do, while [`ItemWait::awaited`].
+/// A row waits while [`ItemWait::awaited`]: under the mirrors, a
+/// sales-index row whose item they lack, as the badge processor's do; on a
+/// network the collections index owns, every row with an asset the
+/// publication does not cover yet, since its description (a mint's creator
+/// is its recipient) must come from a published row.
 fn waits_for_item(
     source: Source,
     row: &LogRow,
     metas: &Metas,
-    wait: Option<ItemWait>,
+    wait: ItemWait,
     links: &Links,
     now: i64,
 ) -> bool {
-    if !matches!(source, Source::Mint | Source::BidAccepted) {
-        return false;
-    }
     let Some((nft, contract, value)) = wanted(source, row) else {
         return false;
     };
-    metas.get(nft, contract, value).is_none()
-        && wait.is_some_and(|w| {
-            w.awaited(
-                links.items_mirror_enabled,
-                row.block_number,
-                row.block_time,
-                now,
-            )
-        })
+    let described = metas.get(nft, contract, value).is_some();
+    let waits_under_mirror = matches!(source, Source::Mint | Source::BidAccepted);
+    match wait {
+        ItemWait::Mirror(_) if !waits_under_mirror => false,
+        _ => wait.awaited(
+            links.items_mirror_enabled,
+            described,
+            row.block_number,
+            row.block_time,
+            now,
+        ),
+    }
 }
 
 /// One pass's result: notifications inserted and the indexes not published yet.
@@ -1243,6 +1241,78 @@ mod tests {
             (110, 0),
             "passed"
         );
+    }
+
+    /// On a network the collections index owns, a rewind leaves the item
+    /// rows in place while it withdraws the publication. A store mint whose
+    /// row names creator A then waits; republished with creator B, B alone
+    /// hears of the sale.
+    #[tokio::test]
+    async fn on_an_owned_network_a_withdrawn_row_never_picks_the_recipient() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        const OTHER_CREATOR: &str = "0x00000000000000000000000000000000000000c9";
+        let links = Links {
+            marketplace: "https://market.example".into(),
+            land_images: "https://api.example".into(),
+            items_mirror_enabled: true,
+            trade_chains: (1, 137),
+        };
+        let token = ((alloy_primitives::U256::from(5u32) << 216usize)
+            | alloy_primitives::U256::from(1u32))
+        .to_string();
+        publish_sales(&pool, 100).await;
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        run_once(&pool, &links, Utc::now()).await.unwrap();
+        add_item(&pool, COLLECTION, 5, CREATOR, "wearable_v2", "7", "Cap").await;
+        sale_event(
+            &pool,
+            mint(
+                110,
+                0,
+                COLLECTION,
+                &token,
+                "5",
+                Some("7000000000000000000"),
+                1,
+            ),
+        )
+        .await;
+        publish_sales(&pool, 120).await;
+        let recipients = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT address FROM social.notifications WHERE type = $1 ORDER BY address",
+            )
+            .bind(KIND_ITEM_SOLD)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Published through 110, then rewound: the row stays, the mint waits.
+        owning::own(&pool, "matic", 137, 110, 60).await;
+        owning::rewind(&pool, "matic").await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            0
+        );
+        assert!(recipients().await.is_empty(), "held while withdrawn");
+
+        // The new branch's fold names another creator.
+        sqlx::query("UPDATE shop.items SET creator = $1 WHERE contract_address = $2")
+            .bind(OTHER_CREATOR)
+            .bind(COLLECTION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        owning::own(&pool, "matic", 137, 110, 60).await;
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            1
+        );
+        assert_eq!(recipients().await, [OTHER_CREATOR]);
     }
 
     /// The sales index's store mints tell each creator once per transaction

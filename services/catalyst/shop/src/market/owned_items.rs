@@ -35,7 +35,9 @@
 //! [`Publications`] it was read under, so a hit serves only while the same
 //! publication stands: a rewind withdraws it (and the read fails closed),
 //! and the refill publishes another, under which the old branch's answer is
-//! never found.
+//! never found. An inventory's key also holds the catalogue copy its items
+//! were named from (the gate's snapshot reads it), so a republication of the
+//! catalogue alone misses it too.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
@@ -49,7 +51,7 @@ use sqlx::{PgConnection, PgPool, Postgres, Row, Transaction};
 
 use crate::shared::cache::TtlMap;
 
-use super::catalogue::{self, NetworkState, Purpose};
+use super::catalogue::{self, CatalogueCopies, NetworkState, Purpose};
 use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, READY_WINDOW};
 use super::nft_index::Catalogue;
 use super::{MarketplaceState, Source, is_valid_eth_address, unavailable};
@@ -87,6 +89,11 @@ pub type OwnedTokens = HashMap<String, HashMap<String, Vec<String>>>;
 pub struct Publications {
     pub ethereum: Option<(i64, NaiveDateTime)>,
     pub matic: Option<(i64, NaiveDateTime)>,
+    /// For a read that names its items from the catalogue (an inventory),
+    /// the catalogue copy of each network it read them from
+    /// ([`Publications::naming`]), so a republication of the catalogue alone
+    /// gives the memo a new key.
+    pub catalogue: Option<CatalogueCopies>,
 }
 
 impl Publications {
@@ -109,6 +116,15 @@ impl Publications {
             }
         }
         Ok(out)
+    }
+
+    /// These publications, and the catalogue copies `conn`'s snapshot sees:
+    /// the key of an answer that names its items from the catalogue.
+    pub async fn naming(self, conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            catalogue: Some(CatalogueCopies::read(conn).await?),
+            ..self
+        })
     }
 
     /// [`Publications::read`] for a memo's lookup key. A fill is filed under
@@ -334,12 +350,13 @@ pub async fn snapshot(
 }
 
 /// A passed inventory gate: the snapshot the gate was checked on, which
-/// [`owned_copies`] reads the rows from. One request opens one.
+/// [`owned_copies`] reads the rows from, and what that snapshot sees of the
+/// nft index and the catalogue. One request opens one.
 pub struct Gate(Transaction<'static, Postgres>, Publications);
 
 impl Gate {
-    /// The publications the gate's snapshot sees: the key of every memo of
-    /// an answer read on it.
+    /// The publications and catalogue copies the gate's snapshot sees: the
+    /// key of every memo of an answer read on it.
     pub fn publications(&self) -> Publications {
         self.1
     }
@@ -369,7 +386,10 @@ pub async fn require_inventory(
             true,
         )
         .await?;
-        let publications = Publications::read(&mut tx, catalogue).await?;
+        let publications = Publications::read(&mut tx, catalogue)
+            .await?
+            .naming(&mut tx)
+            .await?;
         Ok::<_, ReadError>(Gate(tx, publications))
     };
     gate.await.map_err(|e| {

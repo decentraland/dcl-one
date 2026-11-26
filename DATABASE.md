@@ -3489,14 +3489,25 @@ its own mirror check:
   price, in one statement (the guards and the resolver share it, so they
   never judge one item on different facts);
 - descriptive: the inventories' and NFT pages' item check
-  (`owned_items::check`, in the read's snapshot);
-- the sale, bid and royalty notices' item wait (`catalogue::ItemWait`). A
-  sale of an item the catalogue lacks waits until the index's publication
-  covers the sale's block, because every item added by then is in the
-  catalogue and a missing one never comes. Under the mirrors it waits until a
-  complete items pass an hour after the sale. Either way it never waits past
-  a day. The sale's description and its wait come from one snapshot (the
-  royalty notices' from the statement that joins the items).
+  (`owned_items::check`, in the read's snapshot). An inventory memo (an
+  owner's copies, the by-owner answer, the backpack) and the nft leg of
+  `/v1/prices` are keyed by the catalogue copy their snapshot read
+  (`catalogue::CatalogueCopies`: the index's projection generation, or the
+  mirrors' passes) beside the nft index's publications, so a republication
+  of the catalogue alone misses them;
+- the sale, bid and royalty notices' wait (`catalogue::ItemWait`).
+  - On an owned network, every sale waits until the index's publication
+    covers its block, and so does a bid on a contract the catalogue does not
+    list yet. Every collection and item added by then is in the catalogue,
+    so a missing one never comes; a row read before then may be a rewound
+    branch's, so it never picks a recipient.
+  - Under the mirrors, only a sale whose item has no row waits, until a
+    complete items pass an hour after the sale; a bid on an unlisted
+    contract never waits.
+  - Either way, nothing waits past a day.
+  - A sale's description, its collection membership and its wait come from
+    one snapshot (the royalty notices' from the statement that joins the
+    items).
 
 While the index refuses:
 - the relay, the item order and the coupon answer 503 with the index's

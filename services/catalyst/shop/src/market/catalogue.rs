@@ -634,25 +634,32 @@ impl ItemWait {
         Self::from_row(&row, chain, now)
     }
 
-    /// Whether a sale at `block_number` and `block_time` whose item is not in
-    /// the catalogue still waits at `now` (unix seconds):
-    /// - the mirrors: while the items mirror runs and no complete pass ran
-    ///   an hour after the sale ([`item_awaited`]);
-    /// - the index: until its publication covers the sale's block (every
-    ///   item added by then is in the catalogue, so a missing one never
-    ///   comes).
+    /// Whether a sale at `block_number` and `block_time` still waits at `now`
+    /// (unix seconds) for the catalogue to describe its item (`described`:
+    /// the catalogue holds a row of it now):
+    /// - the mirrors: only a sale whose item has no row, while the items
+    ///   mirror runs and no complete pass ran an hour after the sale
+    ///   ([`item_awaited`]);
+    /// - the index: every sale, until its publication covers the sale's
+    ///   block. Every item added by then is in the catalogue, so a missing
+    ///   one never comes; and a row read while the index refuses (a rewind
+    ///   leaves the rows in place) may be the discarded branch's, so it never
+    ///   picks a recipient.
     ///
     /// Either way, never past [`ITEM_HOLD_MAX_SECS`], so a stalled source
     /// never freezes a cursor.
     pub fn awaited(
         self,
         mirror_enabled: bool,
+        described: bool,
         block_number: i64,
         block_time: i64,
         now: i64,
     ) -> bool {
         match self {
-            ItemWait::Mirror(pass) => item_awaited(mirror_enabled, pass, block_time, now),
+            ItemWait::Mirror(pass) => {
+                !described && item_awaited(mirror_enabled, pass, block_time, now)
+            }
             ItemWait::Index(covered) => {
                 now.saturating_sub(block_time) < ITEM_HOLD_MAX_SECS
                     && !covered.is_some_and(|b| b >= block_number)
@@ -671,15 +678,61 @@ pub async fn read_snapshot(pool: &sqlx::PgPool) -> sqlx::Result<Transaction<'sta
     Ok(tx)
 }
 
-/// The networks' states in the snapshot `tx` holds.
-async fn read_states(
-    tx: &mut Transaction<'static, Postgres>,
-) -> Result<Vec<NetworkState>, sqlx::Error> {
+/// The copy a network's catalogue rows come from: the index's projection,
+/// by its generation (every projection raises it, a same-height repair and a
+/// hand-back too, so it is never reused), or the mirrors' passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CatalogueCopy {
+    Index {
+        generation: i64,
+    },
+    Mirror {
+        collections: Option<NaiveDateTime>,
+        items: Option<NaiveDateTime>,
+    },
+}
+
+/// The copy of each network's catalogue a snapshot sees: part of the key of
+/// a memo whose answer joins catalogue rows outside the gate, so a
+/// republication of the catalogue alone gives a new key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct CatalogueCopies {
+    pub ethereum: Option<CatalogueCopy>,
+    pub matic: Option<CatalogueCopy>,
+}
+
+impl CatalogueCopies {
+    /// The copies `conn`'s snapshot sees.
+    pub async fn read(conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
+        let mut out = Self::default();
+        for s in read_states(conn).await? {
+            let copy = if s.owned {
+                CatalogueCopy::Index {
+                    generation: s.generation,
+                }
+            } else {
+                CatalogueCopy::Mirror {
+                    collections: s.collections_pass,
+                    items: s.items_pass,
+                }
+            };
+            match s.network.as_str() {
+                "ethereum" => out.ethereum = Some(copy),
+                "matic" => out.matic = Some(copy),
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// The networks' states in the snapshot `conn` holds.
+async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx::Error> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {STATE_COLUMNS} FROM unnest(ARRAY['ethereum', 'matic']) AS n(network) {}",
         *STATE_JOINS
     )))
-    .fetch_all(&mut **tx)
+    .fetch_all(conn)
     .await?;
     rows.iter().map(NetworkState::from_row).collect()
 }

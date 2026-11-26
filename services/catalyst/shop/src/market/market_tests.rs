@@ -4421,6 +4421,73 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
     own.drop().await;
 }
 
+/// An inventory memo is filed under the catalogue copy its items were named
+/// from, read in the gate's snapshot: on a network the collections index
+/// owns, a republication of the catalogue alone (an item renamed at the same
+/// nft publication) misses a warm memo: the gate's publications, which also
+/// key the by-owner answer and the backpack, change with it.
+#[tokio::test]
+async fn a_warm_inventory_follows_a_catalogue_only_republication() {
+    use super::catalogue::owning;
+    use super::owned_items::{owned_copies, require_inventory, test_support};
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 9);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', '{c}', 0, 137, 'wearable_v2', 'urn:decentraland:matic:collections-v2:{c}:0', '{WALLET_B}', 'rare', 1, 9, 1, 5, 'i', 'Hat', 'hat', ARRAY['BaseMale'], true, 1, 1, 1, now()); \
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', '{c}', 1, '{WALLET_A}', 0, 1, 1, 1, 1, 0, 1)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        true,
+        Duration::ZERO,
+    )
+    .await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let names = |state: SharedState| async move {
+        let Ok(gate) = require_inventory(&state, "wearable", super::internal_server_error).await
+        else {
+            panic!("the published index passes the gate")
+        };
+        let publications = gate.publications();
+        let copies = owned_copies(&state, gate, WALLET_A, "wearable")
+            .await
+            .unwrap();
+        (
+            copies.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
+            publications,
+        )
+    };
+    let (before, first) = names(state.clone()).await;
+    assert_eq!(before, ["Hat"]);
+    assert_eq!(names(state.clone()).await.1, first, "a warm memo");
+
+    sqlx::query("UPDATE shop.items SET name = 'Cap' WHERE contract_address = $1")
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    let (after, second) = names(state.clone()).await;
+    assert_eq!(
+        (second.ethereum, second.matic),
+        (first.ethereum, first.matic)
+    );
+    assert_ne!(second, first, "the catalogue copy is in the key");
+    assert_eq!(after, ["Cap"]);
+    own.drop().await;
+}
+
 /// The open listings' owner guard is an exact-token check on the nft index:
 /// a listing whose signer still holds that token stays, one whose token
 /// another address holds (even while the signer holds another copy of the

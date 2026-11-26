@@ -270,19 +270,20 @@ async fn drain(
                 .map(SaleRow::from_row)
                 .collect::<Result<Vec<_>, _>>()?
         };
-        // A bid sale of an item the catalogue lacks holds the cursor, as the
-        // badge processor's do, while `ItemWait::awaited`: the wait comes from
+        // A sale holds the cursor while `ItemWait::awaited`: under the
+        // mirrors, a bid sale of an item they lack, as the badge processor's
+        // do; on an owned network, any sale the publication does not cover
+        // yet, since its item row picks the recipient. The wait comes from
         // the statement that joined the items.
         let wait = ItemWait::from_row(first, NET.chain_id(), now)?;
         let held = rows.iter().position(|row| {
-            venue == Venue::Bids
-                && !row.mirrored
-                && wait.awaited(
-                    items_mirror_enabled,
-                    row.block_number,
-                    row.block_time,
-                    now.timestamp(),
-                )
+            wait.awaited(
+                items_mirror_enabled && venue == Venue::Bids,
+                row.mirrored,
+                row.block_number,
+                row.block_time,
+                now.timestamp(),
+            )
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let batch: Vec<NewNotification> = ready
@@ -634,6 +635,70 @@ mod tests {
     /// An ERC721BidV2 acceptance pays its item's beneficiary (else creator)
     /// the pinned cut, also when they sold it themselves; only after the sales
     /// index publishes, never for history, never twice.
+    /// On a network the collections index owns, a rewind leaves the item
+    /// rows in place while it withdraws the publication. A sale whose item
+    /// row names beneficiary A then waits; republished with beneficiary B, B
+    /// alone hears of the royalty.
+    #[tokio::test]
+    async fn on_an_owned_network_a_withdrawn_row_never_picks_the_collector() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        const OTHER: &str = "0x00000000000000000000000000000000000000b9";
+        let token = |item: u32| (alloy_primitives::U256::from(item) << 216usize).to_string();
+        let seller = "0x00000000000000000000000000000000000000aa";
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        owning::own(&pool, "matic", 137, 100, 60).await;
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        item(&pool, 7, &token(7), Some(BENEFICIARY)).await;
+        bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 110, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stored = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT address FROM social.notifications WHERE type = 'royalties_earned' ORDER BY address",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Published through 105, then rewound: the row stays, the sale waits.
+        owning::own(&pool, "matic", 137, 105, 60).await;
+        owning::rewind(&pool, "matic").await;
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        assert!(stored().await.is_empty(), "held while withdrawn");
+
+        // The new branch's fold names another beneficiary.
+        sqlx::query("UPDATE shop.items SET beneficiary = $1 WHERE contract_address = $2")
+            .bind(OTHER)
+            .bind(COLLECTION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        owning::own(&pool, "matic", 137, 105, 60).await;
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(1)
+        );
+        assert_eq!(stored().await, [OTHER]);
+    }
+
     /// On a network the collections index owns, a bid sale of an item the
     /// catalogue lacks waits for the publication over its block, read in the
     /// statement that joined the items; the items mirror's recorded pass

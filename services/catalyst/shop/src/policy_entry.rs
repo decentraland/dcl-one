@@ -246,9 +246,10 @@ pub struct MirrorFacts {
     /// The item's price while the CollectionStore sells it (a store minter
     /// of an approved collection).
     pub store_price: Option<String>,
-    /// Whether the collections index owns the network (it answered, or
-    /// refused), rather than the mirrors.
-    pub by_index: bool,
+    /// Why the collections index, which owns the network, refused the
+    /// read's purpose (both lookups are then `Unknown`); `None` when it
+    /// answered, or the mirrors serve the network.
+    pub refused: Option<String>,
 }
 
 /// The catalogue's answer alone, without the static registry. Both payment
@@ -271,15 +272,15 @@ pub async fn mirror_facts(
         .fetch_one(pool)
         .await?;
     let state = NetworkState::from_row(&row)?;
-    let (collections_ready, items_ready) =
+    let (collections_ready, items_ready, refused) =
         match state.owned_verdict(chain_id.0 as i64, purpose, Utc::now()) {
-            Some(verdict) => {
-                if let Err(why) = &verdict {
-                    tracing::debug!(network, why, "collections index refuses the item facts");
-                }
-                (verdict.is_ok(), verdict.is_ok())
-            }
-            None => (state.collections_pass.is_some(), state.items_pass.is_some()),
+            Some(Ok(_)) => (true, true, None),
+            Some(Err(why)) => (false, false, Some(why)),
+            None => (
+                state.collections_pass.is_some(),
+                state.items_pass.is_some(),
+                None,
+            ),
         };
     let is_collection: bool = row.get("is_collection");
     let item_type: Option<String> = row.get("item_type");
@@ -316,25 +317,8 @@ pub async fn mirror_facts(
         item,
         available,
         store_price,
-        by_index: state.owned,
+        refused,
     })
-}
-
-/// The catalogue's answer alone about `collection`'s role: the contract
-/// part of [`mirror_facts`]. The statement's item lookup is ignored, so any
-/// item id gives the same answer.
-pub async fn mirror_contract_role(
-    pool: &PgPool,
-    chain_id: ChainId,
-    network: &str,
-    collection: EvmAddress,
-    purpose: Purpose,
-) -> Result<Lookup<ContractRole>, sqlx::Error> {
-    Ok(
-        mirror_facts(pool, chain_id, network, collection, U256::ZERO, purpose)
-            .await?
-            .contract,
-    )
 }
 
 /// The contract's role and the item record of `(collection, item_id)` on

@@ -381,8 +381,9 @@ pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
 /// cancelled; the route answers [`timed_out`]'s 503 for it.
 pub(crate) const NFT_PRICES_TIMED_OUT: &str = "the nft prices read ran past its statement bound";
 
-/// The prefix of [`nft_prices`]'s error for the nft index or the items
-/// mirror that stopped meeting its rule after [`require_prices_sources`]:
+/// The prefix of [`nft_prices`]'s error for the nft index, the items mirror
+/// or the collections index that stopped meeting its rule after
+/// [`require_prices_sources`]:
 /// then the source's name, `": "` and the envelope's message, which the
 /// route reads back ([`nft_prices_not_ready`]) into the envelope `/v1/nfts`
 /// answers in the same state.
@@ -396,13 +397,17 @@ fn nft_prices_not_ready_error(source: Source, message: &str) -> String {
 /// stopped being ready after the gate.
 pub(crate) fn nft_prices_not_ready(e: &str) -> Option<(Source, &str)> {
     let rest = e.strip_prefix(NFT_PRICES_NOT_READY)?;
-    [Source::NftIndex, Source::ItemsMirror]
-        .into_iter()
-        .find_map(|source| {
-            rest.strip_prefix(source.name())
-                .and_then(|m| m.strip_prefix(": "))
-                .map(|m| (source, m))
-        })
+    [
+        Source::NftIndex,
+        Source::ItemsMirror,
+        Source::CollectionsIndex,
+    ]
+    .into_iter()
+    .find_map(|source| {
+        rest.strip_prefix(source.name())
+            .and_then(|m| m.strip_prefix(": "))
+            .map(|m| (source, m))
+    })
 }
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published;
@@ -1489,12 +1494,28 @@ pub async fn require_prices_sources(
     require_sources(state, &f, sources_for(&f)).await
 }
 
-/// The nft leg of `/v1/prices`: the order price of every nft on sale that
-/// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
-/// and names); `category` narrows the sources as `/v1/nfts` does. Read
-/// only after [`require_prices_sources`]; if the LAND index stops being
-/// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
-pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
+/// The read the nft leg of `/v1/prices` fills on: its checked snapshot,
+/// and the key of what that snapshot sees (the nft index's publications and
+/// the catalogue's copies), so a memo filed under one read never answers for
+/// another publication of either.
+pub(crate) struct PricesRead {
+    conn: ReadConn,
+    key: String,
+}
+
+impl PricesRead {
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+/// Opens [`PricesRead`] for `f`, checking its sources on the snapshot. If
+/// one stopped being ready after [`require_prices_sources`], the error is
+/// the one [`nft_prices`] gives.
+pub(crate) async fn prices_read(
+    state: &MarketplaceState,
+    f: &NftFilters,
+) -> Result<PricesRead, String> {
     let f = on_sale(f);
     let sources = sources_for(&f);
     let land = state.land_network();
@@ -1506,6 +1527,39 @@ pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Hist
             ReadConnError::Pool(e) if cancelled(&e) => NFT_PRICES_TIMED_OUT.to_string(),
             ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
         })?;
+    let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
+    let seen = owned_items::Publications::read(&mut conn, catalogue)
+        .await
+        .map_err(|e| e.to_string())?
+        .naming(&mut conn)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PricesRead {
+        conn,
+        key: format!("{seen:?}"),
+    })
+}
+
+/// The nft leg of `/v1/prices`: the order price of every nft on sale that
+/// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
+/// and names); `category` narrows the sources as `/v1/nfts` does. Read
+/// only after [`require_prices_sources`]; if the LAND index stops being
+/// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
+pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
+    let mut read = prices_read(state, f).await?;
+    nft_prices_on(&mut read, state, f).await
+}
+
+/// [`nft_prices`] on the read [`prices_read`] opened.
+pub(crate) async fn nft_prices_on(
+    read: &mut PricesRead,
+    state: &MarketplaceState,
+    f: &NftFilters,
+) -> Result<Histogram, String> {
+    let f = on_sale(f);
+    let sources = sources_for(&f);
+    let land = state.land_network();
+    let conn: &mut PgConnection = &mut read.conn;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,

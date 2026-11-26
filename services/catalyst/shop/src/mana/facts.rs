@@ -20,7 +20,7 @@ use crate::market::catalogue::Purpose;
 use crate::market::chain_walk::{self, ChainNet, INDEXER_NFT};
 use crate::market::trades;
 use crate::policy::Facts;
-use crate::policy_entry::{MirrorFacts, mirror_contract_role, mirror_facts};
+use crate::policy_entry::{MirrorFacts, mirror_facts};
 use crate::rentals::calls::{RentTerms, rent_terms};
 use crate::rentals::types::RentalListing;
 use crate::types::{
@@ -202,38 +202,54 @@ fn static_contract_role(chain: &Chain, contract: Address) -> Option<Lookup<Contr
 }
 
 /// The contract's role: the static registry first, then the catalogue (the
-/// collections mirror only after a complete pass, an owned network only
-/// while the collections index answers a priced read; else `Unknown`).
+/// collections mirror only after a complete pass, else `Unknown`). On a
+/// network the collections index owns, its refusal of a priced read is
+/// [`ResolveError::IndexNotReady`] naming it, never an `Unknown` the rule
+/// would blame on the registry.
 pub async fn contract_role(
     pool: &PgPool,
     chain: &Chain,
     contract: Address,
-) -> Result<Lookup<ContractRole>, sqlx::Error> {
+) -> Result<Lookup<ContractRole>, ResolveError> {
     if let Some(role) = static_contract_role(chain, contract) {
         return Ok(role);
     }
     let Some(net) = chain.net else {
         return Ok(Lookup::Absent);
     };
-    mirror_contract_role(
+    let facts = mirror_facts(
         pool,
         chain.chain_id,
         net.db_name(),
         evm(contract),
+        U256::ZERO,
         Purpose::Priced,
     )
-    .await
+    .await?;
+    Ok(published(facts)?.contract)
+}
+
+/// `facts`, unless the collections index that owns their network refused
+/// them: then the resolver answers the unavailable source it names.
+fn published(facts: MirrorFacts) -> Result<MirrorFacts, ResolveError> {
+    match facts.refused {
+        Some(_) => Err(ResolveError::IndexNotReady {
+            index: "collections-index",
+        }),
+        None => Ok(facts),
+    }
 }
 
 /// The catalogue's facts about `(collection, item_id)` for a priced read,
 /// with the contract's role, from one statement (`None` for a chain without
-/// a catalogue network: the role is the registry's, the item absent).
+/// a catalogue network: the role is the registry's, the item absent). The
+/// owning index's refusal is [`ResolveError::IndexNotReady`].
 async fn item_and_role(
     pool: &PgPool,
     chain: &Chain,
     collection: Address,
     item_id: U256,
-) -> Result<(Lookup<ContractRole>, Option<MirrorFacts>), sqlx::Error> {
+) -> Result<(Lookup<ContractRole>, Option<MirrorFacts>), ResolveError> {
     let Some(net) = chain.net else {
         return Ok((
             static_contract_role(chain, collection).unwrap_or(Lookup::Absent),
@@ -249,35 +265,26 @@ async fn item_and_role(
         Purpose::Priced,
     )
     .await?;
+    let facts = published(facts)?;
     let role = static_contract_role(chain, collection).unwrap_or_else(|| facts.contract.clone());
     Ok((role, Some(facts)))
 }
 
 /// The catalogue's record of `(collection, item_id)` and its remaining
-/// supply; `Unknown` before the items mirror's first complete pass, or while
-/// the collections index refuses a priced read of an owned network.
+/// supply; `Unknown` before the items mirror's first complete pass. The
+/// owning index's refusal is [`ResolveError::IndexNotReady`].
 pub async fn item_record(
     pool: &PgPool,
     chain: &Chain,
     collection: Address,
     item_id: U256,
-) -> Result<(Lookup<ItemRecord>, Option<i64>), sqlx::Error> {
+) -> Result<(Lookup<ItemRecord>, Option<i64>), ResolveError> {
     Ok(
         match item_and_role(pool, chain, collection, item_id).await?.1 {
             Some(facts) => (facts.item, facts.available),
             None => (Lookup::Absent, None),
         },
     )
-}
-
-/// The source a catalogue `Unknown` names: the index that owns the network,
-/// or the items mirror.
-fn unpublished(facts: &MirrorFacts) -> &'static str {
-    if facts.by_index {
-        "collections-index"
-    } else {
-        "items-mirror"
-    }
 }
 
 /// The indexed token (its owner and item): `shop.nft` for collections and
@@ -804,6 +811,33 @@ mod payment_path_facts_tests {
                 .await
                 .unwrap()
         };
+        // Refused for both: the credits rule cannot judge the line, and the
+        // MANA resolver names the index that refused it.
+        let refused_by_both = |pool: PgPool| async move {
+            let credits =
+                policy_entry::item_facts(&pool, ChainId::POLYGON, collection, U256::from(1))
+                    .await
+                    .unwrap();
+            assert_eq!(
+                (credits.contract, credits.item),
+                (Lookup::Unknown, Lookup::Unknown)
+            );
+            let index = ResolveError::IndexNotReady {
+                index: "collections-index",
+            };
+            assert_eq!(
+                contract_role(&pool, chain, collection.address())
+                    .await
+                    .unwrap_err(),
+                index
+            );
+            assert_eq!(
+                item_record(&pool, chain, collection.address(), U256::from(1))
+                    .await
+                    .unwrap_err(),
+                index
+            );
+        };
 
         // Published a minute ago: both paths answer from the projection.
         owning::own(&pool, "matic", 137, 100, 60).await;
@@ -829,26 +863,17 @@ mod payment_path_facts_tests {
         // Published past the window a price may be read from: neither, though
         // the mirrors' recorded passes are fresh.
         owning::own(&pool, "matic", 137, 101, 31 * 60).await;
-        assert_eq!(
-            both(&pool, &book, 1).await,
-            (Lookup::Unknown, Lookup::Unknown, None)
-        );
+        refused_by_both(pool.clone()).await;
 
         // Walked on another chain than the one asked for: neither.
         owning::own(&pool, "matic", 80002, 101, 60).await;
-        assert_eq!(
-            both(&pool, &book, 1).await,
-            (Lookup::Unknown, Lookup::Unknown, None)
-        );
+        refused_by_both(pool.clone()).await;
 
         // Rewound: neither, and the store quote names the index.
         owning::own(&pool, "matic", 137, 101, 60).await;
         assert_eq!(credits(pool.clone()).await.item, record);
         owning::rewind(&pool, "matic").await;
-        assert_eq!(
-            both(&pool, &book, 1).await,
-            (Lookup::Unknown, Lookup::Unknown, None)
-        );
+        refused_by_both(pool.clone()).await;
         assert_eq!(
             resolve(&pool, &rentals, &book, Session::SignedOut, &store)
                 .await
@@ -991,7 +1016,7 @@ async fn resolve_store(
     match &facts.item {
         Lookup::Unknown => {
             return Err(ResolveError::IndexNotReady {
-                index: unpublished(&facts),
+                index: "items-mirror",
             });
         }
         Lookup::Absent => return Err(ResolveError::StoreUnavailable(asset)),
