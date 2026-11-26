@@ -26,6 +26,7 @@ struct FakePeer {
     pages: Mutex<Vec<String>>,
     page_times: Mutex<Vec<(String, std::time::Instant)>>,
     failing: AtomicBool,
+    page_delay: Mutex<Duration>,
 }
 
 impl FakePeer {
@@ -95,6 +96,8 @@ impl FakePeer {
                         .page_times
                         .lock()
                         .push((q.clone(), std::time::Instant::now()));
+                    let delay = *pages.page_delay.lock();
+                    tokio::time::sleep(delay).await;
                     match pages.page(&q) {
                         Some(page) => axum::Json(page).into_response(),
                         None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -206,7 +209,9 @@ impl Fixture {
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         ));
-        batch.set_peers(vec![self.base.clone()]).await;
+        batch
+            .set_peers(self.peers.borrow().iter().cloned().collect())
+            .await;
         ItemHistoryReplay {
             client: crate::sync::test_sync_client(reqwest::Client::new()),
             deployer: batch,
@@ -223,7 +228,22 @@ impl Fixture {
                 retry_start: Duration::from_millis(50),
                 retry_max: Duration::from_millis(100),
             },
+            concurrency: 8,
         }
+    }
+
+    /// Another peer of the set the replay reads, served beside the first.
+    async fn add_peer(&self) -> Arc<FakePeer> {
+        let peer = Arc::new(FakePeer::default());
+        let base = peer.serve().await;
+        self.add_source(&base);
+        peer
+    }
+
+    fn add_source(&self, base: &str) {
+        self.peers.send_modify(|set| {
+            set.insert(base.to_string());
+        });
     }
 
     async fn coverage(&self, entity_type: &str) -> Coverage {
@@ -485,6 +505,7 @@ async fn a_process_without_the_sync_lease_records_nothing() {
     ));
     let rows: i64 = sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM content.item_history_replay)
+              + (SELECT count(*) FROM content.item_history_replay_peers)
               + (SELECT count(*) FROM content.item_history_coverage)",
     )
     .fetch_one(f.pool())
@@ -573,11 +594,10 @@ async fn a_restarted_leader_resumes_its_pass_where_it_stopped() {
             f.peer.failing.store(true, Ordering::SeqCst);
         }
         let saved: Option<i64> =
-            sqlx::query_scalar("SELECT from_ms FROM content.item_history_replay")
+            sqlx::query_scalar("SELECT from_ms FROM content.item_history_replay_peers")
                 .fetch_optional(f.pool())
                 .await
-                .unwrap()
-                .flatten();
+                .unwrap();
         if saved.is_some_and(|from| from > 0) && f.peer.pages.lock().len() >= 3 {
             break;
         }
@@ -648,6 +668,149 @@ async fn an_unreachable_peer_ends_its_walk_with_debt_and_the_next_pass_reads_it_
             as_of: pass.started_at
         }
     );
+    f.finish().await;
+}
+
+/// Three peers that each take over a second to walk: a pass reads them at
+/// once and lasts about as long as one of them, so a node syncing from the
+/// whole DAO list keeps its coverage continuous.
+#[tokio::test]
+async fn a_pass_over_slow_peers_lasts_about_as_long_as_one_of_them() {
+    let Some(f) = fixture().await else {
+        return;
+    };
+    let mut peers = vec![f.peer.clone()];
+    peers.push(f.add_peer().await);
+    peers.push(f.add_peer().await);
+    for (p, peer) in peers.iter().enumerate() {
+        *peer.page_delay.lock() = Duration::from_millis(500);
+        for n in 0..3 {
+            let n = 10 * p as u32 + n;
+            peer.offer("wearable", n, 1_000 + i64::from(n), true).await;
+        }
+    }
+    let mut replay = f.replay(&["wearable"], 0).await;
+    let pass = replay
+        .pass(&CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pass.debt, 0);
+    assert!(
+        pass.elapsed < Duration::from_millis(2_500),
+        "a pass over three peers of two slow pages each took {:?}",
+        pass.elapsed
+    );
+    assert_eq!(
+        f.coverage("wearable").await,
+        Coverage::Covered {
+            as_of: pass.started_at
+        }
+    );
+    f.finish().await;
+}
+
+/// A peer that never answers leaves debt and doesn't hold the others back:
+/// they are read while its retries run, and the pass completes once it gives
+/// up.
+#[tokio::test]
+async fn a_dead_peer_leaves_debt_without_holding_the_others_back() {
+    let Some(f) = fixture().await else {
+        return;
+    };
+    let dead = "http://127.0.0.1:1";
+    assert!(*dead < *f.base.as_str(), "the dead peer sorts first");
+    f.add_source(dead);
+    let wearable = f.peer.offer("wearable", 1, 1_000, true).await;
+    let mut replay = f.replay(&["wearable"], 0).await;
+    replay.pacing.retry_max = Duration::from_millis(800);
+    let started = std::time::Instant::now();
+    let pass = tokio::time::timeout(
+        Duration::from_secs(20),
+        replay.pass(&CancellationToken::new()),
+    )
+    .await
+    .expect("the pass ends while a peer is dead")
+    .unwrap()
+    .unwrap();
+    let first_page = f.peer.page_times.lock().first().map(|(_, at)| *at).unwrap();
+    assert!(
+        first_page.duration_since(started) < Duration::from_millis(600),
+        "the live peer waited {:?} for the dead one",
+        first_page.duration_since(started)
+    );
+    assert_eq!(pass.debt, 1);
+    assert!(f.deployed(&wearable).await);
+    assert_eq!(
+        f.coverage("wearable").await,
+        Coverage::Unknown(Unknown::Debt)
+    );
+    f.finish().await;
+}
+
+/// A leader that stops mid-pass resumes each peer from its own checkpoint:
+/// no peer is read from the floor again and the pass keeps its start.
+#[tokio::test]
+async fn a_restarted_leader_resumes_each_peer_from_its_own_checkpoint() {
+    let Some(f) = fixture().await else {
+        return;
+    };
+    let other = f.add_peer().await;
+    for (p, peer) in [&f.peer, &other].into_iter().enumerate() {
+        for n in 0..5 {
+            let n = 10 * p as u32 + n;
+            peer.offer("wearable", n, 1_000 + i64::from(n), true).await;
+        }
+    }
+    let cancel = CancellationToken::new();
+    let mut first = f.replay(&["wearable"], 0).await;
+    first.pacing.page_pause = Duration::from_millis(300);
+    let running = tokio::spawn({
+        let cancel = cancel.clone();
+        async move { first.pass(&cancel).await }
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let advanced: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM content.item_history_replay_peers WHERE from_ms > 0 AND NOT done",
+        )
+        .fetch_one(f.pool())
+        .await
+        .unwrap();
+        if advanced == 2 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both peers never saved a checkpoint"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    cancel.cancel();
+    assert!(running.await.unwrap().unwrap().is_none());
+    let started: NaiveDateTime =
+        sqlx::query_scalar("SELECT pass_started_at FROM content.item_history_replay")
+            .fetch_one(f.pool())
+            .await
+            .unwrap();
+    f.peer.pages.lock().clear();
+    other.pages.lock().clear();
+    let pass = f
+        .replay(&["wearable"], 0)
+        .await
+        .pass(&CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((pass.started_at, pass.debt), (started, 0));
+    for peer in [&f.peer, &other] {
+        let pages = peer.pages.lock().clone();
+        assert!(!pages.is_empty(), "a peer was never resumed");
+        assert!(
+            pages.iter().all(|q| !q.contains("from=0")),
+            "resumed from the floor: {pages:?}"
+        );
+    }
     f.finish().await;
 }
 
@@ -793,7 +956,7 @@ async fn a_leader_that_loses_the_lease_mid_pass_writes_nothing_more() {
         let pool = f.pool().clone();
         let checkpoint = || async {
             sqlx::query_as::<_, (Option<i64>, Option<String>)>(
-                "SELECT from_ms, last_id FROM content.item_history_replay",
+                "SELECT from_ms, last_id FROM content.item_history_replay_peers",
             )
             .fetch_one(&pool)
             .await
@@ -876,7 +1039,8 @@ async fn a_late_write_from_a_stale_checkpoint_changes_nothing() {
     };
     let mut replay = f.replay(&["wearable"], 0).await;
     let scope = replay.scope();
-    let at = replay.begin(&scope).await.unwrap();
+    let (started_at, pending) = replay.begin(&scope).await.unwrap();
+    let at = pending[0].clone();
     let next = Checkpoint {
         from_ms: 5,
         last_id: Some("bafynext".into()),
@@ -891,7 +1055,11 @@ async fn a_late_write_from_a_stale_checkpoint_changes_nothing() {
         Err(ReplayError::Lost)
     ));
     assert!(matches!(
-        replay.complete(&scope, &stale, 0, 0).await,
+        replay.finish(&stale, 0, 0).await,
+        Err(ReplayError::Lost)
+    ));
+    assert!(matches!(
+        replay.complete(&scope, started_at).await,
         Err(ReplayError::Lost)
     ));
     replay.save(&at, &next, 0, 0).await.unwrap();
@@ -900,14 +1068,25 @@ async fn a_late_write_from_a_stale_checkpoint_changes_nothing() {
         Err(ReplayError::Lost)
     ));
     assert!(matches!(
-        replay.complete(&scope, &at, 0, 0).await,
+        replay.finish(&at, 0, 0).await,
+        Err(ReplayError::Lost)
+    ));
+    replay.finish(&next, 0, 0).await.unwrap();
+    assert!(matches!(
+        replay.finish(&next, 0, 0).await,
+        Err(ReplayError::Lost)
+    ));
+    assert!(matches!(
+        replay
+            .complete(&scope, started_at - chrono::Duration::seconds(1))
+            .await,
         Err(ReplayError::Lost)
     ));
     assert_eq!(
         f.coverage("wearable").await,
         Coverage::Unknown(Unknown::NoRecord)
     );
-    replay.complete(&scope, &next, 0, 0).await.unwrap();
+    replay.complete(&scope, started_at).await.unwrap();
     assert!(matches!(
         f.coverage("wearable").await,
         Coverage::Covered { .. }
@@ -1080,6 +1259,7 @@ async fn start_leader(f: &mut Fixture, interval: Option<Duration>) -> Arc<crate:
         &SyncSettings {
             item_replay_interval: interval,
             item_replay_page_pause: Duration::from_millis(400),
+            item_replay_concurrency: 8,
             peers: vec![f.base.clone()],
             dao: None,
             entity_types: None,
