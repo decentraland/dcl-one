@@ -256,8 +256,8 @@ fn parse_optional_bool(p: &Params, key: &str) -> Option<bool> {
 pub fn parse_filters(pairs: &[(String, String)]) -> Result<ItemFilters, ApiError> {
     let p = Params::new(pairs);
     Ok(ItemFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         category: p
             .get_value("category", NFT_CATEGORY_VALUES, None)
             .and_then(|s| NftCategory::parse(&s)),
@@ -855,15 +855,15 @@ async fn run_items(
         .await?;
     let (limit, offset) = (clamp_first(f.first, DEFAULT_LIMIT), clamp_skip(f.skip));
     let total = if whole.is_some() {
-        let total = rows.len() as i64;
+        let total = crate::market::casts::len_i64(rows.len());
         rows = rows
             .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
+            .skip(crate::market::casts::page(offset))
+            .take(crate::market::casts::page(limit))
             .collect();
         total
-    } else if offset == 0 && (rows.len() as i64) < limit {
-        rows.len() as i64
+    } else if offset == 0 && crate::market::casts::len_i64(rows.len()) < limit {
+        crate::market::casts::len_i64(rows.len())
     } else {
         let (sql, args) = build_items_query(f, rate, catalog, now, since, true);
         sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
@@ -922,7 +922,7 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         tracing::error!(error = %e, "price_snapshots read failed");
         super::internal_server_error()
     })?;
-    let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
+    let budget = i64::try_from(crate::price::store::SNAPSHOT_MAX_AGE.as_secs()).unwrap_or(i64::MAX);
     match (
         v["rate"].as_str().and_then(ManaUsdRate::parse_usd_per_mana),
         v["taken_at"].as_i64(),
@@ -1121,7 +1121,7 @@ fn volume_of(item: &Item, sales_count: i64) -> u128 {
     item.price
         .parse::<u128>()
         .unwrap_or(0)
-        .saturating_mul(sales_count.max(0) as u128)
+        .saturating_mul(u128::try_from(sales_count).unwrap_or(0))
 }
 
 /// The old selection: 60% of the slots to the most sold, 40% to the biggest
@@ -1147,7 +1147,13 @@ pub fn select_trending(
         .map(|(i, k)| (i, counts[k]))
         .collect();
     by_sales.sort_by_key(|b| std::cmp::Reverse(b.1));
-    let sales_cap = ((size as f64) * SALES_CUT).floor() as usize;
+    let size_f = f64::from(i32::try_from(size).unwrap_or(i32::MAX));
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a share of `size`; `as` saturates a negative one to 0"
+    )]
+    let sales_cap = (size_f * SALES_CUT).floor() as usize;
     let mut chosen_sales: Vec<usize> = Vec::new();
     for (order_i, _) in &by_sales {
         if chosen_sales.len() >= sales_cap {
@@ -1175,7 +1181,12 @@ pub fn select_trending(
             .unwrap_or(0);
         vb.cmp(&va)
     });
-    let volume_cap = ((size as f64) * VOLUME_CUT).floor() as usize;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a share of `size`; `as` saturates a negative one to 0"
+    )]
+    let volume_cap = (size_f * VOLUME_CUT).floor() as usize;
     let mut chosen_volume: Vec<usize> = Vec::new();
     for (order_i, _) in &by_volume {
         if chosen_volume.len() >= volume_cap {
@@ -1208,10 +1219,7 @@ pub async fn get_trendings(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     let p = Params::new(&pairs);
-    let size = p
-        .get_number("size", None)
-        .map(|v| v as i64)
-        .unwrap_or(TRENDING_DEFAULT_SIZE);
+    let size = p.get_integer("size").unwrap_or(TRENDING_DEFAULT_SIZE);
     let include_social_emotes =
         p.get_string("includeSocialEmotes", None).as_deref() != Some("false");
     // The gate first, on a short read: a refusal answers without waiting on
@@ -1251,7 +1259,7 @@ pub async fn get_trendings(
     }
     let filters = ItemFilters {
         ids: order.iter().map(|(c, i)| format!("{c}-{i}")).collect(),
-        first: Some(order.len() as i64),
+        first: Some(crate::market::casts::len_i64(order.len())),
         include_social_emotes,
         ..Default::default()
     };
@@ -1270,6 +1278,13 @@ pub async fn get_trendings(
 
 /// seedrandom's ARC4 first double, and the V8-sort-compatible shuffle the
 /// marketplace-server used to spread a rail (`sort(() => seedrandom(a+b)() - 0.5)`).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a port of seedrandom: the JS ToInt32 and byte wraps are the algorithm"
+)]
 pub mod seedrandom {
     const WIDTH: u32 = 256;
     const CHUNKS: u32 = 6;

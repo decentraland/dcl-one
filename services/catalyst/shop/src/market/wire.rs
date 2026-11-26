@@ -609,7 +609,7 @@ pub fn bn_add(a: &str, b: &str) -> String {
         out.push(b'0' + (s % 10) as u8);
     }
     if carry > 0 {
-        out.push(b'0' + carry as u8);
+        out.push(b'0' + (carry % 10) as u8);
     }
     while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();

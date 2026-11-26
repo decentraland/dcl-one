@@ -169,7 +169,8 @@ async fn inputs(
                 .iter()
                 .map(|d| d.1)
                 .min()
-                .context("missing trade deployments")? as i64,
+                .map(casts::to_i64)
+                .context("missing trade deployments")??,
         )
         .fetch_all(&mut *c)
         .await?;

@@ -215,10 +215,8 @@ pub fn parse_catalog_filters(pairs: &[(String, String)]) -> Result<CatalogFilter
         None
     };
     Ok(CatalogFilters {
-        first: p
-            .get_number("first", Some(DEFAULT_PAGE_SIZE as f64))
-            .map(|n| n as i64),
-        skip: p.get_number("skip", Some(0.0)).map(|n| n as i64),
+        first: Some(p.get_integer("first").unwrap_or(DEFAULT_PAGE_SIZE)),
+        skip: Some(p.get_integer("skip").unwrap_or(0)),
         sort_by: p
             .get_value("sortBy", SORT_BY_VALUES, Some("cheapest"))
             .and_then(|s| CatalogSortBy::parse(&s)),

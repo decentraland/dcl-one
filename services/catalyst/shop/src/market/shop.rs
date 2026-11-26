@@ -333,6 +333,10 @@ fn csv(value: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates; the page readers clamp the result"
+)]
 fn finite_i64(v: Option<f64>) -> Option<i64> {
     v.filter(|n| n.is_finite()).map(|n| n as i64)
 }
@@ -562,6 +566,11 @@ fn top_creators_clamp_days(days: Option<i64>) -> i64 {
 }
 
 /// `days` already clamped; never below the floor, so a one-day window cannot round the bar to one sale.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "clamped days and small constants"
+)]
 fn top_creators_min_sales(days: i64) -> i64 {
     let scaled =
         (days as f64 / TOP_CREATORS_DEFAULT_DAYS as f64) * TOP_CREATORS_MIN_SALES_PER_WINDOW as f64;
@@ -585,6 +594,11 @@ fn related_clamp_first(first: Option<i64>) -> i64 {
         .clamp(SHOP_MIN_PAGE_SIZE, RELATED_MAX_LIMIT)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "non-negative after `max`; float-to-int `as` saturates"
+)]
 pub fn credits_to_wei(credits: f64) -> Option<u128> {
     if !credits.is_finite() {
         return None;
@@ -1016,7 +1030,7 @@ pub async fn shop_listings(
                 creator: l.creator,
                 seller: l.seller,
                 issued_id: l.issued_id,
-                price_credits: l.price_credits.map(|c| c.max(0) as u64),
+                price_credits: l.price_credits.map(|c| u64::try_from(c).unwrap_or(0)),
                 sale: l.sale,
                 available: l.available,
                 network: l.network,
@@ -1276,7 +1290,7 @@ pub async fn top_creators(
             })
             .collect();
         rows.sort_by(|a, b| b.volume_wei.parse::<u128>().unwrap_or(0).cmp(&a.volume_wei.parse::<u128>().unwrap_or(0)).then(a.id.cmp(&b.id)));
-        rows.truncate(first as usize);
+        rows.truncate(crate::market::casts::page(first));
         serde_json::to_value(rows).map_err(|e| e.to_string())
     })
     .await
@@ -1598,7 +1612,7 @@ pub async fn get_suggested_catalog(
     };
     let p = Params::new(&pairs);
     let first = finite_i64(p.get_number("first", None));
-    let limit = first.unwrap_or(12).clamp(1, 40) as usize;
+    let limit = crate::market::casts::page(first.unwrap_or(12).clamp(1, 40));
     let filters = UnifiedCatalogFilters {
         base: ShopCatalogFilters {
             category: p.get_string("category", None),
@@ -1654,7 +1668,7 @@ pub async fn get_suggested_catalog(
             let trending = match trending_items(
                 &state,
                 &mut read,
-                Some(limit as i64 * 2),
+                Some(crate::market::casts::len_i64(limit) * 2),
                 &sales,
                 &filters,
                 rate,
@@ -1822,6 +1836,14 @@ pub async fn get_top_creators(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use serde_json::json;
 

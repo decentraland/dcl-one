@@ -71,3 +71,19 @@ impl RowCount for sqlx::postgres::PgQueryResult {
         i64::try_from(self.rows_affected()).unwrap_or(i64::MAX)
     }
 }
+
+/// A request or JSON number as an integer: the fraction dropped, out-of-range
+/// values saturated, NaN as 0 (what `as` does, made explicit at one place).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "float-to-int `as` saturates; that is the conversion wanted"
+)]
+pub fn saturating_i64(v: f64) -> i64 {
+    v as i64
+}
+
+/// Seconds as a `double` bind, saturated at the `i32` range (68 years).
+pub fn secs_f64(secs: i64) -> f64 {
+    let clamped = secs.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+    f64::from(i32::try_from(clamped).unwrap_or_default())
+}

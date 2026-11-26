@@ -117,9 +117,9 @@ pub struct Keyed {
 
 pub fn from_seconds_to_milliseconds(time: f64) -> i64 {
     if time < 1e11_f64 {
-        (time * 1000.0).round() as i64
+        super::casts::saturating_i64((time * 1000.0).round())
     } else {
-        time.round() as i64
+        super::casts::saturating_i64(time.round())
     }
 }
 
@@ -156,8 +156,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<OrderFilters, Invalid
             }
         });
     Ok(OrderFilters {
-        first: p.get_number("first", None).map(|v| v as i64),
-        skip: p.get_number("skip", None).map(|v| v as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         marketplace_address: p.get_string("marketplaceAddress", None),
         owner: p.get_string("owner", None),
@@ -197,8 +197,7 @@ pub(crate) fn parse_open_by_items(
         items.push(item);
     }
     let per_contract = p
-        .get_number("perContract", None)
-        .map(|v| v as i64)
+        .get_integer("perContract")
         .unwrap_or(OPEN_BY_ITEMS_DEFAULT_PER_CONTRACT)
         .clamp(1, OPEN_BY_ITEMS_MAX_PER_CONTRACT);
     Ok((items, per_contract))
@@ -1174,13 +1173,13 @@ pub async fn list_orders(
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
-    let total = legacy_total + trades.len() as i64;
+    let total = legacy_total + crate::market::casts::len_i64(trades.len());
     merged.extend(trades);
     sort_merged(&mut merged, f.sort_by);
     let page = merged
         .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
+        .skip(crate::market::casts::page(offset))
+        .take(crate::market::casts::page(limit))
         .map(|k| k.order)
         .collect();
     Ok((page, total))
@@ -1285,7 +1284,7 @@ pub async fn open_orders_by_items(
     let mut all: Vec<Keyed> = Vec::new();
     for (contract, mut rows) in per {
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
-        rows.truncate(per_contract as usize);
+        rows.truncate(crate::market::casts::page(per_contract));
         all.extend(rows.into_iter().filter(|k| {
             k.order
                 .token_id
