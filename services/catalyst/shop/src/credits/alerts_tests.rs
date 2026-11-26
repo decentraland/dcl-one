@@ -19,6 +19,8 @@ use super::usage_tests::{
 use super::{RawSettings, Settings, State};
 use crate::http::Outbound;
 
+const SHOP: &str = "https://shop.example";
+
 /// The `(dedupe_key, payload, status)` of every alert of `kind`, oldest first.
 async fn alerts_of(pool: &PgPool, kind: &str) -> Vec<(String, Value, String)> {
     sqlx::query_as::<_, (String, sqlx::types::Json<Value>, String)>(
@@ -46,11 +48,27 @@ async fn a_credit_used_after_its_hold_expired_is_alerted_once() {
     let pledge = salt();
     let earlier = now() - chrono::Duration::minutes(10);
     authorization(&pool, &pledge, &wallet.address, 600, "expired", earlier).await;
+    let contract = format!("0x{}", "b".repeat(40));
+    line(&pool, &pledge, 0, &contract, 7).await;
+    line(&pool, &pledge, 1, &contract, 7).await;
     let index = one_used_credit_index(&pool, &wallet.address, &pledge).await;
 
     let out = index.run_pass(None, true).await.unwrap();
     assert!(out.consumed == 1 && out.failed == 0, "{out:?}");
     index.run_pass(None, true).await.unwrap();
+    // The feed's line, written in the same settlement, once.
+    let settled = alerts_of(&pool, alerts::PURCHASE_SETTLED).await;
+    assert_eq!(settled.len(), 1, "{settled:?}");
+    let (key, payload, _) = &settled[0];
+    assert_eq!(key, &pledge);
+    assert_eq!(payload["recovered"], true);
+    assert_eq!(payload["chainId"], 137);
+    assert_eq!(payload["manaWei"], "10000000000000000000");
+    assert_eq!(payload["lines"], 2);
+    assert_eq!(
+        payload["items"],
+        json!([{ "contractAddress": contract, "itemId": "7" }, { "contractAddress": contract, "itemId": "7" }])
+    );
     let recovered = alerts_of(&pool, alerts::RECOVERED_CONSUMPTION).await;
     assert_eq!(recovered.len(), 1, "{recovered:?}");
     let (key, payload, status) = &recovered[0];
@@ -253,6 +271,21 @@ async fn an_expired_credit_the_shop_submitted_is_alerted() {
     db.drop().await;
 }
 
+/// A primary-mint line of `authorization` for item `item` of `contract`.
+async fn line(pool: &PgPool, authorization: &str, position: i32, contract: &str, item: i64) {
+    sqlx::query(
+        "INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, asset_contract, asset_item_id) \
+         VALUES ($1, $2, 300, 300, 'primary_mint', 'wearable', 137, $3, $4::numeric)",
+    )
+    .bind(authorization)
+    .bind(position)
+    .bind(contract)
+    .bind(item)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// An authorization of `wallet` expired at `expires`, created `age` ago,
 /// for item `item` of `contract`.
 async fn attempt(
@@ -443,7 +476,7 @@ async fn an_alert_is_retried_until_slack_accepts_it() {
     };
     let credits = Credits::new(db.pool.clone());
     let (url, hook) = webhook(StatusCode::INTERNAL_SERVER_ERROR).await;
-    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
     let t0 = now() + chrono::Duration::seconds(1);
     let seconds = chrono::Duration::seconds;
@@ -505,7 +538,7 @@ async fn with_no_webhook_an_alert_ends_skipped() {
         return;
     };
     let credits = Credits::new(db.pool.clone());
-    let delivery = Delivery::new(None, Outbound::for_tests());
+    let delivery = Delivery::new(None, SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
     let t0 = now() + chrono::Duration::seconds(1);
     let out = delivery.run_pass(&credits, t0).await.unwrap();
@@ -534,7 +567,7 @@ async fn an_alert_undelivered_for_a_day_is_given_up_after_one_post() {
     };
     let credits = Credits::new(db.pool.clone());
     let (url, hook) = webhook(StatusCode::BAD_GATEWAY).await;
-    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
     let late = now() + alerts::MAX_AGE + chrono::Duration::seconds(1);
     let out = delivery.run_pass(&credits, late).await.unwrap();
@@ -578,7 +611,7 @@ async fn a_redirect_is_not_followed() {
     let follows = Outbound::new(crate::http::HttpClientCfg::serve(4))
         .unwrap()
         .allowing_private_hosts();
-    let delivery = Delivery::new(Some(url), follows);
+    let delivery = Delivery::new(Some(url), SHOP, follows);
     queue_one(&db.pool).await;
     let out = delivery
         .run_pass(&credits, now() + chrono::Duration::seconds(1))
@@ -613,7 +646,7 @@ async fn a_refused_connection_is_retried_without_naming_the_webhook() {
         closed.local_addr().unwrap()
     );
     drop(closed);
-    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
     let out = delivery
         .run_pass(&credits, now() + chrono::Duration::seconds(1))
@@ -645,7 +678,7 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
         .lock()
         .unwrap()
         .push(("retry-after", "120".into()));
-    let delivery = Delivery::new(Some(url), Outbound::for_tests());
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
     queue_one(&db.pool).await;
     let mut conn = db.pool.acquire().await.unwrap();
     alerts::record(
@@ -717,4 +750,108 @@ fn the_alerts_webhook_must_be_a_public_https_endpoint() {
         Some("https://hooks.slack.com/services/example")
     );
     assert!(parse("  ").unwrap().alerts_slack_webhook.is_none());
+}
+
+/// The settled purchases of a pass share one message, the other alerts one
+/// each; a message's alerts share its outcome, a refused one retrying them
+/// all.
+#[tokio::test]
+async fn settled_purchases_share_a_message_and_its_outcome() {
+    let Some(db) = OwnDatabase::create("alerts_feed_batch").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::OK).await;
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
+    let mut conn = db.pool.acquire().await.unwrap();
+    let settled = |n: i64| json!({ "address": format!("0x{n:040x}"), "usdCents": 100 * n, "manaWei": "1", "lines": 1, "items": [] });
+    for n in 1..=3 {
+        alerts::record(
+            &mut conn,
+            alerts::PURCHASE_SETTLED,
+            &format!("s{n}"),
+            settled(n),
+        )
+        .await
+        .unwrap();
+    }
+    alerts::record(
+        &mut conn,
+        alerts::PACK_CREDITED,
+        "pack:p1",
+        json!({ "address": "0x02", "credits": "50", "chargedCents": 500, "packId": "pack_50", "quantity": 1 }),
+    )
+    .await
+    .unwrap();
+    let t0 = now() + chrono::Duration::seconds(1);
+    let out = delivery.run_pass(&credits, t0).await.unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            sent: 4,
+            ..PassOutcome::default()
+        }
+    );
+    let bodies: Vec<String> = hook
+        .bodies
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|b| b["text"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(bodies.len(), 2, "{bodies:?}");
+    assert!(
+        bodies[0]
+            .starts_with(":shopping_bags: *3 purchases* — 3 items · 60 credits ($6.00) · 3 buyers"),
+        "{}",
+        bodies[0]
+    );
+    assert_eq!(bodies[0].lines().count(), 4);
+    assert!(
+        bodies[1].starts_with(":coin: *Credits purchased* — 50 credits ($5.00)"),
+        "{}",
+        bodies[1]
+    );
+
+    *hook.status.lock().unwrap() = StatusCode::SERVICE_UNAVAILABLE;
+    for n in 4..=5 {
+        alerts::record(
+            &mut conn,
+            alerts::PURCHASE_SETTLED,
+            &format!("s{n}"),
+            settled(n),
+        )
+        .await
+        .unwrap();
+    }
+    let out = delivery
+        .run_pass(&credits, t0 + chrono::Duration::seconds(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        out,
+        PassOutcome {
+            retried: 2,
+            ..PassOutcome::default()
+        }
+    );
+    let pending: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status, last_error FROM credits.alerts WHERE dedupe_key IN ('s4', 's5') ORDER BY id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pending,
+        vec![
+            (
+                "pending".to_string(),
+                Some("Slack answered 503 Service Unavailable".to_string())
+            );
+            2
+        ]
+    );
+    assert_eq!(hook.bodies.lock().unwrap().len(), 3, "one post for both");
+    drop(conn);
+    db.drop().await;
 }

@@ -18,6 +18,12 @@
 //!   created within [`REPEATED_EXPIRY_WINDOW_SECS`] of the newest one this
 //!   sweep expired.
 //!
+//! - **The purchase feed**, credits-server's Shop channel, each line at the
+//!   moment the money moved: a pack paid and credited and a refund or
+//!   chargeback clawing it back, or matching no paid purchase yet (the Stripe
+//!   webhook's transaction); an item purchase settled on chain (the
+//!   settlement's transaction).
+//!
 //! A row is unique per (kind, key), so detecting the same case again adds
 //! nothing. The job claims due rows for a lease, posts each (no redirect
 //! followed), and ends it `sent` once Slack accepted it; a refused or failed
@@ -54,6 +60,25 @@ pub const CAP_NEAR_LIMIT: &str = "cap_near_limit";
 pub const SUBMITTED_UNCONSUMED: &str = "submitted_unconsumed";
 /// A wallet whose purchases of one item keep expiring.
 pub const REPEATED_EXPIRY: &str = "repeated_expiry";
+/// Feed: a credit pack paid and credited.
+pub const PACK_CREDITED: &str = "pack_credited";
+/// Feed: a refund or chargeback clawed a pack's credits back.
+pub const PACK_REVERSED: &str = "pack_reversed";
+/// Feed: a refund or chargeback that matched no paid purchase yet.
+pub const REVERSAL_UNMATCHED: &str = "reversal_unmatched";
+/// Feed: an item purchase settled on chain.
+pub const PURCHASE_SETTLED: &str = "purchase_settled";
+
+/// Stripe's published card rate (2.9% plus 30 cents), the estimate of what a
+/// pack payment cost: the real fee is on Stripe's balance transaction, which
+/// the webhook does not read.
+const STRIPE_FEE_PER_MILLE: i64 = 29;
+const STRIPE_FEE_FIXED_CENTS: i64 = 30;
+/// Settled purchases one message lists: the purchases of a pass share
+/// messages, as credits-server posts one per tick.
+const SETTLED_PER_MESSAGE: usize = 10;
+/// Items a settled line names before counting the rest.
+const ITEMS_PER_LINE: usize = 3;
 
 /// The share of its signed MANA cap, in basis points, at or above which a
 /// credit's consumption is alerted: signed at the quote plus the oracle's
@@ -124,6 +149,132 @@ pub(crate) async fn record_cap_near_limit(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Queues [`PURCHASE_SETTLED`] for `salt` in the settlement's transaction:
+/// what the credit bought (its lines), what it charged, and the MANA its
+/// first use settled on `chain_id` in `tx_hash`.
+pub(crate) async fn record_purchase_settled(
+    conn: &mut PgConnection,
+    salt: &str,
+    chain_id: i64,
+    tx_hash: &str,
+    mana_wei: &str,
+    recovered: bool,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
+         SELECT $1, a.id, jsonb_build_object('salt', a.id, 'address', a.address, 'usdCents', a.usd_cents, \
+                    'manaWei', $4::text, 'txHash', $3::text, 'chainId', $5::bigint, 'recovered', $6::boolean, \
+                    'source', a.source, 'lines', GREATEST(l.lines, 1), 'registeredName', l.registered_name, \
+                    'items', CASE WHEN l.lines = 0 AND a.contract_address IS NOT NULL AND a.item_id IS NOT NULL \
+                                  THEN jsonb_build_array(jsonb_build_object('contractAddress', a.contract_address, 'itemId', a.item_id)) \
+                                  ELSE l.items END), $7, $7 \
+         FROM credits.authorizations a, LATERAL ( \
+             SELECT count(*) AS lines, max(registered_name) AS registered_name, \
+                    COALESCE(jsonb_agg(jsonb_build_object('contractAddress', asset_contract, 'itemId', asset_item_id::text) \
+                                       ORDER BY position) FILTER (WHERE sale_kind = 'primary_mint' AND asset_item_id IS NOT NULL), \
+                             '[]'::jsonb) AS items \
+             FROM credits.authorization_lines WHERE authorization_id = a.id) l \
+         WHERE a.id = $2 \
+         ON CONFLICT (kind, dedupe_key) DO NOTHING",
+    )
+    .bind(PURCHASE_SETTLED)
+    .bind(salt)
+    .bind(tx_hash)
+    .bind(mana_wei)
+    .bind(chain_id)
+    .bind(recovered)
+    .bind(now())
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Queues [`PACK_CREDITED`] in the Stripe webhook's transaction, once per
+/// purchase, with the surface that opened its checkout.
+pub(crate) async fn record_pack_credited(
+    conn: &mut PgConnection,
+    purchase: &super::packs::SettledPurchase,
+    event_id: &str,
+) -> sqlx::Result<()> {
+    let key = purchase
+        .order_id
+        .as_deref()
+        .or(purchase.checkout_session.as_deref())
+        .or(purchase.payment_intent.as_deref())
+        .unwrap_or(event_id);
+    let source: Option<String> = sqlx::query_scalar(
+        "SELECT source FROM credits.purchases \
+         WHERE order_id = $1 OR stripe_checkout_session = $2 OR stripe_payment_intent = $3 LIMIT 1",
+    )
+    .bind(purchase.order_id.as_deref())
+    .bind(purchase.checkout_session.as_deref())
+    .bind(purchase.payment_intent.as_deref())
+    .fetch_optional(&mut *conn)
+    .await?
+    .flatten();
+    record(
+        conn,
+        PACK_CREDITED,
+        &format!("pack:{key}"),
+        json!({
+            "address": purchase.address, "credits": purchase.credits, "chargedCents": purchase.amount_cents,
+            "packId": purchase.sku, "quantity": purchase.quantity, "source": source,
+        }),
+    )
+    .await
+}
+
+/// Queues the feed line of a reversal in the Stripe webhook's transaction,
+/// once per event: [`PACK_REVERSED`] when it clawed credits back,
+/// [`REVERSAL_UNMATCHED`] when it matched no paid purchase.
+pub(crate) async fn record_reversal(
+    conn: &mut PgConnection,
+    outcome: &super::packs::ReversalOutcome,
+    event_id: &str,
+    payment_intent: &str,
+    reason: &str,
+) -> sqlx::Result<()> {
+    use super::packs::ReversalOutcome;
+    let key = format!("stripe:{event_id}:{payment_intent}");
+    match outcome {
+        ReversalOutcome::Reversed {
+            address,
+            charged_back,
+            shortfall,
+            has_shortfall,
+            ..
+        } => {
+            let pack: Option<String> = sqlx::query_scalar(
+                "SELECT sku FROM credits.purchases WHERE stripe_payment_intent = $1 LIMIT 1",
+            )
+            .bind(payment_intent)
+            .fetch_optional(&mut *conn)
+            .await?;
+            record(
+                conn,
+                PACK_REVERSED,
+                &key,
+                json!({
+                    "address": address, "chargedBack": charged_back, "shortfall": shortfall,
+                    "hasShortfall": has_shortfall, "packId": pack, "paymentIntent": payment_intent,
+                    "reason": reason,
+                }),
+            )
+            .await
+        }
+        ReversalOutcome::NoPaidPurchase => {
+            record(
+                conn,
+                REVERSAL_UNMATCHED,
+                &key,
+                json!({ "paymentIntent": payment_intent, "reason": reason }),
+            )
+            .await
+        }
+        ReversalOutcome::NothingToReverse => Ok(()),
+    }
 }
 
 /// The expiry sweep and the alerts it detects, as the CTEs of one
@@ -197,6 +348,8 @@ pub(crate) fn expiry_ctes(now: &str, chain: &str) -> String {
 #[derive(Clone)]
 pub struct Delivery {
     webhook: Option<Arc<str>>,
+    /// `SHOP_BASE_URL`: where a settled item links to.
+    shop: Arc<str>,
     http: Outbound,
 }
 
@@ -206,6 +359,15 @@ enum Refusal {
     Failed(String),
     /// Slack's 429, with its `Retry-After` when it sent one.
     RateLimited(Option<chrono::Duration>),
+}
+
+/// A claimed alert.
+struct Claimed {
+    id: i64,
+    kind: String,
+    payload: Value,
+    attempts: i32,
+    created_at: chrono::NaiveDateTime,
 }
 
 /// What one pass did with the alerts it claimed.
@@ -218,21 +380,25 @@ pub struct PassOutcome {
 }
 
 impl Delivery {
-    pub fn new(webhook: Option<String>, http: Outbound) -> Self {
+    pub fn new(webhook: Option<String>, shop_base_url: &str, http: Outbound) -> Self {
         Self {
             webhook: webhook.map(Arc::from),
+            shop: Arc::from(shop_base_url.trim_end_matches('/')),
             http,
         }
     }
 
     /// One pass at `now`: claims up to [`BATCH`] due alerts for [`LEASE`],
     /// then ends each `sent`, `skipped` or `failed`, or schedules its retry.
+    /// Each alert is a message of its own, except the settled purchases, which
+    /// share messages of up to [`SETTLED_PER_MESSAGE`] lines; a message's
+    /// alerts share its outcome.
     pub async fn run_pass(
         &self,
         credits: &Credits,
         now: chrono::NaiveDateTime,
     ) -> Result<PassOutcome, ApiError> {
-        let mut claimed = sqlx::query(
+        let mut claimed: Vec<Claimed> = sqlx::query(
             "UPDATE credits.alerts a SET attempts = a.attempts + 1, next_attempt_at = $2 \
              WHERE a.id IN (SELECT id FROM credits.alerts WHERE status = 'pending' AND next_attempt_at <= $1 \
                             ORDER BY next_attempt_at, id LIMIT $3 FOR UPDATE SKIP LOCKED) \
@@ -242,53 +408,100 @@ impl Delivery {
         .bind(now + LEASE)
         .bind(BATCH)
         .fetch_all(&credits.pool)
-        .await?;
-        claimed.sort_by_key(|row| row.get::<i64, _>("id"));
+        .await?
+        .into_iter()
+        .map(|row| Claimed {
+            id: row.get("id"),
+            kind: row.get("kind"),
+            payload: row.get::<sqlx::types::Json<Value>, _>("payload").0,
+            attempts: row.get("attempts"),
+            created_at: row.get("created_at"),
+        })
+        .collect();
+        claimed.sort_by_key(|alert| alert.id);
         let mut outcome = PassOutcome::default();
+        let mut due = Vec::new();
+        for alert in claimed {
+            if self.webhook.is_none() {
+                let text = render(&alert.kind, &alert.payload, &self.shop);
+                tracing::error!(alert = %text, kind = alert.kind, "CREDITS_ALERTS_SLACK_WEBHOOK is unset: a credits alert is logged here and not sent");
+                finish(credits, alert.id, "skipped", now).await?;
+                outcome.skipped += 1;
+            } else if alert.attempts > 1 && alert.created_at <= now - MAX_AGE {
+                // Given up only after one attempted post: an alert queued while
+                // no writer delivered is posted late rather than never.
+                let text = render(&alert.kind, &alert.payload, &self.shop);
+                tracing::error!(alert = %text, kind = alert.kind, attempts = alert.attempts, "a credits alert went undelivered for a day and is given up");
+                finish(credits, alert.id, "failed", now).await?;
+                outcome.failed += 1;
+            } else {
+                due.push(alert);
+            }
+        }
+        let Some(webhook) = self.webhook.as_deref() else {
+            return Ok(outcome);
+        };
+        let (settled, single): (Vec<Claimed>, Vec<Claimed>) = due
+            .into_iter()
+            .partition(|alert| alert.kind == PURCHASE_SETTLED);
+        let mut messages: Vec<(Vec<&Claimed>, String)> = single
+            .iter()
+            .map(|alert| (vec![alert], render(&alert.kind, &alert.payload, &self.shop)))
+            .collect();
+        for chunk in settled.chunks(SETTLED_PER_MESSAGE) {
+            let payloads: Vec<&Value> = chunk.iter().map(|alert| &alert.payload).collect();
+            messages.push((
+                chunk.iter().collect(),
+                settled_message(&payloads, &self.shop),
+            ));
+        }
+        messages.sort_by_key(|(alerts, _)| alerts[0].id);
         // Once Slack rate limits, the rest of the pass waits as it asked.
         let mut held_until: Option<chrono::NaiveDateTime> = None;
-        for row in claimed {
-            let id: i64 = row.get("id");
-            let kind: String = row.get("kind");
-            let attempts: i32 = row.get("attempts");
-            let created_at: chrono::NaiveDateTime = row.get("created_at");
-            let payload: sqlx::types::Json<Value> = row.get("payload");
-            let text = message(&kind, &payload);
-            let Some(webhook) = self.webhook.as_deref() else {
-                tracing::error!(alert = %text, kind, "CREDITS_ALERTS_SLACK_WEBHOOK is unset: a credits alert is logged here and not sent");
-                finish(credits, id, "skipped", now).await?;
-                outcome.skipped += 1;
-                continue;
-            };
-            // Given up only after one attempted post: an alert queued while no
-            // writer delivered is posted late rather than never.
-            if attempts > 1 && created_at <= now - MAX_AGE {
-                tracing::error!(alert = %text, kind, attempts, "a credits alert went undelivered for a day and is given up");
-                finish(credits, id, "failed", now).await?;
-                outcome.failed += 1;
-                continue;
-            }
+        for (alerts, text) in messages {
             if let Some(until) = held_until {
-                retry(credits, id, until, "held while Slack rate limits").await?;
-                outcome.retried += 1;
+                for alert in &alerts {
+                    retry(credits, alert.id, until, "held while Slack rate limits").await?;
+                    outcome.retried += 1;
+                }
                 continue;
             }
             match self.post(webhook, &text).await {
                 Ok(()) => {
-                    finish(credits, id, "sent", now).await?;
-                    outcome.sent += 1;
+                    for alert in &alerts {
+                        finish(credits, alert.id, "sent", now).await?;
+                        outcome.sent += 1;
+                    }
                 }
                 Err(Refusal::RateLimited(wait)) => {
+                    let attempts = alerts.iter().map(|alert| alert.attempts).max().unwrap_or(1);
                     let until = clock(now) + wait.unwrap_or_else(|| backoff(attempts));
-                    tracing::warn!(kind, attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
-                    retry(credits, id, until, "Slack answered 429 Too Many Requests").await?;
+                    tracing::warn!(attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
+                    for alert in &alerts {
+                        retry(
+                            credits,
+                            alert.id,
+                            until,
+                            "Slack answered 429 Too Many Requests",
+                        )
+                        .await?;
+                        outcome.retried += 1;
+                    }
                     held_until = Some(until);
-                    outcome.retried += 1;
                 }
                 Err(Refusal::Failed(error)) => {
-                    tracing::warn!(kind, attempts, %error, "a credits alert was not delivered; retried with backoff");
-                    retry(credits, id, clock(now) + backoff(attempts), &error).await?;
-                    outcome.retried += 1;
+                    let failed_at = clock(now);
+                    for alert in &alerts {
+                        tracing::warn!(kind = alert.kind, attempts = alert.attempts, %error, "a credits alert was not delivered; retried with backoff");
+                        retry(
+                            credits,
+                            alert.id,
+                            failed_at + backoff(alert.attempts),
+                            &error,
+                        )
+                        .await?;
+                        outcome.retried += 1;
+                    }
                 }
             }
         }
@@ -382,8 +595,8 @@ async fn finish(
     Ok(())
 }
 
-/// The Slack line of one alert.
-pub(crate) fn message(kind: &str, payload: &Value) -> String {
+/// The Slack message of one alert; `shop` is where a settled item links to.
+pub(crate) fn render(kind: &str, payload: &Value, shop: &str) -> String {
     let text = |key: &str| payload[key].as_str().unwrap_or("unknown").to_string();
     let usd = |key: &str| {
         payload[key]
@@ -430,8 +643,359 @@ pub(crate) fn message(kind: &str, payload: &Value) -> String {
             text("item"),
             payload["windowSecs"].as_i64().unwrap_or(0) / 60,
         ),
+        PACK_CREDITED => pack_credited(payload),
+        PACK_REVERSED => {
+            let loss = if payload["hasShortfall"].as_bool() == Some(true) {
+                format!(
+                    " · :rotating_light: {} credits had already been spent: an unrecovered loss",
+                    credits_text(&text("shortfall"))
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                ":warning: *Refund / chargeback* — {} credits clawed back · pack `{}` · {} · buyer `{address}`{loss}",
+                credits_text(&text("chargedBack")),
+                text("packId").replace('`', "'"),
+                text("reason"),
+            )
+        }
+        REVERSAL_UNMATCHED => format!(
+            ":warning: *Unmatched {}* — PaymentIntent `{}` matched no paid purchase; recorded, and applied if that purchase is credited later",
+            text("reason"),
+            text("paymentIntent").replace('`', "'"),
+        ),
+        PURCHASE_SETTLED => settled_message(&[payload], shop),
         other => format!("Credits alert {other}: {payload}"),
     }
+}
+
+/// A pack's line: what it credited and charged, and the spread the sale left
+/// after the card fee (estimated) and the credits it issued at 10 cents each.
+/// It is no profit: the creator's payout when the credits are spent is not
+/// netted off.
+fn pack_credited(payload: &Value) -> String {
+    let raw = payload["credits"].as_str().unwrap_or("0");
+    let credits = whole_credits(raw);
+    let cents = payload["chargedCents"].as_i64().unwrap_or(0);
+    let quantity = payload["quantity"].as_i64().unwrap_or(1);
+    let fee = round_div(cents * STRIPE_FEE_PER_MILLE, 1000) + STRIPE_FEE_FIXED_CENTS;
+    let spread = match credits {
+        Some(credits) if cents > 0 => {
+            let spread = cents - credits * 10 - fee;
+            format!(
+                " · spread *{}* ({}%) after {} Stripe (est.)",
+                usd(spread),
+                tenths(round_div(spread * 1000, cents)),
+                usd(fee)
+            )
+        }
+        _ => String::new(),
+    };
+    let packs = if quantity > 1 {
+        format!("{quantity} × pack")
+    } else {
+        "pack".to_string()
+    };
+    format!(
+        "{} *Credits purchased* — {} credits ({}) · {packs} `{}`{spread} · buyer `{}`{}",
+        pack_emoji(credits.unwrap_or(0)),
+        credits.map_or_else(|| credits_text(raw), grouped),
+        usd(cents),
+        payload["packId"]
+            .as_str()
+            .unwrap_or("unknown")
+            .replace('`', "'"),
+        payload["address"].as_str().unwrap_or("unknown"),
+        via(payload),
+    )
+}
+
+/// One message for settled purchases: a line of its own for one, a header
+/// counting them over a line each for several.
+fn settled_message(payloads: &[&Value], shop: &str) -> String {
+    if let [payload] = payloads {
+        return format!(
+            ":shopping_bags: *Purchased* — {}",
+            settled_line(payload, shop)
+        );
+    }
+    let items: i64 = payloads
+        .iter()
+        .map(|p| p["lines"].as_i64().unwrap_or(1).max(1))
+        .sum();
+    let cents: i64 = payloads
+        .iter()
+        .map(|p| p["usdCents"].as_i64().unwrap_or(0))
+        .sum();
+    let buyers = payloads
+        .iter()
+        .filter_map(|p| p["address"].as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let plural =
+        |n: i64, word: &str| format!("{} {word}{}", grouped(n), if n == 1 { "" } else { "s" });
+    let mut text = format!(
+        ":shopping_bags: *{} purchases* — {} · {} credits ({}) · {}",
+        payloads.len(),
+        plural(items, "item"),
+        grouped(credits_of(cents)),
+        usd(cents),
+        plural(buyers as i64, "buyer"),
+    );
+    for payload in payloads {
+        text.push_str("\n      • ");
+        text.push_str(&settled_line(payload, shop));
+    }
+    text
+}
+
+/// One settled purchase: what it bought, its credits and cents, the MANA it
+/// settled, its transaction and buyer.
+fn settled_line(payload: &Value, shop: &str) -> String {
+    let lines = payload["lines"].as_i64().unwrap_or(1).max(1);
+    let items: Vec<(&str, &str)> = payload["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|i| Some((i["contractAddress"].as_str()?, i["itemId"].as_str()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let count = if lines == 1 {
+        "1 item".to_string()
+    } else {
+        format!("{lines} items")
+    };
+    // Never naming more than settled: a NAME only when it is the one line,
+    // the items only when every line carries one.
+    let bought = match payload["registeredName"].as_str() {
+        Some(name) if lines == 1 => format!("NAME @{}", slack_label(name)),
+        _ if items.len() as i64 == lines && lines == 1 => items_list(&items, shop),
+        _ if items.len() as i64 == lines => format!("{count}: {}", items_list(&items, shop)),
+        _ => count,
+    };
+    let cents = payload["usdCents"].as_i64().unwrap_or(0);
+    let credits = credits_of(cents);
+    let credits = if credits == 1 {
+        "1 credit".to_string()
+    } else {
+        format!("{} credits", grouped(credits))
+    };
+    let tx = tx_ref(payload["chainId"].as_i64(), payload["txHash"].as_str())
+        .map(|tx| format!(" · {tx}"))
+        .unwrap_or_default();
+    let alarm = if payload["recovered"].as_bool() == Some(true) {
+        " · :rotating_light: recovered after expiry"
+    } else {
+        ""
+    };
+    format!(
+        "{bought} · {credits} ({}) · {} MANA{tx} · buyer `{}`{alarm}{}",
+        usd(cents),
+        mana(payload["manaWei"].as_str().unwrap_or("0")),
+        payload["address"].as_str().unwrap_or("unknown"),
+        via(payload),
+    )
+}
+
+/// The distinct items, each linked to its Shop page with its count, the rest
+/// past [`ITEMS_PER_LINE`] counted.
+fn items_list(items: &[(&str, &str)], shop: &str) -> String {
+    let mut distinct: Vec<((&str, &str), usize)> = Vec::new();
+    for item in items {
+        match distinct.iter_mut().find(|(seen, _)| seen == item) {
+            Some((_, quantity)) => *quantity += 1,
+            None => distinct.push((*item, 1)),
+        }
+    }
+    let shown: Vec<String> = distinct
+        .iter()
+        .take(ITEMS_PER_LINE)
+        .map(|((contract, item), quantity)| {
+            let times = if *quantity > 1 {
+                format!(" ×{quantity}")
+            } else {
+                String::new()
+            };
+            format!(
+                "<{shop}/item/{}/{}|item {}>{times}",
+                contract.to_ascii_lowercase(),
+                urlencoding::encode(item),
+                slack_label(item)
+            )
+        })
+        .collect();
+    let more = distinct.len().saturating_sub(ITEMS_PER_LINE);
+    let more = if more > 0 {
+        format!(" +{more} more")
+    } else {
+        String::new()
+    };
+    format!("{}{more}", shown.join(", "))
+}
+
+/// ` · via <surface>` when the checkout named one.
+fn via(payload: &Value) -> String {
+    payload["source"]
+        .as_str()
+        .map(slack_label)
+        .filter(|source| !source.is_empty())
+        .map(|source| format!(" · via {source}"))
+        .unwrap_or_default()
+}
+
+/// The transaction linked to its chain's explorer, or the bare hash on a
+/// chain with none mapped (a guessed host would read as authoritative).
+fn tx_ref(chain_id: Option<i64>, hash: Option<&str>) -> Option<String> {
+    let hash = hash?;
+    if !hash.starts_with("0x") || !hash[2..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let explorer = match chain_id {
+        Some(1) => Some("https://etherscan.io"),
+        Some(11_155_111) => Some("https://sepolia.etherscan.io"),
+        Some(137) => Some("https://polygonscan.com"),
+        Some(80_002) => Some("https://amoy.polygonscan.com"),
+        _ => None,
+    };
+    Some(match explorer {
+        Some(base) => format!("<{base}/tx/{hash}|tx>"),
+        None => format!("tx `{hash}`"),
+    })
+}
+
+/// Emoji by pack size, so a day's sales read at a glance.
+fn pack_emoji(credits: i64) -> &'static str {
+    match credits {
+        500.. => ":money_mouth_face:",
+        250.. => ":money_with_wings:",
+        100.. => ":dollar:",
+        _ => ":coin:",
+    }
+}
+
+/// Credits a charge buys at 10 cents each, rounded up.
+fn credits_of(cents: i64) -> i64 {
+    (cents.max(0) + 9) / 10
+}
+
+/// A credits amount whose fraction is zero, as a whole number.
+fn whole_credits(text: &str) -> Option<i64> {
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    fraction
+        .chars()
+        .all(|c| c == '0')
+        .then(|| whole.parse().ok())
+        .flatten()
+}
+
+/// A numeric credits amount without trailing fractional zeros.
+fn credits_text(text: &str) -> String {
+    match text.split_once('.') {
+        Some((whole, fraction)) => {
+            let fraction = fraction.trim_end_matches('0');
+            if fraction.is_empty() {
+                whole.to_string()
+            } else {
+                format!("{whole}.{fraction}")
+            }
+        }
+        None => text.to_string(),
+    }
+}
+
+/// `n / d` rounded half away from zero; 0 for a zero `d`.
+fn round_div(n: i64, d: i64) -> i64 {
+    if d == 0 {
+        return 0;
+    }
+    let q = (2 * n.unsigned_abs() + d.unsigned_abs()) / (2 * d.unsigned_abs());
+    let q = q as i64;
+    if (n < 0) != (d < 0) { -q } else { q }
+}
+
+/// Tenths as a one-decimal number.
+fn tenths(tenths: i64) -> String {
+    let sign = if tenths < 0 { "-" } else { "" };
+    let abs = tenths.unsigned_abs();
+    format!("{sign}{}.{}", abs / 10, abs % 10)
+}
+
+/// A whole number with thousands separated.
+fn grouped(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
+/// Cents as dollars, thousands separated.
+fn usd(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let abs = cents.unsigned_abs();
+    format!("{sign}${}.{:02}", grouped((abs / 100) as i64), abs % 100)
+}
+
+/// 18-decimal MANA to at most four decimals, truncated: a settlement figure
+/// is never rounded up.
+fn mana(wei: &str) -> String {
+    let Ok(wei) = U256::from_str(wei) else {
+        return "an unknown amount of".to_string();
+    };
+    let unit = U256::from(10u64).pow(U256::from(18u64));
+    let fraction = (wei % unit) / U256::from(10u64).pow(U256::from(14u64));
+    let fraction = format!("{fraction:0>4}");
+    let fraction = fraction.trim_end_matches('0');
+    if fraction.is_empty() {
+        (wei / unit).to_string()
+    } else {
+        format!("{}.{fraction}", wei / unit)
+    }
+}
+
+/// Text a user typed (a NAME, a surface) made inert for Slack: one line,
+/// without the characters that format or end a link label, capped at 40
+/// characters and escaped.
+fn slack_label(text: &str) -> String {
+    const MAX: usize = 40;
+    let format_char = |c: char| {
+        matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{FEFF}')
+    };
+    let flat: String = text
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || c.is_control() || format_char(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .filter(|c| !matches!(c, '*' | '~' | '`' | '|'))
+        .collect();
+    let words: Vec<&str> = flat
+        .split(' ')
+        .map(|word| word.trim_matches('_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let joined = words.join(" ");
+    let capped: String = if joined.chars().count() > MAX {
+        let head: String = joined.chars().take(MAX - 1).collect();
+        format!("{}…", head.trim_end())
+    } else {
+        joined
+    };
+    capped
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// The `credits-alerts` job: a pass every [`INTERVAL`]. Delivery ends rows,
@@ -479,6 +1043,8 @@ pub fn spawn(jobs: &Jobs, credits: Credits, delivery: Delivery, writes_enabled: 
 mod unit_tests {
     use super::*;
 
+    const SHOP: &str = "https://shop.example";
+
     #[test]
     fn the_retry_wait_doubles_up_to_half_an_hour() {
         assert_eq!(backoff(1), chrono::Duration::seconds(30));
@@ -489,6 +1055,100 @@ mod unit_tests {
     }
 
     #[test]
+    fn the_feed_reads_like_the_shop_channel() {
+        let pack = render(
+            PACK_CREDITED,
+            &json!({ "address": "0x02", "credits": "500", "chargedCents": 5500, "packId": "pack_500", "quantity": 1, "source": "web" }),
+            SHOP,
+        );
+        assert_eq!(
+            pack,
+            ":money_mouth_face: *Credits purchased* — 500 credits ($55.00) · pack `pack_500` · spread *$3.10* (5.6%) after $1.90 Stripe (est.) · buyer `0x02` · via web"
+        );
+        let packs = render(
+            PACK_CREDITED,
+            &json!({ "address": "0x02", "credits": "150.000", "chargedCents": 1500, "packId": "pack`50", "quantity": 3, "source": null }),
+            SHOP,
+        );
+        assert_eq!(
+            packs,
+            ":dollar: *Credits purchased* — 150 credits ($15.00) · 3 × pack `pack'50` · spread *-$0.74* (-4.9%) after $0.74 Stripe (est.) · buyer `0x02`"
+        );
+        let reversed = render(
+            PACK_REVERSED,
+            &json!({ "address": "0x02", "chargedBack": "25.0000", "shortfall": "5.000", "hasShortfall": true, "packId": "pack_50", "reason": "refund" }),
+            SHOP,
+        );
+        assert_eq!(
+            reversed,
+            ":warning: *Refund / chargeback* — 25 credits clawed back · pack `pack_50` · refund · buyer `0x02` · :rotating_light: 5 credits had already been spent: an unrecovered loss"
+        );
+        let unmatched = render(
+            REVERSAL_UNMATCHED,
+            &json!({ "paymentIntent": "pi_1", "reason": "chargeback" }),
+            SHOP,
+        );
+        assert_eq!(
+            unmatched,
+            ":warning: *Unmatched chargeback* — PaymentIntent `pi_1` matched no paid purchase; recorded, and applied if that purchase is credited later"
+        );
+    }
+
+    #[test]
+    fn settled_purchases_share_a_message_and_name_only_what_settled() {
+        let hash = format!("0x{}", "ab".repeat(32));
+        let cart = json!({ "address": "0x02", "usdCents": 1230, "manaWei": "12345678900000000000", "txHash": hash, "chainId": 137,
+            "recovered": false, "source": null, "lines": 2, "registeredName": null,
+            "items": [{ "contractAddress": "0xabc", "itemId": "7" }, { "contractAddress": "0xabc", "itemId": "7" }] });
+        assert_eq!(
+            render(PURCHASE_SETTLED, &cart, SHOP),
+            format!(
+                ":shopping_bags: *Purchased* — 2 items: <https://shop.example/item/0xabc/7|item 7> ×2 · 123 credits ($12.30) · 12.3456 MANA · <https://polygonscan.com/tx/{hash}|tx> · buyer `0x02`"
+            )
+        );
+        let name = json!({ "address": "0x03", "usdCents": 10, "manaWei": "0", "txHash": hash, "chainId": 999,
+            "recovered": true, "source": "unity<script>", "lines": 1, "registeredName": "co*ol_name_", "items": [] });
+        assert_eq!(
+            render(PURCHASE_SETTLED, &name, SHOP),
+            format!(
+                ":shopping_bags: *Purchased* — NAME @cool_name · 1 credit ($0.10) · 0 MANA · tx `{hash}` · buyer `0x03` · :rotating_light: recovered after expiry · via unity&lt;script&gt;"
+            )
+        );
+        let unlisted = json!({ "address": "0x04", "usdCents": 500, "manaWei": "1", "lines": 3,
+            "items": [{ "contractAddress": "0xabc", "itemId": "7" }] });
+        assert!(
+            render(PURCHASE_SETTLED, &unlisted, SHOP)
+                .starts_with(":shopping_bags: *Purchased* — 3 items · 50 credits"),
+            "three lines, one item known: the count alone"
+        );
+        let both = settled_message(&[&cart, &name], SHOP);
+        let mut lines = both.lines();
+        assert_eq!(
+            lines.next(),
+            Some(":shopping_bags: *2 purchases* — 3 items · 124 credits ($12.40) · 2 buyers")
+        );
+        assert!(lines.all(|line| line.starts_with("      • ")));
+        assert_eq!(both.lines().count(), 3);
+    }
+
+    #[test]
+    fn user_text_is_inert_and_amounts_read_plainly() {
+        assert_eq!(
+            slack_label("a\u{200B}b  <x|y>\n_c_ `d`"),
+            "a b &lt;xy&gt; c d"
+        );
+        assert_eq!(slack_label(&"a".repeat(50)), format!("{}…", "a".repeat(39)));
+        assert_eq!(usd(203_637), "$2,036.37");
+        assert_eq!(usd(-5), "-$0.05");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(mana("1999999999999999999"), "1.9999");
+        assert_eq!(mana("100000000000000"), "0.0001");
+        assert_eq!(tx_ref(Some(137), Some("0xnothex")), None);
+        assert_eq!(whole_credits("12.5"), None);
+        assert_eq!(credits_text("12.500"), "12.5");
+    }
+
+    #[test]
     fn a_batch_of_posts_fits_in_the_lease() {
         let posts = POST_TIMEOUT * BATCH as u32;
         assert!(posts < LEASE.to_std().unwrap(), "{posts:?}");
@@ -496,17 +1156,19 @@ mod unit_tests {
 
     #[test]
     fn each_alert_reads_as_one_line() {
-        let cap = message(
+        let cap = render(
             CAP_NEAR_LIMIT,
             &json!({ "salt": "0x01", "address": "0x02", "usdCents": 1234, "capWei": "10000000000000000000", "consumedWei": "9960000000000000000", "txHash": "0x03" }),
+            SHOP,
         );
         assert_eq!(
             cap,
             ":warning: Credits: credit 0x01 consumed 9.96 of the 10 MANA it was signed for (at least 99.5%). Wallet 0x02, $12.34; tx 0x03."
         );
-        let repeated = message(
+        let repeated = render(
             REPEATED_EXPIRY,
             &json!({ "address": "0x02", "item": "0xc:7", "attempts": 3, "windowSecs": 1800 }),
+            SHOP,
         );
         assert_eq!(
             repeated,
@@ -517,7 +1179,7 @@ mod unit_tests {
             UNPAID_CONSUMPTION,
             SUBMITTED_UNCONSUMED,
         ] {
-            let line = message(kind, &json!({}));
+            let line = render(kind, &json!({}), SHOP);
             assert!(!line.contains('\n') && line.starts_with(':'), "{line}");
         }
     }

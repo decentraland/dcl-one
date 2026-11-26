@@ -4385,6 +4385,102 @@ async fn delete_events(pool: &PgPool, prefix: &str) {
         .unwrap();
 }
 
+/// The Stripe webhook queues the purchase feed in its transaction: a pack
+/// credited once (a redelivery adds nothing), a refund clawing part of it
+/// back, and a chargeback that matches no paid purchase.
+#[tokio::test]
+async fn the_webhook_queues_the_purchase_feed_in_its_transaction() {
+    use super::alerts;
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "feed-pack".into(),
+        title: "Feed".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_feed");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let app = app(state.clone());
+    let feed = async |kind: &str, key: &str| -> Vec<Value> {
+        sqlx::query_scalar::<_, sqlx::types::Json<Value>>(
+            "SELECT payload FROM credits.alerts WHERE kind = $1 AND dedupe_key = $2",
+        )
+        .bind(kind)
+        .bind(key)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|payload| payload.0)
+        .collect()
+    };
+
+    let paid = json!({ "id": unique("evt_feed_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    for _ in 0..2 {
+        let (status, out) = deliver(&app, &paid).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+    }
+    let credited = feed(alerts::PACK_CREDITED, &format!("pack:{pi}")).await;
+    assert_eq!(credited.len(), 1, "{credited:?}");
+    assert_eq!(credited[0]["address"], addr.as_str());
+    assert_eq!(credited[0]["packId"], "feed-pack");
+    assert_eq!(credited[0]["chargedCents"], 500);
+    assert_eq!(credited[0]["quantity"], 1);
+
+    let refund_evt = unique("evt_feed_refund");
+    let refund = json!({ "id": refund_evt, "type": "charge.refunded", "data": { "object": { "payment_intent": pi, "amount_refunded": 250 } } }).to_string();
+    assert_eq!(deliver(&app, &refund).await.0, StatusCode::OK);
+    let reversed = feed(alerts::PACK_REVERSED, &format!("stripe:{refund_evt}:{pi}")).await;
+    assert_eq!(reversed.len(), 1, "{reversed:?}");
+    assert!(
+        reversed[0]["chargedBack"]
+            .as_str()
+            .unwrap()
+            .starts_with("25"),
+        "{reversed:?}"
+    );
+    assert_eq!(reversed[0]["packId"], "feed-pack");
+    assert_eq!(reversed[0]["reason"], "refund");
+    assert_eq!(reversed[0]["hasShortfall"], false);
+
+    let (ghost, dispute_evt) = (unique("pi_ghost"), unique("evt_feed_dispute"));
+    let dispute = json!({ "id": dispute_evt, "type": "charge.dispute.created", "data": { "object": { "payment_intent": ghost, "status": "needs_response" } } }).to_string();
+    assert_eq!(deliver(&app, &dispute).await.0, StatusCode::OK);
+    let unmatched = feed(
+        alerts::REVERSAL_UNMATCHED,
+        &format!("stripe:{dispute_evt}:{ghost}"),
+    )
+    .await;
+    assert_eq!(unmatched.len(), 1, "{unmatched:?}");
+    assert_eq!(unmatched[0]["reason"], "chargeback");
+
+    for key in [
+        format!("pack:{pi}"),
+        format!("stripe:{refund_evt}:{pi}"),
+        format!("stripe:{dispute_evt}:{ghost}"),
+    ] {
+        sqlx::query("DELETE FROM credits.alerts WHERE dedupe_key = $1")
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM credits.purchases WHERE stripe_payment_intent = $1")
+        .bind(&pi)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &addr).await;
+}
+
 fn webhook_state(pool: &PgPool) -> SharedState {
     test_state(
         pool.clone(),

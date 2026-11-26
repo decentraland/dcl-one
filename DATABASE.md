@@ -1790,12 +1790,25 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
     index's lag). The read is bounded to the wallets the sweep expired and to
     pledges created 30 minutes before their earliest swept one, through
     `authorizations_address_status_expiry_idx`.
+- **the purchase feed**, each line at the moment the money moved:
+  - `pack_credited`, keyed by the purchase's order, session or intent: the
+    Stripe webhook's grant, in its transaction, with the purchase's `source`;
+  - `pack_reversed`, keyed by event and intent: a refund or chargeback that
+    clawed credits back (with any shortfall already spent), in the webhook's
+    transaction;
+  - `reversal_unmatched`, keyed the same: a reversal that matched no paid
+    purchase yet, recorded and applied if the purchase is credited later;
+  - `purchase_settled`, keyed by salt: a credit's first use settled (not a
+    replayed debit), in the settlement's transaction, with its lines from
+    `authorization_lines` (the primary key's prefix).
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
 (`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
 `next_attempt_at` out by a five-minute lease, then posts each to
-`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction:
+`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction, one message per row
+except the pass's settled purchases, which share messages of up to ten lines
+and the outcome of the message that carried them:
 - a 2xx ends the row `sent`; no redirect is followed;
 - any other answer, or no answer within 10 seconds, schedules a retry after
   30 seconds, doubling up to 30 minutes, from the time it failed, and keeps
@@ -1810,7 +1823,8 @@ Delivery is at least once: a post Slack accepted whose row was not ended (a
 crash, or a timeout after Slack took it) is posted again once its lease ends.
 
 Rows are few: at most one per credit or log for the settlement kinds, one per
-expired submitted credit, and one per failing attempt past the threshold.
+expired submitted credit, one per failing attempt past the threshold, and one
+per pack sold, reversal and item purchase.
 They are kept as the record. The bootstrap defines the table; an existing
 database gains it from the object pass, so no step exists.
 

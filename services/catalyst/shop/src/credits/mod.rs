@@ -876,7 +876,11 @@ impl State {
             },
             _ => None,
         };
-        let alerts = alerts::Delivery::new(settings.alerts_slack_webhook.clone(), http.clone());
+        let alerts = alerts::Delivery::new(
+            settings.alerts_slack_webhook.clone(),
+            &settings.shop_base_url,
+            http.clone(),
+        );
         let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
             goal_flags,
