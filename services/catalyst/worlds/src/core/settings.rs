@@ -230,9 +230,6 @@ pub async fn update_world_settings(
             declared,
         ))
     })??;
-    if !input.realm_name_override_provided && !input.preview_wearable_urns_provided {
-        require_local_management(management_upstream)?;
-    }
     // The gatekeeper reads a signed realm name as the world it names (a bare
     // label as `<label>.dcl.eth`: the Unity explorer signs the realm name
     // alone), so an override naming another world held here would send this
@@ -672,6 +669,9 @@ async fn parse_multipart(
         }
     }
 
+    if !input.realm_name_override_provided && !input.preview_wearable_urns_provided {
+        require_local_management(management_upstream)?;
+    }
     Ok((input, thumbnail))
 }
 
@@ -810,6 +810,51 @@ mod tests {
         )
         .await
         .map(|(input, _)| input)
+    }
+
+    #[tokio::test]
+    async fn managed_settings_forms_allow_only_local_overrides() {
+        const UPSTREAM: &str = "https://worlds.example.org";
+        async fn parse(
+            parts: &[(&str, Option<&str>, &str)],
+        ) -> Result<WorldSettingsUpdate, SettingsError> {
+            let multipart = multipart_from(parts).await;
+            let mut bytes_lease = upload_limits::reserve_in_flight();
+            let mut files_lease = upload_limits::reserve_in_flight_files();
+            parse_multipart(
+                multipart,
+                u64::MAX,
+                u64::MAX,
+                &mut bytes_lease,
+                &mut files_lease,
+                Some(UPSTREAM),
+            )
+            .await
+            .map(|(input, _)| input)
+        }
+
+        for parts in [
+            &[
+                ("realm_name_override", None, "preview"),
+                ("title", None, "Shared Title"),
+            ][..],
+            &[("thumbnail", Some("scene.png"), "not read")][..],
+            &[("realm_name_override", None, "")][..],
+            &[][..],
+        ] {
+            let (status, message) = parser_refusal(parse(parts).await.expect_err("managed form"));
+            assert_eq!(status, 409);
+            assert!(message.contains(UPSTREAM), "{message}");
+        }
+
+        let local = parse(&[
+            ("realm_name_override", None, "preview"),
+            ("preview_wearable_urns", None, "null"),
+        ])
+        .await
+        .expect("local overrides");
+        assert_eq!(local.realm_name_override.as_deref(), Some("preview"));
+        assert_eq!(local.preview_wearable_urns, Some(Vec::new()));
     }
 
     #[tokio::test]
