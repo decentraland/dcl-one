@@ -52,8 +52,7 @@ impl FromRequestParts<SharedState> for Called {
         if let Some(source) = crate::limits::source(&parts.headers)
             && state.validator_calls.check(&source) == RateLimitDecision::Deny
         {
-            return Err(ApiError::http(
-                429,
+            return Err(ApiError::too_many(
                 "Too many requests, try again in a minute",
             ));
         }

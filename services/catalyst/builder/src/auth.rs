@@ -45,7 +45,7 @@ async fn verify(
 /// source that spent its contract-wallet checks is refused with 429.
 pub fn unauthenticated(error: &SignedFetchError) -> ApiError {
     let message = match error {
-        SignedFetchError::RateLimited => return ApiError::http(429, error.to_string()),
+        SignedFetchError::RateLimited => return ApiError::too_many(error.to_string()),
         e if e.is_metadata_refusal() => "Invalid signature",
         SignedFetchError::MalformedChain { .. } | SignedFetchError::InsufficientLinks => {
             "Invalid auth chain"

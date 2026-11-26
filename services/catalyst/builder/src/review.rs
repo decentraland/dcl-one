@@ -92,7 +92,7 @@ fn next_day(at: NaiveDateTime) -> NaiveDateTime {
 }
 
 fn limit_refusal(message: &str, collection: Uuid, retry_at: NaiveDateTime) -> ApiError {
-    ApiError::http(429, message)
+    ApiError::too_many(message)
         .with_data(json!({ "id": collection, "retryAt": iso(&retry_at.and_utc()) }))
 }
 

@@ -20,7 +20,7 @@ use crate::access::{self, ThirdPartyPublish};
 use crate::chain_state;
 use crate::cheques::Offer;
 use crate::curation::rows::ItemCurationOut;
-use crate::http::ApiError;
+use crate::http::{ApiError, Refusal};
 use crate::items::body::FullItemOut;
 use crate::third_parties;
 
@@ -64,9 +64,9 @@ pub fn parse(body: &[u8]) -> Result<Request, ApiError> {
         serde_json::from_slice(body).map_err(|_| ApiError::bad_request("Invalid request body"))?
     };
     let items = truthy(body.get("itemIds"))
-        .ok_or_else(|| ApiError::http(200, "Could not get itemIds from request"))?;
+        .ok_or_else(|| ApiError::thrown_without_status("Could not get itemIds from request"))?;
     let cheque = truthy(body.get("cheque"))
-        .ok_or_else(|| ApiError::http(200, "Could not get cheque from request"))?;
+        .ok_or_else(|| ApiError::thrown_without_status("Could not get cheque from request"))?;
     let items = items
         .as_array()
         .filter(|ids| ids.len() <= MAX_ITEMS)
@@ -82,8 +82,8 @@ pub fn parse(body: &[u8]) -> Result<Request, ApiError> {
     })
 }
 
-fn refused(status: u16, message: &str, id: Uuid) -> ApiError {
-    ApiError::http(status, message).with_data(json!({ "id": id }))
+fn refused(refusal: Refusal, message: &str, id: Uuid) -> ApiError {
+    ApiError::refused(refusal, message).with_data(json!({ "id": id }))
 }
 
 /// The provider's free slots: its registry `maxItems` (none for a provider
@@ -137,7 +137,7 @@ pub async fn publish(
     access::confirm_third_party_publish(&mut tx, &view, grant).await?;
     if request.items.len() as i128 > free_slots(&mut tx, grant).await? {
         return Err(refused(
-            409,
+            Refusal::Conflict,
             "The amount of items to publish exceeds the available slots.",
             id,
         ));
@@ -154,18 +154,22 @@ pub async fn publish(
     .fetch_all(&mut *tx)
     .await?;
     if named.is_empty() {
-        return Err(refused(400, "Tried to publish no TP items", id));
+        return Err(refused(
+            Refusal::Invalid,
+            "Tried to publish no TP items",
+            id,
+        ));
     }
     if request.cheque.qty.and_then(|q| usize::try_from(q).ok()) != Some(named.len()) {
         return Err(refused(
-            400,
+            Refusal::Invalid,
             "The check quantity is different from the amount of published items",
             id,
         ));
     }
     let invalid = |why: &str| {
         refused(
-            400,
+            Refusal::Invalid,
             &format!(
                 "Tried to publish TP items with an invalid signed message or signature. Error: {why}"
             ),
@@ -179,7 +183,7 @@ pub async fn publish(
     }
     if named.iter().any(|item| item.collection_id != Some(id)) {
         return Err(refused(
-            400,
+            Refusal::Invalid,
             "Cannot publish items that belong to different collections",
             id,
         ));
@@ -193,7 +197,7 @@ pub async fn publish(
     .await?;
     if pending {
         return Err(refused(
-            409,
+            Refusal::Conflict,
             "The third party collection already has published items. It can't be updated.",
             id,
         ));
@@ -260,7 +264,7 @@ pub async fn publish(
     .await?;
     if kept.is_none() {
         return Err(refused(
-            400,
+            Refusal::Invalid,
             "An error occurred trying to publish: the cheque was already used",
             id,
         ));

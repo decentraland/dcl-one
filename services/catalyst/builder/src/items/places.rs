@@ -132,7 +132,7 @@ impl Drop for Admission {
 
 /// A refused place: 429 at once, with a `Retry-After`.
 pub fn busy(error: &str) -> Response {
-    retry_later(ApiError::http(429, error))
+    retry_later(ApiError::too_many(error))
 }
 
 /// `refusal` with the `Retry-After` of a refused place.
@@ -236,14 +236,11 @@ impl Places {
 }
 
 fn timed_out() -> ApiError {
-    ApiError::http(408, "The upload timed out")
+    ApiError::timed_out("The upload timed out")
 }
 
 fn yielded() -> ApiError {
-    ApiError::http(
-        408,
-        "The upload gave its place to another while the node was busy",
-    )
+    ApiError::timed_out("The upload gave its place to another while the node was busy")
 }
 
 impl Admission {
@@ -287,7 +284,7 @@ impl Admission {
             }
             None => {
                 self.progress.cut.store(true, Ordering::SeqCst);
-                Err(ApiError::http(429, full(self.what)))
+                Err(ApiError::too_many(full(self.what)))
             }
         }
     }

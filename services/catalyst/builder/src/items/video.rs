@@ -279,7 +279,7 @@ fn not_mp4() -> ApiError {
 
 /// 413 for a video past `max_bytes`.
 pub(crate) fn too_large(max_bytes: u64) -> ApiError {
-    ApiError::http(413, "The video is too large").with_data(json!({ "maxBytes": max_bytes }))
+    ApiError::too_large("The video is too large").with_data(json!({ "maxBytes": max_bytes }))
 }
 
 fn io(e: std::io::Error) -> ApiError {
