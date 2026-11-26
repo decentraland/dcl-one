@@ -5198,6 +5198,10 @@
           "kind": "regular"
         },
         {
+          "name": "rarityTokens.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "reelActions.test.ts",
           "kind": "regular"
         },
@@ -13162,7 +13166,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
-      "sha256": "0c40c917ed10f4848e7c1860827627f683aac859f35d22bf17b1d90ab739f582"
+      "sha256": "44752518f2ca170542e0f622787fcc3a919b29b4ae3c33b77084730a832a1496"
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmotesWheel.module.css",
@@ -14198,7 +14202,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "066d5658eb4043d4f9828d8515da48d1e7cc86288a87100cb4307152c083a3db"
+      "sha256": "20ded2574129967850b63257e022b17c9ee0469304fdcbd08bc4f1b95a781f4e"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14819,6 +14823,10 @@
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
       "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "sha256": "52bbf6b118a3971255dbfee2d023221d6536880255e1e735ec5f0e7fc03714c7"
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
@@ -16850,7 +16858,7 @@
     },
     {
       "path": "library/ui/components/JumpInCTA/JumpInCTA.module.css",
-      "sha256": "6357cd27a0234065caad508828832dd60de2e8355844a0c573ddeba1c792ed78"
+      "sha256": "be34bb94d120621def9789318f4d9e68776132676835932531bdb8f58355de95"
     },
     {
       "path": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
@@ -16946,7 +16954,7 @@
     },
     {
       "path": "library/ui/components/OptionMenu/OptionMenu.module.css",
-      "sha256": "bdf0dcf7fc5e378c1e0560d10cf74ed7313745ef8b9ba33a58312425bd22bf10"
+      "sha256": "912a1520933eaf2fd62ba09521b0092dcc832c029ade067327fdb530dd022c80"
     },
     {
       "path": "library/ui/components/OptionMenu/OptionMenu.tsx",
@@ -17086,7 +17094,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "7ecef8cdcc9eaebbf44a5253247949527a415071a884016915af2c319c0fc8d6"
+      "sha256": "f37be88aca6407349dc2bc531ee52e7b2843c0352698e1a63e207e99b0827061"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -51589,6 +51597,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/reelActions.test.ts",
       "to": "library/explorer-core/test/console.ts",
       "kind": "native:runtime"
@@ -69001,6 +69039,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/rail.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/rarityTokens.test.tsx",
       "kind": "type"
     },
     {

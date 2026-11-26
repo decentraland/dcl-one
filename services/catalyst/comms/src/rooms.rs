@@ -21,9 +21,10 @@
 //! (formerly in `shared::livekit`) are named here too, so every LiveKit room
 //! name has this one owner.
 
-// `ParsedRoom` and `RoomClassification` carry a `ResolvedRoom` by value;
-// boxing it would ripple through every match.
-#![allow(clippy::large_enum_variant)]
+#![allow(
+    clippy::large_enum_variant,
+    reason = "`ParsedRoom` and `RoomClassification` carry a `ResolvedRoom` by value; boxing it would ripple through every match"
+)]
 
 use crate::shared::identity::CommunityId;
 use crate::world_identity::{

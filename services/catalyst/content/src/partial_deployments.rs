@@ -1513,7 +1513,10 @@ struct Totals {
 /// (committed on its own, so a repeated rejected batch still counts), then
 /// its receipts against the scene cap and the account and server budgets,
 /// under one global lock.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the reservation checks every limit in one locked step"
+)]
 async fn reserve(
     pool: &PgPool,
     limits: &Limits,
@@ -1667,7 +1670,6 @@ async fn reserve(
 /// Publishes a complete upload through the write deployer (full validation,
 /// content read from the store), its request TTL measured from the upload's
 /// first batch.
-#[allow(clippy::too_many_arguments)]
 async fn finalize(
     deployer: &WriteDeployer,
     entity: &Entity,

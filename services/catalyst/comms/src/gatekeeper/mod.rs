@@ -488,7 +488,10 @@ crate::shared::send_sync_once! {
 pub type SharedState = Arc<CommsState>;
 
 impl CommsState {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the state takes each shared service it wires"
+    )]
     pub fn new(
         pool: PgPool,
         http: Outbound,
