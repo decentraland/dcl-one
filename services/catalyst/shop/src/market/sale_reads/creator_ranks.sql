@@ -1,4 +1,9 @@
-, mint_creators AS MATERIALIZED (
+, catalogue_time_bound AS MATERIALIZED (
+    -- The latest published execution gives a conservative on-chain time bound.
+    SELECT e.block_time FROM shop.sale_publication p JOIN shop.sale_execution e USING(network)
+    WHERE p.network='matic' AND e.block_number<=p.block_number
+    ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+), mint_creators AS MATERIALIZED (
     -- Store attribution is proved at Issue, before the Bought execution.
     -- A trade uses the creator at Traded, even within a creation block.
     SELECT s.network,s.block_number,s.log_index,s.ordinal,s.contract_address,s.buyer,s.block_time,
@@ -23,12 +28,13 @@
           AND t.block_number<=pub.block_number
         ORDER BY t.block_number,t.log_index LIMIT 1
     ) later ON s.network='matic' AND s.venue_kind='trade' AND earlier.account IS NULL
-    LEFT JOIN shop.chain_cursor history ON history.network=f.network AND history.indexer='collections'
+    -- The walk deletes seeds past the retained block in the rewind transaction.
     LEFT JOIN shop.collection_seed seed ON (seed.network,seed.contract_address)=(f.network,f.contract_address)
-      AND seed.verified AND seed.read_hash IS NOT NULL AND history.reorg_rewinds=0
+      AND seed.verified AND seed.read_hash IS NOT NULL
       AND seed.read_block BETWEEN f.created_block AND pub.block_number
     LEFT JOIN shop.collections c ON (c.network,c.contract_address)=(f.network,f.contract_address)
-      AND c.chain_id=137 AND c.created_at=f.created_at AND c.updated_at<=s.block_time
+      AND c.chain_id=137 AND c.created_at=f.created_at
+      AND c.updated_at<=(SELECT block_time FROM catalogue_time_bound)
     WHERE s.kind='mint'
 ), primary_sales AS MATERIALIZED (
     SELECT m.creator AS id,

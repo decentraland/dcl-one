@@ -1,6 +1,6 @@
 use super::{
-    cached_analytics, db_error, listings, nft_index, require_collections, require_metadata,
-    snapshot,
+    ChainNet, ReadDeadline, cached_analytics, db_error, listings, nft_index, require_collections,
+    require_metadata, snapshot,
 };
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 use crate::market::{MarketplaceState, Source, unavailable};
@@ -95,23 +95,25 @@ pub(in crate::market) async fn creator_rankings(
 ) -> Result<crate::market::rankings::RankingResponse, Response> {
     use crate::market::rankings::{CreatorRank, RankingResponse, RankingsSortBy};
     let (mut snap, nets) = snapshot(state, None).await?;
+    let mut deadline = ReadDeadline::from(snap.expires_at);
     let history = require_collections(state, &mut snap).await?;
     let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror)
         .await?
-        .require_fresh(state, &mut snap, crate::market::mirrors::Mirror::Items)?;
+        .require_fresh(state, &mut deadline, crate::market::mirrors::Mirror::Items)?;
     // Founder attribution can read the Polygon collections catalogue.
     let collections = require_metadata(
         &mut snap,
-        &[crate::market::chain_walk::ChainNet::Matic],
+        &[ChainNet::Matic],
         "collections",
         Source::CollectionsMirror,
     )
     .await?
     .require_fresh(
         state,
-        &mut snap,
+        &mut deadline,
         crate::market::mirrors::Mirror::Collections,
     )?;
+    deadline.limit(snap.expires_at, Source::CollectionsIndex);
     let cache_key = format!(
         "published-creator-rank/{filters:?}/{:?}/{history}/{items:?}/{collections:?}",
         snap.generations
@@ -120,7 +122,7 @@ pub(in crate::market) async fn creator_rankings(
         state,
         &state.sales_analytics_slots,
         cache_key,
-        snap.expires_at,
+        deadline,
         async {
             let key = match filters.sort_by {
                 Some(RankingsSortBy::MostSales) => "sales",

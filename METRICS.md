@@ -36,6 +36,8 @@ A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Pol
 
 A larger fixture included 5.3 million collection mint events, 6,200 factory creations and creator transfers, and 5.3 million NFT transfer events alongside one million sales. The accounts page took 8.00 s with 16 MiB of work memory, the lifetime creator ranking took 6.25 s, and an indexed token lookup took 0.282 ms. Creator lookups used the collection replay index in both directions. The separate partial creator wallet indexes occupied 64 KiB each on the fixture.
 
+To measure the creator-position lookups separately, a PostgreSQL 17.6 fixture held 620,000 events across 6,200 collections, including 1,550 creatorship transfers. Two local `EXPLAIN (ANALYZE, BUFFERS)` runs of the preceding and following transfer lookups for 20,000 mint positions took 666 and 895 ms with the replay index. Both lookups used `collection_event_creatorship_position_idx` after it was added and took 52 and 47 ms. The partial index occupied 160 KiB. These runs measure the attribution probes; the rankings also read sales and aggregate results.
+
 The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
 
 ## Wallet activity transfers

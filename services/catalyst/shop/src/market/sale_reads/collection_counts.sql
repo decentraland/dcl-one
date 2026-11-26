@@ -18,7 +18,8 @@
         ORDER BY t.block_number,t.log_index LIMIT 1
     ) later ON true
     LEFT JOIN shop.collection_seed seed ON (seed.network,seed.contract_address)=(e.network,e.contract_address)
-        AND seed.read_block BETWEEN e.block_number AND ix.folded_block AND ix.reorg_rewinds=0
+        AND seed.verified AND seed.read_hash IS NOT NULL
+        AND seed.read_block BETWEEN e.block_number AND ix.folded_block
     LEFT JOIN shop.collections c ON (c.network,c.contract_address)=(e.network,e.contract_address)
         AND c.created_at=e.block_time AND c.updated_at<=ix.last_block_time
     WHERE e.network='matic' AND e.network=ANY($1) AND e.kind='proxy_created'

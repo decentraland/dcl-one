@@ -1990,6 +1990,8 @@ async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
 
 #[tokio::test]
 async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() {
+    use crate::market::collections_index::{CollectionsIndex, Seed, reads_token, write_seeds};
+
     const FIRST_COLLECTION: &str = "0x1010101010101010101010101010101010101010";
     const OTHER_COLLECTION: &str = "0x2020202020202020202020202020202020202020";
     const STORE_COLLECTION: &str = "0x3030303030303030303030303030303030303030";
@@ -2075,8 +2077,8 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
     )
     .bind(OTHER_COLLECTION)
     .bind(ALICE)
-    .bind(polygon - 16)
-    .bind(format!("0x{:064x}", polygon - 16))
+    .bind(polygon - 1)
+    .bind(format!("0x{:064x}", polygon - 1))
     .execute(&db.pool)
     .await
     .unwrap();
@@ -2332,6 +2334,37 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
     let (code, warm) = get_json(&app, &count_path).await;
     assert_eq!((code, warm), (StatusCode::OK, counts.clone()));
     sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())+interval '1 day'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, future) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{future}");
+    assert_eq!(future["source"], "items-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '1 day'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, stale) = get_json(&app, &count_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{stale}");
+    assert_eq!(stale["source"], "items-mirror");
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())+interval '30 seconds'
+         WHERE network='ethereum' AND mirror='items'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, counts.clone())
+    );
+    sqlx::query(
         "UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE network='matic' AND mirror='collections'",
     )
     .execute(&db.pool)
@@ -2381,5 +2414,100 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
         corrected["data"],
         json!([remaining_alice, bob, corrected_creator])
     );
+
+    let index = CollectionsIndex::new();
+    let lifetime = format!("{all}?sortBy=most_sales");
+    let lifetime_page = get_json(&app, &lifetime).await;
+    assert_eq!(lifetime_page.0, StatusCode::OK);
+    for (retained_through, retains_seed) in [(polygon, true), (polygon - 2, false)] {
+        let mut tx = db.pool.begin().await.unwrap();
+        index.rewind(&mut tx, retained_through).await.unwrap();
+        // The collections log through the sales prefix has been republished
+        // after the rewind. A seed above the retained block still needs a read.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET reorg_rewinds=reorg_rewinds+1,
+                sale_history_revision=sale_history_revision+1, folded_at=timezone('UTC',now())
+             WHERE network='matic' AND indexer='collections'",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let (code, page) = get_json(&app, &count_path).await;
+        if retains_seed {
+            assert_eq!((code, page), (StatusCode::OK, corrected.clone()));
+            assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+        } else {
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+            assert_eq!(page["source"], "collections-index");
+        }
+    }
+    // A metadata update after both mints remains within the published
+    // prefix. With no creatorship transfers, it can prove both positions.
+    sqlx::query(
+        "INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+         VALUES('matic',$1,1,$2,'order','order',$3,true)",
+    )
+    .bind(polygon)
+    .bind(format!("0x{:064x}", polygon * 100 + 1))
+    .bind(recent + 3)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collections(network,contract_address,chain_id,name,creator,owner,urn,
+            is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at)
+         VALUES('matic',$1,137,'Existing',$2,$2,'urn:decentraland:matic:collections-v2:creator-rank',
+            true,true,false,$3,$4,$3,timezone('UTC',now()))",
+    )
+    .bind(OTHER_COLLECTION)
+    .bind(ALICE)
+    .bind(older - 1)
+    .bind(recent + 2)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, corrected.clone())
+    );
+    sqlx::query("DELETE FROM shop.collections WHERE network='matic' AND contract_address=$1")
+        .bind(OTHER_COLLECTION)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let token = reads_token(&db.pool, ChainNet::Matic).await.unwrap();
+    assert_eq!(
+        write_seeds(
+            &db.pool,
+            ChainNet::Matic,
+            &[Seed {
+                contract_address: OTHER_COLLECTION.into(),
+                name: "Existing".into(),
+                symbol: "E".into(),
+                creator: ALICE.into(),
+                is_approved: true,
+                is_editable: false,
+                read_block: polygon,
+            }],
+            &format!("0x{polygon:064x}"),
+            token,
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        get_json(&app, &count_path).await,
+        (StatusCode::OK, corrected)
+    );
+    assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
     db.drop().await;
 }
