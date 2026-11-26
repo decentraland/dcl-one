@@ -6089,8 +6089,9 @@ Workload and invariants:
 
 - Job `item-history-replay` runs in the process that holds the `sync` lease,
   after the bootstrap. It doesn't run without leases
-  (`JOB_LEASES_ENABLED=false`), without a sync worker, or when
-  `SYNC_ENTITY_TYPES` leaves out both `wearable` and `emote`.
+  (`JOB_LEASES_ENABLED=false`), without a sync worker, on a node with
+  `CREATE_WRITES_ENABLED=false` (no builder write reads the coverage there),
+  or when `SYNC_ENTITY_TYPES` leaves out both `wearable` and `emote`.
 - Each pass reads every peer's `/pointer-changes` filtered to
   `entityType=emote&entityType=wearable`, ascending by `local_timestamp`, from
   `SYNC_FROM_TIMESTAMP_MS`. It pages by the `from`/`lastId` keyset, one request
@@ -6235,8 +6236,9 @@ daily `/pointer-changes` traffic pulled from each source catalyst is:
 | 1440 (largest) | 60 | about 4.9 GB | about 9,600 |
 | 0 (off) | 0 | 0 | 0 |
 
-A node that syncs from several catalysts reads each of them in every pass, so
-its total is that times the number of sources. The page pause changes the
+A builder node that syncs from several catalysts reads each of them in every
+pass, so its total is that times the number of sources. A content mirror
+without creator writes runs no pass. The page pause changes the
 pass length, not the traffic. Entity downloads on a node that lacks items
 aren't measured here.
 
