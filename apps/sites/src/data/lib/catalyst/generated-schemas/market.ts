@@ -673,6 +673,8 @@ export const SalesSummaryCollectionSchema = z.object({
   contractAddress: z.string(),
   sold: z.number(),
   earnedWei: z.string(),
+  earnedUsd: z.string(),
+  unpricedSales: z.number(),
 });
 
 export const SalesSummaryItemSchema = z.object({
@@ -684,6 +686,7 @@ export const SalesSummaryItemSchema = z.object({
 export const SalesSummaryRoyaltiesSchema = z.object({
   resales: z.number(),
   volumeWei: z.string(),
+  royaltiesWei: z.string().nullable(),
 });
 
 export const SalesSummarySchema = z.object({
@@ -691,6 +694,8 @@ export const SalesSummarySchema = z.object({
   mints: z.number(),
   resales: z.number(),
   earnedWei: z.string(),
+  earnedUsd: z.string(),
+  unpricedSales: z.number(),
   byCollection: z.array(SalesSummaryCollectionSchema),
   byItem: z.array(SalesSummaryItemSchema),
   royalties: SalesSummaryRoyaltiesSchema,

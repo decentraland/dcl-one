@@ -5,8 +5,10 @@
 //! (`events-notifier@5ceb8abc`, `src/adapters/producers/bid-received.ts`,
 //! which read the Polygon collections subgraph's wearable and emote bids).
 //! The bid contract accepts bids on any ERC721, and the sales index keeps
-//! them all: a bid on another contract notifies nobody and never holds the
-//! cursor.
+//! them all: a bid on another contract notifies nobody. Under the mirrors it
+//! never holds the cursor; on a network the collections index owns it holds
+//! it until the publication covers its block, since a collection created by
+//! then may not be published yet ([`ItemWait`]).
 //!
 //! The recipient is the owner when the bid was placed, the subgraph's
 //! `seller`: the nft walk's latest transfer (a mint is one) before the bid,
@@ -35,7 +37,7 @@
 //! page's notifications in one transaction; ids are reorg-stable
 //! (`notice_cursor::tx_log_key`), so a retried page inserts nothing twice.
 //! A bid on a collection token no index describes yet holds the cursor
-//! while `item_awaited`, as the sale producers do.
+//! while [`ItemWait::awaited`], as the sale producers do.
 
 use std::time::Duration;
 
@@ -44,11 +46,12 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::catalogue::{self, ItemWait};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::shared::collections::{ITEM_HOLD_MAX_SECS, item_awaited};
+use crate::shared::collections::ITEM_HOLD_MAX_SECS;
 use crate::shared::identity::Address;
 use crate::shared::notifications::{NewNotification, format_mana, insert_notifications};
 
@@ -85,7 +88,9 @@ struct BidRow {
     /// transfer is indexed or the contract owes a backfill.
     seller: Option<String>,
     price: String,
-    /// The contract is a Decentraland collection the mirror knows.
+    /// The contract is a Decentraland collection the catalogue lists, read in
+    /// the snapshot of the bid's description and wait.
+    #[sqlx(skip)]
     collection: bool,
     /// The nft walk still owes the contract a backfill.
     backfill_owed: bool,
@@ -98,11 +103,13 @@ struct BidRow {
 /// withdraws the index) before a bid above the fork can be matched against
 /// the truncated transfers. With either index not ready there is no bound
 /// and no row. A page walks `shop.sale_event`'s primary key from the
-/// cursor; each row adds one backward probe of `nft_event_token_idx` and
-/// primary key reads of `shop.nft_contract` and `shop.collections`.
+/// cursor; each row adds one backward probe of `nft_event_token_idx` and a
+/// primary key read of `shop.nft_contract`. The page's contracts are then
+/// looked up in `shop.collections` by primary key, in the snapshot that
+/// reads their descriptions and the catalogue's wait.
 fn rows_sql() -> String {
     format!(
-        "WITH bound AS (SELECT min(c.last_block) AS upto FROM shop.chain_cursor c \
+        "WITH bound AS (SELECT min(c.folded_block) AS upto FROM shop.chain_cursor c \
              WHERE c.network = $1 AND c.indexer = ANY($4) AND {ready} HAVING count(*) = 2) \
          SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
                 e.token_id::text AS token_id, lower(e.buyer) AS bidder, e.price::text AS price, \
@@ -110,15 +117,14 @@ fn rows_sql() -> String {
                     WHERE n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
                       AND n.kind = 'transfer' AND (n.block_number, n.log_index) < (e.block_number, e.log_index) \
                     ORDER BY n.block_number DESC, n.log_index DESC LIMIT 1)) AS seller, \
-                EXISTS (SELECT 1 FROM shop.collections c \
-                    WHERE c.network = e.network AND c.contract_address = e.contract_address) AS collection, \
                 EXISTS (SELECT 1 FROM shop.nft_contract k \
                     WHERE k.network = e.network AND k.contract_address = e.contract_address AND k.backfill_from_block IS NOT NULL \
                       AND COALESCE(k.backfilled_to_block, k.backfill_from_block - 1) < k.walked_from_block - 1) AS backfill_owed \
          FROM shop.sale_event e CROSS JOIN bound \
          WHERE e.network = $1 AND e.kind = 'bid_created' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
          ORDER BY e.block_number, e.log_index LIMIT $5",
-        ready = chain_walk::ready_sql("c", "$6"),
+        ready =
+            chain_walk::published_sql_on("c", "$6", ChainNet::Ethereum.chain_id(), NET.chain_id()),
         key = notice_cursor::tx_log_key(
             "sale_event",
             "e",
@@ -127,20 +133,36 @@ fn rows_sql() -> String {
     )
 }
 
-/// Whether a bid holds the cursor at `now`: its collection item may still
-/// be mirrored, or its owner at the bid awaits the contract's backfill.
+/// Whether a bid holds the cursor at `now`: its collection or item may still
+/// reach the catalogue, or its owner at the bid awaits the contract's
+/// backfill. Under the mirrors a contract the catalogue does not list never
+/// holds (the bid contract takes bids on any ERC721). On an owned network it
+/// holds until the publication covers its block, since a collection created
+/// by then may not be published yet.
 fn holds(
     row: &BidRow,
     described: bool,
     items_mirror_enabled: bool,
-    items_pass: Option<i64>,
+    wait: ItemWait,
     now: i64,
 ) -> bool {
     if !row.collection {
-        return false;
+        return matches!(wait, ItemWait::Index(_))
+            && wait.awaited(
+                items_mirror_enabled,
+                false,
+                row.block_number,
+                row.block_time,
+                now,
+            );
     }
-    (!described && item_awaited(items_mirror_enabled, items_pass, row.block_time, now))
-        || (row.backfill_owed && now.saturating_sub(row.block_time) < ITEM_HOLD_MAX_SECS)
+    wait.awaited(
+        items_mirror_enabled,
+        described,
+        row.block_number,
+        row.block_time,
+        now,
+    ) || (row.backfill_owed && now.saturating_sub(row.block_time) < ITEM_HOLD_MAX_SECS)
 }
 
 /// The notification of one bid; `None` off a Decentraland collection,
@@ -202,18 +224,19 @@ pub async fn run_once(
 /// the first seed at the sales index's published block. Each page reads its
 /// own bound ([`rows_sql`]); these checks only report and seed.
 async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Option<&'static str>> {
-    let Some(sales) = chain_walk::ready_cursor(pool, INDEXER_SALES, NET, now).await else {
+    let Some(published) =
+        chain_walk::published_block(pool, INDEXER_SALES, NET, NET.chain_id(), now).await?
+    else {
         return Ok(Some("the matic sales index is not published"));
     };
-    if chain_walk::ready_cursor(pool, INDEXER_NFT, NET, now)
-        .await
+    if chain_walk::published_block(pool, INDEXER_NFT, NET, NET.chain_id(), now)
+        .await?
         .is_none()
     {
         return Ok(Some(
             "the matic nft index is not published (a bid's owner is unknown)",
         ));
     }
-    let published = sales.folded_block.unwrap_or(sales.last_block);
     notice_cursor::seed(pool, PRODUCER, None, published, i32::MAX).await?;
     Ok(None)
 }
@@ -225,7 +248,7 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, PRODUCER).await?;
-        let rows: Vec<BidRow> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql()))
+        let mut rows: Vec<BidRow> = sqlx::query_as(sqlx::AssertSqlSafe(rows_sql()))
             .bind(network)
             .bind(since_block)
             .bind(since_log)
@@ -238,24 +261,45 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
             txn.rollback().await?;
             break;
         }
-        let keys: Vec<(String, String)> = rows
-            .iter()
-            .filter(|r| r.collection)
-            .map(|r| (r.contract_address.clone(), r.token_id.clone()))
+        // Which contracts are collections, the tokens' descriptions and the
+        // catalogue's wait from one snapshot, so a publication that covers a
+        // bid's block never meets an older copy of its collection or item.
+        let (metas, wait) = {
+            let mut snap = catalogue::read_snapshot(pool).await?;
+            let contracts: Vec<String> = rows.iter().map(|r| r.contract_address.clone()).collect();
+            let listed: std::collections::HashSet<String> = sqlx::query_scalar(
+                "SELECT contract_address::text FROM shop.collections \
+                 WHERE network = $1 AND contract_address = ANY($2)",
+            )
+            .bind(network)
+            .bind(&contracts)
+            .fetch_all(&mut *snap)
+            .await?
+            .into_iter()
             .collect();
-        let metas = trade_events::nft_metas(pool, &settings.land_images, network, &keys).await?;
-        let items_pass: Option<i64> = sqlx::query_scalar(
-            "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-             WHERE mirror = 'items' AND network = $1",
-        )
-        .bind(network)
-        .fetch_optional(&mut *txn)
-        .await?
-        .flatten();
+            for r in &mut rows {
+                r.collection = listed.contains(&r.contract_address);
+            }
+            let keys: Vec<(String, String)> = rows
+                .iter()
+                .filter(|r| r.collection)
+                .map(|r| (r.contract_address.clone(), r.token_id.clone()))
+                .collect();
+            let metas = trade_events::nft_metas(
+                &mut snap,
+                &settings.land_images,
+                network,
+                NET.chain_id(),
+                &keys,
+            )
+            .await?;
+            let wait = ItemWait::read(&mut snap, NET, NET.chain_id(), now).await?;
+            (metas, wait)
+        };
         let ts = now.timestamp();
         let held = rows.iter().position(|r| {
             let described = metas.contains_key(&(r.contract_address.clone(), r.token_id.clone()));
-            holds(r, described, settings.items_mirror_enabled, items_pass, ts)
+            holds(r, described, settings.items_mirror_enabled, wait, ts)
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let Some(last) = ready.last() else {
@@ -357,17 +401,41 @@ mod tests {
     #[test]
     fn only_a_collection_bid_holds_and_never_past_the_bound() {
         let t = T0;
-        assert!(holds(&row(true, false, t), false, true, None, t + 60));
+        assert!(holds(
+            &row(true, false, t),
+            false,
+            true,
+            ItemWait::Mirror(None),
+            t + 60
+        ));
         assert!(
-            !holds(&row(true, false, t), true, true, None, t + 60),
+            !holds(
+                &row(true, false, t),
+                true,
+                true,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "described"
         );
         assert!(
-            !holds(&row(false, true, t), false, true, None, t + 60),
+            !holds(
+                &row(false, true, t),
+                false,
+                true,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "another contract never holds"
         );
         assert!(
-            holds(&row(true, true, t), true, false, None, t + 60),
+            holds(
+                &row(true, true, t),
+                true,
+                false,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "a backfill holds with the mirror off"
         );
         assert!(
@@ -375,10 +443,69 @@ mod tests {
                 &row(true, true, t),
                 true,
                 false,
-                None,
+                ItemWait::Mirror(None),
                 t + ITEM_HOLD_MAX_SECS
             ),
             "a stalled backfill"
+        );
+        // On a network the collections index owns, a bid on a token no index
+        // describes holds until the publication covers its block.
+        let bid = row(true, false, t);
+        assert!(holds(&bid, false, false, ItemWait::Index(None), t + 60));
+        assert!(
+            holds(
+                &bid,
+                false,
+                false,
+                ItemWait::Index(Some(bid.block_number - 1)),
+                t + 60
+            ),
+            "published below the bid"
+        );
+        assert!(
+            !holds(
+                &bid,
+                false,
+                false,
+                ItemWait::Index(Some(bid.block_number)),
+                t + 60
+            ),
+            "published through the bid: the item never comes"
+        );
+        assert!(
+            !holds(
+                &bid,
+                false,
+                true,
+                ItemWait::Index(None),
+                t + ITEM_HOLD_MAX_SECS
+            ),
+            "a stalled index"
+        );
+        assert!(
+            holds(&bid, true, false, ItemWait::Index(None), t + 60),
+            "a row read while the index refuses never describes the bid"
+        );
+        let unlisted = row(false, false, t);
+        assert!(
+            holds(
+                &unlisted,
+                false,
+                false,
+                ItemWait::Index(Some(unlisted.block_number - 1)),
+                t + 60
+            ),
+            "a contract not listed yet may be a collection the publication does not cover"
+        );
+        assert!(
+            !holds(
+                &unlisted,
+                false,
+                false,
+                ItemWait::Index(Some(unlisted.block_number)),
+                t + 60
+            ),
+            "covered: another contract"
         );
         assert_ne!(
             notification_id("matic", "0xa:0:k"),
@@ -521,6 +648,74 @@ mod tests {
         .unwrap()
     }
 
+    /// On a network the collections index owns, a bid on a contract the
+    /// catalogue does not list yet holds the cursor until the publication
+    /// covers its block: a collection created at 105 while the publication
+    /// stands at 104 is announced once it is published, to the owner at the
+    /// bid, exactly once.
+    #[tokio::test]
+    async fn on_an_owned_network_a_bid_waits_for_its_collection_to_be_published() {
+        let Some(db) = PrivateDb::create("bidowned").await else {
+            return;
+        };
+        let pool = &db.pool;
+        use crate::market::catalogue::owning;
+        let s = settings(true);
+        // Token 7 is minted to OWNER and sold to NEW_OWNER at block 90; the
+        // collection is not in the catalogue yet.
+        nft(pool, 7, NEW_OWNER, 10, 90).await;
+        transfer(pool, 10, 0, 7, nft_zero(), OWNER).await;
+        transfer(pool, 90, 0, 7, OWNER, NEW_OWNER).await;
+        notice_cursor::seed(pool, PRODUCER, None, 100, i32::MAX)
+            .await
+            .unwrap();
+        bid(pool, 105, 7, BIDDER, "1000000000000000000").await;
+        recent(pool, 105).await;
+        publish(pool, INDEXER_SALES, "matic", 200, T0 + 200).await;
+        publish(pool, INDEXER_NFT, "matic", 120, T0 + 120).await;
+        owning::own(pool, "matic", 137, 104, 60).await;
+
+        assert_eq!(
+            run_once(pool, &s, Utc::now()).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        assert_eq!(cursor(pool).await, (100, i32::MAX), "held below the bid");
+        assert!(stored(pool).await.is_empty());
+
+        // The fold publishes block 105 with the collection and its item.
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'Coll', $2, $2, 'urn:coll', true, true, false, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(COLLECTION)
+        .bind(CREATOR)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, image, name, category, body_shapes, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 0, 137, 'wearable_v2', 'urn:coll:0', $2, 'epic', 1, 100, 99, 10, 'https://img/0', 'Shoes', 'feet', ARRAY['BaseMale'], true, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(COLLECTION)
+        .bind(CREATOR)
+        .execute(pool)
+        .await
+        .unwrap();
+        owning::own(pool, "matic", 137, 105, 60).await;
+        assert_eq!(
+            run_once(pool, &s, Utc::now()).await.unwrap(),
+            Pass::Emitted(1)
+        );
+        assert_eq!(
+            run_once(pool, &s, Utc::now()).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        let rows = stored(pool).await;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].0, NEW_OWNER, "the owner at the bid");
+        db.drop().await;
+    }
+
     /// Indexed `BidCreated` rows notify the token's owner at the bid, once:
     /// nothing before both indexes publish; a cursor seeded below the head
     /// announces the bids after it; reads stop at the lower published
@@ -557,6 +752,10 @@ mod tests {
             Pass::Waiting(_)
         ));
         publish(pool, INDEXER_NFT, "matic", 120, T0 + 120).await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block=last_block+100 WHERE network='matic'")
+            .execute(pool)
+            .await
+            .unwrap();
 
         assert_eq!(
             run_once(pool, &s, Utc::now()).await.unwrap(),

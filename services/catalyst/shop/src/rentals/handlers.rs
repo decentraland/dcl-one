@@ -277,6 +277,8 @@ pub async fn create_rentals_listing(
             "There is no rentals contract for chain id {served_chain}"
         )));
     };
+    let chain = super::index::RentalsChain::from_id(served_chain)
+        .ok_or_else(|| ApiError::bad_request("Unsupported Rentals chain"))?;
     if !body.rental_contract_address.eq_ignore_ascii_case(rentals) {
         return Err(ApiError::bad_request(
             "The rental contract address does not match the Rentals contract of the given chain",
@@ -335,7 +337,7 @@ pub async fn create_rentals_listing(
     // A third-party LAND owner needs no Rentals check unless that conflict exists.
     if (rentals_unavailable || indexed_third_party)
         && let Some(conflict) = state.db.open_listing_conflict(&body).await?
-        && (rentals_unavailable || !super::index::ready(state.db.pool(), now).await)
+        && (rentals_unavailable || !super::index::ready_on(state.db.pool(), chain, now).await)
     {
         return Err(ApiError::conflict(conflict.message()));
     }
@@ -384,7 +386,7 @@ pub async fn create_rentals_listing(
     let mut tx = state.db.pool().begin().await?;
     let write_time = chrono::Utc::now();
     if let Some(expected) = nft.land_cursor_updated_at
-        && !super::status::land_publication_matches(&mut tx, expected).await?
+        && !super::status::land_publication_matches(&mut tx, chain.land(), expected).await?
     {
         return Ok(reader_unavailable(NftReadError::Unavailable));
     }
@@ -394,6 +396,7 @@ pub async fn create_rentals_listing(
         && let Some(transfer_block) = nft.transfer_block
         && super::index::observed_running_rent(
             &mut tx,
+            chain,
             &body.contract_address,
             &body.token_id,
             transfer_block,
@@ -406,12 +409,11 @@ pub async fn create_rentals_listing(
         ));
     }
     if let Some(evidence) = &rent_evidence {
-        let chain = super::index::RentalsChain::Mainnet;
         let cursor = super::index::lock_cursor(&mut tx, chain).await?;
         if cursor != evidence.cursor
-            || !cursor
-                .as_ref()
-                .is_some_and(|c| crate::market::chain_walk::is_ready_on(c, chain.id(), write_time))
+            || !cursor.as_ref().is_some_and(|c| {
+                crate::market::chain_walk::fresh_fold_on(c, chain.id(), write_time).is_some()
+            })
         {
             return Ok(unavailable(
                 Source::RentalsIndex,

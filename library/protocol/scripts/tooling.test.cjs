@@ -26,7 +26,7 @@ function fixture(t) {
 }
 function repository(t) {
   const fx = fixture(t)
-  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Protocol Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'baseline']]) {
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Protocol Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline']]) {
     const result = run('git', args, fx.root)
     assert.equal(result.status, 0, result.stderr)
   }
@@ -65,7 +65,7 @@ test('missing revisions and revisions without protocol fail before Buf', (t) => 
   assert.notEqual(absent.status, 0)
   assert.equal(fs.existsSync(fx.env.BUF_MARKER), false)
   run('git', ['rm', '-qr', 'library/protocol/proto'], fx.root)
-  const commit = run('git', ['-c', 'user.name=Protocol Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'without protocol'], fx.root)
+  const commit = run('git', ['-c', 'user.name=Protocol Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'without protocol'], fx.root)
   assert.equal(commit.status, 0, commit.stderr)
   const noTree = run('bash', ['scripts/check-proto-compabitility.sh'], fx.protocol, fx.env)
   assert.notEqual(noTree.status, 0)

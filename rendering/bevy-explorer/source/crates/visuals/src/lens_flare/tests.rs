@@ -147,6 +147,7 @@ fn lens_flare_pipelines_compile() {
     });
     app.insert_resource(TimeOfDay {
         time: 12.0 * 3600.0,
+        ..Default::default()
     });
     app.finish();
     app.cleanup();
@@ -279,6 +280,7 @@ fn render_flare(blocker: Blocker) -> bevy::image::Image {
         })
         .insert_resource(TimeOfDay {
             time: 12.0 * 3600.0,
+            ..Default::default()
         });
     app.finish();
     app.cleanup();

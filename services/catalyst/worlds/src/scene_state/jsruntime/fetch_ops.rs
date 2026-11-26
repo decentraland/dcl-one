@@ -139,9 +139,9 @@ pub(super) fn op_signed_fetch(
 
     let checked = HostState::with(scope, |c| {
         let mut h = c.borrow_mut();
-        if h.storage.is_none() || h.fetch_tx.is_none() {
+        let Some(storage) = h.storage.as_ref().filter(|_| h.fetch_tx.is_some()) else {
             return Err("storage is not configured");
-        }
+        };
         if h.pending_fetches.len() >= h.fetch_in_flight_max {
             return Err("too many concurrent requests");
         }
@@ -151,7 +151,7 @@ pub(super) fn op_signed_fetch(
         if req.body.as_ref().map(|b| b.len()).unwrap_or(0) > h.fetch_max_body_bytes {
             return Err("request body too large");
         }
-        let url = validate_scene_url(&req.url, h.storage.as_ref().unwrap())?;
+        let url = validate_scene_url(&req.url, storage)?;
         let id = h.next_fetch_id;
         h.next_fetch_id += 1;
         Ok((id, url))

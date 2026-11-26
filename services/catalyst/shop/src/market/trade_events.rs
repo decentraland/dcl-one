@@ -96,7 +96,10 @@ type Deployment = (&'static str, u64, bool);
 /// 2026-09-25; V1 is the squid's `OffChainMarketplace`, still holding the
 /// most mirrored trades. Testnet blocks (Amoy, Sepolia, the addresses of
 /// `listings::offchain_marketplaces` and the dApps' `OffChainMarketplace`):
-/// the same bisection, 2026-11-02. Sepolia has no V1.
+/// the same bisection, 2026-11-02. Sepolia V1 is pinned in
+/// decentraland/marketplace-squid-core@85c6832e96e5459b37f0f315b8e384693684e12d,
+/// src/eth/addresses/sepolia.ts. Its creation transaction is
+/// 0xd813aee88f1e1a21783ca8fa44868e926b9e2ddee3a73cc69919fcebd0edd337.
 const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
     (
         listings::MATIC_MAINNET,
@@ -161,6 +164,11 @@ const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
     (
         listings::ETHEREUM_SEPOLIA,
         &[
+            (
+                "0x54bdd3ffc1448bdab0251f05dd554eec803adb2f",
+                6_770_056,
+                false,
+            ),
             (
                 "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
                 9_455_328,
@@ -832,25 +840,6 @@ impl ChainIndex for TradeEventsIndex {
     }
 }
 
-/// The networks whose trade verdicts readers may use at `now`, each read on
-/// the chain `indexes` configures for it.
-pub async fn ready_networks(
-    pool: &PgPool,
-    indexes: &chain_walk::IndexSettings,
-    now: chrono::DateTime<Utc>,
-) -> Vec<ChainNet> {
-    let mut out = Vec::new();
-    for net in ChainNet::ALL {
-        if chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, net, indexes.chain_id(net), now)
-            .await
-            .is_some()
-        {
-            out.push(net);
-        }
-    }
-    out
-}
-
 /// The SQL predicate "the chain closed trade `t`", with the readiness rule
 /// inline (a bound `now_p`): a verdict of a network whose index is not
 /// published, or is bound to another chain than this process serves, is
@@ -949,22 +938,37 @@ pub async fn require_current_on(
     conn: &mut PgConnection,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), Response> {
+    current_on(conn, now)
+        .await
+        .map_err(|(source, why)| unavailable(source, &why))
+}
+
+/// [`require_current_on`], typed: the source that refused and why, for a
+/// caller that carries them through its own error (a cursor read that
+/// failed is not current either).
+pub async fn current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), (Source, String)> {
     match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
-        Ok(stale) => Err(unavailable(
-            Source::TradeEventsIndex,
-            &stale_message(&stale),
-        )),
-        Err(e) => Err(unreadable(e)),
+        Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
+        Err(e) => Err(unreadable_reason(e)),
     }
 }
 
 /// The envelope of a cursor read that failed: not current, never a guess.
 fn unreadable(e: sqlx::Error) -> Response {
+    let (source, why) = unreadable_reason(e);
+    unavailable(source, &why)
+}
+
+/// [`unreadable`]'s source and reason.
+fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
-    unavailable(
+    (
         Source::TradeEventsIndex,
-        "the trade-events index state cannot be read",
+        "the trade-events index state cannot be read".to_string(),
     )
 }
 
@@ -975,7 +979,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 /// ([`super::catalog::served_chains`], the trade-events walk's
 /// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
 /// lends its verdicts.
-fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
     chain_walk::published_sql_on(alias, now_p, ethereum, matic)
 }
@@ -1071,10 +1075,10 @@ pub(super) async fn bid_asset(
     let contract = asset.contract_address.to_ascii_lowercase();
     Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
         (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
-            nft_meta(pool, land_image_base, &net, &contract, token).await?
+            nft_meta(pool, land_image_base, &net, bid.chain_id, &contract, token).await?
         }
         (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-            item_meta(pool, &net, &contract, item).await?
+            item_meta(pool, &net, bid.chain_id, &contract, item).await?
         }
         _ => None,
     })
@@ -1182,12 +1186,12 @@ pub(crate) struct StoredTrade {
 }
 
 async fn stored_trade(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     hashed_signature: &str,
 ) -> Result<Option<StoredTrade>, sqlx::Error> {
     let Some(head) = sqlx::query("SELECT id::text AS id, network, signer, type::text AS type, contract FROM shop.trades WHERE hashed_signature = $1")
         .bind(hashed_signature)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?
     else {
         return Ok(None);
@@ -1201,7 +1205,7 @@ async fn stored_trade(
          WHERE ta.trade_id = $1::uuid ORDER BY ta.direction ASC, ta.created_at, ta.id",
     )
     .bind(head.get::<String, _>("id"))
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let sent_amount = assets
         .iter()
@@ -1237,17 +1241,19 @@ fn category_of_item_type(item_type: &str) -> &'static str {
 }
 
 /// An item asset from the items mirror: the creator is the seller.
-pub(crate) async fn item_meta(
-    pool: &PgPool,
+pub(crate) async fn item_meta<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     network: &str,
+    chain_id: i64,
     contract: &str,
     item_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
-    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric")
+    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric AND chain_id=$4 AND ($4 IN (1,137) OR testnet_verified)")
         .bind(network)
         .bind(contract)
         .bind(item_id)
-        .fetch_optional(pool)
+        .bind(chain_id as i32)
+        .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| AssetMeta {
         image: r.get::<Option<String>, _>("image").unwrap_or_default(),
@@ -1263,8 +1269,9 @@ pub(crate) async fn item_meta(
 
 /// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
 pub(crate) async fn item_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
     let (contracts, items): (Vec<String>, Vec<String>) = keys
@@ -1275,12 +1282,13 @@ pub(crate) async fn item_metas(
     let rows = sqlx::query(
         "SELECT u.contract, u.item, i.image, i.creator, i.rarity, i.name, i.item_type \
          FROM UNNEST($2::text[], $3::text[]) AS u(contract, item) \
-         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric",
+         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric AND i.chain_id=$4 AND ($4 IN (1,137) OR i.testnet_verified)",
     )
     .bind(network)
     .bind(&contracts)
     .bind(&items)
-    .fetch_all(pool)
+    .bind(chain_id as i32)
+    .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
@@ -1303,12 +1311,14 @@ pub(crate) async fn item_metas(
 
 /// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
 pub(crate) async fn nft_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
-    let found = super::nft_reads::asset_metas(pool, land_image_base, network, keys).await?;
+    let found =
+        super::nft_reads::asset_metas(conn, land_image_base, network, chain_id, keys).await?;
     Ok(found
         .into_iter()
         .map(|((contract, token), n)| {
@@ -1329,15 +1339,17 @@ pub(crate) async fn nft_metas(
 
 /// An nft asset from the nft index (collections and names) or the LAND
 /// index: its current owner is the seller, as the old squid read had it.
-pub(crate) async fn nft_meta(
-    pool: &PgPool,
+pub(crate) async fn nft_meta<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     contract: &str,
     token_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
     if let Some(n) =
-        super::nft_reads::asset_meta(pool, land_image_base, network, contract, token_id).await?
+        super::nft_reads::asset_meta(conn, land_image_base, network, chain_id, contract, token_id)
+            .await?
     {
         return Ok(Some(AssetMeta {
             image: n.image,
@@ -1357,6 +1369,8 @@ pub(crate) async fn nft_meta(
 /// trade is known and the chain has no execution of it.
 async fn accepted_event(
     state: &MarketplaceState,
+    conn: &mut PgConnection,
+    published_block: i64,
     trade: &StoredTrade,
     caller: &str,
 ) -> Result<Option<Value>, Response> {
@@ -1364,33 +1378,39 @@ async fn accepted_event(
     let executed: Option<i64> = sqlx::query_scalar(
         "SELECT e.block_time FROM shop.trade_event e \
          WHERE e.hashed_signature = (SELECT hashed_signature FROM shop.trades WHERE id = $1::uuid) \
-           AND e.kind = 'traded' AND e.network = $2 AND e.marketplace_address = $3 \
+           AND e.kind = 'traded' AND e.network = $2 AND e.marketplace_address = $3 AND e.block_number <= $4 \
          ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1",
     )
     .bind(&trade.id)
     .bind(&network)
     .bind(&trade.contract)
-    .fetch_optional(&state.pool)
+    .bind(published_block)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| super::wire::ApiError::internal(e.to_string()).into_response())?;
     if executed.is_none() {
         return Ok(None);
     }
+    let Some(net) = ChainNet::parse(&network) else {
+        return Ok(None);
+    };
+    let chain_id = state.settings.market.indexes.chain_id(net);
     let mut metas = Vec::new();
     for (asset_type, contract, token_id, item_id) in &trade.assets {
         let meta = match (*asset_type, token_id, item_id) {
             (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
                 nft_meta(
-                    &state.pool,
+                    &mut *conn,
                     &state.settings.land_image_base_url,
                     &network,
+                    chain_id,
                     contract,
                     token,
                 )
                 .await
             }
             (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-                item_meta(&state.pool, &network, contract, item).await
+                item_meta(&mut *conn, &network, chain_id, contract, item).await
             }
             _ => Ok(None),
         }
@@ -1427,7 +1447,17 @@ pub async fn get_trade_accepted_event(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     let hashed_signature = hashed_signature.to_ascii_lowercase();
-    let trade = match stored_trade(&state.pool, &hashed_signature).await {
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return unreadable(e),
+    };
+    if let Err(e) = sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+    {
+        return unreadable(e);
+    }
+    let trade = match stored_trade(&mut tx, &hashed_signature).await {
         Ok(Some(t)) => t,
         Ok(None) => {
             return envelope_error(
@@ -1444,10 +1474,13 @@ pub async fn get_trade_accepted_event(
         );
     };
     let chain = state.settings.market.indexes.chain_id(net);
-    if chain_walk::ready_cursor_on(&state.pool, INDEXER_TRADE_EVENTS, net, chain, Utc::now())
-        .await
-        .is_none()
-    {
+    let cursor = match chain_walk::cursor(&mut *tx, INDEXER_TRADE_EVENTS, net).await {
+        Ok(cursor) => cursor,
+        Err(e) => return unreadable(e),
+    };
+    let Some(published_block) =
+        cursor.and_then(|c| chain_walk::fresh_fold_on(&c, chain, Utc::now()))
+    else {
         return unavailable(
             Source::TradeEventsIndex,
             &format!(
@@ -1455,7 +1488,7 @@ pub async fn get_trade_accepted_event(
                 net.db_name()
             ),
         );
-    }
+    };
     let timestamp = pairs
         .iter()
         .find(|(k, _)| k == "timestamp")
@@ -1467,7 +1500,7 @@ pub async fn get_trade_accepted_event(
         .find(|(k, _)| k == "caller")
         .map(|(_, v)| v.clone())
         .unwrap_or_default();
-    match accepted_event(&state, &trade, &caller).await {
+    match accepted_event(&state, &mut tx, published_block, &trade, &caller).await {
         Err(r) => r,
         Ok(None) => envelope_error(
             StatusCode::NOT_FOUND,
@@ -1499,7 +1532,7 @@ pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value
             net.db_name().to_string(),
             json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+            "ready": chain_walk::fresh_fold_on(&c, indexes.chain_id(net), Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
             "chainId": c.chain_id, "quarantine": c.quarantine_reason,
         }))),
         );
@@ -1588,7 +1621,7 @@ pub(crate) mod tests {
             net: ChainNet::Ethereum,
             chain_id: 11_155_111,
         };
-        assert_eq!(sepolia.start_block(), 9_455_328);
+        assert_eq!(sepolia.start_block(), 6_770_056);
         // No mainnet address is walked on a testnet, and an unknown chain walks nothing.
         for (a, _, _) in deployments(80_002) {
             assert!(!deployments(137).iter().any(|(m, _, _)| m == a), "{a}");

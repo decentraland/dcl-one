@@ -24,6 +24,7 @@ pub const CONTRACT: &str = "0x1c436c1efb4608dffdc8bace99d2b03c314f3348";
 pub const START_BLOCK: u64 = 26_860_700;
 
 sol! {
+    #[allow(clippy::too_many_arguments, reason = "generated event constructor")]
     interface Registry {
         event ThirdPartyAdded(string id, string metadata, string resolver, bool approved, address[] managers, uint256 slots, bool programmatic, address sender);
         event ThirdPartyUpdated(string id, string metadata, string resolver, address[] managers, bool[] managerValues, uint256 slots, address sender);
