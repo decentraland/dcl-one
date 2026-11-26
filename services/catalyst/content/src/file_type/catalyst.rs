@@ -880,7 +880,11 @@ async fn asf<S: Source>(tok: &mut Tokenizer<'_, S>, size: u64) -> Result<Pass, S
                 "application/vnd.ms-asf"
             }));
         }
-        let object = u64::from_le_bytes(header[16..24].try_into().unwrap());
+        let object = u64::from_le_bytes(
+            header[16..24]
+                .try_into()
+                .expect("an 8-byte slice is a [u8; 8]"),
+        );
         // `ignore` of a negative payload throws.
         if object < 24 || !tok.ignore(object - 24).await? {
             return Ok(Pass::Stop);
@@ -1098,7 +1102,13 @@ async fn zip_walk<S: Source>(
             return Ok(eos);
         };
         let u16_at = |i: usize| u64::from(u16::from_le_bytes([header[i], header[i + 1]]));
-        let u32_at = |i: usize| u64::from(u32::from_le_bytes(header[i..i + 4].try_into().unwrap()));
+        let u32_at = |i: usize| {
+            u64::from(u32::from_le_bytes(
+                header[i..i + 4]
+                    .try_into()
+                    .expect("a 4-byte slice is a [u8; 4]"),
+            ))
+        };
         let descriptor = u16_at(6) & 0x0008 != 0;
         let method = u16_at(8);
         let compressed = u32_at(18);

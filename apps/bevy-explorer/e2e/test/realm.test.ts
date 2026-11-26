@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
+import { type aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
 
 describe('realm', () => {
   let dir: string
