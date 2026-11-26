@@ -526,7 +526,7 @@ impl TransactionComponent {
         )
         .bind(user_address)
         .bind(session_id)
-        .bind(chain_id as i32)
+        .bind(crate::types::chain_id_column::<i32>(chain_id)?)
         .bind(&contract)
         .bind(window_start)
         .bind(now)

@@ -12,6 +12,13 @@
 //! `ReleaseWorker`: every tick it releases the active `shop.usage_grants`
 //! whose lock expired (a bounded batch) to their buyer through the broker.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -77,9 +84,9 @@ pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError
                 to: field("to")?,
                 value_wei: field("valueWei")?,
                 block: TransferBlock {
-                    number: number("blockNumber")?.max(0) as u64,
+                    number: u64::try_from(number("blockNumber")?).unwrap_or(0),
                     timestamp: number("blockTimestamp")?,
-                    confirmations: number("confirmations")?.max(0) as u64,
+                    confirmations: u64::try_from(number("confirmations")?).unwrap_or(0),
                 },
             })
         }

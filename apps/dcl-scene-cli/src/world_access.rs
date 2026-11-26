@@ -735,6 +735,7 @@ async fn fetch_permissions(base: &str, name: &str) -> Result<Value> {
     serde_json::from_str(&body).context("parsing the permissions response")
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn show(name: &str, target_content: Option<&str>) -> Result<()> {
     let base = world::resolve_target(target_content)?;
     let dir = Directory::from_env()?;
