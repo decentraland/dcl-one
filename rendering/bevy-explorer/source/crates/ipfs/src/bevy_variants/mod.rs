@@ -36,9 +36,13 @@
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
 //! preview always shows the deployed files.
 //!
-//! Every read of an entity's texture or `.glb` counts under the entity's content type (scene,
-//! wearable or emote), with variants off too, together with whether a variant answered it; the
-//! session's counts are the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`], measured every frame.
+//! Each texture or `.glb` an entity reads counts once under the entity's content type (scene,
+//! wearable or emote), with variants off too, with whether a variant answered its latest read: a
+//! reload or a colliders-only load of the file replaces its outcome, and a variant that fails to
+//! load leaves it counted as its original. The kind is the first one the entity's manifest was
+//! asked for as, so a smart wearable's scene counts as the wearable and a scene's emote `.glb`
+//! as the scene. The session's counts are the [`VARIANT_LOAD_COUNT_DIAGNOSTICS`], measured every
+//! frame.
 //!
 //! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
 //! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
@@ -434,9 +438,6 @@ struct ServedVariant {
     format: String,
     /// Where its bytes came from, the key of their cached copy.
     url: String,
-    /// The entity kind its read counts under, until the variant fails to load or a later read
-    /// of the path returns the original.
-    counted_as: Option<VariantEntityKind>,
 }
 
 #[derive(Debug)]
@@ -509,10 +510,33 @@ struct Session {
     reloading: HashMap<PathBuf, web_time::Instant>,
     /// The kind each entity's manifest was first asked for as, kept with variants off too.
     entity_kinds: HashMap<String, VariantEntityKind>,
+    /// The latest read of each (entity, content file) a variant could stand in for.
+    counted_loads: HashMap<(String, String), CountedLoad>,
+    /// `counted_loads` totalled by kind.
     loads: BTreeMap<VariantEntityKind, VariantLoadCounts>,
 }
 
+/// An entity's content file as counted: its entity's kind and whether a variant answered its
+/// latest read.
+#[derive(Clone, Copy, Debug)]
+struct CountedLoad {
+    kind: VariantEntityKind,
+    from_variant: bool,
+}
+
 impl Session {
+    /// Sets the counted outcome of `(entity, file)`, replacing its earlier one in the totals.
+    fn count_load(&mut self, entity_file: (String, String), load: CountedLoad) {
+        if let Some(earlier) = self.counted_loads.insert(entity_file, load) {
+            let counts = self.loads.entry(earlier.kind).or_default();
+            counts.load_count -= 1;
+            counts.variant_load_count -= u64::from(earlier.from_variant);
+        }
+        let counts = self.loads.entry(load.kind).or_default();
+        counts.load_count += 1;
+        counts.variant_load_count += u64::from(load.from_variant);
+    }
+
     fn fallback(&mut self, scene: &str, file: &str, format: Option<&str>, reason: String) {
         debug!("bevy variant fallback for `{file}` in {scene}: {reason}");
         self.fallbacks += 1;
@@ -631,31 +655,21 @@ impl BevyVariants {
         }
     }
 
-    /// Counts a read of an entity's file at `path` under the entity's kind, when a variant could
-    /// stand in for the file, and whether a variant answered it.
-    fn count_load(&self, entity: &str, file: &str, path: &Path, from_variant: bool) {
+    /// Counts an entity's file under the entity's kind, when a variant could stand in for the
+    /// file, with whether a variant answered this read: a file read again counts once, with its
+    /// latest outcome.
+    fn count_load(&self, entity: &str, file: &str, from_variant: bool) {
         if !could_have_variant(file) {
             return;
         }
         let mut session = self.session.lock_ignore_poison();
-        let kind = session.entity_kinds.get(entity).copied();
-        // the path's variant read, counted or not, is no longer what the asset holds
-        if !from_variant {
-            if let Some(served) = session.served.get_mut(path) {
-                served.counted_as = None;
-            }
-        }
-        let Some(kind) = kind else {
+        let Some(kind) = session.entity_kinds.get(entity).copied() else {
             return;
         };
-        let counts = session.loads.entry(kind).or_default();
-        counts.load_count += 1;
-        if from_variant {
-            counts.variant_load_count += 1;
-            if let Some(served) = session.served.get_mut(path) {
-                served.counted_as = Some(kind);
-            }
-        }
+        session.count_load(
+            (entity.to_owned(), file.to_owned()),
+            CountedLoad { kind, from_variant },
+        );
     }
 
     /// The session's load counts of every entity kind, in [`VariantEntityKind::ALL`] order.
@@ -734,12 +748,21 @@ impl BevyVariants {
             return None;
         }
         let served = session.served.remove(path)?;
-        // the variant never rendered: its read no longer counts
-        if let Some(kind) = served.counted_as {
-            if let Some(counts) = session.loads.get_mut(&kind) {
-                counts.load_count = counts.load_count.saturating_sub(1);
-                counts.variant_load_count = counts.variant_load_count.saturating_sub(1);
-            }
+        // the variant never rendered: the file counts as its original
+        let entity_file = (served.scene.clone(), served.file.clone());
+        if let Some(load) = session
+            .counted_loads
+            .get(&entity_file)
+            .copied()
+            .filter(|load| load.from_variant)
+        {
+            session.count_load(
+                entity_file,
+                CountedLoad {
+                    from_variant: false,
+                    ..load
+                },
+            );
         }
         session.bad.insert(served.variant.clone());
         session.fallback(
@@ -1008,8 +1031,7 @@ impl IpfsIo {
     ) -> Option<VariantRead> {
         let read = self.variant_read(ipfs_path, path).await;
         if let (Some(entity), Some(file)) = (ipfs_path.scene_hash(), ipfs_path.content_path()) {
-            self.bevy_variants
-                .count_load(entity, file, path, read.is_some());
+            self.bevy_variants.count_load(entity, file, read.is_some());
         }
         read
     }
@@ -1114,7 +1136,6 @@ impl IpfsIo {
             variant: variant.path.clone(),
             format: variant.format.clone(),
             url: url.clone(),
-            counted_as: None,
         };
 
         #[cfg(not(target_arch = "wasm32"))]

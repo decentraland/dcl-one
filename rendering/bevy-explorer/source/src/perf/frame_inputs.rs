@@ -185,7 +185,7 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
 }
 
 /// The latest [`VARIANT_LOAD_COUNT_DIAGNOSTICS`]; `None` while one has no measurement.
-pub fn latest_bevy_variant_load_counts(
+fn latest_bevy_variant_load_counts(
     diagnostics: &DiagnosticsStore,
 ) -> Option<[VariantLoadCounts; 3]> {
     let latest = |path| {

@@ -172,8 +172,9 @@ Bevy's `trace_chrome` and set `TRACE_CHROME=<file>`; open it in `chrome://tracin
 The autopilot's CSV holds every frame's CPU and GPU time (`benchmark.md`, *Files*). When the
 measured phase ends the engine logs two `perf_summary` lines: the CPU and GPU p99 and hiccup
 counts over the whole phase with the threshold in effect, the peak engine memory, the JavaScript
-heap sum, the entity count and the sample count; then, in a `performance-profiler` build, the
+heap sum, the entity count, the sample count and each content type's Bevy variant load counts;
+then, in a `performance-profiler` build, the
 top 30 scopes by self time over every frame of the phase, focused or not (the profiler's table,
 reset when the phase starts; the line is empty without the feature). The report
-shows them as *Hiccups per run*, *Peak memory* and *Top scopes* (`benchmark.md`, *Reading the
-results*).
+shows them as *Hiccups per run*, *Peak memory*, *Top scopes* and *Scene / Wearable / Emote loads
+from variants* (`benchmark.md`, *Reading the results*).

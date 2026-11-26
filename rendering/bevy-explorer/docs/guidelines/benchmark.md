@@ -184,8 +184,9 @@ variants*.
   - **🟢 _N_% faster / 🔴 _N_% slower** on *Time to world* and *First ring ready*: the
     frame-time rule with an absolute floor of 0.5 s, given 2 runs per build whose log holds the
     entry; with fewer the row reads *⚠️ no verdict — fewer than 2 runs measured it*.
-  - **— informational:** the 0.1% worst rows. They average the two or three worst frames of a run,
-    so one OS hiccup moves them by tens of percent; they never get a verdict.
+  - **— informational:** the 0.1% worst rows and the variant load rows; they never get a verdict.
+    The 0.1% worst rows average the two or three worst frames of a run, so one OS hiccup moves
+    them by tens of percent; the variant load rows are shares of each build's own reads.
   - **⚠️ no verdict — _reason_:** the sessions cannot be compared. *too few runs*: a build has
     fewer than 2 usable runs. *sample counts differ*: the builds' median row counts are more than
     1.5× apart, so one did not run the whole session. *GPU timing not working* (GPU rows only): a
@@ -666,8 +667,9 @@ back counts as a read of its original only. A content type well below full cover
 where the variants fall short in `/bevy_variants` (`manifests`: each scene, wearable and emote
 whose manifest abgen has none of or that failed; `recentFallbacks`: files whose variant was
 refused or failed) and in the debug panel's
-*Optimized variants* section ([running](running.md)). A stop takes about 50 minutes: two warm-ups
-and six runs of up to 480 s each, with their settles.
+*Optimized variants* section ([running](running.md)). A stop takes at most about an hour: two
+warm-ups of up to 300 s and six runs of up to 480 s each, with their settles; a run usually ends
+soon after its 90 s.
 
 ## The workflow
 
