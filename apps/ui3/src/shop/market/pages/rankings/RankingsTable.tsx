@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/RankingsTable/{RankingsTable.tsx,RankingsTable.css,utils.ts},
 //       RankingsTable/RankingItemRow, RankingsTable/RankingCreatorRow, RankingsTable/RankingCollectorRow,
 //       components/Rankings/TimeframeSelector, components/InfoTooltip, the translations under
@@ -9,7 +10,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import ManaMark from "../../../../atoms/ManaMark";
 import { useMediaQuery } from "../../../../data/hooks/useMediaQuery";
 import { fetchProfile, profileFaceUrl } from "../../../../data/catalyst/profile";
 import Blockie from "../../../checkout/settings/Blockie";
@@ -92,7 +92,7 @@ function Mana({ wei, network = "polygon", fiat = true }: { wei: string; network?
   return (
     <span className="shop-rk__mana">
       <span className="shop-rk__mana-amount">
-        <ManaMark size={14} network={network} />
+        <ShopManaMark size={14} network={network} />
         {manaText(wei)}
         <span className="u-sr-only"> MANA</span>
       </span>

@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/BidPage (BidPage.tsx, BidModal/BidModal.{tsx,css}),
 //       webapp/src/components/ConfirmInputValueModal, webapp/src/modules/bid/sagas.ts (PLACE_BID),
 //       webapp/src/components/Routes/Routes.tsx (ProtectedRoute: signed out goes to sign-in);
@@ -11,7 +12,6 @@ import { Link, useLocation, useNavigate } from "react-router";
 import type { EvmAddress } from "@shop/model/address";
 import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "@shop/model/chain";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
-import ManaMark from "../../../atoms/ManaMark";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { WalletGuidance } from "@shop/model/settlement";
 import { shopPath } from "../../routes";
@@ -168,7 +168,7 @@ export function BidForm({ subject, now = Date.now }: { subject: BidSubject; now?
           content={
             <>
               <p>
-                You are about to bid on <b>{subject.name}</b> for <ManaMark size={14} network={network} /> {formatMana(amount, { group: true })}.
+                You are about to bid on <b>{subject.name}</b> for <ShopManaMark size={14} network={network} /> {formatMana(amount, { group: true })}.
               </p>
               <p>Please re-enter the price to confirm:</p>
             </>

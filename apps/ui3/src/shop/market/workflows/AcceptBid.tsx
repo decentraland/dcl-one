@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/AssetPage/BidsTable (BidsTable.tsx, BidsTable.module.css, utils.tsx,
 //       BidsTableContent/BidsTableContent.{tsx,module.css}), webapp/src/components/Table/TableContainer/TableContainer.{tsx,css},
 //       webapp/src/components/Table/TableContent/TableContent.css, webapp/src/components/AssetPage/OnBack/OnBack.{tsx,css},
@@ -10,7 +11,6 @@ import { formatEther } from "viem";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { sameAddress } from "@shop/model/address";
 import { formatMana } from "@shop/model/money";
 import { isPolygon } from "@shop/model/chain";
@@ -117,7 +117,7 @@ function BidRow({ bid, canAccept, isMine, onAccept }: { bid: Bid; canAccept: boo
               "—"
             ) : (
               <>
-                <ManaMark size={14} network={network} /> {formatMana(price, { group: true })}
+                <ShopManaMark size={14} network={network} /> {formatMana(price, { group: true })}
               </>
             )}
           </span>

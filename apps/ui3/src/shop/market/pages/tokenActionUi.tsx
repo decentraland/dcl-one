@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/AssetAction (AssetAction.css), ManaField, ConfirmInputValueModal,
 //       Wallet (the signed-out redirect of ProtectedRoute), lib/date (formatDistanceToNow);
 //       decentraland-ui Field / Button (dark theme)
@@ -6,7 +7,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 
-import ManaMark from "../../../atoms/ManaMark";
 import Modal from "../../../components/Modal";
 import { rarityMedia } from "@shop/discovery/lib/rarity";
 import { isPolygon } from "@shop/model/chain";
@@ -59,7 +59,7 @@ export function TaField({
         {label}
       </label>
       <span className="shop-ta-field__control" data-invalid={invalid ? "" : undefined}>
-        {mana ? <ManaMark size={16} network={mana} /> : null}
+        {mana ? <ShopManaMark size={16} network={mana} /> : null}
         {children}
       </span>
       {message ? <p className={invalid ? "shop-ta-field__error" : "shop-ta-field__help"}>{message}</p> : null}
@@ -106,7 +106,7 @@ export function ConfirmValueModal({
           <label className="shop-ta-confirm__field">
             <span className="shop-ta-confirm__label">{label}</span>
             <span className="shop-ta-confirm__control">
-              {mana ? <ManaMark size={16} network={mana} /> : null}
+              {mana ? <ShopManaMark size={16} network={mana} /> : null}
               <input inputMode="decimal" value={typed} placeholder={expected} aria-label={`Confirm the ${label.toLowerCase()}`} disabled={busy} onChange={(e) => setTyped(e.target.value.replace(/[^\d.]/g, ""))} autoFocus />
             </span>
           </label>

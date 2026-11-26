@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/SellPage (SellPage.tsx, SellPage.css, SellModal/SellModal.tsx),
 //       webapp/src/components/ConfirmInputValueModal, webapp/src/modules/order/utils.ts (getDefaultExpirationDate),
 //       webapp/src/modules/translation/locales/en.json (sell_page.*); shop@2d3bf62:app/src/lib/trades.ts;
@@ -7,7 +8,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
 import Modal from "../../../components/Modal";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { formatMana } from "@shop/model/money";
@@ -139,7 +139,7 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
             Price
           </label>
           <span className="seller-field__control" data-invalid={price && !amount ? "" : undefined}>
-            <ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
+            <ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
             <input
               id={`${id}-price`}
               inputMode="decimal"
@@ -190,13 +190,13 @@ export function SellForm({ token, now = Date.now }: { token: TokenRecord; now?: 
         <Modal onClose={() => setConfirming(false)} className="seller-confirm" width={480}>
           <h2 className="seller-confirm__title">Please confirm</h2>
           <p>
-            You are about to list <b>{token.name}</b> on sale for <ManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
+            You are about to list <b>{token.name}</b> on sale for <ShopManaMark size={14} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} /> {formatMana(amount, { group: true })}.
           </p>
           <p>Please re-enter the price to confirm:</p>
           <label className="seller-field">
             <span className="seller-field__label">Price</span>
             <span className="seller-field__control">
-              <ManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
+              <ShopManaMark size={16} network={isPolygon(token.chainId) ? "polygon" : "ethereum"} />
               <input inputMode="decimal" value={confirmed} placeholder={formatMana(amount)} aria-label="Confirm the price" onChange={(e) => setConfirmed(e.target.value.replace(/[^\d.]/g, ""))} autoFocus />
             </span>
           </label>

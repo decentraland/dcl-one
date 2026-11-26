@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@3a322cf9:app/src/components/PaymentCtas/PaymentCtas.tsx
 // The purchase CTAs, one per payment rail the buyer's balances support. Each button IS the payment: the
 // credits rail (the buy gradient), the MANA rail (dark, with its amount). When no rail covers the
@@ -6,7 +7,6 @@
 // disabled button with its reason, never hidden.
 import { useId } from "react";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { isEthereum } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { CartRail } from "../lib/cart-rails";
@@ -30,7 +30,7 @@ function ManaAmountMark({ wei, chainId }: { wei: ManaWei; chainId: number }) {
   return (
     <span className={styles.amount}>
       <span className={styles.manaMark}>
-        <ManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
+        <ShopManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
       </span>
       <span>{formatMana(wei)}</span>
     </span>

@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // Moved from catalyrst-v2 ui3/src/marketplace/components/EnsCard.tsx (since removed).
 // from: marketplace@f3956826:webapp/src/components/AssetImage/EnsImage/{EnsImage.tsx,utils.ts} (the
 // length-banded gradients of a NAME's art)
@@ -8,7 +9,6 @@
 import { Link } from "react-router";
 
 import DclLogomark from "../../atoms/DclLogomark";
-import ManaMark from "../../atoms/ManaMark";
 import { manaText } from "../land/format";
 import "./namecard.css";
 
@@ -54,7 +54,7 @@ export default function NameCard({ name, priceWei, price, href, onClick }: NameC
           <span className="shop-namecard__title u-truncate">{name}</span>
           {shown !== null ? (
             <span className="shop-namecard__price" aria-label={`${shown} MANA`}>
-              <ManaMark size={13} className="shop-namecard__manamark" />
+              <ShopManaMark size={13} className="shop-namecard__manamark" />
               {shown}
             </span>
           ) : null}

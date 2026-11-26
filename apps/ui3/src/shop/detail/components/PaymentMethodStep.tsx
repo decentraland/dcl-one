@@ -1,3 +1,4 @@
+import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@3a322cf9:app/src/components/PaymentMethodStep/PaymentMethodStep.tsx, app/src/assets/payment/credits-coin.webp,
 //       app/src/intl/en.json (buyModal)
 // "Choose your payment method": Buy now's payment step for a buyer holding MANA. Two rows, Credits and MANA, and one
@@ -14,7 +15,6 @@
 // pick to that row instead of leaving both ticked over a disabled Buy.
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { formatCredits, formatCreditsFull } from "@shop/checkout/lib/currency";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
@@ -259,13 +259,13 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
           <span className={styles.content}>
             <span className={styles.infoGroup}>
               <span className={styles.logo}>
-                <ManaMark network="polygon" size={35.328} className={styles.manaArt} />
+                <ShopManaMark network="polygon" size={35.328} className={styles.manaArt} />
               </span>
               <span className={styles.text}>
                 <span className={styles.label}>{TEXT.mana}</span>
                 <span className={styles.balance}>
                   {TEXT.manaBalance}
-                  <ManaMark network="polygon" size={13} className={styles.manaMini} />
+                  <ShopManaMark network="polygon" size={13} className={styles.manaMini} />
                   <span className={styles.balanceValue}>{formatMana(props.manaBalanceWei, { group: true, decimals: 2 })}</span>
                 </span>
               </span>
@@ -273,7 +273,7 @@ export default function PaymentMethodStep(props: PaymentMethodStepProps) {
             <span className={styles.priceCol}>
               {manaUsable ? (
                 <span className={styles.price}>
-                  <ManaMark network="polygon" size={24} className={styles.manaPriceIco} />
+                  <ShopManaMark network="polygon" size={24} className={styles.manaPriceIco} />
                   <span data-testid="pay-with-mana-amount">{formatManaPrice(manaLeg)}</span>
                 </span>
               ) : (
