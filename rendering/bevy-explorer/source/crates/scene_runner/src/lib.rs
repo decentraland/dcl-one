@@ -735,7 +735,7 @@ fn update_scene_priority(
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
                     // its scene host drops the oldest global updates past its capacity, so a
                     // scene that has many unread is due whatever its band
-                    let unread = global_updates_sent(&crdt_contexts, context)
+                    let unread = global_updates_sent(&crdt_contexts, &context)
                         .saturating_sub(context.global_updates_read);
                     if unread < GLOBAL_UPDATE_BACKLOG_DUE {
                         skipped_rate_capped += 1;

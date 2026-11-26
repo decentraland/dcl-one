@@ -23,9 +23,9 @@ and main-thread time each frame there is spare time, whether or not the player c
 - **Behind the camera, at most once a second** (`BEHIND_SCENE_TICK_RATE`), from 16 m on and
   while the camera is near level (`behind_cap_applies`). In the nearest band a scene keeps its
   rate behind the camera: the player can back into its colliders, such as doors and moving
-  platforms, and hears its spatial audio, which would otherwise move in steps of up to a second. The behind test compares parcels with the flat forward
-  direction, so looking steeply up or down it can call a scene behind while its content is on
-  screen.
+  platforms, and hears its spatial audio, which would otherwise move in steps of up to a
+  second. The behind test compares parcels with the flat forward direction, so looking steeply
+  up or down it can call a scene behind while its content is on screen.
 - **The farthest band keeps a slow tick, and unread global updates make a scene due.** The
   engine sends every global update (player joins, leaves, identities, avatars, movement) to each
   scene's host as it happens: the IPC forwarder on native, the relay pump on the web. The host
@@ -80,8 +80,8 @@ and main-thread time each frame there is spare time, whether or not the player c
   much, and whether replayed copies need a threshold of their own.
 - Scene message buses (binary and string, `MAX_NETWORK_MESSAGE_QUEUE`, 1,024 each) also drain
   only at a tick and drop new messages when full, and nothing releases a capped scene for them.
-  A scene behind the camera or past 80 m that receives more than about 1,024 or 512 messages a
-  second from peers loses the excess.
+  A scene 16 m or more behind the camera, or past 80 m, that receives more than about 1,024 or
+  512 messages a second from peers loses the excess.
 - The photo and cinematic exemptions lift every cap, not just the scenes the camera frames. A
   scene that keeps a cinematic camera or camera-mode area active while the player is inside it
   ticks the whole world at the full rate for that time. Measuring the bands from the rendering
