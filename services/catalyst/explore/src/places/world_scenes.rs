@@ -520,6 +520,178 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dealing_with_scene_aliases_preserves_imported_facts_and_curation() {
+        use super::super::{interactions, scene_identity};
+
+        let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let (admin, pool, database) = fixture(&url).await;
+        let unchanged: String =
+            sqlx::query_scalar("SELECT explore.scene_interaction_entity_id('unclaimed.dcl.eth')")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(unchanged, "unclaimed.dcl.eth");
+        let world = "imported.dcl.eth";
+        let source = "https://worlds.example";
+        sqlx::query("INSERT INTO worlds.worlds (name, mirror_source) VALUES ($1, $2)")
+            .bind(world)
+            .bind(source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let local = deploy(&pool, world, "scene", &["0,0"]).await;
+        let public = uuid::Uuid::new_v4();
+        let alias = public.to_string();
+        sqlx::query("UPDATE worlds.world_scenes SET mirror_source = $1 WHERE world_name = $2")
+            .bind(source)
+            .bind(world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.place_moderation (place_id, content_rating, set_by) VALUES ($1, 'T', 'migration:places')")
+            .bind(&alias).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place_ranking (place_id, overlay, set_by) VALUES ($1, '{\"ranking\": 42}', 'migration:places')")
+            .bind(&alias).execute(&pool).await.unwrap();
+        let user = "0x0000000000000000000000000000000000000001";
+        let other_user = "0x0000000000000000000000000000000000000002";
+        interactions::set_favorite(&pool, &alias, user, true, 120.0)
+            .await
+            .unwrap();
+        interactions::set_favorite(&pool, &local, user, true, 200.0)
+            .await
+            .unwrap();
+        interactions::set_like(&pool, &alias, user, Some(true), 120.0)
+            .await
+            .unwrap();
+        interactions::set_like(&pool, &local, user, Some(false), 200.0)
+            .await
+            .unwrap();
+
+        let mut claim = pool.begin().await.unwrap();
+        assert_eq!(
+            scene_identity::bind_public_id(&mut claim, source, world, "scene", public)
+                .await
+                .unwrap(),
+            scene_identity::PublicIdBinding::Bound
+        );
+        claim.commit().await.unwrap();
+        let places =
+            super::super::PlacesComponent::new(pool.clone(), "https://content.example", None);
+        let row = places
+            .find_by_id_for(&alias, Some(user))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((row.favorites, row.likes, row.dislikes), (1, 0, 1));
+        assert!(row.user_favorite && row.user_dislike);
+        assert_eq!(row.content_rating.as_deref(), Some("T"));
+        assert_eq!(row.ranking, Some(42.0));
+
+        for (stage_schema, load) in [
+            (
+                "CREATE TEMP TABLE stage (\"user\" text, entity_id text, user_activity float8, created_at timestamptz) ON COMMIT DROP",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../../tooling/migration/sources/places/user_favorite.load.sql"
+                )),
+            ),
+            (
+                "CREATE TEMP TABLE stage (\"user\" text, entity_id text, user_activity float8, created_at timestamptz, \"like\" boolean DEFAULT true, updated_at timestamptz DEFAULT now()) ON COMMIT DROP",
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../../tooling/migration/sources/places/user_like.load.sql"
+                )),
+            ),
+        ] {
+            let mut import = pool.begin().await.unwrap();
+            sqlx::raw_sql(stage_schema)
+                .execute(&mut *import)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO stage (\"user\", entity_id, user_activity, created_at) VALUES ($1, $2, 200, now())")
+                .bind(other_user).bind(&alias).execute(&mut *import).await.unwrap();
+            sqlx::raw_sql(load).execute(&mut *import).await.unwrap();
+            import.commit().await.unwrap();
+        }
+        let row = places
+            .find_by_id_for(&local, Some(other_user))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((row.favorites, row.likes, row.dislikes), (2, 1, 1));
+        assert!(row.user_favorite && row.user_like);
+        assert_eq!(row.like_rate, Some(0.5));
+
+        let mut curation = pool.begin().await.unwrap();
+        sqlx::raw_sql(
+            "CREATE SCHEMA dcl_migration;
+             CREATE TABLE dcl_migration.blob_inventory (source text, object_key text, hash text);
+             CREATE TABLE dcl_migration.blob_missing (source text, object_key text);
+             CREATE TEMP TABLE stage (
+                 id text, base_position text, title text, description text, creator_address text,
+                 content_rating text, categories text[], deployed_at timestamptz,
+                 disabled boolean, highlighted boolean, world_name text, raw jsonb,
+                 mod_disabled boolean, mod_rating text, ranking_overlay jsonb
+             ) ON COMMIT DROP",
+        )
+        .execute(&mut *curation)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO stage (id, world_name, raw, mod_disabled, highlighted, mod_rating, ranking_overlay) VALUES ($1, $2, '{}', false, true, 'E', '{\"ranking\": 56}')")
+            .bind(&alias).bind(world).execute(&mut *curation).await.unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tooling/migration/sources/places/place.load.sql"
+        )))
+        .execute(&mut *curation)
+        .await
+        .unwrap();
+        curation.commit().await.unwrap();
+        let row = places
+            .find_by_id_for(&alias, Some(other_user))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.content_rating.as_deref(), Some("E"));
+        assert_eq!(row.ranking, Some(56.0));
+        assert!(row.highlighted);
+
+        interactions::set_like(&pool, &alias, user, None, 0.0)
+            .await
+            .unwrap();
+        interactions::set_favorite(&pool, &alias, user, false, 0.0)
+            .await
+            .unwrap();
+        let row = places
+            .find_by_id_for(&alias, Some(user))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((row.favorites, row.likes, row.dislikes), (1, 1, 0));
+        assert!(!row.user_favorite && !row.user_dislike);
+        let stored_keys: Vec<String> = sqlx::query_scalar(
+            "SELECT entity_id FROM explore.place_interaction_counts
+             UNION SELECT entity_id FROM explore.user_favorites
+             UNION SELECT entity_id FROM explore.user_likes
+             UNION SELECT place_id FROM explore.place_moderation
+             UNION SELECT place_id FROM explore.place_ranking",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored_keys, [local]);
+        drop(places);
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{database}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
+    }
+
+    #[tokio::test]
     async fn mirrored_scene_uses_the_places_uuid_for_both_aliases() {
         let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
             return;
@@ -573,7 +745,16 @@ mod tests {
         assert_eq!(world_scenes["total"], 1);
         assert_eq!(world_scenes["data"][0]["id"], public);
         let ids = [local.clone(), public.clone()];
-        assert!(state.places.owns_places(&ids, owner).await.unwrap());
+        // A world's owner at its last deployment is insufficient for community edits.
+        for id in &ids {
+            assert!(
+                !state
+                    .places
+                    .owns_places(std::slice::from_ref(id), owner)
+                    .await
+                    .unwrap()
+            );
+        }
         assert!(!state.places.owns_places(&ids, other_owner).await.unwrap());
         let batch = state.places.find_by_ids_for(&ids, None).await.unwrap();
         assert_eq!(batch.len(), 1);
@@ -624,6 +805,36 @@ mod tests {
         assert_eq!(favorite_ids, vec![local.clone()]);
         let (_, favorites) = signed(&app, "GET", "/api/places?only_favorites=true", None).await;
         assert_eq!(favorites["data"][0]["id"], public);
+        let genesis = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '2,2', 'Genesis', '{}')",
+        )
+        .bind(&genesis)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (requested, expected) in [
+            (genesis.clone(), vec![]),
+            (format!("{genesis},{local}"), vec![&public]),
+            (public.clone(), vec![&public]),
+        ] {
+            let (status, page) = signed(
+                &app,
+                "GET",
+                &format!("/api/destinations?ids={requested}&only_favorites=true"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            assert_eq!(page["total"], expected.len());
+            let returned: Vec<_> = page["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| &row["id"])
+                .collect();
+            assert_eq!(json!(returned), json!(expected));
+        }
         let (_, ordinary_list) = get(&app, "/api/places?only_highlighted=true").await;
         assert_eq!(ordinary_list["data"], json!([]));
 

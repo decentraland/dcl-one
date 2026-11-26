@@ -250,9 +250,11 @@ pub async fn set_ranking(
     actor: &str,
 ) -> Result<u64, ApiError> {
     let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    let key = super::interactions::interaction_key(&mut tx, id).await?;
     let written = write_overlays(
         &mut tx,
-        &[(id.to_string(), json!({ "ranking": ranking_value(ranking) }))],
+        &[(key, json!({ "ranking": ranking_value(ranking) }))],
         actor,
     )
     .await?;
@@ -290,6 +292,9 @@ pub async fn set_ranking_from_score(
     actor: &str,
 ) -> Result<ScoreRankingOutcome, ApiError> {
     let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    let key = super::interactions::interaction_key(&mut tx, id).await?;
+    let id = key.as_str();
     // Scene before catalogue row, the order every other curation write takes.
     lock_world_scenes(&mut tx, &[id.to_string()]).await?;
     // A scene wins over a catalogue row with its id, as on read, and is
@@ -351,7 +356,9 @@ pub async fn set_exclusion(
         json!({ "exclude_from_ranking": false })
     };
     let mut tx = pool.begin().await?;
-    let written = write_overlays(&mut tx, &[(id.to_string(), overlay)], actor).await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    let key = super::interactions::interaction_key(&mut tx, id).await?;
+    let written = write_overlays(&mut tx, &[(key, overlay)], actor).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -416,6 +423,7 @@ pub async fn replace_ranking(
     actor: &str,
 ) -> Result<ReplaceRankingResult, ApiError> {
     let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
     let place_ids: Vec<String> = places.iter().map(|e| e.id.clone()).collect();
     let mut curation = Vec::new();
     let mut world_backed_ids = Vec::new();
@@ -443,10 +451,12 @@ pub async fn replace_ranking(
             .filter_map(|id| uuid::Uuid::parse_str(id).ok())
             .collect();
         let binding = super::scene_identity::BOUND_WORLD_SCENE_FROM;
-        let public = super::scene_identity::PUBLIC_WORLD_SCENE_ID;
         let scenes: HashMap<uuid::Uuid, uuid::Uuid> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT identity, identity FROM explore.world_scene_place WHERE identity = ANY($1)
-             UNION SELECT ({public}), p.identity {binding} WHERE ({public}) = ANY($1)"
+             UNION SELECT canonical.public_id, p.identity {binding}
+             WHERE p.identity = ANY(ARRAY(
+                 SELECT identity FROM explore.world_scene_public_id WHERE public_id = ANY($1)
+             )) AND canonical.public_id = ANY($1)"
         )))
         .bind(&parsed)
         .fetch_all(&mut *tx)

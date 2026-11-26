@@ -280,7 +280,7 @@ pub(super) fn build_where_from(
 
     if !f.ids.is_empty() {
         clauses.push(if scene_projection {
-            format!("(id = ANY(${idx}) OR canonical_scene)")
+            format!("(id = ANY(${idx}) OR (canonical_scene AND public_scene_id = ANY(${idx})))")
         } else {
             format!("id = ANY(${idx})")
         });

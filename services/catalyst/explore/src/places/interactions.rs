@@ -216,7 +216,7 @@ pub fn combined_rates(mirrored: &MirroredVotes, local: &LocalVotes) -> (Option<f
     (like_rate(likes, dislikes), like_score(likes, dislikes))
 }
 
-async fn local_votes(tx: &mut PgConnection, entity_id: &str) -> Result<LocalVotes, ApiError> {
+async fn local_votes(tx: &mut PgConnection, entity_id: &str) -> Result<LocalVotes, sqlx::Error> {
     let row = sqlx::query(
         r#"SELECT
              (SELECT count(*) FROM explore.user_favorites WHERE entity_id = $1) AS favorites,
@@ -249,7 +249,10 @@ fn raw_float(v: Option<Value>) -> Option<f64> {
     }
 }
 
-async fn mirrored_votes(tx: &mut PgConnection, entity_id: &str) -> Result<MirroredVotes, ApiError> {
+async fn mirrored_votes(
+    tx: &mut PgConnection,
+    entity_id: &str,
+) -> Result<MirroredVotes, sqlx::Error> {
     let row = sqlx::query(
         "SELECT likes, dislikes, raw->'like_rate' AS like_rate, raw->'like_score' AS like_score \
          FROM explore.place WHERE id = $1",
@@ -270,7 +273,7 @@ async fn mirrored_votes(tx: &mut PgConnection, entity_id: &str) -> Result<Mirror
 
 /// Locks the entity's counter row for the rest of the transaction and
 /// answers its `imported` (above zero: the import settled the entity).
-async fn lock_counts(tx: &mut PgConnection, entity_id: &str) -> Result<i32, ApiError> {
+async fn lock_counts(tx: &mut PgConnection, entity_id: &str) -> Result<i32, sqlx::Error> {
     sqlx::query("INSERT INTO explore.place_interaction_counts (entity_id, updated_at) VALUES ($1, $2) ON CONFLICT (entity_id) DO NOTHING")
         .bind(entity_id)
         .bind(now())
@@ -289,7 +292,7 @@ async fn lock_counts(tx: &mut PgConnection, entity_id: &str) -> Result<i32, ApiE
 /// `shared/entityInteractions.ts:111-160`, over this node's facts), the
 /// combined rates included; `imported` is the import's and stays. Under the
 /// caller's lock.
-async fn recount(tx: &mut PgConnection, entity_id: &str) -> Result<(), ApiError> {
+async fn recount(tx: &mut PgConnection, entity_id: &str) -> Result<(), sqlx::Error> {
     let local = local_votes(&mut *tx, entity_id).await?;
     let mirrored = mirrored_votes(&mut *tx, entity_id).await?;
     let (rate, score) = combined_rates(&mirrored, &local);
@@ -310,11 +313,148 @@ async fn recount(tx: &mut PgConnection, entity_id: &str) -> Result<(), ApiError>
     Ok(())
 }
 
+/// Claims take the exclusive side before the world or scene row lock. Writers
+/// and migration batches hold the shared side through key resolution and writes.
+pub(super) async fn lock_public_id_merge(tx: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('explore.scene_interaction_import', 0))",
+    )
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn lock_public_id_writes(tx: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0))")
+        .execute(tx)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn interaction_key(
+    tx: &mut PgConnection,
+    id: &str,
+) -> Result<String, sqlx::Error> {
+    sqlx::query_scalar("SELECT explore.scene_interaction_entity_id($1)")
+        .bind(id)
+        .fetch_one(tx)
+        .await
+}
+
+async fn locked_interaction_key(tx: &mut PgConnection, id: &str) -> Result<String, sqlx::Error> {
+    if uuid::Uuid::parse_str(id).is_err() {
+        return Ok(id.to_string());
+    }
+    lock_public_id_writes(tx).await?;
+    interaction_key(tx, id).await
+}
+
+/// Fold pre-claim data into the durable scene identity in the claim transaction.
+/// Existing internal decisions win conflicts. Rebuild aggregate counts from the
+/// merged per-wallet facts and preserve the import's settled marker.
+pub(super) async fn merge_public_id(
+    tx: &mut PgConnection,
+    public_id: uuid::Uuid,
+    identity: uuid::Uuid,
+) -> Result<(), sqlx::Error> {
+    if public_id == identity {
+        return Ok(());
+    }
+    let public = public_id.to_string();
+    let local = identity.to_string();
+    let has_facts: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.place_interaction_counts WHERE entity_id = $1)
+             OR EXISTS (SELECT 1 FROM explore.user_favorites WHERE entity_id = $1)
+             OR EXISTS (SELECT 1 FROM explore.user_likes WHERE entity_id = $1)",
+    )
+    .bind(&public)
+    .fetch_one(&mut *tx)
+    .await?;
+    if has_facts {
+        let mut keys = [&public, &local];
+        keys.sort_unstable();
+        for id in keys {
+            lock_counts(tx, id).await?;
+        }
+        sqlx::query(
+            r#"WITH moved AS (
+                   DELETE FROM explore.user_favorites WHERE entity_id = $1 RETURNING *
+               )
+               INSERT INTO explore.user_favorites ("user", entity_id, user_activity, created_at)
+               SELECT "user", $2, user_activity, created_at FROM moved
+               ON CONFLICT ("user", entity_id) DO NOTHING"#,
+        )
+        .bind(&public)
+        .bind(&local)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            r#"WITH moved AS (
+                   DELETE FROM explore.user_likes WHERE entity_id = $1 RETURNING *
+               )
+               INSERT INTO explore.user_likes AS l ("user", entity_id, "like", user_activity, source, created_at, updated_at)
+               SELECT "user", $2, "like", user_activity, source, created_at, updated_at FROM moved
+               ON CONFLICT ("user", entity_id) DO UPDATE SET
+                   "like" = EXCLUDED."like", user_activity = EXCLUDED.user_activity,
+                   source = EXCLUDED.source, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
+               WHERE l.source = 'upstream' AND EXCLUDED.source = 'upstream'
+                 AND l.updated_at < EXCLUDED.updated_at"#,
+        )
+        .bind(&public)
+        .bind(&local)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "WITH moved AS (
+                 DELETE FROM explore.place_interaction_counts WHERE entity_id = $1 RETURNING imported
+             )
+             UPDATE explore.place_interaction_counts c SET imported = GREATEST(c.imported, moved.imported)
+             FROM moved WHERE c.entity_id = $2",
+        )
+        .bind(&public)
+        .bind(&local)
+        .execute(&mut *tx)
+        .await?;
+        recount(tx, &local).await?;
+    }
+    sqlx::query(
+        "WITH moved AS (DELETE FROM explore.place_moderation WHERE place_id = $1 RETURNING *)
+         INSERT INTO explore.place_moderation AS m
+             (place_id, disabled, highlighted, content_rating, reason, set_by, updated_at, disabled_at)
+         SELECT $2, disabled, highlighted, content_rating, reason, set_by, updated_at, disabled_at FROM moved
+         ON CONFLICT (place_id) DO UPDATE SET
+             disabled = COALESCE(m.disabled, EXCLUDED.disabled),
+             highlighted = COALESCE(m.highlighted, EXCLUDED.highlighted),
+             content_rating = COALESCE(m.content_rating, EXCLUDED.content_rating),
+             reason = CASE WHEN m.disabled IS NULL THEN EXCLUDED.reason ELSE m.reason END,
+             disabled_at = CASE WHEN m.disabled IS NULL THEN EXCLUDED.disabled_at ELSE m.disabled_at END,
+             updated_at = GREATEST(m.updated_at, EXCLUDED.updated_at)",
+    )
+    .bind(&public)
+    .bind(&local)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "WITH moved AS (DELETE FROM explore.place_ranking WHERE place_id = $1 RETURNING *)
+         INSERT INTO explore.place_ranking AS r (place_id, overlay, set_by, updated_at)
+         SELECT $2, overlay, set_by, updated_at FROM moved
+         ON CONFLICT (place_id) DO UPDATE SET
+             overlay = EXCLUDED.overlay || r.overlay,
+             updated_at = GREATEST(r.updated_at, EXCLUDED.updated_at)",
+    )
+    .bind(&public)
+    .bind(&local)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
 /// Rebuilds every counter row from the facts (the derived table's rebuild
 /// rule): rows without facts go to zero and no rate, the rest are recounted,
 /// in entity id order; `imported` is the import's record and stays.
 pub async fn rebuild_counts(pool: &PgPool) -> Result<(), ApiError> {
     let mut tx = pool.begin().await?;
+    lock_public_id_writes(&mut tx).await?;
     sqlx::query(
         "UPDATE explore.place_interaction_counts c \
          SET favorites = 0, likes = 0, dislikes = 0, like_rate = NULL, like_score = NULL, updated_at = $1 \
@@ -406,6 +546,7 @@ pub async fn import_upstream_likes(
     }
     for (entity_id, rows) in &by_entity {
         let mut tx = pool.begin().await?;
+        let entity_id = &locked_interaction_key(&mut tx, entity_id).await?;
         if lock_counts(&mut tx, entity_id).await? > 0 {
             out.settled += rows.len() as u64;
             continue;
@@ -471,6 +612,7 @@ pub async fn set_favorite_in(
     user_activity: f64,
 ) -> Result<(), ApiError> {
     let user = user.to_lowercase();
+    let entity_id = &locked_interaction_key(tx, entity_id).await?;
     lock_counts(&mut *tx, entity_id).await?;
     if favorite {
         // `UserFavoriteModel.create({entity_id, user, user_activity, created_at})`
@@ -489,7 +631,7 @@ pub async fn set_favorite_in(
             .execute(&mut *tx)
             .await?;
     }
-    recount(&mut *tx, entity_id).await
+    Ok(recount(&mut *tx, entity_id).await?)
 }
 
 /// Sets `user`'s like (`Some(true)`), dislike (`Some(false)`) or neither
@@ -516,6 +658,7 @@ pub async fn set_like_in(
     user_activity: f64,
 ) -> Result<(), ApiError> {
     let user = user.to_lowercase();
+    let entity_id = &locked_interaction_key(tx, entity_id).await?;
     lock_counts(&mut *tx, entity_id).await?;
     match like {
         // `UserLikesModel.like` (`UserLikes/model.ts:10-51`): a new row, or
@@ -547,7 +690,7 @@ pub async fn set_like_in(
                 .await?;
         }
     }
-    recount(&mut *tx, entity_id).await
+    Ok(recount(&mut *tx, entity_id).await?)
 }
 
 // ── the lookups ────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ which then count twice with the imported facts. Rows upstream does not list
 
 | Step | Source | Target | Key | Watermark |
 | --- | --- | --- | --- | --- |
-| `place` | `places` (`world IS FALSE`, enabled or `disabled_reason` in `opt_out`, `moderation`); `worlds` with an enabled scene, as `/api/worlds` lists them; `content_ratings` (latest, only when it is still the place's rating) | `explore.place`, `explore.place_moderation`, `explore.place_ranking` | `id` | none (upstream does not bump `updated_at` on every write) |
+| `place` | Enabled, opted-out or moderation-disabled `places` (world scenes supply curation only); `worlds` with an enabled scene, as `/api/worlds` lists them; `content_ratings` (latest, only when it is still the place's rating) | `explore.place`, `explore.place_moderation`, `explore.place_ranking` | `id` | none (upstream does not bump `updated_at` on every write) |
 | `world_scene_place` | `places` (`world IS TRUE`) | `explore.world_scene_place` (identity = place UUID) | `identity` | none |
 | `user_favorite` | `user_favorites` | `explore.user_favorites`, `explore.place_interaction_counts` | `user`, `entity_id` | `created_at` |
 | `user_like` | `user_likes` | `explore.user_likes`, `explore.place_interaction_counts` | `user`, `entity_id` | `updated_at` |
@@ -53,10 +53,18 @@ which then count twice with the imported facts. Rows upstream does not list
   retired identities, so storage keyed on them stays addressable. A binding
   another identity already holds on the node stays with that identity.
   Re-runs move an identity only if the node has not updated it since.
+  A UUID reserved by a different local identity as a public Places UUID
+  is skipped, whether the claim is current or historical. The scene import
+  and mirror claim serialize the ownership check. The import keeps the
+  existing local identity and leaves storage under its original keys.
 - Favorites and likes: wallets lowercased, non-wallet users skipped; kept only
-  for an imported place or any upstream world name. A like changed later on
-  the node wins. Each batch recounts its entities from the fact tables
-  (`REBUILD_COUNTS` rule).
+  for an imported place, an eligible world scene, or any upstream world name.
+  A like changed later on the node wins. Each batch recounts its entities from
+  the fact tables (`REBUILD_COUNTS` rule).
+- A verified reservation redirects imports of scene curation and per-wallet
+  facts to the durable internal UUID. The claim transaction consolidates rows
+  already written before the claim. Imports and claims serialize so replay uses
+  the same key after a proof is invalidated.
 - `contact_email` and the other public scene metadata travel in `raw`, as the
   upstream API serves them.
 

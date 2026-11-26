@@ -179,15 +179,25 @@ const WORLD_SCENE_RESOLVE: &str = "SELECT p.identity::text AS id, true AS world,
      LEFT JOIN explore.world_scene_public_id canonical ON canonical.public_id = $1 AND canonical.identity = p.identity \
          AND canonical.world_name = p.world_name AND canonical.entity_id = s.entity_id \
          AND canonical.source = s.mirror_source AND canonical.source = w.mirror_source \
-     WHERE p.identity = $1 OR canonical.public_id = $1";
+     WHERE p.identity = COALESCE(
+         (SELECT identity FROM explore.world_scene_public_id WHERE public_id = $1), $1
+     ) AND (p.identity = $1 OR canonical.public_id = $1)";
 
 /// The catalogue row `target` names, from either leg; `None` when none matches.
 /// A place target is any row by id, world-backed ones included
 /// (`findByIdWithAggregates`, `Place/model.ts:513-553`); a world target is a
 /// world catalogue row by id or folded name (`World/model.ts:333` reads the
 /// worlds table alone, so a world known only through its scenes is a miss).
+#[cfg(test)]
 pub(super) async fn resolve(
     pool: &PgPool,
+    target: &Target<'_>,
+) -> Result<Option<Resolved>, ApiError> {
+    resolve_on(&mut *pool.acquire().await?, target).await
+}
+
+async fn resolve_on(
+    conn: &mut sqlx::PgConnection,
     target: &Target<'_>,
 ) -> Result<Option<Resolved>, ApiError> {
     let row = match target {
@@ -195,7 +205,7 @@ pub(super) async fn resolve(
             if let Ok(identity) = Uuid::parse_str(id) {
                 let scene = sqlx::query_as(WORLD_SCENE_RESOLVE)
                     .bind(identity)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *conn)
                     .await?;
                 if scene.is_some() {
                     return Ok(scene);
@@ -206,7 +216,7 @@ pub(super) async fn resolve(
                 "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 AND NOT {scene} LIMIT 1"
             )))
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?
         }
         Target::World(id) => {
@@ -214,7 +224,7 @@ pub(super) async fn resolve(
                 "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE world IS TRUE AND id = lower(world_name) AND id = lower($1) LIMIT 1"
             )))
             .bind(id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?
         }
     };
@@ -271,7 +281,9 @@ pub async fn apply_with(
     actor: &str,
     ctx: Context<'_>,
 ) -> Result<Option<Applied>, ApiError> {
-    let Some(row) = resolve(pool, &target).await? else {
+    let mut tx = pool.begin().await?;
+    super::interactions::lock_public_id_writes(&mut tx).await?;
+    let Some(row) = resolve_on(&mut tx, &target).await? else {
         return Ok(None);
     };
     let id = row.id.clone();
@@ -291,7 +303,6 @@ pub async fn apply_with(
         Decision::Highlighted(h) => (None, Some(*h), None, None),
         Decision::Rating(r) => (None, None, Some(r.clone()), None),
     };
-    let mut tx = pool.begin().await?;
     super::ranking::lock_world_scenes(&mut tx, std::slice::from_ref(&id)).await?;
     if written {
         sqlx::query(OVERLAY)

@@ -4,6 +4,10 @@
 -- holds on the node (world_scene_place_deployment_idx) stays with it: this
 -- row lands retired. A re-run moves an imported identity only while the
 -- node has not touched it since (its updated_at is not newer than upstream's).
+-- Serialize against mirror claims before checking UUID ownership.
+SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0));
+SET LOCAL explore.scene_identity_import = 'on';
+
 INSERT INTO explore.world_scene_place AS p
     (world_name, identity, entity_id, parcels, active, created_at, updated_at)
 SELECT s.world_name, s.identity,
@@ -18,6 +22,10 @@ CROSS JOIN LATERAL (
           AND o.identity <> s.identity
     ) AS ok
 ) bind
+WHERE NOT EXISTS (
+    SELECT 1 FROM explore.world_scene_public_id claim
+    WHERE claim.public_id = s.identity AND claim.identity <> s.identity
+)
 ON CONFLICT (identity) DO UPDATE SET
     entity_id = EXCLUDED.entity_id,
     parcels = EXCLUDED.parcels,

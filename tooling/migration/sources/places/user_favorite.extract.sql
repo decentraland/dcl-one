@@ -1,7 +1,6 @@
 -- Favorites of an imported place, or of any upstream world (keyed by its
--- lowercase name, the id the node's world rows use): a favorite of a place
--- that is not imported (overwritten or undeployed scenes, world-scene place
--- UUIDs from before upstream keyed worlds by name) would match nothing.
+-- lowercase name, the id the node's world rows use). World-scene UUIDs
+-- are imported alongside the scene identity and follow a later verified claim.
 SELECT "user", entity_id, user_activity, created_at
 FROM (
     SELECT lower(f."user"::text) AS "user",
@@ -13,7 +12,8 @@ FROM (
     FROM user_favorites f
     WHERE lower(f."user"::text) ~ '^0x[0-9a-f]{40}$'
       AND (EXISTS (SELECT 1 FROM places p
-                   WHERE p.id = f.entity_id AND p.world IS FALSE
+                   WHERE p.id = f.entity_id
+                     AND (p.world IS FALSE OR btrim(COALESCE(p.world_id, p.world_name, '')) <> '')
                      AND (p.disabled IS FALSE OR p.disabled_reason IN ('opt_out', 'moderation')))
            OR EXISTS (SELECT 1 FROM worlds w WHERE w.id = f.entity_id::text))
 ) f

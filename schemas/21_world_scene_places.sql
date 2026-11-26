@@ -156,7 +156,12 @@ EXECUTE FUNCTION explore.invalidate_world_scene_public_id();
 CREATE FUNCTION explore.guard_world_scene_identity() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('explore.world_scene_uuid/' || NEW.identity::text, 0));
+    -- The Places import already excludes claims for the whole batch. Confirm
+    -- that lock here so a session setting alone cannot bypass serialization.
+    IF current_setting('explore.scene_identity_import', true) IS DISTINCT FROM 'on'
+       OR NOT pg_try_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0)) THEN
+        PERFORM pg_advisory_xact_lock(hashtextextended('explore.world_scene_uuid/' || NEW.identity::text, 0));
+    END IF;
     IF EXISTS (
         SELECT 1 FROM explore.world_scene_public_id
         WHERE public_id = NEW.identity AND identity <> NEW.identity
@@ -168,3 +173,28 @@ END;
 $$;
 CREATE TRIGGER world_scene_identity_guarded BEFORE INSERT ON explore.world_scene_place
 FOR EACH ROW EXECUTE FUNCTION explore.guard_world_scene_identity();
+
+-- The binding collision probe accepts case, hyphen, brace and URN spellings.
+-- Probe a normalized text key first, then validate the exact candidate UUID.
+CREATE INDEX place_scene_uuid_lookup_idx
+    ON explore.place (lower(translate(id, '-{}', '')));
+CREATE INDEX place_world_local_scene_uuid_lookup_idx
+    ON explore.place_world_local (lower(translate(id, '-{}', '')));
+
+-- A Places import can arrive before, during or after verification. A reserved
+-- public UUID always owns the same durable interaction key, even after its
+-- discovery proof expires.
+CREATE FUNCTION explore.scene_interaction_entity_id(input_id text) RETURNS text
+LANGUAGE plpgsql STABLE STRICT AS $$
+DECLARE
+    normalized text := regexp_replace(input_id, '^urn:uuid:', '', 'i');
+BEGIN
+    IF NOT pg_input_is_valid(normalized, 'uuid') THEN
+        RETURN input_id;
+    END IF;
+    RETURN COALESCE((
+        SELECT identity::text FROM explore.world_scene_public_id
+        WHERE public_id = normalized::uuid
+    ), input_id);
+END;
+$$;

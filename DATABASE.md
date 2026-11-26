@@ -135,11 +135,30 @@ only the current pass's active CIDs and takes the world row lock before
 committing each proof. Claim writes serialize on the requested UUID, reject
 any other active or retired internal identity using that UUID, and check
 existing catalogue keys. Catalogue copies qualify only when both their
-normalized world name and deployment CID match. The catalogue check parses
-UUID spellings and scans the catalogue for collisions during binding only.
+normalized world name and deployment CID match. The binding collision check
+probes one expression index per catalogue leg for the normalized UUID and
+its URN spelling, then applies PostgreSQL's UUID parser to the candidates.
+The two indexes store one entry per catalogue row across both legs.
+On PostgreSQL 18 with 100,001 mirrored and 5,000 local synthetic rows, a
+missing UUID took 77.5 ms with sequential scans and 0.13 ms with the two
+expression indexes and a generic plan. Production latency and write cost
+have not been measured.
+The Places scene import holds the shared side of the claim lock while it
+filters out reserved public UUIDs that belong to another internal identity,
+including stale reservations. The insert guard checks UUID ownership under
+that same batch lock, saving one advisory lock per imported scene. Ordinary
+scene writers retain per-UUID locking.
 The schema object pass installs the reservation table, index and triggers with no
 backfill. Existing mirrored deployments gain a public UUID after a subsequent
-mirror pass confirms the exact binding. Existing storage keys need no rewrite.
+mirror pass confirms the exact binding. Existing world storage keys need no rewrite.
+
+The claim transaction folds previously imported favorites, votes, and curation
+from the public UUID into the durable key. It deduplicates facts per wallet,
+retains internal curation where it already has a decision, keeps the settled
+vote-import marker, and rebuilds counts from the consolidated facts. A shared
+import and writer lock, taken before row locks, serializes these writes against
+claims. Later Places imports resolve both active and historical public
+reservations to the original internal key.
 
 See [public identifiers for mirrored world scenes](docs/adr/2026-11-26-mirrored-world-scene-place-ids.md)
 for how the mirror confirms a match and retries it.

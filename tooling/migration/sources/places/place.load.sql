@@ -24,14 +24,18 @@ DO $images$ DECLARE n bigint; BEGIN
 -- set_by = 'migration:places'; a decision made on the node (any other set_by)
 -- is never overwritten, and a migration overlay whose upstream decision is gone
 -- is removed.
+SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0));
+ALTER TABLE stage ADD COLUMN interaction_id text;
+UPDATE stage SET interaction_id = explore.scene_interaction_entity_id(id);
+
 DELETE FROM explore.place_moderation m
 USING stage s
-WHERE m.place_id = s.id AND m.set_by = 'migration:places'
+WHERE m.place_id = s.interaction_id AND m.set_by = 'migration:places'
   AND NOT (s.mod_disabled OR s.highlighted OR s.mod_rating IS NOT NULL);
 
 INSERT INTO explore.place_moderation AS m
     (place_id, disabled, highlighted, content_rating, reason, set_by, updated_at)
-SELECT id,
+SELECT DISTINCT ON (interaction_id) interaction_id,
        CASE WHEN mod_disabled THEN true END,
        CASE WHEN highlighted THEN true END,
        mod_rating,
@@ -40,6 +44,7 @@ SELECT id,
        timezone('UTC', now())
 FROM stage
 WHERE mod_disabled OR highlighted OR mod_rating IS NOT NULL
+ORDER BY interaction_id, id
 ON CONFLICT (place_id) DO UPDATE SET
     disabled = EXCLUDED.disabled,
     highlighted = EXCLUDED.highlighted,
@@ -52,12 +57,13 @@ WHERE m.set_by = 'migration:places'
 
 DELETE FROM explore.place_ranking r
 USING stage s
-WHERE r.place_id = s.id AND r.set_by = 'migration:places' AND s.ranking_overlay IS NULL;
+WHERE r.place_id = s.interaction_id AND r.set_by = 'migration:places' AND s.ranking_overlay IS NULL;
 
 INSERT INTO explore.place_ranking AS r (place_id, overlay, set_by, updated_at)
-SELECT id, ranking_overlay, 'migration:places', timezone('UTC', now())
+SELECT DISTINCT ON (interaction_id) interaction_id, ranking_overlay, 'migration:places', timezone('UTC', now())
 FROM stage
 WHERE ranking_overlay IS NOT NULL
+ORDER BY interaction_id, id
 ON CONFLICT (place_id) DO UPDATE SET
     overlay = EXCLUDED.overlay,
     updated_at = EXCLUDED.updated_at
@@ -80,9 +86,10 @@ SELECT s.id, s.base_position, s.title, s.description, s.creator_address,
        s.raw || COALESCE(r.overlay, '{}'::jsonb),
        timezone('UTC', now()), 'local', '{}'::text[]
 FROM stage s
-LEFT JOIN explore.place_moderation m ON m.place_id = s.id
-LEFT JOIN explore.place_ranking r ON r.place_id = s.id
-WHERE NOT EXISTS (
+LEFT JOIN explore.place_moderation m ON m.place_id = s.interaction_id
+LEFT JOIN explore.place_ranking r ON r.place_id = s.interaction_id
+WHERE (s.world_name IS NULL OR s.id = lower(s.world_name))
+  AND NOT EXISTS (
     SELECT 1 FROM explore.place_world_local l
     WHERE l.id = s.id
        OR (s.world_name IS NOT NULL AND l.world IS TRUE AND lower(l.world_name) = lower(s.world_name)))

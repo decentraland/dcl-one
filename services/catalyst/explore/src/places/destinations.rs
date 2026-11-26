@@ -103,6 +103,10 @@ impl From<NextEvent> for DestinationNextEvent {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "places/"))]
 pub struct Destination {
     pub id: String,
+    /// Existing local references can still address a scene after its public ID is confirmed.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub local_scene_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<EntityType>,
@@ -201,6 +205,7 @@ impl From<PlaceRow> for Destination {
         };
         Self {
             id: p.id,
+            local_scene_id: p.local_scene_id,
             kind: Some(kind),
             title: p.title,
             description: p.description,

@@ -1,6 +1,11 @@
 //! The production Places UUID of an exact WCS scene deployment.
+use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
+use crate::content::read_through::{Fills, MAX_CONCURRENT_FILLS};
+use futures::FutureExt;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::*;
@@ -9,6 +14,8 @@ const PAGE_SIZE: usize = 100;
 const MAX_ROWS: usize = 4_000;
 const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+static SCHEDULED_RETRIES: LazyLock<Fills> =
+    LazyLock::new(|| Fills::new(MAX_CONCURRENT_FILLS, Duration::ZERO));
 
 #[derive(Deserialize)]
 struct Page {
@@ -22,14 +29,65 @@ async fn fetch_ids<'a>(
     world: &WorldName,
     candidates: &'a [String],
 ) -> Result<Vec<(&'a str, Uuid)>> {
+    let (matches, digest) = scan(client, places, world, candidates).await?;
+    if let Some(digest) = digest.filter(|_| !matches.is_empty()) {
+        let (_, confirmation) = scan(client, places, world, candidates).await?;
+        if confirmation != Some(digest) {
+            bail!("Places pagination changed between reads for {world}");
+        }
+    }
+    Ok(matches)
+}
+
+// Upstream places@bbfc4b5 sorts named opted-out queries by disabled, then
+// deployed_at DESC NULLS LAST, then the requested updated_at DESC NULLS LAST.
+// It has no unique tie-breaker or snapshot cursor. Keep the identity fields of
+// the response stable across two scans and refuse ties at a page boundary.
+type OrderKey = (
+    bool,
+    Reverse<Option<chrono::DateTime<chrono::FixedOffset>>>,
+    Reverse<Option<chrono::DateTime<chrono::FixedOffset>>>,
+);
+
+fn order_key(row: &Value) -> Option<OrderKey> {
+    let timestamp = |key: &str| {
+        let field = row.get(key)?;
+        if field.is_null() {
+            Some(Reverse(None))
+        } else {
+            chrono::DateTime::parse_from_rfc3339(field.as_str()?)
+                .ok()
+                .map(|date| Reverse(Some(date)))
+        }
+    };
+    Some((
+        row["disabled"].as_bool()?,
+        timestamp("deployed_at")?,
+        timestamp("updated_at")?,
+    ))
+}
+
+type PlacesScan<'a> = (Vec<(&'a str, Uuid)>, Option<[u8; 32]>);
+
+async fn scan<'a>(
+    client: &crate::http::Outbound,
+    places: &str,
+    world: &WorldName,
+    candidates: &'a [String],
+) -> Result<PlacesScan<'a>> {
     let mut url = url::Url::parse(places)?.join("/api/places")?;
     url.query_pairs_mut()
         .append_pair("names", world.key())
         .append_pair("include_opted_out", "true")
+        .append_pair("order_by", "updated_at")
+        .append_pair("order", "desc")
         .append_pair("limit", &PAGE_SIZE.to_string());
     let mut total = None;
     let mut offset = 0;
     let mut matches = PlacesMatches::new(candidates);
+    let mut digest = Sha256::new();
+    let mut seen = HashSet::new();
+    let mut previous_key = None;
     loop {
         let mut page_url = url.clone();
         page_url
@@ -52,12 +110,43 @@ async fn fetch_ids<'a>(
         {
             bail!("inconsistent or over-limit Places pagination for {world}");
         }
-        for row in &page.data {
+        let multipage = page.total > PAGE_SIZE;
+        for (index, row) in page.data.iter().enumerate() {
+            if multipage {
+                let key = order_key(row).context("missing Places row sort key")?;
+                if previous_key
+                    .is_some_and(|previous| previous > key || (index == 0 && previous == key))
+                {
+                    bail!("unstable or tied Places pagination boundary for {world}");
+                }
+                previous_key = Some(key);
+                let id = row["id"]
+                    .as_str()
+                    .and_then(|id| Uuid::parse_str(id).ok())
+                    .filter(|id| !id.is_nil())
+                    .context("missing Places row UUID")?;
+                if !seen.insert(id) {
+                    bail!("duplicate Places row {id} across pages for {world}");
+                }
+                digest.update(serde_json::to_vec(&[
+                    &row["id"],
+                    &row["world"],
+                    &row["world_name"],
+                    &row["deployment_id"],
+                    &row["disabled"],
+                    &row["disabled_reason"],
+                    &row["deployed_at"],
+                    &row["updated_at"],
+                ])?);
+            }
             matches.add(world, row);
         }
         offset += page.data.len();
         if offset == page.total {
-            return Ok(matches.finish(candidates));
+            return Ok((
+                matches.finish(candidates),
+                multipage.then(|| digest.finalize().into()),
+            ));
         }
         total = Some(page.total);
     }
@@ -127,18 +216,19 @@ pub(super) async fn refresh(
     settings: &MirrorSettings,
     world: &WorldName,
     active_cids: &[&str],
-) {
+) -> bool {
     let Some(places) = settings.places_source.as_deref() else {
-        return;
+        return false;
     };
     let source = &settings.source;
     let result = async {
         let candidates = scene_identity::pending_public_ids(pool, source, world.key(), active_cids).await?;
         if candidates.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let matches = tokio::time::timeout(LOOKUP_TIMEOUT, fetch_ids(client, places, world, &candidates))
             .await.context("Places lookup timed out")??;
+        let mut retry = matches.len() < candidates.len();
         for (cid, id) in matches {
             let result = async {
                 let mut tx = pool.begin().await?;
@@ -152,15 +242,51 @@ pub(super) async fn refresh(
                 }
                 Ok(_) => {}
                 Err(error) => {
+                    retry = true;
                     tracing::warn!(%world, %cid, %error, "could not save the Places scene UUID");
                 }
             }
         }
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, anyhow::Error>(retry)
     }.await;
-    if let Err(error) = result {
-        tracing::warn!(%world, %error, "could not look up Places scene UUIDs");
+    match result {
+        Ok(retry) => retry,
+        Err(error) => {
+            tracing::warn!(%world, %error, "could not look up Places scene UUIDs");
+            true
+        }
     }
+}
+
+/// After a full content reconciliation, give Places' asynchronous indexing
+/// one short retry without keeping a mirror slot open. Unchanged worlds use
+/// the normal pass so old pending rows do not fill the short-retry slots.
+pub(super) async fn refresh_after_sync(
+    client: &crate::http::Outbound,
+    pool: &PgPool,
+    settings: &MirrorSettings,
+    world: &WorldName,
+    active_cids: &[&str],
+) {
+    let retry = refresh(client, pool, settings, world, active_cids).await;
+    let Some(delay) = settings.places_retry_delay.filter(|_| retry) else {
+        return;
+    };
+    let key = format!("{}:{}", settings.source, world.key());
+    let (client, pool, settings, world) = (
+        client.clone(),
+        pool.clone(),
+        settings.clone(),
+        world.clone(),
+    );
+    let cids: Vec<_> = active_cids.iter().map(|cid| (*cid).to_owned()).collect();
+    let _ = SCHEDULED_RETRIES
+        .fill(vec![key], move |_| async move {
+            tokio::time::sleep(delay).await;
+            let cids: Vec<_> = cids.iter().map(String::as_str).collect();
+            refresh(&client, &pool, &settings, &world, &cids).await;
+        })
+        .now_or_never();
 }
 
 /// Probe a held world whose content was read without making the reader wait.

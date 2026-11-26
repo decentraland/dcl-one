@@ -1,7 +1,8 @@
 -- The catalogue as dcl-one holds it: Genesis City places (world IS FALSE) that
 -- are listed, opted out or disabled by moderation, and the worlds aggregate
 -- (upstream `worlds`, id = lowercase name) for every world with an enabled
--- scene, as /api/worlds lists it. `raw` is the upstream wire row (p.* / w.*
+-- scene, as /api/worlds lists it. World-scene rows supply only curation.
+-- `raw` is the upstream wire row (p.* / w.*
 -- without textsearch, the counters and the viewer columns), tagged
 -- source = 'places' and local = true. World scenes go to world_scene_place.
 -- Upstream timestamps are `timestamp without time zone` holding UTC.
@@ -25,7 +26,7 @@ SELECT p.id::text AS id,
        p.deployed_at AT TIME ZONE 'UTC' AS deployed_at,
        p.disabled,
        p.highlighted,
-       NULL::text AS world_name,
+       CASE WHEN p.world THEN lower(btrim(COALESCE(p.world_id, p.world_name))) END AS world_name,
        jsonb_build_object(
            'id', p.id::text, 'title', p.title, 'description', p.description, 'image', p.image,
            'owner', p.owner::text, 'positions', to_jsonb(p.positions::text[]),
@@ -38,7 +39,7 @@ SELECT p.id::text AS id,
            'updated_at', to_char(p.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
            'categories', to_jsonb(p.categories::text[]), 'like_rate', p.like_rate,
            'like_score', p.like_score, 'highlighted', p.highlighted,
-           'highlighted_image', p.highlighted_image, 'world', false, 'world_name', p.world_name,
+           'highlighted_image', p.highlighted_image, 'world', p.world, 'world_name', p.world_name,
            'world_id', p.world_id,
            'deployed_at', to_char(p.deployed_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
            'creator_address', p.creator_address::text, 'sdk', p.sdk, 'ranking', p.ranking,
@@ -54,7 +55,7 @@ SELECT p.id::text AS id,
        )), '{}'::jsonb) AS ranking_overlay
 FROM places p
 LEFT JOIN rating r ON r.entity_id = p.id::text
-WHERE p.world IS FALSE
+WHERE (p.world IS FALSE OR btrim(COALESCE(p.world_id, p.world_name, '')) <> '')
   AND (p.disabled IS FALSE OR p.disabled_reason IN ('opt_out', 'moderation'))
 UNION ALL
 SELECT w.id,

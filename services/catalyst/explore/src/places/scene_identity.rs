@@ -87,6 +87,7 @@ pub async fn bind_public_id(
     entity_id: &str,
     public_id: Uuid,
 ) -> Result<PublicIdBinding, sqlx::Error> {
+    super::interactions::lock_public_id_merge(conn).await?;
     let world_locked = sqlx::query_scalar::<_, String>(
         "SELECT name FROM worlds.worlds WHERE name = $1 AND mirror_source = $2 FOR UPDATE",
     )
@@ -122,7 +123,10 @@ pub async fn bind_public_id(
         "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place WHERE identity = $1 AND identity <> $2) \
           OR EXISTS (SELECT 1 FROM explore.world_scene_public_id \
                        WHERE identity = $2 AND entity_id IS NOT NULL AND public_id <> $1) \
-          OR EXISTS (SELECT 1 FROM explore.place_indexed catalogue WHERE {catalogue_id} = $1 \
+          OR EXISTS (SELECT 1 FROM explore.place_indexed catalogue \
+                       WHERE lower(translate(catalogue.id, '-{{}}', '')) = ANY(ARRAY[ \
+                           replace($1::uuid::text, '-', ''), 'urn:uuid:' || replace($1::uuid::text, '-', '')]) \
+                       AND {catalogue_id} = $1 \
                        AND (catalogue.world AND lower(catalogue.world_name) = $3 \
                             AND catalogue.raw->>'deployment_id' = $4) IS DISTINCT FROM true)"
     );
@@ -150,11 +154,12 @@ pub async fn bind_public_id(
     .bind(source)
     .bind(world)
     .bind(entity_id)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
     if bound.rows_affected() == 0 {
         Ok(PublicIdBinding::Conflict)
     } else {
+        super::interactions::merge_public_id(conn, public_id, identity).await?;
         Ok(PublicIdBinding::Bound)
     }
 }
@@ -450,6 +455,89 @@ mod tests {
             outcomes => panic!("expected only one proof for the same CID, got {outcomes:?}"),
         };
         assert_eq!(visible_id(pool, unclaimed).await, winner);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn places_import_replays_around_concurrent_and_retired_public_claims() {
+        let Some(db) = OwnedDatabase::new("scene_public_import", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        create_world(pool, WORLD).await;
+        let identity = deploy(pool, WORLD, "first", "0,0").await;
+        let public_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let mut claim = pool.begin().await.unwrap();
+        assert_eq!(
+            bind_public_id(&mut claim, SOURCE, WORLD, "first", public_id)
+                .await
+                .unwrap(),
+            PublicIdBinding::Bound
+        );
+        let mut import = pool.begin().await.unwrap();
+        sqlx::query(
+            "CREATE TEMP TABLE stage (world_name text, identity uuid, entity_id text, parcels text[],
+              active boolean, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP",
+        )
+        .execute(&mut *import)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO stage VALUES ($1, $2, 'first', ARRAY['0,0'], true, now(), now()),
+             ($1, $3, NULL, ARRAY['2,0'], false, now(), now())",
+        )
+        .bind(WORLD)
+        .bind(public_id)
+        .bind(other_id)
+        .execute(&mut *import)
+        .await
+        .unwrap();
+        let load_sql = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/tooling/migration/sources/places/world_scene_place.load.sql"
+        ));
+        {
+            let load = async {
+                sqlx::raw_sql(load_sql).execute(&mut *import).await.unwrap();
+            };
+            tokio::pin!(load);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), &mut load)
+                    .await
+                    .is_err(),
+                "the import must wait for the reserved public UUID to commit"
+            );
+            claim.commit().await.unwrap();
+            load.await;
+        }
+        let advisory_locks: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory'",
+        )
+        .fetch_one(&mut *import)
+        .await
+        .unwrap();
+        assert_eq!(advisory_locks, 1, "the batch uses one shared advisory lock");
+        sqlx::query(
+            "UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE identity = $1",
+        )
+        .bind(identity)
+        .execute(&mut *import)
+        .await
+        .unwrap();
+        sqlx::raw_sql(load_sql).execute(&mut *import).await.unwrap();
+        import.commit().await.unwrap();
+        let internal_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT identity FROM explore.world_scene_place WHERE world_name = $1",
+        )
+        .bind(WORLD)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(internal_ids.len(), 2);
+        assert!(internal_ids.contains(&identity));
+        assert!(internal_ids.contains(&other_id));
+        assert!(!internal_ids.contains(&public_id));
         db.drop().await;
     }
 }

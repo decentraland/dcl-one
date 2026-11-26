@@ -4,7 +4,9 @@
 
 The production Worlds content server identifies a scene deployment by its content ID (CID). Places gives a scene a public UUID and can retain it through successive deployments. The Worlds mirror uses the public UUID when one Places row for the same world names the exact active deployment CID. World name, base parcel and parcel overlap alone cannot identify the indexed deployment.
 
-The mirror reads the paginated Places result for each world with unresolved scenes. It commits scene content independently. A later scheduled pass retries unresolved scenes even when their content has not changed. With only read-through enabled, a read of a held world's `/about` or `/scenes` can start a background lookup. Concurrent reads share the lookup and a completed attempt has a one-minute cooldown. This lookup pairs the production Worlds server with production Places.
+The mirror commits scene content before looking up unresolved scenes in Places. Scheduled nodes can retry a miss after one minute, subject to worker capacity. Subsequent full passes also retry unchanged deployments and recover after a restart. On read-through-only nodes, a cached world's `/about` or `/scenes` request can trigger a background lookup. Concurrent reads share it and completed attempts have a one-minute cooldown. This lookup pairs the production Worlds server with production Places.
+
+The catalogue mirror follows the public discovery feed. An opted-out scene may still have a Places UUID. The Worlds mirror therefore queries Places by the specific world name with `include_opted_out=true` when it has an unresolved WCS deployment. Explore owns the persisted identity and rechecks the deployment before recording a match.
 
 ## Local data and older links
 

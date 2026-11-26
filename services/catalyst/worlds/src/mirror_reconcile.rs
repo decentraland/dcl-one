@@ -749,7 +749,7 @@ pub(super) async fn mirror_world(
         .with_context(|| format!("retire the storage identities of {name}"))?;
     tx.commit().await.context("commit tx")?;
     if verify.is_none() {
-        place_ids::refresh(client, pool, settings, &world, &cids).await;
+        place_ids::refresh_after_sync(client, pool, settings, &world, &cids).await;
     }
 
     Ok(Outcome::Synced {

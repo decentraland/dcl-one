@@ -13,7 +13,8 @@ FROM (
     FROM user_likes l
     WHERE lower(l."user"::text) ~ '^0x[0-9a-f]{40}$'
       AND (EXISTS (SELECT 1 FROM places p
-                   WHERE p.id = l.entity_id AND p.world IS FALSE
+                   WHERE p.id = l.entity_id
+                     AND (p.world IS FALSE OR btrim(COALESCE(p.world_id, p.world_name, '')) <> '')
                      AND (p.disabled IS FALSE OR p.disabled_reason IN ('opt_out', 'moderation')))
            OR EXISTS (SELECT 1 FROM worlds w WHERE w.id = l.entity_id::text))
 ) l

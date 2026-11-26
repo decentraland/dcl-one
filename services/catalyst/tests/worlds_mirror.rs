@@ -96,6 +96,7 @@ struct Upstream {
     places_rows: Vec<Value>,
     places_status: Option<StatusCode>,
     places_offsets: Vec<usize>,
+    places_empty_on_first_request: bool,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -364,12 +365,17 @@ async fn fake_places(
 ) -> axum::response::Response {
     assert_eq!(query["names"], "canon.dcl.eth");
     assert_eq!(query["include_opted_out"], "true");
+    assert_eq!(query["order_by"], "updated_at");
+    assert_eq!(query["order"], "desc");
     let offset: usize = query["offset"].parse().unwrap();
     let limit: usize = query["limit"].parse().unwrap();
     let mut state = s.lock();
     state.places_offsets.push(offset);
     if let Some(status) = state.places_status {
         return status.into_response();
+    }
+    if state.places_empty_on_first_request && state.places_offsets.len() == 1 {
+        return Json(json!({"data": [], "total": 0})).into_response();
     }
     let data: Vec<_> = state.places_rows.iter().skip(offset).take(limit).collect();
     Json(json!({"data": data, "total": state.places_rows.len()})).into_response()
@@ -1064,16 +1070,21 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
                     "world": true,
                     "world_name": world,
                     "deployment_id": format!("old-cid-{index}"),
+                    "disabled": false,
+                    "deployed_at": format!("2026-11-20T12:{:02}:{:02}.000Z", 59-index/60, 59-index%60),
+                    "updated_at": "2026-11-20T13:00:00.000Z",
                 })
             })
             .collect();
+        let tied = upstream.places_rows[99].clone();
         upstream.places_rows.push(json!({
             "id": uuid::Uuid::new_v4(),
             "world": true,
             "world_name": "Canon.DCL.ETH",
             "deployment_id": cid,
-            "disabled": true,
-            "disabled_reason": "opt_out",
+            "disabled": false,
+            "deployed_at": tied["deployed_at"],
+            "updated_at": tied["updated_at"],
         }));
     }
     // Reopen the same blob directory and database after restarting the worker.
@@ -1082,12 +1093,76 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
     node.jobs = Jobs::new();
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
+    assert_eq!(fake.state.lock().places_offsets, [0, 0, 100]);
+    {
+        let mut upstream = fake.state.lock();
+        upstream.places_rows[100]["disabled"] = json!(true);
+        upstream.places_rows[100]["disabled_reason"] = json!("opt_out");
+    }
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
     assert!(pending().await.is_empty());
     assert_eq!(identities(&scratch.pool, world).await, internal);
     assert_eq!(about_calls(&fake, world), 1);
-    assert_eq!(fake.state.lock().places_offsets, [0, 0, 100]);
+    assert_eq!(
+        fake.state.lock().places_offsets,
+        [0, 0, 100, 0, 100, 0, 100]
+    );
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
-    assert_eq!(fake.state.lock().places_offsets, [0, 0, 100]);
+    assert_eq!(
+        fake.state.lock().places_offsets,
+        [0, 0, 100, 0, 100, 0, 100]
+    );
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_scheduled_mirror_retries_when_places_indexes_a_deployment_late() {
+    let Some(scratch) = db::scratch_database().await else {
+        return;
+    };
+    let fake = start_fake().await;
+    let world = "canon.dcl.eth";
+    let cid = add_scene(&mut fake.state.lock(), world, "Canon", "0,0", &[]);
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "places-delayed").await;
+    node.settings = node
+        .settings
+        .clone()
+        .with_places_source(&fake.base)
+        .with_places_retry_delay(std::time::Duration::from_millis(200));
+    {
+        let mut upstream = fake.state.lock();
+        upstream.places_empty_on_first_request = true;
+        upstream.places_rows.push(json!({
+            "id": uuid::Uuid::new_v4(),
+            "world": true,
+            "world_name": world,
+            "deployment_id": cid,
+            "disabled": false,
+        }));
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !catalyst::explore::places::scene_identity::pending_public_ids(
+            &scratch.pool,
+            &fake.base,
+            world,
+            &[cid.as_str()],
+        )
+        .await
+        .unwrap()
+        .is_empty()
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the short retry binds the UUID without another mirror pass");
+    assert_eq!(about_calls(&fake, world), 1);
+    assert_eq!(fake.state.lock().places_offsets, [0, 0]);
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
     scratch.teardown().await;

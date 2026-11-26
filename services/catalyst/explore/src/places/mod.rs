@@ -175,36 +175,15 @@ impl PlacesComponent {
         .await?)
     }
 
-    /// Authorization for attaching a place to a community. Genesis ownership
-    /// comes from the fresh LAND authority. A bound scene uses its world's owner.
+    /// Authorization for attaching a catalogue place to a community. Genesis ownership
+    /// comes from the fresh LAND authority (or its trusted fallback), never scene metadata.
     pub async fn owns_places(&self, place_ids: &[String], owner: &str) -> Result<bool, ApiError> {
         let keys: Vec<String> = place_ids.iter().map(|id| id.to_lowercase()).collect();
-        let ids: Vec<_> = keys
-            .iter()
-            .map(|key| uuid::Uuid::parse_str(key).ok())
-            .collect();
-        let claimed = scene_identity::is_scene_id_sql("requested.key");
-        let binding = scene_identity::BOUND_WORLD_SCENE_FROM;
-        let public = scene_identity::PUBLIC_WORLD_SCENE_ID;
-        let candidate = world_scenes::scene_id_predicate("$2");
         let rows: Vec<(String, bool, String, Option<String>)> = sqlx::query_as(
-            sqlx::AssertSqlSafe(format!(
-                "WITH requested AS (SELECT key, identity FROM unnest($1::text[], $2::uuid[]) r(key, identity)),
-                 catalogue_keys AS (SELECT ARRAY(SELECT key FROM requested WHERE NOT {claimed}) AS keys),
-                 scenes AS (SELECT p.identity, ({public}) AS public_id, w.owner {binding} WHERE {candidate})
-                 SELECT CASE WHEN id = ANY(keys) THEN id ELSE lower(world_name) END,
-                        world, base_position, lower(COALESCE(raw->>'owner', creator_address))
-                 FROM explore.place_indexed CROSS JOIN catalogue_keys
-                 WHERE id = ANY(keys) OR lower(world_name) = ANY(keys)
-                 UNION ALL
-                 SELECT r.key, true, '', lower(scenes.owner)
-                 FROM requested r JOIN scenes ON r.identity IN (scenes.identity, scenes.public_id)"
-            )),
-        )
-        .bind(&keys)
-        .bind(ids)
-        .fetch_all(&self.pool)
-        .await?;
+            "SELECT CASE WHEN id = ANY($1) THEN id ELSE lower(world_name) END, \
+             world, base_position, lower(COALESCE(raw->>'owner', creator_address)) FROM explore.place_indexed \
+             WHERE id = ANY($1) OR lower(world_name) = ANY($1)"
+        ).bind(&keys).fetch_all(&self.pool).await?;
         let mut owned = std::collections::HashSet::new();
         let mut parcels = Vec::new();
         let mut parcel_keys = Vec::new();
