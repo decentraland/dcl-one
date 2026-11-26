@@ -446,6 +446,54 @@ async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx:
     rows.iter().map(NetworkState::from_row).collect()
 }
 
+/// Require the collection membership of one network in the route's existing
+/// snapshot. The native catalogue must hold its published fold. The mirror
+/// must have published a complete pass even when its current copy is empty.
+pub(super) async fn require_collections_on(
+    tx: &mut Transaction<'static, Postgres>,
+    state: &MarketplaceState,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Result<(), super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
+    let catalogue = states
+        .iter()
+        .find(|s| s.network == net.db_name())
+        .expect("every catalogue network has a state");
+    if catalogue.owned {
+        return index_verdict(
+            catalogue,
+            state.settings.catalogue_chain(net),
+            Purpose::Describe,
+            now,
+        )
+        .map(|_| ())
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let network = match net {
+        ChainNet::Ethereum => Network::Ethereum,
+        ChainNet::Matic => Network::Matic,
+    };
+    let configured = state.settings.collection_networks().contains(&network);
+    let served = if configured { &[network][..] } else { &[] };
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[catalogue],
+            returnable: &[network],
+            served,
+            configured,
+            owned: &[],
+            asked: Some(network),
+        },
+        &[Mirror::Collections],
+        Purpose::Describe,
+        now,
+    )
+    .map(|_| ())
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
+}
+
 /// [`begin_checked`], answering a refusal with its envelope.
 pub async fn begin(
     state: &MarketplaceState,

@@ -663,6 +663,10 @@
     "primitives": 0,
     "tokens": 5
   },
+  "library/ui/components/ColorPicker/ColorPicker.module.css": {
+    "primitives": 0,
+    "tokens": 19
+  },
   "library/ui/components/CommunityCard/CommunityCard.module.css": {
     "primitives": 0,
     "tokens": 27
@@ -698,6 +702,10 @@
   "library/ui/components/FriendCTA/FriendCTA.module.css": {
     "primitives": 0,
     "tokens": 14
+  },
+  "library/ui/components/HintsButton/HintsButton.module.css": {
+    "primitives": 0,
+    "tokens": 11
   },
   "library/ui/components/InputExplorerNames/InputExplorerNames.module.css": {
     "primitives": 0,
@@ -782,6 +790,10 @@
   "library/ui/components/ProgressBar/ProgressBar.module.css": {
     "primitives": 0,
     "tokens": 6
+  },
+  "library/ui/components/RailButton/RailButton.module.css": {
+    "primitives": 0,
+    "tokens": 12
   },
   "library/ui/components/ScrollThumb/ScrollThumb.module.css": {
     "primitives": 0,

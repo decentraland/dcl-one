@@ -10,8 +10,9 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 ## Layout
 
 - `Cargo.toml`: its own workspace. Explorer crates come in by path from
-  `../bevy-explorer/source/crates`; the `[patch.crates-io]` table repeats the Explorer's so
-  both resolve the same engine fork. `Cargo.lock` is seeded from the Explorer's (a fresh
+  `../bevy-explorer/source/crates`; the patch tables repeat the Explorer's pins for the crates this
+  graph has, so both resolve the same engine fork (a pin this graph never uses would go into
+  `Cargo.lock` as unused, in an order that changes between runs, which `--locked` refuses). `Cargo.lock` is seeded from the Explorer's (a fresh
   resolution fails on the yanked `core2 0.4.0` that `multihash-codetable` needs).
 - `.cargo/config.toml`: wasm flags without shared memory or atomics. `DCL_ONE_ROOT` comes
   from the repository root's cargo configuration.
@@ -36,6 +37,10 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
   evaluates an expression in the page at the end, or from the start with `PROBE_EARLY=1`;
   `INIT_JS` runs before the page's own scripts (hiding `navigator.gpu` tests the WebGL2
   fallback); `TIMELINE` captures the page at set seconds after it opens.
+- `tools/package.py`: lays a build out for publication (below): the page, and every file it loads
+  under a content-hashed name; `--max-wasm-gzip` fails it over a size limit.
+- `tools/serve.py`: serves `web/` with `Cache-Control: no-cache` for iteration, or with `--dist <dir>`
+  a packaged build at the paths and with the cache headers Sites gives it.
 - `web/ui/`: the Unity renderer's control icons, cursors and font (see its README).
 - `web/index.html`: the page, with the Unity renderer's controls laid out over the canvas; `?debug=1` or the backquote key shows the console and the commands on screen.
 - `build.sh`: `wasm-pack build --target web` with the Explorer's toolchain (`nightly-2026-04-15`),
@@ -224,13 +229,36 @@ Not supported yet, answered with an error: `physics.setSpringBonesParams`; socia
 `mode=configurator` renders as the marketplace does for now, and `setUsername` is accepted and
 ignored.
 
-## Embedding it in the shop
+## Publication
 
-The shop (`decentraland/shop`) embeds the preview through `decentraland-ui2`'s `WearablePreview`
-and takes the iframe origin from `VITE_WEARABLE_PREVIEW_URL`. Pointing that at this page (no
-trailing slash: the host filters messages by origin) switches every preview in the shop to this
-renderer: item pages by contract and item or token id, outfits by profile and urns, promo tiles.
-Items resolve through the marketplace API the host names (`marketplaceServerUrl`, else by
+The preview ships in the Explorer's web build
+([ADR 2026-11-25](../../docs/adr/2026-11-25-avatar-preview-served-by-sites.md)). The web job of
+`.github/workflows/bevy-explorer-ci.yml` compiles both modules from the same commit as the engine
+(`apps/bevy-explorer/build-web.py`), caches them by their inputs (`tooling/play-artifact.py
+preview-inputs`: the engine's inputs and this crate; a page or packaging change reuses them) and
+packages them with `tools/package.py` into the play artifact's `avatar-preview/`. Pull requests
+build the modules without wasm-opt; `main` builds them optimized and fails over 10 MB gzip per
+module. Sites serves:
+
+- `/avatar-preview/`: the page, revalidated on every visit;
+- `/assets/avatar-preview/`: everything it loads, under content-hashed names, cached for good.
+  A module directory is named by the hash of its contents (the glue imports its snippets by
+  relative path); `preview.js`, the emotes and the page's images by the hash of their bytes.
+
+To see a packaged build as Sites serves it:
+
+```
+./build.sh && python3 tools/package.py /tmp/avatar-preview && python3 tools/serve.py --dist /tmp/avatar-preview
+```
+
+## Embedding it
+
+A host switches to this renderer by setting its `wearable-preview` origin to
+`<site>/avatar-preview` (no trailing slash: hosts filter messages by origin); the options, messages
+and controller RPC are `wearable-preview`'s. For example, `decentraland/shop` embeds it through
+`decentraland-ui2`'s `WearablePreview` and takes that origin from `VITE_WEARABLE_PREVIEW_URL`, which
+switches its item pages (by contract and item or token id), outfits (by profile and urns) and promo
+tiles. Items resolve through the marketplace API the host names (`marketplaceServerUrl`, else by
 `env`), profiles through the host's `peerUrl`, whose domain also becomes the engine's catalyst.
 
 ## What it renders today
@@ -251,9 +279,7 @@ Windows Chrome can be driven headless from WSL over the DevTools protocol
 
 ## Next work
 
-1. A workflow that builds both modules, fails over a size limit, publishes them, and runs on
-   changes to the Explorer crates it links.
-2. Where the page and modules are served from, and how hosts switch to it: their preview url
-   pointed at this page, or a Bevy renderer inside `wearable-preview`. The shop sends `mode` only
+1. Hosts: the dcl-one Shop's preview origin pointed at `/avatar-preview`; then the production
+   Shop, Marketplace and Builder, once it is proven there. `decentraland/shop` sends `mode` only
    with its Unity flag on.
-3. Social emotes and spring bones, once the Explorer renders them.
+2. Social emotes and spring bones, once the Explorer renders them.

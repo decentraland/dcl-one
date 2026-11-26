@@ -68,8 +68,10 @@ macro_rules! send_sync_once {
         // what the auto impls require (they need `Send` fields for `Send` and
         // `Sync` fields for `Sync`). Only doc comments may precede the struct,
         // so no attribute can gate it apart from these impls or rewrite it.
+        #[allow(unsafe_code, reason = "the fields are checked Send + Sync above")]
         unsafe impl Send for $name {}
         // SAFETY: as above.
+        #[allow(unsafe_code, reason = "the fields are checked Send + Sync above")]
         unsafe impl Sync for $name {}
     };
 }

@@ -89,9 +89,18 @@ exclude = ["../../library/vendor/rusty_enet", "cast-bot"]
 version = "0.1.0"
 
 # Every member declares `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
 [workspace.lints.clippy]
 unwrap_used = "deny"
 allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
 
 [workspace.dependencies]
 # The shared crates in ../../library, named once here so members write
