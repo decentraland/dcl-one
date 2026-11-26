@@ -24,7 +24,7 @@ use crate::shared::signed_fetch::SignedPath;
 use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
 use super::deploy_validate::{MAX_PARCEL_COORDINATE, MIN_PARCEL_COORDINATE};
-use super::http::ApiError;
+use super::http::{ApiError, require_local_management};
 use super::permissions::parse_world;
 use super::settings_policy::{
     DESCRIPTION_MAX_LENGTH, DESCRIPTION_MIN_LENGTH, MAX_CATEGORIES, TITLE_MAX_LENGTH,
@@ -206,6 +206,7 @@ pub async fn update_world_settings(
     let received = Arc::new(AtomicU64::new(0));
     let multipart = read_multipart(request, received.clone()).await?;
     let timeout_ms = limits.multipart_upload_timeout_ms;
+    let management_upstream = state.settings.management_upstream_url.as_deref();
     let (mut input, thumbnail) = tokio::time::timeout(
         Duration::from_millis(timeout_ms),
         parse_multipart(
@@ -214,6 +215,7 @@ pub async fn update_world_settings(
             limits.max_in_flight_upload_files,
             &mut bytes_lease,
             &mut files_lease,
+            management_upstream,
         ),
     )
     .await
@@ -228,6 +230,9 @@ pub async fn update_world_settings(
             declared,
         ))
     })??;
+    if !input.realm_name_override_provided && !input.preview_wearable_urns_provided {
+        require_local_management(management_upstream)?;
+    }
     // The gatekeeper reads a signed realm name as the world it names (a bare
     // label as `<label>.dcl.eth`: the Unity explorer signs the realm name
     // alone), so an override naming another world held here would send this
@@ -391,6 +396,7 @@ async fn parse_multipart(
     max_in_flight_files: u64,
     bytes_lease: &mut upload_limits::InFlightBytesGuard,
     files_lease: &mut upload_limits::InFlightFilesGuard,
+    management_upstream: Option<&str>,
 ) -> Result<(WorldSettingsUpdate, Option<Vec<u8>>), SettingsError> {
     let mut fields: HashMap<String, Vec<String>> = HashMap::new();
     let mut seen: HashMap<String, bool> = HashMap::new();
@@ -413,6 +419,16 @@ async fn parse_multipart(
         };
         let name = field.name().unwrap_or("").to_string();
         let is_file = field.file_name().is_some();
+
+        // Reject mixed forms before storing any settings or thumbnail.
+        if is_file
+            || !matches!(
+                name.as_str(),
+                "realm_name_override" | "preview_wearable_urns"
+            )
+        {
+            require_local_management(management_upstream)?;
+        }
 
         part_count += 1;
         if part_count > upload_limits::MAX_MULTIPART_PARTS {
@@ -790,6 +806,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .map(|(input, _)| input)
@@ -810,6 +827,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .expect("form parses");
@@ -881,6 +899,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .expect_err("oversized field must be rejected");
@@ -958,6 +977,7 @@ mod tests {
             u64::MAX,
             &mut bytes_lease,
             &mut files_lease,
+            None,
         )
         .await
         .unwrap();

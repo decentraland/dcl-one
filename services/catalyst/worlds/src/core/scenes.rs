@@ -19,7 +19,7 @@ use crate::shared::signed_fetch::SignedPath;
 
 use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
-use super::http::ApiError;
+use super::http::{ApiError, require_local_management};
 use super::permissions::parse_world;
 use super::store;
 
@@ -61,6 +61,7 @@ pub async fn delete_scene(
     )
     .await
     .map_err(map_auth_error_api)?;
+    require_local_management(state.settings.management_upstream_url.as_deref())?;
     let parcel = Parcel::parse_strict(&scene_coord).map_err(|_| {
         ApiError::bad_request(format!(
             "Invalid coordinate format: {scene_coord}. Expected format: x,y (e.g., 0,0 or -1,2)"
@@ -121,6 +122,7 @@ pub async fn undeploy_world(
     )
     .await
     .map_err(map_auth_error_api)?;
+    require_local_management(state.settings.management_upstream_url.as_deref())?;
 
     let authorized = match state.policy.is_owner(&world, &auth.signer).await {
         PermissionDecision::Allowed => true,

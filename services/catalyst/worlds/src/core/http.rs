@@ -6,6 +6,15 @@
 
 pub use crate::comms::worlds_envelope::{ApiError, clamp_limit, envelope};
 
+pub(super) fn require_local_management(upstream: Option<&str>) -> Result<(), ApiError> {
+    match upstream {
+        Some(upstream) => Err(ApiError::conflict(format!(
+            "Manage Worlds undeploys and shared settings at {upstream}. Sign the request for the upstream route."
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// A raw query string, every pair in order (`URLSearchParams.get` reads the first).
 pub type QueryPairs = Vec<(String, String)>;
 

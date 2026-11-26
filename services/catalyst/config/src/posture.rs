@@ -570,6 +570,7 @@ const ROWS: &[Row] = &[
     // Forwarding local deploys upstream is the operator's call under every posture.
     same("upstreams", "CONTENT_FORWARD_UPSTREAM_URL", ""),
     same("upstreams", "WORLDS_FORWARD_UPSTREAM_URL", ""),
+    same("upstreams", "WORLDS_MANAGEMENT_UPSTREAM_URL", ""),
     // The ADR-250 scheme (`{base}/{zoom}/{x},{y}.jpg`) is genesis.city's; this
     // node's `/satellite/{z}/{x}/{y}` pyramid is another, so an island or
     // journey /about advertises no satellite view.

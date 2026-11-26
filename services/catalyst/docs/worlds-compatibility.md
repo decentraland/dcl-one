@@ -557,6 +557,18 @@ A difference not listed here is a gap, not a decision.
   `POST /entities/active`, the parcel-holder lookup, the world-storage
   export (`POST /world-storage/exports`) and the comms mints stay open. A node replacing the upstream service sets it once its database, blobs
   and credentials are backed up and a restore has been tested.
+- **Shared management.** When `WORLDS_MANAGEMENT_UPSTREAM_URL` names an
+  HTTPS origin, signed creator requests to `DELETE /entities/{name}`,
+  `DELETE /world/{name}/scenes/{coordinate}`, and shared settings
+  `PUT /world/{name}/settings` return 409 with that origin. Sign these
+  requests for the upstream route. The mirror accepts local settings forms
+  containing only `realm_name_override` or `preview_wearable_urns`, with
+  their existing authorization. It rejects mixed forms before storing any
+  field. Direct permission and access endpoints still edit this node's own
+  policy. Use the upstream endpoints for grants and access on the upstream
+  service. Publish forwarding has its own switch, and pausing it does not
+  change where these management operations run. An empty management origin
+  allows local creator management.
 - **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
   whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
   than `sepolia` reports `networkId: 1` (upstream answers 500 for a network
