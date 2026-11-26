@@ -951,7 +951,11 @@ fn json_as_i64(v: &serde_json::Value) -> Option<i64> {
 }
 
 #[cfg(all(test, feature = "ts"))]
-#[allow(clippy::cast_possible_truncation, reason = "test support")]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test support"
+)]
 mod ts_peg_export {
     use super::CREDIT_USD;
 
