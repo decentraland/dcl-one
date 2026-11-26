@@ -33,3 +33,6 @@ zeroize = "1"
 tokio = { workspace = true, features = ["test-util"] }
 alloy.workspace = true
 futures.workspace = true
+
+[lints]
+workspace = true

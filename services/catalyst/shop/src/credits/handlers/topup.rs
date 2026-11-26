@@ -9,6 +9,13 @@
 //! (lowercase): the grant is booked as a purchase, like the claim, and a later
 //! claim of that hash replays it instead of granting again.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use axum::Json;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -87,6 +94,10 @@ pub struct TopupPolicy {
 }
 
 /// A transfer with no recorded MANA/USD rate at its block is credited only this soon after it.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "SNAPSHOT_MAX_AGE is the constant 1800 s"
+)]
 const UNPRICED_MAX_AGE_SECS: i64 = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
 
 #[derive(Debug, PartialEq, Eq)]

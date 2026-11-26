@@ -1,4 +1,5 @@
 //! What the gatekeeper client signs, checked with the gatekeeper's own verifier.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
 use catalyst_comms::gatekeeper::auth::verify_wallet_signed_fetch;

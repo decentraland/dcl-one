@@ -57,8 +57,10 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// Parsed once, then destructured: the size of `Start` costs nothing.
-#[allow(clippy::large_enum_variant)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "parsed once, then destructured: the size of `Start` costs nothing"
+)]
 enum Command {
     #[command(
         about = "Scaffold a new scene, smart wearable, portable experience or library project"
@@ -998,6 +1000,7 @@ fn stopped_on_request(e: &anyhow::Error) -> bool {
 }
 
 /// `--json`: the result, as upstream writes it.
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn print_json(value: serde_json::Value) {
     println!(
         "{}",
@@ -1005,6 +1008,7 @@ fn print_json(value: serde_json::Value) {
     );
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 async fn run(command: Command) -> Result<()> {
     match command {
         Command::Init {

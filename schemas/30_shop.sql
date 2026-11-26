@@ -839,6 +839,11 @@ CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
 -- (/v1/orders?status=open&sortBy=cheapest).
 CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
 CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
+-- Unscoped token ID sorts walk this index in either direction.
+-- PostgreSQL sorts the equal-token ties by order ID.
+CREATE INDEX legacy_order_issued_idx ON shop.legacy_order (token_id);
+-- Cheapest without an open status filter includes all unexpired orders.
+CREATE INDEX legacy_order_price_idx ON shop.legacy_order (price, order_id);
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
 -- The latest parcel Update or the latest valid estate document supplies both fields.

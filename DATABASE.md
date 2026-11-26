@@ -1890,17 +1890,29 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
 
 The writer of delivery is the leased `credits-alerts` job, every 15 seconds
 where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
-(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
-`next_attempt_at` out by a five-minute lease, then posts each to
-`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction, one message per row
-except the pass's settled purchases, which share messages of up to ten lines
-and the outcome of the message that carried them:
+(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), tentatively incrementing
+`attempts` and pushing `next_attempt_at` out by a five-minute lease. It then
+posts each to `CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction. The
+pass's settled purchases share messages of up to ten lines and the outcome
+of the message that carried them. Other rows get one message each.
 - a 2xx ends the row `sent`; no redirect is followed;
 - any other answer, or no answer within 10 seconds, schedules a retry after
   30 seconds, doubling up to 30 minutes, from the time it failed, and keeps
   the reason in `last_error` (never the webhook, whose path is the
-  credential); a 429 waits Slack's `Retry-After` when given, and the rest of
-  the pass waits with it;
+  credential). A 429 uses Slack's `Retry-After` when given, clamped to one
+  second through 30 minutes, and holds the rest of the pass. Retries match
+  the pending row and this pass's lease timestamp. The row Slack received
+  keeps its attempt. Each unposted held row refunds the claim's increment
+  in the update that schedules it or marks it failed.
+- the first unposted Slack hold records its start in `last_error`. Another
+  hold carries that timestamp forward, and a real post replaces the hold
+  reason if it schedules a retry. A row with a legacy hold reason starts
+  timing on its next hold. At 48 hours from that first recorded hold, another
+  hold ends the row `failed` under the same lease check. The worker records
+  `finished_at` and logs the alert at error. This path can leave a failed row
+  with zero attempts and `last_error = 'Slack hold age limit reached'`.
+  Starting the clock at the first hold protects a backlog after worker
+  downtime and lets sustained rate limiting age out held rows.
 - a row still undelivered a day after it was written, with one post already
   attempted, ends `failed`, and with no webhook a row ends `skipped`. Both
   log the alert at error, so none is dropped silently.
@@ -3045,6 +3057,8 @@ the table (`catalyst schema migrate`), and no step is needed.
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
+Publication also clears acknowledged projection writes. See
+[Fold-written projections and their publication](#fold-written-projections-and-their-publication).
 
 A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
@@ -5425,9 +5439,14 @@ from an item row of the trade's chain, verified there on a testnet. On a
 node that does not walk the indexes, the trades readiness and the mirror's
 bids are one short read-only snapshot, released before the subgraph is
 awaited, whose instant the subgraph's filter takes. On an NFT walker, a
-mirrored ERC721 bid in the request's scope requires a fresh NFT ownership
-publication for the served chain. The check runs before any seller filter or pagination, so
-a pending owner change cannot move bids between seller pages or totals.
+mirrored ERC721 bid that reads `shop.nft` requires a fresh NFT ownership
+publication for the served chain. On any node, mirrored LAND and Estate bids
+get their sellers from `land_authz.token_right` and require a ready LAND fold
+for the served chain's registries. The scoped mirror bids determine which
+ownership publications the read needs to check.
+NFT-index 503s are counted by network in `catalyst_shop_bid_nft_unavailable_reads_total`.
+The check runs before any seller filter or pagination, so a pending owner
+change cannot move bids between seller pages or totals.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
@@ -5448,6 +5467,10 @@ few bids it reads and compared each with the whole catalogue (180 ms):
 These timings cover a book with no pending seller recheck. A pending recheck
 also inspects bids created past its start, whose stored sellers may have
 changed. That case can scan a larger part of the book and is unmeasured.
+The native Polygon bid reads are uncached. `shop.nft_bid` has no dedicated
+index for bidder, seller, expiry, creation time or price filters. Watch the
+seller-filtered page and count as the book grows. At 60,000 synthetic bids
+they took 48 ms and 46 ms respectively.
 
 ## Legacy Marketplace orders
 
@@ -5531,15 +5554,23 @@ listing keeps its network in scope through an ownership rewind, and an
 unknown address keeps both networks in scope. LAND and estate ownership checks use
 the same snapshot. Open v3 listings check the trades mirror and the verdicts
 of the networks read. Legacy-only status and buyer filters skip those
-checks. Each statement uses the `/v1/nfts` statement timeout.
+checks. Each statement uses the `/v1/nfts` statement timeout. Cancellation of
+a trades mirror or trade-events marker read returns the standard statement
+timeout response for orders and bids. An unreadable trade-events marker
+otherwise returns the named `trade-events-index` response.
 
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
   of the same snapshot;
 - the total: each network's count capped at 5,000, or at the deep window
   for a deeper page, summed, as the subgraph reader counted;
-- open-by-items: per contract, its open orders cheapest first
-  (`legacy_order_open_idx`), up to `perContract`.
+- open-by-items queries the requested contracts together on that snapshot.
+  A lateral legacy query takes each contract's cheapest window using
+  `legacy_order_open_idx` on contract address and price. The v3 query ranks each contract's newest 1,000 backed
+  listings. The merge compares their full integer prices and applies the
+  item filter after the `perContract` cut. The local statement shares a
+  10-second bound across all requested contracts. Graph-backed legacy orders keep their page limit
+  and use one batched query for the local v3 leg.
 
 Writers that predate the book's marker (an earlier binary's nft fold during
 a rollout) write `shop.nft` all the same. So readiness also reads
@@ -5547,8 +5578,12 @@ a rollout) write `shop.nft` all the same. So readiness also reads
 publication"): a write to `shop.nft` or `shop.legacy_order` that no
 publication has acknowledged refuses the read, whichever binary wrote it and
 at whatever height. Reads refused that way are counted by
-`catalyst_shop_order_book_unpublished_fold_reads_total` (serve); they fall in
-each pass's window between the fold's commit and its publication.
+`catalyst_shop_order_book_unpublished_fold_reads_total` during the window
+between a fold's commit and its publication. The denominator is
+`catalyst_shop_order_book_fold_read_checks_total`, incremented once for each
+attempted network's publication check. Both counters use `network` and
+`route` labels. The route is `orders`, `open_by_items` or `activity`.
+Each activity page takes its own book snapshot and counts its checks.
 
 ### Fold-written projections and their publication
 
@@ -5583,7 +5618,28 @@ no network), `legacy_order_seller_idx` (an owner's orders newest first),
 `legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
 and recently-updated windows with no filter), `legacy_order_open_idx` (a
 contract's open orders by price) and `legacy_order_open_price_idx` (every
-open order by price).
+open order by price). `legacy_order_issued_idx` supports unscoped token
+ID sorts in either direction, with an incremental sort for order ID ties.
+`legacy_order_price_idx` sorts unscoped orders by price and order ID
+when the caller asks for every status. See the
+[order-book read measurements](METRICS.md#marketplace-order-book-reads).
+
+The object pass builds missing indexes in its migration transaction and
+blocks writes to the book until that transaction commits. On a large live
+book, an operator can build these indexes before the migration, outside a
+transaction:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_issued_idx
+  ON shop.legacy_order (token_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_price_idx
+  ON shop.legacy_order (price, order_id);
+```
+
+Schema status checks index names. Before migrating, verify that both indexes
+have `pg_index.indisvalid` set and that `pg_get_indexdef(indexrelid)` matches
+the canonical definitions. Drop and rebuild any invalid or mismatched index
+before relying on its name.
 
 The fold finds the event that ends each order with one backward probe of
 `nft_event_token_idx` per order (`LATERAL ... LIMIT 1`). As a join of the
@@ -5604,9 +5660,11 @@ quarter sold and 30% cancelled by id, 130,050 left open:
 | a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |
 | a catch-up pass (the last 200,000 Polygon blocks) | 0.87 s |
 
-The table holds 719 MB at that bound (346 MB heap, the primary key 145 MB,
-`legacy_order_token_idx` 98 MB, `legacy_order_seller_idx` 74 MB, the rest
-under 25 MB each).
+The heap and indexes in that fold benchmark totalled 719 MB (346 MB heap,
+the primary key 145 MB, `legacy_order_token_idx` 98 MB,
+`legacy_order_seller_idx` 74 MB, the rest under 25 MB each). The unscoped
+sort indexes add 130 MiB in the
+[order-book read fixture](METRICS.md#marketplace-order-book-reads).
 
 | Read (first = 100 unless noted) | Page | Capped total |
 |---|---|---|

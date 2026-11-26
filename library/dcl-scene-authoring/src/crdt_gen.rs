@@ -320,7 +320,13 @@ pub fn describe_difference(
 }
 
 fn parse_messages(bytes: &[u8]) -> Vec<(u32, u32, &[u8])> {
-    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    let word = |at: usize| {
+        u32::from_le_bytes(
+            bytes[at..at + 4]
+                .try_into()
+                .expect("a 4-byte slice is a [u8; 4]"),
+        )
+    };
     let mut out = Vec::new();
     let mut offset = 0usize;
     while offset + CRDT_HEADER_LEN as usize <= bytes.len() {
