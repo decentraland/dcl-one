@@ -831,6 +831,10 @@ pub(super) fn social_states(
                 deployment_max_lag: (config.social.badges_deployment_max_lag_secs > 0)
                     .then(|| Duration::from_secs(config.social.badges_deployment_max_lag_secs)),
                 items_mirror_enabled: config.marketplace.marketplace_mirrors_enabled,
+                polygon_owned: crate::settings::collections_owned(
+                    &config.marketplace.marketplace_collections_index_owns,
+                )
+                .is_ok_and(|owned| owned.contains(&shop::market::chain_walk::ChainNet::Matic)),
                 ..badges::jobs::ProcessorSettings::default()
             },
         },

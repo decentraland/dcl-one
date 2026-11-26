@@ -62,6 +62,10 @@ pub struct SalesIndex {
     polygon: Option<CollectionVenues>,
     bid: &'static str,
     bid_start: u64,
+    /// It takes the collections whose `Issue` it walks from the collections
+    /// index's walked log (`nft_index::catalogue_set_sql`), not from the
+    /// catalogue's rows.
+    native: bool,
 }
 #[derive(Clone, Copy)]
 struct CollectionVenues {
@@ -77,6 +81,7 @@ pub const POLYGON: SalesIndex = SalesIndex {
     }),
     bid: BID_V2_MATIC,
     bid_start: BID_V2_MATIC_START_BLOCK,
+    native: false,
 };
 
 pub const AMOY: SalesIndex = SalesIndex {
@@ -87,6 +92,7 @@ pub const AMOY: SalesIndex = SalesIndex {
     }),
     bid: "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d",
     bid_start: 5_706_662,
+    native: false,
 };
 
 /// marketplace-squid-core@85c6832e96e5459b37f0f315b8e384693684e12d,
@@ -98,6 +104,7 @@ pub const SEPOLIA: SalesIndex = SalesIndex {
     polygon: None,
     bid: "0x2c2835b95852fd975e087b3b25297322728792e2",
     bid_start: 3_831_237,
+    native: false,
 };
 
 impl SalesIndex {
@@ -114,6 +121,13 @@ impl SalesIndex {
             11_155_111 => Some(SEPOLIA),
             _ => None,
         }
+    }
+
+    /// The walk taking its collections from the collections index's walked
+    /// log when `native` (`nft_index::catalogue_set_sql`).
+    pub const fn following_the_index(mut self, native: bool) -> Self {
+        self.native = native;
+        self
     }
 }
 
@@ -540,6 +554,10 @@ impl ChainIndex for SalesIndex {
         INDEXER_SALES
     }
 
+    fn catalogue_native(&self) -> bool {
+        self.native
+    }
+
     fn chain_id(&self) -> i64 {
         self.chain
     }
@@ -570,15 +588,13 @@ impl ChainIndex for SalesIndex {
         let mut groups = Vec::new();
         if let Some(venues) = self.polygon {
             let bound = chain_walk::time_at_most(ChainNet::Matic, anchor, to);
-            let collections: Vec<String> = sqlx::query_scalar(
-            "SELECT contract_address FROM shop.collections WHERE network = $1 AND created_at <= $2 AND chain_id = $3 AND ($4 OR testnet_verified) ORDER BY contract_address",
-        )
-        .bind(ChainNet::Matic.db_name())
-        .bind(bound)
-        .bind(self.chain as i32)
-        .bind(self.chain == ChainNet::Matic.chain_id())
-        .fetch_all(pool)
-        .await?;
+            let collections: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT contract_address FROM ({}) AS c WHERE created_at <= $1 ORDER BY contract_address",
+                super::nft_index::catalogue_set_sql(ChainNet::Matic, self.chain, self.native)
+            )))
+            .bind(bound)
+            .fetch_all(pool)
+            .await?;
             if !collections.is_empty() {
                 groups.push(LogGroup {
                     addresses: collections,

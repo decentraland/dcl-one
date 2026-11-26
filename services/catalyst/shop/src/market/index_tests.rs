@@ -15215,3 +15215,298 @@ mod cancelled_trades;
 mod historical_routes;
 mod royalties;
 mod sale_routes;
+
+/// A `ProxyCreated` the collections index walked on Polygon at `block`.
+async fn walked_collection(pool: &PgPool, contract: &str, block: u64) {
+    let mut conn = pool.acquire().await.unwrap();
+    super::collections_index::insert_events(
+        &mut conn,
+        ChainNet::Matic,
+        &[super::collections_index::CollectionEvent {
+            block_number: block as i64,
+            block_time: time_of(block),
+            kind: super::collections_index::KIND_PROXY_CREATED,
+            contract_address: contract.into(),
+            account: Some(super::collections_index::FACTORIES[0].0.into()),
+            ..Default::default()
+        }],
+    )
+    .await
+    .unwrap();
+}
+
+/// The walks that follow the catalogue wait for the source they take it
+/// from: natively, the collections index's fresh publication, whatever the
+/// mirror recorded; otherwise the mirror's first complete pass.
+#[tokio::test]
+async fn the_walks_wait_for_the_source_they_follow() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let wait = |native| nft_index::catalogue_wait(&pool, ChainNet::Matic, 137, native);
+    let why = wait(false).await.unwrap();
+    assert!(why.contains("collections mirror"), "{why}");
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+         VALUES ('collections', 'matic', 'https://subgraph.example/matic', timezone('UTC', now()))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(wait(false).await, None, "the mirror's pass");
+    let why = wait(true).await.unwrap();
+    assert!(
+        why.contains("collections index"),
+        "native: no publication, the mirror's pass notwithstanding: {why}"
+    );
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    assert_eq!(wait(true).await, None, "published");
+    owning::own(&pool, "matic", 137, 100, 31 * 60).await;
+    assert!(wait(true).await.is_some(), "a stale publication");
+    owning::rewind(&pool, "matic").await;
+    assert!(wait(true).await.is_some(), "withdrawn");
+}
+
+/// The collections the walks take natively: Polygon's walked `ProxyCreated`
+/// up to the published fold, at its block time, never one walked past it;
+/// Ethereum's v1 contracts from their first walked log; and the
+/// catalogue's chain-bound rows otherwise.
+#[tokio::test]
+async fn the_catalogue_set_follows_the_published_log() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let set = |net, chain, native| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, i64)>(sqlx::AssertSqlSafe(format!(
+                "SELECT contract_address, created_at FROM ({}) AS c ORDER BY contract_address",
+                nft_index::catalogue_set_sql(net, chain, native)
+            )))
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let (early, late) = (
+        "0x00000000000000000000000000000000000000e1",
+        "0x00000000000000000000000000000000000000e2",
+    );
+    walked_collection(&pool, early, 100).await;
+    walked_collection(&pool, late, 200).await;
+    assert_eq!(
+        set(ChainNet::Matic, 137, true).await,
+        [],
+        "nothing published"
+    );
+    owning::own(&pool, "matic", 137, 150, 60).await;
+    assert_eq!(
+        set(ChainNet::Matic, 137, true).await,
+        [(early.to_string(), time_of(100))],
+        "the walk past the fold is not taken"
+    );
+    owning::own(&pool, "matic", 137, 200, 60).await;
+    assert_eq!(set(ChainNet::Matic, 137, true).await.len(), 2);
+
+    let v1 = "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f";
+    let mut conn = pool.acquire().await.unwrap();
+    super::collections_index::insert_events(
+        &mut conn,
+        ChainNet::Ethereum,
+        &[30, 40].map(|block: i64| super::collections_index::CollectionEvent {
+            block_number: block,
+            block_time: time_of(block as u64),
+            kind: super::collections_index::KIND_OWNERSHIP_TRANSFERRED,
+            contract_address: v1.into(),
+            account: Some(ALICE.into()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    owning::own(&pool, "ethereum", 1, 50, 60).await;
+    assert_eq!(
+        set(ChainNet::Ethereum, 1, true).await,
+        [(v1.to_string(), time_of(30))],
+        "from its first walked log"
+    );
+
+    seed_collection(
+        &pool,
+        "matic",
+        late,
+        300,
+        "urn:decentraland:matic:collections-v2:0xe2",
+        "Late",
+    )
+    .await;
+    assert_eq!(
+        set(ChainNet::Matic, 137, false).await,
+        [(late.to_string(), time_of(300))],
+        "the catalogue's rows"
+    );
+    assert_eq!(
+        set(ChainNet::Matic, 80_002, false).await,
+        [],
+        "bound to the chain"
+    );
+}
+
+/// A native nft walk takes only what the collections index published: a
+/// collection walked past the fold is not taken; once a later fold covers
+/// it, though the nft walk passed its creation, the backfill lane walks it
+/// from there.
+#[tokio::test]
+async fn a_native_nft_walk_takes_a_late_published_collection_through_the_backfill_lane() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let s = Deployments::mainnet(ChainNet::Matic).start;
+    let (early, late) = (
+        "0x00000000000000000000000000000000000000e1",
+        "0x00000000000000000000000000000000000000e2",
+    );
+    walked_collection(&db.pool, early, s + 100).await;
+    walked_collection(&db.pool, late, s + 1_500).await;
+    owning::own(&db.pool, "matic", 137, (s + 1_000) as i64, 60).await;
+    let logs = vec![
+        transfer(early, ZERO, ALICE, v2_token(0, 1), s + 200, 0),
+        transfer(late, ZERO, BOB, v2_token(0, 7), s + 1_600, 0),
+    ];
+    let head = s + 5_000;
+    let chain = FakeChain::new(head, logs, 10_000, 2);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let ix = || NftIndex::new(ChainNet::Matic).following_the_index(true);
+    let contract = |c: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, Option<i64>, Option<i64>)>(
+                "SELECT walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
+                 WHERE network = 'matic' AND contract_address = $1",
+            )
+            .bind(c)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let transfers = |c: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM shop.nft_event WHERE network = 'matic' AND contract_address = $1",
+            )
+            .bind(c)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let first = publish_nft(&st, &url, &ix()).await;
+    assert!(first.published, "{first:?}");
+    assert!(contract(early).await.is_some());
+    assert_eq!(
+        contract(late).await,
+        None,
+        "walked past the publication: not taken"
+    );
+    assert_eq!(transfers(late).await, 0);
+
+    owning::own(&db.pool, "matic", 137, (s + 2_000) as i64, 60).await;
+    *chain.head.lock() = head + 100;
+    let next = publish_nft(&st, &url, &ix()).await;
+    assert!(next.published, "{next:?}");
+    let (from, backfill, done) = contract(late).await.unwrap();
+    assert!(
+        backfill.is_some_and(|b| b <= (s + 1_500) as i64) && done == Some(from - 1),
+        "{from} {backfill:?} {done:?}"
+    );
+    assert_eq!(
+        transfers(late).await,
+        1,
+        "its transfer read by the backfill lane"
+    );
+}
+
+/// The sales walk's `Issue` filter takes the same set as the nft walk:
+/// natively the collections the index published, the catalogue's rows
+/// otherwise.
+#[tokio::test]
+async fn the_sales_walk_issues_follow_the_catalogue_set() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    let (early, late, mirrored) = (
+        "0x00000000000000000000000000000000000000e1",
+        "0x00000000000000000000000000000000000000e2",
+        "0x00000000000000000000000000000000000000e3",
+    );
+    walked_collection(&pool, early, 100).await;
+    walked_collection(&pool, late, 200).await;
+    owning::own(&pool, "matic", 137, 150, 60).await;
+    seed_collection(
+        &pool,
+        "matic",
+        mirrored,
+        120,
+        "urn:decentraland:matic:collections-v2:0xe3",
+        "Mirrored",
+    )
+    .await;
+    let issues = |native: bool| {
+        let pool = pool.clone();
+        async move {
+            let groups = sales_index::POLYGON
+                .following_the_index(native)
+                .groups(&pool, 1_000, 1_000, (1_000, time_of(1_000)))
+                .await
+                .unwrap();
+            groups
+                .into_iter()
+                .find(|g| g.topics == serde_json::json!([[sales_index::TOPIC_ISSUE]]))
+                .map(|g| g.addresses)
+                .unwrap_or_default()
+        }
+    };
+    assert_eq!(issues(true).await, [early], "published only");
+    assert_eq!(issues(false).await, [mirrored], "the catalogue's rows");
+}
+
+/// The walks follow the collections index's log exactly where this process
+/// walks a network's collections (the index enabled, the network's mainnet
+/// chain): on a testnet, or with the index off, they keep the catalogue's
+/// rows and the mirror's gate.
+#[test]
+fn only_a_walked_mainnet_network_follows_the_index() {
+    let on = IndexSettings {
+        collections_enabled: true,
+        ..IndexSettings::default()
+    };
+    for net in ChainNet::ALL {
+        assert!(
+            super::chain_jobs::walks_follow_the_index(&on, net),
+            "{net:?}"
+        );
+        assert!(
+            !super::chain_jobs::walks_follow_the_index(&IndexSettings::default(), net),
+            "{net:?}: the index off"
+        );
+    }
+    let testnets = IndexSettings {
+        chain_id_ethereum: ChainNet::Ethereum.testnet_chain_id(),
+        chain_id_matic: ChainNet::Matic.testnet_chain_id(),
+        ..on
+    };
+    for net in ChainNet::ALL {
+        assert!(
+            !super::chain_jobs::walks_follow_the_index(&testnets, net),
+            "{net:?}: a testnet keeps the rows"
+        );
+    }
+}

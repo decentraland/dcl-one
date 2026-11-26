@@ -161,7 +161,9 @@ fn checked_indexes(
 /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks the collections index
 /// takes from the mirror, each once: Polygon, and Ethereum (its v1
 /// collections, walked on mainnet only).
-fn collections_owned(value: &str) -> anyhow::Result<Vec<shop::market::chain_walk::ChainNet>> {
+pub(crate) fn collections_owned(
+    value: &str,
+) -> anyhow::Result<Vec<shop::market::chain_walk::ChainNet>> {
     use shop::market::chain_walk::ChainNet;
     let mut out = Vec::new();
     for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {

@@ -1295,6 +1295,13 @@ pub trait ChainIndex: Send + Sync {
     }
     /// The first block a full history reads (the contracts' deployment).
     fn start_block(&self) -> u64;
+    /// Whether the index takes the catalogue's collections from the
+    /// collections index's walked log (`nft_index::catalogue_set_sql`); the
+    /// walks that follow the catalogue answer for themselves, every other
+    /// index reads none.
+    fn catalogue_native(&self) -> bool {
+        false
+    }
     /// The filter groups of window `[from, to]`; `anchor` is an exact
     /// (block, time) at or before `from` for time-bounded address sets.
     async fn groups(

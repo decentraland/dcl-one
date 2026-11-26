@@ -1,12 +1,15 @@
 //! The `nft` index: the ERC-721 `Transfer` logs of every collection the
-//! collections mirror knows (Polygon v2 collections, Ethereum v1 ones and
-//! their v1 `Issue` logs, which carry the wearable id a v1 token id does
-//! not), the DCLRegistrar's names and `NameRegistered` subdomains, the
-//! legacy Marketplace orders (`OrderCreated`/`OrderSuccessful`/
-//! `OrderCancelled`, both chains) and the LAND and Estate registries'
-//! `CreateEstate` and `Update` data (names and descriptions). LAND and estate
-//! ownership and estate membership are land_authz's facts
-//! (`land_authz.token_right`, `estate_land`) and the readers join them.
+//! catalogue knows (Polygon v2 collections, Ethereum v1 ones and their v1
+//! `Issue` logs, which carry the wearable id a v1 token id does not; on
+//! mainnet, where this process walks the network's collections, from the
+//! collections index's published log, elsewhere from the collections
+//! mirror's rows: [`catalogue_set_sql`]), the DCLRegistrar's names and
+//! `NameRegistered` subdomains, the legacy Marketplace orders
+//! (`OrderCreated`/`OrderSuccessful`/`OrderCancelled`, both chains) and the
+//! LAND and Estate registries' `CreateEstate` and `Update` data (names and
+//! descriptions). LAND and estate ownership and estate membership are
+//! land_authz's facts (`land_authz.token_right`, `estate_land`) and the
+//! readers join them.
 //!
 //! Identity is (network, contract, token) throughout; a v2 token id decodes
 //! to its item as `token >> 216` (the collection's `blockchainId`) and its
@@ -19,11 +22,13 @@
 //! valid estate document). The LAND fold reads the window.
 //! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
-//! The address set grows with the mirror. A collection enters the walk at
+//! The address set grows with its source: the collections index's
+//! publication, or the mirror's passes. A collection enters the walk at
 //! the first window whose end its `created_at` may precede (an upper bound
 //! on the window's time from an exact anchor, `chain_walk::time_at_most`);
-//! one the mirror reports only after the walk passed its creation gets a
-//! backfill lane (`nft_contract.backfill_from_block`), walked before the
+//! one its source publishes only after the walk passed its creation (a
+//! collection the index walked past its fold, or one the mirror reports
+//! late) gets a backfill lane (`nft_contract.backfill_from_block`), walked before the
 //! main range and refolded whole when it completes. A network publishes only
 //! with no backfill owed, and a fold that still owes one clears the publish
 //! marker in the transaction that commits its rows.
@@ -804,6 +809,9 @@ pub struct NftIndex {
     /// The cursor's start: nothing before it is the walk's (a bounded
     /// window's history, or none at all for a full one).
     walk_start: Mutex<Option<u64>>,
+    /// It takes its collections from the collections index's walked log
+    /// ([`catalogue_set_sql`]), not from the catalogue's rows.
+    native: bool,
 }
 
 impl NftIndex {
@@ -826,21 +834,29 @@ impl NftIndex {
             collections: Mutex::new(None),
             walked: Mutex::new(None),
             walk_start: Mutex::new(None),
+            native: false,
         }
     }
 
-    /// The mirrored collections of this network with their creation time,
-    /// read once per pass (the address set's source).
+    /// The walk taking its collections from the collections index's walked
+    /// log when `native` ([`catalogue_set_sql`]).
+    pub fn following_the_index(mut self, native: bool) -> Self {
+        self.native = native;
+        self
+    }
+
+    /// The catalogue's collections of this network with their creation time
+    /// ([`catalogue_set_sql`]), read once per pass (the address set's source).
     async fn load(&self, pool: &PgPool) -> anyhow::Result<(Vec<Collection>, HashMap<String, i64>)> {
         if let (Some(c), Some(w)) = (self.collections.lock().clone(), self.walked.lock().clone()) {
             return Ok((c, w));
         }
-        let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 AND ($3 OR testnet_verified) ORDER BY created_at, contract_address")
-            .bind(self.net.db_name())
-            .bind(self.deployments.chain_id as i32)
-            .bind(self.deployments.chain_id == self.net.chain_id())
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT contract_address, created_at FROM ({}) AS c ORDER BY created_at, contract_address",
+            catalogue_set_sql(self.net, self.deployments.chain_id, self.native)
+        )))
+        .fetch_all(pool)
+        .await?;
         let collections: Vec<Collection> = rows
             .iter()
             .map(|r| Collection {
@@ -874,6 +890,72 @@ impl NftIndex {
     }
 }
 
+/// The collections the walks that follow the catalogue (the nft and sales
+/// walks, and the sales accounting's coverage checks) take on `net`, read on
+/// `chain_id`, as a relation of `(contract_address, created_at)`:
+/// - `native` (this process walks the network's collections: the
+///   collections index on its mainnet chain): those the index's walked log
+///   holds up to its published fold, never a collection it walked past it.
+///   On Polygon each walked `ProxyCreated`, at its block time; on Ethereum
+///   each v1 contract, from its first walked log (its deployment);
+/// - otherwise the catalogue's rows bound to the chain (on a testnet, the
+///   verified ones), as the collections mirror writes them.
+pub fn catalogue_set_sql(net: ChainNet, chain_id: i64, native: bool) -> String {
+    let network = net.db_name();
+    if !native {
+        return format!(
+            "SELECT contract_address, created_at FROM shop.collections \
+             WHERE network = '{network}' AND chain_id = {chain_id} AND ({mainnet} OR testnet_verified)",
+            mainnet = chain_id == net.chain_id(),
+        );
+    }
+    let published = "JOIN shop.chain_cursor w ON w.indexer = 'collections' AND w.network = e.network \
+                     AND w.folded_block IS NOT NULL AND e.block_number <= w.folded_block";
+    match net {
+        ChainNet::Matic => format!(
+            "SELECT e.contract_address, e.block_time AS created_at FROM shop.collection_event e {published} \
+             WHERE e.network = '{network}' AND e.kind = 'proxy_created'"
+        ),
+        ChainNet::Ethereum => format!(
+            "SELECT e.contract_address, min(e.block_time) AS created_at FROM shop.collection_event e {published} \
+             WHERE e.network = '{network}' GROUP BY e.contract_address"
+        ),
+    }
+}
+
+/// Why the walks that follow `net`'s catalogue wait, or `None` once they may
+/// take its collections ([`catalogue_set_sql`]). With `native`, once the
+/// collections index has published the network: its whole history walked
+/// and a fold published within `READY_WINDOW`, bound to `chain_id` and out
+/// of quarantine. Otherwise once the collections mirror completed a pass
+/// ([`mirror_complete`]). A state that cannot be read is a wait.
+pub async fn catalogue_wait(
+    pool: &PgPool,
+    net: ChainNet,
+    chain_id: i64,
+    native: bool,
+) -> Option<String> {
+    if !native {
+        return (!mirror_complete(pool, net, chain_id).await)
+            .then(|| "waiting for the collections mirror's first complete pass".to_string());
+    }
+    match chain_walk::published_block(
+        pool,
+        super::chain_walk::INDEXER_COLLECTIONS,
+        net,
+        chain_id,
+        chrono::Utc::now(),
+    )
+    .await
+    {
+        Ok(Some(_)) => None,
+        Ok(None) => Some("waiting for the collections index to publish the network".to_string()),
+        Err(e) => Some(format!(
+            "the collections index's cursor cannot be read: {e}"
+        )),
+    }
+}
+
 /// Whether the collections mirror has completed a pass for `net`: the
 /// address set is only as complete as it. Legacy mainnet writers used the
 /// mainnet row tags even for custom URLs, before they recorded a chain here.
@@ -893,6 +975,10 @@ pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> boo
 impl ChainIndex for NftIndex {
     fn indexer(&self) -> &'static str {
         INDEXER_NFT
+    }
+
+    fn catalogue_native(&self) -> bool {
+        self.native
     }
 
     fn abandon(&self) {

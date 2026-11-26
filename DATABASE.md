@@ -2742,8 +2742,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   grows older than it while it waits passes without a badge, as under the
   mirrors. The page,
   its goods' item types and the wait come from one snapshot. Without
-  `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
-  not started (logged at startup);
+  `MARKETPLACE_MIRRORS_ENABLED` no mirror pass ever completes, so unless
+  the collections index owns Polygon (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+  lists `matic`) the sales job is not started (logged at startup);
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass, or, once the collections
   index owns Polygon, while its descriptive verdict holds; the verdict, the
@@ -4001,7 +4002,22 @@ decide nothing from them:
   may miss the network's items;
 - the walks' address sets: the NFT walk's and the sales index walk's
   contract sets, and the sales index's coverage checks (`sale_fold`,
-  `sale_history`), take the catalogue as it stands;
+  `sale_history`), take the catalogue's collections
+  (`nft_index::catalogue_set_sql`). Where this process walks the network's
+  collections (the collections index on its mainnet chain), they come only
+  from the index's walked log up to its published fold, never from a
+  collection it walked past it: Polygon's `ProxyCreated`, at its block
+  time, and Ethereum's v1 contracts from their first walked log. Both
+  walks then wait for that publication (whole history, a fold within 30
+  minutes, bound to the chain, out of quarantine; `nft_index::catalogue_wait`),
+  whatever the collections mirror recorded. Elsewhere (a testnet) they take
+  the catalogue's chain-bound rows and wait for the collections mirror's
+  first complete pass, as before. A collection published only after the NFT
+  walk passed its creation is taken late: the backfill lane walks it from
+  its creation (`nft_contract.backfill_from_block`). `sale_fold`'s
+  undiscovered-collection check reads both the rows and the published log,
+  so neither source's late collection publishes sales the NFT walk has not
+  read;
 - Social's deployments job reads a wearable's rarity from `shop.items` when
   its entity lacks one (an item's rarity never changes).
 
