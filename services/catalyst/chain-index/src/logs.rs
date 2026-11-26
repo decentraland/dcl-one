@@ -259,8 +259,15 @@ pub(crate) async fn fetch_window(
     sent: &AtomicUsize,
     budget: usize,
 ) -> Result<Window, RpcError> {
+    let (Ok(from_i), Ok(to_i)) = (i64::try_from(from), i64::try_from(to)) else {
+        return Err(RpcError::Rpc(format!(
+            "log window {from}..={to} is past i64"
+        )));
+    };
     let before = sent.load(Ordering::SeqCst);
     let rpc = rpc.also_counting(sent);
+    // `out.reached` as i64: it starts at `to` and only drops to a checked `upper`.
+    let mut reached_i = to_i;
     let mut out = Window {
         logs: Vec::new(),
         reached: to,
@@ -288,26 +295,31 @@ pub(crate) async fn fetch_window(
                 .await
             {
                 Ok((logs, upper, _)) => {
-                    if upper < from
-                        || upper > out.reached
-                        || logs.iter().any(|l| {
-                            let (block, index) = log_position(l);
-                            block < from as i64
-                                || block > upper as i64
-                                || index < 0
-                                || index > i32::MAX as i64
-                        })
-                    {
+                    // In the window, `upper <= to` fits i64.
+                    let in_window = upper >= from && upper <= out.reached;
+                    let upper_i = i64::try_from(upper).ok().filter(|_| in_window);
+                    let Some(upper_i) = upper_i else {
+                        return Err(RpcError::Rpc(
+                            "invalid log window bounds or position".into(),
+                        ));
+                    };
+                    if logs.iter().any(|l| {
+                        let (block, index) = log_position(l);
+                        block < from_i
+                            || block > upper_i
+                            || index < 0
+                            || index > i64::from(i32::MAX)
+                    }) {
                         return Err(RpcError::Rpc(
                             "invalid log window bounds or position".into(),
                         ));
                     }
                     if upper < out.reached {
                         out.reached = upper;
-                        let cut = upper as i64;
-                        out.logs.retain(|l| log_position(l).0 <= cut);
+                        reached_i = upper_i;
+                        out.logs.retain(|l| log_position(l).0 <= upper_i);
                     }
-                    let cut = out.reached as i64;
+                    let cut = reached_i;
                     out.logs
                         .extend(logs.into_iter().filter(|l| log_position(l).0 <= cut));
                     i = end;
@@ -359,14 +371,16 @@ pub(crate) async fn block_times(
     let wanted: Vec<u64> = missing
         .into_iter()
         .filter(|b| !times.contains_key(b))
-        .map(|b| b as u64)
-        .collect();
+        .map(|b| u64::try_from(b).map_err(|_| RpcError::Rpc(format!("negative log block {b}"))))
+        .collect::<Result<_, _>>()?;
     if wanted.is_empty() {
         return Ok((times, 0));
     }
     let (headers, requests) = rpc.block_headers(&wanted).await?;
     for (number, header) in headers {
-        times.insert(number as i64, header.timestamp);
+        let number = i64::try_from(number)
+            .map_err(|_| RpcError::Rpc(format!("block header {number} is past i64")))?;
+        times.insert(number, header.timestamp);
     }
     Ok((times, requests))
 }
@@ -374,6 +388,24 @@ pub(crate) async fn block_times(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn block_times_refuses_a_negative_log_block() {
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, "http://127.0.0.1:1");
+        let log = RpcLog {
+            address: String::new(),
+            topics: vec![],
+            data: String::new(),
+            block_number: "0x-5".into(),
+            log_index: "0x0".into(),
+            block_timestamp: None,
+            block_hash: None,
+            transaction_hash: None,
+        };
+        let err = block_times(&rpc, &[log]).await.unwrap_err();
+        assert!(err.to_string().contains("negative log block -5"), "{err}");
+    }
 
     #[test]
     fn a_window_needs_one_request_per_address_chunk_per_group() {
