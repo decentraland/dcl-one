@@ -109,7 +109,9 @@ export async function prepareLinkedApproval(
 ): Promise<LinkedApprovalPlan> {
   const [pendingItems, approvalData, curations, registryRoot, deployedHashes] = await Promise.all([
     deps.fetchPendingItems(collection.id),
-    deps.fetchApprovalData(collection.id).catch(refuseUnsubmitted),
+    deps.fetchApprovalData(collection.id).catch(error => {
+      refuseUnsubmitted(error)
+    }),
     deps.fetchItemCurations(collection.id),
     deps.fetchRegistryRoot(),
     deps.fetchDeployedHashes(collection.id)
