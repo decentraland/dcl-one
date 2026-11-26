@@ -313,6 +313,7 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ),
     ("shop.chain_checkpoint.block_hash", "a block hash"),
     ("land_authz.index_cursor.last_block_hash", "a block hash"),
+    ("land_authz.index_cursor.folded_block_hash", "a block hash"),
     ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),

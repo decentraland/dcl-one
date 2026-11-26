@@ -223,6 +223,14 @@ Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` 
 registry history, API replicas prefer the native index and can serve manager and slot details.
 The NFT worker supplies wallet holdings for open mappings.
 
+The marketplace historical holdings API serves the subgraph worker at
+`/v1/historical/*` on the marketplace gateway. Set `HISTORICAL_ADMIN_TOKEN_FILE`
+to the credential corresponding to the worker's `subgraph-historical-api-token`.
+The routes use the Ethereum and Polygon mainnet indexes. An existing
+database needs schema step 0094 and the registry review repair before the
+full Polygon history is available. Moving the marketplace API host to this
+gateway preserves the worker's request paths.
+
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
