@@ -129,6 +129,85 @@ CREATE TABLE credits.idempotency (
     CONSTRAINT idempotency_scope_check CHECK (scope IN ('grant', 'spend', 'refund'))
 );
 
+-- Studios (credits-server's studios, its migration 1786700000000_studios;
+-- shop/src/credits/studios.rs): scene studios that give Credits to their
+-- players out of a budget an operator assigns. `studio_operators` are the
+-- wallets that act for a studio. `studio_budget_entries` is the budget's
+-- ledger, in USD cents (1 Credit = 10 cents): a `deposit` adds, an
+-- `adjustment` moves either way, a `grant` takes and names the
+-- `credits.ledger` row it credited to the player. A studio's balance is
+-- the sum of its entries; new budget (any positive entry) is bounded by a
+-- service-wide daily ceiling. A write's `idempotency_key` repeats with the
+-- same request (`request_hash`) to answer what it wrote. `created_by` and
+-- `added_by` name who wrote the row: the operator console's audit actor, or
+-- the wallet of the studio operator who granted.
+CREATE TABLE credits.studios (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    created_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studios_pkey PRIMARY KEY (id),
+    CONSTRAINT studios_status_check CHECK (status IN ('active', 'paused'))
+);
+
+-- Names tell studios apart, so two differing only in case are one name.
+CREATE UNIQUE INDEX studios_name_uidx ON credits.studios (lower(name));
+
+CREATE TABLE credits.studio_operators (
+    studio_id uuid NOT NULL,
+    address text NOT NULL,
+    added_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studio_operators_pkey PRIMARY KEY (studio_id, address),
+    CONSTRAINT studio_operators_studio_fkey FOREIGN KEY (studio_id)
+        REFERENCES credits.studios (id) ON DELETE CASCADE,
+    CONSTRAINT studio_operators_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+
+-- The studios a signed-in wallet acts for.
+CREATE INDEX studio_operators_address_idx ON credits.studio_operators (address);
+
+CREATE TABLE credits.studio_budget_entries (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    studio_id uuid NOT NULL,
+    usd_cents bigint NOT NULL,
+    kind text NOT NULL,
+    ledger_id bigint,
+    note text,
+    idempotency_key text,
+    request_hash text,
+    created_by text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT studio_budget_entries_pkey PRIMARY KEY (id),
+    CONSTRAINT studio_budget_entries_studio_fkey FOREIGN KEY (studio_id)
+        REFERENCES credits.studios (id),
+    -- A granted credit is never removed: a removal fails rather than leave
+    -- a budget that no longer explains where its money went.
+    CONSTRAINT studio_budget_entries_ledger_fkey FOREIGN KEY (ledger_id)
+        REFERENCES credits.ledger (id),
+    CONSTRAINT studio_budget_entries_kind_check CHECK (
+        (kind = 'deposit' AND usd_cents > 0) OR (kind = 'grant' AND usd_cents < 0)
+        OR (kind = 'adjustment' AND usd_cents <> 0)),
+    -- A grant always names its credit, and nothing else does.
+    CONSTRAINT studio_budget_entries_ledger_check CHECK ((kind = 'grant') = (ledger_id IS NOT NULL)),
+    CONSTRAINT studio_budget_entries_idempotency_check CHECK (
+        (idempotency_key IS NULL) = (request_hash IS NULL))
+);
+
+-- One entry per key and studio: a repeat is answered from it.
+CREATE UNIQUE INDEX studio_budget_entries_idempotency_uidx
+    ON credits.studio_budget_entries (studio_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX studio_budget_entries_ledger_uidx
+    ON credits.studio_budget_entries (ledger_id) WHERE ledger_id IS NOT NULL;
+-- The day's new budget, every studio together (the daily deposit ceiling).
+CREATE INDEX studio_budget_entries_inflow_idx
+    ON credits.studio_budget_entries (created_at) WHERE usd_cents > 0;
+-- A studio's history page and its balance, read from the index alone.
+CREATE INDEX studio_budget_entries_studio_idx
+    ON credits.studio_budget_entries (studio_id, created_at) INCLUDE (usd_cents);
+
 -- Buyable Credit packs; `credits` is the numeric Credits granted on
 -- purchase, `price_cents` the fiat charge in minor units. Product
 -- configuration: the four tiers at the 0.10 USD/Credit peg are seeded here

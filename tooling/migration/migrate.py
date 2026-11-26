@@ -265,6 +265,13 @@ CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (
     address text PRIMARY KEY,
     has_started_program boolean NOT NULL
 );
+-- The studio operators the studio import added. Only these follow an upstream removal; an operator
+-- added on the node is never recorded, and one the node removed is not added back.
+CREATE TABLE IF NOT EXISTS dcl_migration.credit_studio_operator_loaded (
+    studio_id uuid NOT NULL,
+    address text NOT NULL,
+    PRIMARY KEY (studio_id, address)
+);
 RESET client_min_messages;
 """
 
