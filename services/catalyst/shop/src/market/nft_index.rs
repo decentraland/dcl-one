@@ -176,14 +176,8 @@ pub fn expires_ms(raw: u128) -> i64 {
 /// One log as a row; `Ok(None)` for a topic this index does not model.
 pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, DecodeError> {
     let (block, index) = chain_walk::log_position(log);
-    let Ok(index) = i32::try_from(index) else {
-        return Err(DecodeError {
-            block,
-            index: -1,
-            what: "position",
-            why: format!("log index {index} is out of range"),
-        });
-    };
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let err = |what: &'static str, why: String| DecodeError {
         block,
         index,

@@ -297,13 +297,8 @@ pub enum DecodeError {
 /// One log as a row; `Ok(None)` for a topic this index does not model.
 pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<TradeEvent>, DecodeError> {
     let (block, index) = chain_walk::log_position(log);
-    let Ok(index) = i32::try_from(index) else {
-        return Err(DecodeError::Trade {
-            block,
-            index: -1,
-            why: format!("log index {index} is out of range"),
-        });
-    };
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let Some(topic0) = log.topics.first().map(|t| t.to_ascii_lowercase()) else {
         return Ok(None);
     };

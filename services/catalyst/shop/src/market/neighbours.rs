@@ -81,8 +81,7 @@ impl Default for CoOwnershipOptions {
     }
 }
 
-/// A matrix id or offset as an index; a negative one indexes out of bounds
-/// (and panics), as the `as usize` it replaces did.
+/// A matrix id or offset as an index; a negative one is out of bounds.
 fn ix(v: i32) -> usize {
     usize::try_from(v).unwrap_or(usize::MAX)
 }

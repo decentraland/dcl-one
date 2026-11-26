@@ -38,7 +38,7 @@ pub fn rank_trending(
         )
     };
     let signal = |i: &UnifiedItem| signals.get(&key(i)).cloned().unwrap_or_default();
-    let first_f = f64::from(i32::try_from(first).unwrap_or(i32::MAX));
+    let first_f = f64::from(crate::market::casts::clamp_i32(first));
     #[allow(
         clippy::cast_possible_truncation,
         reason = "a share of `first`, which fits i32"

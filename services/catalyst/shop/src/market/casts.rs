@@ -51,7 +51,7 @@ pub fn to_usize(n: u64) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
 
-/// A page bound as `usize`: a negative one is 0, as `n.max(0) as usize` was.
+/// A page bound as `usize`; a negative one is 0.
 pub fn page(n: i64) -> usize {
     usize::try_from(n).unwrap_or(0)
 }
@@ -82,8 +82,13 @@ pub fn saturating_i64(v: f64) -> i64 {
     v as i64
 }
 
+/// `n` clamped to the `i32` range.
+pub fn clamp_i32(n: i64) -> i32 {
+    let clamped = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
+    i32::try_from(clamped).unwrap_or_default()
+}
+
 /// Seconds as a `double` bind, saturated at the `i32` range (68 years).
 pub fn secs_f64(secs: i64) -> f64 {
-    let clamped = secs.clamp(i64::from(i32::MIN), i64::from(i32::MAX));
-    f64::from(i32::try_from(clamped).unwrap_or_default())
+    f64::from(clamp_i32(secs))
 }

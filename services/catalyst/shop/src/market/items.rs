@@ -1147,7 +1147,7 @@ pub fn select_trending(
         .map(|(i, k)| (i, counts[k]))
         .collect();
     by_sales.sort_by_key(|b| std::cmp::Reverse(b.1));
-    let size_f = f64::from(i32::try_from(size).unwrap_or(i32::MAX));
+    let size_f = f64::from(super::casts::clamp_i32(size));
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,

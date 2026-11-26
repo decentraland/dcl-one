@@ -164,14 +164,8 @@ fn decode_sale(
 ) -> Result<Option<SaleEvent>, DecodeError> {
     let store = index.polygon.map(|venues| venues.store);
     let (block, index) = chain_walk::log_position(log);
-    let Ok(index) = i32::try_from(index) else {
-        return Err(DecodeError {
-            block,
-            index: -1,
-            what: "position",
-            why: format!("log index {index} is out of range"),
-        });
-    };
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let err = |what: &'static str, why: String| DecodeError {
         block,
         index,
@@ -298,7 +292,7 @@ pub(super) fn bought_at(
     let (block, index) = chain_walk::log_position(log);
     let err = |why: String| DecodeError {
         block,
-        // A label only: an out-of-range index reads -1.
+        // A missing index (`log_position`'s `i64::MAX`) reads -1.
         index: i32::try_from(index).unwrap_or(-1),
         what: "Bought",
         why,

@@ -2431,7 +2431,7 @@ async fn walk(
             out.requests
         ));
     }
-    // A negative `indexed_to` compares as past `target`, as the old `as u64` did.
+    // A negative `indexed_to` counts as past `target`.
     if out.paused || u64::try_from(out.indexed_to).is_ok_and(|b| b < target) {
         out.elapsed_ms = casts::millis(started.elapsed());
         return Ok(out);
