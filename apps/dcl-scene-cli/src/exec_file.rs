@@ -118,10 +118,8 @@ impl Parked {
     pub(crate) fn fork() -> Self {
         let mut pipe = [0; 2];
         // SAFETY: a fresh array for the two descriptors.
-        assert_eq!(
-            unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
-            0
-        );
+        let piped = unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) };
+        assert_eq!(piped, 0);
         // SAFETY: the child calls only async-signal-safe functions.
         let pid = unsafe { libc::fork() };
         if pid == 0 {
