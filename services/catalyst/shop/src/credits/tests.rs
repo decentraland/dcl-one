@@ -11279,6 +11279,7 @@ async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
     let Some(db) = OwnDatabase::create("studio_budget").await else {
         return;
     };
+    clear_of_utc_midnight(&db.pool).await;
     // $12.00 of new budget a day.
     let unset = app(studio_state(db.pool.clone(), None));
     let app = app(studio_state(db.pool.clone(), Some(1200)));
@@ -11531,6 +11532,21 @@ async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
     db.drop().await;
 }
 
+/// Waits out the database clock's last two minutes of a UTC day, so a test
+/// of the day's deposit ceiling runs within one day.
+async fn clear_of_utc_midnight(pool: &PgPool) {
+    let left: f64 = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM date_trunc('day', timezone('UTC', clock_timestamp())) \
+             + interval '1 day' - timezone('UTC', clock_timestamp()))::float8",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if left < 120.0 {
+        tokio::time::sleep(std::time::Duration::from_secs_f64(left + 1.0)).await;
+    }
+}
+
 /// Two deposits that each fit the day's ceiling but not together: the
 /// deposits lock lets exactly one through, across studios, round after round,
 /// even with every connection defaulting to REPEATABLE READ (the budget
@@ -11541,6 +11557,7 @@ async fn concurrent_studio_deposits_never_pass_the_days_ceiling_together() {
     let Some(db) = OwnDatabase::create("studio_ceiling").await else {
         return;
     };
+    clear_of_utc_midnight(&db.pool).await;
     sqlx::raw_sql(
         "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation = %L', \
          current_database(), 'repeatable read'); END $$",
