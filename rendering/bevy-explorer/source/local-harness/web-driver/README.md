@@ -5,9 +5,9 @@ launches Chrome over the DevTools protocol and gives a test what the standalone'
 and CEF input give it:
 
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
-  app frame and returns what it resolves with, or rejects with the page's message. Before the
-  engine starts (the start screen, where `/hud_login` signs in) it runs the page's own command from
-  `window.__dclPageCommands`, and rejects any other. A command whose
+  app frame and returns what it resolves with, or rejects with the page's message. With
+  `{ startScreen: true }` it runs a page command from `window.__dclPageCommands` before the engine
+  starts (the start screen, where `/hud_login` signs in), and rejects any other. A command whose
   document is replaced or closed before it answers (a click that loads the page again) rejects at
   once with the exported `APP_GONE` message; the next command runs in the new document once it is
   ready.
@@ -51,8 +51,9 @@ takes `headless` (default true), `args` (more Chrome flags), `windowSize` and `p
 directory for Chrome's profile that `close()` leaves in place, so the page's storage and caches
 carry over to the next launch with it (one Chrome at a time). Without it each launch has a
 temporary profile that `close()` removes. `ready()` waits for
-a frame of the page's origin with `window.__dclTrustedInput` and either
-`window.engine_console_command` or the page's commands (`window.__dclPageCommands`), and for the page to draw it (see "Wire protocol"); it rejects when its
+a frame of the page's origin with both `window.engine_console_command` and
+`window.__dclTrustedInput` (with `{ startScreen: true }`, the page's commands do in place of the
+console), and for the page to draw it (see "Wire protocol"); it rejects when its
 `timeout` (default 120 s) passes first. A page that never draws, such as a minimised headed window,
 makes `ready()` reject at that timeout. `frameTargets()` lists the page and the out-of-process
 iframes.

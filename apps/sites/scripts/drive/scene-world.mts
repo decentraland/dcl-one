@@ -26,15 +26,17 @@ const STATE = path.join(ROOT, ".cache/dev");
 const SDK_PACKAGES = path.join(ROOT, "library/js-sdk-toolchain/packages/@dcl");
 const DRIVER = path.join(ROOT, "rendering/bevy-explorer/source/local-harness/web-driver/driver.mjs");
 const SCENE_SIGNER = "decentraland-kernel-scene";
-// What a deploy leaves out besides the scene's own .dclignore.
-const ALWAYS_SKIPPED = [/(^|\/)\./, /(^|\/)node_modules(\/|$)/, /\.tsx?$/, /\.map$/, /^src\//];
 
 type Options = { scene: string; checkoutSdk: boolean; drive: boolean; owner: string };
+type ProjectFiles = {
+  getPublishableFiles(components: { fs: { readFile: typeof fs.promises.readFile } }, root: string): Promise<string[]>;
+  normalizeDecentralandFilename(root: string, file: string): string;
+};
 type Owner = { address: string; ephemeralKey: `0x${string}`; mandate: string; mandateSig: string; expiration: string };
 type Link = { type: string; payload: string; signature: string };
 type Driver = {
-  ready(o: { timeout: number }): Promise<void>;
-  console(line: string): Promise<string>;
+  ready(o: { timeout: number; startScreen?: boolean }): Promise<void>;
+  console(line: string, o?: { timeout?: number; startScreen?: boolean }): Promise<string>;
   screenshot(): Promise<Buffer>;
   consoleMessages(): unknown[];
   close(): Promise<void>;
@@ -65,7 +67,7 @@ function stack(): { node: string; site: string } {
 }
 
 /** The owner kept in `file` while its sign-in lasts another day, else a new throwaway one. */
-async function owner(file: string): Promise<Owner> {
+export async function owner(file: string): Promise<Owner> {
   if (fs.existsSync(file)) {
     const kept = JSON.parse(fs.readFileSync(file, "utf8")) as Owner;
     if (Date.parse(kept.expiration) > Date.now() + 24 * 3600e3) return kept;
@@ -90,7 +92,7 @@ async function chain(o: Owner, payload: string): Promise<Link[]> {
 }
 
 /** The identity `/hud_login` takes, base64 of its JSON. */
-function identity(o: Owner): string {
+export function identity(o: Owner): string {
   const ephemeral = privateKeyToAccount(o.ephemeralKey);
   return Buffer.from(
     JSON.stringify({
@@ -127,21 +129,13 @@ function buildWithCheckoutSdk(scene: string): string {
   return copy;
 }
 
-function ignored(scene: string): RegExp[] {
-  const file = path.join(scene, ".dclignore");
-  const lines = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")) : [];
-  const globs = lines.map((line) => {
-    const body = line.replace(/\/$/, "").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
-    return new RegExp(line.includes("/") && !line.endsWith("/") ? `^${body}$` : `(^|/)${body}(/|$)`);
-  });
-  return [...ALWAYS_SKIPPED, ...globs];
-}
-
-function files(root: string, skip: RegExp[], rel = ""): string[] {
-  return fs.readdirSync(path.join(root, rel), { withFileTypes: true }).flatMap((entry) => {
-    const file = rel ? `${rel}/${entry.name}` : entry.name;
-    if (skip.some((pattern) => pattern.test(file))) return [];
-    return entry.isDirectory() ? files(root, skip, file) : [file];
+/** The files a deploy of the scene sends, named as it names them: the scene's own sdk-commands decides. */
+async function publishableFiles(scene: string): Promise<{ file: string; absolute: string }[]> {
+  const projectFiles = createRequire(path.join(scene, "package.json"))("@dcl/sdk-commands/dist/logic/project-files.js") as ProjectFiles;
+  const listed = await projectFiles.getPublishableFiles({ fs: { readFile: fs.promises.readFile } }, scene);
+  return listed.map((relative) => {
+    const absolute = path.resolve(scene, relative);
+    return { file: projectFiles.normalizeDecentralandFilename(scene, absolute), absolute };
   });
 }
 
@@ -155,8 +149,8 @@ async function publish(scene: string, node: string, o: Owner): Promise<{ world: 
   if (!fs.existsSync(path.join(scene, metadata.main ?? "bin/index.js"))) throw new Error(`build the scene first: ${metadata.main ?? "bin/index.js"} is missing`);
   const blobs = new Map<string, Buffer>();
   const content: { file: string; hash: string }[] = [];
-  for (const file of files(scene, ignored(scene))) {
-    const bytes = file === "scene.json" ? Buffer.from(JSON.stringify(metadata)) : fs.readFileSync(path.join(scene, file));
+  for (const { file, absolute } of await publishableFiles(scene)) {
+    const bytes = file === "scene.json" ? Buffer.from(JSON.stringify(metadata)) : fs.readFileSync(absolute);
     const hash = await hashV1(bytes);
     blobs.set(hash, bytes);
     content.push({ file, hash });
@@ -172,7 +166,8 @@ async function publish(scene: string, node: string, o: Owner): Promise<{ world: 
   form.append(entityId, new Blob([new Uint8Array(entity)]), entityId);
   for (const [hash, bytes] of blobs) form.append(hash, new Blob([new Uint8Array(bytes)]), hash);
   const res = await fetch(`${node}/worlds-content-server/entities`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(`publishing ${world} answered ${res.status}: ${await res.text()}`);
+  const answer = await res.text();
+  if (!res.ok) throw new Error(`publishing ${world} answered ${res.status}: ${answer}`);
   return { world, entityId, base: metadata.scene.base };
 }
 
@@ -184,7 +179,9 @@ async function adminReady(node: string, o: Owner, published: { world: string; en
     const timestamp = String(Date.now());
     const headers: Record<string, string> = { "x-identity-timestamp": timestamp, "x-identity-metadata": meta };
     (await chain(o, `get:${route}:${timestamp}:${meta}`.toLowerCase())).forEach((link, i) => (headers[`x-identity-auth-chain-${i}`] = JSON.stringify(link)));
-    if ((await fetch(node + route, { headers })).ok) return true;
+    const res = await fetch(node + route, { headers });
+    await res.body?.cancel();
+    if (res.ok) return true;
   }
   return false;
 }
@@ -201,42 +198,70 @@ function chromeArgs(): string[] {
   return args;
 }
 
-/** `/hud_login` as the owner, tried again while the HUD or the engine is still starting. */
+/** Keeps the lines that carry an identity and masks them, with the driver's `redact`, in what this prints. */
+export function createRedactor(redact: (line: string, text: string) => string, secretsOf: (line: string) => string[]) {
+  const lines: string[] = [];
+  return {
+    add(line: string): void {
+      if (secretsOf(line).length > 0) lines.push(line);
+    },
+    clean(text: string): string {
+      return lines.reduce((out, line) => redact(line, out), text);
+    },
+  };
+}
+
+let redactor: ReturnType<typeof createRedactor> | null = null;
+
+function clean(text: string): string {
+  return redactor ? redactor.clean(text) : text;
+}
+
+/** `/hud_login` as the owner on the start screen, tried again while the HUD or the engine is still starting. */
 async function signIn(driver: Driver, o: Owner, published: { world: string; base: string }): Promise<string> {
+  const line = `/hud_login ${identity(o)} --name SceneOwner --look 1 --realm ${published.world} --position ${published.base}`;
+  redactor?.add(line);
   for (const deadline = Date.now() + 120_000; ; await new Promise((r) => setTimeout(r, 2_000))) {
     try {
-      return await driver.console(`/hud_login ${identity(o)} --name SceneOwner --look 1 --realm ${published.world} --position ${published.base}`);
+      return await driver.console(line, { startScreen: true });
     } catch (error) {
-      if (!/HUD is not mounted|not ready to take a sign-in/.test(String((error as Error).message)) || Date.now() > deadline) throw error;
+      const message = String((error as Error).message);
+      if (!/HUD is not mounted|not ready to take a sign-in/.test(message) || Date.now() > deadline) throw new Error(clean(message));
     }
   }
 }
 
 async function drive(play: string, o: Owner, published: { world: string; base: string }): Promise<number> {
-  const { launch } = (await import(pathToFileURL(DRIVER).href)) as { launch: (o: object) => Promise<Driver> };
+  const { launch, redact, secretsOf } = (await import(pathToFileURL(DRIVER).href)) as {
+    launch: (o: object) => Promise<Driver>;
+    redact: (line: string, text: string) => string;
+    secretsOf: (line: string) => string[];
+  };
+  redactor = createRedactor(redact, secretsOf);
   const driver = await launch({ url: play, args: chromeArgs(), windowSize: [1600, 1000] });
   let failed = false;
   const say = (value: object) => process.stdout.write(`${JSON.stringify(value)}\n`);
   try {
-    await driver.ready({ timeout: 240_000 });
-    say({ command: "/hud_login <owner>", ok: true, output: await signIn(driver, o, published) });
+    await driver.ready({ timeout: 240_000, startScreen: true });
+    say({ command: "/hud_login <owner>", ok: true, output: clean(await signIn(driver, o, published)) });
     for await (const raw of readline.createInterface({ input: process.stdin })) {
       const line = raw.trim();
       if (!line) continue;
+      redactor.add(line);
       try {
         if (line.startsWith("sleep ")) await new Promise((r) => setTimeout(r, Number(line.slice(6)) * 1000));
         else if (line.startsWith("screenshot ")) fs.writeFileSync(path.resolve(line.slice(11)), await driver.screenshot());
         else if (line === "log") {
-          say({ command: line, ok: true, output: driver.consoleMessages().slice(-50) });
+          say({ command: clean(line), ok: true, output: driver.consoleMessages().slice(-50) });
           continue;
         } else {
-          say({ command: line, ok: true, output: await driver.console(line) });
+          say({ command: clean(line), ok: true, output: clean(await driver.console(line)) });
           continue;
         }
-        say({ command: line, ok: true });
+        say({ command: clean(line), ok: true });
       } catch (error) {
         failed = true;
-        say({ command: line, ok: false, error: String((error as Error).message ?? error) });
+        say({ command: clean(line), ok: false, error: clean(String((error as Error).message ?? error)) });
       }
     }
   } finally {
@@ -259,10 +284,12 @@ async function main(): Promise<number> {
   return opts.drive ? await drive(play, o, published) : 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (error) => {
-    process.stderr.write(`scene-world: ${(error as Error).message}\n`);
-    process.exit(2);
-  },
-);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => process.exit(code),
+    (error) => {
+      process.stderr.write(`scene-world: ${clean(String((error as Error).message ?? error))}\n`);
+      process.exit(2);
+    },
+  );
+}
