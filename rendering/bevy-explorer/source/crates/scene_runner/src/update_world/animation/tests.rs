@@ -14,7 +14,7 @@ use crate::{
     update_world::{
         gltf_container::GltfProcessed, CrdtExtractors, CrdtStateComponent, TrackComponents,
     },
-    DeletedSceneEntities, RendererSceneContext, SceneLoopLabel, SceneLoopSchedule,
+    DeletedSceneEntities, RendererSceneContext, SceneLoopSchedule,
 };
 
 fn send_animator(app: &mut App, root: Entity, id: SceneEntityId, message: Option<&PbAnimator>) {
@@ -47,9 +47,7 @@ fn scene_fixture() -> (App, Entity, SceneEntityId, Entity) {
     .init_resource::<CrdtExtractors>()
     .init_resource::<ComponentNameRegistry>()
     .init_resource::<TrackComponents>()
-    .insert_resource(SceneLoopSchedule {
-        schedule: Schedule::new(SceneLoopLabel),
-    })
+    .init_resource::<SceneLoopSchedule>()
     .add_plugins(AnimatorPlugin)
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
         100,

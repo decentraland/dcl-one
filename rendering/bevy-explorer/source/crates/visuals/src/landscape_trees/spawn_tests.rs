@@ -610,7 +610,7 @@ fn landscape_trees_schedule_is_acyclic() {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_resource::<CrdtExtractors>()
-        .insert_resource(SceneLoopSchedule::empty());
+        .init_resource::<SceneLoopSchedule>();
     // the explorer's own order of the transform, collider and camera sets, before the realm's
     // scene lifecycle
     TransformAndParentPlugin.build(&mut app);
