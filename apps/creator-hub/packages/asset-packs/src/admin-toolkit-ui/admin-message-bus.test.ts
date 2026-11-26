@@ -22,18 +22,28 @@ vi.mock('~system/CommunicationsController', () => ({ send: comms.send }));
 vi.mock('./fetch-utils', () => ({ isPreview: () => false }));
 vi.mock('./VideoControl/index', () => ({ DEFAULT_VOLUME: 1 }));
 
-function setup(playing = true) {
+function setup(playing = true, options: { position?: number; secondScreen?: boolean } = {}) {
   const engine = Engine();
   createComponents(engine);
   const { VideoPlayer } = getExplorerComponents(engine);
   const { AdminTools } = getComponents(engine);
   const screen = engine.addEntity();
-  VideoPlayer.create(screen, { src: 'video.mp4', playing, volume: 0.5, position: 0 });
+  VideoPlayer.create(screen, {
+    src: 'video.mp4',
+    playing,
+    volume: 0.5,
+    position: options.position ?? 0,
+  });
+  const other = options.secondScreen ? engine.addEntity() : undefined;
+  if (other !== undefined) VideoPlayer.create(other, { src: 'other.mp4', playing: true });
   const admin = engine.addEntity();
   const config = AdminTools.schema.create();
   config.videoControl.isEnabled = true;
   config.videoControl.disableVideoPlayersSound = false;
   config.videoControl.videoPlayers = [{ entity: screen, customName: 'Screen' }];
+  if (other !== undefined) {
+    config.videoControl.videoPlayers.push({ entity: other, customName: 'Other screen' });
+  }
   AdminTools.create(admin, config);
   const bus = initAdminMessageBus(engine, [{ address: 'admin' } as never], admin);
   const controls = createVideoPlayerControls(screen, engine);
@@ -61,7 +71,7 @@ function setup(playing = true) {
     },
   });
   const tick = (dt = 0.1) => engine.update(dt);
-  return { engine, screen, bus, controls, VideoPlayer, sent, tick };
+  return { engine, screen, other, bus, controls, VideoPlayer, sent, tick };
 }
 
 beforeEach(() => {
@@ -70,6 +80,40 @@ beforeEach(() => {
 });
 
 describe('Toolkit Restart with the published SDK', () => {
+  for (const action of ['pause', 'play', 'volume', 'loop'] as const) {
+    it(`preserves an authored start position on the first ${action} command`, async () => {
+      const p = setup(true, { position: 30 });
+      await p.tick();
+      if (action === 'volume') p.controls.setVolumeExact(0.7);
+      else if (action === 'loop') p.controls.setLoop(true);
+      else p.controls[action]();
+      await p.tick();
+      expect(p.VideoPlayer.get(p.screen).position).toBe(30);
+      expect(p.sent[p.sent.length - 1].position).toBe(30);
+    });
+  }
+
+  it('preserves a scene position that replaces the Toolkit Restart position', async () => {
+    const p = setup();
+    p.controls.restart();
+    await p.tick();
+    await p.tick(0.2);
+    p.VideoPlayer.getMutable(p.screen).position = 45;
+    p.controls.pause();
+    await p.tick();
+    expect(p.sent[p.sent.length - 1]).toMatchObject({ playing: false, position: 45 });
+  });
+
+  it('preserves an explicit seek on subsequent settings commands', async () => {
+    const p = setup();
+    p.bus.emitSetVideo(p.screen, { position: 12 });
+    await p.tick();
+    p.controls.setVolumeExact(0.7);
+    await p.tick();
+    expect(p.sent[p.sent.length - 1].position).toBe(12);
+    expect(p.sent[p.sent.length - 1].volume).toBeCloseTo(0.7);
+  });
+
   for (const playing of [true, false]) {
     it(`serializes pause/-1 before play/0 on every Restart (initial playing=${playing})`, async () => {
       const p = setup(playing);
@@ -164,14 +208,51 @@ describe('Toolkit Restart with the published SDK', () => {
     comms.send.mockClear();
     const request = comms.handlers.get('admin:request-state')!;
     request({}, 'viewer');
-    expect(comms.send).not.toHaveBeenCalled();
-    await p.tick(0.2);
-    request({}, 'viewer');
+    expect(comms.send).toHaveBeenCalledTimes(1);
     const response = JSON.parse(comms.send.mock.calls[0][0].message);
     expect(response.message).toBe('admin:sync-state');
     expect(response.payload.video).toEqual([
       { entity: p.screen, src: 'video.mp4', playing: true, volume: 0.5 },
     ]);
+    // Sending the target state must not apply it locally before the paused stage is delivered.
+    expect(p.VideoPlayer.get(p.screen)).toMatchObject({ playing: false, position: -1 });
+    await p.tick(0.1);
+    expect(p.sent[p.sent.length - 1]).toMatchObject({ playing: false, position: -1 });
+    await p.tick(0.1);
+    expect(p.sent[p.sent.length - 1]).toMatchObject({ playing: true, position: 0 });
+  });
+
+  it('delivers both screens to a late joiner while one Restart is pending', async () => {
+    const p = setup(true, { secondScreen: true });
+    p.controls.setSource('active.mp4');
+    p.bus.emitSetVideo(p.other!, { src: 'active-other.mp4', playing: true });
+    p.controls.restart();
+    await p.tick();
+    const request = comms.handlers.get('admin:request-state')!;
+    const viewer = setup(true, { secondScreen: true });
+    comms.send.mockClear();
+    request({}, 'viewer');
+    const response = JSON.parse(comms.send.mock.calls[0][0].message);
+    expect(response.payload.video).toHaveLength(2);
+    const receive = comms.handlers.get('admin:sync-state')!;
+    receive(response.payload, 'attacker');
+    expect(viewer.VideoPlayer.get(viewer.screen).src).toBe('video.mp4');
+    receive(response.payload, 'admin');
+    await viewer.tick(2);
+    expect(viewer.VideoPlayer.get(viewer.screen)).toMatchObject({
+      src: 'active.mp4',
+      playing: true,
+    });
+    expect(viewer.VideoPlayer.get(viewer.other!)).toMatchObject({
+      src: 'active-other.mp4',
+      playing: true,
+    });
+    expect(p.VideoPlayer.get(p.screen)).toMatchObject({ playing: false, position: -1 });
+    expect(
+      comms.send.mock.calls.filter(
+        ([message]) => JSON.parse(message.message).message === 'admin:request-state',
+      ),
+    ).toHaveLength(0);
   });
 
   it('keeps independent Restarts for different screens', async () => {

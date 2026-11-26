@@ -102,6 +102,7 @@ export function initAdminMessageBus(
 
   const authoritativeVideo = new Map<Entity, VideoState>();
   const pendingRestarts = new Map<Entity, { src: string; elapsed: number; skipTick: boolean }>();
+  const restartPositions = new Map<Entity, { src: string; position: number }>();
   let authoritativeAnnouncement: AnnouncementState | null = null;
   let adminHasActed = false;
   // True once we've applied authoritative state from a *remote* admin. Gates the
@@ -188,6 +189,9 @@ export function initAdminMessageBus(
     const current = VideoPlayer.getOrNull(entity);
     if (!current) return;
 
+    const restartPosition = restartPositions.get(entity);
+    const hasRestartPosition =
+      restartPosition?.src === current.src && restartPosition.position === current.position;
     const restart = payload.playing === true && payload.position === 0;
     if (
       payload.playing !== undefined ||
@@ -212,10 +216,12 @@ export function initAdminMessageBus(
     if (restart) {
       // Apply both stages on every recipient, so batched network delivery cannot collapse them.
       video.position = -1;
+      restartPositions.set(entity, { src: updated.src, position: -1 });
       pendingRestarts.set(entity, { src: updated.src, elapsed: 0, skipTick: true });
     } else if (!pendingRestarts.has(entity)) {
-      // A stored seek must not turn a later Resume into another Restart.
-      video.position = payload.position;
+      // Clear only our Restart's seek; authored and subsequently changed positions are state.
+      if (payload.position !== undefined || hasRestartPosition) video.position = payload.position;
+      restartPositions.delete(entity);
     }
 
     adminHasActed = true;
@@ -226,6 +232,7 @@ export function initAdminMessageBus(
       const video = VideoPlayer.getOrNull(entity);
       if (!video || video.src !== pending.src) {
         pendingRestarts.delete(entity);
+        restartPositions.delete(entity);
         continue;
       }
       // Even a large first dt must leave pause/-1 in one complete SDK update.
@@ -241,6 +248,7 @@ export function initAdminMessageBus(
       const mutable = VideoPlayer.getMutable(entity);
       mutable.playing = true;
       mutable.position = 0;
+      restartPositions.set(entity, { src: pending.src, position: 0 });
     }
   });
 
@@ -276,11 +284,18 @@ export function initAdminMessageBus(
       const entity = vp.entity as Entity;
       const screen = VideoScreen.getOrNull(entity);
       const current = VideoPlayer.getOrNull(entity);
-      // Late joiners retry state requests; never seed them with a transient paused Restart.
-      if (!current || pendingRestarts.has(entity)) continue;
-      if (current.src !== (screen?.defaultURL || '')) {
+      if (!current) continue;
+      const restarting = pendingRestarts.has(entity);
+      if (restarting || current.src !== (screen?.defaultURL || '')) {
         const { src, playing, volume, loop } = current;
-        video.push({ entity: entity as number, src, playing, volume, loop });
+        // Include the target state so a partial reply cannot stop retries for a missing screen.
+        video.push({
+          entity: entity as number,
+          src,
+          playing: restarting ? true : playing,
+          volume,
+          loop,
+        });
       }
     }
 
@@ -299,6 +314,8 @@ export function initAdminMessageBus(
     if (sender !== 'self' && payload.video.length > 0) receivedRemoteState = true;
     for (const vs of payload.video) {
       const entity = vs.entity as Entity;
+      // A snapshot (including our own broadcast) must not collapse a local Restart's two stages.
+      if (pendingRestarts.has(entity)) continue;
       authoritativeVideo.set(entity, {
         src: vs.src,
         playing: vs.playing,

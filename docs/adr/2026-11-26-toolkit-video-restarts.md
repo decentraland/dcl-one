@@ -28,7 +28,15 @@ Stage both writes on each recipient rather than sending two network messages:
 network batching must not collapse them into one local component update. A new
 playback, source or seek command cancels the pending Restart. Volume and loop
 changes survive its completion. Missing players and changed sources discard
-pending work. Ordinary commands clear a retained seek position.
+pending work. Ordinary commands clear a retained seek position only while it
+still matches the source and position written by the Toolkit's Restart. Authored
+start positions and positions subsequently changed by scene code are preserved.
+
+State replies include a restarting screen's target playback state, without a seek,
+alongside the other screens. A reply must not omit that screen and stop a late
+joiner's retries with an incomplete snapshot. Recipients already staging a Restart
+ignore snapshots for that screen until both stages complete, including snapshots
+from their own broadcasts.
 
 The engine compares position changes using its existing half-second threshold.
 Repeated identical state carries no new seek intent. This restores the behavior
@@ -49,5 +57,6 @@ compatibility is not established by a source harness. Browser playback also
 requires runtime acceptance.
 
 Automated regressions cover authenticated remote delivery, batched commands,
-separate SDK serialization, cancellation, setting preservation and repeated
-engine updates. Cast and Stream lifecycle acceptance remains separate.
+separate SDK serialization, cancellation, authored start positions, setting
+preservation, multi-screen late joins during Restart and repeated engine updates.
+Cast and Stream lifecycle acceptance remains separate.
