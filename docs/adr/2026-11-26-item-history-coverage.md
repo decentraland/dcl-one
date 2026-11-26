@@ -15,11 +15,12 @@ entities behind its cursors and processed snapshots.
 
 - **A replay proves coverage.** The process that holds the `sync` lease
   replays every peer's wearable and emote `/pointer-changes` history from
-  `SYNC_FROM_TIMESTAMP_MS`, in passes, and deploys what the node lacks
-  through the sync deployer. A pass counts as debt every delta it can't
-  prove accepted: an entity still missing after the drain, a record that
-  doesn't parse, an implausible timestamp, a page that doesn't advance the
-  keyset, and a peer whose page keeps failing past its retries.
+  `SYNC_FROM_TIMESTAMP_MS`, in passes, up to `SYNC_ITEM_REPLAY_CONCURRENCY`
+  peers at once (default 8), each from its own checkpoint, and deploys what
+  the node lacks through the sync deployer. A pass counts as debt every
+  delta it can't prove accepted: an entity still missing after the drain, a
+  record that doesn't parse, an implausible timestamp, a page that doesn't
+  advance the keyset, and a peer whose page keeps failing past its retries.
 - **The proof names its writer.** A completed pass records its scope
   (algorithm, sorted peers, item types, history floor), its start, its debt
   and the lease session that wrote it (pid and backend start). Every write
@@ -48,11 +49,13 @@ entities behind its cursors and processed snapshots.
 - Each pass reads about 81 MB in 160 requests from each source (measured on
   November 20, 2026), so the default costs about 5.8 GB a day per source
   catalyst.
-- A pass reads its sources one after another. Coverage stays continuous
-  while the larger of the interval and a pass, plus a pass, fits in 30
-  minutes: up to five sources at the default interval and page pause. A
-  longer pass logs a warning, and for part of every cycle readers get
-  `Stale` and URN checks answer 503.
+- A pass lasts about as long as each of its readers' share of the source
+  walks, about 2 minutes a walk at the default page pause. Coverage stays
+  continuous while the larger of the interval and a pass, plus a pass,
+  fits in 30 minutes: up to five walks per reader (40 sources) at the
+  default interval, page pause and concurrency. A longer pass logs a
+  warning, and for part of every cycle readers get `Stale` and URN checks
+  answer 503.
 - With the replay off, or before its first pass completes, a URN check that
   needs the proof answers 503.
 - The sync leader and every reader connect as the same database role, or
@@ -64,5 +67,6 @@ entities behind its cursors and processed snapshots.
 - Passes that read only past the previous pass's newest `localTimestamp`:
   cheaper, but a deployment a peer commits late with an older timestamp
   would stay hidden under a fresh proof.
-- Reading the peers concurrently: a pass as short as one source's, at the
-  cost of a checkpoint per peer. Not taken yet.
+- Reading the peers one after another from one checkpoint: a pass lasts
+  the sum of the sources' walks, so coverage lapses beyond about five
+  sources.
