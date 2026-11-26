@@ -66,14 +66,15 @@ async fn descriptor(
         &producer,
     );
     let multi = add_param(&native, "multi-instance", "true");
-    let mobile = crate::netinfo::share_ip(&crate::netinfo::enumerate()).map(|ip| {
-        let mut lan = url::Url::parse(&realm).expect("preview URL");
-        lan.set_host(Some(&ip.to_string())).expect("LAN IP");
+    // The origin comes from request headers; one that doesn't parse just gets no mobile link.
+    let mobile = crate::netinfo::share_ip(&crate::netinfo::enumerate()).and_then(|ip| {
+        let mut lan = url::Url::parse(&realm).ok()?;
+        lan.set_host(Some(&ip.to_string())).ok()?;
         let lan = lan.as_str().trim_end_matches('/');
         let mobile = crate::joinblock::mobile_deep_link(lan, position);
-        let mut producer = url::Url::parse(&producer).expect("same host as the preview URL");
-        producer.set_host(Some(&ip.to_string())).expect("LAN IP");
-        add_param(&mobile, "scene-inspector", producer.as_str())
+        let mut producer = url::Url::parse(&producer).ok()?;
+        producer.set_host(Some(&ip.to_string())).ok()?;
+        Some(add_param(&mobile, "scene-inspector", producer.as_str()))
     });
     let prefix = super::forwarded_prefix(&headers);
     Ok(Json(
