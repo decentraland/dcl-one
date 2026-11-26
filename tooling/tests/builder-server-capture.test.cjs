@@ -351,6 +351,20 @@ test('an error report never carries the database password', t => {
   assert.doesNotMatch(result.stdout + result.stderr, /example-secret-123/)
 })
 
+test('a database outside loopback and Unix sockets is refused before anything runs', t => {
+  const source = pinnedCheckout(t)
+  for (const url of ['postgres://capture@postgres:5432/postgres', 'postgres://capture@localhost/postgres?host=db.example', 'postgres://capture@192.0.2.10/postgres']) {
+    const result = capture(source, path.join(scratch(t), 'out'), url)
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /CATALYST_TEST_DATABASE_URL must name a loopback host or a Unix socket/, url)
+  }
+  for (const url of ['postgres://capture@%2Ftmp/postgres', 'postgres:///postgres?host=/tmp', 'postgres://capture@[::1]:5432/postgres']) {
+    const result = capture(source, path.join(scratch(t), 'out'), url)
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /npm ci failed/, url)
+  }
+})
+
 test('a recorded marker is refused before anything is published', () => {
   const { refuseMarkers } = require(script)
   refuseMarkers('a', { request: { headers: {} }, response: { body_json: { ok: true } } })
