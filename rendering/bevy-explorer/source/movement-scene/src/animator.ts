@@ -36,8 +36,6 @@ export type Transition = {
   interruption?: 'source' | 'destination';
   noSelf?: boolean;
   mute?: boolean;
-  // the exit time is read from the engine's report of the clip playing, not counted on the update clock
-  engineExit?: boolean;
   line: number; // of the transition's entry in the reference animator asset
 };
 
@@ -77,9 +75,6 @@ export type Pose = {
   seek?: number; // fraction of the clip to start from, on the update the state starts
 };
 
-// The engine's report of the clip it plays.
-export type ClipReport = { src: string; playbackTime: number; duration: number; loopCount: number };
-
 const EPS = 1e-6; // lets an update that reaches an exit exactly (a sum of frame times) take it
 
 export class Animator {
@@ -110,8 +105,8 @@ export class Animator {
     return this.c.states[blending ? this.from : this.state]?.tag;
   }
 
-  // Advances the layer by dt (s) with the parameters of this update; report: the engine's clip, for engineExit.
-  update(p: Params, dt: number, report?: ClipReport): Pose {
+  // Advances the layer by dt (s) with the parameters of this update.
+  update(p: Params, dt: number): Pose {
     this.time += dt;
     const t = this.time - this.since + EPS; // in the state at the end of this update
     const before = t - dt;
@@ -133,7 +128,7 @@ export class Animator {
     for (const [tr, owner, timed] of candidates) {
       if (tr.mute || (tr.noSelf && tr.to === this.state)) continue;
       if (!(tr.when ?? []).every((c) => holds(c, p))) continue;
-      if (tr.exitTime !== undefined && (!timed || !this.exitCrossed(tr, exitFrom, t, report))) continue;
+      if (tr.exitTime !== undefined && (!timed || !this.exitCrossed(tr, exitFrom, t))) continue;
       const ownerLength = owner === this.state ? this.stateLength(p) : this.fromLength;
       this.enter(tr, tr.fixed ? tr.duration : tr.duration * ownerLength, p);
       return this.pose;
@@ -142,12 +137,8 @@ export class Animator {
     return this.pose;
   }
 
-  private exitCrossed(tr: Transition, before: number, t: number, report?: ClipReport): boolean {
+  private exitCrossed(tr: Transition, before: number, t: number): boolean {
     const exit = tr.exitTime!;
-    if (tr.engineExit) {
-      return report !== undefined && report.src === this.pose.clip
-        && (report.loopCount >= 1 || report.playbackTime >= exit * report.duration);
-    }
     const a = this.offset + before / this.length - exit;
     const b = this.offset + t / this.length - exit;
     return exit < 1 ? b >= 0 && Math.floor(b) > Math.floor(a) : a < 0 && b >= 0;

@@ -293,7 +293,7 @@ function selectAnimation(): MovementAnimation {
     IsStunned: stunned() || landingStuns(),
     StartGliding: startGliding,
     IsGliding: glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING,
-  }, tickTime, activeAnimationState);
+  }, tickTime);
   const animation: MovementAnimation = pose.scene === 'locomotion' ? locomotionAnimation(horizontalSpeed)
     : pose.scene === 'glidePose' ? glidePoseAnimation(horizontalSpeed, pose.entered)
     : { src: pose.clip!, speed: pose.speed, loop: pose.loop, idle: true, transitionSeconds: pose.blend, sounds: [] };

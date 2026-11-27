@@ -3,8 +3,6 @@
 // (index.ts), set as the reference client sets them.
 // Not here: the emote states and transitions (the engine plays emotes), Rotation State, Hit_Wall_Walk and AFK_Action
 // (no parameter of the scene starts them). Where the scene departs from the reference, the entry says why.
-// Scene: the transitions marked `reference: <source>` let the destination's transitions interrupt their cross-fade;
-// the reference's interruption source for them is the one named.
 import { AnimatorController, Condition, Transition, Tree } from './animator';
 
 // The engine reads jumps, the glide and the stun for its jump timing and network state from these exact file names
@@ -73,9 +71,8 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
   any: [
     tr(2959, 'Jump', [['Jump', 'if'], ['JumpCount', 'less', 2], NOT_GLIDING], 0.1310842, true,
       { offset: 0.3291167, interruption: DEST, noSelf: true }),
-    tr(2906, 'Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1], NOT_GLIDING], 0.05, true,
-      { interruption: DEST }), // reference: none
-    tr(2781, 'Gliding_Start', [['StartGliding', 'if']], 0.05, true, { interruption: DEST }), // reference: none
+    tr(2906, 'Double Jump', [['Jump', 'if'], ['JumpCount', 'greater', 1], NOT_GLIDING], 0.05, true),
+    tr(2781, 'Gliding_Start', [['StartGliding', 'if']], 0.05, true),
   ],
   states: {
     // The locomotion tree (L2036): the scene picks its clip by the horizontal speed (index.ts).
@@ -127,7 +124,7 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
       line: 3236, tag: 'Jumping', motion: { clip: LONG_FALL },
       transitions: [
         tr(698, 'Hard Landing', [GROUNDED, STUNNED], 0.058513165, true),
-        tr(1429, 'Down', [['IsLongFall', 'ifNot'], AIRBORNE], 0.25, true, { interruption: DEST }), // reference: none
+        tr(1429, 'Down', [['IsLongFall', 'ifNot'], AIRBORNE], 0.25, true),
         tr(856, 'Grounded', [GROUNDED, ['IsStunned', 'ifNot']], 0.062423754, false),
       ],
     },
@@ -135,9 +132,8 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
     Grounded: {
       line: 377, tag: 'Jumping', motion: tierTree('End'), variant: { when: [['IsGliding', 'if']], clips: GLIDER_CLOSING },
       transitions: [
-        tr(1379, 'Movement', [['MovementBlend', 'greater', 0.5]], 0.35801375, false,
-          { offset: 0.025870794, interruption: DEST }), // reference: none
-        tr(751, 'Movement', [], 0.39824668, false, { exitTime: 0.4778491, interruption: DEST }), // reference: none
+        tr(1379, 'Movement', [['MovementBlend', 'greater', 0.5]], 0.35801375, false, { offset: 0.025870794 }),
+        tr(751, 'Movement', [], 0.39824668, false, { exitTime: 0.4778491 }),
       ],
     },
     'Hard Landing': {
@@ -150,7 +146,7 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
     },
     'Hard Landing Exit': {
       line: 2147, speed: 1.2, motion: { clip: HARD_LANDING.exit },
-      transitions: [tr(1009, 'Movement', [], 0.14, true, { exitTime: 0.2, interruption: DEST })], // reference: source
+      transitions: [tr(1009, 'Movement', [], 0.14, true, { exitTime: 0.2, interruption: SRC })],
     },
     // 2D cartesian tree (L203): MovementBlend 1..3 by JumpVariation 0 (plain) or 1 (Right), each at 0.7.
     'Double Jump': {
@@ -161,9 +157,7 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
           [0, 1].map((v) => ({ clip: DOUBLE_JUMP(v ? `${t}_Right` : t), at: [i + 1, v] as [number, number], timeScale: 0.7 }))),
       },
       transitions: [
-        // Scene: the exit is read from the engine's report of the clip.
-        tr(2856, 'Down', [AIRBORNE], 0.1, true,
-          { exitTime: 0.778, interruption: DEST, engineExit: true }), // reference: source
+        tr(2856, 'Down', [AIRBORNE], 0.1, true, { exitTime: 0.778, interruption: SRC }),
         tr(1523, 'Grounded', [GROUNDED], 0.1, true),
       ],
     },
@@ -172,9 +166,10 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
       transitions: [
         tr(670, 'Hard Landing', [GROUNDED, STUNNED], 0.1, true),
         tr(457, 'Grounded', [GROUNDED], 0.1, true),
-        // Scene: the End before the loop when both are due on one update (the reference lists the loop first).
-        tr(1354, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: DEST }), // reference: source
-        tr(355, 'Gliding Loop', [], 0.05, true, { exitTime: 1, interruption: DEST }), // reference: source
+        // Scene: the End before the loop when both are due on one update (the reference lists the loop first, and its
+        // End interrupts the loop's cross-fade on the next update, so the loop's pose would only flash).
+        tr(1354, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
+        tr(355, 'Gliding Loop', [], 0.05, true, { exitTime: 1, interruption: SRC }),
       ],
     },
     // The 2D directional tree (L1263) on GlideBlend and MovementBlend: the scene picks the forward or the idle pose by
@@ -183,13 +178,13 @@ export const CHARACTER_ANIMATOR: AnimatorController = {
       line: 956, motion: { scene: 'glidePose' },
       transitions: [
         tr(405, 'Grounded', [GROUNDED], 0.1, true),
-        tr(1457, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: DEST }), // reference: source
+        tr(1457, 'Gliding_End', [NOT_GLIDING], 0.1, true, { interruption: SRC }),
       ],
     },
     Gliding_End: {
       line: 3474, cycleOffset: 0.05, motion: { clip: GLIDE_END },
       transitions: [
-        tr(1690, 'Down', [], 0.1, true, { exitTime: 1, interruption: DEST }), // reference: source
+        tr(1690, 'Down', [], 0.1, true, { exitTime: 1, interruption: SRC }),
         tr(726, 'Grounded', [GROUNDED], 0.1, true),
       ],
     },
