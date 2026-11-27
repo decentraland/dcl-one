@@ -45,6 +45,35 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     vi.resetAllMocks();
   });
 
+  it("should keep each field's limits, type and rows", () => {
+    expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("maxLength", 150);
+    expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("maxLength", 5000);
+    expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("maxLength", 5000);
+    expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("rows", 3);
+    expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("rows", 3);
+    expect(screen.getByRole("textbox", { name: "Contact email" })).toHaveProperty("type", "email");
+    const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
+    expect([duration.getAttribute("min"), duration.getAttribute("max"), duration.getAttribute("step")]).toEqual(["0.25", "24", "0.25"]);
+    expect(screen.getByLabelText("Date")).toHaveProperty("type", "date");
+    expect(screen.getByLabelText("Start (UTC)")).toHaveProperty("type", "time");
+  });
+
+  it("should show the repeat options only while Repeat Hangout is on", async () => {
+    const repeat = screen.getByRole<HTMLInputElement>("switch", { name: "Repeat Hangout" });
+    expect(repeat.checked).toBe(false);
+    expect(screen.queryByRole("combobox", { name: "Repeat" })).toBeNull();
+    expect(screen.queryByLabelText("Ends")).toBeNull();
+    await user.click(repeat);
+    expect(repeat.checked).toBe(true);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Repeat" }), "every_month");
+    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Repeat" }).value).toBe("every_month");
+    expect(screen.getByLabelText("Ends")).toHaveProperty("type", "date");
+    await user.click(repeat);
+    expect(repeat.checked).toBe(false);
+    expect(screen.queryByRole("combobox", { name: "Repeat" })).toBeNull();
+    expect(screen.queryByLabelText("Ends")).toBeNull();
+  });
+
   describe("and the required details are incomplete", () => {
     it("should block the preview", () => {
       expect(screen.getByRole<HTMLButtonElement>("button", { name: "Preview" }).disabled).toBe(true);
@@ -141,7 +170,7 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
       const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
       await user.clear(duration);
       await user.type(duration, "3");
-      await user.click(screen.getByRole("checkbox", { name: "Repeat Hangout" }));
+      await user.click(screen.getByRole("switch", { name: "Repeat Hangout" }));
       await user.type(screen.getByLabelText("Ends"), "2099-07-29");
       await user.click(screen.getByRole("button", { name: "Preview" }));
       const preview = within(screen.getByRole("dialog"));

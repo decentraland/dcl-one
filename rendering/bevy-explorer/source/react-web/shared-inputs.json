@@ -7062,6 +7062,10 @@
           "kind": "regular"
         },
         {
+          "name": "PermissionsModal.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "PermissionsModal.tsx",
           "kind": "regular"
         },
@@ -16094,7 +16098,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/AdminModal.module.css",
-      "sha256": "8fdaebee904d1dad3751eb1ece328aa9c7f9f144ff3253607db0f0ce9794efbe"
+      "sha256": "3342ee1f032faa54a1f940bdb40c027d5918efca73ead022053c6f1186ba8d0e"
     },
     {
       "path": "library/ui/apps/sites/events/AdminPage.module.css",
@@ -16194,7 +16198,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "sha256": "9d4c63d592b17485bc21660d0be4ea3f2e6f16ff42f9e78af3c47e87e148203f"
+      "sha256": "44a646fd32c60fac562234bf34e8804ad09cda5045d7010238ea58d962637bab"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.module.css",
@@ -16206,7 +16210,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "sha256": "8fcb25f5ccfbd4d14b8728618e7254ee3ef1c7705db7f56452f886bf585bebbe"
+      "sha256": "2bf7e0d8a9dd8b4fd50f8e48ba3326c109ce2113212a4319d57cc70ab51aa654"
     },
     {
       "path": "library/ui/apps/sites/events/SubmitHangoutView.tsx",
@@ -16242,7 +16246,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/ldsubmithangoutview.css",
-      "sha256": "572d406da64ce07f236bf9403494b744834ee6369b22829603c0aca32de2f863"
+      "sha256": "7d6c1ad5a01edec31fe4ab6365a3599e33ca35b2c18113c729ae8eb6332a4da6"
     },
     {
       "path": "library/ui/apps/sites/events/locale.ts",
@@ -56455,21 +56459,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
       "to": "library/ui/apps/sites/events/admin-copy.ts",
       "kind": "native:runtime"
     },
@@ -56515,32 +56504,32 @@
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/components/Switch/Switch.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/foundations/icons/index.ts",
+      "to": "library/ui/components/Switch/Switch.tsx",
       "kind": "test:runtime"
     },
     {
@@ -56620,21 +56609,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/events/Dialog.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
       "to": "library/ui/apps/sites/events/Notice.tsx",
       "kind": "native:runtime"
     },
@@ -56691,6 +56665,36 @@
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
       "to": "library/ui/components/CheckboxLabel/CheckboxLabel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/InputField/InputFieldWebControls.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
+      "to": "library/ui/components/Modal/Modal.tsx",
       "kind": "test:runtime"
     },
     {
