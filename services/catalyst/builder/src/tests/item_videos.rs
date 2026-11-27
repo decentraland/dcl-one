@@ -1185,6 +1185,64 @@ async fn a_small_video_on_a_slow_link_finishes_while_the_node_has_places() {
     cleanup(&node.pool, &[collection], &[hash(&video)]).await;
 }
 
+/// The node checks an upload's budgets after it takes its place and before
+/// it reads the body. While those checks wait on the database, the idle
+/// bound doesn't run: once they answer, the upload still has the whole
+/// bound for its first bytes, sent a second after, and its video is kept.
+#[tokio::test]
+async fn an_upload_whose_budget_checks_wait_still_has_its_idle_bound_for_its_first_bytes() {
+    let Some(node) =
+        isolated_node(|state| state.videos.idle_timeout = Duration::from_secs(2)).await
+    else {
+        return;
+    };
+    let video = mp4("checked slowly");
+    let (collection, item) = smart_wearable(&node, &video).await;
+    let mut lock = node.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE builder.uploaded_contents IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (body, tx, _) = fed();
+    let uploading = tokio::spawn({
+        let app = node.app.clone();
+        async move {
+            send(
+                &app,
+                Some(OWNER_KEY),
+                &format!("/v1/items/{item}/videos"),
+                body,
+            )
+            .await
+        }
+    });
+    until("the upload's place", || node.state.videos.in_flight() == 1).await;
+    let waiting = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' \
+             AND query LIKE '%builder.uploaded_contents%' AND datname = current_database())",
+        )
+        .fetch_one(&node.pool)
+        .await
+        .unwrap()
+    };
+    while !waiting().await {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    lock.commit().await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let _ = tx.send(Bytes::from(video_form(&video)));
+    drop(tx);
+    let answered = tokio::time::timeout(Duration::from_secs(10), uploading)
+        .await
+        .expect("the upload ended")
+        .unwrap();
+    assert_eq!(answered, (200, json!({ "ok": true })));
+    assert_eq!(records(&node.pool, &hash(&video)).await.len(), 1);
+    cleanup(&node.pool, &[collection], &[hash(&video)]).await;
+}
+
 #[tokio::test]
 async fn a_steady_sender_past_the_total_is_cut_and_frees_its_place() {
     let Some(node) = node_with(

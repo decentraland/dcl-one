@@ -4,10 +4,13 @@
 //! `Retry-After` at once ([`busy`]); nothing waits for a place.
 //!
 //! An admitted upload reads its body through [`Admission::read`]: all of it
-//! by its [`Timing::deadline`], never [`Timing::idle`] without a byte, else
+//! by its [`Timing::deadline`], counted from its admission, and never
+//! [`Timing::idle`] without a byte, counted from its body's first read, else
 //! 408. It is behind while it has received less than its route's largest
 //! body takes at the pace that body needs to arrive by the deadline
-//! ([`Timing::most`] over [`Timing::deadline`]), counted from its admission.
+//! ([`Timing::most`] over [`Timing::deadline`]), counted from its body's
+//! first read, so the checks between its admission and that read count
+//! against neither.
 //! While every place is held and some upload is behind, a newcomer takes an
 //! extra place and waits for its own first bytes, one newcomer for each
 //! upload behind; when they arrive ([`Admission::arrived`]) the slowest
@@ -18,7 +21,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::http::{HeaderValue, header};
@@ -39,7 +42,7 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Timing {
     /// All of it by then, counted from its admission.
     pub deadline: Duration,
-    /// Never this long without a byte.
+    /// Never this long without a byte, counted from the body's first read.
     pub idle: Duration,
     /// The route's largest body.
     pub most: u64,
@@ -77,9 +80,9 @@ impl InFlight {
     }
 }
 
-/// What an upload reading its body has received since its admission.
+/// What an upload has received since its body's first read.
 struct Progress {
-    started: Instant,
+    started: OnceLock<Instant>,
     pace: f64,
     received: AtomicU64,
     cut: AtomicBool,
@@ -88,15 +91,17 @@ struct Progress {
 }
 
 impl Progress {
-    fn rate(&self, now: Instant) -> f64 {
-        let secs = now.saturating_duration_since(self.started).as_secs_f64();
-        self.received.load(Ordering::SeqCst) as f64 / secs.max(f64::MIN_POSITIVE)
+    fn rate(&self, now: Instant) -> Option<f64> {
+        let secs = now
+            .saturating_duration_since(*self.started.get()?)
+            .as_secs_f64();
+        Some(self.received.load(Ordering::SeqCst) as f64 / secs.max(f64::MIN_POSITIVE))
     }
 
     fn behind(&self, now: Instant) -> bool {
         !self.cut.load(Ordering::SeqCst)
             && !self.waiting.load(Ordering::SeqCst)
-            && self.rate(now) < self.pace
+            && self.rate(now).is_some_and(|rate| rate < self.pace)
     }
 }
 
@@ -109,7 +114,7 @@ pub struct Admission {
     progress: Arc<Progress>,
     deadline: Instant,
     idle: Duration,
-    last: Instant,
+    last: Option<Instant>,
 }
 
 impl Drop for Admission {
@@ -206,7 +211,7 @@ impl Places {
         }
         in_flight.total += 1;
         let progress = Arc::new(Progress {
-            started: now,
+            started: OnceLock::new(),
             pace: timing.pace(),
             received: AtomicU64::new(0),
             cut: AtomicBool::new(false),
@@ -222,7 +227,7 @@ impl Places {
             progress,
             deadline: now + timing.deadline,
             idle: timing.idle,
-            last: now,
+            last: None,
         })
     }
 
@@ -248,9 +253,11 @@ fn yielded() -> ApiError {
 
 impl Admission {
     /// `read` of the body: 408 once the deadline or the idle bound since the
-    /// last bytes passes, or when the upload gave its place to a newcomer.
+    /// last bytes, or since the body's first read, passes, or when the upload
+    /// gave its place to a newcomer.
     pub async fn read<T>(&self, read: impl Future<Output = T>) -> Result<T, ApiError> {
-        let until = self.deadline.min(self.last + self.idle);
+        let started = *self.progress.started.get_or_init(Instant::now);
+        let until = self.deadline.min(self.last.unwrap_or(started) + self.idle);
         tokio::select! {
             read = timeout_at(until, read) => read.map_err(|_| timed_out()),
             () = self.progress.cut_now.notified() => Err(yielded()),
@@ -261,7 +268,7 @@ impl Admission {
     /// of the slowest upload behind; with none behind and no place come
     /// free, the newcomer gives way itself (429).
     pub fn arrived(&mut self, bytes: usize) -> Result<(), ApiError> {
-        self.last = Instant::now();
+        self.last = Some(Instant::now());
         self.progress
             .received
             .fetch_add(bytes as u64, Ordering::SeqCst);
@@ -278,7 +285,11 @@ impl Admission {
             .reading
             .iter()
             .filter(|p| !Arc::ptr_eq(p, &self.progress) && p.behind(now))
-            .min_by(|a, b| a.rate(now).total_cmp(&b.rate(now)));
+            .min_by(|a, b| {
+                a.rate(now)
+                    .unwrap_or(0.0)
+                    .total_cmp(&b.rate(now).unwrap_or(0.0))
+            });
         match slowest {
             Some(slowest) => {
                 slowest.cut.store(true, Ordering::SeqCst);
@@ -322,11 +333,21 @@ mod tests {
         Places::new("uploads", 4, 1, 2)
     }
 
-    fn hold(places: &Places, n: usize) -> Admission {
-        places
+    async fn hold(places: &Places, n: usize) -> Admission {
+        let held = places
             .admit(&format!("0xholder{n}"), None, TIMING)
             .map_err(|refused| refused.status())
-            .expect("a place")
+            .expect("a place");
+        held.read(std::future::ready(())).await.unwrap();
+        held
+    }
+
+    async fn hold_all(places: &Places, from: usize, n: usize) -> Vec<Admission> {
+        let mut held = Vec::new();
+        for n in from..from + n {
+            held.push(hold(places, n).await);
+        }
+        held
     }
 
     /// Uploads that each send nothing and restart just before their idle
@@ -338,7 +359,7 @@ mod tests {
         let mut held: Vec<Admission> = Vec::new();
         for round in 0..10 {
             held.clear();
-            held.extend((0..4).map(|n| hold(&places, 4 * round + n)));
+            held.extend(hold_all(&places, 4 * round, 4).await);
             tokio::time::advance(Duration::from_secs(29)).await;
             let mut creator = places
                 .admit("0xcreator", None, TIMING)
@@ -355,7 +376,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn keeping_a_creator_out_takes_every_place_at_its_pace() {
         let places = four();
-        let mut held: Vec<Admission> = (0..4).map(|n| hold(&places, n)).collect();
+        let mut held = hold_all(&places, 0, 4).await;
         for _ in 0..5 {
             tokio::time::advance(Duration::from_secs(10)).await;
             for (n, upload) in held.iter_mut().enumerate() {
@@ -379,13 +400,31 @@ mod tests {
         assert_eq!(cut, [2]);
     }
 
+    /// An upload's pace counts from its body's first read: the minute its
+    /// checks took before it is not held against it, so a newcomer finds no
+    /// upload behind and is refused at once.
+    #[tokio::test(start_paused = true)]
+    async fn the_pace_counts_from_the_bodys_first_read() {
+        let places = Places::new("uploads", 1, 1, 2);
+        let mut holder = places
+            .admit("0xholder", None, TIMING)
+            .map_err(|refused| refused.status())
+            .expect("a place");
+        tokio::time::advance(Duration::from_secs(60)).await;
+        holder.read(std::future::ready(())).await.unwrap();
+        tokio::time::advance(Duration::from_secs(10)).await;
+        holder.arrived(150).unwrap();
+        let refused = places.admit("0xnewcomer", None, TIMING).err();
+        assert_eq!(refused.map(|r| r.status().as_u16()), Some(429));
+    }
+
     /// A newcomer whose bytes arrive once no upload is behind and no place
     /// came free gives way itself, and the upload that caught up keeps its
     /// place.
     #[tokio::test(start_paused = true)]
     async fn a_newcomer_finding_no_upload_behind_when_its_bytes_arrive_gives_way_itself() {
         let places = Places::new("uploads", 1, 1, 2);
-        let mut holder = hold(&places, 0);
+        let mut holder = hold(&places, 0).await;
         tokio::time::advance(Duration::from_secs(10)).await;
         let mut newcomer = places
             .admit("0xnewcomer", None, TIMING)
@@ -403,8 +442,8 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_newcomer_whose_bytes_arrive_after_a_place_came_free_cuts_nobody() {
         let places = Places::new("uploads", 2, 1, 2);
-        let first = hold(&places, 0);
-        let second = hold(&places, 1);
+        let first = hold(&places, 0).await;
+        let second = hold(&places, 1).await;
         tokio::time::advance(Duration::from_secs(10)).await;
         let mut newcomer = places
             .admit("0xnewcomer", None, TIMING)

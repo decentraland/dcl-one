@@ -81,9 +81,12 @@ The builder answers items as `github.com/decentraland/builder-server` at
   parser may hold at most 64 KiB beyond the bytes it has handed on, the
   whole body must arrive within 20 minutes (about 1.7 Mbit/s for the
   largest video), 30 seconds without a byte ends the upload, and the node
-  stops reading the moment a bound is passed. An upload is behind while it
-  has received less, since it took its place, than the pace the largest
-  video needs to arrive in 20 minutes (about 1.7 Mbit/s). While every
+  stops reading the moment a bound is passed. The 20 minutes count from the
+  moment the upload takes its place; the 30 seconds and the pace below count
+  from the body's first read, so the budget checks before it count against
+  neither. An upload is behind while it has received less, since that first
+  read, than the pace the largest video needs to arrive in 20 minutes
+  (about 1.7 Mbit/s). While every
   place is held and an upload is behind, a newcomer takes an extra place,
   one for each upload behind, and reads its body; once its first bytes
   arrive, the slowest upload behind ends with 408 and `Retry-After`, or,
