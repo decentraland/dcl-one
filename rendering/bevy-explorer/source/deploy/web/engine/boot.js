@@ -337,9 +337,12 @@ window.__setShaderCompiling = (on) => {
 // canvas as target, which the target check drops (no loop).
 const ACTIVATION_KEYS = new Set(['Space', 'Enter', 'NumpadEnter'])
 const CONTROLS = 'button, a[href], select, summary, [role="button"], input[type="checkbox"], input[type="radio"]'
-// Inputs that take no text: a focused one (the HUD's switches are checkboxes) leaves every other key
-// to the engine, so Escape still closes its panel. The HUD declares text focus to the engine by the
-// same rule (isEditableTarget, library/ui/apps/hud/lib/bindingLabels.ts): change both together.
+// Which focused element keeps the keys from the engine, one rule with the `text` focus the HUD declares
+// (isEditableTarget, library/ui/apps/hud/lib/bindingLabels.ts, which states it): change both together.
+// A text field keeps every key. So does a slider (a range input): its arrows, Home, End and Page keys
+// adjust it, and the HUD itself closes the top layer on its cancel key, which the engine never hears. An
+// input that takes no text (the HUD's switches are checkboxes) leaves every other key to the engine, so
+// Escape still closes its panel.
 const NON_TEXT_INPUTS = new Set(['checkbox', 'radio'])
 const isTextField = (t) =>
   t instanceof HTMLElement && ((t.tagName === 'INPUT' && !NON_TEXT_INPUTS.has(t.type)) || t.tagName === 'TEXTAREA' || t.isContentEditable)

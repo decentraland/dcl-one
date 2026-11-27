@@ -134,22 +134,36 @@ export function cancelKeyCodes(): string[] {
   return bindingsForAction(snapshot, { System: 'Cancel' }).filter(isKeyWire)
 }
 
+// Which focused element keeps the keys from the engine. One rule in two places: here, as the `text` focus the
+// HUD declares to the engine (no action resolves, natively too), and in the web engine page's key forwarding
+// (`isTextField` in the Explorer's deploy/web/engine/boot.js). Change both together; react-web's
+// src/test/bootKeyForwarding.test.ts fails when they disagree.
+// - A text field (an input that takes text, a textarea, a contenteditable element) keeps every key: keys there
+//   are typing. The cancel key blurs it, and a printable cancel key is typed.
+// - A slider (a range input) keeps every key too: its arrows, Home, End, PageUp and PageDown adjust it and must
+//   not move the avatar or the camera. It types nothing, so its cancel key, printable or not, closes the top layer
+//   on the first press, as the engine's Cancel does from a button: useEngineSession leaves the slider and
+//   dispatches Cancel itself, since the engine never hears that key.
+// - Any other element (a button, a switch, a checkbox, a radio) leaves the keys to the engine.
+
 /** Inputs that take no text: the HUD's switches are native checkboxes, the permission prompt's choices radios. */
 const NON_TEXT_INPUTS = new Set(['checkbox', 'radio'])
 
-/** Is this a text-entry element (keystrokes there are typing, not hotkeys/cancel)? Focusing a checkbox or a
- *  radio leaves the keys to the engine. The web engine page forwards keys to the engine by the same rule
- *  (`isTextField` in the Explorer's deploy/web/engine/boot.js): change both together. */
+/** Does this focused element keep the keys from the engine: a text field or a slider (the rule above)? */
 export const isEditableTarget = (t: EventTarget | null | undefined): boolean =>
   t instanceof HTMLElement &&
   ((t.tagName === 'INPUT' && !NON_TEXT_INPUTS.has((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.isContentEditable === true)
+
+/** Is this a slider: it keeps the keys like a text field, but its cancel key cancels (the rule above)? */
+export const isSliderTarget = (t: EventTarget | null | undefined): boolean =>
+  t instanceof HTMLInputElement && t.type === 'range'
 
 /** Does this keydown mean cancel? Matches the physical `code`; the `key` fallback keeps
  *  synthetic events that only set `key` (tests) working while Escape is the cancel key. */
 export function isCancelKey(e: Pick<KeyboardEvent, 'key' | 'code'> & { target?: EventTarget | null }): boolean {
   // Inside a text field a printable key is typing, never cancel — only a non-printing
-  // cancel key (Escape, an F-key…) may close/blur from within one.
-  if (e.key.length === 1 && isEditableTarget(e.target)) return false
+  // cancel key (Escape, an F-key…) may close/blur from within one. A slider types nothing.
+  if (e.key.length === 1 && isEditableTarget(e.target) && !isSliderTarget(e.target)) return false
   const codes = cancelKeyCodes()
   return codes.includes(e.code) || (e.key === 'Escape' && codes.includes('Escape'))
 }

@@ -1,12 +1,14 @@
 // DOMAIN: the engine page's key forwarding (deploy/web/engine/boot.js): winit listens on the canvas,
 // so keys pressed while a HUD control holds the focus are cloned to it. A text field keeps its keys
-// (typing never moves the avatar); a switch, a checkbox or a radio takes no text, so Escape and the
-// movement keys still reach the engine from it, while Space and Enter press it instead of reaching
-// Jump or Chat. The HUD declares text focus to the engine by the same rule (isEditableTarget), and the
-// last block holds the two to it. boot.js is imported as the page does, over a stand-in for the engine.
+// (typing never moves the avatar), and so does a slider (its arrows, Home, End and Page keys adjust
+// it; the HUD closes the top layer on its cancel key itself). A switch, a checkbox or a radio takes no
+// text, so Escape and the movement keys still reach the engine from it, while Space and Enter press it
+// instead of reaching Jump or Chat. The HUD declares text focus to the engine by the same rule
+// (isEditableTarget, which states it), and the last block holds the two to it. boot.js is imported as
+// the page does, over a stand-in for the engine.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { isEditableTarget } from '@hud/lib/bindingLabels'
+import { isCancelKey, isEditableTarget, isSliderTarget, setBindingsSnapshot } from '@hud/lib/bindingLabels'
 // boot.js reads window.__serviceUrl as it is evaluated: the host defines it there
 import '../lib/baseDomain'
 
@@ -50,6 +52,7 @@ afterAll(() => {
 afterEach(() => {
   heard.length = 0
   document.body.querySelectorAll('[data-panel]').forEach((panel) => panel.remove())
+  setBindingsSnapshot([]) // module store leaks across tests
 })
 
 /** `html`'s first element, inside a HUD panel on the page. */
@@ -80,6 +83,13 @@ const TEXT_FIELDS = {
   'a textarea': '<textarea></textarea>'
 }
 const MOVEMENT = ['KeyW', 'KeyA', 'KeyS', 'KeyD']
+// The keys a focused slider adjusts itself with.
+const SLIDER_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']
+// The HUD's sliders: the shared Slider (the Volume panel's Master) and the ColorPicker's bars.
+const SLIDERS = {
+  'the Volume slider': '<input type="range" min="0" max="100" aria-label="Master">',
+  'a colour bar': '<input type="range" min="0" max="1" step="0.001" aria-label="Hue">'
+}
 
 describe('a focused switch, checkbox or radio', () => {
   it.each(Object.entries(NON_TEXT))('leaves Escape to the engine from a %s, so Cancel closes its panel', (_, html) => {
@@ -130,6 +140,20 @@ describe('a focused text field keeps its keys', () => {
   })
 })
 
+describe('a focused slider keeps its keys', () => {
+  it.each(Object.entries(SLIDERS))('the keys that adjust %s never reach the engine: no movement or camera', (_, html) => {
+    const target = control(html)
+    for (const code of SLIDER_KEYS) expect(press(target, code), code).toEqual([])
+  })
+
+  it.each(Object.entries(SLIDERS))('nor do the movement keys, Space or Escape from %s: the HUD acts on its cancel key', (_, html) => {
+    const target = control(html)
+    for (const code of MOVEMENT) expect(press(target, code, code.slice(3).toLowerCase()), code).toEqual([])
+    expect(press(target, 'Space', ' ')).toEqual([])
+    expect(press(target, 'Escape')).toEqual([])
+  })
+})
+
 describe('a focused button (unchanged)', () => {
   it('leaves Escape to the engine and keeps Space for itself', () => {
     const target = control('<button type="button">Skybox</button>')
@@ -143,14 +167,29 @@ describe("the page and the HUD's text focus agree", () => {
   // withholds keys by its own rule. Where they disagree, a key either reaches an engine that resolves
   // nothing, or never reaches one that would have.
   const cases = {
-    ...NON_TEXT,
+    ...Object.fromEntries(Object.entries(NON_TEXT).map(([name, html]) => [`a ${name}`, html])),
     ...TEXT_FIELDS,
-    range: '<input type="range">',
-    button: '<button type="button">Open</button>',
-    div: '<div tabindex="0"></div>'
+    ...SLIDERS,
+    'a button': '<button type="button">Open</button>',
+    'a focusable div': '<div tabindex="0"></div>'
   }
-  it.each(Object.entries(cases))('for a %s', (_, html) => {
+  const keys: [code: string, key: string][] = [
+    ['Escape', 'Escape'],
+    ['KeyW', 'w'],
+    ['KeyR', 'r'],
+    ...SLIDER_KEYS.map((code): [string, string] => [code, code])
+  ]
+  it.each(Object.entries(cases))('for %s, on every key', (_, html) => {
     const target = control(html)
-    expect(press(target, 'Escape').length > 0).toBe(!isEditableTarget(target))
+    for (const [code, key] of keys) expect(press(target, code, key).length > 0, code).toBe(!isEditableTarget(target))
+  })
+
+  // A cancel key the page withholds can only be acted on by the HUD: a text field types a printable one,
+  // and a slider, which types nothing, cancels on it. Rebound to R, only a slider withholds it and cancels.
+  it.each(Object.entries(cases))('for %s, a printable cancel key', (_, html) => {
+    setBindingsSnapshot([[{ System: 'Cancel' }, ['KeyR']]])
+    const target = control(html)
+    const withheld = press(target, 'KeyR', 'r').length === 0
+    expect(withheld && isCancelKey({ key: 'r', code: 'KeyR', target })).toBe(isSliderTarget(target))
   })
 })
