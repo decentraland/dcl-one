@@ -91,7 +91,7 @@ export var isGliding = false;
 // The avatar moves at vy + ve. Gravity and scene pushes act on the ballistic speed vg + ve. The player's own moves (a
 // jump, an air jump's hover, the glide's fall) shape vy only, so they never cancel a push, and a push never gets the
 // jump's slowdown.
-type VState = {
+export type VState = {
   vy: number; // the player's own vertical velocity: gravity, jumps, an air jump's held height, the glide
   // the ballistic part of vy. While a jump rises or an air jump hovers, it goes on under plain gravity.
   vg: number;
@@ -122,12 +122,16 @@ type VState = {
 const NEVER = -1e9;
 // tolerance of time comparisons (s)
 const EPS = 1e-6;
-const vstate: VState = {
-  vy: 0, vg: 0, ve: 0, t: 0, t0: 0, yo: 0, yo0: 0, groundedLast: false, lastGroundedEnd: NEVER, triggerT: NEVER, consumedT: NEVER,
-  jumpCount: 0, glideWanted: false, prop: GlideProp.CLOSED, propT: NEVER, glideOpenT: NEVER, glideClosedT: NEVER,
-  launched: false, y: 0, airPressT: NEVER, airLaunchT: NEVER, airLaunched: false,
-  topY: -Infinity, stunEndT: NEVER, pressBack: 0,
-};
+// The model's state before its first tick.
+export function initialVState(): VState {
+  return {
+    vy: 0, vg: 0, ve: 0, t: 0, t0: 0, yo: 0, yo0: 0, groundedLast: false, lastGroundedEnd: NEVER, triggerT: NEVER, consumedT: NEVER,
+    jumpCount: 0, glideWanted: false, prop: GlideProp.CLOSED, propT: NEVER, glideOpenT: NEVER, glideClosedT: NEVER,
+    launched: false, y: 0, airPressT: NEVER, airLaunchT: NEVER, airLaunched: false,
+    topY: -Infinity, stunEndT: NEVER, pressBack: 0,
+  };
+}
+const vstate: VState = initialVState();
 var jumpWasPressed = false;
 var prevJumpPressed = false;
 var prevRunning = false;
@@ -154,7 +158,10 @@ function launchSpeed(running: boolean): number {
   return launchFor(currentJumpHeight);
 }
 
-function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: boolean, noGravity: boolean, h: number) {
+function vstep(
+  s: VState, pressed: boolean, running: boolean, onGroundTick: boolean, touchdown: boolean, noGravity: boolean,
+  h: number,
+) {
   const prevT0 = s.t0;
   const t0 = s.t;
   s.t0 = t0;
@@ -234,7 +241,9 @@ function vstep(s: VState, pressed: boolean, running: boolean, onGroundTick: bool
     s.propT = t0;
     s.glideOpenT = t0;
   } else if (s.prop === GlideProp.GLIDING) {
-    if (!pressed || !canGlide) {
+    // The close is decided before the move, so a touchdown closes the glider from the tick after the one that finds the
+    // ground: the landing starts with the glider open, and the next tick closes it.
+    if (!pressed || (!canGlide && !touchdown)) {
       // the prop that has just opened stays open for this step and closes on the next one
       if (s.propT < t0) {
         s.prop = GlideProp.CLOSING;
@@ -330,10 +339,13 @@ function heldUntil(s: VState, pressed: boolean): number {
   return pressed ? s.consumedT + JUMP_HOLD_TIME : -Infinity;
 }
 
-function vadvance(s: VState, pressed: boolean, running: boolean, onGround: boolean, noGravity: boolean, time: number) {
+// Advances the model by `time` (s) in steps of the frame's length.
+export function vadvance(s: VState, pressed: boolean, running: boolean, onGround: boolean, noGravity: boolean, time: number) {
   const n = stepsFor(time);
+  // the tick that finds the ground after the air (see vstep's glide close)
+  const touchdown = onGround && !s.groundedLast;
   for (let k = 0; k < n; k++) {
-    vstep(s, pressed, running, onGround, noGravity, time / n);
+    vstep(s, pressed, running, onGround, touchdown && onGround, noGravity, time / n);
     if (s.launched) onGround = false;
   }
 }
