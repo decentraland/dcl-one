@@ -1573,6 +1573,21 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.collections_enabled && net == ChainNet::Ethereum && mainnet {
+        // The closed collections-v1 set: a static filter, no gate.
+        let project = settings.collections_owned.contains(&ChainNet::Ethereum);
+        add(
+            "collections-index",
+            state.chain_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(super::collections_v1::CollectionsV1Index::projecting(
+                    project,
+                ))
+            }),
+            None,
+            market_cfg(),
+        );
+    }
     if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
         add(
             "third-party-registry-index",
@@ -1817,6 +1832,23 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         tracing::warn!(
             job = "collections-index",
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
+    let ethereum_walk = settings.serves_mainnet(ChainNet::Ethereum)
+        && state.chain_rpc_url(ChainNet::Ethereum).is_some();
+    if settings.collections_enabled && settings.serves_mainnet(ChainNet::Ethereum) && !ethereum_walk
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Ethereum JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, else ETH_RPC_URL): the collections-v1 walk stays off"
+        );
+    }
+    if settings.collections_owned.contains(&ChainNet::Ethereum)
+        && !(settings.collections_enabled && ethereum_walk)
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but this process runs no collections-v1 walk (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint), so it walks and projects nothing on Ethereum"
         );
     }
     if settings.third_party_registry_enabled

@@ -17,8 +17,9 @@ catalogue scope, the seller rule, the statuses), with these differences:
 - Readiness adds, on Ethereum mainnet, the bid history repair complete and
   explaining the sales cursor
   ([the bid lifecycle in the sales walk](2026-11-25-ethereum-bid-lifecycle-in-the-sales-walk.md)),
-  else the `sales-index` envelope. It also adds the land-authz index ready,
-  whose snapshot the read runs on, else the `land-authz-index` envelope.
+  else the `sales-index` envelope. It also requires the land-authz index
+  ready for the served registries on the read snapshot, else the
+  `land-authz-index` envelope.
 - The scope is the catalogue the nft index walks on the served chain plus
   that chain's LAND, Estate and names registrar, the assets the marketplace
   indexer kept bids on.
@@ -36,11 +37,11 @@ catalogue scope, the seller rule, the statuses), with these differences:
   it. A bid past it fails the read closed with the `land-authz-index`
   envelope, as one past the land index's publication does.
 - A mirrored (v3) bid on a LAND or Estate token reads its seller from the
-  land-authz fold (`land_authz.token_right`). Besides the nft publication
-  every mirrored token bid needs, it needs the land-authz index ready on
-  the read's snapshot, else the `land-authz-index` envelope. This applies
-  only when such a bid is in the read's scope, as with the item-only reads
-  that skip the legacy book.
+  land-authz fold (`land_authz.token_right`). On both walking and
+  graph-backed nodes, a scoped LAND or Estate bid requires that fold to be
+  ready for the trade's served chain on the read snapshot. On an NFT walker,
+  a scoped mirrored bid that reads `shop.nft` requires that ownership
+  publication. The native book can reuse its proof for the same chain.
 - The wire is the marketplace subgraph's: `fingerprint` 0x-prefixed hex
   (`0x` when empty or not kept), `bidAddress` the chain's ERC721Bid.
 - Each network's total is capped as the subgraph reader capped it, and the
@@ -52,8 +53,7 @@ catalogue scope, the seller rule, the statuses), with these differences:
   subgraph on a walking node.
 - An upgraded node answers Ethereum bid reads with the `sales-index`
   envelope until the bid history repair completes.
-- A read that could include an Ethereum bid needs the land-authz index
-  ready.
+- Reads of the native Ethereum book need the land-authz index ready.
 - The sales walk records a checkpoint at each window end and keeps the
   newest 64. On Ethereum it passes every few seconds, about one block per
   window, so the land cursor's block is normally one of them. While the land

@@ -485,19 +485,19 @@ pub async fn fold(
 ) -> anyhow::Result<u64> {
     let mut tx = pool.begin().await?;
     let bids = fold_in(&mut tx, since, owner).await?;
-    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
 }
 
-/// [`fold`]'s statements in the caller's transaction, which ends with
-/// `owner.check`: the Ethereum bid history repair refolds every key in the
-/// transaction that completes it.
+/// [`fold`]'s statements in the caller's transaction. Fence the cursor
+/// before the bid write takes its publication lock. The Ethereum bid
+/// history repair already locks that cursor before its refold.
 pub async fn fold_in(
     tx: &mut PgConnection,
     since: Option<i64>,
     owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
+    owner.check(tx).await?;
     let since = since.unwrap_or(-1);
     // The nft walk's rewinds since the last fold, read before the fold's own
     // statement (whose newer snapshot sees each one's rows); only these are

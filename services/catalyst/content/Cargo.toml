@@ -45,7 +45,6 @@ bs58.workspace = true
 reqwest.workspace = true
 flate2.workspace = true
 url.workspace = true
-regex.workspace = true
 image = { workspace = true, features = ["gif"] }
 dcl-metrics.workspace = true
 

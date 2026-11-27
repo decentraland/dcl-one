@@ -716,7 +716,14 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
         rows,
         vec![
             ("Slack answered 429 Too Many Requests".into(), 1, next),
-            ("held while Slack rate limits".into(), 0, next),
+            (
+                format!(
+                    "held while Slack rate limits since {}",
+                    t0.and_utc().to_rfc3339()
+                ),
+                0,
+                next,
+            ),
         ]
     );
 
@@ -748,6 +755,96 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
         }
     );
     assert_eq!(hook.bodies.lock().unwrap().len(), 2);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sustained_slack_rate_limiting_expires_only_the_purchase_held_for_two_days() {
+    let Some(db) = OwnDatabase::create("alerts_hold_age").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::TOO_MANY_REQUESTS).await;
+    *hook.headers.lock().unwrap() = vec![("retry-after", "120".into())];
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
+
+    queue_one(&db.pool).await;
+    let t0 = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
+    let cutoff = t0 + chrono::Duration::days(2);
+    // A second single alert comes due first on the cutoff pass and gets the 429.
+    // The two old purchases then share one held message.
+    sqlx::query(
+        "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at, last_error) \
+         VALUES ($1, '0xdef', jsonb_build_object('salt', '0xdef'), $3, $3, NULL), \
+                ($2, 's1', '{}'::jsonb, $4, $5, 'held while Slack rate limits'), \
+                ($2, 's2', '{}'::jsonb, $4, $3, NULL)",
+    )
+    .bind(alerts::SUBMITTED_UNCONSUMED)
+    .bind(alerts::PURCHASE_SETTLED)
+    .bind(cutoff)
+    .bind(t0 - chrono::Duration::days(3))
+    .bind(t0)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    for at in [t0, t0 + chrono::Duration::seconds(120)] {
+        assert_eq!(
+            delivery.run_pass(&credits, at).await.unwrap(),
+            PassOutcome {
+                retried: 2,
+                ..PassOutcome::default()
+            }
+        );
+    }
+    // The first posted alert gives up under the normal 24-hour rule. The
+    // second posted alert and s2 retry, and s1 reaches its hold ceiling.
+    assert_eq!(
+        delivery.run_pass(&credits, cutoff).await.unwrap(),
+        PassOutcome {
+            retried: 2,
+            failed: 2,
+            ..PassOutcome::default()
+        }
+    );
+    let purchases =
+        sqlx::query_as::<_, (String, String, i32, String, Option<chrono::NaiveDateTime>)>(
+            "SELECT dedupe_key, status, attempts, last_error, finished_at \
+         FROM credits.alerts WHERE kind = $1 ORDER BY id",
+        )
+        .bind(alerts::PURCHASE_SETTLED)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        purchases,
+        [
+            (
+                "s1".into(),
+                "failed".into(),
+                0,
+                "Slack hold age limit reached".into(),
+                Some(cutoff),
+            ),
+            (
+                "s2".into(),
+                "pending".into(),
+                0,
+                format!(
+                    "held while Slack rate limits since {}",
+                    cutoff.and_utc().to_rfc3339()
+                ),
+                None,
+            ),
+        ]
+    );
+    {
+        let bodies = hook.bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 3);
+        for (body, salt) in bodies.iter().zip(["0xabc", "0xabc", "0xdef"]) {
+            assert!(body["text"].as_str().unwrap().contains(salt));
+        }
+    }
     db.drop().await;
 }
 

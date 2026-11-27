@@ -730,6 +730,8 @@ pub struct AppConfig {
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
     pub chat_bubble_visibility: ChatBubbleVisibility,
+    /// Whether situational reactions are also shown on screen, by the HUD.
+    pub chat_reactions: bool,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -739,8 +741,8 @@ pub struct AppConfig {
     /// The language the player chose (BCP-47); `None` follows the system language.
     pub language: Option<String>,
     /// Base url of an abgen Bevy variants service (prototype), when `--bevy-variants-url` /
-    /// `?bevyVariants=` is absent; `None` = the asset-bundle generator's CDN for the base
-    /// domain, `off` = off.
+    /// `?bevyVariants=` and an `abgen_cdn` override are absent and the endpoint feature flag
+    /// names none; `None` = the asset-bundle generator's CDN for the base domain, `off` = off.
     pub bevy_variants_url: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
@@ -808,6 +810,7 @@ impl Default for AppConfig {
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
             chat_bubble_visibility: Default::default(),
+            chat_reactions: false,
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,
@@ -1372,6 +1375,8 @@ pub struct AudioSettings {
     pub avatar: i32,
     /// Whether [`Self::microphone_focus`] passes the client window's focus through.
     pub mute_mic_in_background: bool,
+    /// The chosen audio input's device id; `None` uses the system default.
+    pub microphone: Option<String>,
 }
 
 impl Default for AudioSettings {
@@ -1384,6 +1389,7 @@ impl Default for AudioSettings {
             system: 100,
             avatar: 100,
             mute_mic_in_background: true,
+            microphone: None,
         }
     }
 }
@@ -2340,6 +2346,82 @@ impl ClientWindowFocus {
 #[derive(Event, Debug, Clone, Copy)]
 pub struct RequestClientWindowFocus;
 
+/// An audio input the host offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrophoneInput {
+    pub id: String,
+    pub label: String,
+}
+
+/// An input reported during this session, kept after it is unplugged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KnownMicrophone {
+    input: MicrophoneInput,
+    present: bool,
+}
+
+/// Every audio input the host reported this session, in first-report order. An input keeps its
+/// place once seen, so a choice index read from an older list still names the same input.
+#[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
+pub struct MicrophoneDevices {
+    known: Vec<KnownMicrophone>,
+}
+
+impl MicrophoneDevices {
+    /// Whether the host's latest report listed `id`.
+    pub fn offers(&self, id: &str) -> bool {
+        self.known
+            .iter()
+            .any(|known| known.present && known.input.id == id)
+    }
+
+    /// How many inputs the host's latest report listed.
+    pub fn offered(&self) -> usize {
+        self.known.iter().filter(|known| known.present).count()
+    }
+
+    /// Every known input's id, in choice order.
+    pub fn ids(&self) -> Vec<String> {
+        self.known
+            .iter()
+            .map(|known| known.input.id.clone())
+            .collect()
+    }
+
+    /// Every known input's name, in choice order.
+    pub fn labels(&self) -> Vec<String> {
+        self.known.iter().map(Self::shown).collect()
+    }
+
+    fn shown(known: &KnownMicrophone) -> String {
+        if known.present {
+            known.input.label.clone()
+        } else {
+            format!("{} (unplugged)", known.input.label)
+        }
+    }
+
+    /// Takes the host's current inputs.
+    pub fn replace(&mut self, reported: Vec<MicrophoneInput>) {
+        for known in self.known.iter_mut() {
+            known.present = reported.iter().any(|input| input.id == known.input.id);
+        }
+        for input in reported {
+            match self
+                .known
+                .iter_mut()
+                .find(|known| known.input.id == input.id)
+            {
+                Some(known) => known.input.label = input.label,
+                None => self.known.push(KnownMicrophone {
+                    input,
+                    present: true,
+                }),
+            }
+        }
+    }
+}
+
 #[derive(Resource, Default, Serialize, Deserialize, Clone)]
 pub struct MicState {
     pub available: bool,
@@ -2940,6 +3022,7 @@ mod tests {
                 system: 20,
                 avatar: 10,
                 mute_mic_in_background: true,
+                microphone: None,
             }
         );
     }

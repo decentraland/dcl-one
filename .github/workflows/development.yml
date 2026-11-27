@@ -275,6 +275,11 @@ jobs:
         run: |
           nix develop .#ci --command \
             cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets --features catalyst/ts -- -D warnings
+      - name: No unused dependencies
+        # Reads sources only; services/catalyst covers cast-bot, and its gitignored target dirs are skipped.
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli
   smoke:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
