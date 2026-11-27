@@ -7286,10 +7286,6 @@
       "path": "library/ui/apps/sites/jump",
       "entries": [
         {
-          "name": "JumpButtons.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "JumpCard.module.css",
           "kind": "regular"
         },
@@ -16377,24 +16373,20 @@
       "sha256": "dc7b29dfe8cc3c8ab21a75fd3709c540e6a53df862f782718e8326e579fc2580"
     },
     {
-      "path": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "sha256": "ef2a11e010c87d9d1d06d6ef4a0fe58718bfcc296591a55f4689965147fdc3e0"
-    },
-    {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "sha256": "4d75bddf9d8de2d0d58003c5dae34c7ecb89ffe8c04d420c7aafb8a4ec009718"
+      "sha256": "9b52a7126529a2d6e14a8fd4768837354146576fe3d272586df3f7c2004c7b3e"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "sha256": "f80266271f67be617c459bb8128f7a943e608afb49b6b5f1026139e96245b42a"
+      "sha256": "b88131f2932754d1ddad72b79591027e5876c82f39f52aa2bd1b19c26aeda62d"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "sha256": "e8fb964bf4e308455421ae520fcc1e3147aa62fe5f6598e8b7701789ce01e52e"
+      "sha256": "d27c6cd77458be59ed6cbf5659eee61d37936b30aa4540631ea1a6ef496eea9b"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "sha256": "6d85e9a26c5116182c7641c4c124a2b8702e2646ce952302a28e650bf0292f4d"
+      "sha256": "9a25a8098b6525e8f32f853aa72a1282d3cd55cc6ff02526b458c291a7d5c1e3"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpIcons.tsx",
@@ -16402,11 +16394,11 @@
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "sha256": "f441c68144b826ff74185c36a565dbdcc469fa074d12998417bd46d1557fc756"
+      "sha256": "b35fc3f79b1d97ab2d6e2a5386c46338a672c17a128a2934a5e8b907d885139a"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "sha256": "02e6313b4b42f15bc54ff4854081d04fc8b0fcfff685e8ce0e333bdc237c8354"
+      "sha256": "7ae2b2537ff34b0b35015b840029d695458b65035b435276ae14d1d8c1f61c38"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpPage.module.css",
@@ -59740,21 +59732,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/apps/sites/assets/dcl-logo.svg",
       "kind": "native:runtime"
@@ -59846,17 +59823,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59873,21 +59850,6 @@
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
@@ -59936,33 +59898,18 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
@@ -59996,17 +59943,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
