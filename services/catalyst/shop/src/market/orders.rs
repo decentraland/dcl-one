@@ -1056,18 +1056,6 @@ async fn book_total(
 
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
 
-/// Compare the two raw expiry encodings on the Graph before paging.
-/// Nest OR under AND so it can share a query with column filters and the
-/// count cursor. The boundary is the NFT walk's `expires_ms` conversion.
-fn graph_unexpired(field: &str, now_ms: i64) -> Value {
-    let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
-    let gt = format!("{field}_gt");
-    json!([{ "or": [
-        { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
-        { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
-    ] }])
-}
-
 fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     let mut w = json!({});
     if let Some(v) = &f.marketplace_address {
@@ -1088,10 +1076,10 @@ fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     match f.status.as_deref() {
         Some("open") => {
             w["status"] = json!("open");
-            w["and"] = graph_unexpired("expiresAt", now_ms);
+            w["and"] = readers::graph_unexpired("expiresAt", now_ms);
         }
         Some(s) => w["status"] = json!(s),
-        None => w["and"] = graph_unexpired("expiresAt", now_ms),
+        None => w["and"] = readers::graph_unexpired("expiresAt", now_ms),
     }
     if let Some(v) = &f.item_id {
         let composite = if v.contains('-') {

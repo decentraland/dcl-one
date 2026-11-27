@@ -5579,6 +5579,11 @@ NFT-index 503s are counted by network in `catalyst_shop_bid_nft_unavailable_read
 The check runs before any seller filter or pagination, so a pending owner
 change cannot move bids between seller pages or totals.
 
+The collections subgraph leg compares raw expiry in two disjoint ranges.
+Second values use the request cutoff in whole seconds. Millisecond values
+use the same cutoff in milliseconds. The Graph applies this filter to
+both the page and the count.
+
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus
 3,000 bids on 200 contracts outside the catalogue, with 2M transfers and
 6,000 bids without a stored seller (PostgreSQL 17, warm cache), no index
