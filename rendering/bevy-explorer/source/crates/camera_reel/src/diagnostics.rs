@@ -4,7 +4,6 @@ use bevy::{prelude::*, tasks::Task};
 use bevy_console::ConsoleCommand;
 use common::{
     rpc::RpcResultSender,
-    sets::SceneSets,
     structs::{CursorLocks, OutOfWorld, PrimaryCamera, PrimaryUser},
     util::{TaskCompat, TaskExt},
 };
@@ -23,10 +22,7 @@ use crate::{
         capture_blocker, phase, EncodingPhoto, PendingPhoto, PhotoStats, TakePhotoRequest,
         UploadingPhoto,
     },
-    mode::{
-        apply_photo_mode_requests, photo_mode_block, PhotoCameraPlacer, PhotoModeBlock,
-        PhotoModeRequest,
-    },
+    mode::{photo_mode_block, PhotoCameraPlacer, PhotoModeBlock, PhotoModeRequest},
     photo_camera::{PhotoCamera, PhotoCameraSettings, PhotoModeSource, PhotoPose},
     storage::{delete_photo, CameraReelStorage},
 };
@@ -47,12 +43,8 @@ impl Plugin for PhotoModeDiagnosticsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PhotoDeletes>()
             .init_resource::<PhotoLanding>()
-            .add_systems(
-                Update,
-                land_photo_pose
-                    .in_set(SceneSets::Input)
-                    .after(apply_photo_mode_requests),
-            )
+            // it waits for photo mode to be open, so it needs no place among photo mode's systems
+            .add_systems(Update, land_photo_pose)
             .add_console_command::<PhotoModeCommand, _>(photo_mode_command)
             .add_console_command::<TakePhotoCommand, _>(take_photo_command)
             .add_console_command::<DeletePhotoCommand, _>(delete_photo_command)
@@ -621,7 +613,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::mode::PhotoModeChanged;
+    use crate::mode::{apply_photo_mode_requests, PhotoModeChanged};
 
     /// `/photo_mode`, photo mode's opening and the landing, in that order each frame, with a
     /// third-person camera and a player at the origin.

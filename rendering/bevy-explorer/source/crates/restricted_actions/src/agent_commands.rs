@@ -175,7 +175,7 @@ struct MoveWait {
 
 /// The `/move_player_to --wait` replies still to come, answered by [`settle_moves`].
 #[derive(Resource, Default)]
-pub struct MoveWaits(Vec<MoveWait>);
+struct MoveWaits(Vec<MoveWait>);
 
 fn settle_moves(
     mut waits: ResMut<MoveWaits>,
