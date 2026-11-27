@@ -61,7 +61,7 @@ pub(super) async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(
         })
 }
 
-fn store_collected() -> ApiError {
+pub(super) fn store_collected() -> ApiError {
     ApiError::service_unavailable("The content store is being collected; retry shortly")
 }
 

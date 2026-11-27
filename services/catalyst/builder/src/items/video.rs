@@ -11,10 +11,11 @@
 //! gives its place to a newcomer whose bytes arrive ([`super::places`]). A
 //! wallet and an upload source have a day of upload time
 //! ([`WALLET_VIDEO_SECS_A_DAY`], [`SOURCE_VIDEO_SECS_A_DAY`]), spent by
-//! the time each upload holds its place, bytes or none. Only then, in one
+//! the time each upload holds its place, bytes or none. The spool file is
+//! synced, the file goes to the blob store, and only then, in one
 //! transaction with the item locked, the decision runs again, the item must
-//! still name the hash at `video.mp4`, and the file goes to the blob store
-//! with its upload record, as [`super::upload`] stores files.
+//! still name the hash at `video.mp4` and the upload is recorded while the
+//! bytes are still stored, as [`super::upload`] stores files.
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -41,7 +42,7 @@ use crate::storage::{StagingGuard, Storage, create_staging_file};
 use super::ItemsComponent;
 use super::places::{self, Admission, Places, Timing};
 use super::save::lock_item;
-use super::upload::lock_store_shared;
+use super::upload::{lock_store_shared, store_collected};
 
 /// The file name an item gives its preview video, and the upload's one field.
 pub const VIDEO_FILE: &str = "video.mp4";
@@ -287,7 +288,8 @@ fn io(e: std::io::Error) -> ApiError {
 
 /// Reads `request`'s form into a spool file under `root`, through `place`
 /// ([`Admission::read`], [`Admission::arrived`]): one file part named
-/// [`VIDEO_FILE`], at most `videos.max_bytes`, an MP4 container.
+/// [`VIDEO_FILE`], at most `videos.max_bytes`, an MP4 container, synced to
+/// disk before it is answered.
 pub async fn receive(
     videos: &Videos,
     root: &Path,
@@ -362,6 +364,7 @@ pub async fn receive(
         return Err(not_mp4());
     }
     file.flush().await.map_err(io)?;
+    file.get_ref().sync_all().await.map_err(io)?;
     Ok(Spooled {
         guard,
         hash: hasher.finish(),
@@ -489,41 +492,38 @@ impl Mp4 {
 }
 
 impl ItemsComponent {
-    /// Stores `video` for the item `change` was decided for, if the item
-    /// still names it at [`VIDEO_FILE`].
+    /// Stores `video` for the item `change` was decided for, if the decision
+    /// holds again and the item still names it at [`VIDEO_FILE`]: the bytes
+    /// go to the blob store first, holding no lock, then one transaction
+    /// with the item locked decides again and records the upload under the
+    /// store lock's shared side, once the bytes are still stored (503
+    /// otherwise).
     pub async fn save_item_video(
         &self,
         change: &ItemChange,
         video: Spooled,
     ) -> Result<(), ApiError> {
         let id = change.id();
-        let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
-        lock_item(&mut tx, id, None).await?;
-        access::confirm_item_change(&mut tx, &view, change).await?;
-        let named: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM builder.item_contents WHERE item_id = $1 AND file = $2 AND hash = $3)",
-        )
-        .bind(id)
-        .bind(VIDEO_FILE)
-        .bind(&video.hash)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !named {
-            return Err(ApiError::bad_request("The item does not name this video")
-                .with_data(json!({ "hash": video.hash })));
+        {
+            let mut conn = self.pool.acquire().await?;
+            let view = chain_state::for_decision(&mut conn).await?;
+            access::confirm_item_change(&mut conn, &view, change).await?;
+            named_video(&mut conn, id, &video.hash).await?;
         }
-        lock_store_shared(&mut tx).await?;
-        let held = self
-            .blobs
-            .exist(&video.hash)
-            .await
-            .map_err(|e| ApiError::internal(e.to_string()))?;
-        if !held {
+        if !self.held(&video.hash).await? {
             self.blobs
                 .store_file(&video.hash, video.guard.path())
                 .await
                 .map_err(|e| ApiError::internal(format!("storing {}: {e}", video.hash)))?;
+        }
+        let mut tx = self.pool.begin().await?;
+        let view = chain_state::for_decision(&mut tx).await?;
+        lock_item(&mut tx, id, None).await?;
+        access::confirm_item_change(&mut tx, &view, change).await?;
+        named_video(&mut tx, id, &video.hash).await?;
+        lock_store_shared(&mut tx).await?;
+        if !self.held(&video.hash).await? {
+            return Err(store_collected());
         }
         sqlx::query(
             "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by, video) VALUES ($1, $2, $3, true) \
@@ -538,6 +538,13 @@ impl ItemsComponent {
         Ok(())
     }
 
+    async fn held(&self, hash: &str) -> Result<bool, ApiError> {
+        self.blobs
+            .exist(hash)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))
+    }
+
     /// Whether item `id` names a video at [`VIDEO_FILE`].
     pub async fn names_video(&self, id: uuid::Uuid) -> Result<bool, ApiError> {
         Ok(sqlx::query_scalar(
@@ -548,6 +555,27 @@ impl ItemsComponent {
         .fetch_one(&self.pool)
         .await?)
     }
+}
+
+/// Item `id` names `hash` at [`VIDEO_FILE`] (400 otherwise).
+async fn named_video(
+    conn: &mut sqlx::PgConnection,
+    id: uuid::Uuid,
+    hash: &str,
+) -> Result<(), ApiError> {
+    let named: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM builder.item_contents WHERE item_id = $1 AND file = $2 AND hash = $3)",
+    )
+    .bind(id)
+    .bind(VIDEO_FILE)
+    .bind(hash)
+    .fetch_one(conn)
+    .await?;
+    if !named {
+        return Err(ApiError::bad_request("The item does not name this video")
+            .with_data(json!({ "hash": hash })));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
