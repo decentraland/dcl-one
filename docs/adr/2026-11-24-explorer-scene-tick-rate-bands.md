@@ -96,10 +96,24 @@ and main-thread time each frame there is spare time, whether or not the player c
 - Scenes from 80 m on change at most every two seconds; their SDK systems and tweens driven
   from script step in large intervals until the player comes nearer.
 - A scene 16 m or more behind the camera delivers up to a second of changes in one reply.
-  Whether that hitches when the camera turns is open until main-thread and scene-thread time are
-  measured at a dense spot with and without the cap.
-- Walking through a busy area, the global-update release can take back part of the saving;
-  the measurement reports the panel's `released` count to show how much.
+  Whether that hitches when the camera turns is still open: Genesis Plaza, measured below,
+  caps no scene, so it needs a spot where the neighbouring scenes run.
+- Walking through a busy area, the global-update release can take back part of the saving. At
+  Genesis Plaza it released no tick.
+- **Measured at Genesis Plaza** (2026-11-27): release builds of `main` and this change, native
+  and web, two runs each, a guest with fetch and websocket permissions preset. Three scenes run
+  there, the player's scene and two exempt scenes 18 to 22 m away, all at the full rate (the
+  panel reads `full` 3 and no capped scene); the plaza's neighbours do not start. The change
+  measures as neutral:
+  - ticks per scene per second over 60 s standing: the plaza 53.5 on `main` and 55.5 with the
+    change on native, 25.0 and 25.0 on web; the other two 60 on native and 50 on web, on both;
+  - the main world's mean frame time 15.6 to 15.7 ms native and 12.7 ms web on both; the scene
+    loop's 5.1 ms on `main` and 5.4 ms with the change native, 1.4 ms web on both;
+  - turning the camera at 90°/s, frame p99 23 ms native and 36 ms web on both; the worst frame
+    44 to 64 ms on web on both, and on native 26 to 27 ms with the change against 314 and
+    542 ms single frames on `main`, too few runs to attribute;
+  - walking 17 to 52 m through the plaza, `released` stayed 0 and `skipped` reached 224
+    scene-frames, from one scene that started on the way.
 - On the client every scene shares one crdt context, so the global-update release follows the
   island's update rate: at about 500 updates a second every capped scene is due about every
   half second, and the 1/s and 0.5/s caps act as about 2/s where the island is busiest. A scene
@@ -113,7 +127,7 @@ and main-thread time each frame there is spare time, whether or not the player c
   camera while it is away from the player would keep the caps there.
 - A scene's imposter or LOD stand-in goes once it passes tick 5, before the cap starts at
   `SCENE_LOADED_TICK`. A far scene that builds its content over many ticks shows it built at one
-  tick every two seconds; the measurement checks one such scene.
+  tick every two seconds.
 - A pointer result reaches a capped scene at its next tick: a click on a scene 80 m or more away,
   or on one behind the camera inside a wide field of view, answers up to two seconds later.
 - A scene sends at most `MAX_SEND_MESSAGES_PER_TICK` (512) messages a tick, so a capped scene
