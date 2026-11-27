@@ -3,10 +3,9 @@ use bevy::{platform::collections::HashMap, prelude::*, ui::UiSystem};
 use common::{
     sets::PostUpdateSets,
     structs::{
-        AppConfig, PointAtMarkerVisibility, PointAtMarkerVisibilityChanged, PointAtSync,
-        PrimaryCamera, PrimaryUser, ZOrder,
+        AppConfig, PlayerAddress, PointAtMarkerVisibility, PointAtMarkerVisibilityChanged,
+        PointAtSync, PrimaryCamera, PrimaryUser, ZOrder,
     },
-    util::AsH160,
 };
 use comms::{
     global_crdt::ForeignPlayer,
@@ -118,12 +117,7 @@ fn sync_markers(
     mut commands: Commands,
     overlay: Res<MarkerOverlay>,
     avatars: Query<
-        (
-            Entity,
-            &PointAtSync,
-            Option<&ForeignPlayer>,
-            Option<&UserProfile>,
-        ),
+        (Entity, &PointAtSync, &PlayerAddress, Option<&UserProfile>),
         (
             With<AvatarShape>,
             Or<(With<PrimaryUser>, With<ForeignPlayer>)>,
@@ -137,16 +131,10 @@ fn sync_markers(
 
     let existing: HashMap<Entity, Entity> = markers.iter().map(|(m, p)| (p.avatar, m)).collect();
 
-    for (avatar_ent, sync, foreign, profile) in &avatars {
+    for (avatar_ent, sync, &PlayerAddress(address), profile) in &avatars {
         if !sync.is_pointing || existing.contains_key(&avatar_ent) {
             continue;
         }
-        let Some(address) = foreign
-            .map(|f| f.address)
-            .or_else(|| profile.and_then(|p| p.content.eth_address.as_h160()))
-        else {
-            continue;
-        };
 
         let bg = profile
             .map(|profile| profile.name_color())

@@ -7,8 +7,9 @@
 // matters. OK returns the user to the destination picker; there's no Reload, it would re-hit the
 // same URL.
 
-import { openPopup, ModalShell, Button } from '../../design'
+import { openPopup, ModalShell } from '../../design'
 import styles from './RealmErrorModal.module.css'
+import { Button } from '@dcl/one-ui'
 
 /** Open the world-not-found dialog. `onDismiss` runs exactly once, on any USER close path (OK,
  *  Escape, scrim click) — the caller clears the error state there, so a keyboard dismiss can't
@@ -43,7 +44,7 @@ export function openRealmError(opts: { title: string; message: string; onDismiss
         closeButton={false}
         actionsAlign="center"
         actions={
-          <Button variant="primary" className={styles.btn} onClick={close}>
+          <Button appearance="hud" variant="primary" className={styles.btn} onClick={close}>
             OK
           </Button>
         }

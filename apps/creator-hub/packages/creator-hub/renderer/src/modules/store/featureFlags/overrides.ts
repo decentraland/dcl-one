@@ -1,3 +1,7 @@
+import { type AiSharingDevEnv, buildEnv, devAiSharingUrl } from '/@/lib/aiSharingDevUrl';
+
+import { FeatureFlag } from './types';
+
 /**
  * Locally forced feature flags.
  *
@@ -7,15 +11,27 @@
  *
  *   localStorage.setItem('creator-hub:feature-flags', '{"creatorhub-analytics":true}')
  *
- * Never applied in a release build.
+ * A dev build started with `VITE_AI_SHARING_API_URL` (a local Assistant Insights) also gets
+ * `creatorhub-ai-prompt-sharing` on; the stored overrides still win over it.
+ *
+ * Never applied in a packaged or release build.
  */
 export const FLAG_OVERRIDES_KEY = 'creator-hub:feature-flags';
 
 export function applyFlagOverrides(
-  flags: Record<string, boolean>,
+  serviceFlags: Record<string, boolean>,
   storage: Pick<Storage, 'getItem'> = localStorage,
+  env: AiSharingDevEnv = buildEnv(),
 ): Record<string, boolean> {
-  if (!import.meta.env.DEV) return flags;
+  if (!env.DEV) return serviceFlags;
+
+  const aiSharingDev = devAiSharingUrl(env) !== '';
+  if (aiSharingDev) {
+    console.info('[featureFlags] VITE_AI_SHARING_API_URL is set: AI prompt sharing is on');
+  }
+  const flags = aiSharingDev
+    ? { ...serviceFlags, [FeatureFlag.AI_PROMPT_SHARING]: true }
+    : serviceFlags;
 
   let raw: string | null = null;
   try {

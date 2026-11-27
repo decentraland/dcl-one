@@ -1,5 +1,5 @@
 use bevy::ecs::system::RunSystemOnce;
-use common::structs::PrimaryUser;
+use common::structs::{OutOfWorld, PrimaryUser};
 use dcl_types::SceneId;
 use scene_material::SceneBounds;
 use web_time::Instant;
@@ -138,6 +138,72 @@ fn a_failed_neighbour_does_not_hold_the_report() {
 }
 
 #[test]
+fn landing_behind_the_loading_screen_times_the_destination_scene() {
+    let mut world = world();
+    let player = world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(player).insert(OutOfWorld::default());
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+
+    // the destination is still loading while the player waits for it
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().arrival.is_some());
+
+    // the player is let in once it is ready, and the arrival is reported
+    set_tick(&mut world, home, 6);
+    world.entity_mut(player).remove::<OutOfWorld>();
+    world.run_system_once(report_scene_load_times).unwrap();
+    let timing = world.resource::<FirstRingTiming>();
+    assert_eq!(timing.arrival.map(|(scene, _)| scene), Some(home));
+    assert!(timing.reported);
+}
+
+#[test]
+fn an_arrival_whose_scene_despawns_is_not_reported() {
+    let mut world = world();
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 2);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().arrival.is_some());
+
+    // a realm change purges the scene and its pointers before it is ready
+    world.despawn(home);
+    world.resource_mut::<LiveScenes>().scenes.clear();
+    world.insert_resource(ScenePointers::default());
+    world.run_system_once(report_scene_load_times).unwrap();
+
+    let timing = world.resource::<FirstRingTiming>();
+    assert!(timing.arrival.is_none());
+    assert!(!timing.reported);
+
+    // the new realm's spawn scene is the next arrival, timed and reported on its own
+    let mut pointers = ScenePointers::default();
+    pointers.insert(
+        IVec2::ZERO,
+        PointerResult::Exists {
+            hash: "new".to_owned(),
+            urn: None,
+        },
+    );
+    world.insert_resource(pointers);
+    let new = scene(&mut world, "new", &[IVec2::ZERO], 2);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert_eq!(
+        world
+            .resource::<FirstRingTiming>()
+            .arrival
+            .map(|(scene, _)| scene),
+        Some(new)
+    );
+
+    set_tick(&mut world, new, 5);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().reported);
+}
+
+#[test]
 fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
     let mut world = world();
     scene(&mut world, "home", &[IVec2::ZERO], 7);
@@ -146,4 +212,31 @@ fn arriving_at_a_scene_that_is_already_ready_reports_nothing() {
 
     // nothing to time: the load happened before the player got here
     assert!(world.resource::<FirstRingTiming>().arrival.is_none());
+}
+
+#[test]
+fn a_frozen_scene_has_loaded_once_its_gltfs_have() {
+    let mut world = world();
+    let home = scene(&mut world, "home", &[IVec2::ZERO], 3);
+    let mut context = world.get_mut::<RendererSceneContext>(home).unwrap();
+    assert!(!scene_is_halted(&context) && !scene_has_loaded(&context));
+
+    // the editor's freeze at tick 3, while the scene's models still load
+    context.blocked.insert(FROZEN_BLOCK);
+    context.blocked.insert(GLTF_LOADING);
+    assert!(!scene_is_halted(&context) && !scene_has_loaded(&context));
+    context.blocked.remove(GLTF_LOADING);
+    assert!(scene_is_halted(&context) && scene_has_loaded(&context));
+
+    // a running scene has loaded past its startup ticks with nothing blocking it
+    context.blocked.clear();
+    context.tick_number = STARTUP_TICKS;
+    assert!(!scene_has_loaded(&context));
+    context.tick_number = STARTUP_TICKS + 1;
+    assert!(scene_has_loaded(&context) && !scene_is_halted(&context));
+    context.blocked.insert(GLTF_LOADING);
+    assert!(!scene_has_loaded(&context));
+
+    context.state = crate::renderer_context::SceneState::Broken;
+    assert!(scene_is_halted(&context) && scene_has_loaded(&context));
 }

@@ -3,14 +3,16 @@ use bevy::prelude::*;
 use common::{
     sets::SceneSets,
     structs::{
-        avatar_tilt_quat, AvatarDynamicState, MoveKind, SceneDrivenAnim,
+        avatar_tilt_quat, AvatarDynamicState, ForeignAvatar, MoveKind, SceneDrivenAnim,
         SceneDrivenAnimationRequest,
     },
     util::QuatNormalizeExt,
 };
 
 use crate::animate::{ActiveEmote, ActiveEmoteSource};
-use comms::global_crdt::{ForeignPlayer, PlayerPositionEvent, PlayerSceneAnimEvent};
+use comms::global_crdt::{
+    process_transport_updates, ForeignPlayer, PlayerPositionEvent, PlayerSceneAnimEvent,
+};
 use dcl_component::{transform_and_parent::DclTransformAndParent, SceneEntityId};
 use scene_runner::{update_world::mesh_collider::SceneColliderData, ContainingScene};
 
@@ -89,6 +91,8 @@ impl Plugin for PlayerMovementPlugin {
                 update_foreign_user_actual_position,
             )
                 .chain()
+                // Apply the rejoin pose before PostLoop visibility can reveal the avatar.
+                .after(process_transport_updates)
                 // the jump take-off clip restarts on the frame `jump_time` is set, so the
                 // animation must see that frame
                 .before(SceneSets::PostLoop),
@@ -246,9 +250,11 @@ struct PlayerTargetPosition {
     // matching emote (DoubleJump / Glide); None resets a previously-applied remote state
     // back to Idle so the picker reclaims.
     remote_move_kind: Option<MoveKind>,
-    /// This target came from a teleport (discontinuous reposition) — snap straight to it rather than
-    /// interpolating across the gap. Cleared by the next ordinary movement packet.
+    /// First placement or a discontinuous target, as reported by the movement debug panel.
     teleport: bool,
+    /// A discontinuity still needs to reach the rendered pose, even if a newer delta arrived
+    /// in the same frame.
+    snap_pending: bool,
 }
 
 /// Pending scene-driven animation for a foreign player, fed by [`PlayerSceneAnimEvent`] (which rides
@@ -276,11 +282,13 @@ struct PendingSceneAnim {
 fn update_foreign_user_target_position(
     mut commands: Commands,
     mut move_events: EventReader<PlayerPositionEvent>,
-    mut players: Query<(
-        &ForeignPlayer,
-        Option<&mut PlayerTargetPosition>,
-        Option<&mut PendingSceneAnim>,
-    )>,
+    mut players: Query<
+        (
+            Option<&mut PlayerTargetPosition>,
+            Option<&mut PendingSceneAnim>,
+        ),
+        With<ForeignAvatar>,
+    >,
 ) {
     for ev in move_events.read() {
         let dcl_transform = DclTransformAndParent {
@@ -292,7 +300,7 @@ fn update_foreign_user_target_position(
 
         let bevy_trans = dcl_transform.to_bevy_transform();
 
-        if let Ok((_player, maybe_pos, maybe_pending)) = players.get_mut(ev.player) {
+        if let Ok((maybe_pos, maybe_pending)) = players.get_mut(ev.player) {
             if let Some(mut pos) = maybe_pos {
                 // The Pulse server tick is monotonic seconds: accept any strictly-newer stamp — a
                 // large forward jump is a legitimate resume (an idle peer whose unchanged state the
@@ -314,9 +322,14 @@ fn update_foreign_user_target_position(
                 if is_valid {
                     const LAG_DECAY_SECS: f32 = 1.5;
                     let delta = (ev.time - pos.time) as f32;
-                    let update_freq = LAG_DECAY_SECS
-                        / ((LAG_DECAY_SECS - delta).max(0.0) / pos.update_freq
-                            + (LAG_DECAY_SECS / delta).min(1.0));
+                    let update_freq = if ev.teleport {
+                        // The gap across a discontinuity does not measure the stream's cadence.
+                        pos.update_freq
+                    } else {
+                        LAG_DECAY_SECS
+                            / ((LAG_DECAY_SECS - delta).max(0.0) / pos.update_freq
+                                + (LAG_DECAY_SECS / delta).min(1.0))
+                    };
                     // Resolve the quantized observation once, here — not per frame in the
                     // interpolator (running the ±box through `v_req = dp/dt` there amplified it into
                     // velocity jerks). Dead-reckon the previous goalpost forward over the inter-packet
@@ -342,6 +355,7 @@ fn update_foreign_user_target_position(
                         grounded: ev.grounded,
                         remote_move_kind: ev.remote_move_kind,
                         teleport: ev.teleport,
+                        snap_pending: ev.teleport || pos.snap_pending,
                     };
                     // Movement trigger: the first packet after an anim arrives arms it; the next one
                     // fires it, in sync with the motion (see `PendingSceneAnim`).
@@ -371,6 +385,7 @@ fn update_foreign_user_target_position(
                         remote_move_kind: ev.remote_move_kind,
                         // First placement: snap from the spawn position rather than travel from it.
                         teleport: true,
+                        snap_pending: true,
                     },
                     AvatarDynamicState::default(),
                     PendingSceneAnim::default(),
@@ -424,6 +439,10 @@ fn update_foreign_scene_anim(
 /// take-off clip once and the falling loop follows. A grounded packet that does not announce a
 /// jump ends the flight and clears it. DoubleJump / Glide select the matching emote; a Jump, or
 /// no state, clears a previously-applied DoubleJump / Glide so the picker reclaims.
+///
+/// An air jump or a glide also sets `jump_time` when no jump is in flight (the avatar walked off
+/// a ledge), because senders count the fall after it, or a glider closed in the air, as a Jump:
+/// that Jump continues the fall instead of starting a take-off.
 fn apply_remote_move_kind(
     dynamic_state: &mut AvatarDynamicState,
     kind: Option<MoveKind>,
@@ -436,7 +455,13 @@ fn apply_remote_move_kind(
                 dynamic_state.jump_time = now;
             }
         }
-        Some(k) => dynamic_state.move_kind = k,
+        Some(k) => {
+            // `k` is DoubleJump or Glide: `remote_move_kind` yields no other kind.
+            if dynamic_state.jump_time <= 0.0 {
+                dynamic_state.jump_time = now;
+            }
+            dynamic_state.move_kind = k;
+        }
         None => {}
     }
     if matches!(kind, None | Some(MoveKind::Jump))
@@ -456,7 +481,7 @@ fn update_foreign_user_actual_position(
     mut commands: Commands,
     mut avatars: Query<(
         Entity,
-        &PlayerTargetPosition,
+        &mut PlayerTargetPosition,
         &mut Transform,
         &mut AvatarDynamicState,
         Option<&mut PendingSceneAnim>,
@@ -465,21 +490,22 @@ fn update_foreign_user_actual_position(
     containing_scene: ContainingScene,
     time: Res<Time>,
 ) {
-    for (foreign_ent, target, mut actual, mut dynamic_state, maybe_pending) in avatars.iter_mut() {
+    for (foreign_ent, mut target, mut actual, mut dynamic_state, maybe_pending) in
+        avatars.iter_mut()
+    {
         debug!(
             "positioning foreign {foreign_ent:?}, target {}, current {}",
             target.translation, actual.translation
         );
 
-        // Snap (no interpolation) for a teleport, or when the target is implausibly far — both are
-        // discontinuous repositions rather than travel.
-        if target.teleport || (actual.translation - target.translation).length() > 125.0 {
+        // A discontinuity places the avatar at the fresh pose for this frame.
+        let turn_time;
+        if target.snap_pending || (actual.translation - target.translation).length() > 125.0 {
+            target.snap_pending = false;
             actual.translation = target.translation;
             dynamic_state.velocity = target.velocity.unwrap_or_default();
-        }
-
-        let turn_time;
-        if let Some(velocity) = target.velocity {
+            turn_time = 0.0;
+        } else if let Some(velocity) = target.velocity {
             let t0 = time.elapsed_secs_f64();
             let t1 = target.time + target.update_freq as f64;
 
@@ -654,6 +680,7 @@ mod tests {
                 grounded: Some(grounded),
                 remote_move_kind: kind,
                 teleport: false,
+                snap_pending: false,
             });
         app.update();
     }
@@ -661,6 +688,55 @@ mod tests {
     fn state(app: &App, avatar: Entity) -> (f64, MoveKind) {
         let d = app.world().get::<AvatarDynamicState>(avatar).unwrap();
         (d.jump_time, d.move_kind)
+    }
+
+    #[test]
+    fn reconnect_snapshot_snaps_even_with_a_delta_in_the_same_frame() {
+        use dcl_component::transform_and_parent::{DclQuat, DclTranslation};
+
+        let (mut app, avatar) = app_with_avatar();
+        app.add_event::<PlayerPositionEvent>().add_systems(
+            Update,
+            update_foreign_user_target_position.before(update_foreign_user_actual_position),
+        );
+        app.world_mut().entity_mut(avatar).insert(ForeignAvatar);
+        receive(&mut app, avatar, None, true);
+
+        // The old target survived because the player remained in a LiveKit room.
+        app.world_mut()
+            .resource_mut::<Time<Virtual>>()
+            .set_max_delta(Duration::from_secs(300));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            144_500,
+        )));
+        app.update();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)));
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        for (timestamp, teleport) in [(144.5, true), (144.6, false)] {
+            app.world_mut().send_event(PlayerPositionEvent {
+                player: avatar,
+                time: now,
+                timestamp,
+                translation: DclTranslation([6.0, 0.0, 0.0]),
+                rotation: DclQuat::default(),
+                velocity: Vec3::X,
+                grounded: Some(true),
+                remote_move_kind: None,
+                teleport,
+                precision: Vec3::ZERO,
+            });
+        }
+        app.update();
+
+        let target = app.world().get::<PlayerTargetPosition>(avatar).unwrap();
+        assert_eq!(target.timestamp, Some(144.6));
+        assert!(
+            (0.09..0.11).contains(&target.update_freq),
+            "expected the pre-reconnect cadence, got {}",
+            target.update_freq
+        );
+        let rendered = app.world().get::<Transform>(avatar).unwrap();
+        assert_eq!(rendered.translation, Vec3::new(6.0, 0.0, 0.0));
     }
 
     #[test]
@@ -708,6 +784,34 @@ mod tests {
         receive(&mut app, avatar, None, true);
         assert_eq!(state(&app, avatar).1, MoveKind::Idle);
         assert!(state(&app, avatar).0 < 0.0);
+    }
+
+    #[test]
+    fn a_jump_after_an_air_jump_or_a_glide_continues_the_fall() {
+        for air_move in [MoveKind::DoubleJump, MoveKind::Glide] {
+            let (mut app, avatar) = app_with_avatar();
+            receive(&mut app, avatar, None, true);
+            // walked off a ledge: in the air with no jump
+            receive(&mut app, avatar, None, false);
+            assert!(state(&app, avatar).0 <= 0.0);
+
+            receive(&mut app, avatar, Some(air_move), false);
+            let (air_start, _) = state(&app, avatar);
+            // the fall after the air jump, or a glider closed in the air
+            for _ in 0..5 {
+                app.update();
+                receive(&mut app, avatar, Some(MoveKind::Jump), false);
+                assert_eq!(state(&app, avatar).0, air_start, "{air_move:?}");
+                assert_ne!(state(&app, avatar).1, air_move);
+            }
+
+            receive(&mut app, avatar, None, true);
+            assert!(state(&app, avatar).0 < 0.0);
+            // a jump from the ground takes off again
+            app.update();
+            receive(&mut app, avatar, Some(MoveKind::Jump), true);
+            assert!(state(&app, avatar).0 > air_start, "{air_move:?}");
+        }
     }
 
     #[test]

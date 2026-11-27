@@ -7,7 +7,8 @@
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found). A content file is stored once it hashes to its name, a profile's
-//! avatar renders included; a `/contents/{hash}` miss is filled the same way, so a file this
+//! avatar renders included (those its metadata names outside `content[]` when a source has
+//! them, as sync stores them); a `/contents/{hash}` miss is filled the same way, so a file this
 //! node lists but lost (or synced before it stored renders) is fetched on its first read.
 //!
 //! [`Fills`] bounds it: one fill per key at a time (a second reader waits on the first), a
@@ -32,8 +33,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError, watch};
 use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
-    BufferSink, ByteBudget, ByteReservation, ContentSource, RemoteDeployment,
-    deploy_entity_streaming, fetch_verified, stream_body,
+    BufferSink, ByteBudget, ByteReservation, ContentSource, DownloadPeers, RemoteDeployment,
+    Requester, deploy_entity_streaming, fetch_verified, stream_body,
 };
 use super::failed_deployments_store::LiveFailedDeploymentsStore;
 use super::queries::{self, EntityDoc};
@@ -407,7 +408,8 @@ impl ReadThrough {
         fills: Fills,
         validation: SyncValidation,
     ) -> Self {
-        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY, validation);
+        let deployer =
+            LiveSyncDeployer::new(pool.clone(), storage.clone(), FLUSH_CONCURRENCY, validation);
         let downloads = Downloads::new(MAX_CONCURRENT_DOWNLOADS, deployer.inflight_bytes().clone());
         Self {
             upstream: Arc::new(Upstream {
@@ -808,7 +810,15 @@ impl Upstream {
         let budget = self.deployer.inflight_bytes().as_ref();
         let mut fetched = Err(SyncError::NoServers);
         for server in &servers {
-            fetched = fetch_verified(&self.client, id, server, 0, Some(budget)).await;
+            fetched = fetch_verified(
+                &self.client,
+                id,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await;
             if fetched.is_ok() {
                 break;
             }
@@ -827,16 +837,18 @@ impl Upstream {
             ContentSource {
                 client: &self.client,
                 storage: self.storage.clone(),
-                servers: &servers,
+                servers: DownloadPeers::fixed(&servers),
                 content_semaphore: self.downloads.files.clone(),
             },
             &self.deployer,
             RemoteDeployment {
                 entity_id: id,
+                entity_type: &entity_type,
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await;
@@ -922,7 +934,16 @@ impl Upstream {
         };
         let budget = self.deployer.inflight_bytes().as_ref();
         for server in self.sources.iter().chain(&self.file_sources) {
-            match fetch_verified(&self.client, hash, server, 0, Some(budget)).await {
+            match fetch_verified(
+                &self.client,
+                hash,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await
+            {
                 Ok((bytes, hold)) => {
                     if let Err(e) = self.storage.store(hash, bytes.into()).await {
                         tracing::warn!(hash, error = %e, "read-through: storing a content file failed");
@@ -934,6 +955,25 @@ impl Upstream {
             }
         }
     }
+}
+
+/// The active entities for `values` (ids, or pointers) through `read_through` when one is
+/// configured, else as this node holds them; without those `denylist` lists, when given.
+pub async fn active_entity_docs(
+    pool: &PgPool,
+    read_through: Option<&ReadThrough>,
+    use_ids: bool,
+    values: &[String],
+    denylist: Option<&Denylist>,
+) -> Result<Vec<EntityDoc>, sqlx::Error> {
+    let mut docs = match read_through {
+        Some(read_through) => read_through.active_docs(use_ids, values).await?,
+        None => local_docs(pool, use_ids, values).await?,
+    };
+    if let Some(denylist) = denylist {
+        queries::retain_non_denylisted(&mut docs, denylist);
+    }
+    Ok(docs)
 }
 
 #[cfg(test)]

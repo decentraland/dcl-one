@@ -115,10 +115,14 @@ pub fn trade_time_checks(trade: &TradeIn, now: i64) -> Vec<Check> {
 pub fn trade_verdict_check(verdict: Option<&(String, i32)>, uses: u64, index_ready: bool) -> Check {
     match verdict {
         Some((status, executions)) if index_ready => match status.as_str() {
-            "open" if (*executions as u64) < uses => {
+            "open" if u64::try_from(*executions).is_ok_and(|e| e < uses) => {
                 Check::pass("chainVerdict", format!("open, {executions} of {uses} uses"))
             }
             "open" => Check::fail("chainVerdict", format!("its {uses} uses are spent")),
+            "unverifiable" => Check::fail(
+                "chainVerdict",
+                "its V3 cancellation digest could not be established, so a cancellation would go unseen",
+            ),
             other => Check::fail("chainVerdict", other.to_string()),
         },
         _ => Check::unknown("chainVerdict", "the trade-events index is not published"),

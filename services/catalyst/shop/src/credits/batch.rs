@@ -10,14 +10,24 @@
 //! our signer holds the role), reserve the charged total under the wallet
 //! lock, sign the contract digest (`digest.rs`), answer the upstream wire.
 //!
-//! Deliberate departures from the pinned handlers (SHOP.md, backend items 3
-//! and 4): a line must name what it buys (a trade, a store item or a NAME);
-//! a bare `usdPriceCents` is refused, since nothing authoritative can be
-//! derived from it; the quote is the server's, a differing `usdPriceCents`
-//! answers 409 `Price changed` instead of being charged; a resale or LAND
-//! line answers 400 with the rule's reason; NAME registration with credits
-//! stays unavailable (503) until an executor that builds the registration on
-//! chain exists (docs/shop/CONTRACTS.md, "NAME credits").
+//! Deliberate departures from the pinned handlers, kept on purpose (#1664):
+//! a line must name what it buys (a trade, a store item or a NAME); a bare
+//! `usdPriceCents` is refused, since nothing authoritative can be derived
+//! from it; the quote is the server's, a differing `usdPriceCents` answers
+//! 409 `Price changed` instead of being charged; a resale or LAND line
+//! answers 400 with the rule's reason; NAME registration with credits stays
+//! unavailable (503) until an executor that builds the registration on chain
+//! exists.
+//!
+//! A request of exactly one line of one unit, on either route, may pay part
+//! of the price with credits (`creditsCents`, whole credits below the quote)
+//! and the rest with the buyer's MANA in the same `useCredits` call. The
+//! price check stays on the whole quote; only the Credits part is reserved,
+//! recorded and settled, and the credit is that part's share of the MANA the
+//! line's sale moves, with no buffer (`policy::partial_credit_cap`), the
+//! bound the guard enforces. A NAME, a bundle, a USD-pegged listing, a
+//! listing not paid in the chain's MANA, a second line or a second unit with
+//! a Credits part answers 400, before anything is reserved or signed.
 
 use std::str::FromStr;
 
@@ -68,9 +78,26 @@ pub struct ValidatedLine {
     pub contract_address: Option<String>,
     pub item_id: Option<String>,
     pub registered_name: Option<String>,
+    /// The Credits part of the line's price (`creditsCents`), whole credits
+    /// below `quoted_cents`; the buyer's MANA pays the rest in the same call.
+    /// `None` pays the whole price with credits.
+    pub credits_cents: Option<i64>,
 }
 
-/// Upstream `validateCreditLine`, message for message.
+/// What refuses a `creditsCents` that is not a whole number of credits inside the price.
+pub const CREDITS_CENTS_RANGE: &str = "\"creditsCents\" must be a positive whole number of credits (10 cents each) below \"usdPriceCents\"";
+/// What refuses a Credits part on a NAME registration.
+pub const CREDITS_CENTS_NAME: &str = "\"creditsCents\" cannot pay part of a NAME registration";
+/// What refuses a Credits part for more than one unit.
+pub const CREDITS_CENTS_QUANTITY: &str = "\"creditsCents\" pays one unit: \"quantity\" must be 1";
+/// What refuses a Credits part beside other lines.
+pub const CREDITS_CENTS_ALONE: &str =
+    "\"creditsCents\" pays part of one line alone: a request with it holds exactly one line";
+/// What refuses a Credits part while this node takes none.
+pub const CREDITS_CENTS_OFF: &str = "this node takes no Credits part (\"creditsCents\"): pay the whole price with Credits or with MANA";
+
+/// Upstream `validateCreditLine`, message for message, then this node's
+/// Credits part (`creditsCents`, with `quantity` 1 at most and no NAME).
 pub fn validate_line(raw: &Value) -> Result<ValidatedLine, String> {
     let quoted = match raw.get("usdPriceCents").and_then(Value::as_i64) {
         Some(c) if c > 0 => c,
@@ -116,6 +143,23 @@ pub fn validate_line(raw: &Value) -> Result<ValidatedLine, String> {
             }
         },
     };
+    let credits_cents = match raw.get("creditsCents").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => match v.as_i64() {
+            Some(c) if c > 0 && c % UsdCents::CENTS_PER_CREDIT == 0 && c < quoted => Some(c),
+            _ => return Err(CREDITS_CENTS_RANGE.to_string()),
+        },
+    };
+    if credits_cents.is_some() {
+        if registered_name.is_some() {
+            return Err(CREDITS_CENTS_NAME.to_string());
+        }
+        if let Some(quantity) = raw.get("quantity").filter(|v| !v.is_null())
+            && quantity.as_i64() != Some(1)
+        {
+            return Err(CREDITS_CENTS_QUANTITY.to_string());
+        }
+    }
     let charged = UsdCents::new(quoted)
         .charge_for_quote()
         .map(UsdCents::get)
@@ -129,6 +173,7 @@ pub fn validate_line(raw: &Value) -> Result<ValidatedLine, String> {
             .map(|s| s.to_ascii_lowercase()),
         item_id: item_id.and_then(Value::as_str).map(str::to_string),
         registered_name,
+        credits_cents,
     })
 }
 
@@ -225,6 +270,10 @@ pub enum AuthorizeError {
     OperationReused,
     /// 403: a trial (`CREDITS_TRIAL_MODE`) whose buyers don't include the signer.
     NotATrialBuyer,
+    /// 400: a Credits part (`creditsCents`) while this node takes none (`State::credits_mana_split`).
+    CreditsPartOff {
+        index: usize,
+    },
     Api(ApiError),
 }
 
@@ -320,6 +369,25 @@ impl AuthorizeError {
                     extra,
                 )
             }
+            Self::CreditsPartOff { index } => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("index".into(), json!(index));
+                extra.insert("code".into(), json!("credits_mana_split_off"));
+                let reason = format!(
+                    "{CREDITS_CENTS_OFF} ({}-{})",
+                    crate::market::features::APP,
+                    crate::market::features::CREDITS_MANA_SPLIT
+                );
+                envelope(
+                    400,
+                    if single {
+                        reason
+                    } else {
+                        format!("items[{index}]: {reason}")
+                    },
+                    extra,
+                )
+            }
             Self::Api(e) => {
                 let status = e.status().as_u16();
                 let message = if status >= 500 {
@@ -362,6 +430,8 @@ pub fn refusal_code(r: &Refusal) -> &'static str {
         Refusal::GroupTooLarge { .. } | Refusal::EmptyGroup => "group_size",
         Refusal::NegativeDebit { .. } => "negative_debit",
         Refusal::CreditValueTooLarge { .. } => "credit_too_large",
+        Refusal::PartialCreditOutOfRange { .. } => "partial_credit_out_of_range",
+        Refusal::PartialCreditUnavailable { .. } => "partial_credit_unavailable",
         Refusal::SettlementNeedAboveReference { .. } => "settlement_need_above_reference",
         Refusal::UnlistedMarketplace { .. } => "unlisted_marketplace",
     }
@@ -719,7 +789,8 @@ pub(super) async fn derive_line(
             AssetKind::Name => "name",
             _ => "other",
         },
-        asset_chain_id: asset.chain_id.0 as i64,
+        asset_chain_id: crate::types::chain_id_column(asset.chain_id.0)
+            .map_err(|e| ApiError::Internal(e.to_string()))?,
         asset_contract: asset.contract.to_string(),
         asset_item_id,
         asset_token_id,
@@ -737,10 +808,16 @@ pub(super) async fn derive_line(
 }
 
 /// The whole flow for `lines` on behalf of `signer` (lowercase, from the
-/// verified auth chain); `single` shapes the messages.
+/// verified auth chain); `single` shapes the messages. `metadata` is the
+/// signed auth-chain metadata, read only for a Credits part (below).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per part of the signed request"
+)]
 pub async fn authorize_group(
     state: &State,
     signer: &str,
+    metadata: Option<&str>,
     lines: &[ValidatedLine],
     source: Option<&str>,
     idempotency_key: &str,
@@ -779,11 +856,38 @@ pub async fn authorize_group(
             message: format!("A checkout may hold at most {MAX_LINES_PER_GROUP} items"),
         });
     }
+    // A Credits part is taken only while its rollout is on: refused here, on
+    // either route, before an operation is recovered (a replay of one issued
+    // while it was on included), anything is read, reserved or signed.
+    if !state.credits_mana_split()
+        && let Some(index) = lines.iter().position(|l| l.credits_cents.is_some())
+    {
+        return Err(AuthorizeError::CreditsPartOff { index });
+    }
+    // A Credits part pays one line of one unit, on either route: refused here,
+    // before an operation is recovered or anything is read or reserved.
+    if lines.len() > 1
+        && let Some(index) = lines.iter().position(|l| l.credits_cents.is_some())
+    {
+        return Err(AuthorizeError::Line {
+            index,
+            message: CREDITS_CENTS_ALONE.to_string(),
+        });
+    }
+    let leg = lines
+        .first()
+        .and_then(|l| l.credits_cents)
+        .map(UsdCents::new);
     let wallet = TreasuryWallet::from_hex(signer_key)
         .map_err(|e| ApiError::Internal(format!("invalid credits signer key: {e}")))?;
     let buyer = EvmAddress::parse(signer)
         .map_err(|_| ApiError::bad_request("Invalid or missing signed-fetch authentication"))?;
-    let chain_id = ChainId(settings.usage.chain_id as u64);
+    let chain_id = ChainId(u64::try_from(settings.usage.chain_id).map_err(|_| {
+        ApiError::Internal(format!(
+            "invalid usage chain id {}",
+            settings.usage.chain_id
+        ))
+    })?);
     let manager = EvmAddress::parse(contract).map_err(|_| {
         ApiError::Internal("CREDITS_MANAGER_CONTRACT is not an address".to_string())
     })?;
@@ -836,7 +940,15 @@ pub async fn authorize_group(
             "oracle rate {mana_usd:?} is not a positive decimal"
         ))
     })?;
-    let session = Session::Web3 { wallet: buyer };
+    // A Credits part is judged on the session the quote that offered it was:
+    // the signed metadata's (`mana::quote::session_of`), so only a signed web3
+    // wallet may pay the rest in MANA and a web2 or unstated session is refused
+    // by the rule. A whole-price credit keeps the signed address as its
+    // session, as before, so clients that send no metadata keep working.
+    let session = match leg {
+        Some(_) => crate::mana::quote::session_of(Some(signer), metadata),
+        None => Session::Web3 { wallet: buyer },
+    };
 
     let mut derived = Vec::with_capacity(lines.len());
     for (index, v) in lines.iter().enumerate() {
@@ -862,6 +974,18 @@ pub async fn authorize_group(
         charged_total = charged_total
             .checked_add(d.charged)
             .ok_or_else(|| ApiError::bad_request("the group total overflows"))?;
+    }
+    // The whole quote is what the price check above compared and what the
+    // credit is sized from (the authorization's `quoted_cents`); a Credits
+    // part is what is reserved, charged, echoed and settled. Its line records
+    // the part as quoted and charged: whole credits, so the line keeps
+    // `charged_cents >= quoted_cents` and the lines still sum to the charge.
+    if let Some(leg) = leg {
+        charged_total = leg;
+        for d in &mut derived {
+            d.record.quoted_cents = leg.get();
+            d.record.charged_cents = leg.get();
+        }
     }
     let mut sizing = CreditSizing::new(
         rate,
@@ -900,6 +1024,7 @@ pub async fn authorize_group(
                 chain_id,
                 value,
                 sizing,
+                leg,
             },
         )
     };
@@ -975,7 +1100,11 @@ pub async fn authorize_group(
         tracing::info!(marketplace = %venue.contract.address(), aggregator = %reading.aggregator, block = reading.block, updated_at = reading.updated_at_s, rate = %reading.rate.rate(), "sizing a USD-pegged credit group at its marketplace's feed");
         sizing = sizing.with_settlement_rate(reading.rate);
     }
-    let value = policy::credit_cap(&authoritative, &sizing).map_err(|refusal| match refusal {
+    let sized = match leg {
+        Some(leg) => policy::partial_credit_cap(&authoritative, &sizing, leg),
+        None => policy::credit_cap(&authoritative, &sizing),
+    };
+    let value = sized.map_err(|refusal| match refusal {
         Refusal::SettlementNeedAboveReference { need, reference } => {
             tracing::warn!(need = %need, reference = %reference, "a USD-pegged credit group needs more at its marketplace's feed than its quote allows");
             AuthorizeError::Unavailable {
@@ -988,8 +1117,9 @@ pub async fn authorize_group(
         }
         refusal => policy_refusal(refusal),
     })?;
-    // Defense in depth: the guard recomputes the same `credit_cap` from the
-    // same inputs, so it only fails if the sizing above stops using it.
+    // Defense in depth: the guard recomputes the same cap (the whole price's,
+    // or a Credits part's share of the line's MANA) from the same inputs, so
+    // it only fails if the sizing above stops using it.
     guard(value, sizing).map_err(policy_refusal)?;
     let recorded_rate = sizing.recorded_rate();
 
@@ -998,8 +1128,13 @@ pub async fn authorize_group(
     );
     let salt_hex = bytes32_hex(salt);
     let now = chrono::Utc::now();
-    let expires_at_s = now.timestamp() as u64 + settings.credit_ttl_seconds;
-    let expires_at = chrono::DateTime::from_timestamp(expires_at_s as i64, 0)
+    let expires_at_s = u64::try_from(now.timestamp())
+        .ok()
+        .and_then(|t| t.checked_add(settings.credit_ttl_seconds))
+        .ok_or_else(|| ApiError::Internal("expiry out of range".into()))?;
+    let expires_at = i64::try_from(expires_at_s)
+        .ok()
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
         .ok_or_else(|| ApiError::Internal("expiry out of range".into()))?
         .naive_utc();
     let identity = CreditIdentity {
@@ -1015,14 +1150,15 @@ pub async fn authorize_group(
     let group = NewGroup {
         id: &salt_hex,
         address: signer,
-        chain_id: chain_id.0 as i64,
+        chain_id: crate::types::chain_id_column(chain_id.0)
+            .map_err(|e| ApiError::Internal(e.to_string()))?,
         contract: &manager.to_string(),
         credit_hash: &credit_hash,
         quoted_cents: quoted_total.get(),
         charged_cents: charged_total.get(),
         amount_wei: &value.get().to_string(),
         oracle_rate: &recorded_rate.rate().to_string(),
-        oracle_decimals: recorded_rate.decimals() as i16,
+        oracle_decimals: i16::from(recorded_rate.decimals()),
         source,
         expires_at,
         lines: &records,
@@ -1109,10 +1245,17 @@ async fn replayed(
         .ok_or_else(|| ApiError::Internal("a replayed authorization has no value".into()))?;
     let identity = CreditIdentity {
         sender: buyer.address(),
-        chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
+        chain_id: match row.chain_id {
+            Some(c) => u64::try_from(c).map_err(|_| {
+                ApiError::Internal(format!("a replayed authorization has chain id {c}"))
+            })?,
+            None => chain_id.0,
+        },
         manager: stored_manager,
         value,
-        expires_at: row.expires_at.and_utc().timestamp() as u64,
+        expires_at: u64::try_from(row.expires_at.and_utc().timestamp()).map_err(|_| {
+            ApiError::Internal("a replayed authorization expires before 1970".into())
+        })?,
         salt: B256::from_str(&row.id).map_err(|_| {
             ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
         })?,
@@ -1147,7 +1290,8 @@ fn credit_out(
             id: bytes32_hex(identity.salt),
             amount: amount.clone(),
             available_amount: amount.clone(),
-            expires_at: identity.expires_at as i64,
+            expires_at: i64::try_from(identity.expires_at)
+                .map_err(|_| ApiError::Internal("credit expiry is past i64".into()))?,
             signature,
             contract: format!("{:#x}", identity.manager),
         },
@@ -1280,6 +1424,64 @@ mod tests {
         assert_eq!(
             parse_source(Some(&json!("client"))).unwrap(),
             Some("client")
+        );
+    }
+
+    #[test]
+    fn a_credits_part_is_whole_credits_inside_the_price_of_one_unit() {
+        let item = |extra: Value| {
+            let mut body = json!({ "usdPriceCents": 200, "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc", "itemId": "12" });
+            for (k, v) in extra.as_object().unwrap() {
+                body[k] = v.clone();
+            }
+            validate_line(&body)
+        };
+        let ok = item(json!({ "creditsCents": 120 })).unwrap();
+        assert_eq!(
+            (ok.quoted_cents, ok.charged_cents, ok.credits_cents),
+            (200, 200, Some(120))
+        );
+        assert_eq!(item(json!({})).unwrap().credits_cents, None);
+        assert_eq!(
+            item(json!({ "creditsCents": null })).unwrap().credits_cents,
+            None
+        );
+        assert_eq!(
+            item(json!({ "creditsCents": 120, "quantity": 1 }))
+                .unwrap()
+                .credits_cents,
+            Some(120)
+        );
+        for leg in [
+            json!(0),
+            json!(-10),
+            json!(125),
+            json!(200),
+            json!(210),
+            json!(12.5),
+            json!("120"),
+        ] {
+            assert_eq!(
+                item(json!({ "creditsCents": leg })).unwrap_err(),
+                CREDITS_CENTS_RANGE,
+                "{leg}"
+            );
+        }
+        for quantity in [json!(2), json!(0), json!("1")] {
+            assert_eq!(
+                item(json!({ "creditsCents": 120, "quantity": quantity })).unwrap_err(),
+                CREDITS_CENTS_QUANTITY,
+                "{quantity}"
+            );
+        }
+        assert!(
+            item(json!({ "quantity": 2 })).is_ok(),
+            "a whole-price line keeps ignoring a quantity"
+        );
+        assert_eq!(
+            validate_line(&json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }))
+                .unwrap_err(),
+            CREDITS_CENTS_NAME
         );
     }
 

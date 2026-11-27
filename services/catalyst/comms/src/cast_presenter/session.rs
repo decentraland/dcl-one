@@ -12,12 +12,26 @@
 //!
 //! Every bot this node runs holds a slot of `MAX_CONCURRENT_PRESENTATIONS`:
 //! a session, a creation in progress, or the JSON path's credential check
-//! and download. A room holds as many as there are slots, each with a bot
-//! token of its own: LiveKit gives a second bot of a token the place of the
-//! first, so a token that holds a slot answers 409 until its presentation
-//! stops. A creation runs in its own task, so a client that goes away
-//! mid-request leaves either a running session or nothing. Multipart uploads
-//! being read hold an upload permit, as many as there are slots.
+//! and download. A room runs one presentation (upstream keeps both): a new
+//! bot token of the room's active Cast credential takes the slot of the
+//! room's session, which stops at once. Until its bot has shut down, that
+//! session still counts against the limit as retiring: the new bot connects
+//! while the replaced one shuts down, so a handover runs one bot beyond the
+//! limit, and repeated shares are refused (429) until the replaced bots are
+//! gone. A token of a revoked or rotated credential replaces nothing: on a
+//! full node it is refused (429), otherwise its creation fails (401) when the
+//! room has a presentation as it is admitted. The new bot publishes its track
+//! only once every session of the room that left before has announced its
+//! stop (`stopping`), whichever request replaced or stopped it. Two creations of one
+//! room in flight together both run; the one admitted last stops the other,
+//! after checking its credential again. A session sends nothing once its stop
+//! has begun ([`Session::ended`]), so a session replaced while it is created
+//! never names itself after its successor. LiveKit gives a second bot of a token the
+//! place of the first, so a token that holds a slot answers 409 until its
+//! presentation stops, and stops nothing.
+//! A creation runs in its own task, so a client that goes away mid-request
+//! leaves either a running session or nothing. Multipart uploads being read
+//! hold an upload permit, as many as there are slots.
 //!
 //! A bot that ends without leaving (its process killed) says nothing, and
 //! LiveKit keeps its participant and last slide for about 20 s: the node
@@ -38,9 +52,10 @@
 //! names the current one. A state names a slide only when its picture is
 //! kept; without one it has no composition field.
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
@@ -256,6 +271,12 @@ struct Session {
     room: watch::Receiver<RoomState>,
     /// When the reaper last saw a participant.
     last_active: Mutex<Instant>,
+    /// Set by the stop before it announces `presentation:stopped`; a state
+    /// is published under this lock only while it is unset, so none follows
+    /// the stop.
+    ended: tokio::sync::Mutex<bool>,
+    /// `true` once its `presentation:stopped` went out (or its bot was evicted).
+    announced: watch::Sender<bool>,
 }
 
 /// The sessions of this node.
@@ -269,6 +290,12 @@ pub struct Presenter {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// Slots held by creations and credential checks.
     in_flight: AtomicUsize,
+    /// Slots held by replaced sessions whose bots are still shutting down.
+    retiring: AtomicUsize,
+    /// By room, the sessions out of the map whose `presentation:stopped` has
+    /// not gone out yet: a new presentation of the room publishes its track
+    /// and its state only after them.
+    stopping: Mutex<HashMap<String, Vec<watch::Receiver<bool>>>>,
     /// The bot identities that hold a slot: a session, a creation or a
     /// credential check.
     seats: Mutex<HashSet<String>>,
@@ -290,11 +317,26 @@ pub struct Slot {
 
 impl Slot {
     /// The session takes the slot: in the map and out of `in_flight` at once.
-    fn admit(mut self, session: Arc<Session>) {
-        let mut sessions = self.presenter.sessions.lock().unwrap();
+    /// The room's other sessions, admitted while it was created, leave the
+    /// map with it as retiring; the caller stops them.
+    fn admit(mut self, session: Arc<Session>) -> Vec<Arc<Session>> {
+        let presenter = self.presenter.clone();
+        let mut sessions = presenter.sessions.lock();
+        let replaced = presenter.take_room(&mut sessions, &self.seat.room);
         sessions.insert(session.id.clone(), session);
-        self.presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
+        presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
         self.held = false;
+        replaced
+    }
+}
+
+/// A replaced session's retiring slot, released on drop: after its bot shut
+/// down, or when its stop is cancelled.
+struct Retiring(Arc<Presenter>);
+
+impl Drop for Retiring {
+    fn drop(&mut self) {
+        self.0.retiring.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -302,11 +344,7 @@ impl Drop for Slot {
     fn drop(&mut self) {
         if self.held {
             self.presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
-            self.presenter
-                .seats
-                .lock()
-                .unwrap()
-                .remove(&self.seat.identity);
+            self.presenter.seats.lock().remove(&self.seat.identity);
         }
     }
 }
@@ -319,7 +357,7 @@ struct SeatRelease<'a> {
 
 impl Drop for SeatRelease<'_> {
     fn drop(&mut self) {
-        self.seats.lock().unwrap().remove(self.identity);
+        self.seats.lock().remove(self.identity);
     }
 }
 
@@ -437,6 +475,8 @@ impl Presenter {
             max_concurrent,
             sessions: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
+            retiring: AtomicUsize::new(0),
+            stopping: Mutex::default(),
             seats: Mutex::default(),
             room_service: OnceLock::new(),
             uploads: max_concurrent.map(|max| Arc::new(Semaphore::new(max))),
@@ -481,12 +521,12 @@ impl Presenter {
     }
 
     pub fn active_sessions(&self) -> usize {
-        self.sessions.lock().unwrap().len()
+        self.sessions.lock().len()
     }
 
     /// Whether every slot is taken now (a hint: [`Self::create`] decides).
     pub fn at_capacity(&self) -> bool {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock();
         self.full(sessions.len())
     }
 
@@ -495,9 +535,81 @@ impl Presenter {
         CreateError::MaxConcurrent(self.max_concurrent.unwrap_or(0))
     }
 
+    /// Whether `sessions`, the creations and the retiring sessions take every slot.
     fn full(&self, sessions: usize) -> bool {
-        self.max_concurrent
-            .is_some_and(|max| sessions + self.in_flight.load(Ordering::SeqCst) >= max)
+        self.max_concurrent.is_some_and(|max| {
+            sessions + self.in_flight.load(Ordering::SeqCst) + self.retiring.load(Ordering::SeqCst)
+                >= max
+        })
+    }
+
+    /// The sessions of `room`, out of the map and counted as retiring until
+    /// [`Self::retire`] has stopped them.
+    fn take_room(
+        &self,
+        sessions: &mut HashMap<String, Arc<Session>>,
+        room: &str,
+    ) -> Vec<Arc<Session>> {
+        let ids: Vec<String> = sessions
+            .values()
+            .filter(|session| session.seat.room == room)
+            .map(|session| session.id.clone())
+            .collect();
+        let taken: Vec<_> = ids.iter().filter_map(|id| sessions.remove(id)).collect();
+        self.retiring.fetch_add(taken.len(), Ordering::SeqCst);
+        for session in &taken {
+            self.stopping_now(session);
+        }
+        taken
+    }
+
+    /// `session`, just out of the map, stops: later presentations of its room
+    /// wait for its `presentation:stopped`. Called under the sessions lock.
+    fn stopping_now(&self, session: &Session) {
+        let mut stopping = self.stopping.lock();
+        let room = stopping.entry(session.seat.room.clone()).or_default();
+        room.push(session.announced.subscribe());
+    }
+
+    /// Waits until every session of `room` that has left the map so far has
+    /// announced its stop, whichever request replaced or stopped it.
+    async fn earlier_stops(&self, room: &str) {
+        let pending = self.stopping.lock().get(room).cloned().unwrap_or_default();
+        for mut stop in pending {
+            // A stop whose task ended without announcing (cancelled) is done.
+            let _ = stop.wait_for(|announced| *announced).await;
+        }
+    }
+
+    /// Forgets the announced stops of `room`.
+    fn prune_stops(&self, room: &str) {
+        let mut stopping = self.stopping.lock();
+        if let Some(pending) = stopping.get_mut(room) {
+            pending.retain(|stop| !*stop.borrow() && stop.has_changed().is_ok());
+            if pending.is_empty() {
+                stopping.remove(room);
+            }
+        }
+    }
+
+    fn has_room_sessions(&self, room: &str) -> bool {
+        let sessions = self.sessions.lock();
+        sessions.values().any(|session| session.seat.room == room)
+    }
+
+    /// Whether the bot of `seat` holds its room's active Cast credential, as
+    /// the gatekeeper says; no when it cannot say.
+    async fn holds_credential(&self, seat: &Seat) -> bool {
+        let Some(rooms) = self.room_service.get() else {
+            return false;
+        };
+        match rooms.holds_credential(&seat.room, &seat.identity).await {
+            Ok(holds) => holds,
+            Err(e) => {
+                tracing::warn!(room = %seat.room, "Cast credential not checked: {e}");
+                false
+            }
+        }
     }
 
     /// A permit to read a multipart upload, or 429 when as many uploads as
@@ -525,21 +637,50 @@ impl Presenter {
 
     /// The slot of the bot `token` names: 401 for a token that is no bot
     /// token, 429 when every slot is taken, 409 when that bot holds one.
-    pub fn reserve(self: &Arc<Self>, token: &str) -> Result<Slot, CreateError> {
+    /// When the bot holds its room's active Cast credential, the room's
+    /// running session gives up its slot: it stops, whether or not the new
+    /// one starts. A bot of a revoked credential replaces nothing.
+    pub async fn reserve(self: &Arc<Self>, token: &str) -> Result<Slot, CreateError> {
         let seat = self.verify_token(token)?;
-        let sessions = self.sessions.lock().unwrap();
-        if self.full(sessions.len()) {
-            return Err(self.capacity_error());
-        }
-        if !self.seats.lock().unwrap().insert(seat.identity.clone()) {
-            return Err(CreateError::TokenInUse);
-        }
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
+        let replaces = self.has_room_sessions(&seat.room) && self.holds_credential(&seat).await;
+        let replaced = {
+            let mut sessions = self.sessions.lock();
+            let in_room = sessions
+                .values()
+                .filter(|session| replaces && session.seat.room == seat.room)
+                .count();
+            if self.full(sessions.len() - in_room) {
+                return Err(self.capacity_error());
+            }
+            if !self.seats.lock().insert(seat.identity.clone()) {
+                return Err(CreateError::TokenInUse);
+            }
+            self.in_flight.fetch_add(1, Ordering::SeqCst);
+            if replaces {
+                self.take_room(&mut sessions, &seat.room)
+            } else {
+                Vec::new()
+            }
+        };
+        self.retire(replaced);
         Ok(Slot {
             presenter: self.clone(),
             held: true,
             seat,
         })
+    }
+
+    /// Stops sessions [`Self::take_room`] took, each in its own task: a new
+    /// presentation of their room replaced them.
+    fn retire(self: &Arc<Self>, replaced: Vec<Arc<Session>>) {
+        for session in replaced {
+            tracing::info!(presentation = %session.id, room = %session.seat.room, "replaced by a new presentation of its room");
+            let retiring = Retiring(self.clone());
+            crate::shared::task::spawn(async move {
+                retiring.0.finish_stop(&session).await;
+                drop(retiring);
+            });
+        }
     }
 
     /// The JSON path's pre-flight, under the caller's slot: the token
@@ -572,7 +713,7 @@ impl Presenter {
         file_name: &str,
         presenter_identity: Option<String>,
     ) -> Result<PresentationInfo, CreateError> {
-        let slot = self.reserve(livekit_token)?;
+        let slot = self.reserve(livekit_token).await?;
         self.create_reserved(slot, file, livekit_token, file_name, presenter_identity)
             .await
     }
@@ -615,6 +756,9 @@ impl Presenter {
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
         let bot = connected.link.clone();
+        // The room's stopping presentations end first, so clients see them
+        // end before this one's track appears.
+        self.earlier_stops(&slot.seat.room).await;
         let started = self.start(&id, &slot.seat, connected.room, file, file_name, &bot);
         let session = match started.await {
             Ok(session) => session,
@@ -625,10 +769,26 @@ impl Presenter {
             }
         };
         session.state.lock().await.presenter_identity = presenter_identity;
-        slot.admit(session.clone());
+        // A session of the room admitted meanwhile is replaced only by a bot
+        // whose credential is still the room's active one.
+        if self.has_room_sessions(&slot.seat.room) && !self.holds_credential(&slot.seat).await {
+            bot.shutdown().await;
+            self.evict(&slot.seat, None).await;
+            return Err(CreateError::InvalidCredentials(
+                "the Cast credential is no longer active".into(),
+            ));
+        }
+        let room = slot.seat.room.clone();
+        let replaced = slot.admit(session.clone());
+        self.retire(replaced);
+        self.earlier_stops(&room).await;
         tracing::info!(presentation = %id, slides = session.slide_count, "presentation created");
         session.broadcast_state().await;
-        crate::shared::task::spawn(self.clone().run(session.clone(), connected.data));
+        // Replaced by a newer presentation of its room while it waited: its
+        // stop owns the bot, and it sent no state.
+        if self.is_live(&id) {
+            crate::shared::task::spawn(self.clone().run(session.clone(), connected.data));
+        }
         Ok(PresentationInfo {
             id,
             file_name: session.file_name.clone(),
@@ -692,6 +852,8 @@ impl Presenter {
             }),
             room,
             last_active: Mutex::new(Instant::now()),
+            ended: tokio::sync::Mutex::new(false),
+            announced: watch::Sender::new(false),
         }))
     }
 
@@ -771,12 +933,12 @@ impl Presenter {
     }
 
     fn is_live(&self, id: &str) -> bool {
-        self.sessions.lock().unwrap().contains_key(id)
+        self.sessions.lock().contains_key(id)
     }
 
     /// The PNG of a slide a live session keeps, by its hash.
     pub async fn slide_picture(&self, id: &str, hash: &str) -> Option<bytes::Bytes> {
-        let session = self.sessions.lock().unwrap().get(id).cloned()?;
+        let session = self.sessions.lock().get(id).cloned()?;
         let state = session.state.lock().await;
         let (_, png) = state.pictures.iter().find(|(kept, _)| kept == hash)?;
         Some(png.clone())
@@ -789,20 +951,38 @@ impl Presenter {
     /// retry with the same token gets a bot this cleanup no longer touches,
     /// as the eviction removes the participant by that token's identity.
     pub async fn stop(&self, id: &str) {
-        let Some(session) = self.sessions.lock().unwrap().remove(id) else {
-            return;
+        let session = {
+            let mut sessions = self.sessions.lock();
+            let Some(session) = sessions.remove(id) else {
+                return;
+            };
+            self.stopping_now(&session);
+            session
         };
+        self.finish_stop(&session).await;
+    }
+
+    /// [`Self::stop`] for a session already out of the map, which
+    /// [`Self::stopping_now`] registered.
+    async fn finish_stop(&self, session: &Session) {
+        let id = &session.id;
         // Released on drop, so a cancelled stop never keeps the token.
         let _seat = SeatRelease {
             seats: &self.seats,
             identity: &session.seat.identity,
         };
-        let scene_id = session.state.lock().await.scene_id.clone();
-        let packet = wire::encode_packet(&wire::stopped_message(id), &scene_id);
-        if let Err(e) = session.bot.publish_data(packet.clone()).await {
-            tracing::warn!(presentation = %id, "stop broadcast failed: {e}");
-            self.evict(&session.seat, Some(&packet)).await;
+        {
+            let mut ended = session.ended.lock().await;
+            *ended = true;
+            let scene_id = session.state.lock().await.scene_id.clone();
+            let packet = wire::encode_packet(&wire::stopped_message(id), &scene_id);
+            if let Err(e) = session.bot.publish_data(packet.clone()).await {
+                tracing::warn!(presentation = %id, "stop broadcast failed: {e}");
+                self.evict(&session.seat, Some(&packet)).await;
+            }
         }
+        session.announced.send_replace(true);
+        self.prune_stops(&session.seat.room);
         session.bot.shutdown().await;
         tracing::info!(presentation = %id, "presentation stopped");
     }
@@ -810,10 +990,10 @@ impl Presenter {
     /// One reaper pass at `now`: a session with participants is active; one
     /// without any for [`IDLE_TIMEOUT`] stops.
     pub async fn reap_idle(&self, now: Instant) {
-        let sessions: Vec<Arc<Session>> = self.sessions.lock().unwrap().values().cloned().collect();
+        let sessions: Vec<Arc<Session>> = self.sessions.lock().values().cloned().collect();
         for session in sessions {
             let idle = {
-                let mut last_active = session.last_active.lock().unwrap();
+                let mut last_active = session.last_active.lock();
                 if session.room.borrow().participants > 0 {
                     *last_active = now;
                     false
@@ -873,7 +1053,12 @@ impl Session {
     }
 
     /// `presentation:state` to the room, then the same state in the bot's metadata.
+    /// Nothing once the session's stop has begun.
     async fn broadcast_state(&self) {
+        let ended = self.ended.lock().await;
+        if *ended {
+            return;
+        }
         let (snapshot, scene_id) = {
             let state = self.state.lock().await;
             (self.snapshot(&state), state.scene_id.clone())
@@ -886,6 +1071,7 @@ impl Session {
         if let Err(e) = self.bot.update_metadata(metadata).await {
             tracing::warn!(presentation = %self.id, "metadata update failed: {e}");
         }
+        drop(ended);
     }
 
     /// The command in a packet, when its sender is a presenter. Only a

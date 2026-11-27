@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { galleryHref, generatedHref, parseRoute, parseWidth, widthPresets } from '../src/url'
+import {
+  canvasHref,
+  galleryHref,
+  generatedHref,
+  pageAliases,
+  parseRoute,
+  parseWidth,
+  widthPresets
+} from '../src/url'
 
 const components = ['Button', 'NavBar']
 const foundations = ['colors', 'icons']
@@ -84,6 +92,113 @@ describe('when an export shown on another page is requested by its own name', ()
         width: 'fill',
         missing: unknown
       })
+  })
+})
+
+describe('when the components Showcase is one of the pages', () => {
+  const withShowcase = [...components, 'Showcase']
+
+  it('should open it by name at the requested width, in the components canvas', () => {
+    expect(parseRoute('?component=Showcase&width=375', withShowcase, foundations)).toEqual({
+      source: 'runtime',
+      view: 'component',
+      name: 'Showcase',
+      width: 375
+    })
+    expect(canvasHref('component', 'Showcase')).toBe('frame.html?component=Showcase')
+    expect(galleryHref({ component: 'Showcase', width: 1280 })).toBe(
+      '?component=Showcase&width=1280'
+    )
+  })
+
+  it('should keep opening the first component page for a bare or unknown link', () => {
+    expect(parseRoute('', withShowcase, foundations)).toMatchObject({ name: components[0] })
+    expect(parseRoute('?component=Nope', withShowcase, foundations)).toMatchObject({
+      name: components[0],
+      missing: 'Nope'
+    })
+  })
+
+  it('should keep every earlier link opening the page it opened', () => {
+    for (const name of components)
+      expect(parseRoute(`?component=${name}`, withShowcase, foundations)).toEqual(
+        parseRoute(`?component=${name}`, components, foundations)
+      )
+    expect(
+      parseRoute('?hud=Showcase', withShowcase, foundations, {}, { pages: ['Showcase'] })
+    ).toMatchObject({ view: 'hud', name: 'Showcase' })
+    expect(parseRoute('?source=generated&component=Showcase', withShowcase, foundations)).toEqual({
+      source: 'generated',
+      query: 'component=Showcase'
+    })
+  })
+
+  it('should prefer the page over an export that another page shows under the same name', () => {
+    expect(
+      parseRoute('?component=Showcase', withShowcase, foundations, { Showcase: 'Button' })
+    ).toMatchObject({ name: 'Showcase' })
+    expect(
+      parseRoute('?component=Showcase', components, foundations, { Showcase: 'Button' })
+    ).toMatchObject({ name: 'Button', alias: 'Showcase' })
+  })
+})
+
+describe('when a section of the HUD Showcase is requested', () => {
+  const hud = { pages: ['Showcase', 'Button', 'MenuPanel'], aliases: { MenuRow: 'MenuPanel' } }
+
+  it('should open the section at the requested width, in the HUD document', () => {
+    expect(parseRoute('?hud=MenuPanel&width=1280', components, foundations, {}, hud)).toEqual({
+      source: 'runtime',
+      view: 'hud',
+      name: 'MenuPanel',
+      width: 1280
+    })
+    expect(canvasHref('hud', 'MenuPanel')).toBe('hud.html?hud=MenuPanel')
+    expect(canvasHref('component', 'Button')).toBe('frame.html?component=Button')
+  })
+
+  it('should keep a HUD section apart from the runtime page of the same name', () => {
+    expect(parseRoute('?hud=Button', components, foundations, {}, hud)).toMatchObject({
+      view: 'hud',
+      name: 'Button'
+    })
+    expect(parseRoute('?component=Button', components, foundations, {}, hud)).toMatchObject({
+      view: 'component',
+      name: 'Button'
+    })
+  })
+
+  it('should open a component on the section that renders it', () => {
+    expect(parseRoute('?hud=MenuRow&width=375', components, foundations, {}, hud)).toEqual({
+      source: 'runtime',
+      view: 'hud',
+      name: 'MenuPanel',
+      width: 375,
+      alias: 'MenuRow'
+    })
+  })
+
+  it('should show the Showcase and name an unknown, empty or inherited section', () => {
+    for (const unknown of ['Nope', '', 'constructor'])
+      expect(parseRoute(`?hud=${unknown}`, components, foundations, {}, hud)).toEqual({
+        source: 'runtime',
+        view: 'hud',
+        name: 'Showcase',
+        width: 'fill',
+        missing: unknown
+      })
+  })
+})
+
+describe('when pages show exports named after other pages', () => {
+  it('should open each export on the first page that lists it, and never a page on another', () => {
+    expect(
+      pageAliases([
+        { name: 'MenuPanel', components: ['MenuPanel', 'MenuRow', 'Icon'] },
+        { name: 'IconButton', components: ['IconButton', 'Icon', 'MenuPanel'] }
+      ])
+    ).toEqual({ MenuRow: 'MenuPanel', Icon: 'MenuPanel' })
+    expect(pageAliases([])).toEqual({})
   })
 })
 

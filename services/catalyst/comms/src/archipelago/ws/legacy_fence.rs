@@ -95,7 +95,7 @@ impl LegacyFence {
                 ),
                 stamp,
                 token_fence: token_fence.clone(),
-                permit,
+                permit: Box::new(permit),
             },
             Some(link),
         )

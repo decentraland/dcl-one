@@ -1,5 +1,5 @@
 //! The broker reconciler: a `jobs::spawn_periodic` pass over the unsettled
-//! rows of the three ledgers (the partial indexes' predicates, `id` order,
+//! rows of the three ledgers (bounded, durable sweeps in `id` order,
 //! `LIMIT 100`, older than two minutes as of the pass clock) that reads
 //! their receipts and moves them to the status the receipt implies.
 
@@ -47,21 +47,57 @@ fn due_before(pass_clock: NaiveDateTime) -> NaiveDateTime {
     pass_clock - chrono::Duration::seconds(SETTLE_GRACE_SECS)
 }
 
+// Only these local ledgers can reach the SQL identifiers below.
+async fn receipt_batch(
+    pool: &sqlx::PgPool,
+    ledger: &'static str,
+    chain: i64,
+    pass_clock: NaiveDateTime,
+) -> sqlx::Result<Vec<sqlx::postgres::PgRow>> {
+    let (columns, predicate) = match ledger {
+        "broker_purchases" => (
+            "id, idempotency_key, status, mode, tx_hash, forward_tx_hash",
+            "status IN ('sent', 'forwarding')",
+        ),
+        "name_transfers" => ("id, idempotency_key, tx_hash", "status = 'sent'"),
+        "escrow_actions" => ("id, tx_hash", "status = 'sent' AND tx_hash IS NOT NULL"),
+        _ => unreachable!("receipt ledger is a local constant"),
+    };
+    let mut sweep = crate::worker_progress::Sweep::begin(pool, ledger, chain).await?;
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        if sweep.position >= sweep.ceiling {
+            sweep.position = 0;
+            sweep.ceiling = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COALESCE(max(id), 0) FROM shop.{ledger} WHERE {predicate} AND chain_id = $1 AND updated_at < $2"
+            ))).bind(chain).bind(due_before(pass_clock)).fetch_one(&mut *sweep.tx).await?;
+        }
+        rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {columns} FROM shop.{ledger} WHERE {predicate} AND chain_id = $1 AND updated_at < $2 AND id > $3 AND id <= $4 ORDER BY id LIMIT $5"
+        ))).bind(chain).bind(due_before(pass_clock)).bind(sweep.position).bind(sweep.ceiling).bind(DUE_BATCH)
+            .fetch_all(&mut *sweep.tx).await?;
+        if let Some(last) = rows.last() {
+            sweep.position = last.get("id");
+            break;
+        }
+        // Completed/deleted rows can exhaust a cohort before its ceiling.
+        sweep.position = sweep.ceiling;
+    }
+    sweep.commit().await?;
+    Ok(rows)
+}
+
 pub async fn reconcile_once(
     state: &State,
     signer: &DirectSigner,
     pass_clock: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT idempotency_key, status, mode, tx_hash, forward_tx_hash \
-         FROM shop.broker_purchases \
-         WHERE status IN ('sent', 'forwarding') AND chain_id = $1 AND updated_at < $2 \
-         ORDER BY id LIMIT $3",
+    let rows = receipt_batch(
+        &state.pool,
+        "broker_purchases",
+        crate::types::chain_id_column(signer.chain_id())?,
+        pass_clock,
     )
-    .bind(signer.chain_id() as i64)
-    .bind(due_before(pass_clock))
-    .bind(DUE_BATCH)
-    .fetch_all(&state.pool)
     .await?;
 
     let mut advanced = 0u64;
@@ -109,15 +145,12 @@ pub async fn reconcile_name_transfers_once(
     signer: &DirectSigner,
     pass_clock: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT idempotency_key, tx_hash FROM shop.name_transfers \
-         WHERE status = 'sent' AND chain_id = $1 AND updated_at < $2 \
-         ORDER BY id LIMIT $3",
+    let rows = receipt_batch(
+        &state.pool,
+        "name_transfers",
+        crate::types::chain_id_column(signer.chain_id())?,
+        pass_clock,
     )
-    .bind(signer.chain_id() as i64)
-    .bind(due_before(pass_clock))
-    .bind(DUE_BATCH)
-    .fetch_all(&state.pool)
     .await?;
 
     let mut advanced = 0u64;
@@ -156,15 +189,12 @@ pub async fn reconcile_escrow_actions_once(
     signer: &DirectSigner,
     pass_clock: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT id, tx_hash FROM shop.escrow_actions \
-         WHERE status = 'sent' AND tx_hash IS NOT NULL AND chain_id = $1 AND updated_at < $2 \
-         ORDER BY id LIMIT $3",
+    let rows = receipt_batch(
+        &state.pool,
+        "escrow_actions",
+        crate::types::chain_id_column(signer.chain_id())?,
+        pass_clock,
     )
-    .bind(signer.chain_id() as i64)
-    .bind(due_before(pass_clock))
-    .bind(DUE_BATCH)
-    .fetch_all(&state.pool)
     .await?;
 
     let mut advanced = 0u64;
@@ -221,6 +251,79 @@ pub async fn run_pass(state: &Arc<State>, ctx: &JobContext) -> anyhow::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn receipt_sweeps_resume_and_retry_a_blocked_prefix() {
+        let Some(db) = crate::test_db::OwnDatabase::create("receipt_sweeps").await else {
+            return;
+        };
+        let clock = chrono::Utc::now().naive_utc();
+        for (ledger, insert) in [
+            (
+                "broker_purchases",
+                "INSERT INTO shop.broker_purchases (collection, escrow_address, price_wei, chain_id, mode, updated_at) SELECT '0x00', '0x00', 0, 137, 'primary', timezone('UTC', now()) - interval '1 hour' FROM generate_series(1, 101)",
+            ),
+            (
+                "name_transfers",
+                "INSERT INTO shop.name_transfers (idempotency_key, registrar, token_id, from_address, to_address, chain_id, status, updated_at) SELECT 'transfer-' || n, '0x00', n::text, '0x00', '0x00', 137, 'sent', timezone('UTC', now()) - interval '1 hour' FROM generate_series(1, 101) n",
+            ),
+            (
+                "escrow_actions",
+                "INSERT INTO shop.escrow_actions (action, chain_id, tx_hash, updated_at) SELECT 'release', 137, 'pending-' || n, timezone('UTC', now()) - interval '1 hour' FROM generate_series(1, 101) n",
+            ),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(insert))
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE shop.{ledger} SET tx_hash = 'ready' WHERE id = 101"
+            )))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+            let first = receipt_batch(&db.pool, ledger, 137, clock).await.unwrap();
+            assert_eq!(first.len(), 100);
+            // Simulate a crash after selection: no outcome is written. A fresh
+            // call reads persisted progress and reaches the ready tail.
+            let tail = receipt_batch(&db.pool, ledger, 137, clock).await.unwrap();
+            assert_eq!(tail.len(), 1);
+            assert_eq!(tail[0].get::<String, _>("tx_hash"), "ready");
+            assert!(
+                receipt_batch(&db.pool, ledger, 1, clock)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            let retry = receipt_batch(&db.pool, ledger, 137, clock).await.unwrap();
+            assert_eq!(retry[0].get::<i64, _>("id"), 1);
+            // Temporarily make a prefix row ineligible; it is rediscovered
+            // after becoming due again, without changing its durable identity.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE shop.{ledger} SET updated_at = $1 WHERE id = 1"
+            )))
+            .bind(clock)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                receipt_batch(&db.pool, ledger, 137, clock).await.unwrap()[0].get::<i64, _>("id"),
+                101
+            );
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE shop.{ledger} SET updated_at = $1 WHERE id = 1"
+            )))
+            .bind(clock - chrono::Duration::hours(1))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                receipt_batch(&db.pool, ledger, 137, clock).await.unwrap()[0].get::<i64, _>("id"),
+                1
+            );
+        }
+        db.drop().await;
+    }
 
     #[test]
     fn status_transitions_are_correct() {

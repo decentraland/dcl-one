@@ -165,7 +165,7 @@ pub fn listing_tuple(listing: &RentalListing) -> Result<Listing, RentError> {
         signer: address(lessor, "lessor")?,
         contractAddress: address(&listing.contract_address, "contractAddress")?,
         tokenId: decimal(&listing.token_id, "tokenId")?,
-        expiration: U256::from((listing.expiration / 1000).max(0) as u64),
+        expiration: U256::from(u64::try_from(listing.expiration / 1000).unwrap_or(0)),
         indexes,
         pricePerDay: price_per_day,
         maxDays: max_days,

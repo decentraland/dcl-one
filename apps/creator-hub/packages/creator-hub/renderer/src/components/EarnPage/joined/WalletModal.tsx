@@ -9,17 +9,22 @@ import { useDispatch } from '#store';
 import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
+import { CREATOR_FUND_RULES_URL } from '/@/modules/utils';
 
 import { EarnDialog } from '../EarnDialog';
 import modal from '../EarnModal.module.css';
 import contact from '../ContactInfoForm.module.css';
 import { WarningIcon } from '../icons';
 
+import { InfoTip } from './InfoTip';
 import { isWalletAddress } from './wallet';
 import parts from './parts.module.css';
 import styles from './PayoutModals.module.css';
 
 export type WalletModalVariant = 'add' | 'change';
+
+/** The Program Rules section on payouts: currency, timing, the payout wallet and how to set it. */
+const PAYOUT_RULES_URL = `${CREATOR_FUND_RULES_URL}#payout-process`;
 
 const COPY: Record<
   WalletModalVariant,
@@ -39,7 +44,13 @@ const COPY: Record<
   },
 };
 
-type Submission = 'idle' | 'saving' | 'refused' | 'failed';
+type Submission = 'idle' | 'saving' | 'refused' | 'failed' | 'unnotified' | 'no_active_place';
+
+const FAILURE_LINE: Partial<Record<Submission, TranslationPath>> = {
+  failed: 'earn.errors.generic',
+  unnotified: 'earn.joined.payouts.wallet.notify_failed',
+  no_active_place: 'earn.joined.payouts.wallet.no_active_place',
+};
 
 /** The wallet address field, focused once it mounts inside the dialog; its error line is live. */
 function WalletField({
@@ -139,8 +150,16 @@ export function WalletModal({
       fieldRef.current?.focus();
       return;
     }
-    setSubmission('failed');
+    const error = result.payload?.body?.error;
+    if (error === 'no_active_place') {
+      setSubmission('no_active_place');
+      void dispatch(actions.fetchHasActivePlace());
+      return;
+    }
+    setSubmission(error === 'email_unavailable' ? 'unnotified' : 'failed');
   };
+
+  const failureLine = FAILURE_LINE[submission];
 
   return (
     <EarnDialog
@@ -153,12 +172,19 @@ export function WalletModal({
         onSubmit={submit}
       >
         <div className={styles.modalIntro}>
-          <h2
-            className={modal.modalTitle}
-            id={titleId}
-          >
-            {t(copy.title)}
-          </h2>
+          <div className={styles.modalTitleRow}>
+            <h2
+              className={modal.modalTitle}
+              id={titleId}
+            >
+              {t(copy.title)}
+            </h2>
+            <InfoTip
+              label="earn.joined.payouts.wallet.info_label"
+              text="earn.joined.payouts.wallet.payout_info"
+              href={PAYOUT_RULES_URL}
+            />
+          </div>
           <p className={styles.body}>{t(copy.body)}</p>
         </div>
         <WalletField
@@ -178,12 +204,12 @@ export function WalletModal({
           <WarningIcon />
           {t('earn.joined.payouts.erc20')}
         </div>
-        {submission === 'failed' && (
+        {failureLine && (
           <p
             className={styles.failureLine}
             role="alert"
           >
-            {t('earn.errors.generic')}
+            {t(failureLine)}
           </p>
         )}
         <div className={cx(modal.actions, styles.payoutActions)}>

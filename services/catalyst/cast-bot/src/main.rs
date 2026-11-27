@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -159,7 +159,12 @@ fn now_us() -> i64 {
 }
 
 fn capture(video: &Video) {
-    if let Some(frame) = video.frame.lock().unwrap().as_mut() {
+    if let Some(frame) = video
+        .frame
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_mut()
+    {
         frame.timestamp_us = now_us();
         video.source.capture_frame(frame);
     }
@@ -314,6 +319,25 @@ fn connect_failure(e: &RoomError) -> &'static str {
     }
 }
 
+/// `set_metadata`, sent once more when its answer timed out. The SDK
+/// listens for the answer only once the request went out
+/// (`LocalParticipant::set_metadata`), so an answer LiveKit sends back at once
+/// can be lost and the call times out after 5 s although the update applied.
+async fn set_metadata(room: &Room, metadata: String) -> RoomResult<()> {
+    use livekit::rtc_engine::EngineError;
+    let local = room.local_participant();
+    match local.set_metadata(metadata.clone()).await {
+        Err(RoomError::Engine(EngineError::Signal(e))) => {
+            if local.metadata() == metadata {
+                return Ok(());
+            }
+            eprintln!("cast-bot: metadata update not answered ({e}), sending it again");
+            local.set_metadata(metadata).await
+        }
+        done => done,
+    }
+}
+
 async fn run(out: Out) -> anyhow::Result<()> {
     let mut stdin = BufReader::with_capacity(1 << 20, tokio::io::stdin());
     let init: Command = match read_line(&mut stdin).await? {
@@ -393,12 +417,13 @@ async fn run(out: Out) -> anyhow::Result<()> {
                         command.width.unwrap_or(0),
                         command.height.unwrap_or(0),
                     )?;
-                    *video.frame.lock().unwrap() = Some(VideoFrame {
-                        rotation: VideoRotation::VideoRotation0,
-                        timestamp_us: now_us(),
-                        frame_metadata: None,
-                        buffer,
-                    });
+                    *video.frame.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(VideoFrame {
+                            rotation: VideoRotation::VideoRotation0,
+                            timestamp_us: now_us(),
+                            frame_metadata: None,
+                            buffer,
+                        });
                     capture(video);
                     Ok(())
                 }
@@ -414,9 +439,7 @@ async fn run(out: Out) -> anyhow::Result<()> {
                     Ok(())
                 }
                 "updateMetadata" => {
-                    room.local_participant()
-                        .set_metadata(command.metadata.unwrap_or_default())
-                        .await?;
+                    set_metadata(&room, command.metadata.unwrap_or_default()).await?;
                     Ok(())
                 }
                 "shutdown" => Ok(()),

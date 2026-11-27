@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), getJSON: vi.fn() }));
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { getJSON } from "../client";
 import { fetchProfile, mapProfile } from "./profile";

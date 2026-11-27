@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::borrow::Cow;
 use std::sync::{
@@ -5,14 +6,21 @@ use std::sync::{
     Arc, Mutex,
 };
 
-use bevy::{ecs::relationship::Relationship, prelude::*};
-use common::structs::{ClientWindowFocus, MicState, SystemAudio};
+use bevy::{
+    ecs::{relationship::Relationship, system::SystemParam},
+    prelude::*,
+};
+#[cfg(target_arch = "wasm32")]
+use common::structs::AppConfig;
+#[cfg(any(target_arch = "wasm32", test))]
+use common::structs::MicrophoneDevices;
+use common::structs::{AudioSettings, ClientWindowFocus, MicState, SystemAudio};
 use tokio::{sync::oneshot, task::JoinHandle};
 use web_time::Instant;
 #[cfg(target_arch = "wasm32")]
 use {
     bevy::render::view::RenderLayers,
-    common::{structs::AudioSettings, util::AsH160, util::VolumePanning},
+    common::{util::AsH160, util::VolumePanning},
     livestream_manager::AudioTransmitterVolume,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -116,6 +124,11 @@ impl Plugin for MicPlugin {
             tear_down_microphone,
         );
 
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(
+            Update,
+            follow_microphone_choice.after(reconcile_publications),
+        );
         app.add_systems(Startup, add_ping_systems);
         app.add_systems(Update, transmission_state);
         app.add_systems(
@@ -184,6 +197,9 @@ struct PublicationControl {
     draining: bool,
     transmitting: bool,
     retry: RetryState,
+    /// The input last asked of the live track; not asked again until the inputs change.
+    #[cfg(target_arch = "wasm32")]
+    switching_to: Option<String>,
 }
 
 /// Dropping a participant or changing its route revokes its async work, including work which
@@ -216,20 +232,14 @@ impl MicrophonePublication {
         // A task exit without an acknowledged stop still needs the drain barrier.
         !eligible
             || self.revoked.load(Ordering::SeqCst)
-            || (self.task.is_finished()
-                && self
-                    .state
-                    .lock()
-                    .unwrap_or_else(|err| err.into_inner())
-                    .stopped_at
-                    .is_none())
+            || (self.task.is_finished() && self.state.lock_ignore_poison().stopped_at.is_none())
     }
 
     fn retry_state(&self, now: Instant) -> Option<RetryState> {
         if !self.task.is_finished() {
             return None;
         }
-        let state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let state = self.state.lock_ignore_poison();
         let elapsed = now
             .saturating_duration_since(state.stopped_at?)
             .as_secs_f64();
@@ -238,7 +248,7 @@ impl MicrophonePublication {
 
     pub(crate) fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let mut state = self.state.lock_ignore_poison();
         state.revoked = true;
         state.transmitting = false;
         if let Some(track) = &state.track {
@@ -259,7 +269,7 @@ impl Drop for MicrophonePublication {
 }
 
 fn complete_publication(state: &Mutex<PublicationControl>, drain: &MicrophoneDrain, stopped: bool) {
-    let mut state = state.lock().unwrap_or_else(|err| err.into_inner());
+    let mut state = state.lock_ignore_poison();
     state.transmitting = false;
     if stopped {
         state.track = None;
@@ -338,6 +348,23 @@ fn suppress_nearby_voice_on_refusal(
     }
 }
 
+/// The client window's focus as [`AudioSettings::microphone_focus`] adjusts it.
+#[derive(SystemParam)]
+pub(crate) struct MicrophoneFocus<'w> {
+    focus: Res<'w, ClientWindowFocus>,
+    audio: Res<'w, AudioSettings>,
+}
+
+impl MicrophoneFocus<'_> {
+    pub(crate) fn get(&self) -> ClientWindowFocus {
+        self.audio.microphone_focus(self.window())
+    }
+
+    fn window(&self) -> ClientWindowFocus {
+        *self.focus
+    }
+}
+
 /// While the scene blocks nearby voice, only the call's mic can be the one that stopped by choice.
 fn mic_off_pings(scene_blocked: bool, call_was_transmitting: bool) -> bool {
     !scene_blocked || call_was_transmitting
@@ -349,17 +376,15 @@ fn transmission_state(
     microphone_transmission_state: Res<State<MicrophoneTransmissionState>>,
     mut next_state: ResMut<NextState<MicrophoneTransmissionState>>,
     mut last: ResMut<LastTransmission>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
 ) {
+    let focus = focus.get();
     let mut transmitting = false;
     let mut call = false;
     for (publication, room) in &tracks {
-        let state = publication
-            .state
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let state = publication.state.lock_ignore_poison();
         if state.transmitting {
             transmitting = true;
             call |= voice_rooms.contains(room.get());
@@ -369,8 +394,8 @@ fn transmission_state(
         last.call = call;
     }
     // the pause ends on focus with nothing left to resume or a mic change since
-    if *focus == ClientWindowFocus::Focused
-        && (!can_capture_microphone(&mic, &call_mic, *focus)
+    if focus == ClientWindowFocus::Focused
+        && (!can_capture_microphone(&mic, &call_mic, focus)
             || mic.is_changed()
             || call_mic.is_changed())
     {
@@ -378,7 +403,7 @@ fn transmission_state(
     }
     if !transmitting && microphone_transmission_state.get() == &MicrophoneTransmissionState::Enabled
     {
-        last.focus_paused = *focus == ClientWindowFocus::NoFocus;
+        last.focus_paused = focus == ClientWindowFocus::NoFocus;
         next_state.set(MicrophoneTransmissionState::Disabled);
     } else if transmitting
         && microphone_transmission_state.get() == &MicrophoneTransmissionState::Disabled
@@ -528,9 +553,9 @@ fn enable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
 ) {
-    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
+    if can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(focus.get())) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -611,9 +636,9 @@ fn disable_microphone_state_system(
     mut commands: Commands,
     mic_state: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
 ) {
-    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(*focus)) {
+    if !can_capture_microphone(&mic_state, &call_mic, microphone_state_focus(focus.get())) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -675,15 +700,16 @@ fn reconcile_publications(
     )>,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
-    focus: Res<ClientWindowFocus>,
+    focus: MicrophoneFocus,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
     drain: Res<MicrophoneDrain>,
     livekit_runtime: LivekitRuntimeRes,
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
+    #[cfg(target_arch = "wasm32")] config: Res<AppConfig>,
 ) {
-    let enabled = microphone_routes_open(*focus, &mic, *permission.get(), *availability.get());
+    let enabled = microphone_routes_open(focus.get(), &mic, *permission.get(), *availability.get());
     let eligible = |room: Entity, participant: &LivekitParticipant| {
         rooms.get(room).is_ok_and(|room| {
             enabled
@@ -746,6 +772,14 @@ fn reconcile_publications(
         let receiver = source.subscribe();
         #[cfg(not(target_arch = "wasm32"))]
         let (sample_rate, channels) = (format.sample_rate, format.channels);
+        // starts on the chosen input when it is present, else on the system default, which the
+        // browser lists as "default", as livekit's fallback does
+        #[cfg(target_arch = "wasm32")]
+        let task_device = config
+            .audio
+            .microphone
+            .clone()
+            .unwrap_or_else(|| "default".to_owned());
 
         let task = livekit_runtime.spawn(async move {
             if installed.await.is_err() || task_revoked.load(Ordering::SeqCst) {
@@ -762,7 +796,7 @@ fn reconcile_publications(
             )
             .await;
             #[cfg(target_arch = "wasm32")]
-            let track = match build_audio_local_track().await {
+            let track = match build_audio_local_track(task_device).await {
                 Ok(Ok(track)) => track,
                 Ok(Err(err)) => {
                     warn!("microphone creation failed: {err}");
@@ -778,7 +812,7 @@ fn reconcile_publications(
             // Both backends create tracks muted. Publishing itself may outlive cancellation;
             // a canceled publication is never unmuted.
             {
-                let mut state = task_state.lock().unwrap_or_else(|err| err.into_inner());
+                let mut state = task_state.lock_ignore_poison();
                 state.track = Some(track.clone());
             }
             let mut published = false;
@@ -799,7 +833,7 @@ fn reconcile_publications(
             }
             if published {
                 {
-                    let mut state = task_state.lock().unwrap_or_else(|err| err.into_inner());
+                    let mut state = task_state.lock_ignore_poison();
                     if !state.revoked {
                         mute_local_track(&track, false);
                         state.transmitting = true;
@@ -944,11 +978,7 @@ async fn build_audio_local_track(
                 break;
             }
             // Keep real samples out of the source until this route has activated transmission.
-            if !state
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .transmitting
-            {
+            if !state.lock_ignore_poison().transmitting {
                 continue;
             }
             if let Err(e) = new_source
@@ -972,9 +1002,60 @@ async fn build_audio_local_track(
     (local_audio_track, capture)
 }
 
+/// The input a live track should capture from: the chosen one while the page lists it, the
+/// browser's `"default"` without a choice, and none (leave the track where livekit restarted it)
+/// while the chosen input is unplugged.
+#[cfg(any(target_arch = "wasm32", test))]
+fn input_to_follow<'a>(choice: Option<&'a str>, devices: &MicrophoneDevices) -> Option<&'a str> {
+    match choice {
+        Some(id) if devices.offers(id) => Some(id),
+        Some(_) => None,
+        None => Some("default"),
+    }
+}
+
+/// Keeps each live route's track on the chosen input, in place. A new choice moves the track;
+/// once an unplugged choice is listed again, the track moves back from the system default livekit
+/// restarted it on.
 #[cfg(target_arch = "wasm32")]
-async fn build_audio_local_track() -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
+fn follow_microphone_choice(
+    config: Res<AppConfig>,
+    devices: Res<MicrophoneDevices>,
+    inputs: Res<super::web::MicrophoneTrackInputs>,
+    routes: Query<&MicrophonePublication>,
+) {
+    let choice = config.audio.microphone.as_deref();
+    let wanted = input_to_follow(choice, &devices);
+    for route in &routes {
+        let mut state = route.state.lock_ignore_poison();
+        if devices.is_changed() {
+            state.switching_to = None;
+        }
+        // a restart enables the capture, so only a published, unmuted track is switched
+        if state.revoked || !state.transmitting {
+            continue;
+        }
+        let (Some(wanted), Some(track)) = (wanted, state.track.clone()) else {
+            continue;
+        };
+        let Some(input) = inputs.get(track.id()) else {
+            continue;
+        };
+        if input.device == wanted {
+            state.switching_to = None;
+        } else if state.switching_to.as_deref() != Some(wanted) {
+            state.switching_to = Some(wanted.to_owned());
+            track.set_device(choice.map(str::to_owned));
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn build_audio_local_track(
+    device_id: String,
+) -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
     LocalAudioTrack::new(AudioCaptureOptions {
+        device_id: Some(device_id),
         echo_cancellation: Some(true),
         noise_suppression: Some(true),
         auto_gain_control: Some(true),
@@ -1021,6 +1102,23 @@ mod routing_tests {
             drain: drain.clone(),
             task: runtime.spawn(std::future::pending()),
         }
+    }
+
+    #[test]
+    fn a_track_follows_the_choice_while_listed_and_stays_on_the_default_while_it_is_unplugged() {
+        let mut devices = MicrophoneDevices::default();
+        let headset = common::structs::MicrophoneInput {
+            id: "headset".to_owned(),
+            label: "Headset".to_owned(),
+        };
+        assert_eq!(input_to_follow(None, &devices), Some("default"));
+        assert_eq!(input_to_follow(Some("headset"), &devices), None);
+        devices.replace(vec![headset.clone()]);
+        assert_eq!(input_to_follow(Some("headset"), &devices), Some("headset"));
+        devices.replace(Vec::new());
+        assert_eq!(input_to_follow(Some("headset"), &devices), None);
+        devices.replace(vec![headset]);
+        assert_eq!(input_to_follow(Some("headset"), &devices), Some("headset"));
     }
 
     #[test]
@@ -1131,7 +1229,7 @@ mod routing_tests {
         assert_eq!(drain.pending(), 1);
         assert!(revoked.load(Ordering::SeqCst));
         // A late completion retains revocation; it can never unmute the old route.
-        assert!(state.lock().unwrap().revoked);
+        assert!(state.lock_ignore_poison().revoked);
         complete_publication(&state, &drain, true);
         assert_eq!(drain.pending(), 0);
     }
@@ -1175,7 +1273,7 @@ mod routing_tests {
         publication.task =
             runtime.spawn(async move { complete_publication(&state, &task_drain, true) });
         runtime.block_on(&mut publication.task).unwrap();
-        let stopped_at = publication.state.lock().unwrap().stopped_at.unwrap();
+        let stopped_at = publication.state.lock_ignore_poison().stopped_at.unwrap();
         assert!(publication.retry_state(stopped_at).is_none());
         assert!(publication.should_remove(false));
         assert!(!publication.should_remove(true));
@@ -1276,7 +1374,7 @@ mod routing_tests {
             publication.revoked.clone(),
             publication.state.clone(),
         ));
-        publication.state.lock().unwrap().track = Some(track.clone());
+        publication.state.lock_ignore_poison().track = Some(track.clone());
         // Native LiveKit finishes publish by enabling the RTC track while its mute bit is set.
         track.enable();
         assert!(track.is_muted() && track.is_enabled());
@@ -1451,6 +1549,7 @@ mod routing_tests {
             .insert_resource(mic_state(true, true))
             .init_resource::<CallMic>()
             .insert_resource(ClientWindowFocus::Focused)
+            .init_resource::<AudioSettings>()
             .add_systems(Startup, add_ping_systems)
             .add_systems(Update, transmission_state);
         let room = app.world_mut().spawn_empty().id();
@@ -1471,7 +1570,7 @@ mod routing_tests {
                 .sum::<usize>()
         };
         let transmit = |transmitting: bool| {
-            control.lock().unwrap().transmitting = transmitting;
+            control.lock_ignore_poison().transmitting = transmitting;
         };
 
         transmit(true);
@@ -1511,5 +1610,13 @@ mod routing_tests {
         app.world_mut().resource_mut::<CallMic>().enabled = true;
         transmit(true);
         assert_eq!(chimes(&mut app), 1, "the player's call mic starts");
+
+        // Mute Mic in Background off: a stop without focus chimes
+        app.world_mut()
+            .resource_mut::<AudioSettings>()
+            .mute_mic_in_background = false;
+        app.insert_resource(ClientWindowFocus::NoFocus);
+        transmit(false);
+        assert_eq!(chimes(&mut app), 1, "the player closes the mic while away");
     }
 }

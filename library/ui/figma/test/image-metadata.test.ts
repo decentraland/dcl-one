@@ -15,6 +15,8 @@ import { readMaterialized } from '../src/lfs.js'
 // The public mock assets and their metadata exceptions were retired together.
 const repoRoot = path.resolve(import.meta.dirname, '../../../..')
 const PUBLIC_ASSETS = 'library/ui/components/assets/'
+// Images shared by the public components.
+const SHARED_ASSETS = 'library/ui/assets/'
 
 // Tracked files plus new, not-ignored ones, so the gate also holds before a change is committed.
 const files = execFileSync(
@@ -26,7 +28,8 @@ const files = execFileSync(
     '--others',
     '--exclude-standard',
     'library/ui/figma',
-    PUBLIC_ASSETS
+    PUBLIC_ASSETS,
+    SHARED_ASSETS
   ],
   { cwd: repoRoot }
 )
@@ -65,6 +68,15 @@ describe('image metadata gate', () => {
     expect(gateProblems(found, await allowlist(), PUBLIC_ASSETS)).toEqual([])
     expect(undercounted).toEqual([])
   }, 180_000)
+
+  it('should scan the images shared by the public components', () => {
+    expect(files.filter((file) => file.startsWith(SHARED_ASSETS) && /\.webp$/.test(file))).toEqual([
+      'library/ui/assets/custom-welcome-background.webp',
+      'library/ui/assets/logo-pattern.webp',
+      'library/ui/assets/skeleton-sweep.webp',
+      'library/ui/assets/slider-handle.webp'
+    ])
+  })
 
   it('should require the actual image metadata allowlist to contain no public asset exception', async () => {
     expect((await allowlist()).files).toEqual([])

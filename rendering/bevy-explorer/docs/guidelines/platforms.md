@@ -33,7 +33,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   and do not add cross-browser hedges.
 - **No threads as you know them.** `TaskPool::spawn` runs on the JS event loop: no `Send`,
   no blocking, no `std::thread`, no busy-waiting. Use `web_time` for clocks. The engine worker
-  runs the app world; the render world lives in its own worker.
+  runs the app world; the render world lives in its own worker. The scene loop may sleep for a
+  bounded wait between passes (`SCENE_REPLY_POLL`) because it runs on the engine worker; other
+  systems and tasks may not block.
 - **The log level is compiled in.** `RUST_LOG` does nothing at runtime on wasm. A debug log you
   want to see needs a rebuild with the filter changed.
 - **Engine switches are page params, not launch options.** A web-only knob is a `?param=` the
@@ -112,7 +114,8 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   run the test suite and the headless smoke test: they start when the PR is marked ready for
   review, or on the next push with the `ci:engine` label. The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
-  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
+  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, the native platform layer
+  (`crates/platform/src/native.rs` and `native/`), a file or folder named
   `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine
   source (the workflow, the selector, `library/vendor/rusty_enet`, `apps/bevy-explorer` build
   scripts); when it is labelled `ci:macos` (then push or reopen); and on every main push and
@@ -158,7 +161,7 @@ failure by reducing quality. That allowance should remain distinguishable from m
 ## GPU timestamps
 
 The benchmark's GPU time (`gpu/frame_time`, see [GPU time](benchmark.md#gpu-time)) is the
-difference of two timestamps that empty compute passes write with `timestamp_writes`, which needs
+difference of two timestamps that compute passes write with `timestamp_writes`, which needs
 `wgpu::Features::TIMESTAMP_QUERY` on the render device. The engine sets no `WgpuSettings` of its
 own (the web render worker uses the default too), so Bevy's default `Functionality` priority
 requests every feature the adapter reports, and the feature is on wherever the backend exposes
@@ -169,8 +172,8 @@ Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/
 |---|---|---|---|
 | DX12 (Windows) | always | the queue's timestamp frequency | Windows, RTX 5080 Laptop GPU: the GPU tests, and the packaged release standalone with FXC and `--no_gltf` |
 | Vulkan (Windows, Linux) | always | the device's `timestampPeriod` limit | Windows, the same GPU: the GPU tests and the packaged release standalone, which picks Vulkan by itself; Linux not |
-| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | not checked |
-| WebGPU (Chrome) | when the browser's adapter lists `timestamp-query` | 1 ns (WebGPU reports nanoseconds) | Chrome on Windows (RTX 5080 Laptop GPU) |
+| Metal (macOS) | when the device samples counters at stage boundaries (macOS 11 or newer) | fixed: 1 ns, 83.333 ns when the device name starts with "Intel" | Apple M4 Max: the GPU tests |
+| WebGPU (Chrome) | when the browser's adapter lists `timestamp-query` | 1 ns (WebGPU reports nanoseconds) | Chrome on Windows (RTX 5080 Laptop GPU); Chrome 157 on macOS (Apple M1 Pro) |
 
 - **DX12 and Vulkan** set the feature for every device: `wgpu-hal/src/dx12/adapter.rs` lists it
   among the features "always available on d3d12", and `wgpu-hal/src/vulkan/adapter.rs` sets it
@@ -185,11 +188,18 @@ Explorer's wgpu (upstream `v24.0.5` plus the series in `rendering/bevy-explorer/
   is unaffected.
 - **Metal.** A compute pass's `timestamp_writes` become the encoder's start and end samples
   (`wgpu-hal/src/metal/command.rs`), which stage-boundary sampling covers
-  (`wgpu-hal/src/metal/adapter.rs`). Whether an empty pass writes its samples is not checked.
+  (`wgpu-hal/src/metal/adapter.rs`). The GPU tests pass on native Metal (Apple M4 Max).
   wgpu does not convert Metal's GPU timestamps to CPU time; it hard-codes the period, and its own
   comment names Apple silicon (M1, M2) and AMD for the 1 ns. Not checked here.
 - **WebGPU.** `wgpu/src/backend/webgpu.rs` maps the feature to `timestamp-query` and passes the
-  pass `timestampWrites` through.
+  pass `timestampWrites` through. In Chrome on macOS (Apple M1 Pro, Metal) a compute pass that
+  holds no work does not write its end timestamp, so each bracket pass dispatches one workgroup
+  of a shader that does nothing; with it samples arrive, but some frames still read back an end
+  earlier than their begin and a run can sit on one value. A web build on macOS therefore marks
+  the GPU frame time unreliable (`common::gpu_time::GpuFrameTimeUnreliable`): the panel, the CSV,
+  `gpuFrameMs` and the GPU element of `frameTimeBreakdown` keep the readings, and the
+  performance snapshot, the analytics event built from it, the benchmark summary and the
+  bottleneck take none.
 - **Chrome quantises timestamps** unless its "WebGPU Developer Features" flag is on
   (`chrome://flags/#enable-webgpu-developer-features`;
   [Chrome's WebGPU 121 notes](https://developer.chrome.com/blog/new-in-webgpu-121) give 100 µs).

@@ -5,6 +5,8 @@
 //! except under CI (`CI=true`), where it fails. `CAST_BOT_BIN` names the bot
 //! to drive when it is not this build's (CI runs the Nix-built test binary).
 
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use std::process::Stdio;
 use std::time::Duration;
 

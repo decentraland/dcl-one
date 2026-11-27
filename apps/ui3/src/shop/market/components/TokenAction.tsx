@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import ThumbnailImage from "../../../components/ThumbnailImage";
+import { ShopThumbnailImage } from "@dcl/one-ui";
 import { parseEvmAddress, sameAddress } from "@shop/model/address";
 import { normalizeDecimal } from "@shop/model/decimal";
 import { shopPath } from "../../routes";
@@ -54,7 +54,7 @@ export function TokenFrame({ token, title, subtitle, children }: { token: Pick<M
         onBack={() => (token ? navigate(shopPath("tokenDetail", { contractAddress: token.contractAddress, tokenId: token.tokenId })) : navigate(-1))}
         media={
           token ? (
-            <div className="mk-action-layout__media">{token.image ? <ThumbnailImage src={token.image} fallbackSrc={token.image} alt={token.name} /> : <span className="mk-tile__glyph">{token.name.slice(0, 1)}</span>}</div>
+            <div className="mk-action-layout__media">{token.image ? <ShopThumbnailImage src={token.image} fallbackSrc={token.image} alt={token.name} /> : <span className="mk-tile__glyph">{token.name.slice(0, 1)}</span>}</div>
           ) : null
         }
       >

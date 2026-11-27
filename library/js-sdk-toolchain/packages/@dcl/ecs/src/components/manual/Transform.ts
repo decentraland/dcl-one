@@ -1,8 +1,8 @@
-import { LastWriteWinElementSetComponentDefinition, IEngine } from '../../engine'
-import { Entity } from '../../engine/entity'
+import type { LastWriteWinElementSetComponentDefinition, IEngine } from '../../engine'
+import type { Entity } from '../../engine/entity'
 import type { ISchema } from '../../schemas/ISchema'
 import type { Vector3Type } from '../../schemas/custom/Vector3'
-import { ByteBuffer } from '../../serialization/ByteBuffer'
+import type { ByteBuffer } from '../../serialization/ByteBuffer'
 // Use import * to safely handle circular dependency (tree.ts → components → Transform.ts → tree.ts).
 // With import *, the namespace object's properties are resolved at access time (live bindings in ESM,
 // getters via __importStar in CJS), so by the time methods are called all exports are available.

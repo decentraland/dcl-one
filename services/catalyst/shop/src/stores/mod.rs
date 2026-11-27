@@ -17,16 +17,9 @@
 //! alike; here an error is an error). Saving stays a signed content deploy
 //! from the client; no Shop write exists to bypass the validator.
 //!
-//! The stats are the exact aggregate the upstream dashboard computed on the
-//! client from a capped page of sales rows (`storeStats.ts`, which says so):
-//! per collection and per item, sold and earned over the window, lifetime
-//! mints per item, the seller's royalties as a creator, from the bounded
-//! sales reader (`market::sales::sales_summary`, over the collections
-//! subgraphs) joined with the items mirror for names, supply and prices.
-//! Every amount is MANA wei, whatever the listing was priced in: the trade
-//! settled in MANA and that is what the seller received (a resale's
-//! proceeds are MANA; SHOP.md). A reader that is not configured, or a
-//! seller past the reader's bound, is the unavailable envelope.
+//! Store statistics use the published sales snapshot for windowed sales,
+//! lifetime mints and creator resale volume. The items and collections
+//! catalogues supply names, supply and prices in the same transaction.
 
 use crate::shared::routing::get;
 use axum::Json;
@@ -113,10 +106,15 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
     store.exists = true;
     store.entity_id = entity.get("id").and_then(Value::as_str).map(str::to_string);
     // A synced entity's timestamp can be fractional; it keeps whole milliseconds.
-    store.updated_at = entity
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` drops the fraction and saturates"
+    )]
+    let updated_at = entity
         .get("timestamp")
         .and_then(Value::as_f64)
         .map(|t| t as i64);
+    store.updated_at = updated_at;
     let cover_file = metadata
         .get("images")
         .and_then(Value::as_array)
@@ -240,48 +238,22 @@ pub struct StoreStats {
     pub collections: Vec<StoreCollectionStats>,
 }
 
-/// The window's first sales per item, `(contract, item) -> (sold, earned wei)`.
-pub fn per_item_window(
-    rows: &[Value],
-    from: Option<i64>,
-    to: Option<i64>,
-) -> std::collections::BTreeMap<(String, String), (i64, u128)> {
-    let mut out: std::collections::BTreeMap<(String, String), (i64, u128)> = Default::default();
-    for s in rows {
-        if super::market::readers::str_of(s, "type") != "mint" {
-            continue;
-        }
-        let ts = super::market::readers::int_of(s, "timestamp") * 1000;
-        if from.is_some_and(|f| ts < f) || to.is_some_and(|t| ts > t) {
-            continue;
-        }
-        let Some(item) = super::market::readers::opt_str_of(s, "searchItemId") else {
-            continue;
-        };
-        let e = out
-            .entry((
-                super::market::readers::str_of(s, "searchContractAddress"),
-                item,
-            ))
-            .or_default();
-        e.0 += 1;
-        e.1 = e.1.saturating_add(
-            super::market::readers::str_of(s, "price")
-                .parse::<u128>()
-                .unwrap_or(0),
-        );
-    }
-    out
-}
-
 pub async fn store_stats(
     state: &MarketplaceState,
     filters: &SalesSummaryFilters,
 ) -> Result<StoreStats, Response> {
     let seller = filters.seller.to_lowercase();
-    let rows = sales::seller_sales_rows(state, &seller, "/v1/stores/{address}/stats").await?;
-    let summary = sales::sales_summary(state, filters).await?;
-    let window = per_item_window(&rows, filters.from, filters.to);
+    let _slot = crate::market::sale_reads::seller_slot(state).await?;
+    let (mut snapshot, nets) = crate::market::sale_reads::snapshot(state, None).await?;
+    let crate::market::sale_reads::SellerStats { summary, window } =
+        crate::market::sale_reads::seller_stats(&mut snapshot, nets, filters).await?;
+    crate::market::sale_reads::require_metadata(
+        &mut snapshot,
+        nets,
+        "collections",
+        crate::market::Source::CollectionsMirror,
+    )
+    .await?;
     let items = sqlx::query(
         "SELECT i.contract_address, i.item_id::text AS item_id, i.name, i.image, i.rarity, i.category, i.item_type, i.available::text AS available, \
                 i.total_supply::text AS total_supply, i.max_supply::text AS max_supply, i.price::text AS price, i.created_at, c.name AS collection_name, c.is_approved \
@@ -289,7 +261,7 @@ pub async fn store_stats(
          WHERE i.creator = $1 ORDER BY i.contract_address, i.item_id",
     )
     .bind(&seller)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *snapshot.transaction)
     .await
     .map_err(|e| ApiError::from(e).into_response())?;
     let lifetime: std::collections::BTreeMap<(String, String), i64> = summary
@@ -308,8 +280,8 @@ pub async fn store_stats(
         let item_id: String = r.get("item_id");
         let (sold, earned) = window
             .get(&(contract.clone(), item_id.clone()))
-            .copied()
-            .unwrap_or((0, 0));
+            .cloned()
+            .unwrap_or_else(|| (0, "0".into()));
         let item = StoreItemStats {
             contract_address: contract.clone(),
             item_id: item_id.clone(),
@@ -326,7 +298,7 @@ pub async fn store_stats(
             max_supply: r.get("max_supply"),
             price_wei: r.get("price"),
             sold,
-            earned_wei: earned.to_string(),
+            earned_wei: earned,
             sold_lifetime: lifetime
                 .get(&(contract.clone(), item_id))
                 .copied()
@@ -347,12 +319,12 @@ pub async fn store_stats(
     }
     for c in &mut collections {
         let sold = c.items.iter().map(|i| i.sold).sum::<i64>();
-        let earned = c.items.iter().fold(0u128, |acc, i| {
-            acc.saturating_add(i.earned_wei.parse::<u128>().unwrap_or(0))
-        });
         c.sold = sold;
-        c.earned_wei = earned.to_string();
+        c.earned_wei = c.items.iter().fold("0".to_owned(), |sum, i| {
+            crate::market::wire::bn_add(&sum, &i.earned_wei)
+        });
     }
+    crate::market::sale_reads::ensure_fresh(snapshot.expires_at)?;
     Ok(StoreStats {
         owner: seller,
         from: filters.from,
@@ -383,7 +355,7 @@ pub async fn get_store_stats(
     };
     let _ = Params::new(&with_seller);
     match store_stats(&state, &filters).await {
-        Ok(stats) => ([(CACHE_CONTROL, "private, max-age=60")], ok(stats)).into_response(),
+        Ok(stats) => ([(CACHE_CONTROL, "no-store")], ok(stats)).into_response(),
         Err(r) => r,
     }
 }
@@ -473,24 +445,5 @@ mod tests {
             s.exists && s.cover.is_empty() && s.cover_hash.is_empty(),
             "a cover file the entity does not carry is no cover"
         );
-    }
-
-    #[test]
-    fn the_window_counts_first_sales_per_item_only() {
-        let rows = vec![
-            json!({ "type": "mint", "timestamp": "1000", "price": "5", "searchContractAddress": "0xc", "searchItemId": "1" }),
-            json!({ "type": "mint", "timestamp": "2000", "price": "7", "searchContractAddress": "0xc", "searchItemId": "1" }),
-            json!({ "type": "order", "timestamp": "2000", "price": "9", "searchContractAddress": "0xc", "searchItemId": "1" }),
-            json!({ "type": "mint", "timestamp": "3000", "price": "11", "searchContractAddress": "0xc", "searchItemId": "2" }),
-        ];
-        let w = per_item_window(&rows, Some(1_500_000), Some(2_500_000));
-        assert_eq!(
-            w.get(&("0xc".into(), "1".into())),
-            Some(&(1, 7)),
-            "one mint inside the window; the resale is not the creator's first sale"
-        );
-        assert!(!w.contains_key(&("0xc".into(), "2".into())));
-        let all = per_item_window(&rows, None, None);
-        assert_eq!(all.get(&("0xc".into(), "1".into())), Some(&(2, 12)));
     }
 }

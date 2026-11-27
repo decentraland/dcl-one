@@ -4,18 +4,22 @@ import { expectConsoleOutput } from '@explorer-core/test/console'
 import type { GetUserProfileRequest, SceneToPage } from '@explorer-core/engine/protocol'
 
 const api = vi.hoisted(() => ({
+  getPlayer: vi.fn(),
+  resolveEquippedSet: vi.fn().mockResolvedValue([]),
+  resolveEquippedEmotes: vi.fn().mockResolvedValue([]),
   getUserProfile: vi.fn<(address: string) => Promise<unknown>>(),
+  getOfficialWallets: undefined as (() => Promise<string[]>) | undefined,
   getJson: vi.fn<(url: string) => Promise<unknown>>()
 }))
 
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
 vi.mock('../../bridge-scene/src/http', () => ({ serviceBase: async () => 'https://badges.test', getJson: api.getJson }))
-vi.mock('../../bridge-scene/src/domains/wearables', () => ({ resolveWearables: async () => [] }))
-vi.mock('../../bridge-scene/src/domains/emotes', () => ({ resolveEquippedEmotes: async () => [] }))
+vi.mock('../../bridge-scene/src/domains/wearables', () => ({ resolveWearables: async () => [], resolveEquippedSet: api.resolveEquippedSet }))
+vi.mock('../../bridge-scene/src/domains/emotes', () => ({ resolveEquippedEmotes: api.resolveEquippedEmotes }))
 vi.mock('../../bridge-scene/src/domains/avatarDraft', () => ({}))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: () => {} }))
 vi.mock('../../bridge-scene/src/identity', () => ({ identity: { onChange: () => {} } }))
-vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => null }))
+vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: api.getPlayer }))
 
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({ engine: {} }))
 const { startBridge } = await import('../../bridge-scene/src/bridge')
@@ -36,9 +40,21 @@ async function read(request: GetUserProfileRequest): Promise<SceneToPage[]> {
 beforeEach(() => {
   api.getUserProfile.mockReset().mockResolvedValue({ name: 'Tester', version: 3 })
   api.getJson.mockReset()
+  api.getPlayer.mockReset().mockReturnValue(null)
+  api.getOfficialWallets = undefined
 })
 
 describe('bridge profile reads', () => {
+  it('uses committed own equipment even while the live player previews an undeployed look', async () => {
+    api.getPlayer.mockReturnValue({ userId: '0xABC', wearables: ['optimistic-hat'], emotes: ['optimistic-emote'] })
+    api.getUserProfile.mockResolvedValue({ name: 'Tester', avatar: {
+      wearables: ['committed-shirt'], emotes: [{ urn: 'committed-emote', slot: 5 }]
+    } })
+    await read({ kind: 'getUserProfile', address: '0xabc', requestId: 19, extras: true })
+    expect(api.resolveEquippedSet).toHaveBeenLastCalledWith(['committed-shirt'], { shopUrls: true, dropFailed: true })
+    expect(api.resolveEquippedEmotes).toHaveBeenLastCalledWith([{ urn: 'committed-emote', slot: 5 }])
+  })
+
   it('echoes the request ID on the passport and the badge tiers that follow it', async () => {
     api.getJson
       .mockResolvedValueOnce({ data: { achieved: [{ id: 'badge', name: 'Badge', isTier: true }] } })
@@ -48,6 +64,16 @@ describe('bridge profile reads', () => {
       { kind: 'userProfile', address: '0xabc', requestId: 17, profile: { badges: [{ id: 'badge' }] } },
       { kind: 'userProfile', address: '0xabc', requestId: 17, profile: { badges: [{ id: 'badge', tiers: [{ id: 'tier' }] }] } }
     ])
+  })
+
+  it("marks an official wallet on the passport's profile, and none on an engine without the read", async () => {
+    const passport = async (): Promise<unknown> =>
+      (await read({ kind: 'getUserProfile', address: '0xABC', requestId: 5, extras: true }))[0]
+    expect(await passport()).toMatchObject({ profile: { official: false } })
+    api.getOfficialWallets = vi.fn(async () => ['0xabc'])
+    expect(await passport()).toMatchObject({ profile: { official: true } })
+    api.getOfficialWallets = vi.fn(async () => ['0xdef'])
+    expect(await passport()).toMatchObject({ profile: { official: false } })
   })
 
   it('echoes the request ID even if a profile is unavailable', async () => {

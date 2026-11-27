@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { cx } from '/@/lib/cx';
 import Button from '@ui/atoms/Button';
 import { CloseIcon } from '@ui/atoms/icons-material';

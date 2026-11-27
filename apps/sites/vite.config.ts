@@ -4,12 +4,14 @@ import { createReadStream, existsSync, readFileSync, readdirSync, statSync } fro
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
-import { validateAliasObject } from "../ui3/vite.validate.js";
+import { validateAliasObject } from "../../library/web-core/validate/vite.mjs";
 
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// The browser logic shared with ui3 (validation seam, auth signing, profile and notification views).
+const webCore = fileURLToPath(new URL("../../library/web-core", import.meta.url));
 // Decentraland's content hashes, which the creators code computes for the files and entities it publishes.
 const hashing = fileURLToPath(new URL("../../library/hashing/src/index.ts", import.meta.url));
 // Part of every cached item validation's key (data/lib/creators/validation/cache.ts).
@@ -25,10 +27,27 @@ const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url
 // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
 const shopHost = fileURLToPath(new URL("../ui3/src/play/shopHost.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
-// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
-// to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
-const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
+// copies. Only these specifiers, and only for code outside node_modules: a dependency of this app keeps the
+// @noble release it asks for. Keep this list to the @noble modules library/explorer-core imports;
+// tsconfig.json maps all of @noble/* for the type check.
+const libraryNobleModules: Record<string, string> = Object.fromEntries(
+  ["curves/secp256k1.js", "hashes/sha2.js", "hashes/sha3.js", "hashes/webcrypto.js", "hashes/utils.js"].map((path) => [
+    `@noble/${path}`,
+    fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url)),
+  ]),
+);
 const oneUi = fileURLToPath(new URL("../../library/ui", import.meta.url));
+
+function libraryNoble(): Plugin {
+  return {
+    name: "library-noble",
+    enforce: "pre",
+    resolveId(source, importer) {
+      const target = libraryNobleModules[source];
+      return target && importer && !importer.includes("/node_modules/") ? target : null;
+    },
+  };
+}
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -130,6 +149,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // A world's /about names its room sign-in at this origin's root, which the gateway's `location /` sends to the node.
+    "^/worlds/[^/]+/(?:scenes/[^/]+/)?comms(?:[/?]|$)": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
     // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes
@@ -168,6 +189,8 @@ const PLAY_MIME: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".css": "text/css; charset=utf-8",
+  ".glb": "model/gltf-binary",
+  ".otf": "font/otf",
 };
 export function playWebDir(root = fileURLToPath(new URL("../..", import.meta.url))): string {
   if (process.env.PLAY_WEB_DIR) return process.env.PLAY_WEB_DIR;
@@ -182,10 +205,18 @@ function servePlayWeb(): Plugin {
       const dir = playWebDir();
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
-        if (!url.pathname.startsWith("/play/")) return next();
-        const rel = decodeURIComponent(url.pathname.slice("/play/".length));
-        const [head] = rel.split("/");
-        if (!head || !served.has(head)) return next();
+        let rel: string;
+        if (url.pathname === "/avatar-preview" || url.pathname === "/avatar-preview/") {
+          // The avatar preview from the same build, where the Sites image serves it (infra/packages/sites.nix).
+          rel = "avatar-preview/index.html";
+        } else if (url.pathname.startsWith("/assets/avatar-preview/")) {
+          rel = "avatar-preview/assets/" + decodeURIComponent(url.pathname.slice("/assets/avatar-preview/".length));
+        } else {
+          if (!url.pathname.startsWith("/play/")) return next();
+          rel = decodeURIComponent(url.pathname.slice("/play/".length));
+          const [head] = rel.split("/");
+          if (!head || !served.has(head)) return next();
+        }
         const file = normalize(join(dir, rel));
         if (!file.startsWith(normalize(dir) + "/") || !existsSync(file) || !statSync(file).isFile()) {
           if (!existsSync(dir)) {
@@ -272,8 +303,8 @@ function playBuild(): string {
 export default defineConfig({
   define: { __PLAY_BUILD__: JSON.stringify(playBuild()), __VALIDATOR_VERSION__: JSON.stringify(validatorVersion) },
   // ES workers can code-split, so the item validation worker loads its rule book as its own chunk.
-  worker: { format: "es" },
-  plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
+  worker: { format: "es", plugins: () => [libraryNoble()] },
+  plugins: [libraryNoble(), icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
     // server's inotify as two events. Transforming on the first one served an EMPTY
@@ -293,7 +324,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing", "../../library/web-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -303,14 +334,10 @@ export default defineConfig({
         "@ui": ui,
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
+        "@web-core": webCore,
         "@dcl/hashing": hashing,
         "@hud-host": hudHost,
         "@shop-host": shopHost,
-        "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
-        "@noble/hashes/sha2.js": noble("hashes/sha2.js"),
-        "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
-        "@noble/hashes/webcrypto.js": noble("hashes/webcrypto.js"),
-        "@noble/hashes/utils.js": noble("hashes/utils.js"),
         "@hud": hud,
         "@explorer-core": explorerCore,
         "@": src,
@@ -323,7 +350,7 @@ export default defineConfig({
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],
-    dedupe: ["viem", "react", "react-dom", "zod"],
+    dedupe: ["viem", "react", "react-dom", "zod", "@walletconnect/sign-client"],
   },
   optimizeDeps: {
     include: ["@xstate/react", "xstate", "zod", "viem/accounts"],

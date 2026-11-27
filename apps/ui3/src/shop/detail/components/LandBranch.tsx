@@ -10,11 +10,11 @@
 // components/Table/{TableContainer,TableContent}/*.tsx; icons vendored from webapp/src/images into landbranch-assets/.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { QueryClientContext } from "@tanstack/react-query";
 
-import ManaMark from "../../../atoms/ManaMark";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import { landTokenId } from "../../../data/catalyst/landListing";
 import { EstateUpgradeWarning } from "../../land/LandSections";
@@ -39,6 +39,7 @@ import { useShopWallet } from "../../wallet/context";
 import LegacyOrderBuy from "./LegacyOrderBuy";
 import LandAtlas from "./LandAtlas";
 import LandTradeBuy from "./LandTradeBuy";
+import { useReadOnClose } from "../lib/useReadOnClose";
 import backIcon from "./landbranch-assets/onBack.png";
 import pinIcon from "./landbranch-assets/pin-land.svg";
 import jumpIcon from "./landbranch-assets/jump_in.svg";
@@ -352,6 +353,13 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
   const maxPrice = rental ? maxPriceOfPeriods(rental) : null;
   const [view, setView] = useState<"sale" | "rent">(!!order || !rentalOpen ? "sale" : "rent");
   const [buying, setBuying] = useState(false);
+  // A sale that went out (confirmed, or still confirming) has this LAND and its order read again once its dialog
+  // closes, or this box unmounts, not while it shows (refetch drops the token and would take the dialog with it).
+  const { arm: readAgainOnClose, fire: readIfBought } = useReadOnClose(onChanged);
+  const closeBuy = () => {
+    setBuying(false);
+    readIfBought();
+  };
   const [period, setPeriod] = useState<number | null>(null);
   const partOfEstate = land.kind === "parcel" && !!land.estate;
   const executed = isRentalExecuted(rental);
@@ -381,7 +389,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
             <div className="shop-landtoken__price">
               <div className="shop-landtoken__price-title">Price</div>
               <div className="shop-landtoken__price-value">
-                <ManaMark size={18} network="ethereum" />
+                <ShopManaMark size={18} network="ethereum" />
                 <span className="shop-landtoken__price-mana">{manaText(maxPrice)}</span>
                 <span className="shop-landtoken__per-day">/day</span>
                 <FiatPrice wei={maxPrice} suffix="/day" />
@@ -407,7 +415,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
               <div className="shop-landtoken__price">
                 <div className="shop-landtoken__price-title">Price</div>
                 <div className="shop-landtoken__price-value" data-testid="land-price">
-                  <ManaMark size={18} network={order.network === "MATIC" ? "polygon" : "ethereum"} />
+                  <ShopManaMark size={18} network={order.network === "MATIC" ? "polygon" : "ethereum"} />
                   <span className="shop-landtoken__price-mana">{manaText(order.price)}</span>
                   <FiatPrice wei={order.price} />
                 </div>
@@ -442,7 +450,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
                 <div className="shop-landtoken__sale-buttons">
                   {buyable ? (
                     <button type="button" className="shop-landtoken__primary" onClick={() => (account ? setBuying(true) : onSignIn?.())} data-testid="land-buy">
-                      <ManaMark size={16} network="ethereum" />
+                      <ShopManaMark size={16} network="ethereum" />
                       <span>Buy with MANA</span>
                     </button>
                   ) : null}
@@ -474,7 +482,15 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
         </div>
       ) : null}
       {buying && order && priceWei && order.tradeId ? (
-        <LandTradeBuy name={nft.name} tradeId={order.tradeId} quoted={priceWei as ManaWei} onClose={() => setBuying(false)} onDone={() => onChanged()} />
+        <LandTradeBuy
+          name={nft.name}
+          tradeId={order.tradeId}
+          quoted={priceWei as ManaWei}
+          land={{ contractAddress: nft.contractAddress.toLowerCase(), tokenId: nft.tokenId }}
+          onClose={closeBuy}
+          onDone={readAgainOnClose}
+          onPending={readAgainOnClose}
+        />
       ) : null}
       {buying && order && priceWei && !order.tradeId ? (
         <LegacyOrderBuy
@@ -483,8 +499,9 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
           tokenId={nft.tokenId}
           order={{ id: order.id, marketplaceAddress: order.marketplaceAddress, price: order.price, chainId: order.chainId }}
           quoted={priceWei as ManaWei}
-          onClose={() => setBuying(false)}
-          onDone={() => onChanged()}
+          onClose={closeBuy}
+          onDone={readAgainOnClose}
+          onPending={readAgainOnClose}
         />
       ) : null}
     </div>
@@ -616,7 +633,7 @@ function LinkedProfile({ address }: { address: string }) {
 function InlineMana({ wei, network }: { wei: string; network?: string }) {
   return (
     <span className="shop-landtoken__inline-mana">
-      <ManaMark size={14} network={network === "MATIC" || network === "polygon" ? "polygon" : "ethereum"} />
+      <ShopManaMark size={14} network={network === "MATIC" || network === "polygon" ? "polygon" : "ethereum"} />
       {manaText(wei)}
     </span>
   );

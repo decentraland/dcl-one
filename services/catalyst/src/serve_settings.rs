@@ -25,7 +25,7 @@ pub(super) fn imposters_bake_settings(config: &Config) -> explore::imposters::Ra
 /// The six write switches as `GET /writes` reports them.
 pub(super) fn write_switches(config: &Config) -> shared::writes::Switches {
     shared::writes::Switches {
-        content: config.writes.content_writes_enabled,
+        content: config.writes.content_writes(),
         create: config.create.create_writes_enabled,
         data: config.writes.data_writes_enabled,
         social: config.writes.social_writes_enabled,
@@ -47,8 +47,12 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         },
         writes_enabled: config.ops.ops_writes_enabled,
         admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
+        read_admin_addresses: config.shop.credits_read_admin_addresses.clone(),
+        write_admin_addresses: config.shop.credits_write_admin_addresses.clone(),
+        admin_writes_require_bound_body: config.shop.credits_admin_writes_require_bound_body,
         captcha_secret: non_empty(&config.shop.credits_captcha_secret),
         captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
+        alerts_slack_webhook: non_empty(&config.shop.credits_alerts_slack_webhook),
         stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
         stripe_webhook_secret: non_empty(&config.shop.stripe_webhook_secret),
         stripe_api_base: config.shop.stripe_api_base.clone(),
@@ -61,6 +65,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
             config.shop.mana_price_max_staleness_secs
         },
         credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
+        daily_summary_hour_utc: config.shop.credits_daily_summary_hour_utc,
         checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
         require_purchase_intent: config.shop.credits_require_purchase_intent,
         checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,
@@ -75,6 +80,9 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         checkout_cancel_url: config.shop.credits_checkout_cancel_url.clone(),
         checkout_success_url_builder: non_empty(&config.shop.credits_checkout_success_url_builder),
         checkout_cancel_url_builder: non_empty(&config.shop.credits_checkout_cancel_url_builder),
+        public_url: config.node.public_url.clone(),
+        daily_studio_deposit_limit_cents: config.shop.credits_daily_studio_deposit_limit_cents,
+        studio_grant_max_cents: config.shop.credits_studio_grant_max_cents,
         usage_index_enabled: config.shop.credits_usage_index_enabled,
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
         usage_chain_id: config.economy.collections_chain_id as i64,

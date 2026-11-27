@@ -51,17 +51,35 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_MIRROR_INTERVAL_SECS", default_value_t = 3600)]
     pub events_mirror_interval_secs: u64,
 
+    /// The feature-flags service the Foundation event creators are read from (`<base>/events.json`, every five
+    /// minutes, whatever `EXPLORER_MIRRORS_ENABLED` says); empty reads none and labels no creator.
+    #[arg(long, env = "EVENTS_FEATURE_FLAGS_URL", default_value = "")]
+    pub events_feature_flags_url: String,
+
+    /// Optional `X-Address-Hash` that request adds beside its decentraland.org Referer (the old events service's
+    /// `FEATURE_FLAGS_USER_ID`); labelling works without it. Also accepts EVENTS_FEATURE_FLAGS_USER_ID_FILE.
+    #[arg(long, env = "EVENTS_FEATURE_FLAGS_USER_ID", hide_env_values = true)]
+    pub events_feature_flags_user_id: Option<String>,
+
     /// Adopt the rows the events mirror wrote as this node's own (`origin = 'local'`), once the old service stops and the mirror is off; `explore.mirror_state` records it, so it runs once per database.
     #[arg(long, env = "EVENTS_MIRROR_ADOPT", default_value_t = false, action = clap::ArgAction::Set)]
     pub events_mirror_adopt: bool,
 
-    /// The events site `/events/sitemap*.xml` points at.
+    /// Legacy website origin for sitemap URLs, world-event default posters and Slack links.
     #[arg(
         long,
         env = "EVENTS_BASE_URL",
         default_value = "https://events.decentraland.org"
     )]
     pub events_base_url: String,
+
+    /// Public Sites origin for event notification page links.
+    #[arg(
+        long,
+        env = "EVENTS_SITE_URL",
+        default_value = "https://decentraland.org"
+    )]
+    pub events_site_url: String,
 
     /// The jump-in site the event notifications link to
     /// (`JUMP_IN_SITE_URL/events?id=&position=&realm=`, the old service's
@@ -174,13 +192,6 @@ pub struct ExploreConfig {
     /// always served from this node's own entities.
     #[arg(long, env = "EXPLORER_REGISTRY_SOURCE_URL", default_value = "")]
     pub explorer_registry_source_url: String,
-
-    #[arg(long, env = "EXPLORER_MAP_SOURCE_URL", default_value = "")]
-    pub explorer_map_source_url: String,
-
-    /// Floor between two downloads of the 38 MB tile grid.
-    #[arg(long, env = "EXPLORER_MAP_MIN_REFRESH_SECS", default_value_t = 3600)]
-    pub explorer_map_min_refresh_secs: u64,
 
     /// The render directory `/satellite/{z}/{x}/{y}` is painted from
     /// (`manifest.json`, `<cx>/<cy>.png`, `<cx>/<cy>.t.png`), mirrored into

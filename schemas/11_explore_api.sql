@@ -69,16 +69,22 @@ CREATE TABLE explore_api.feature_flags_local (
     PRIMARY KEY (app, name)
 );
 
--- The api.decentraland.org /v2/tiles grid (about 92k tiles, 38 MB of JSON),
--- gzip-compressed as one row so a restart renders map.png before the first
--- pass; last_updated_at is the upstream /v2/tiles/info stamp the grid carries.
+-- The explorer map's tile grid (about 92k tiles, 37 MB of JSON), built from
+-- the land-authz and marketplace indexes (DATABASE.md "Map grid build
+-- workload") and gzip-compressed as one row so a restart renders map.png
+-- before the first pass; the row is the grid's revision: last_updated_at
+-- is the /v2/tiles/info stamp, moved only when the body changes; etag is the
+-- hex SHA-256 of the stored body; fetched_at is the build time; checked_at
+-- is when a build last found this revision current (/v2/tiles/info
+-- checkedAt, the map's age label).
 CREATE TABLE explore_api.map_grid (
     id smallint PRIMARY KEY CHECK (id = 1),
     last_updated_at bigint NOT NULL,
     etag text,
     tile_count integer NOT NULL,
     body_gzip bytea NOT NULL,
-    fetched_at timestamp without time zone NOT NULL
+    fetched_at timestamp without time zone NOT NULL,
+    checked_at timestamp without time zone
 );
 
 -- /auth-api, the sign-in relay (DATABASE.md "Auth API relay state workload"):
@@ -134,6 +140,17 @@ CREATE TABLE explore_api.auth_identity_tombstones (
 );
 
 CREATE INDEX auth_identity_tombstones_created_idx ON explore_api.auth_identity_tombstones (created_at);
+
+CREATE TABLE explore_api.magic_deletion_attempts (
+    token_key bytea PRIMARY KEY,
+    address_key bytea NOT NULL,
+    network_key bytea,
+    requested_at timestamptz NOT NULL DEFAULT now(),
+    status text NOT NULL DEFAULT 'requested'
+        CHECK (status IN ('requested', 'processed', 'unprocessed', 'rate_limited', 'upstream_error'))
+);
+
+CREATE INDEX magic_deletion_attempts_requested_idx ON explore_api.magic_deletion_attempts (requested_at);
 
 -- POST /onboarding/checkpoint: one row per (user, checkpoint 1-7), the
 -- auth server's onboarding_checkpoints. reached_at is the first `reached`

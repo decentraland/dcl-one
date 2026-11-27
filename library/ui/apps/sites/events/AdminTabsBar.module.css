@@ -1,0 +1,95 @@
+/* decentraland.org's AdminTabsBar: a translucent purple bar held under the site header while the page
+   scrolls, 64px tall from 992px and 56px under it. */
+.root {
+  position: sticky;
+  top: var(--site-header-h, 0px);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+  min-height: 64px;
+  padding: 0 var(--dcl-space-64);
+  border-block: 1px solid var(--dcl-transparencies-white-10);
+  background: color-mix(in srgb, var(--dcl-brand-purple-dark) 55%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  color: var(--dcl-text-primary);
+}
+
+.tabs {
+  display: flex;
+  align-self: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.tabs > li {
+  display: flex;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: var(--dcl-space-16) var(--dcl-space-32);
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--dcl-text-primary);
+}
+
+.tab[aria-current='page'] {
+  color: var(--dcl-text-primary);
+  font-weight: 700;
+}
+
+.tab[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  background: var(--dcl-action-primary);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: -4px;
+}
+
+.create {
+  flex-shrink: 0;
+}
+
+@media (max-width: 991px) {
+  .root {
+    min-height: 56px;
+    padding: 0 var(--dcl-space-16);
+  }
+
+  .tab {
+    padding: var(--dcl-space-16) var(--dcl-space-12);
+  }
+}
+
+/* Phones: the source shrinks the call to action so the tabs keep room to scroll. */
+@media (max-width: 599px) {
+  .tab {
+    padding: var(--dcl-space-16) var(--dcl-space-8);
+  }
+
+  .create {
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    font-size: var(--dcl-font-size-label-xs-caps);
+  }
+}

@@ -38,7 +38,12 @@ pub fn rank_trending(
         )
     };
     let signal = |i: &UnifiedItem| signals.get(&key(i)).cloned().unwrap_or_default();
-    let sales_slots = (first as f64 * TRENDING_SALES_CUT).ceil() as i64;
+    let first_f = f64::from(crate::market::casts::clamp_i32(first));
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a share of `first`, which fits i32"
+    )]
+    let sales_slots = (first_f * TRENDING_SALES_CUT).ceil() as i64;
     let volume_slots = first - sales_slots;
     items.sort_by(|a, b| {
         let (sa, sb) = (signal(a), signal(b));
@@ -48,7 +53,7 @@ pub fn rank_trending(
             .then(a.contract_address.cmp(&b.contract_address))
             .then(a.item_id.cmp(&b.item_id))
     });
-    let rest = items.split_off((sales_slots.max(0) as usize).min(items.len()));
+    let rest = items.split_off(crate::market::casts::page(sales_slots).min(items.len()));
     let mut by_sales = items;
     let mut by_volume = rest;
     by_volume.sort_by(|a, b| {
@@ -59,9 +64,9 @@ pub fn rank_trending(
             .then(a.contract_address.cmp(&b.contract_address))
             .then(a.item_id.cmp(&b.item_id))
     });
-    by_volume.truncate(volume_slots.max(0) as usize);
+    by_volume.truncate(crate::market::casts::page(volume_slots));
     by_sales.extend(by_volume);
-    by_sales.truncate(first.max(0) as usize);
+    by_sales.truncate(crate::market::casts::page(first));
     by_sales
         .into_iter()
         .map(|item| {
@@ -232,7 +237,13 @@ pub(super) fn rerank_for_diversity(
     } else {
         DEFAULT_WEARABLE_RATIO
     };
-    let wearable_target = (limit as f64 * ratio).round() as usize;
+    let limit_f = f64::from(u32::try_from(limit).unwrap_or(u32::MAX));
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a finite, positive product; `as` saturates"
+    )]
+    let wearable_target = (limit_f * ratio).round() as usize;
     let emote_target = limit.saturating_sub(wearable_target);
     let mut picked: Vec<RailCandidate> = Vec::new();
     let mut per_collection: HashMap<String, usize> = HashMap::new();
@@ -303,9 +314,9 @@ pub(super) fn rerank_for_diversity(
 /// for the address it proves (and only when `address` is absent or that
 /// same one; a signed caller naming nobody means themselves). The old rail's
 /// content neighbours and taste blend are not carried.
-
 pub(super) async fn personal_rows(
     state: &MarketplaceState,
+    read: &mut super::super::catalogue::CatalogueRead,
     p: &Params<'_>,
     verified: Option<&str>,
     filters: &UnifiedCatalogFilters,
@@ -324,13 +335,13 @@ pub(super) async fn personal_rows(
     let equipped = item_id_values(p, "equipped", MAX_EQUIPPED);
     let exclude = id_list(p, "exclude", MAX_EXCLUDE);
     let held = match profile_for {
-        Some(w) => super::super::neighbours::held_items(&state.pool, w, MAX_HELD_SEEDS).await?,
+        Some(w) => super::super::neighbours::held_items(&mut *read.tx, w, MAX_HELD_SEEDS).await?,
         None => Vec::new(),
     };
     let held_ids: Vec<String> = held.iter().map(|(_, c, i)| format!("{c}-{i}")).collect();
     let favorites: Vec<String> = match favorites_for {
         Some(address) => match super::super::lists::get_picks_by_list_id(
-            &state.pool,
+            &mut *read.tx,
             super::super::lists::DEFAULT_LIST_ID,
             Some(address),
             MAX_FAVORITES,
@@ -342,6 +353,9 @@ pub(super) async fn personal_rows(
                 .iter()
                 .filter_map(|pick| normalize_item_id(&pick.item_id))
                 .collect(),
+            Err(ApiError::Database(e)) if super::super::nft_reads::cancelled(&e) => {
+                return Err(e.into());
+            }
             Err(e) => {
                 tracing::warn!(error = ?e, "suggestions: could not read favorites");
                 Vec::new()
@@ -366,7 +380,7 @@ pub(super) async fn personal_rows(
     )
     .bind(&contracts)
     .bind(&items)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *read.tx)
     .await?;
     let mut seeds: Vec<(String, String, String, f64)> = Vec::new();
     let (mut wearable_weight, mut total_weight) = (0.0f64, 0.0f64);
@@ -396,17 +410,17 @@ pub(super) async fn personal_rows(
     let mut skip: Vec<String> = exclude;
     skip.extend(profile.iter().map(|(id, _)| id.clone()));
     let scored = super::super::neighbours::weighted_neighbours_of(
-        &state.pool,
+        &mut *read.tx,
         &seeds,
         &skip,
-        (limit * 3) as i64,
+        crate::market::casts::len_i64(limit * 3),
     )
     .await?;
     if scored.is_empty() {
         return Ok(Vec::new());
     }
     let ids: Vec<String> = scored.iter().map(|s| s.id.clone()).collect();
-    let hydrated = items_by_ids(state, &ids, filters, rate).await?;
+    let hydrated = items_by_ids(state, read, &ids, filters, rate).await?;
     let by_id: HashMap<String, &UnifiedItem> = hydrated
         .iter()
         .map(|i| {

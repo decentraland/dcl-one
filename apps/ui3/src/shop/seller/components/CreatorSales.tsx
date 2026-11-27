@@ -8,8 +8,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import Button from "../../../atoms/Button";
-import EmptyState from "../../../components/EmptyState";
+import { Button, EmptyState } from "@dcl/one-ui";
 import type { ChainId } from "@shop/model/chain";
 import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "@shop/model/money";
 import { dataUnavailable } from "../../market/lib/api";
@@ -75,7 +74,7 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
         <p role="status">
           {pct}% off “{collection.name}” until {formatDate(now() + days * DAY)}.
         </p>
-        <Button size="sm" variant="ghost" onClick={onClose}>
+        <Button size="sm" variant="outline" onClick={onClose}>
           Close
         </Button>
       </div>
@@ -142,10 +141,10 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
           ) : null}
           {problem ? <p className="mk-field__error">{PROBLEM_TEXT[problem]}</p> : null}
           <div className="mk-actions">
-            <Button disabled={!!problem} onClick={() => setReviewing(true)}>
+            <Button size="md" disabled={!!problem} onClick={() => setReviewing(true)}>
               Review discount
             </Button>
-            <Button variant="ghost" onClick={onClose}>
+            <Button size="md" variant="outline" onClick={onClose}>
               Cancel
             </Button>
           </div>
@@ -172,10 +171,10 @@ export function CreatorSaleForm({ collection, chainId = settlementChainId(), onC
             ) : null}
           </ul>
           <div className="mk-actions">
-            <Button disabled={write.busy || discounted === 0} onClick={submit}>
+            <Button size="md" disabled={write.busy || discounted === 0} onClick={submit}>
               {write.busy ? "Starting…" : "Start discount"}
             </Button>
-            <Button variant="ghost" disabled={write.busy} onClick={() => setReviewing(false)}>
+            <Button size="md" variant="outline" disabled={write.busy} onClick={() => setReviewing(false)}>
               Back
             </Button>
           </div>
@@ -240,7 +239,7 @@ export default function CreatorSales({ address, saleable, names }: { address: st
       ) : sales.isError ? (
         <LoadFailure error={sales.error} what="Discounts" onRetry={() => void sales.refetch()} />
       ) : sales.data.length === 0 ? (
-        <EmptyState variant="inline" title="No discounts yet" subtitle="Put a collection on sale for a few days to bring buyers back." data-testid="shop-empty" />
+        <EmptyState appearance="shop" titleAs="h2" variant="inline" title="No discounts yet" subtitle="Put a collection on sale for a few days to bring buyers back." data-testid="shop-empty" />
       ) : (
         <ul className="mk-list">
           {sales.data.map((s) => (

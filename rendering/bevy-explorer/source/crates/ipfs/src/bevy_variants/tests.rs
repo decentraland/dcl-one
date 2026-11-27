@@ -3,6 +3,7 @@ use crate::{
     ipfs_path::IpfsType, ContentMap, EndpointConfig, IpfsEntity, RealmConfig, ServerAbout,
 };
 use bevy::asset::io::Reader;
+use common::sync::MutexExt;
 
 /// A 2-level BC7 KTX2 variant and its CID.
 fn bc7_variant() -> (Vec<u8>, String) {
@@ -261,7 +262,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
 async fn variants_are_off_by_default() {
     let (io, dir) = io_with_cache("off");
     io.request_bevy_variants(SCENE);
-    assert!(io.bevy_variants.manifests.lock().unwrap().is_empty());
+    assert!(io.bevy_variants.manifests.lock_ignore_poison().is_empty());
     let path = content_path("tex.png");
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
     assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
@@ -272,7 +273,7 @@ async fn variants_are_off_by_default() {
 async fn preview_and_local_scenes_ask_for_no_manifest() {
     let (mut io, dir) = io_with_cache("preview");
     Arc::get_mut(&mut io).unwrap().is_preview = true;
-    io.set_bevy_variants_base("https://abgen.example");
+    io.set_bevy_variants_base(Some("https://abgen.example"), "test");
     io.request_bevy_variants(SCENE);
     let mut state = io.bevy_variants.manifest(SCENE).unwrap();
     let state = state
@@ -288,7 +289,7 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
 async fn a_near_lod_descriptor_comes_from_the_variants_base() {
     let (io, dir) = io_with_cache("lod-descriptor");
     assert_eq!(io.bevy_lod_descriptor(SCENE), None);
-    io.set_bevy_variants_base("https://abgen.example/");
+    io.set_bevy_variants_base(Some("https://abgen.example/"), "test");
     assert_eq!(
         io.bevy_lod_descriptor(SCENE),
         Some(format!(
@@ -306,7 +307,7 @@ async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
         io.bevy_far_lod(SCENE),
         FarLodSource::Unavailable("bevy variants off".to_owned())
     );
-    io.set_bevy_variants_base("https://abgen.example/");
+    io.set_bevy_variants_base(Some("https://abgen.example/"), "test");
     assert_eq!(io.bevy_far_lod(SCENE), FarLodSource::NotYet);
     io.context.write().await.about = Some(ServerAbout {
         content: Some(EndpointConfig {
@@ -338,7 +339,7 @@ async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
 #[tokio::test]
 async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     let (io, dir) = io_with_cache("far-lod-health");
-    io.set_bevy_variants_base("https://abgen.example");
+    io.set_bevy_variants_base(Some("https://abgen.example"), "test");
     io.context.write().await.about = Some(ServerAbout {
         content: Some(EndpointConfig {
             healthy: true,
@@ -407,6 +408,49 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[tokio::test]
+async fn far_lods_outlive_the_variants_session_switch() {
+    let (io, dir) = io_with_cache("far-lod-session-switch");
+    io.set_bevy_variants_base(Some("https://abgen.example"), "test");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    let url = |scene: &str| match io.bevy_far_lod(scene) {
+        FarLodSource::Url(url) => url,
+        other => panic!("{scene}: {other:?}"),
+    };
+
+    // manifest and texture failures turn the variants client off for the session
+    for _ in 0..BREAKER_FAILURES {
+        io.bevy_variants.transport_failed("connection refused");
+    }
+    assert!(io.bevy_variants.disabled().is_some());
+
+    // far LODs are still offered, and their own breaker sees the outage
+    assert!(matches!(io.bevy_far_lod(SCENE), FarLodSource::Url(_)));
+    assert!(!io.far_lods_off());
+    assert!(io.far_lod_may_request());
+    for n in 0..far_lod::FAR_LOD_BREAKER_FAILURES {
+        io.far_lod_fetched(&url(&format!("bafkrei{n}")), Err(None));
+    }
+    let status = io.far_lod_status();
+    assert_eq!(status.failures, far_lod::FAR_LOD_BREAKER_FAILURES);
+    assert!(status.paused_for.is_some());
+    assert!(!io.far_lod_may_request());
+    assert!(!io.far_lods_off());
+
+    // an answer resumes them
+    io.far_lod_fetched(&url("bafkrei0"), Ok(()));
+    assert!(io.far_lod_status().paused_for.is_none());
+    assert!(io.far_lod_may_request());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn content_path(file: &str) -> PathBuf {
     PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
         SCENE.to_owned(),
@@ -443,7 +487,7 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>
                         break;
                     }
                 }
-                seen.lock().unwrap().push(path.clone());
+                seen.lock_ignore_poison().push(path.clone());
                 let response = match routes.iter().find(|(route, _)| *route == path) {
                     Some((_, body)) => [
                         format!(
@@ -504,7 +548,7 @@ async fn scene_with_variant_of(
         secret: None,
         spawn_parcel: None,
     }));
-    io.set_bevy_variants_base(base);
+    io.set_bevy_variants_base(Some(base), "test");
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
         r#"{{"v": 3, "lanes": {{"texture": "t2", "mesh": "m1"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
@@ -517,8 +561,7 @@ async fn scene_with_variant_of(
     drop(sender);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
 }
 
@@ -530,7 +573,10 @@ async fn read_all(io: &Arc<IpfsIo>, path: &Path) -> Vec<u8> {
 }
 
 fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
-    log.lock().unwrap().iter().filter(|p| *p == path).count()
+    log.lock_ignore_poison()
+        .iter()
+        .filter(|p| *p == path)
+        .count()
 }
 
 #[tokio::test]
@@ -563,7 +609,7 @@ async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(
         (session.downloaded, session.cached, session.fallbacks),
         (1, 1, 0)
@@ -630,7 +676,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
         secret: None,
         spawn_parcel: None,
     }));
-    io.set_bevy_variants_base(&base);
+    io.set_bevy_variants_base(Some(&base), "test");
     let _ = io.bevy_variants.bc.set(true);
 
     io.request_bevy_variants(WEARABLE);
@@ -678,7 +724,7 @@ async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_ori
     assert!(!dir.join(&name).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert_eq!(session.fallbacks, 1);
         assert!(session.recent[0].reason.contains("vkFormat 146"));
         assert!(session.bad.contains(&served_path(VARIANT_CID)));
@@ -708,7 +754,7 @@ async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
     let name = cache_name(&base, &served_path(VARIANT_CID));
     assert!(!dir.join(&name).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert!(session.recent[0].reason.starts_with("invalid KTX2"));
         assert!(session.bad.contains(&served_path(VARIANT_CID)));
     }
@@ -725,7 +771,7 @@ async fn a_missing_variant_falls_back_to_the_original() {
     scene_with_variant(&io, &base, VARIANT_CID).await;
     let path = content_path("tex.png");
     assert_eq!(read_all(&io, &path).await, b"original png");
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(session.fallbacks, 1);
     assert!(session.recent[0].reason.starts_with("fetch:"));
     drop(session);
@@ -766,7 +812,7 @@ async fn a_glb_variant_is_read_as_served() {
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
-    let session = io.bevy_variants.session.lock().unwrap();
+    let session = io.bevy_variants.session.lock_ignore_poison();
     assert_eq!(session.served_by_format.get("glb"), Some(&[1, 1]));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
@@ -794,7 +840,7 @@ async fn a_glb_variant_that_is_not_a_glb_falls_back_to_the_original() {
     let name = cache_name(&base, &served_path_of("glb", &cid));
     assert!(!dir.join(&name).exists());
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert!(session.recent[0].reason.starts_with("invalid glb variant"));
         assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
         assert!(session.bad.contains(&served_path_of("glb", &cid)));
@@ -840,7 +886,7 @@ fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
     );
     assert!(!variants.is_served(&path));
     assert!(variants.is_bad(&served_path_of("glb", VARIANT_CID)));
-    let session = variants.session.lock().unwrap();
+    let session = variants.session.lock_ignore_poison();
     assert_eq!(session.fallbacks_by_format.get("glb"), Some(&1));
     assert!(session.recent[0]
         .reason
@@ -964,7 +1010,7 @@ fn repeated_transport_failures_turn_variants_off_for_the_session() {
 fn the_debug_snapshot_reports_state_and_fallbacks() {
     let variants = BevyVariants::default();
     assert_eq!(snapshot_of(&variants)["state"], "off");
-    variants.set_base("http://localhost:5147/");
+    variants.settle(Some("http://localhost:5147/"), "test");
     let _ = variants.bc.set(true);
     variants.fail(
         SCENE,
@@ -1002,14 +1048,18 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     let (sender, receiver) = watch::channel(ManifestState::Pending);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
+    // the base settled long ago, so the deadline counts from the request alone
+    io.bevy_variants.route.send_modify(|route| {
+        if let Base::On(_, settled_at) = &mut route.base {
+            *settled_at = web_time::Instant::now() - MANIFEST_DEADLINE * 2;
+        }
+    });
     let requested = |ago: Duration| {
         io.bevy_variants
             .requested_at
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .insert(SCENE.to_owned(), web_time::Instant::now() - ago);
     };
     let path = content_path("tex.png");
@@ -1029,7 +1079,7 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
     assert!(began.elapsed() < Duration::from_millis(100));
     {
-        let session = io.bevy_variants.session.lock().unwrap();
+        let session = io.bevy_variants.session.lock_ignore_poison();
         assert_eq!(session.fallbacks, 2);
         assert!(session.recent[0].reason.contains("manifest was not there"));
         assert!(session.bad.is_empty());
@@ -1045,8 +1095,7 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
     let (sender, receiver) = watch::channel(ManifestState::Pending);
     io.bevy_variants
         .manifests
-        .lock()
-        .unwrap()
+        .lock_ignore_poison()
         .insert(SCENE.to_owned(), receiver);
     requested(Duration::ZERO);
     let io2 = io.clone();
@@ -1061,5 +1110,255 @@ async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
         parse_manifest(manifest.as_bytes()).unwrap(),
     )));
     assert_eq!(reading.await.unwrap(), ktx2);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_endpoint_flag_routes_only_to_decentraland_hosts() {
+    use common::feature_flags::FlagPayload;
+    const DEFAULT: &str = "https://abgen-cdn.decentraland.org";
+    let variant = |name: &str, enabled: bool, payload: Option<(&str, &str)>| FlagVariant {
+        name: name.to_owned(),
+        enabled,
+        payload: payload.map(|(kind, value)| FlagPayload {
+            kind: kind.to_owned(),
+            value: value.to_owned(),
+        }),
+    };
+    let base = |v: Option<FlagVariant>| flagged_base(v.as_ref(), Some(DEFAULT)).0;
+    let staging = Some(("string", "https://abgen-cdn.decentraland.zone/"));
+
+    // unread, disabled or without an enabled variant: the default
+    assert_eq!(base(None).as_deref(), Some(DEFAULT));
+    assert_eq!(
+        base(Some(variant("disabled", false, None))).as_deref(),
+        Some(DEFAULT)
+    );
+    assert_eq!(
+        base(Some(variant("zone", false, staging))).as_deref(),
+        Some(DEFAULT)
+    );
+    // `off`, `on`, or the url its payload names
+    assert_eq!(base(Some(variant("off", true, staging))), None);
+    assert_eq!(
+        base(Some(variant("on", true, staging))).as_deref(),
+        Some(DEFAULT)
+    );
+    assert_eq!(
+        base(Some(variant("zone", true, staging))).as_deref(),
+        Some("https://abgen-cdn.decentraland.zone/")
+    );
+    // a payload that is not an https Decentraland base keeps the default
+    for payload in [
+        None,
+        Some(("json", "https://abgen-cdn.decentraland.zone")),
+        Some(("string", "http://abgen-cdn.decentraland.zone")),
+        Some(("string", "https://abgen.example")),
+        Some(("string", "https://decentraland.org.example")),
+        Some(("string", "https://abgen-cdn.decentraland.org/?x=1")),
+        Some(("string", "not a url")),
+        Some(("string", "https://abgen-cdn.decentraland.org:8443")),
+        Some(("string", "https://user@abgen-cdn.decentraland.org")),
+        Some(("string", "https://abgen-cdn.decentraland.org#x")),
+    ] {
+        assert_eq!(
+            base(Some(variant("zone", true, payload))).as_deref(),
+            Some(DEFAULT),
+            "{payload:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_base_settles_from_an_http_url_or_off() {
+    let (io, dir) = io_with_cache("settle");
+    io.set_bevy_variants_base(Some("https://abgen.example/"), "test");
+    assert_eq!(
+        io.bevy_variants.base().as_deref(),
+        Some("https://abgen.example")
+    );
+    // a url that is not http(s) is off, and says so
+    io.set_bevy_variants_base(Some("ftp://abgen.example"), "launch option");
+    assert!(io.bevy_variants.is_off());
+    assert_eq!(
+        snapshot_of(&io.bevy_variants)["baseSource"],
+        "launch option: not an http(s) url"
+    );
+    io.set_bevy_variants_base(None, "test");
+    assert_eq!(io.bevy_lod_descriptor(SCENE), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// While the base waits for the endpoint flag nothing is asked of any base: far LODs are not
+/// known yet but not off, a file waits for its manifest however long the base takes, and the
+/// manifest's deadline counts from when the base settled.
+#[tokio::test]
+async fn files_wait_for_a_pending_base_then_for_the_manifest_deadline() {
+    let (io, dir) = io_with_cache("pending-base");
+    let (ktx2, cid) = bc7_variant();
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2.clone())]).await;
+    scene_with_variant(&io, &base, &cid).await;
+    let loaded = io.bevy_variants.manifest(SCENE).unwrap().borrow().clone();
+    let (sender, receiver) = watch::channel(ManifestState::Pending);
+    io.bevy_variants
+        .manifests
+        .lock_ignore_poison()
+        .insert(SCENE.to_owned(), receiver);
+    // requested long enough ago that a deadline counted from the request is over
+    io.bevy_variants.requested_at.lock_ignore_poison().insert(
+        SCENE.to_owned(),
+        web_time::Instant::now() - MANIFEST_DEADLINE * 2,
+    );
+    io.route_bevy_variants_by_flag(Some(&base), "test");
+    assert!(io.bevy_variants_pending());
+    assert_eq!(io.bevy_far_lod(SCENE), FarLodSource::NotYet);
+    assert!(!io.far_lods_off());
+    assert_eq!(io.bevy_lod_descriptor(SCENE), None);
+
+    let path = content_path("tex.png");
+    let io2 = io.clone();
+    let path2 = path.clone();
+    let reading = tokio::spawn(async move { read_all(&io2, &path2).await });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!reading.is_finished());
+    io.bevy_variants.settle(Some(&base), "test");
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    sender.send_replace(loaded);
+    assert_eq!(reading.await.unwrap(), ktx2);
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A pending base that settles off serves nothing: a waiting read reads the original, and an
+/// entity requested meanwhile gets no manifest.
+#[tokio::test]
+async fn a_pending_base_that_settles_off_serves_nothing() {
+    let (io, dir) = io_with_cache("pending-off");
+    let (ktx2, cid) = bc7_variant();
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2)]).await;
+    scene_with_variant(&io, &base, &cid).await;
+    let (_sender, receiver) = watch::channel(ManifestState::Pending);
+    io.bevy_variants
+        .manifests
+        .lock_ignore_poison()
+        .insert(SCENE.to_owned(), receiver);
+    io.route_bevy_variants_by_flag(Some(&base), "test");
+    io.request_bevy_variants("bafkreiother");
+    let path = content_path("tex.png");
+    let io2 = io.clone();
+    let path2 = path.clone();
+    let reading = tokio::spawn(async move {
+        let ipfs_path = IpfsPath::new_from_path(&path2).unwrap().unwrap();
+        io2.read_bevy_variant(&ipfs_path, &path2).await.is_none()
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    io.bevy_variants.settle(None, "test");
+    assert!(reading.await.unwrap());
+    let mut other = io.bevy_variants.manifest("bafkreiother").unwrap();
+    let state = other
+        .wait_for(|state| !matches!(state, ManifestState::Pending))
+        .await
+        .unwrap()
+        .clone();
+    assert!(matches!(state, ManifestState::Failed(_)), "{state:?}");
+    assert_eq!(requests_for(&log, &variant_route), 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The flag settles the base once the flags are read, here from `ff` alone.
+#[test]
+fn the_flag_settles_the_base_once_the_flags_are_read() {
+    const DEFAULT: &str = "https://abgen-cdn.decentraland.org";
+    for (ff, expected) in [
+        ("-*,bevy-variants-endpoint:off", None),
+        ("-*", Some(DEFAULT)),
+    ] {
+        let (io, dir) = io_with_cache("flag-routing");
+        io.route_bevy_variants_by_flag(Some(DEFAULT), "config");
+        let mut app = App::new();
+        app.insert_resource(common::structs::AppConfig::default())
+            .insert_resource(IpfsResource { inner: io.clone() })
+            .add_plugins(common::feature_flags::FeatureFlagsPlugin {
+                overrides: Some(ff.to_owned()),
+            })
+            .add_plugins(EndpointFlagRoutingPlugin);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(!io.bevy_variants_pending(), "{ff}");
+        assert_eq!(io.bevy_variants.base().as_deref(), expected, "{ff}");
+        let source = snapshot_of(&io.bevy_variants)["baseSource"].clone();
+        let source = source.as_str().unwrap();
+        assert!(source.starts_with("endpoint flag"), "{ff}: {source}");
+        assert!(source.ends_with("default: config"), "{ff}: {source}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// End to end from the flags service: an entity requested before the flags are read waits for
+/// them. Their answer names a plain `http` loopback base, which the scheme check refuses (other
+/// hosts are `flagged_base`'s table) and which is never asked for; the manifest comes from the
+/// fallback.
+#[tokio::test]
+async fn a_flagged_base_outside_decentraland_is_never_requested() {
+    let manifest_route = format!("/bevy/manifest/{SCENE}.json");
+    let manifest = format!(r#"{{"files": {{"{ORIGINAL_CID}": ["bevy/t4/{VARIANT_CID}"]}}}}"#);
+    let (default, default_log) = serve(vec![(manifest_route.clone(), manifest.into_bytes())]).await;
+    let (elsewhere, elsewhere_log) = serve(vec![]).await;
+    let file = format!(
+        r#"{{
+            "flags": {{ "explorer-bevy-variants-endpoint": true }},
+            "variants": {{ "explorer-bevy-variants-endpoint": {{
+                "name": "elsewhere", "enabled": true,
+                "payload": {{ "type": "string", "value": "{elsewhere}" }}
+            }} }}
+        }}"#
+    );
+    let (flags, flags_log) = serve(vec![("/explorer.json".to_owned(), file.into_bytes())]).await;
+    // the only test in this binary that resolves the feature-flags service
+    common::base_domain::set_services([(base_domain::Service::FeatureFlags, flags.as_str())])
+        .unwrap();
+
+    let (io, dir) = io_with_cache("flag-end-to-end");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    io.route_bevy_variants_by_flag(Some(&default), "config");
+    io.request_bevy_variants(SCENE);
+    let mut app = App::new();
+    app.insert_resource(common::structs::AppConfig::default())
+        .insert_resource(IpfsResource { inner: io.clone() })
+        .add_plugins(common::feature_flags::FeatureFlagsPlugin::default())
+        .add_plugins(EndpointFlagRoutingPlugin);
+    for _ in 0..500 {
+        app.update();
+        if !io.bevy_variants_pending() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(requests_for(&flags_log, "/explorer.json"), 1);
+    assert!(!io.bevy_variants_pending());
+    assert_eq!(io.bevy_variants.base().as_deref(), Some(default.as_str()));
+    assert!(snapshot_of(&io.bevy_variants)["baseSource"]
+        .as_str()
+        .unwrap()
+        .contains("`elsewhere` names no https Decentraland base url"));
+
+    let mut state = io.bevy_variants.manifest(SCENE).unwrap();
+    let state = state
+        .wait_for(|state| !matches!(state, ManifestState::Pending))
+        .await
+        .unwrap()
+        .clone();
+    assert!(matches!(state, ManifestState::Loaded(_)), "{state:?}");
+    assert_eq!(requests_for(&default_log, &manifest_route), 1);
+    assert!(elsewhere_log.lock_ignore_poison().is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }

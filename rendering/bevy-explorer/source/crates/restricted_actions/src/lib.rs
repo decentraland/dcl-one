@@ -2,6 +2,7 @@
 
 pub mod agent_commands;
 pub mod explorer_ui;
+mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
@@ -33,8 +34,8 @@ use common::{
     sets::SceneSets,
     structs::{
         server_mode, AvatarDynamicState, CurrentRealm, EngineMovementControl, PermissionType,
-        PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser, ReturnedToWorld,
-        SceneMeta, StartupScenes, ZOrder,
+        PlayerAddress, PlayerTeleported, PreviewCommand, PreviewMode, PrimaryCamera, PrimaryUser,
+        ReturnedToWorld, SceneMeta, StartupScenes, ZOrder,
     },
     util::{AsH160, TaskCompat, TaskExt, UrlLoopbackExt},
 };
@@ -42,8 +43,9 @@ use comms::{
     global_crdt::{CrdtContexts, ForeignPlayer},
     preview::handle_preview_socket,
     profile::{CurrentUserProfile, ProfileManager, UserProfile},
+    scene_messages::SceneMessageTraffic,
     scene_rooms::SceneRooms,
-    scene_topics::{is_topic_frame, SceneTopicTraffic},
+    scene_topics::is_topic_frame,
     NetworkMessage, NetworkMessageRecipient,
 };
 use console::DoAddConsoleCommand;
@@ -72,7 +74,7 @@ use scene_runner::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use system_bridge::SystemApi;
-use teleport::{handle_out_of_world, teleport_player};
+use teleport::handle_out_of_world;
 use ui_core::button::DuiButton;
 use user_input::avatar_movement::{ActivePlayerComponent, AvatarMovement, AvatarMovementInfo};
 use wallet::{browser_auth::remote_send_async, sign_request, Wallet};
@@ -106,8 +108,7 @@ impl Plugin for RestrictedActionsPlugin {
                     event_player_moved_scene,
                     event_scene_ready,
                     send_scene_messages,
-                    teleport_player.after(change_realm),
-                    handle_out_of_world,
+                    teleport::landing_systems(),
                     announce_returned_to_world.after(handle_out_of_world),
                     open_nft_dialog,
                 ),
@@ -131,12 +132,14 @@ impl Plugin for RestrictedActionsPlugin {
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
         app.init_resource::<input_manager::SystemActionStreams>();
+        app.add_plugins(teleport::diagnostics::TeleportDiagnosticsPlugin);
         app.add_console_command::<SpawnPortableCommand, _>(spawn_portable_command);
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
         app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(home::HomePlugin);
         app.add_plugins(map_pins::MapPinsPlugin);
         app.add_plugins(item_purchase::ItemPurchasePlugin);
     }
@@ -681,7 +684,7 @@ fn change_realm(
 
     for (new_realm, response, report) in perms.drain_success(PermissionType::ChangeRealm) {
         debug!("change realm action -> base");
-        *target = RealmInitialLocation::Base;
+        *target = RealmInitialLocation::BASE;
         // answered once the realm is actually set (or failed, keeping the player where they are)
         commands.send_event(ChangeRealmEvent {
             new_realm,
@@ -1289,6 +1292,7 @@ fn list_portables(
 }
 
 fn get_user_data(
+    mut system_events: EventReader<SystemApi>,
     profile: Res<CurrentUserProfile>,
     others: Query<(&ForeignPlayer, &UserProfile)>,
     me: Res<Wallet>,
@@ -1306,10 +1310,30 @@ fn get_user_data(
     mut profile_manager: ProfileManager,
     contexts: Res<CrdtContexts>,
 ) {
-    for (user, scene, response) in events.read().filter_map(|ev| match &ev.call {
-        RpcCall::GetUserData { user, response } => Some((user, ev.origin.scene(), response)),
+    let scene_reads = events.read().filter_map(|event| match &event.call {
+        RpcCall::GetUserData { user, response } => {
+            Some((user.as_ref(), event.origin.scene(), response))
+        }
         _ => None,
-    }) {
+    });
+    let system_reads = system_events.read().filter_map(|event| {
+        let SystemApi::GetUserProfile { address, response } = event else {
+            return None;
+        };
+        if let Some(owner) = me
+            .address()
+            .filter(|owner| address.as_h160() == Some(*owner))
+        {
+            let committed = profile
+                .peer_profile()
+                .filter(|profile| profile.content.eth_address.as_h160() == Some(owner));
+            response.send(committed.map(|profile| profile.content.clone()).ok_or(()));
+            return None;
+        }
+        // The system UI runs on clients, where nearby players share one context.
+        Some((Some(address), None, response))
+    });
+    for (user, scene, response) in scene_reads.chain(system_reads) {
         debug!("process get_user_data for {:?}", scene);
         match user {
             None => match profile.profile.as_ref() {
@@ -1415,7 +1439,7 @@ impl ScenePresence<'_, '_> {
 }
 
 fn get_connected_players(
-    me: Res<Wallet>,
+    me: Query<&PlayerAddress, With<PrimaryUser>>,
     others: Query<&ForeignPlayer>,
     mut events: EventReader<RpcCallEvent>,
     presence: ScenePresence,
@@ -1436,7 +1460,7 @@ fn get_connected_players(
         // a headless server has no real local player — don't report its fake player as
         // a connected peer (it would appear as a ghost to every scene)
         let own = (!server_mode())
-            .then(|| me.address().map(|address| format!("{address:#x}")))
+            .then(|| me.single().ok().map(|address| format!("{:#x}", address.0)))
             .flatten();
         let results = others.chain(own).collect();
         response.send(results);
@@ -1444,8 +1468,7 @@ fn get_connected_players(
 }
 
 fn get_players_in_scene(
-    me: Query<Entity, With<PrimaryUser>>,
-    wallet: Res<Wallet>,
+    me: Query<(Entity, &PlayerAddress), With<PrimaryUser>>,
     others: Query<(Entity, &ForeignPlayer)>,
     mut events: EventReader<RpcCallEvent>,
     containing_scene: ContainingScene,
@@ -1460,11 +1483,9 @@ fn get_players_in_scene(
         let mut results = Vec::default();
         // skip the fake local player in server mode (see get_connected_players)
         if !server_mode() {
-            if let Ok(player) = me.single() {
+            if let Ok((player, &PlayerAddress(address))) = me.single() {
                 if containing_scene.get(player).contains(scene) {
-                    if let Some(address) = wallet.address() {
-                        results.push(format!("{address:#x}"));
-                    }
+                    results.push(format!("{address:#x}"));
                 }
             }
         }
@@ -1583,8 +1604,10 @@ fn event_player_moved_scene(
     mut enter_senders: Local<HashMap<Entity, RpcEventSender>>,
     mut leave_senders: Local<HashMap<Entity, RpcEventSender>>,
     mut current_scene: Local<HashMap<Address, Entity>>,
-    players: Query<(Entity, Option<&ForeignPlayer>), Or<(With<PrimaryUser>, With<ForeignPlayer>)>>,
-    me: Res<Wallet>,
+    players: Query<
+        (Entity, &PlayerAddress, Option<&ForeignPlayer>),
+        Or<(With<PrimaryUser>, With<ForeignPlayer>)>,
+    >,
     containing_scene: ContainingScene,
     scenes: Query<(Entity, &RendererSceneContext)>,
     contexts: Res<CrdtContexts>,
@@ -1625,18 +1648,14 @@ fn event_player_moved_scene(
     // ForeignPlayer is the PrimaryUser, which is not a real participant on a server)
     let new_scene: HashMap<_, _> = players
         .iter()
-        .filter(|(_, f)| !(server_mode() && f.is_none()))
-        .flat_map(|(p, f)| {
+        .filter(|(_, _, f)| !(server_mode() && f.is_none()))
+        .flat_map(|(p, address, f)| {
             if let Some(scene) = f.and_then(|f| scene_of_context.get(&f.context)) {
-                return Some((f.unwrap().address, *scene));
+                return Some((address.0, *scene));
             }
-            containing_scene.get_parcel(p).map(|parcel| {
-                (
-                    f.map(|f| f.address)
-                        .unwrap_or(me.address().unwrap_or_default()),
-                    parcel,
-                )
-            })
+            containing_scene
+                .get_parcel(p)
+                .map(|parcel| (address.0, parcel))
         })
         .collect();
 
@@ -1744,7 +1763,8 @@ fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
     scene_rooms: SceneRooms,
     scenes: Query<&RendererSceneContext>,
-    mut topic_traffic: ResMut<SceneTopicTraffic>,
+    mut traffic: ResMut<SceneMessageTraffic>,
+    (wallet, realm, admission): (Res<Wallet>, Res<CurrentRealm>, Res<comms::SceneAdmission>),
 ) {
     for ev in events.read() {
         let RpcOrigin::Scene { entity, hash } = &ev.origin else {
@@ -1762,7 +1782,7 @@ fn send_scene_messages(
             }
             RpcCall::PublishSceneTopic { data } => {
                 if !is_topic_frame(data) {
-                    topic_traffic.record_publish(false);
+                    traffic.record_publish(false);
                     continue;
                 }
                 (data, NetworkMessageRecipient::All, true)
@@ -1770,21 +1790,30 @@ fn send_scene_messages(
             _ => continue,
         };
 
-        let sent = scene_rooms.transport(hash).is_some_and(|transport| {
-            let message = rfc4::Packet {
-                message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                    scene_id: hash.to_string(),
-                    data: data.clone(),
-                })),
-                protocol_version: 100,
-            };
-            transport
-                .sender
-                .try_send(NetworkMessage::targetted_reliable(&message, recipient))
-                .is_ok()
+        let denied = wallet.address().is_some_and(|address| {
+            admission.is_scene_banned(&realm.about_url, address, hash.as_ref())
+                || scene_rooms
+                    .moderation(hash)
+                    .is_some_and(|state| state.is_banned(address))
+        });
+        let filtered = comms::scene_messages::outbound(data, denied, &mut traffic);
+        let sent = filtered.is_some_and(|filtered| {
+            scene_rooms.transport(hash).is_some_and(|transport| {
+                let message = rfc4::Packet {
+                    message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
+                        scene_id: hash.to_string(),
+                        data: filtered.into_owned(),
+                    })),
+                    protocol_version: 100,
+                };
+                transport
+                    .sender
+                    .try_send(NetworkMessage::targetted_reliable(&message, recipient))
+                    .is_ok()
+            })
         });
         if topic {
-            topic_traffic.record_publish(sent);
+            traffic.record_publish(sent);
         }
     }
 }
@@ -2736,6 +2765,106 @@ pub fn process_startup_scenes(
 }
 
 #[cfg(test)]
+#[test]
+fn system_and_scene_self_reads_during_an_optimistic_edit() {
+    use bevy::asset::io::memory::MemoryAssetReader;
+    use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration};
+    use common::structs::AppConfig;
+    use comms::{global_crdt::ProfileEvent, profile::UserProfilePlugin};
+    use ipfs::IpfsResource;
+
+    let owner = Address::repeat_byte(7);
+    let address = format!("{owner:#x}");
+    let mut wallet = Wallet::default();
+    wallet.finalize_remote(
+        owner,
+        owner,
+        vec![common::structs::ChainLink {
+            ty: "SIGNER".into(),
+            payload: address.clone(),
+            signature: String::new(),
+        }],
+        false,
+    );
+    let mut current = CurrentUserProfile::default();
+    let saved = SerializedProfile {
+        eth_address: address.clone(),
+        name: "Saved".into(),
+        version: 1,
+        ..default()
+    };
+    current.adopt_server_profile(UserProfile {
+        version: 1,
+        content: saved.clone(),
+        ..default()
+    });
+    // Hold the upload so both reads observe the same pending edit.
+    current.deploy_held = true;
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default(), UserProfilePlugin))
+        .insert_resource(wallet)
+        .insert_resource(current)
+        .init_resource::<AppConfig>()
+        .init_resource::<ConsoleConfiguration>()
+        .add_event::<ConsoleCommandEntered>()
+        .add_event::<PrintConsoleLine>()
+        .add_event::<ProfileEvent>()
+        .insert_resource(IpfsResource {
+            inner: Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader { root: default() }),
+                None,
+                default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        })
+        .add_event::<RpcCallEvent>()
+        .add_event::<SystemApi>()
+        .add_systems(Update, get_user_data);
+    let scene = app.world_mut().spawn_empty().id();
+    let shared = app.world_mut().spawn_empty().id();
+    let mut contexts = CrdtContexts::default();
+    contexts.0.insert(String::new(), shared);
+    app.insert_resource(contexts);
+
+    let (reply, mut save) = RpcResultSender::channel();
+    app.world_mut().send_event(SystemApi::SetAvatar(
+        address.clone(),
+        serde_json::from_value(json!({ "profileExtras": { "description": "Edited" } })).unwrap(),
+        reply,
+    ));
+    app.update();
+    assert!(save.poll_once().unwrap().is_none());
+
+    let (send, mut system) = RpcResultSender::channel();
+    app.world_mut().send_event(SystemApi::GetUserProfile {
+        address: address.clone(),
+        response: send,
+    });
+    let scene_reads = [None, Some(address)].map(|user| {
+        let (response, recv) = RpcResultSender::channel();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "parcel".into(),
+            },
+            call: RpcCall::GetUserData { user, response },
+        });
+        recv
+    });
+    app.update();
+
+    assert_eq!(system.try_recv().unwrap(), Ok(saved));
+    for mut read in scene_reads {
+        let edited = read.try_recv().unwrap().unwrap();
+        assert_eq!(edited.version, 2);
+        assert_eq!(edited.extra_fields["description"], "Edited");
+    }
+}
+
+#[cfg(test)]
 mod scene_message_tests {
     use super::*;
     use comms::{
@@ -2753,7 +2882,9 @@ mod scene_message_tests {
         app.init_resource::<SceneRoomConnection>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<common::structs::CurrentRealm>()
-            .init_resource::<SceneTopicTraffic>();
+            .init_resource::<SceneMessageTraffic>()
+            .init_resource::<comms::SceneAdmission>()
+            .init_resource::<Wallet>();
         app.add_systems(Update, send_scene_messages);
         app
     }
@@ -2779,6 +2910,7 @@ mod scene_message_tests {
         app.world_mut().resource_mut::<SceneRoomConnection>().0 = Some((
             SetCurrentScene {
                 realm_name: "realm".to_owned(),
+                realm_about_url: String::new(),
                 scene_id: hash.to_owned(),
             },
             "livekit:test".to_owned(),
@@ -2856,11 +2988,85 @@ mod scene_message_tests {
     }
 
     fn topic_publishes(app: &App) -> (u64, u64) {
-        app.world().resource::<SceneTopicTraffic>().publishes()
+        app.world().resource::<SceneMessageTraffic>().publishes()
     }
 
     fn both() -> [Vec<u8>; 2] {
         [TOPIC_MESSAGE.to_vec(), BUS_MESSAGE.to_vec()]
+    }
+
+    #[test]
+    fn scene_binary_sends_are_filtered_and_bounded_in_the_engine() {
+        let mut app = sending_app();
+        let mut room_rx = client_room(&mut app, "bafyscene");
+        let scene = spawn_scene(&mut app, "bafyscene", false);
+        let mut at_limit = vec![0; dcl_types::MAX_BINARY_MESSAGE_BYTES + 1];
+        at_limit[0] = CommsMessageType::Binary as u8;
+        let mut oversized = at_limit.clone();
+        oversized.push(0);
+        let mut local_only = vec![CommsMessageType::Binary as u8, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::PHYSICS_COMBINED_FORCE.0,
+            1,
+            0,
+        ] {
+            local_only.extend(word.to_le_bytes());
+        }
+        for data in [at_limit, oversized, local_only, vec![2, 1, 0]] {
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: "bafyscene".into(),
+                },
+                call: RpcCall::SendMessageBus {
+                    data,
+                    recipient: None,
+                },
+            });
+        }
+        app.update();
+        assert_eq!(sent(&mut room_rx).len(), 2);
+    }
+
+    #[test]
+    fn scene_messages_cannot_be_sent_while_locally_banned() {
+        for from_metadata in [false, true] {
+            let mut app = sending_app();
+            app.world_mut()
+                .resource_mut::<Wallet>()
+                .finalize_as_guest_with_seed([7; 32]);
+            let address = app.world().resource::<Wallet>().address().unwrap();
+            let mut room_rx = client_room(&mut app, "bafyscene");
+            let scene = spawn_scene(&mut app, "bafyscene", false);
+            if from_metadata {
+                let room = app
+                    .world()
+                    .resource::<SceneRoomConnection>()
+                    .0
+                    .as_ref()
+                    .unwrap()
+                    .2;
+                let mut metadata = comms::SceneRoomModeration::default();
+                metadata.banned_addresses.insert(address);
+                app.world_mut().entity_mut(room).insert(metadata);
+            } else {
+                app.insert_resource(
+                    comms::SceneAdmission::from_refusal(
+                        403,
+                        Some("User is banned from this scene"),
+                        false,
+                        "bafyscene",
+                    )
+                    .for_session("", address),
+                );
+            }
+            send(&mut app, scene, "bafyscene", both());
+            assert!(sent(&mut room_rx).is_empty());
+            assert_eq!(topic_publishes(&app), (0, 1));
+        }
     }
 
     #[test]

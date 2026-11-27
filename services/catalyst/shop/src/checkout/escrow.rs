@@ -13,6 +13,7 @@ use crate::evm::SharedState;
 use crate::evm::errors::ApiError;
 use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
+use crate::types::chain_id_column;
 
 #[derive(Debug, Clone, Copy)]
 enum EscrowAction {
@@ -175,7 +176,7 @@ async fn broadcast_action(
         buyer_hex,
     } = target;
     let escrow_hex = format!("{escrow:#x}");
-    let chain_id = state.settings.collections_chain_id as i64;
+    let chain_id = chain_id_column(state.settings.collections_chain_id)?;
 
     let tx_hash = match idem {
         Some(key) => {

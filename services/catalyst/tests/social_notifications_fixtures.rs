@@ -24,8 +24,7 @@ use catalyst::shared::signed_fetch::{
 };
 use catalyst::social::notifications::{Settings, State, router};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const ADMIN: &str = "fixture-admin-token";
 const METADATA: &str = r#"{"signer":"dcl:explorer"}"#;
@@ -78,7 +77,7 @@ impl Wallet {
             AuthLink {
                 link_type: AuthLinkType::SIGNER,
                 payload: format!("{:#x}", self.0.address()),
-                signature: None,
+                signature: Some(String::new()),
             },
             AuthLink {
                 link_type: AuthLinkType::EcdsaSignedEntity,

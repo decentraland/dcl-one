@@ -14,7 +14,6 @@ mod tests {
 
     use axum::Json;
     use axum::extract::{Query, State};
-    use axum::http::StatusCode;
     use sqlx::PgPool;
     use uuid::Uuid;
 
@@ -65,11 +64,10 @@ mod tests {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                market,
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), market)
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -121,77 +119,45 @@ mod tests {
         Some(axum::Extension(catalyst::comms::writes::Switch(true)))
     }
 
-    /// A marketplace subgraph on the loopback answering `parcelsAt` from a fixed
-    /// parcel list (any other document gets an empty page), or, when `fail` is
-    /// set, HTTP 500 with `Retry-After: 0`, so the reader spends its retries
-    /// without waiting through the backoff ladder.
-    async fn fake_land_subgraph(
-        parcels: serde_json::Value,
-        fail: Arc<std::sync::atomic::AtomicBool>,
-    ) -> String {
-        use axum::Router;
-        use axum::response::IntoResponse;
-        use axum::routing::post;
-        async fn answer(
-            State((parcels, fail)): State<(
-                Arc<serde_json::Value>,
-                Arc<std::sync::atomic::AtomicBool>,
-            )>,
-            Json(body): Json<serde_json::Value>,
-        ) -> axum::response::Response {
-            if fail.load(std::sync::atomic::Ordering::Relaxed) {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    [(axum::http::header::RETRY_AFTER, "0")],
-                    "boom",
-                )
-                    .into_response();
-            }
-            let query = body["query"].as_str().unwrap_or("");
-            let nfts = if query.contains("parcelsAt") {
-                let xs: Vec<String> = body["variables"]["xs"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_string())
-                    .collect();
-                let ys: Vec<String> = body["variables"]["ys"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.as_str().unwrap().to_string())
-                    .collect();
-                parcels
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|p| {
-                        xs.contains(&p["searchParcelX"].as_str().unwrap().to_string())
-                            && ys.contains(&p["searchParcelY"].as_str().unwrap().to_string())
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
-            Json(serde_json::json!({ "data": { "nfts": nfts } })).into_response()
+    /// A published land-authz index on `pool`: `parcel_owner` holds (10,20),
+    /// estate 500 (owned by `estate_owner`) holds (10,21), and `bystander`
+    /// holds (11,20).
+    async fn seed_land_index(
+        pool: &PgPool,
+        settings: &catalyst::land_authz::Settings,
+        parcel_owner: &Address,
+        estate_owner: &Address,
+        bystander: &Address,
+    ) {
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 1, 1, timezone('UTC', now()), true)")
+            .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry)
+            .execute(pool).await.unwrap();
+        for (x, y, owner) in [
+            (10, 20, parcel_owner.as_str()),
+            (10, 21, settings.estate_registry.as_str()),
+            (11, 20, bystander.as_str()),
+        ] {
+            sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, $2::int::numeric * 340282366920938463463374607431768211456 + $3::int::numeric, $2, $3, $4, 1, 0)")
+                .bind(&settings.land_registry).bind(x).bind(y).bind(owner)
+                .execute(pool).await.unwrap();
         }
-        let app = Router::new()
-            .route("/subgraph", post(answer))
-            .with_state((Arc::new(parcels), fail));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        format!("http://{addr}/subgraph")
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 500, $2, 1, 0)")
+            .bind(&settings.estate_registry).bind(estate_owner.as_str())
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES (10::numeric * 340282366920938463463374607431768211456 + 21, 500, 1, 0)")
+            .execute(pool).await.unwrap();
     }
 
-    fn state_with_marketplace(pool: PgPool, subgraph: Option<String>) -> SharedState {
-        let settings = catalyst::chain_index::IndexSettings {
-            marketplace_subgraph_url: subgraph,
-            ..catalyst::chain_index::IndexSettings::for_tests()
-        };
-        let market = catalyst::chain_index::ChainIndex::new(Outbound::for_tests(), settings);
-        market.allow_loopback_for_tests();
+    /// Comms over `pool` whose scene policy reads LAND rights from `land`
+    /// alone (`None`: no LAND source attached).
+    fn state_with_land(
+        pool: PgPool,
+        land: Option<Arc<catalyst::land_authz::LandAuthzState>>,
+    ) -> SharedState {
+        let market = catalyst::chain_index::ChainIndex::new(
+            Outbound::for_tests(),
+            catalyst::chain_index::IndexSettings::for_tests(),
+        );
         let market = Arc::new(market);
         Arc::new(CommsState::new(
             pool.clone(),
@@ -199,36 +165,38 @@ mod tests {
             Settings::for_tests(),
             Some(market.clone()),
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names()
+                    .with_land_authz(land),
+            ),
             Arc::new(SceneResolver::new(pool)),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
         ))
     }
 
-    /// Genesis City moderation: a parcel owner and an estate owner are scene
-    /// owners without an admin row (so they can add the first admin, ban and
-    /// unban), a bystander is refused, a reader that cannot be asked is 503.
+    /// Genesis City moderation, from the land-authz index: a parcel owner and
+    /// an estate owner are scene owners without an admin row (so they can add
+    /// the first admin, ban and unban), a bystander is refused, an index that
+    /// is not published is 503 and no LAND source is a refusal.
     #[tokio::test]
     async fn a_land_owner_moderates_a_genesis_scene_without_an_admin_row() {
-        let Some(pool) = scratch().await else { return };
+        // Readiness is global per network: a database of its own keeps this
+        // fixture from replacing a concurrent test's LAND source.
+        let Some(pool) = catalyst::db::scratch::isolated_pool(8).await else {
+            return;
+        };
         let (parcel_owner, estate_owner, bystander, first_admin) =
             (wallet(), wallet(), wallet(), wallet());
-        let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let subgraph = fake_land_subgraph(
-            serde_json::json!([
-                { "id": "0xland-a", "searchParcelX": "10", "searchParcelY": "20", "owner": { "id": parcel_owner.as_str().to_uppercase() }, "parcel": { "estate": null } },
-                { "id": "0xland-b", "searchParcelX": "10", "searchParcelY": "21", "owner": { "id": "0xestatecontract" }, "parcel": { "estate": { "owner": { "id": estate_owner.as_str() } } } },
-                { "id": "0xland-c", "searchParcelX": "11", "searchParcelY": "20", "owner": { "id": bystander.as_str() }, "parcel": { "estate": null } }
-            ]),
-            fail.clone(),
-        )
-        .await;
-        let state = state_with_marketplace(pool.clone(), Some(subgraph));
+        let settings = catalyst::land_authz::Settings::for_tests();
+        seed_land_index(&pool, &settings, &parcel_owner, &estate_owner, &bystander).await;
+        let land = Arc::new(catalyst::land_authz::LandAuthzState::new(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+        ));
+        let state = state_with_land(pool.clone(), Some(land));
         let place_id = format!("genesis-{}", tag());
         // The place covers (10,20) and (10,21); (11,20) is the bystander's parcel next door.
         seed_place(
@@ -277,9 +245,12 @@ mod tests {
             .await
             .expect_err("an owner cannot be banned");
         assert_eq!(err.code, 400);
-        // A reader that cannot be asked is a 503, never a refusal (the cache
-        // holds the answered set; a new place misses it).
-        fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        // An index that stops being published is a 503, never a refusal (the
+        // cache holds the answered set; a new place misses it).
+        sqlx::query("DELETE FROM land_authz.index_cursor")
+            .execute(&pool)
+            .await
+            .unwrap();
         let other_place = format!("genesis-{}", tag());
         seed_place(
             &pool,
@@ -294,8 +265,18 @@ mod tests {
             .into_result()
             .unwrap_err();
         assert_eq!(undetermined.http_status(), 503, "{undetermined}");
-        // No marketplace subgraph configured: an explicit refusal, as for worlds.
-        let unconfigured = state_with_marketplace(pool.clone(), None);
+        assert!(
+            undetermined.to_string().contains("land-authz-index"),
+            "the refusal names the index: {undetermined}"
+        );
+        // A ban cannot tell whether its target holds LAND there either.
+        let err = scene::ensure_target_not_protected(&state, &other, &bystander)
+            .await
+            .expect_err("a ban target cannot be checked");
+        assert_eq!(err.code, 503, "{}", err.message);
+        assert!(err.message.contains("land-authz-index"), "{}", err.message);
+        // No LAND source attached: an explicit refusal, as for worlds.
+        let unconfigured = state_with_land(pool.clone(), None);
         let place = PlaceLookup::new(&unconfigured, &place_id, &place_id);
         assert!(
             !scene::scene_owner_or_admin_decision(&unconfigured, &place, &parcel_owner)
@@ -1075,7 +1056,7 @@ mod stream_access {
              WHERE old.entity_id IN (SELECT entity_id FROM content.active_pointers WHERE pointer = ANY($3))",
         )
         .bind(entity_id)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel, "parcels": [parcel] } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel, "parcels": [parcel] } } })))
         .bind(vec![parcel.to_string()])
         .execute(pool)
         .await
@@ -1177,6 +1158,103 @@ mod stream_access {
         )
     }
 
+    /// A Genesis scene synced from a peer (no `content.local_entities` row)
+    /// has a place only once the catalogue holds one: the local derive pass
+    /// skips it, so stream access answers 404; the whole-content derive pass
+    /// (`PLACES_DERIVE_FROM_CONTENT` without the places mirror) lists it, and
+    /// the key is stored under that place.
+    #[tokio::test]
+    async fn a_peer_synced_genesis_scene_streams_once_the_catalogue_lists_it() {
+        use catalyst::explore::places::derive::{self, DeriveScope};
+        // The whole-content pass rewrites derived rows, so the database is this test's own.
+        let Some(pool) = catalyst::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let admin_key = random_key();
+        let admin = Address::parse(&address_of(&admin_key)).unwrap();
+        let (host, _deleted) = ingress_stub().await;
+        let settings = Settings {
+            livekit: LiveKit {
+                api_url: host,
+                ..Settings::for_tests().livekit
+            },
+            ..Settings::for_tests()
+        };
+        let state: SharedState = Arc::new(CommsState::new(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(Policy::new(
+                pool.clone(),
+                PersonalWorldsPolicy::disabled(),
+                None,
+            )),
+            Arc::new(SceneResolver::new(pool.clone())),
+            Arc::new(catalyst::comms::presence::Presence::new()),
+            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
+        ));
+        let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
+        let token = Uuid::new_v4().as_u128();
+        let parcel = &format!(
+            "{},{}",
+            (token % 301) as i32 - 150,
+            ((token >> 64) % 301) as i32 - 150
+        );
+        let scene_id = format!("bafkreipeer{}", Uuid::new_v4().simple());
+        deploy_scene(&pool, &scene_id, parcel).await;
+        state
+            .moderation
+            .add_admin(parcel, &admin, &admin)
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": scene_id }).to_string();
+
+        // A known gap while production derives places from local scenes only (#1462).
+        derive::run_once(&pool, DeriveScope::Local, "/content")
+            .await
+            .unwrap();
+        for method in ["GET", "POST"] {
+            let (status, body) = call(&app, &admin_key, method, &metadata).await;
+            assert_eq!(
+                (status, body["error"].as_str()),
+                (
+                    StatusCode::NOT_FOUND,
+                    Some("place not found for this scene")
+                ),
+                "{method} before the catalogue lists the scene"
+            );
+        }
+
+        derive::run_once(&pool, DeriveScope::All, "/content")
+            .await
+            .unwrap();
+        let place_id: String = sqlx::query_scalar(
+            "SELECT id FROM explore.place WHERE NOT world AND base_position = $1",
+        )
+        .bind(parcel)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call(&app, &admin_key, "GET", &metadata).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG)),
+            "the place resolves: no key yet"
+        );
+        let (status, body) = call(&app, &admin_key, "POST", &metadata).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stored: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT FROM social.scene_stream_access WHERE place_id = $1 AND active)",
+        )
+        .bind(&place_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(stored, "the key is stored under the derived place");
+    }
+
     /// The lifecycle over a Genesis place the signer administers: add mints
     /// once, list reads it, reset replaces the ingress, the webhook flips
     /// `streaming`, remove deletes it; a stranger is refused; a platform
@@ -1251,7 +1329,7 @@ mod stream_access {
         ));
         let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
         let place_id = Uuid::new_v4().to_string();
-        // The signer administers the scene, but LAND determines reset/revoke recipients.
+        // LAND determines ownership; local admins also receive reset/revoke notices.
         // Self-declared catalogue ownership must not redirect those notifications.
         sqlx::query(
             "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
@@ -1446,10 +1524,16 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(rows, 2, "the replaced credential is kept, inactive");
+        // The owner and both scene admins, once each.
+        let granted = Address::parse(&address_of(&granted_key)).unwrap();
+        let recipients =
+            std::collections::BTreeSet::from([land_owner.clone(), admin.clone(), granted.clone()]);
         {
-            let notifications = directory.streaming_notifications.lock().unwrap();
-            assert_eq!(notifications.len(), 1);
-            assert_eq!(notifications[0].recipient, land_owner);
+            let notifications = directory.streaming_notifications.lock();
+            let told: std::collections::BTreeSet<_> =
+                notifications.iter().map(|n| n.recipient.clone()).collect();
+            assert_eq!(notifications.len(), 3);
+            assert_eq!(told, recipients);
         }
 
         let stranger = random_key();
@@ -1566,13 +1650,18 @@ mod stream_access {
             ["IN_1".to_string(), "IN_2".to_string()]
         );
         {
-            let notifications = directory.streaming_notifications.lock().unwrap();
-            assert_eq!(notifications.len(), 2);
-            assert!(
-                notifications
-                    .iter()
-                    .all(|event| event.recipient == land_owner)
-            );
+            let notifications = directory.streaming_notifications.lock();
+            assert_eq!(notifications.len(), 6);
+            for recipient in &recipients {
+                assert_eq!(
+                    notifications
+                        .iter()
+                        .filter(|event| &event.recipient == recipient)
+                        .count(),
+                    2,
+                    "{recipient} hears of the reset and the removal"
+                );
+            }
         }
         let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1657,11 +1746,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -1788,10 +1876,27 @@ mod stream_access {
             }
         }
         assert!(refused.is_empty(), "{refused:#?}");
+        // The key is the scene's, stored under its place (its world-scene identity).
+        let scene_place = |entity: String| {
+            let pool = pool.clone();
+            let world = world.key().to_owned();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT identity::text FROM explore.world_scene_place \
+                     WHERE world_name = $1 AND entity_id = $2 AND active",
+                )
+                .bind(world)
+                .bind(entity)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let main_place = scene_place(scene_id.clone()).await;
         let room: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 ORDER BY created_at DESC LIMIT 1",
         )
-        .bind(&place_id)
+        .bind(&main_place)
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -1832,11 +1937,10 @@ mod stream_access {
             assert_eq!(claims["video"]["room"], room.as_str(), "{realm} {scene}");
         }
 
-        // The world has ONE credential. A grantee of a second scene's parcels
-        // only never reaches it, nor does an admin that grantee adds on that
-        // scene; a grantee without a parcel restriction and an admin the
-        // world's owner granted on that scene (`/scene-admin` keys it on the
-        // scene's entity id) do.
+        // Each scene has its own key. A grantee of a second scene's parcels
+        // and an admin the world's owner granted on that scene reach that
+        // scene's key alone; an admin the grantee adds there reaches none; a
+        // grantee without a parcel restriction reaches every scene's.
         let side_id = format!("SideScene{tag}");
         let side_parcels: ParcelSet = [Parcel::parse("5,5").unwrap()].into_iter().collect();
         // An earlier scene at the side parcel, replaced by the side scene.
@@ -1899,18 +2003,8 @@ mod stream_access {
                     .unwrap();
             }
         }
-        // A scene admin is granted on the scene's place: its identity, which
-        // for an imported place is the id of the world's catalogue place.
-        let side_place: String = sqlx::query_scalar(
-            "UPDATE explore.world_scene_place SET identity = $3::uuid WHERE world_name = $1 AND entity_id = $2 \
-             RETURNING identity::text",
-        )
-        .bind(world.key())
-        .bind(&side_id)
-        .bind(&place_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        // A scene admin is granted on the scene's place: its identity.
+        let side_place = scene_place(side_id.clone()).await;
         state
             .moderation
             .add_admin(
@@ -1932,14 +2026,18 @@ mod stream_access {
             "signer": SCENE_SIGNER, "sceneId": format!("ForeignScene{tag}"), "parcel": "5,5", "realm": realm,
         })
         .to_string();
-        let credential = || async {
-            sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
-            )
-            .bind(&place_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap()
+        let credential = |place: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (Uuid, String, String)>(
+                    "SELECT id, room_id, streaming_key FROM social.scene_stream_access \
+                     WHERE place_id = $1 AND active",
+                )
+                .bind(place)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+            }
         };
         // The parcel-scoped grantee may moderate its scene, so it can add a
         // second wallet it holds as that scene's admin.
@@ -1971,7 +2069,11 @@ mod stream_access {
                 .await
                 .unwrap();
         }
-        let before = credential().await;
+        let before = credential(main_place.clone()).await;
+        assert!(
+            before.is_some(),
+            "the main scene's key, minted by its stream link"
+        );
         let verbs = [
             ("GET", PATH),
             ("POST", PATH),
@@ -1981,7 +2083,16 @@ mod stream_access {
         ];
         let mut refused = Vec::new();
         for (who, key, meta) in [
-            ("parcel-scoped grantee", &scoped_key, &side_meta),
+            (
+                "parcel-scoped grantee on another scene",
+                &scoped_key,
+                &scene_meta,
+            ),
+            (
+                "side scene's admin on another scene",
+                &side_admin_key,
+                &scene_meta,
+            ),
             (
                 "admin added by the scoped grantee",
                 &scoped_admin_key,
@@ -2006,19 +2117,31 @@ mod stream_access {
             }
         }
         assert!(refused.is_empty(), "admitted: {refused:#?}");
-        assert_eq!(credential().await, before, "the world's key is untouched");
+        assert_eq!(
+            credential(main_place.clone()).await,
+            before,
+            "the main scene's key is untouched"
+        );
+        assert_eq!(
+            credential(side_place.clone()).await,
+            None,
+            "and no side key was minted"
+        );
         let (status, body) = call_at(&app, &wide_key, "GET", PATH, &side_meta).await;
         assert_eq!(
-            status,
-            StatusCode::OK,
-            "a grantee of the whole world reads the key: {body}"
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG)),
+            "the side scene has no key of its own yet"
         );
-        assert!(body["streaming_key"].is_string(), "{body}");
+        let side_room = catalyst::comms::rooms::worlds_service_scene_room(
+            &world,
+            &catalyst::comms::world_identity::SceneId::parse(&side_id).unwrap(),
+        );
         for (method, path, expected) in [
+            ("POST", PATH, StatusCode::OK),
             ("GET", PATH, StatusCode::OK),
             ("PUT", PATH, StatusCode::OK),
             ("DELETE", PATH, StatusCode::NO_CONTENT),
-            ("POST", PATH, StatusCode::OK),
             ("GET", "/cast/generate-stream-link", StatusCode::OK),
         ] {
             let mut answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
@@ -2033,6 +2156,173 @@ mod stream_access {
             let (status, body) = answer;
             assert_eq!(status, expected, "side scene admin {method} {path}: {body}");
         }
+        // Two keys, each streaming into its own scene's room.
+        let main = credential(main_place.clone()).await.unwrap();
+        let side = credential(side_place.clone()).await.unwrap();
+        assert_eq!(
+            (main.1.as_str(), side.1.as_str()),
+            (scene_room.as_str(), side_room.as_str())
+        );
+        assert_ne!(main.2, side.2);
+        assert_eq!(
+            main,
+            before.unwrap(),
+            "the side scene's verbs leave the main key alone"
+        );
+        // The parcel grantee, the grantee of the whole world and the owner
+        // read the side scene's key; the owner reads the main scene's too.
+        for (who, key, meta, expected) in [
+            ("parcel-scoped grantee", &scoped_key, &side_meta, &side.2),
+            ("world grantee", &wide_key, &side_meta, &side.2),
+            ("owner", &admin_key, &side_meta, &side.2),
+            ("owner", &admin_key, &scene_meta, &main.2),
+        ] {
+            let (status, body) = call_at(&app, key, "GET", PATH, meta).await;
+            assert_eq!(status, StatusCode::OK, "{who}: {body}");
+            assert_eq!(body["streaming_key"], expected.as_str(), "{who}");
+        }
+
+        // A key minted under the world's catalogue place before keys were per
+        // scene is the key of the scene whose room it streams into, until a
+        // reset stores its replacement under that scene's place.
+        let (status, _) = call_at(&app, &admin_key, "DELETE", PATH, &scene_meta).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        settled(&pool, &main_place).await;
+        let legacy: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'legacy-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("legacy-world-key"))
+        );
+        let (status, body) = call_at(&app, &side_admin_key, "GET", PATH, &side_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some(side.2.as_str()))
+        );
+        let (status, body) = call_at(&app, &side_admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "another scene's admin: {body}"
+        );
+        let (status, body) = call_at(&app, &admin_key, "PUT", PATH, &scene_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let reset = credential(main_place.clone()).await.unwrap();
+        assert_eq!(
+            (reset.1.as_str(), reset.2.as_str()),
+            (scene_room.as_str(), body["streaming_key"].as_str().unwrap())
+        );
+        let legacy_active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(legacy)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!legacy_active, "the reset replaced the legacy key");
+
+        // An imported identity can be the id of the world's catalogue place,
+        // where the world's one key was stored. Such a key streaming into the
+        // main scene's room is the main scene's: the side scene, whose
+        // identity equals that id, neither sees nor acts on it, and its own
+        // mint moves the old key to the main scene's place.
+        for (meta, place) in [(&scene_meta, &main_place), (&side_meta, &side_place)] {
+            let (status, body) = call_at(&app, &admin_key, "DELETE", PATH, meta).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+            settled(&pool, place).await;
+        }
+        sqlx::query("UPDATE explore.world_scene_place SET identity = $3::uuid WHERE world_name = $1 AND entity_id = $2")
+            .bind(world.key())
+            .bind(&side_id)
+            .bind(&place_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let collided: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'collided-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for method in ["GET", "PUT", "DELETE"] {
+            let (status, body) = call_at(&app, &admin_key, method, PATH, &side_meta).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "side {method}: {body}");
+        }
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("collided-world-key"))
+        );
+        let (status, body) = call_at(&app, &admin_key, "POST", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["streaming_key"], "collided-world-key");
+        let side_key = credential(place_id.clone()).await.unwrap();
+        assert_eq!(
+            (side_key.1.as_str(), side_key.2.as_str()),
+            (side_room.as_str(), body["streaming_key"].as_str().unwrap())
+        );
+        let moved: (bool, String) =
+            sqlx::query_as("SELECT active, place_id FROM social.scene_stream_access WHERE id = $1")
+                .bind(collided)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            moved,
+            (true, main_place.clone()),
+            "the main scene keeps its stream"
+        );
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("collided-world-key"))
+        );
+
+        // When the room's scene already has a key of its own, the old key
+        // cannot move: the minting scene revokes it, and the other scene's
+        // own key stays.
+        let (status, body) = call_at(&app, &admin_key, "DELETE", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        settled(&pool, &place_id).await;
+        let stranded: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'stranded-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call_at(&app, &admin_key, "POST", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stranded_active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(stranded)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!stranded_active, "the key that could not move is revoked");
+        assert_eq!(credential(place_id.clone()).await.unwrap().1, side_room);
+        assert_eq!(credential(main_place.clone()).await.unwrap().0, collided);
     }
 
     /// The answer to `signer`'s `GET /scene-stream-access` for the scene of
@@ -2083,11 +2373,10 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            Arc::new(
+                Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), Some(market))
+                    .with_subgraph_names(),
+            ),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
@@ -2112,7 +2401,12 @@ mod stream_access {
             .unwrap();
         // The owner's key of the first scene, then the admin's of the second.
         let mut replaced: Option<String> = None;
-        for (timestamp, minter) in [(1000, &owner_key), (2000, &admin_key), (3000, &admin_key)] {
+        for (timestamp, minter) in [
+            (1000, &owner_key),
+            (2000, &admin_key),
+            (3000, &admin_key),
+            (4000, &admin_key),
+        ] {
             let scene_id = format!("Redeployed{timestamp}{tag}");
             let scene = json!({ "base": "0,0", "parcels": ["0,0"] });
             let entity = json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"], "metadata": { "scene": scene } });
@@ -2140,8 +2434,27 @@ mod stream_access {
                     resolve(&pool, room).await.is_ok(),
                     "the replaced scene's room resolves"
                 );
-                let key = key_of(&app, &pool, &owner_key, &metadata, &old).await;
-                assert_eq!(key, (StatusCode::NOT_FOUND, false), "{timestamp}");
+                if timestamp >= 3000 {
+                    // A revocation (3000) or a reset (4000) signed from the
+                    // scene standing there now ends the old scene's key too:
+                    // the revocation answers it, the reset finds no key.
+                    let (method, expected) = match timestamp {
+                        3000 => ("DELETE", StatusCode::NO_CONTENT),
+                        _ => ("PUT", StatusCode::NOT_FOUND),
+                    };
+                    let (status, body) = call(&app, &admin_key, method, &metadata).await;
+                    assert_eq!(status, expected, "{method}: {body}");
+                    let active = "SELECT EXISTS (SELECT FROM social.scene_stream_access WHERE room_id = $1 AND active)";
+                    let active: bool = sqlx::query_scalar(active)
+                        .bind(&old)
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                    assert!(!active, "{method}: the replaced scene's key is revoked");
+                } else {
+                    let key = key_of(&app, &pool, &owner_key, &metadata, &old).await;
+                    assert_eq!(key, (StatusCode::NOT_FOUND, false), "{timestamp}");
+                }
             }
             // Granted once: the place keeps the admin at the next redeploy.
             if timestamp == 2000 {
@@ -3157,6 +3470,20 @@ mod relay_authority_policy {
         );
         let (player, banned, other) = (wallet(), wallet(), wallet());
         let scene = format!("bafkrei{}", Uuid::new_v4().simple());
+        let n = Uuid::new_v4().as_u128();
+        let parcel = format!("{},{}", 20_000 + n % 9_000, 20_000 + (n >> 32) % 9_000);
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+             entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, \
+             timezone('UTC', now()), '[]'::json)",
+        )
+        .bind(&scene)
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel } } })))
+        .bind(vec![parcel.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             relay
                 .authorize(&room(
@@ -3184,6 +3511,27 @@ mod relay_authority_policy {
                 .await,
             Err(DenialReason::NotAuthorized)
         );
+        // A scene ban is read on the place, the base parcel; a Genesis room
+        // no deployment stands behind is refused.
+        let scene_banned = wallet();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+            .bind(&parcel)
+            .bind(&scene_banned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (who, room_name) in [
+            (&scene_banned, format!("scene:main:{scene}")),
+            (&player, "scene:main:bafkreinotdeployed".to_string()),
+        ] {
+            assert_eq!(
+                relay
+                    .authorize(&room(who.as_str(), who.as_str(), &room_name, ""))
+                    .await,
+                Err(DenialReason::NotAuthorized),
+                "{room_name}"
+            );
+        }
         assert_eq!(
             relay
                 .authorize(&room(player.as_str(), player.as_str(), "island-abc", ""))

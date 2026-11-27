@@ -8,6 +8,7 @@ const instance = figma.selectedInstance
 const property0 = instance.getEnum('variant', {
   primary: ' variant={"primary"}',
   secondary: ' variant={"secondary"}',
+  'secondary-light': ' variant={"secondaryLight"}',
   outline: ' variant={"outline"}',
   dark: ' variant={"dark"}',
   text: ' variant={"text"}',

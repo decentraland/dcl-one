@@ -22,6 +22,7 @@ pub(crate) const CONTENT_ROUTE_PATHS: &[&str] = &[
     "/challenge",
     "/entities/{type}",
     "/entities/active/collections/{collectionUrn}",
+    "/entities/active/scenes",
     "/entities/active",
     "/contents/{hashId}",
     "/contents/{hashId}/active-entities",
@@ -187,12 +188,15 @@ const UPSTREAM_CORS_METHODS: &str = "GET,HEAD,POST,OPTIONS";
 /// headers, lasts 600 s and varies on `Access-Control-Request-Headers`. A
 /// request without `Origin` gets no CORS header, as captured.
 ///
-/// The root mounts, the lambdas routes in this router and this node's own
+/// The root mounts and this node's own
 /// routes under `/content/`, which upstream does not serve (`scenes`, whose
 /// `DELETE` the upstream preflight would refuse, and the `forwarding`
 /// operator API), keep the shared rule. `every_route_outside_upstreams_cors_methods_is_exempt`
 /// fails when a content route takes another method without an exemption.
 pub(crate) async fn content_cors(req: Request, next: Next) -> Response {
+    if req.uri().path() == "/lambdas/about" {
+        return crate::cors::lambdas_cors(req, next).await;
+    }
     if !upstream_cors_path(req.uri().path()) {
         return crate::cors::cors_middleware(req, next).await;
     }

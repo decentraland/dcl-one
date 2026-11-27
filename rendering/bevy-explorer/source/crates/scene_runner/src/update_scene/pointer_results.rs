@@ -16,9 +16,12 @@ use comms::global_crdt::ForeignPlayer;
 use console::DoAddConsoleCommand;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
-use super::synthetic_pointer::{
-    aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
-    LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+use super::{
+    left_drag_pan::LeftDragPan,
+    synthetic_pointer::{
+        aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+        LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+    },
 };
 use crate::{
     gltf_resolver::GltfMeshResolver,
@@ -115,6 +118,7 @@ impl Plugin for PointerResultPlugin {
             .init_resource::<PointerActionTarget>()
             .init_resource::<UiPointerTarget>()
             .init_resource::<WorldPointerTarget>()
+            .init_resource::<PanHoldsPointer>()
             .init_resource::<DebugPointers>()
             .init_resource::<ProximityCandidates>()
             .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>()
@@ -275,6 +279,19 @@ pub struct PointerActionTarget {
     entities: HashMap<InputAction, PressCapture>,
 }
 
+impl PointerActionTarget {
+    #[cfg(test)]
+    pub(crate) fn capture_for_test(&mut self, action: InputAction, capture: PressCapture) {
+        self.entities.insert(action, capture);
+    }
+
+    /// The pointer press was captured by a scene entity that listens for `PetDrag` or
+    /// `PetDragLocked`.
+    pub(crate) fn holds_pointer_drag(&self) -> bool {
+        self.entities.contains_key(&InputAction::IaPointer)
+    }
+}
+
 #[derive(Default, Debug, Resource, Clone, PartialEq, Eq)]
 pub struct UiPointerTarget(pub UiPointerTargetValue);
 
@@ -317,6 +334,13 @@ pub struct WorldPointerTarget(pub Option<PointerTargetInfo>);
 #[derive(Resource, Default)]
 pub struct PointerRay(pub Option<Ray3d>);
 
+/// Whether a left-drag pan holds the pointer this frame, recorded in `PreUpdate` before the pan
+/// sees the release, so the release frame counts too. While it is set nothing is a pointer
+/// target, scene UI included: natively the hidden cursor is only confined and keeps moving, so
+/// UI focus can still land on a scene UI button under it.
+#[derive(Resource, Default)]
+struct PanHoldsPointer(bool);
+
 /// Entities currently within `max_player_distance` of the avatar that carry at
 /// least one PROXIMITY pointer-event entry. Distance is the closest-point distance
 /// from the avatar's center (transform + half player collider height) to the
@@ -351,8 +375,11 @@ fn update_pointer_target(
     transforms: Query<&GlobalTransform>,
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
+    pan: Res<LeftDragPan>,
+    mut pan_holds_pointer: ResMut<PanHoldsPointer>,
 ) {
     pointer_ray.0 = None;
+    pan_holds_pointer.0 = pan.is_panning();
 
     let Ok((camera, camera_position)) = camera.single() else {
         // can't do much without a camera
@@ -398,6 +425,15 @@ fn update_pointer_target(
 
     pointer_ray.0 = Some(ray);
 
+    // a drag that turns the camera hovers nothing, up to and including its release frame: this
+    // runs before the pan sees the release, and the cursor is still locked at the screen centre,
+    // so a target here would send the release to whatever is under the reticle. The ray stays
+    // for trigger areas.
+    if pan.is_panning() {
+        world_target.0 = None;
+        return;
+    }
+
     let nearby_scenes = containing_scenes.get_area(player, PARCEL_SIZE);
     let containing_scenes = containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS);
     let maybe_nearest_hit = scenes
@@ -406,7 +442,8 @@ fn update_pointer_target(
         .fold(
             None,
             |maybe_prior_nearest, (scene_entity, _, mut collider_data)| {
-                let maybe_nearest = collider_data.cast_ray_nearest(
+                collider_data.update_bvh();
+                let maybe_nearest = collider_data.cast_ray_nearest_in_scene_flushed(
                     ray.origin,
                     ray.direction.into(),
                     f32::MAX,
@@ -863,11 +900,12 @@ fn resolve_pointer_target(
     mut prev: Local<Option<Entity>>,
     tick: Res<FrameCount>,
     synthetic: Res<SyntheticPointer>,
+    pan_holds_pointer: Res<PanHoldsPointer>,
 ) {
     let any_root_interacting = ui_roots
         .iter()
         .any(|root| !matches!(root, Interaction::None));
-    if !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
+    if pan_holds_pointer.0 || !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
         target.0 = None;
         if prev.is_some() {
             debug!("[{}] {prev:?} -> None", tick.0);
@@ -2092,5 +2130,169 @@ mod distance_tests {
         assert!(!check(info(Some(0.0), None, None)));
         // camera distance plays no part in proximity
         assert!(!check(info(Some(2.4), None, Some(100.0))));
+    }
+}
+
+#[cfg(test)]
+mod pan_tests {
+    use super::*;
+
+    /// A scene UI button under the hidden cursor, with UI focus on it, as when a native drag
+    /// ends over one.
+    fn app_over_scene_ui(panning: bool) -> App {
+        let mut app = App::new();
+        app.init_resource::<WorldPointerTarget>()
+            .init_resource::<PointerTarget>()
+            .init_resource::<FrameCount>()
+            .init_resource::<SyntheticPointer>()
+            .insert_resource(PanHoldsPointer(panning))
+            .add_systems(Update, resolve_pointer_target);
+        let button = app
+            .world_mut()
+            .spawn((Interaction::Hovered, MouseInteractionComponent))
+            .id();
+        app.insert_resource(UiPointerTarget(UiPointerTargetValue::Primary(button, None)));
+        app
+    }
+
+    #[test]
+    fn a_pan_holding_the_pointer_targets_no_scene_ui() {
+        let mut app = app_over_scene_ui(true);
+        app.update();
+        assert!(app.world().resource::<PointerTarget>().0.is_none());
+    }
+
+    #[test]
+    fn without_a_pan_scene_ui_is_the_target() {
+        let mut app = app_over_scene_ui(false);
+        app.update();
+        let target = app.world().resource::<PointerTarget>().0.clone();
+        assert_eq!(target.map(|t| t.ty), Some(PointerTargetType::Ui));
+    }
+}
+
+#[cfg(test)]
+mod pointer_target_tests {
+    use super::*;
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        update_scene::synthetic_pointer::{Anchor, Hold, SyntheticAim},
+        update_world::mesh_collider::regions_of_parcels,
+    };
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+    use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+    use scene_material::SceneBounds;
+
+    #[test]
+    fn the_pointer_passes_a_scenes_collider_over_another_scenes_parcel() {
+        // A scene around a notch: parcels (0, 0) and (2, 0), joined by the row (0, 1), (1, 1),
+        // (2, 1). The notch at (1, 0), which is not the scene's, spans world x 16 to 32 and z
+        // -16 to 0; the scene's row behind it spans z -32 to -16.
+        let parcels = [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1)];
+        let regions = regions_of_parcels(&parcels);
+        let parcels = parcels.map(|(x, y)| IVec2::new(x, y));
+
+        let mut world = World::new();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "scene".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            parcels.into_iter().collect(),
+            regions.clone(),
+            SceneBounds::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        let mut colliders = SceneColliderData::for_regions(&regions, parcels.len());
+
+        // two posts of the scene on the line x = 24: one over the notch, one in the row behind
+        let [_in_the_notch, behind_the_notch] = [(1, -8.0), (2, -24.0)].map(|(index, z)| {
+            let entity = world.spawn_empty().id();
+            let scene_entity = SceneEntityId {
+                id: 512 + index,
+                generation: 0,
+            };
+            context.associate_bevy_entity(scene_entity, entity);
+            let id = ColliderId::new(scene_entity, None, 0);
+            let layers = Group::from_bits_truncate(ColliderLayer::ClPointer as u32);
+            let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+                .collision_groups(InteractionGroups::new(
+                    layers,
+                    layers,
+                    InteractionTestMode::And,
+                ))
+                .build();
+            colliders.set_collider(&id, collider, Some(entity));
+            colliders.update_collider_transform(
+                &id,
+                &GlobalTransform::from(
+                    Transform::from_xyz(24.0, 2.0, z).with_scale(Vec3::new(1.0, 4.0, 1.0)),
+                ),
+            );
+            entity
+        });
+        let scene = world.spawn((context, colliders)).id();
+
+        let mut pointers = ScenePointers::default();
+        for parcel in parcels {
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: "scene".to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        let mut live = LiveScenes::default();
+        live.scenes.insert("scene".to_owned(), scene);
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+        world.init_resource::<AvatarColliders>();
+        world.init_resource::<WorldPointerTarget>();
+        world.init_resource::<PointerRay>();
+        world.init_resource::<LeftDragPan>();
+        world.init_resource::<PanHoldsPointer>();
+
+        // the player stands in the notch and aims along -z at the post behind it
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_xyz(24.0, 0.0, -2.0),
+        ));
+        world.spawn((
+            Camera::default(),
+            PrimaryCamera::default(),
+            GlobalTransform::from_xyz(24.0, 2.0, -2.0),
+        ));
+        let target = world
+            .spawn(GlobalTransform::from_xyz(24.0, 2.0, -24.0))
+            .id();
+        world.insert_resource(SyntheticPointer(Some(SyntheticAim {
+            scene,
+            entity: SceneEntityId {
+                id: 514,
+                generation: 0,
+            },
+            target,
+            anchor: Anchor::Origin,
+            hold: Hold::Open,
+            started_frame: 0,
+        })));
+
+        world.run_system_once(update_pointer_target).unwrap();
+
+        let hit = world.resource::<WorldPointerTarget>().0.clone().unwrap();
+        assert_eq!(hit.container, behind_the_notch);
+        assert!((hit.camera_distance.0 - 21.5).abs() < 1e-3);
     }
 }

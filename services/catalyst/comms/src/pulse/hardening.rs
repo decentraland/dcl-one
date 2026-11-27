@@ -41,6 +41,29 @@ pub enum DisconnectReason {
 }
 
 impl DisconnectReason {
+    /// Every reason, in code order (1 to 19).
+    pub const ALL: [DisconnectReason; 19] = [
+        DisconnectReason::Graceful,
+        DisconnectReason::AuthTimeout,
+        DisconnectReason::AuthFailed,
+        DisconnectReason::DuplicateSession,
+        DisconnectReason::Banned,
+        DisconnectReason::ServerFull,
+        DisconnectReason::PreAuthIpLimitExhausted,
+        DisconnectReason::PreAuthBudgetExhausted,
+        DisconnectReason::InputRateExceeded,
+        DisconnectReason::DiscreteEventRateExceeded,
+        DisconnectReason::InvalidInputField,
+        DisconnectReason::InvalidEmoteField,
+        DisconnectReason::InvalidTeleportField,
+        DisconnectReason::HandshakeReplayRejected,
+        DisconnectReason::InvalidHandshakeField,
+        DisconnectReason::PacketCorrupted,
+        DisconnectReason::IpConnectionLimitExceeded,
+        DisconnectReason::SceneListenerIpLimitExceeded,
+        DisconnectReason::InvalidSceneListenerField,
+    ];
+
     pub fn code(self) -> u32 {
         self as u32
     }
@@ -423,7 +446,10 @@ impl ReplayJournalFile {
 }
 
 /// What a test gate tells the journal writer to do with its next batch.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "only the test gate builds these steps")
+)]
 #[derive(Debug)]
 pub(crate) enum WriterStep {
     Write,
@@ -925,6 +951,11 @@ impl PreAuthAdmission {
     }
 
     pub fn try_admit(&mut self, peer_index: u32, ip: &str) -> AdmitResult {
+        let canonical = ip
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|addr| addr.to_canonical().to_string());
+        let ip = canonical.as_deref().unwrap_or(ip);
         let per_ip = *self.per_ip_counts.get(ip).unwrap_or(&0);
 
         if self.per_ip_cap > 0 && per_ip >= self.per_ip_cap {
@@ -972,8 +1003,6 @@ pub fn pre_auth_refusal_reason(result: AdmitResult) -> Option<DisconnectReason> 
 }
 
 pub const DEFAULT_PRE_AUTH_BUDGET: i64 = 512;
-
-pub const DEFAULT_PRE_AUTH_BUDGET_WT: i64 = 512;
 
 pub const DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP: i64 = 32;
 
@@ -1260,6 +1289,46 @@ mod limiter_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reason after `reason` in code order. The match names every variant, so a new one does
+    /// not compile until it is placed here; placed after the last, it is reached from the first
+    /// and must then be in `DisconnectReason::ALL` for the test below to pass.
+    fn next_reason(reason: DisconnectReason) -> Option<DisconnectReason> {
+        use DisconnectReason::*;
+        match reason {
+            Graceful => Some(AuthTimeout),
+            AuthTimeout => Some(AuthFailed),
+            AuthFailed => Some(DuplicateSession),
+            DuplicateSession => Some(Banned),
+            Banned => Some(ServerFull),
+            ServerFull => Some(PreAuthIpLimitExhausted),
+            PreAuthIpLimitExhausted => Some(PreAuthBudgetExhausted),
+            PreAuthBudgetExhausted => Some(InputRateExceeded),
+            InputRateExceeded => Some(DiscreteEventRateExceeded),
+            DiscreteEventRateExceeded => Some(InvalidInputField),
+            InvalidInputField => Some(InvalidEmoteField),
+            InvalidEmoteField => Some(InvalidTeleportField),
+            InvalidTeleportField => Some(HandshakeReplayRejected),
+            HandshakeReplayRejected => Some(InvalidHandshakeField),
+            InvalidHandshakeField => Some(PacketCorrupted),
+            PacketCorrupted => Some(IpConnectionLimitExceeded),
+            IpConnectionLimitExceeded => Some(SceneListenerIpLimitExceeded),
+            SceneListenerIpLimitExceeded => Some(InvalidSceneListenerField),
+            InvalidSceneListenerField => None,
+        }
+    }
+
+    #[test]
+    fn all_lists_every_disconnect_reason_in_code_order() {
+        let mut walked = vec![DisconnectReason::Graceful];
+        while let Some(next) = next_reason(*walked.last().unwrap()) {
+            walked.push(next);
+        }
+        assert_eq!(walked.as_slice(), DisconnectReason::ALL.as_slice());
+        for (position, reason) in DisconnectReason::ALL.iter().enumerate() {
+            assert_eq!(reason.code() as usize, position + 1, "{reason:?}");
+        }
+    }
 
     #[test]
     fn ban_list_normalizes_prefix_and_case() {

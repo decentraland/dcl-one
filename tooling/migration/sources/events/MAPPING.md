@@ -26,6 +26,7 @@ adding events created upstream later as `'upstream'` rows; the next
 | `schedule` | `schedule` | `explore.schedules_local` | `id` | none (small; update path not verified to bump `updated_at`) |
 | `event` | `events` | `explore.event` | `id` | `updated_at` (`EventModel.update` sets it on every write, attendee counts and the recurrence cron included) |
 | `attendance` | `event_attendees` | `explore.event_attendance_local` (`going`) | `event_id, signer` | none (`created_at` nullable; a cancel deletes the row) |
+| `attendance_reconcile` | whole normalized `event_attendees` set | unchanged imported attendance and its provenance | `event_id, signer` | whole set; upstream deletes cancel RSVPs |
 | `profile_subscription` | `profile_subscriptions` | `explore.event_profile_subscriptions` | `endpoint` | none (source has no timestamps) |
 | `profile_settings` | `profile_settings` | `explore.event_profile_settings` | `user` | none (updates keep the old `updated_at`) |
 
@@ -35,10 +36,34 @@ Notes:
   become local rows, which the read path counts on top of the preview.
   Attendees of events missing upstream are skipped (the mirror sweep deletes
   orphan RSVPs). An RSVP or cancel this node recorded later wins.
+- Attendance loads record only rows actually written in
+  `dcl_migration.event_attendance_loaded` (timestamp and payload). Run
+  `attendance_reconcile` after attendance on every authoritative pass: it removes
+  recorded upstream-missing `going` rows only while their imported values still
+  match. Later local changes and unrelated local attendance remain. Empty source
+  membership is refused while provenance exists unless the operator verifies it
+  and uses `--allow-empty events/attendance_reconcile`.
+- Before activating event jobs, reconcile deletions against the frozen source.
+  An import made without attendance provenance cannot identify attendees already
+  removed upstream: use an earlier authoritative attendance export to establish
+  those exact imported rows and reconcile them, preserving later local changes.
+  Do not infer ownership from payload shape. Without that evidence, historical
+  cancellation coverage remains unverified and activation is not ready.
 - Posters on the upstream bucket (`events-assets-<hex>.decentraland.*/poster[-vertical]/<file>`)
   become `/poster[-vertical]/<file>`, the path local writes store. The poster
-  bytes are not in the database: they come through the poster read-through
-  (`EVENTS_POSTER_UPSTREAM_URL`) or a separate bucket copy.
+  bytes are not in the database. The node reads them through from
+  `EVENTS_POSTER_UPSTREAM_URL` only while `EVENTS_MIRROR_UPSTREAM` is on, so
+  `migrate.py blobs events` copies every poster the node's events name, as that
+  path or as the production bucket's full URL a mirror-written row keeps, from
+  the bucket into the store and indexes it in `explore.poster` (`origin =
+  'upstream'`, as the read-through writes it). A local upload stays; an
+  upstream row whose blob the store lacks is copied again and repointed. A
+  poster the bucket no longer holds is reported and stays unindexed (404, as
+  the read-through answers). The copy reads the bucket directly, so it also
+  runs with the mirror off: run it after each `run events` and before events
+  API traffic switches to the node (`services/catalyst/docs/events.md`,
+  "Cutover by import"); `blobs events --verify` lists named posters not
+  indexed or whose blob the store lacks.
 - `deleted_at` is `timestamp` (UTC) upstream; the other event and schedule
   timestamps are `timestamptz`. `profile_settings.created_at/updated_at` are
   `timestamp` (gatsby `Type.TimeStampTZ`) and are read as UTC.
@@ -66,10 +91,12 @@ Notes:
 - `explore.events_local`, `explore.signed_actions`: upstream stores no signed
   payloads, and none are fabricated.
 - `explore.moderators`: upstream admins are the `ADMIN_ADDRESSES` setting,
-  not a table; seed it by hand.
+  not a table; seed it at the cut-over with `catalyst explore moderators-add`
+  (`services/catalyst/docs/events.md`, "Events moderators").
 
 ## Left to the node
 
 `social.event_notification_intents` (written by the node's own transitions and
-occurrence scanner), `explore.mirror_state`, `explore.poster`,
-`explore.seen_nonces`.
+occurrence scanner), `explore.mirror_state`, `explore.seen_nonces`.
+`explore.poster` rows come from `blobs events`, uploads and the read-through,
+not from `run`.

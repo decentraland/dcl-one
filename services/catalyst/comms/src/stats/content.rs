@@ -92,12 +92,9 @@ fn thumbnail(scene: &OrderedJson, url: &str) -> Result<Option<OrderedJson>, Erro
     else {
         return Ok(None);
     };
-    if !truthy(value) {
-        return Ok(Some(value.clone()));
-    }
-    let name = value.as_str().ok_or(Error)?;
-    if name.starts_with("http") {
-        return Ok(Some(value.clone()));
+    // Only a file stored with the scene resolves to a thumbnail.
+    if !value.as_str().is_some_and(|name| !name.is_empty()) {
+        return Ok(None);
     }
     let Some(files) = scene.get("content").filter(|v| !v.is_null()) else {
         return Ok(None);
@@ -196,7 +193,8 @@ pub fn project_hot_scenes<'a>(
             base_coords: coords(base)?,
             users_total_count: raw_parcels
                 .iter()
-                .map(|p| counts.get(p.as_str().unwrap()).copied().unwrap_or(0))
+                .filter_map(OrderedJson::as_str)
+                .map(|p| counts.get(p).copied().unwrap_or(0))
                 .sum(),
             parcels: parsed,
             thumbnail: thumbnail(scene, url)?,
@@ -205,7 +203,7 @@ pub fn project_hot_scenes<'a>(
             description: metadata.get("display").and_then(|v| v.get("description")),
         });
     }
-    out.sort_by(|a, b| b.users_total_count.cmp(&a.users_total_count));
+    out.sort_by_key(|b| std::cmp::Reverse(b.users_total_count));
     out.truncate(100);
     Ok(out)
 }

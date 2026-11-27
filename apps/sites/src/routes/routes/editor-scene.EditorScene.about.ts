@@ -1,4 +1,4 @@
-import realm from "@ui/editor/editor-scene-realm.json";
+import realm from "@/data/editor-scene/editor-scene-realm.json";
 
 // The scene editor's own scene as a static realm (apps/ui3/editor-scene): its files are public
 // files under /editor-scene/; its about is answered here so the scene urn names this deployment's

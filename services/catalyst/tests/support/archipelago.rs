@@ -6,7 +6,7 @@
 //! state over a pool that never connects (nothing but `/hot-scenes` and the
 //! v4 fence reach the database), and one bound listener serving the
 //! primary's stats mount (`comms::archipelago::mounts`).
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test binary uses a subset of these fixtures")]
 
 use std::sync::Arc;
 
@@ -142,7 +142,6 @@ pub async fn serve(state: AppState) -> u16 {
         state,
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = catalyst::comms::stats::http::merge_root(mounts.stats, mounts.statistics);

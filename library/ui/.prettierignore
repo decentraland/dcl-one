@@ -18,6 +18,7 @@ figma-mapping-manifest.json
 components/*
 !components/Button
 !components/Modal
+!components/Tooltip
 foundations/*
 !foundations/index.ts
 !foundations/foundations.css

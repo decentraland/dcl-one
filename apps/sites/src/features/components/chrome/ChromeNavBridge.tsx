@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { ComponentPropsWithRef, ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { ChromeNavContext, isSameDocumentHref, type ChromeNavigate } from "@ui/web/frames/chrome-nav";
+import { ChromeNavContext, isSameDocumentHref, type ChromeNavigate } from "@dcl/one-ui";
 
 import SitesTopBar from "./SitesTopBar";
 

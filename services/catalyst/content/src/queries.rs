@@ -207,7 +207,7 @@ fn active_entity_projection(mode: MetadataProjection) -> String {
     };
     let files = match mode {
         MetadataProjection::TextThumbnail => {
-            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> '' AND cf.key NOT LIKE 'http%'"
+            "AND cf.key = CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'display' -> 'navmapThumbnail') = 'string' THEN dep.entity_metadata -> 'v' -> 'display' ->> 'navmapThumbnail' END AND cf.key <> ''"
         }
         _ => "",
     };
@@ -337,6 +337,54 @@ pub async fn active_entity_docs_by_pointers(
     .await
 }
 
+#[derive(sqlx::FromRow)]
+struct ActiveSceneRow {
+    entity_id: String,
+    entity_pointers: Vec<String>,
+    entity_timestamp: f64,
+    base: Option<String>,
+}
+
+/// One entry of `GET /entities/active/scenes`: `pointers` is every parcel the
+/// scene spans (the validator holds them equal to `scene.parcels`), `base` its
+/// `scene.base`, `null` when the metadata carries no string there.
+#[derive(serde::Serialize)]
+pub struct ActiveScene {
+    pub id: String,
+    pub pointers: Vec<String>,
+    pub timestamp: Value,
+    pub base: Option<String>,
+}
+
+/// Every active scene, ordered by id. The scene ids come from
+/// `active_pointers` by its type index, so the scan covers the active pointers
+/// of scenes, not every scene deployment ever made; the join re-checks type
+/// and activity on the deployment row.
+pub async fn active_scenes(pool: &PgPool) -> Result<Vec<ActiveScene>, sqlx::Error> {
+    let rows: Vec<ActiveSceneRow> = sqlx::query_as(
+        "SELECT dep.entity_id, dep.entity_pointers,
+                date_part('epoch', dep.entity_timestamp) * 1000 AS entity_timestamp,
+                CASE WHEN json_typeof(dep.entity_metadata -> 'v' -> 'scene' -> 'base') = 'string'
+                     THEN dep.entity_metadata -> 'v' -> 'scene' ->> 'base' END AS base
+         FROM (SELECT DISTINCT entity_id FROM content.active_pointers
+               WHERE entity_type = 'scene') ap
+         INNER JOIN content.deployments dep ON dep.entity_id = ap.entity_id
+         WHERE dep.entity_type = 'scene' AND dep.deleter_deployment IS NULL
+         ORDER BY dep.entity_id COLLATE \"C\"",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ActiveScene {
+            id: row.entity_id,
+            pointers: row.entity_pointers,
+            timestamp: js_millis(row.entity_timestamp),
+            base: row.base,
+        })
+        .collect())
+}
+
 /// Active selection with the metadata order retained by the stored JSON text.
 /// Ordinary content reads keep their existing JSON value projection.
 #[cfg(any(test, feature = "test-support"))]
@@ -418,15 +466,17 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// Entities whose active pointer starts with `prefix` (a collection URN);
-/// `total` counts matching pointers, the page walks them in pointer order.
+/// Entities whose active pointer starts with `prefix` (a collection URN) in
+/// any letter case; `total` counts matching pointers, the page walks them in
+/// pointer order. Pointers are stored lowercased, so lowercasing the prefix
+/// compares case-insensitively and keeps `active_pointers_pointer_ops_idx`.
 pub async fn active_entity_docs_by_prefix(
     pool: &PgPool,
     prefix: &str,
     offset: i64,
     limit: i64,
 ) -> Result<PrefixDocsResult, sqlx::Error> {
-    let pattern = format!("{}%", escape_like(prefix));
+    let pattern = format!("{}%", escape_like(&prefix.to_lowercase()));
     let projection = active_entity_projection(MetadataProjection::Json);
     let total: i64 = sqlx::query_scalar(
         r"SELECT count(*) FROM content.active_pointers p WHERE p.pointer LIKE $1 ESCAPE '\'",

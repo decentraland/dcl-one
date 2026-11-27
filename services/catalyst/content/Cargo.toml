@@ -29,6 +29,7 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+rand.workspace = true
 ipnet.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true
@@ -44,9 +45,8 @@ bs58.workspace = true
 reqwest.workspace = true
 flate2.workspace = true
 url.workspace = true
-regex.workspace = true
-image.workspace = true
-metrics.workspace = true
+image = { workspace = true, features = ["gif"] }
+dcl-metrics.workspace = true
 
 [features]
 ts = ["catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts"]
@@ -65,3 +65,6 @@ catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints]
+workspace = true

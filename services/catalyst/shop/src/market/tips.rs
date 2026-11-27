@@ -24,24 +24,24 @@
 //! [`FIRST_PASS_GRACE`] with the local setting on), one without its whole
 //! history, or one not advanced for [`INDEX_ABANDONED_SECS`], it is a 503 with
 //! the body code [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so
-//! clients stop. With a whole-history walk lagging or paused
-//! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
+//! clients stop. With a whole-history walk lagging or paused, a cursor the
+//! resolver cannot use yet (unbound, bound to another chain or in quarantine:
+//! [`chain_walk::is_walked`] false), or the local walk's first pass still to
 //! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
 //! 500. The age check reads `updated_at`, which a walk sets just outside the
-//! live window once its first head read in a process answers, unless it is
-//! held at its stop block ([`chain_walk::touch_started`]): an index back after
-//! hours down reads as behind, neither abandoned nor live, until its first
-//! window really lands.
+//! live window once its first head read answers after it took the projection,
+//! unless it is held at its stop block ([`chain_walk::touch_started`], a
+//! fenced write): an index back after hours down reads as behind, neither
+//! abandoned nor live, until its first window really lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
 //! before its claim, is rejected (`TipSettings`). The notification id is a
 //! uuid v5 of the transaction hash.
 
-use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::shared::routing::post;
 use alloy_primitives::U256;
@@ -52,7 +52,6 @@ use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::NaiveDateTime;
-use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -61,6 +60,7 @@ use super::SharedState;
 use super::chain_walk::{self, ChainNet, INDEXER_MANA};
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
+use crate::shared::limits::{KeyedLimiter, preauth_keys};
 use crate::shared::notifications::{NewNotification, insert_notifications};
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedPath};
 
@@ -74,10 +74,8 @@ pub const CLAIM_TTL_SECS: i64 = 3600;
 pub const EVICTABLE_AFTER_SECS: i64 = 300;
 /// Forwards one signer may send a minute.
 pub const FORWARDS_PER_MINUTE: u32 = 30;
-/// Unauthenticated requests one client source (IPv6 by /64) may send a minute.
-pub const PREAUTH_PER_MINUTE: u32 = 120;
-/// Unauthenticated requests every /64 of one IPv6 /48 may send a minute together.
-pub const PREAUTH_PER_MINUTE_PER_48: u32 = 480;
+/// The pre-auth budgets of one client source and of an IPv6 /48 (`shared::limits`).
+pub use crate::shared::limits::{PREAUTH_PER_MINUTE, PREAUTH_PER_MINUTE_PER_48};
 /// Limiter keys kept; past it the least recently used goes.
 const LIMITER_KEYS: usize = 10_000;
 pub const MAX_PENDING_PER_SENDER: i64 = 20;
@@ -153,101 +151,10 @@ pub fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
-struct Bucket {
-    tokens: f64,
-    last: Instant,
-    /// Its place in the use order.
-    used: u64,
-}
-
-/// Token buckets, at most `max_keys`: a key is stored only when a request
-/// spends from it, and past the cap the least recently used goes, so keys a
-/// denied flood invents never displace the buckets it exhausted.
-struct ForwardLimiter {
-    max_keys: usize,
-    inner: Mutex<Buckets>,
-}
-
-#[derive(Default)]
-struct Buckets {
-    clock: u64,
-    map: HashMap<String, Bucket>,
-    order: BTreeMap<u64, String>,
-}
-
-impl ForwardLimiter {
-    fn new(max_keys: usize) -> Self {
-        Self {
-            max_keys: max_keys.max(2),
-            inner: Mutex::new(Buckets::default()),
-        }
-    }
-
-    /// Spends one token of every `(key, budget a minute)`, or none.
-    fn allow(&self, keys: &[(String, u32)]) -> bool {
-        let now = Instant::now();
-        let mut b = self.inner.lock();
-        let Buckets { clock, map, order } = &mut *b;
-        let refilled = |key: &str, per_minute: u32| {
-            let cap = f64::from(per_minute);
-            map.get(key).map_or(cap, |b| {
-                let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
-                (b.tokens + elapsed * cap / 60.0).min(cap)
-            })
-        };
-        let tokens: Vec<f64> = keys.iter().map(|(k, n)| refilled(k, *n)).collect();
-        let ok = tokens.iter().all(|t| *t >= 1.0);
-        for ((key, _), tokens) in keys.iter().zip(tokens) {
-            if !ok && !map.contains_key(key) {
-                continue;
-            }
-            *clock += 1;
-            let bucket = map.entry(key.clone()).or_insert(Bucket {
-                tokens,
-                last: now,
-                used: 0,
-            });
-            order.remove(&bucket.used);
-            bucket.used = *clock;
-            order.insert(*clock, key.clone());
-            if ok {
-                bucket.tokens = tokens - 1.0;
-                bucket.last = now;
-            }
-        }
-        while map.len() > self.max_keys {
-            let Some((_, oldest)) = order.pop_first() else {
-                break;
-            };
-            map.remove(&oldest);
-        }
-        ok
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.inner.lock().map.len()
-    }
-}
-
-/// The pre-auth keys of a client address and their budgets a minute.
-fn source_keys(ip: &str) -> Vec<(String, u32)> {
-    let mut keys = vec![(crate::shared::client_ip::source_key(ip), PREAUTH_PER_MINUTE)];
-    if let Ok(IpAddr::V6(v6)) = ip.parse::<IpAddr>()
-        && v6.to_ipv4_mapped().is_none()
-    {
-        let net = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 80));
-        keys.push((format!("{net}/48"), PREAUTH_PER_MINUTE_PER_48));
-    }
-    keys
-}
-
 /// Loose, before the signature is checked: per client source and IPv6 /48.
-static SOURCE_LIMITER: LazyLock<ForwardLimiter> =
-    LazyLock::new(|| ForwardLimiter::new(LIMITER_KEYS));
+static SOURCE_LIMITER: LazyLock<KeyedLimiter> = LazyLock::new(|| KeyedLimiter::new(LIMITER_KEYS));
 /// The real budget, per signer.
-static SIGNER_LIMITER: LazyLock<ForwardLimiter> =
-    LazyLock::new(|| ForwardLimiter::new(LIMITER_KEYS));
+static SIGNER_LIMITER: LazyLock<KeyedLimiter> = LazyLock::new(|| KeyedLimiter::new(LIMITER_KEYS));
 
 fn retry_later(status: StatusCode, message: &str, secs: i64) -> Response {
     let secs = secs.max(1);
@@ -304,7 +211,7 @@ async fn forward(
         &state.settings.market.trusted_proxy_cidrs,
     );
     if let Some(ip) = ip
-        && !SOURCE_LIMITER.allow(&source_keys(&ip))
+        && !SOURCE_LIMITER.allow(&preauth_keys(&ip))
     {
         return retry_later(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded", 1);
     }
@@ -558,7 +465,11 @@ fn unmatched() -> String {
 /// Deletes up to `limit` unmatched claims (of `sender`, or anyone's) at
 /// least `min_age_secs` old, oldest first; returns how many. Anyone's claim
 /// must also be `min_age_secs` older than the MANA index's newest block, so
-/// a stalled or catching-up index evicts no accepted tip it has not reached.
+/// a stalled or catching-up index evicts no accepted tip it has not reached;
+/// that block counts only while the index is bound to its mainnet chain, out
+/// of quarantine and not diverged, so a history set apart, or one whose
+/// recovery from a reorg is still searching (the branch it recovers may hold
+/// the claim's transfer), evicts nobody's claim.
 async fn evict(
     conn: &mut PgConnection,
     sender: Option<&str>,
@@ -572,15 +483,17 @@ async fn evict(
                AND c.created_at <= timezone('UTC', now()) - make_interval(secs => $2) AND {} \
                AND ($1::text IS NOT NULL OR c.created_at <= ( \
                    SELECT to_timestamp(k.last_block_time) AT TIME ZONE 'UTC' - make_interval(secs => $2) \
-                   FROM shop.chain_cursor k WHERE k.indexer = '{}' AND k.network = '{}')) \
+                   FROM shop.chain_cursor k WHERE k.indexer = '{}' AND k.network = '{}' \
+                     AND k.chain_id = {} AND k.quarantined_at IS NULL AND k.diverged_at IS NULL)) \
              ORDER BY c.created_at LIMIT $3 FOR UPDATE SKIP LOCKED) e \
          WHERE d.transaction_hash = e.transaction_hash AND d.sender = e.sender",
         unmatched(),
         INDEXER_MANA,
-        NET.db_name()
+        NET.db_name(),
+        NET.chain_id()
     )))
     .bind(sender)
-    .bind(min_age_secs as f64)
+    .bind(super::casts::secs_f64(min_age_secs))
     .bind(limit)
     .execute(conn)
     .await?
@@ -597,11 +510,13 @@ async fn retry_after(conn: &mut PgConnection, sender: &str, own: bool) -> sqlx::
         unmatched()
     )))
     .bind(own.then_some(sender))
-    .bind(if own { 0.0 } else { EVICTABLE_AFTER_SECS as f64 })
+    .bind(if own { 0.0 } else { super::casts::secs_f64(EVICTABLE_AFTER_SECS) })
     .fetch_one(conn)
     .await?;
     Ok(wait
-        .map_or(POLL_SECS as i64, |w| w.ceil() as i64)
+        .map_or(i64::try_from(POLL_SECS).unwrap_or(i64::MAX), |w| {
+            super::casts::saturating_i64(w.ceil())
+        })
         .clamp(1, EVICTABLE_AFTER_SECS))
 }
 
@@ -801,7 +716,7 @@ async fn expire(pool: &PgPool) -> anyhow::Result<u64> {
     Ok(sqlx::query(
         "DELETE FROM shop.tip_claim WHERE created_at < timezone('UTC', now()) - make_interval(secs => $1)",
     )
-    .bind(CLAIM_TTL_SECS as f64)
+    .bind(super::casts::secs_f64(CLAIM_TTL_SECS))
     .execute(pool)
     .await?
     .rows_affected())
@@ -861,6 +776,14 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
 
     #[test]
@@ -889,7 +812,10 @@ mod tests {
         chrono::Utc::now().timestamp()
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per seeded transfer column"
+    )]
     async fn transfer(
         pool: &PgPool,
         block: i64,
@@ -936,8 +862,8 @@ mod tests {
         published: bool,
     ) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, updated_at) \
-             VALUES ('mana_transfers', 'matic', 0, $1, $2, CASE WHEN $3 THEN $1 END, CASE WHEN $3 THEN timezone('UTC', now()) END, $4, timezone('UTC', now()) - $5::interval) \
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, updated_at, chain_id) \
+             VALUES ('mana_transfers', 'matic', 0, $1, $2, CASE WHEN $3 THEN $1 END, CASE WHEN $3 THEN timezone('UTC', now()) END, $4, timezone('UTC', now()) - $5::interval, 137) \
              ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, \
                folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at, full_history = $4, updated_at = EXCLUDED.updated_at",
         )
@@ -1118,38 +1044,6 @@ mod tests {
         assert_eq!(
             send_signed(&app, "192.0.2.1", Some("203.0.114.200"), Some(&other)).await,
             StatusCode::BAD_REQUEST
-        );
-    }
-
-    fn ip_keys(ip: &str) -> Vec<(String, u32)> {
-        source_keys(ip)
-    }
-
-    /// Cycling /64s of one /48 hits the /48 budget; denied keys are never
-    /// stored, so a flood of fresh ones cannot reset an exhausted bucket.
-    #[test]
-    fn a_flood_of_fresh_keys_cannot_reset_a_bucket() {
-        let limiter = ForwardLimiter::new(8);
-        let allowed = (0..1_000u32)
-            .filter(|n| limiter.allow(&ip_keys(&format!("2001:db8:1:{n:x}::1"))))
-            .count();
-        assert_eq!(allowed, PREAUTH_PER_MINUTE_PER_48 as usize);
-        assert!(
-            limiter.len() <= 8,
-            "the least recently used goes past the cap"
-        );
-        for _ in 0..PREAUTH_PER_MINUTE {
-            assert!(limiter.allow(&ip_keys("203.0.113.5")));
-        }
-        assert!(!limiter.allow(&ip_keys("203.0.113.5")));
-        let before = limiter.len();
-        for n in 1_000..3_000u32 {
-            assert!(!limiter.allow(&ip_keys(&format!("2001:db8:1:{n:x}::1"))));
-        }
-        assert_eq!(limiter.len(), before, "denied keys are not stored");
-        assert!(
-            !limiter.allow(&ip_keys("203.0.113.5")),
-            "still exhausted after a flood of fresh keys"
         );
     }
 
@@ -1419,12 +1313,88 @@ mod tests {
         age_claim(pool, 1, 30).await;
         age_claim(pool, 2, 10).await;
         transfer(pool, 500, 0, &hash(1), &other(1), RECEIVER, one, t).await;
+        // An index whose history is set apart evicts nobody's claim.
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' WHERE indexer = 'mana_transfers'")
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
+            Outcome::Busy { .. }
+        ));
+        assert_eq!(stored(pool).await, vec![hash(1), hash(2), hash(3)]);
+        sqlx::query("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'mana_transfers'")
+            .execute(pool)
+            .await
+            .unwrap();
         assert_eq!(
             claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
             Outcome::Pending
         );
         assert_eq!(stored(pool).await, vec![hash(1), hash(3), hash(9)]);
         assert_eq!(tip_count(pool).await, 1);
+        db.drop().await;
+    }
+
+    /// While the MANA index's recovery from a reorg searches (its
+    /// publication withdrawn, its cursor marked diverged), the global cap
+    /// evicts nobody's claim: the branch it recovers may hold the claim's
+    /// transfer. Once it recovers with that transfer, the claim resolves.
+    #[tokio::test]
+    async fn a_diverged_index_evicts_nobodys_claim_at_the_global_cap() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_cap_diverged").await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::parse(DEFAULT_MIN_AMOUNT_WEI, DEFAULT_MAX_AGE_SECS, 3).unwrap();
+        publish(pool, 100).await;
+        for n in 1..=3u8 {
+            assert_eq!(
+                claim(pool, &settings, &hash(n), &other(n)).await.unwrap(),
+                Outcome::Pending
+            );
+            age_claim(pool, n, 10).await;
+        }
+        // The index found its cursor block on another branch: withdrawn and
+        // marked diverged while its search waits on an older header.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, \
+                 diverged_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
+            Outcome::Busy { .. }
+        ));
+        assert_eq!(stored(pool).await, vec![hash(1), hash(2), hash(3)]);
+        // The recovery reads a branch that holds hash(1)'s transfer, clears
+        // the mark and publishes again.
+        transfer(
+            pool,
+            150,
+            0,
+            &hash(1),
+            &other(1),
+            RECEIVER,
+            "1000000000000000000",
+            now_secs(),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = 200, last_block_time = $1, folded_block = 200, \
+                 folded_at = timezone('UTC', now()), diverged_at = NULL WHERE indexer = 'mana_transfers'",
+        )
+        .bind(now_secs())
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            claim(pool, &settings, &hash(1), &other(1)).await.unwrap(),
+            Outcome::Notified
+        );
         db.drop().await;
     }
 
@@ -1705,6 +1675,68 @@ mod tests {
         db.drop().await;
     }
 
+    /// A walk near the head serves a forward only while its cursor is one the
+    /// resolver can use: bound to Polygon, out of quarantine and not diverged.
+    /// Unbound, bound to another chain, in quarantine or diverged (its
+    /// recovery searching), a fresh forward is refused (retryably) and nothing
+    /// is stored; otherwise the same walk takes it.
+    #[tokio::test]
+    async fn a_forward_needs_a_cursor_the_resolver_can_use() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_unusable").await else {
+            return;
+        };
+        let app = forward_router(std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        )));
+        let w = crate::outfits::testkit::scratch_wallet();
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "0 seconds", false).await;
+        let pool = db.pool.clone();
+        let set = |sql: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(sql).execute(&pool).await.unwrap();
+            }
+        };
+        for (sql, why) in [
+            (
+                "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'mana_transfers'",
+                "unbound",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = 'mana_transfers'",
+                "bound to another chain",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), \
+                 quarantine_reason = 'test' WHERE indexer = 'mana_transfers'",
+                "in quarantine",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, \
+                 diverged_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'",
+                "diverged, its recovery still searching",
+            ),
+        ] {
+            set(sql).await;
+            assert_eq!(
+                refused(forward_tip(&app, &w).await).await.0.as_deref(),
+                Some("60"),
+                "{why}"
+            );
+            assert_eq!(claim_count(&db.pool).await, 0, "{why}: nothing stored");
+        }
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, diverged_at = NULL WHERE indexer = 'mana_transfers'").await;
+        assert_eq!(
+            forward_tip(&app, &w).await.status(),
+            StatusCode::ACCEPTED,
+            "bound and out of quarantine"
+        );
+        assert_eq!(claim_count(&db.pool).await, 1);
+        db.drop().await;
+    }
+
     #[test]
     fn a_missing_cursor_waits_for_the_first_pass_only_briefly() {
         let minute = std::time::Duration::from_secs(60);
@@ -1739,7 +1771,22 @@ mod tests {
             crate::market::Settings::for_tests(),
         ));
         let minute = std::time::Duration::from_secs(60);
-        let touch = || chain_walk::touch_started(&db.pool, INDEXER_MANA, NET);
+        // The walk that starts claims the projection, then touches its cursor
+        // where it stands.
+        let touch = || async {
+            let ix = super::super::mana_transfers::ManaTransfersIndex { net: NET };
+            let owner = chain_walk::test_owner(&db.pool, &ix, &state.settings.market.indexes).await;
+            let c = chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                .await
+                .unwrap()
+                .unwrap();
+            chain_walk::touch_started(
+                &db.pool,
+                &owner,
+                (c.last_block, c.last_block_hash.as_deref()),
+            )
+            .await
+        };
         let updated_at = || async {
             chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
                 .await

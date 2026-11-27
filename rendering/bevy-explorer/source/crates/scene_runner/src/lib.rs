@@ -8,7 +8,11 @@ use web_time::SystemTime;
 
 use bevy::{
     diagnostic::FrameCount,
-    ecs::{query::Has, schedule::ScheduleLabel, system::SystemParam},
+    ecs::{
+        query::Has,
+        schedule::{ExecutorKind, ScheduleLabel},
+        system::SystemParam,
+    },
     math::{FloatOrd, Vec3A, Vec3Swizzles},
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -23,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, MicState, NearbyVoiceDisabled,
-        NoRenderApp, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
+        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -39,14 +43,12 @@ use dcl_component::{
 };
 use dcl_types::{
     interface::CrdtType, scene_response_channel, RendererResponse, SceneCensus, SceneId,
-    SceneLogLevel, SceneLogMessage, SceneResponse, SceneResponseReceiver,
+    SceneLogLevel, SceneLogMessage, SceneResponse, SceneResponseReceiver, SceneWake,
     TaggedSceneResponseSender,
 };
 use initialize_scene::{PortableScenes, TestingData};
 use ipfs::SceneIpfsLocation;
 use primary_entities::PrimaryEntities;
-#[cfg(not(target_arch = "wasm32"))]
-use spin_sleep::SpinSleeper;
 use ui_core::ui_actions::{Click, On};
 use update_world::lights::LightsPlugin;
 use util::SceneUtilPlugin;
@@ -65,7 +67,7 @@ use common::partition::PartitionData;
 
 use self::{
     initialize_scene::{
-        LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
+        LiveScenes, NoParcelScene, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
     },
     renderer_context::{RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK},
     update_scene::SceneInputPlugin,
@@ -75,7 +77,9 @@ use dcl_component::ComponentNameRegistry;
 
 pub mod asset_preload;
 pub mod automatic_testing;
+mod loop_pacing;
 pub mod visible_content_bytes;
+mod voice_block;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
@@ -90,6 +94,7 @@ pub mod scene_lod;
 pub mod scene_partition;
 pub mod scene_spawn_slice;
 mod scene_traffic;
+mod stage;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -127,6 +132,16 @@ impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
         self.receiver.get()
     }
+
+    /// The scene the next loop pass would start, if any. Priority scenes bypass the
+    /// thread limit (but still occupy slots, preventing non-priority scenes from
+    /// running). Non-priority scenes respect the limit.
+    fn next_scene_to_start(&self, scene_threads: usize) -> Option<Entity> {
+        let &(ent, _) = self.scene_queue.front()?;
+        (self.jobs_in_flight.len() < scene_threads
+            || self.priority_scenes.values().any(|&e| e == ent))
+        .then_some(ent)
+    }
 }
 
 #[derive(Debug)]
@@ -136,6 +151,9 @@ pub struct SceneThreadHandle {
     // listens for. None on native, where the sender drop itself crosses the IPC
     // boundary and triggers the kill.
     pub kill_guard: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Whether the engine wakes the scene's runtime when it sends it something; set each frame
+    /// from `player_scenes`.
+    pub wake: SceneWake,
 }
 
 /// Emitted by [`receive_scene_updates`] when the scene thread responds to a
@@ -265,14 +283,11 @@ pub struct SceneLoopTiming {
 #[derive(Resource)]
 pub struct SceneLoopSchedule {
     schedule: Schedule,
-    /// Absolute wall-clock deadline for the end of the next frame. Accumulating this
-    /// by the frame target (rather than restarting the clock from `Instant::now()` each
-    /// frame) means a frame that overruns is repaid by a correspondingly shorter sleep,
-    /// so the long-run rate matches the target instead of losing the overshoot forever.
-    next_frame_end: Instant,
-    #[cfg(not(target_arch = "wasm32"))]
-    sleeper: SpinSleeper,
 }
+
+/// The time from the start of one scene loop pass to the start of the next while the loop
+/// can only wait for replies.
+const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);
 
 // left px, top px, right px, bottom px
 #[derive(Default, Resource)]
@@ -430,8 +445,12 @@ impl Plugin for SceneRunnerPlugin {
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
+        app.add_plugins(loop_pacing::LoopPacingPlugin);
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
+        // most passes find nothing to do, so handing each system to a worker costs more
+        // than running it
+        scene_schedule.set_executor_kind(ExecutorKind::SingleThreaded);
 
         scene_schedule.configure_sets(
             (
@@ -449,9 +468,6 @@ impl Plugin for SceneRunnerPlugin {
 
         app.insert_resource(SceneLoopSchedule {
             schedule: scene_schedule,
-            next_frame_end: Instant::now(),
-            #[cfg(not(target_arch = "wasm32"))]
-            sleeper: SpinSleeper::default(),
         });
 
         app.add_plugins(SceneInputPlugin);
@@ -466,9 +482,17 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
+        app.init_resource::<permissions::PermissionsInForce>();
         app.add_systems(
             Update,
-            (update_scene_room, update_scene_voice_block).in_set(SceneSets::PostLoop),
+            (
+                update_scene_room,
+                voice_block::update_scene_voice_block,
+                permissions::publish_permissions_in_force
+                    .after(update_world::camera_mode_area::update_camera_mode_area)
+                    .after(update_world::avatar_modifier_area::update_avatar_modifier_area),
+            )
+                .in_set(SceneSets::PostLoop),
         );
         app.init_resource::<load_timing::FirstRingTiming>();
         app.add_systems(
@@ -506,26 +530,20 @@ fn run_scene_loop(world: &mut World) {
         world.resource::<AppConfig>(),
         refresh_hz,
     ) as f64;
+    let scene_threads = world.resource::<AppConfig>().scene_threads;
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
-    let frame_target_duration = if fps == 0.0 {
-        Duration::from_secs(100)
-    } else {
-        Duration::from_nanos((1e9 / fps) as u64)
-    };
+    let frame_target = (fps != 0.0).then(|| Duration::from_nanos((1e9 / fps) as u64));
     let start_loop_time = Instant::now();
-    // Bounded so we neither burn through a backlog after a hitch (a deadline already in
-    // the past still leaves a 1ms floor to make progress) nor run a frame longer than the
-    // target if the deadline is stale — e.g. after an fps change, or an uncapped frame.
-    let earliest_end = start_loop_time + Duration::from_millis(1);
-    let latest_end = start_loop_time + frame_target_duration.max(Duration::from_millis(1));
-    let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
-    loop_schedule.next_frame_end = target_end_time + frame_target_duration;
+    let mut paced = world
+        .resource_mut::<loop_pacing::LoopPacing>()
+        .begin(start_loop_time, frame_target);
+    let target_end_time = paced.deadline;
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
-    updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
+    updates.frame_target = frame_target;
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -537,22 +555,32 @@ fn run_scene_loop(world: &mut World) {
             && (world.resource::<SceneUpdates>().eligible_jobs > 0
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
+        let pass_start = Instant::now();
+        paced.pass_start();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
+
+        // with no scene to start, only a reply can give the next pass anything to do
+        let updates = world.resource::<SceneUpdates>();
+        if !updates.jobs_in_flight.is_empty()
+            && updates.next_scene_to_start(scene_threads).is_none()
+        {
+            let next_pass = (pass_start + SCENE_REPLY_POLL).min(paced.last_wait_end);
+            if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
+                paced.wait(world, next_pass, wait);
+            }
+        }
     }
     let loop_end_time = Instant::now();
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
 
-    let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
-    loop_schedule.schedule = schedule;
+    world.resource_mut::<SceneLoopSchedule>().schedule = schedule;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    if fps != 0.0 {
-        if let Some(sleep_time) = target_end_time.checked_duration_since(Instant::now()) {
-            loop_schedule.sleeper.sleep(sleep_time);
-        }
-    }
+    // natively, with a frame cap, the frame limiter sleeps to the deadline
+    world
+        .resource_mut::<loop_pacing::LoopPacing>()
+        .end(paced, loop_end_time);
     let frame_limiter_sleep_ms = loop_end_time.elapsed().as_secs_f32() * 1000.0;
     world.insert_resource(SceneLoopTiming {
         scene_loop_ms: (loop_end_time - start_loop_time).as_secs_f32() * 1000.0,
@@ -581,15 +609,23 @@ fn update_scene_priority(
     updates.eligible_jobs = 0;
     updates.frames += 1;
 
-    let active_scenes = player
-        .single()
-        .map(|e| containing_scene.get(e))
-        .unwrap_or_default();
+    let PlayerScenes {
+        active: active_scenes,
+        wake: wake_scenes,
+    } = player_scenes(
+        player.single().ok(),
+        &containing_scene,
+        &updates.priority_scenes,
+    );
 
     // mark scenes that have been in-flight past the timeout as broken and free their
     // slot, so a wedged scene worker can't hold a scene thread forever
     let elapsed = time.elapsed_secs_f64();
     for (ent, _, mut context, maybe_super) in scenes.iter_mut() {
+        // before this frame's dispatch
+        if let Some(wake) = context.wake() {
+            wake.set(wake_scenes.contains(&ent));
+        }
         if not_responding(
             context.in_flight(),
             context.inspected,
@@ -672,6 +708,36 @@ fn update_scene_priority(
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
 }
 
+/// The scenes the player is in and the scenes the engine wakes ([`player_scenes`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PlayerScenes {
+    /// The scenes the player is in, which tick first ([`ContainingScene::get`]).
+    pub active: HashSet<Entity>,
+    /// The scenes whose runtimes the engine wakes when it sends them something ([`SceneWake`]; the
+    /// web relays wait for it, the others keep their poll).
+    pub wake: HashSet<Entity>,
+}
+
+/// The scenes the player is in and the scenes the engine wakes: the parcel scene under the player,
+/// also while they are kept out of the world arriving at a teleport's destination
+/// ([`ContainingScene::get_oow`]), every portable experience, and the named priority scenes (the
+/// movement scene). Without a player, or before it has a position, the player is in no scene and
+/// the portable experiences and the priority scenes wake.
+fn player_scenes(
+    player: Option<Entity>,
+    containing_scene: &ContainingScene,
+    priority_scenes: &HashMap<&'static str, Entity>,
+) -> PlayerScenes {
+    let mut scenes = player
+        .and_then(|player| containing_scene.get_in_and_at(player))
+        .unwrap_or_else(|| PlayerScenes {
+            active: HashSet::default(),
+            wake: containing_scene.get_portables(false),
+        });
+    scenes.wake.extend(priority_scenes.values());
+    scenes
+}
+
 /// The queue key of a scene due this frame: its distance over the time since it was last
 /// sent, 0 for the player's scenes. A scene behind the camera counts as
 /// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
@@ -711,11 +777,7 @@ pub struct ContainingScene<'w, 's> {
     portable_scenes: Res<'w, PortableScenes>,
 }
 
-pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
-    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
-        .floor()
-        .as_ivec2()
-}
+pub use common::partition::vec3_to_parcel;
 
 /// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
 /// parcels a side. A negative ring gives none.
@@ -742,15 +804,47 @@ impl ContainingScene<'_, '_> {
             || self.portable_scenes.is_changed()
     }
 
+    /// The hash of the scene on `parcel`, or why the parcel has none (yet).
+    pub(crate) fn parcel_hash(&self, parcel: IVec2) -> Result<&str, NoParcelScene> {
+        self.pointers.scene_hash(parcel)
+    }
+
+    /// The live scene on `parcel`, or why there is none (yet).
+    pub(crate) fn parcel_scene(&self, parcel: IVec2) -> Result<Entity, NoParcelScene> {
+        self.live(self.pointers.scene_hash(parcel)?)
+    }
+
+    /// [`Self::parcel_hash`] for the local player: a scene `bans` refuses them is
+    /// [`NoParcelScene::Refused`] (`ScenePointers::admitted_hash`).
+    pub(crate) fn admitted_hash(
+        &self,
+        parcel: IVec2,
+        bans: &comms::SceneBanGate,
+    ) -> Result<&str, NoParcelScene> {
+        self.pointers.admitted_hash(parcel, bans)
+    }
+
+    /// [`Self::parcel_scene`] for the local player: a scene `bans` refuses them is
+    /// [`NoParcelScene::Refused`], not one still to spawn.
+    pub(crate) fn admitted_scene(
+        &self,
+        parcel: IVec2,
+        bans: &comms::SceneBanGate,
+    ) -> Result<Entity, NoParcelScene> {
+        self.live(self.pointers.admitted_hash(parcel, bans)?)
+    }
+
+    fn live(&self, hash: &str) -> Result<Entity, NoParcelScene> {
+        self.live_scenes
+            .scenes
+            .get(hash)
+            .copied()
+            .ok_or(NoParcelScene::NotSpawned)
+    }
+
     // just the parcel at the position
     pub fn get_parcel_position(&self, position: Vec3) -> Option<Entity> {
-        let parcel = vec3_to_parcel(position);
-
-        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
-            self.live_scenes.scenes.get(hash).copied()
-        } else {
-            None
-        }
+        self.parcel_scene(vec3_to_parcel(position)).ok()
     }
 
     // just the parcel at the entity's position
@@ -774,18 +868,8 @@ impl ContainingScene<'_, '_> {
 
     // the parcel at the position, plus any global scenes
     pub fn get_position(&self, position: Vec3) -> HashSet<Entity> {
-        let parcel = (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
-            .floor()
-            .as_ivec2();
-
         let mut results = HashSet::default();
-
-        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
-            if let Some(scene) = self.live_scenes.scenes.get(hash) {
-                results.insert(*scene);
-            }
-        }
-
+        results.extend(self.get_parcel_position(position));
         results.extend(self.get_portables(false));
         results
     }
@@ -808,14 +892,22 @@ impl ContainingScene<'_, '_> {
     pub fn get(&self, ent: Entity) -> HashSet<Entity> {
         self.transforms
             .get(ent)
-            .map(|(gt, oow)| {
-                if oow {
-                    self.get_portables(true)
-                } else {
-                    self.get_position(gt.translation())
-                }
-            })
+            .map(|(gt, oow)| self.scenes_in(oow, || self.get_position(gt.translation())))
             .unwrap_or_default()
+    }
+
+    // the scenes an entity is in, given the scenes at its position: out of world, only the
+    // super-user portables
+    fn scenes_in(
+        &self,
+        out_of_world: bool,
+        at_position: impl FnOnce() -> HashSet<Entity>,
+    ) -> HashSet<Entity> {
+        if out_of_world {
+            self.get_portables(true)
+        } else {
+            at_position()
+        }
     }
 
     // the parcel at the entity's position, even if they are out of world (arriving: the player
@@ -826,6 +918,18 @@ impl ContainingScene<'_, '_> {
             .get(ent)
             .map(|(gt, _)| self.get_position(gt.translation()))
             .unwrap_or_default()
+    }
+
+    /// [`Self::get`] and [`Self::get_oow`] of the player from one lookup of its position: the
+    /// scenes it is in (`active`) and the scenes at its position even while it is out of world
+    /// (`wake`). None while it has no position.
+    pub(crate) fn get_in_and_at(&self, player: Entity) -> Option<PlayerScenes> {
+        let (gt, oow) = self.transforms.get(player).ok()?;
+        let wake = self.get_position(gt.translation());
+        Some(PlayerScenes {
+            active: self.scenes_in(oow, || wake.clone()),
+            wake,
+        })
     }
 
     // get all scenes within radius of the given entity, plus any global scenes
@@ -840,6 +944,16 @@ impl ContainingScene<'_, '_> {
             return self.get_portables(false);
         };
 
+        self.get_area_xz(focus, radius)
+    }
+
+    /// The scenes within `radius` of `position` on the ground plane, plus any global scenes.
+    pub fn get_area_at(&self, position: Vec3, radius: f32) -> HashSet<Entity> {
+        self.get_area_xz(position.xz() * Vec2::new(1.0, -1.0), radius)
+    }
+
+    // `focus` is in parcel orientation: world x, world -z
+    fn get_area_xz(&self, focus: Vec2, radius: f32) -> HashSet<Entity> {
         let min_point = focus - Vec2::splat(radius);
         let max_point = focus + Vec2::splat(radius);
 
@@ -850,13 +964,7 @@ impl ContainingScene<'_, '_> {
 
         for parcel_x in min_parcel.x..=max_parcel.x {
             for parcel_y in min_parcel.y..=max_parcel.y {
-                if let Some(PointerResult::Exists { hash, .. }) =
-                    self.pointers.get(IVec2::new(parcel_x, parcel_y))
-                {
-                    if let Some(scene) = self.live_scenes.scenes.get(hash).copied() {
-                        results.insert(scene);
-                    }
-                }
+                results.extend(self.parcel_scene(IVec2::new(parcel_x, parcel_y)).ok());
             }
         }
 
@@ -930,8 +1038,234 @@ impl ContainingScene<'_, '_> {
 }
 
 #[cfg(test)]
+mod player_scenes_tests {
+    use super::*;
+    use crate::initialize_scene::PointerResult;
+    use bevy::ecs::system::RunSystemOnce;
+
+    // parcel (2,2) is x 32..48, z -48..-32; (3,2) is x 48..64
+    const HERE: Vec3 = Vec3::new(40.0, 0.0, -40.0);
+    const EAST: Vec3 = Vec3::new(56.0, 0.0, -40.0);
+
+    struct Scenes {
+        here: Entity,
+        east: Entity,
+        portable: Entity,
+        player: Entity,
+    }
+
+    // scenes on parcels (2,2) and (3,2), a portable experience, and the player on (2,2)
+    fn scenes(world: &mut World) -> Scenes {
+        let here = world.spawn_empty().id();
+        let east = world.spawn_empty().id();
+        let portable = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("here", here, IVec2::new(2, 2)),
+            ("east", east, IVec2::new(3, 2)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        live.scenes.insert("portable".to_owned(), portable);
+        let mut portables = PortableScenes::default();
+        portables.insert(
+            "portable".to_owned(),
+            initialize_scene::PortableSource {
+                pid: "portable".to_owned(),
+                parent_scene: None,
+                ens: None,
+                super_user: false,
+                kind: initialize_scene::PortableKind::Startup,
+            },
+        );
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.insert_resource(portables);
+        let player = world
+            .spawn((
+                PrimaryUser::default(),
+                GlobalTransform::from_translation(HERE),
+            ))
+            .id();
+        Scenes {
+            here,
+            east,
+            portable,
+            player,
+        }
+    }
+
+    fn player_scenes_of(world: &mut World, player: Entity, priority: Entity) -> PlayerScenes {
+        world
+            .run_system_once(move |containing: ContainingScene| {
+                let priority = HashMap::from_iter([("movement_controller", priority)]);
+                player_scenes(Some(player), &containing, &priority)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_scene_under_the_player_portables_and_the_movement_scene_wake() {
+        let mut world = World::new();
+        let Scenes {
+            here,
+            east,
+            portable,
+            player,
+        } = scenes(&mut world);
+        let movement = world.spawn_empty().id();
+
+        let in_scene = |scene| PlayerScenes {
+            active: HashSet::from_iter([scene, portable]),
+            wake: HashSet::from_iter([scene, portable, movement]),
+        };
+        assert_eq!(
+            player_scenes_of(&mut world, player, movement),
+            in_scene(here)
+        );
+
+        // onto the next parcel: its scene replaces the one left
+        *world.get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(EAST);
+        assert_eq!(
+            player_scenes_of(&mut world, player, movement),
+            in_scene(east)
+        );
+
+        // a teleport's arrival: out of the world at the destination, whose scene wakes already;
+        // the player is in no scene but the super-user portables until it is ready
+        world.entity_mut(player).insert(OutOfWorld::default());
+        *world.get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(HERE);
+        assert_eq!(
+            player_scenes_of(&mut world, player, movement),
+            PlayerScenes {
+                active: HashSet::default(),
+                wake: HashSet::from_iter([here, portable, movement]),
+            }
+        );
+    }
+
+    /// Before the player has a position, as without a player, it is in no scene, and the
+    /// portables and the movement scene wake.
+    #[test]
+    fn without_a_position_the_portables_and_the_movement_scene_wake() {
+        let mut world = World::new();
+        let Scenes {
+            portable, player, ..
+        } = scenes(&mut world);
+        let movement = world.spawn_empty().id();
+        let no_position = PlayerScenes {
+            active: HashSet::default(),
+            wake: HashSet::from_iter([portable, movement]),
+        };
+
+        world.entity_mut(player).remove::<GlobalTransform>();
+        assert_eq!(player_scenes_of(&mut world, player, movement), no_position);
+        let no_player = world
+            .run_system_once(move |containing: ContainingScene| {
+                let priority = HashMap::from_iter([("movement_controller", movement)]);
+                player_scenes(None, &containing, &priority)
+            })
+            .unwrap();
+        assert_eq!(no_player, no_position);
+    }
+
+    // a running scene with its engine handle
+    fn live_scene(world: &mut World, scene: Entity, parcel: IVec2) {
+        let mut context = RendererSceneContext::new(
+            SceneId(scene),
+            String::new(),
+            String::new(),
+            false,
+            0,
+            String::new(),
+            parcel,
+            [parcel].into_iter().collect(),
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+            scene,
+            0.0,
+            false,
+            "",
+            false,
+            false,
+        );
+        context.state = SceneState::Live {
+            handle: SceneThreadHandle {
+                sender: tokio::sync::mpsc::unbounded_channel().0,
+                kill_guard: None,
+                wake: SceneWake::default(),
+            },
+            in_flight: false,
+        };
+        world.entity_mut(scene).insert(context);
+    }
+
+    fn wakes(world: &World, scene: Entity) -> bool {
+        world
+            .get::<RendererSceneContext>(scene)
+            .and_then(RendererSceneContext::wake)
+            .unwrap()
+            .get()
+    }
+
+    /// Each frame, before the dispatch, sets each running scene's flag: the scene the player
+    /// walks into wakes, the one left stops.
+    #[test]
+    fn each_frame_sets_the_wake_flag_of_every_running_scene() {
+        let mut world = World::new();
+        let Scenes {
+            here,
+            east,
+            portable,
+            player,
+        } = scenes(&mut world);
+        live_scene(&mut world, here, IVec2::new(2, 2));
+        live_scene(&mut world, east, IVec2::new(3, 2));
+        live_scene(&mut world, portable, IVec2::ZERO);
+        let (sender, receiver) = scene_response_channel();
+        world.insert_resource(SceneUpdates {
+            sender,
+            receiver: SyncCell::new(receiver),
+            jobs_in_flight: Default::default(),
+            update_deadline: web_time::SystemTime::now(),
+            eligible_jobs: 0,
+            scene_queue: Default::default(),
+            loop_end_time: Instant::now(),
+            frame_target: None,
+            priority_scenes: Default::default(),
+            frames: 0,
+            skipped_in_flight: 0,
+            skipped_already_sent: 0,
+        });
+        world.init_resource::<Time>();
+
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(wakes(&world, here) && wakes(&world, portable));
+        assert!(!wakes(&world, east));
+
+        *world.get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(EAST);
+        world.run_system_once(update_scene_priority).unwrap();
+        assert!(wakes(&world, east) && wakes(&world, portable));
+        assert!(!wakes(&world, here));
+    }
+}
+
+#[cfg(test)]
 mod get_ray_tests {
     use super::*;
+    use crate::initialize_scene::PointerResult;
     use bevy::ecs::system::RunSystemOnce;
 
     #[test]
@@ -1326,18 +1660,10 @@ fn send_scene_updates(
             .collect();
     }
 
-    // Peek at the next scene before popping. Priority scenes bypass the thread
-    // limit (but still occupy slots, preventing non-priority scenes from
-    // running). Non-priority scenes respect the limit.
-    let Some(&(ent, _)) = updates.scene_queue.front() else {
+    // peek at the next scene before popping
+    let Some(ent) = updates.next_scene_to_start(config.scene_threads) else {
         return;
     };
-
-    if updates.jobs_in_flight.len() >= config.scene_threads
-        && !updates.priority_scenes.values().any(|&e| e == ent)
-    {
-        return;
-    }
 
     updates.scene_queue.pop_front();
 
@@ -1787,63 +2113,63 @@ fn update_scene_room(
     mut writer: EventWriter<SetCurrentScene>,
     mut last: Local<Option<SetCurrentScene>>,
     realm: Res<CurrentRealm>,
+    preview: Res<PreviewMode>,
+    bans: comms::SceneBanGate,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
 ) {
-    let (Some(realm), Some(scene)) = (
-        realm.config.realm_name.as_ref(),
-        player
-            .single()
-            .ok()
-            .and_then(|p| containing_scene.get_parcel(p))
-            .and_then(|scene| scenes.get(scene).ok()),
-    ) else {
+    let scene_id = player.single().ok().and_then(|player| {
+        if let Some(scene) = containing_scene
+            .get_parcel(player)
+            .and_then(|entity| scenes.get(entity).ok())
+        {
+            return Some(scene.hash.as_ref());
+        }
+        if preview.is_preview || realm.is_local() {
+            return None;
+        }
+        let (transform, out_of_world) = containing_scene.transforms.get(player).ok()?;
+        let hash = containing_scene
+            .parcel_hash(vec3_to_parcel(transform.translation()))
+            .ok()?;
+        // A banned parcel has no live scene to identify it. Its pointer must select the room
+        // even when the player arrives from another scene, so fresh admission can restore it.
+        let banned = bans.is_banned(hash);
+        let previous = last.as_ref().is_some_and(|previous| {
+            previous.realm_about_url == realm.about_url && previous.scene_id == *hash
+        });
+        (banned || (!out_of_world && previous)).then_some(hash)
+    });
+    let (Some(realm_name), Some(scene_id)) = (realm.config.realm_name.as_ref(), scene_id) else {
         if last.take().is_some() {
             debug!("clear scene room");
             writer.write(SetCurrentScene {
                 realm_name: default(),
+                realm_about_url: default(),
                 scene_id: default(),
             });
         }
         return;
     };
 
-    if last
-        .as_ref()
-        .is_some_and(|ev| &ev.realm_name == realm && *ev.scene_id == *scene.hash)
-    {
+    if last.as_ref().is_some_and(|ev| {
+        &ev.realm_name == realm_name
+            && ev.realm_about_url == realm.about_url
+            && ev.scene_id == scene_id
+    }) {
         return;
     }
 
     let ev = SetCurrentScene {
-        realm_name: realm.to_owned(),
-        scene_id: scene.hash.to_string(),
+        realm_name: realm_name.to_owned(),
+        realm_about_url: realm.about_url.clone(),
+        scene_id: scene_id.to_owned(),
     };
 
     *last = Some(ev.clone());
     debug!("set scene room {ev:?}");
     writer.write(ev);
-}
-
-/// Only the parcel scene under the player counts: a portable experience never blocks.
-fn update_scene_voice_block(
-    mic_state: Option<ResMut<MicState>>,
-    containing_scene: ContainingScene,
-    player: Query<Entity, With<PrimaryUser>>,
-    disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
-) {
-    let Some(mut mic_state) = mic_state else {
-        return;
-    };
-    let disabled = player
-        .single()
-        .ok()
-        .and_then(|player| containing_scene.get_parcel(player))
-        .is_some_and(|scene| disabling_scenes.contains(scene));
-    if mic_state.scene_disabled() != disabled {
-        mic_state.set_scene_disabled(disabled);
-    }
 }
 
 fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {
@@ -1872,7 +2198,7 @@ fn set_ui_constraints(
 
 fn push_time_to_crdt(time_of_day: Res<TimeOfDay>, mut contexts: Query<&mut GlobalCrdtState>) {
     for mut global_crdt_state in contexts.iter_mut() {
-        global_crdt_state.update_time(time_of_day.time);
+        global_crdt_state.update_time(*time_of_day);
     }
 }
 

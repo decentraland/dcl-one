@@ -1,0 +1,749 @@
+From 0000000000000000000000000000000000000000
+Subject: perf(bevy): one matrix per joint entity, shared by every skin that uses it
+Date: 2026-11-19T17:01:46+00:00
+
+---
+diff --git a/crates/bevy_pbr/src/render/mesh.rs b/crates/bevy_pbr/src/render/mesh.rs
+index ca05c7448ec4a2404a88f2713285c3dd53fe0adb..0bf95882b27eaed974ddb4111e72cfd854c853e1 100644
+--- a/crates/bevy_pbr/src/render/mesh.rs
++++ b/crates/bevy_pbr/src/render/mesh.rs
+@@ -3218,9 +3218,10 @@ fn prepare_mesh_bind_groups_for_phase(
+     // Create the skinned mesh bind group with the current and previous buffers
+     // (the latter being for motion vector computation).
+     let (skin, prev_skin) = (&skins_uniform.current_buffer, &skins_uniform.prev_buffer);
++    let skin_joints = &skins_uniform.skin_joints_buffer;
+     groups.skinned = Some(MeshBindGroupPair {
+-        motion_vectors: layouts.skinned_motion(render_device, &model, skin, prev_skin),
+-        no_motion_vectors: layouts.skinned(render_device, &model, skin),
++        motion_vectors: layouts.skinned_motion(render_device, &model, skin, prev_skin, skin_joints),
++        no_motion_vectors: layouts.skinned(render_device, &model, skin, skin_joints),
+     });
+ 
+     // Create the morphed bind groups just like we did for the skinned bind
+@@ -3240,6 +3241,7 @@ fn prepare_mesh_bind_groups_for_phase(
+                             targets,
+                             prev_skin,
+                             prev_weights,
++                            skin_joints,
+                         ),
+                         no_motion_vectors: layouts.morphed_skinned(
+                             render_device,
+@@ -3247,6 +3249,7 @@ fn prepare_mesh_bind_groups_for_phase(
+                             skin,
+                             weights,
+                             targets,
++                            skin_joints,
+                         ),
+                     }
+                 } else {
+diff --git a/crates/bevy_pbr/src/render/mesh_bindings.rs b/crates/bevy_pbr/src/render/mesh_bindings.rs
+index 51b28389dcd0c5f2f4c59b62b6f043adb67d4204..815eef7386755e4fbe1622f2d492371e17414de5 100644
+--- a/crates/bevy_pbr/src/render/mesh_bindings.rs
++++ b/crates/bevy_pbr/src/render/mesh_bindings.rs
+@@ -7,7 +7,11 @@ use bevy_render::{
+     renderer::{RenderAdapter, RenderDevice},
+ };
+ 
+-use crate::{binding_arrays_are_usable, render::skin::MAX_JOINTS, LightmapSlab};
++use crate::{
++    binding_arrays_are_usable,
++    render::skin::{skins_use_uniform_buffers, MAX_JOINTS},
++    LightmapSlab,
++};
+ 
+ const MORPH_WEIGHT_SIZE: usize = size_of::<f32>();
+ 
+@@ -25,7 +29,7 @@ pub(crate) const JOINT_BUFFER_SIZE: usize = MAX_JOINTS * JOINT_SIZE;
+ mod layout_entry {
+     use core::num::NonZeroU32;
+ 
+-    use super::{JOINT_BUFFER_SIZE, MORPH_BUFFER_SIZE};
++    use super::{JOINT_BUFFER_SIZE, JOINT_SIZE, MORPH_BUFFER_SIZE};
+     use crate::{render::skin, MeshUniform, LIGHTMAPS_PER_SLAB};
+     use bevy_render::{
+         render_resource::{
+@@ -53,6 +57,11 @@ mod layout_entry {
+             storage_buffer_read_only_sized(false, size)
+         }
+     }
++    /// The static buffer of inverse bindposes and joint slots, present only
++    /// where skins use storage buffers.
++    pub(super) fn skin_joints() -> BindGroupLayoutEntryBuilder {
++        storage_buffer_read_only_sized(false, BufferSize::new(JOINT_SIZE as u64))
++    }
+     pub(super) fn weights() -> BindGroupLayoutEntryBuilder {
+         uniform_buffer_sized(true, BufferSize::new(MORPH_BUFFER_SIZE as u64))
+     }
+@@ -116,6 +125,9 @@ mod entry {
+         };
+         entry(binding, size, buffer)
+     }
++    pub(super) fn skin_joints(binding: u32, buffer: &Buffer) -> BindGroupEntry {
++        entry(binding, None, buffer)
++    }
+     pub(super) fn weights(binding: u32, buffer: &Buffer) -> BindGroupEntry {
+         entry(binding, Some(MORPH_BUFFER_SIZE as u64), buffer)
+     }
+@@ -213,6 +225,19 @@ impl MeshLayouts {
+ 
+     // ---------- create individual BindGroupLayouts ----------
+ 
++    /// Adds the skin joints binding to a skinned layout where skins use
++    /// storage buffers.
++    fn with_skin_joints(
++        render_device: &RenderDevice,
++        entries: DynamicBindGroupLayoutEntries,
++    ) -> DynamicBindGroupLayoutEntries {
++        if skins_use_uniform_buffers(render_device) {
++            entries
++        } else {
++            entries.extend_with_indices(((8, layout_entry::skin_joints()),))
++        }
++    }
++
+     fn model_only_layout(render_device: &RenderDevice) -> BindGroupLayout {
+         render_device.create_bind_group_layout(
+             "mesh_layout",
+@@ -227,12 +252,15 @@ impl MeshLayouts {
+     fn skinned_layout(render_device: &RenderDevice) -> BindGroupLayout {
+         render_device.create_bind_group_layout(
+             "skinned_mesh_layout",
+-            &BindGroupLayoutEntries::with_indices(
+-                ShaderStages::VERTEX,
+-                (
+-                    (0, layout_entry::model(render_device)),
+-                    // The current frame's joint matrix buffer.
+-                    (1, layout_entry::skinning(render_device)),
++            &Self::with_skin_joints(
++                render_device,
++                DynamicBindGroupLayoutEntries::new_with_indices(
++                    ShaderStages::VERTEX,
++                    (
++                        (0, layout_entry::model(render_device)),
++                        // The current frame's joint matrix buffer.
++                        (1, layout_entry::skinning(render_device)),
++                    ),
+                 ),
+             ),
+         )
+@@ -243,14 +271,17 @@ impl MeshLayouts {
+     fn skinned_motion_layout(render_device: &RenderDevice) -> BindGroupLayout {
+         render_device.create_bind_group_layout(
+             "skinned_motion_mesh_layout",
+-            &BindGroupLayoutEntries::with_indices(
+-                ShaderStages::VERTEX,
+-                (
+-                    (0, layout_entry::model(render_device)),
+-                    // The current frame's joint matrix buffer.
+-                    (1, layout_entry::skinning(render_device)),
+-                    // The previous frame's joint matrix buffer.
+-                    (6, layout_entry::skinning(render_device)),
++            &Self::with_skin_joints(
++                render_device,
++                DynamicBindGroupLayoutEntries::new_with_indices(
++                    ShaderStages::VERTEX,
++                    (
++                        (0, layout_entry::model(render_device)),
++                        // The current frame's joint matrix buffer.
++                        (1, layout_entry::skinning(render_device)),
++                        // The previous frame's joint matrix buffer.
++                        (6, layout_entry::skinning(render_device)),
++                    ),
+                 ),
+             ),
+         )
+@@ -296,15 +327,18 @@ impl MeshLayouts {
+     fn morphed_skinned_layout(render_device: &RenderDevice) -> BindGroupLayout {
+         render_device.create_bind_group_layout(
+             "morphed_skinned_mesh_layout",
+-            &BindGroupLayoutEntries::with_indices(
+-                ShaderStages::VERTEX,
+-                (
+-                    (0, layout_entry::model(render_device)),
+-                    // The current frame's joint matrix buffer.
+-                    (1, layout_entry::skinning(render_device)),
+-                    // The current frame's morph weight buffer.
+-                    (2, layout_entry::weights()),
+-                    (3, layout_entry::targets()),
++            &Self::with_skin_joints(
++                render_device,
++                DynamicBindGroupLayoutEntries::new_with_indices(
++                    ShaderStages::VERTEX,
++                    (
++                        (0, layout_entry::model(render_device)),
++                        // The current frame's joint matrix buffer.
++                        (1, layout_entry::skinning(render_device)),
++                        // The current frame's morph weight buffer.
++                        (2, layout_entry::weights()),
++                        (3, layout_entry::targets()),
++                    ),
+                 ),
+             ),
+         )
+@@ -315,19 +349,22 @@ impl MeshLayouts {
+     fn morphed_skinned_motion_layout(render_device: &RenderDevice) -> BindGroupLayout {
+         render_device.create_bind_group_layout(
+             "morphed_skinned_motion_mesh_layout",
+-            &BindGroupLayoutEntries::with_indices(
+-                ShaderStages::VERTEX,
+-                (
+-                    (0, layout_entry::model(render_device)),
+-                    // The current frame's joint matrix buffer.
+-                    (1, layout_entry::skinning(render_device)),
+-                    // The current frame's morph weight buffer.
+-                    (2, layout_entry::weights()),
+-                    (3, layout_entry::targets()),
+-                    // The previous frame's joint matrix buffer.
+-                    (6, layout_entry::skinning(render_device)),
+-                    // The previous frame's morph weight buffer.
+-                    (7, layout_entry::weights()),
++            &Self::with_skin_joints(
++                render_device,
++                DynamicBindGroupLayoutEntries::new_with_indices(
++                    ShaderStages::VERTEX,
++                    (
++                        (0, layout_entry::model(render_device)),
++                        // The current frame's joint matrix buffer.
++                        (1, layout_entry::skinning(render_device)),
++                        // The current frame's morph weight buffer.
++                        (2, layout_entry::weights()),
++                        (3, layout_entry::targets()),
++                        // The previous frame's joint matrix buffer.
++                        (6, layout_entry::skinning(render_device)),
++                        // The previous frame's morph weight buffer.
++                        (7, layout_entry::weights()),
++                    ),
+                 ),
+             ),
+         )
+@@ -412,15 +449,25 @@ impl MeshLayouts {
+         render_device: &RenderDevice,
+         model: &BindingResource,
+         current_skin: &Buffer,
++        skin_joints: &Buffer,
+     ) -> BindGroup {
+-        render_device.create_bind_group(
+-            "skinned_mesh_bind_group",
+-            &self.skinned,
+-            &[
+-                entry::model(0, model.clone()),
+-                entry::skinning(render_device, 1, current_skin),
+-            ],
+-        )
++        let mut entries = vec![
++            entry::model(0, model.clone()),
++            entry::skinning(render_device, 1, current_skin),
++        ];
++        Self::push_skin_joints(render_device, &mut entries, skin_joints);
++        render_device.create_bind_group("skinned_mesh_bind_group", &self.skinned, &entries)
++    }
++
++    /// Adds the skin joints entry where skins use storage buffers.
++    fn push_skin_joints<'a>(
++        render_device: &RenderDevice,
++        entries: &mut Vec<BindGroupEntry<'a>>,
++        skin_joints: &'a Buffer,
++    ) {
++        if !skins_use_uniform_buffers(render_device) {
++            entries.push(entry::skin_joints(8, skin_joints));
++        }
+     }
+ 
+     /// Creates the bind group for skinned meshes with no morph targets, with
+@@ -436,15 +483,18 @@ impl MeshLayouts {
+         model: &BindingResource,
+         current_skin: &Buffer,
+         prev_skin: &Buffer,
++        skin_joints: &Buffer,
+     ) -> BindGroup {
++        let mut entries = vec![
++            entry::model(0, model.clone()),
++            entry::skinning(render_device, 1, current_skin),
++            entry::skinning(render_device, 6, prev_skin),
++        ];
++        Self::push_skin_joints(render_device, &mut entries, skin_joints);
+         render_device.create_bind_group(
+             "skinned_motion_mesh_bind_group",
+             &self.skinned_motion,
+-            &[
+-                entry::model(0, model.clone()),
+-                entry::skinning(render_device, 1, current_skin),
+-                entry::skinning(render_device, 6, prev_skin),
+-            ],
++            &entries,
+         )
+     }
+ 
+@@ -502,16 +552,19 @@ impl MeshLayouts {
+         current_skin: &Buffer,
+         current_weights: &Buffer,
+         targets: &TextureView,
++        skin_joints: &Buffer,
+     ) -> BindGroup {
++        let mut entries = vec![
++            entry::model(0, model.clone()),
++            entry::skinning(render_device, 1, current_skin),
++            entry::weights(2, current_weights),
++            entry::targets(3, targets),
++        ];
++        Self::push_skin_joints(render_device, &mut entries, skin_joints);
+         render_device.create_bind_group(
+             "morphed_skinned_mesh_bind_group",
+             &self.morphed_skinned,
+-            &[
+-                entry::model(0, model.clone()),
+-                entry::skinning(render_device, 1, current_skin),
+-                entry::weights(2, current_weights),
+-                entry::targets(3, targets),
+-            ],
++            &entries,
+         )
+     }
+ 
+@@ -531,18 +584,21 @@ impl MeshLayouts {
+         targets: &TextureView,
+         prev_skin: &Buffer,
+         prev_weights: &Buffer,
++        skin_joints: &Buffer,
+     ) -> BindGroup {
++        let mut entries = vec![
++            entry::model(0, model.clone()),
++            entry::skinning(render_device, 1, current_skin),
++            entry::weights(2, current_weights),
++            entry::targets(3, targets),
++            entry::skinning(render_device, 6, prev_skin),
++            entry::weights(7, prev_weights),
++        ];
++        Self::push_skin_joints(render_device, &mut entries, skin_joints);
+         render_device.create_bind_group(
+             "morphed_skinned_motion_mesh_bind_group",
+             &self.morphed_skinned_motion,
+-            &[
+-                entry::model(0, model.clone()),
+-                entry::skinning(render_device, 1, current_skin),
+-                entry::weights(2, current_weights),
+-                entry::targets(3, targets),
+-                entry::skinning(render_device, 6, prev_skin),
+-                entry::weights(7, prev_weights),
+-            ],
++            &entries,
+         )
+     }
+ }
+diff --git a/crates/bevy_pbr/src/render/skin.rs b/crates/bevy_pbr/src/render/skin.rs
+index f572bfe4ed93ef1c2101aa5dd66778eb35a501fb..60f4bc4826b40244628b0dc3c5516e158cc1070a 100644
+--- a/crates/bevy_pbr/src/render/skin.rs
++++ b/crates/bevy_pbr/src/render/skin.rs
+@@ -83,6 +83,14 @@ impl SkinByteOffset {
+ /// the joint matrix buffer from two frames ago with the data for the current
+ /// frame.
+ ///
++/// Where skins use storage buffers, the double-buffered matrices are the world
++/// matrices of the joint entities, one per distinct joint entity regardless of
++/// how many skins reference it, and slot 0 is always the identity. A separate,
++/// static skin joints buffer holds one entry per joint of each skin: the
++/// inverse bindpose with the joint's slot stored as a number in `x_axis.w`. The vertex shader multiplies the two. Where skins use uniform
++/// buffers, the double-buffered matrices are the final skinning matrices of
++/// each skin and the skin joints buffer is unused.
++///
+ /// Notes on implementation: see comment on top of the `extract_skins` system.
+ #[derive(Resource)]
+ pub struct SkinUniforms {
+@@ -95,12 +103,27 @@ pub struct SkinUniforms {
+     /// The GPU-side buffer that stores the joint matrices for skinned meshes in
+     /// the previous frame.
+     pub prev_buffer: Buffer,
++    /// The CPU-side copy of the skin joints buffer (storage buffers only).
++    skin_joints_staging: Vec<Mat4>,
++    /// The GPU-side buffer of per-skin inverse bindposes and joint slots
++    /// (storage buffers only). It is only written when a skin is added.
++    pub skin_joints_buffer: Buffer,
++    /// Whether [`Self::skin_joints_staging`] must be uploaded.
++    skin_joints_dirty: bool,
++    /// Whether skins use uniform buffers on this platform.
++    use_uniform_buffers: bool,
++    /// The slot and reference count of the joint matrix of each joint entity
++    /// (storage buffers only).
++    joint_slots: MainEntityHashMap<(u32, u32)>,
++    /// Slots in [`Self::current_staging_buffer`] that no skin references.
++    free_slots: Vec<u32>,
+     /// The offset allocator that manages the placement of the joints within the
+-    /// [`Self::current_buffer`].
++    /// skin joints buffer, or [`Self::current_buffer`] with uniform buffers.
+     allocator: Allocator,
+     /// Allocation information that we keep about each skin.
+     skin_uniform_info: MainEntityHashMap<SkinUniformInfo>,
+-    /// Maps each joint entity to the skins it's associated with.
++    /// Maps each joint entity to the skins it's associated with (uniform
++    /// buffers only).
+     ///
+     /// We use this in conjunction with change detection to only update the
+     /// skins that need updating each frame.
+@@ -109,7 +132,7 @@ pub struct SkinUniforms {
+     /// [`SmallVec`] to avoid allocations for the vast majority of the cases in
+     /// which each bone belongs to exactly one skin.
+     joint_to_skins: MainEntityHashMap<SmallVec<[MainEntity; 1]>>,
+-    /// The total number of joints in the scene.
++    /// The total number of joints in the scene (uniform buffers only).
+     ///
+     /// We use this as part of our heuristic to decide whether to use
+     /// fine-grained change detection.
+@@ -119,7 +142,8 @@ pub struct SkinUniforms {
+ impl FromWorld for SkinUniforms {
+     fn from_world(world: &mut World) -> Self {
+         let device = world.resource::<RenderDevice>();
+-        let buffer_usages = (if skins_use_uniform_buffers(device) {
++        let use_uniform_buffers = skins_use_uniform_buffers(device);
++        let buffer_usages = (if use_uniform_buffers {
+             BufferUsages::UNIFORM
+         } else {
+             BufferUsages::STORAGE
+@@ -141,10 +165,32 @@ impl FromWorld for SkinUniforms {
+             mapped_at_creation: false,
+         });
+ 
++        let skin_joints_buffer = device.create_buffer(&BufferDescriptor {
++            label: Some("skin joints buffer"),
++            size: MAX_JOINTS as u64 * size_of::<Mat4>() as u64,
++            usage: if use_uniform_buffers {
++                BufferUsages::COPY_DST
++            } else {
++                BufferUsages::STORAGE | BufferUsages::COPY_DST
++            },
++            mapped_at_creation: false,
++        });
++
+         Self {
+-            current_staging_buffer: vec![],
++            // With storage buffers, slot 0 is reserved as the identity.
++            current_staging_buffer: if use_uniform_buffers {
++                vec![]
++            } else {
++                vec![Mat4::IDENTITY]
++            },
+             current_buffer,
+             prev_buffer,
++            skin_joints_staging: vec![],
++            skin_joints_buffer,
++            skin_joints_dirty: false,
++            use_uniform_buffers,
++            joint_slots: MainEntityHashMap::default(),
++            free_slots: vec![],
+             allocator: Allocator::new(MAX_TOTAL_JOINTS),
+             skin_uniform_info: MainEntityHashMap::default(),
+             joint_to_skins: MainEntityHashMap::default(),
+@@ -168,6 +214,39 @@ impl SkinUniforms {
+         })
+     }
+ 
++    /// Returns the slot of the joint's matrix, taking a reference to it. A new
++    /// slot starts out holding the joint's current world matrix.
++    fn acquire_joint_slot(&mut self, joint: MainEntity, joints: &Query<&GlobalTransform>) -> u32 {
++        match self.joint_slots.entry(joint) {
++            Entry::Occupied(mut entry) => {
++                entry.get_mut().1 += 1;
++                entry.get().0
++            }
++            Entry::Vacant(entry) => {
++                let slot = self.free_slots.pop().unwrap_or_else(|| {
++                    self.current_staging_buffer.push(Mat4::IDENTITY);
++                    self.current_staging_buffer.len() as u32 - 1
++                });
++                self.current_staging_buffer[slot as usize] = joints
++                    .get(*joint)
++                    .map_or(Mat4::IDENTITY, GlobalTransform::compute_matrix);
++                entry.insert((slot, 1));
++                slot
++            }
++        }
++    }
++
++    /// Drops a reference to the joint's slot, freeing the slot when no skin
++    /// references it any more.
++    fn release_joint_slot(&mut self, joint: MainEntity) {
++        if let Entry::Occupied(mut entry) = self.joint_slots.entry(joint) {
++            entry.get_mut().1 -= 1;
++            if entry.get().1 == 0 {
++                self.free_slots.push(entry.remove().0);
++            }
++        }
++    }
++
+     /// Returns an iterator over all skins in the scene.
+     pub fn all_skins(&self) -> impl Iterator<Item = &MainEntity> {
+         self.skin_uniform_info.keys()
+@@ -176,14 +255,16 @@ impl SkinUniforms {
+ 
+ /// Allocation information about each skin.
+ struct SkinUniformInfo {
+-    /// The allocation of the joints within the [`SkinUniforms::current_buffer`].
++    /// The allocation of the joints within the skin joints buffer, or
++    /// [`SkinUniforms::current_buffer`] with uniform buffers.
+     allocation: Allocation,
+-    /// The entities that comprise the joints.
++    /// The entities that comprise the joints. With storage buffers, these are
++    /// the joints that hold a reference to a joint matrix slot.
+     joints: Vec<MainEntity>,
+ }
+ 
+ impl SkinUniformInfo {
+-    /// The offset in joints within the [`SkinUniforms::current_staging_buffer`].
++    /// The offset in joints within the skin's buffer.
+     fn offset(&self) -> u32 {
+         self.allocation.offset * JOINTS_PER_ALLOCATION_UNIT
+     }
+@@ -210,10 +291,43 @@ pub fn prepare_skins(
+ ) {
+     let uniform = uniform.into_inner();
+ 
+-    if uniform.current_staging_buffer.is_empty() {
++    // There is nothing to upload until the first skin exists.
++    let nothing_to_upload = if uniform.use_uniform_buffers {
++        uniform.current_staging_buffer.is_empty()
++    } else {
++        uniform.skin_joints_staging.is_empty()
++    };
++    if nothing_to_upload {
+         return;
+     }
+ 
++    // Grow the skin joints buffer if necessary and upload it if it changed.
++    if !uniform.use_uniform_buffers {
++        let needed_size = uniform.skin_joints_staging.len() as u64 * size_of::<Mat4>() as u64;
++        if uniform.skin_joints_buffer.size() < needed_size {
++            let mut new_size = uniform.skin_joints_buffer.size();
++            while new_size < needed_size {
++                // 1.5× growth factor.
++                new_size = (new_size + new_size / 2).next_multiple_of(4);
++            }
++            uniform.skin_joints_buffer = render_device.create_buffer(&BufferDescriptor {
++                label: Some("skin joints buffer"),
++                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
++                size: new_size,
++                mapped_at_creation: false,
++            });
++            uniform.skin_joints_dirty = true;
++        }
++        if uniform.skin_joints_dirty {
++            render_queue.write_buffer(
++                &uniform.skin_joints_buffer,
++                0,
++                bytemuck::must_cast_slice(&uniform.skin_joints_staging[..]),
++            );
++            uniform.skin_joints_dirty = false;
++        }
++    }
++
+     // Swap current and previous buffers.
+     mem::swap(&mut uniform.current_buffer, &mut uniform.prev_buffer);
+ 
+@@ -273,7 +387,8 @@ pub fn prepare_skins(
+     // last frame, and the data should still be on the GPU.
+ }
+ 
+-// Notes on implementation:
++// Notes on implementation (uniform buffers only; storage buffers bind the whole
++// buffers and index them in the shader):
+ // We define the uniform binding as an array<mat4x4<f32>, N> in the shader,
+ // where N is the maximum number of Mat4s we can fit in the uniform binding,
+ // which may be as little as 16kB or 64kB. But, we may not need all N.
+@@ -329,16 +444,25 @@ pub fn extract_skins(
+         &joints,
+     );
+ 
+-    // Extract the transforms for all joints from the scene, and write them into
+-    // the staging buffer at the appropriate spot.
+-    extract_joints(
+-        skin_uniforms,
+-        &skinned_meshes,
+-        &changed_skinned_meshes,
+-        &skinned_mesh_inverse_bindposes,
+-        &changed_transforms,
+-        &joints,
+-    );
++    if skin_uniforms.use_uniform_buffers {
++        // Extract the transforms for all joints from the scene, and write them
++        // into the staging buffer at the appropriate spot.
++        extract_joints(
++            skin_uniforms,
++            &skinned_meshes,
++            &changed_skinned_meshes,
++            &skinned_mesh_inverse_bindposes,
++            &changed_transforms,
++            &joints,
++        );
++    } else {
++        // Write the world matrix of every changed joint entity into its slot.
++        for (joint, transform) in changed_transforms.iter() {
++            if let Some(&(slot, _)) = skin_uniforms.joint_slots.get(&MainEntity::from(joint)) {
++                skin_uniforms.current_staging_buffer[slot as usize] = transform.compute_matrix();
++            }
++        }
++    }
+ 
+     // Delete skins that became invisible.
+     for skinned_mesh_entity in removed_visibilities_query
+@@ -537,6 +661,18 @@ fn add_skin(
+         return;
+     };
+ 
++    if !skin_uniforms.use_uniform_buffers {
++        add_skin_joints(
++            skinned_mesh_entity,
++            skinned_mesh,
++            allocation,
++            skin_uniforms,
++            skinned_mesh_inverse_bindposes,
++            joints,
++        );
++        return;
++    }
++
+     // Store that allocation.
+     let skin_uniform_info = SkinUniformInfo {
+         allocation,
+@@ -590,6 +726,57 @@ fn add_skin(
+         .insert(skinned_mesh_entity, skin_uniform_info);
+ }
+ 
++/// Writes the entries of a new skin into the skin joints buffer, and takes a
++/// reference to the joint matrix slot of each joint.
++fn add_skin_joints(
++    skinned_mesh_entity: MainEntity,
++    skinned_mesh: &SkinnedMesh,
++    allocation: Allocation,
++    skin_uniforms: &mut SkinUniforms,
++    skinned_mesh_inverse_bindposes: &Assets<SkinnedMeshInverseBindposes>,
++    joints: &Query<&GlobalTransform>,
++) {
++    let mut skin_uniform_info = SkinUniformInfo {
++        allocation,
++        joints: Vec::with_capacity(skinned_mesh.joints.len()),
++    };
++    let inverse_bindposes = skinned_mesh_inverse_bindposes.get(&skinned_mesh.inverse_bindposes);
++
++    // Grow the staging buffer to cover the whole allocation.
++    let end = skin_uniform_info.offset() as usize
++        + skinned_mesh
++            .joints
++            .len()
++            .next_multiple_of(JOINTS_PER_ALLOCATION_UNIT as usize);
++    if skin_uniforms.skin_joints_staging.len() < end {
++        skin_uniforms
++            .skin_joints_staging
++            .resize(end, Mat4::IDENTITY);
++    }
++
++    for (joint_index, &joint) in skinned_mesh.joints.iter().enumerate() {
++        // A joint without an inverse bindpose stays at the identity in slot 0.
++        let entry = match inverse_bindposes.and_then(|bindposes| bindposes.get(joint_index)) {
++            Some(&inverse_bindpose) => {
++                let joint = MainEntity::from(joint);
++                let slot = skin_uniforms.acquire_joint_slot(joint, joints);
++                skin_uniform_info.joints.push(joint);
++                let mut entry = inverse_bindpose;
++                entry.x_axis.w = slot as f32;
++                entry
++            }
++            None => Mat4::IDENTITY,
++        };
++        skin_uniforms.skin_joints_staging[skin_uniform_info.offset() as usize + joint_index] =
++            entry;
++    }
++
++    skin_uniforms.skin_joints_dirty = true;
++    skin_uniforms
++        .skin_uniform_info
++        .insert(skinned_mesh_entity, skin_uniform_info);
++}
++
+ /// Deallocates a skin and removes it from the [`SkinUniforms`].
+ fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity) {
+     let Some(old_skin_uniform_info) = skin_uniforms.skin_uniform_info.remove(&skinned_mesh_entity)
+@@ -602,6 +789,13 @@ fn remove_skin(skin_uniforms: &mut SkinUniforms, skinned_mesh_entity: MainEntity
+         .allocator
+         .free(old_skin_uniform_info.allocation);
+ 
++    if !skin_uniforms.use_uniform_buffers {
++        for &joint in &old_skin_uniform_info.joints {
++            skin_uniforms.release_joint_slot(joint);
++        }
++        return;
++    }
++
+     // Remove the inverse mapping from each joint back to the skin.
+     for &joint in &old_skin_uniform_info.joints {
+         if let Entry::Occupied(mut entry) = skin_uniforms.joint_to_skins.entry(joint) {
+diff --git a/crates/bevy_pbr/src/render/skinning.wgsl b/crates/bevy_pbr/src/render/skinning.wgsl
+index 1762a73887c9435567942b429e7c3480a8878c9c..426a22d4714538c3c64f76192ed892adca74e682 100644
+--- a/crates/bevy_pbr/src/render/skinning.wgsl
++++ b/crates/bevy_pbr/src/render/skinning.wgsl
+@@ -23,6 +23,38 @@
+ @group(1) @binding(6) var<storage> prev_joint_matrices: array<mat4x4<f32>>;
+ #endif  // SKINS_USE_UNIFORM_BUFFERS
+ 
++#ifndef SKINS_USE_UNIFORM_BUFFERS
++// Per skin joint: the inverse bindpose, with the slot of the joint's world
++// matrix in `joint_matrices` stored in the bottom row's first component.
++@group(1) @binding(8) var<storage> skin_joints: array<mat4x4<f32>>;
++
++// Returns the skinning matrix of a joint for the current frame.
++fn joint_skin_matrix(index: u32) -> mat4x4<f32> {
++    let entry = skin_joints[index];
++    let slot = u32(entry[0].w);
++    let inverse_bindpose = mat4x4<f32>(
++        vec4<f32>(entry[0].xyz, 0.0),
++        vec4<f32>(entry[1].xyz, 0.0),
++        vec4<f32>(entry[2].xyz, 0.0),
++        vec4<f32>(entry[3].xyz, 1.0),
++    );
++    return joint_matrices[slot] * inverse_bindpose;
++}
++
++// Returns the skinning matrix of a joint for the previous frame.
++fn prev_joint_skin_matrix(index: u32) -> mat4x4<f32> {
++    let entry = skin_joints[index];
++    let slot = u32(entry[0].w);
++    let inverse_bindpose = mat4x4<f32>(
++        vec4<f32>(entry[0].xyz, 0.0),
++        vec4<f32>(entry[1].xyz, 0.0),
++        vec4<f32>(entry[2].xyz, 0.0),
++        vec4<f32>(entry[3].xyz, 1.0),
++    );
++    return prev_joint_matrices[slot] * inverse_bindpose;
++}
++#endif  // SKINS_USE_UNIFORM_BUFFERS
++
+ fn skin_model(
+     indexes: vec4<u32>,
+     weights: vec4<f32>,
+@@ -35,10 +67,10 @@ fn skin_model(
+         + weights.w * joint_matrices.data[indexes.w];
+ #else   // SKINS_USE_UNIFORM_BUFFERS
+     var skin_index = mesh[instance_index].current_skin_index;
+-    return weights.x * joint_matrices[skin_index + indexes.x]
+-        + weights.y * joint_matrices[skin_index + indexes.y]
+-        + weights.z * joint_matrices[skin_index + indexes.z]
+-        + weights.w * joint_matrices[skin_index + indexes.w];
++    return weights.x * joint_skin_matrix(skin_index + indexes.x)
++        + weights.y * joint_skin_matrix(skin_index + indexes.y)
++        + weights.z * joint_skin_matrix(skin_index + indexes.z)
++        + weights.w * joint_skin_matrix(skin_index + indexes.w);
+ #endif  // SKINS_USE_UNIFORM_BUFFERS
+ }
+ 
+@@ -58,10 +90,10 @@ fn skin_prev_model(
+         + weights.w * prev_joint_matrices.data[indexes.w];
+ #else   // SKINS_USE_UNIFORM_BUFFERS
+     let skin_index = mesh[instance_index].current_skin_index;
+-    return weights.x * prev_joint_matrices[skin_index + indexes.x]
+-        + weights.y * prev_joint_matrices[skin_index + indexes.y]
+-        + weights.z * prev_joint_matrices[skin_index + indexes.z]
+-        + weights.w * prev_joint_matrices[skin_index + indexes.w];
++    return weights.x * prev_joint_skin_matrix(skin_index + indexes.x)
++        + weights.y * prev_joint_skin_matrix(skin_index + indexes.y)
++        + weights.z * prev_joint_skin_matrix(skin_index + indexes.z)
++        + weights.w * prev_joint_skin_matrix(skin_index + indexes.w);
+ #endif  // SKINS_USE_UNIFORM_BUFFERS
+ }
+ 

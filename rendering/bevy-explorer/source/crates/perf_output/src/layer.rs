@@ -175,6 +175,7 @@ impl Visit for Fields {
 
 #[cfg(test)]
 mod tests {
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     use bevy::log::{
@@ -194,11 +195,11 @@ mod tests {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let sink = {
             let captured = captured.clone();
-            FnSink(move |bytes: &[u8]| captured.lock().unwrap().extend_from_slice(bytes))
+            FnSink(move |bytes: &[u8]| captured.lock_ignore_poison().extend_from_slice(bytes))
         };
         let subscriber = Registry::default().with(PerfLogLayer::with_clock(sink, || NOW));
         tracing::subscriber::with_default(subscriber, log);
-        let bytes = captured.lock().unwrap().clone();
+        let bytes = captured.lock_ignore_poison().clone();
         String::from_utf8(bytes).unwrap()
     }
 

@@ -1,9 +1,6 @@
 import { useState } from "react";
 
-import {
-  ProfileMemberActionControls,
-  type MemberActionNotice,
-} from "@dcl/one-ui/apps/sites/profile/ProfileMemberActionControls";
+import { ProfileMemberActionControls, type MemberActionNotice } from "@dcl/one-ui";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
@@ -95,7 +92,7 @@ export function ProfileMemberActions({ address: rawAddress, name }: { address: s
       retry={retry}
       act={act}
       setBlock={setBlock}
-      onSignIn={() => openSignIn({ inPlace: true })}
+      onSignIn={() => openSignIn()}
       onDismissNotice={() => setNotice(null)}
     />
   );

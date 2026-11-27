@@ -26,11 +26,14 @@ pub fn number(value: f64) -> String {
     // serde_json's shortest-roundtrip formatter chooses even decimal ties.
     // Adapt its digits to ECMAScript's fixed/scientific notation thresholds.
     let source = serde_json::to_string(&value.abs()).expect("finite number");
-    let (mantissa, exponent) = source
-        .split_once(['e', 'E'])
-        .map_or((source.as_str(), 0), |(m, e)| {
-            (m, e.parse::<i32>().unwrap())
-        });
+    let (mantissa, exponent) = match source.split_once(['e', 'E']) {
+        Some((m, e)) => (
+            m,
+            e.parse::<i32>()
+                .expect("serde_json writes an integer exponent"),
+        ),
+        None => (source.as_str(), 0),
+    };
     let mut point = mantissa.find('.').unwrap_or(mantissa.len()) as i32 + exponent;
     let mut digits = mantissa.replace('.', "");
     let leading = digits.bytes().take_while(|b| *b == b'0').count();
@@ -228,6 +231,16 @@ pub struct Island<'a> {
     pub radius: f64,
     pub peers: Vec<PublicPeer<'a>>,
 }
+/// Count the same published islands without constructing peer projections.
+pub(crate) fn public_island_count(snapshot: &Snapshot) -> usize {
+    IslandStatusMessage::decode(snapshot.islands.as_slice())
+        .unwrap_or_default()
+        .data
+        .iter()
+        .filter(|island| island.center.is_some())
+        .count()
+}
+
 pub fn public_islands(snapshot: &Snapshot) -> Vec<Island<'_>> {
     let peers: HashMap<_, _> = snapshot
         .peers

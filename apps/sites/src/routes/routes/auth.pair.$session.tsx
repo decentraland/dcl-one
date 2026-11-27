@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { data, useLoaderData } from "react-router";
 
 import { buildEphemeralMessage } from "@/data/lib/auth/identity";
-import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@ui/data/auth/walletconnect";
+import { completePairing } from "@/data/lib/auth/pair-complete";
+import { hasWalletConnect, startWalletConnect, type WalletConnectSession } from "@web-core/auth/walletconnect";
 import { pairStore } from "@/data/lib/auth/pair-store.server";
 import { connectWallet, hasWallet, personalSign } from "@/data/lib/auth/wallet";
 
@@ -12,7 +13,6 @@ export function meta(_args: Route.MetaArgs) {
   return [{ title: "Approve sign-in \u{2014} Decentraland" }];
 }
 
-const PAIR_API_PATH = "/internal/pair";
 const ID_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const NO_STORE = { headers: { "cache-control": "no-store" } };
 
@@ -177,21 +177,7 @@ export default function AuthPairRoute() {
   const { id, ephemeral, expiration } = loaded;
   const message = buildEphemeralMessage(ephemeral, new Date(expiration));
 
-  async function complete(signer: string, signature: string) {
-    const res = await fetch(PAIR_API_PATH, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "complete", id, signer, signature }),
-    });
-    if (res.status === 409) throw new Error("This code was already used.");
-    if (res.status === 410 || res.status === 404) {
-      throw new Error("This code expired \u{2014} scan a fresh one.");
-    }
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? `The sign-in couldn't be completed (${res.status}).`);
-    }
-  }
+  const complete = (signer: string, signature: string) => completePairing(id, signer, signature);
 
   async function onWalletConnect() {
     qrRequest.current?.abort();

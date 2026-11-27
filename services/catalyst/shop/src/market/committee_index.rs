@@ -130,7 +130,7 @@ impl ChainIndex for CommitteeIndex {
         .execute(conn)
         .await?
         .rows_affected();
-        Ok(written as usize)
+        Ok(super::casts::to_usize(written))
     }
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM shop.committee_event WHERE network = $1 AND block_number > $2")
@@ -140,7 +140,13 @@ impl ChainIndex for CommitteeIndex {
             .await?;
         Ok(())
     }
-    async fn fold(&self, _: &PgPool, _: Option<i64>, _: i64) -> anyhow::Result<bool> {
+    async fn fold(
+        &self,
+        _: &PgPool,
+        _: Option<i64>,
+        _: i64,
+        _: &super::chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
         Ok(true)
     }
 }

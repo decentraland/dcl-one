@@ -12,7 +12,8 @@ const setting = (name: string, value: number, names: string[] = []): Setting => 
   namedVariants: variants(...names),
   value,
   default: value,
-  stepSize: 1
+  stepSize: 1,
+  disabled: false
 })
 const OFF_ON = ['Off', 'On']
 const FXAA = ['Off', 'FXAA (Low)', 'FXAA (High)']
@@ -24,7 +25,7 @@ const webDefaults = (): Setting[] => [
   setting('Target Frame Rate', 1, ['30 fps', '60 fps', '120 fps', '144 fps', 'Max']),
   setting('Render Resolution', 100),
   setting('Anti-aliasing', 2, FXAA),
-  setting('Bloom', 1, ['Off', 'Low', 'High']),
+  setting('Bloom', 1, OFF_ON),
   setting('Avatar Outline', 1, OFF_ON),
   setting('Jiggle Bones', 0, OFF_ON),
   setting('Shadow settings', 1, ['Off', 'Low', 'High']),
@@ -68,6 +69,12 @@ describe('graphics presets', () => {
     expect(target(nativeDefaults(), 2, 'Anti-aliasing')).toBe(2)
   })
 
+  it('every preset uses the default bloom', () => {
+    for (const preset of [0, 1, 2]) {
+      expect(target(nativeDefaults(), preset, 'Bloom')).toBe(1)
+    }
+  })
+
   it('Low turns off the costly features', () => {
     const low = Object.fromEntries(presetTargets(nativeDefaults(), 0).map((t) => [t.name, t.value]))
     expect(low).toMatchObject({
@@ -75,7 +82,6 @@ describe('graphics presets', () => {
       VSync: 0,
       'Render Resolution': 50,
       'Anti-aliasing': 0,
-      Bloom: 1,
       'Shadow settings': 0,
       'Light Count': 0,
       'Lens Flare': 0

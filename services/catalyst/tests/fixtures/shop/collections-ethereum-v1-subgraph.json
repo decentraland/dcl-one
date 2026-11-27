@@ -1,0 +1,312 @@
+{
+ "source": "the collections subgraph (collections-ethereum-mainnet) at block 26499473, read 2026-11-26",
+ "collections": [
+  {
+   "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5",
+   "name": "dcl://meme_dontbuythis",
+   "symbol": "DCLMMDNTBYTHS",
+   "owner": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "isCompleted": true,
+   "isApproved": true,
+   "itemsCount": 4,
+   "createdAt": "1608123203",
+   "urn": "urn:decentraland:ethereum:collections-v1:meme_dontbuythis",
+   "searchText": "dcl://meme_dontbuythis"
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f",
+   "name": "dcl://xmash_up_2020",
+   "symbol": "DCLXMSHP2020",
+   "owner": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "isCompleted": true,
+   "isApproved": true,
+   "itemsCount": 5,
+   "createdAt": "1608315766",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020",
+   "searchText": "dcl://xmash_up_2020"
+  }
+ ],
+ "items": [
+  {
+   "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5-meme_helmet_pineapple",
+   "blockchainId": "1",
+   "collection": {
+    "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5"
+   },
+   "maxSupply": "1000",
+   "totalSupply": "0",
+   "available": "1000",
+   "rarity": "epic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_helmet_pineapple",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_helmet_pineapple/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608123203",
+   "searchText": "tasty pineapple head tasty pineapple head from the $meme collection - don't wear this",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Tasty Pineapple Head",
+     "description": "Tasty Pineapple Head from the $Meme Collection - Don't wear this",
+     "category": "helmet",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "epic"
+    }
+   }
+  },
+  {
+   "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5-meme_pants_pineapple",
+   "blockchainId": "2",
+   "collection": {
+    "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5"
+   },
+   "maxSupply": "1000",
+   "totalSupply": "0",
+   "available": "1000",
+   "rarity": "epic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_pants_pineapple",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_pants_pineapple/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608123203",
+   "searchText": "fresh pineapple pants fresh pineapple pants from the $meme collection - don't wear this",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Fresh Pineapple Pants",
+     "description": "Fresh Pineapple Pants from the $Meme collection - Don't wear this",
+     "category": "lower_body",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "epic"
+    }
+   }
+  },
+  {
+   "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5-meme_suit_pineapple_onesie",
+   "blockchainId": "3",
+   "collection": {
+    "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5"
+   },
+   "maxSupply": "1000",
+   "totalSupply": "0",
+   "available": "1000",
+   "rarity": "epic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_suit_pineapple_onesie",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_suit_pineapple_onesie/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608123203",
+   "searchText": "sweet pineapple onesie sweet pineapple onesie from the $meme collection - don't wear this",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Sweet Pineapple Onesie",
+     "description": "Sweet Pineapple Onesie from the $Meme collection - Don't wear this",
+     "category": "upper_body",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "epic"
+    }
+   }
+  },
+  {
+   "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5-meme_suit_pineapple",
+   "blockchainId": "4",
+   "collection": {
+    "id": "0x1a57f6afc902d25792c53b8f19b7e17ef84222d5"
+   },
+   "maxSupply": "1000",
+   "totalSupply": "0",
+   "available": "1000",
+   "rarity": "epic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_suit_pineapple",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:meme_dontbuythis:meme_suit_pineapple/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608123203",
+   "searchText": "cool pineapple suit cool pineapple suit from the $meme collection - don't wear this",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Cool Pineapple Suit",
+     "description": "Cool Pineapple Suit from the $Meme collection - Don't wear this",
+     "category": "upper_body",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "epic"
+    }
+   }
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f-xmash_up_googles_eyewear",
+   "blockchainId": "1",
+   "collection": {
+    "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f"
+   },
+   "maxSupply": "10",
+   "totalSupply": "10",
+   "available": "0",
+   "rarity": "mythic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_googles_eyewear",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_googles_eyewear/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608315766",
+   "searchText": "bryfocals - guest artists collection bryfocals | art by bryan blinkman - 3d design by vrglit.ch | guest artists collection",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Bryfocals - Guest Artists Collection",
+     "description": "Bryfocals | Art by Bryan Blinkman - 3D Design by vrglit.ch | Guest Artists Collection",
+     "category": "eyewear",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "mythic"
+    }
+   }
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f-xmash_up_boots_feet",
+   "blockchainId": "2",
+   "collection": {
+    "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f"
+   },
+   "maxSupply": "10",
+   "totalSupply": "10",
+   "available": "0",
+   "rarity": "mythic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_boots_feet",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_boots_feet/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608315766",
+   "searchText": "fewo cloud shoes - guest artists collection fewo cloud shoes. it\u2019s like walking on air... | art by fewocious - 3d design by vrglit.ch | guest artists collection",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "FEWO CLOUD SHOES - Guest Artists Collection",
+     "description": "FEWO CLOUD SHOES. It\u2019s like Walking on Air... | Art by fewocious - 3D Design by vrglit.ch | Guest Artists Collection",
+     "category": "feet",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "mythic"
+    }
+   }
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f-xmash_up_cap_hat",
+   "blockchainId": "3",
+   "collection": {
+    "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f"
+   },
+   "maxSupply": "10",
+   "totalSupply": "9",
+   "available": "1",
+   "rarity": "mythic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_cap_hat",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_cap_hat/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608315766",
+   "searchText": "the delbo comic cap - guest artists collection the delbo comic cap. because every great artist needs their hat... | art by jos\u00e9 delbo - 3d design by vrglit.ch | guest artists collection",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "The Delbo Comic Cap - Guest Artists Collection",
+     "description": "The Delbo Comic Cap. Because every great artist needs their hat... | Art by Jos\u00e9 Delbo - 3D Design by vrglit.ch | Guest Artists Collection",
+     "category": "hat",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "mythic"
+    }
+   }
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f-xmash_up_pants_lower_body",
+   "blockchainId": "4",
+   "collection": {
+    "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f"
+   },
+   "maxSupply": "10",
+   "totalSupply": "10",
+   "available": "0",
+   "rarity": "mythic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_pants_lower_body",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_pants_lower_body/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608315766",
+   "searchText": "joelle pants wash separately, colours may bleed. | art by kj walker - 3d design by vrglit.ch | guest artists collection",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Joelle Pants",
+     "description": "Wash separately, colours may bleed. | Art by KJ Walker - 3D Design by vrglit.ch | Guest Artists Collection",
+     "category": "lower_body",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "mythic"
+    }
+   }
+  },
+  {
+   "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f-xmash_up_coat_upper_body",
+   "blockchainId": "5",
+   "collection": {
+    "id": "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f"
+   },
+   "maxSupply": "10",
+   "totalSupply": "9",
+   "available": "1",
+   "rarity": "mythic",
+   "creator": "0x1fbf26781e289883a1ec8da235f7159b455d1160",
+   "urn": "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_coat_upper_body",
+   "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_coat_upper_body/thumbnail",
+   "itemType": "wearable_v1",
+   "createdAt": "1608315766",
+   "searchText": "infinity cow coat - guest artists collection infinity cow coat. | art by jonathan wolfe - 3d design by vrglit.ch | guest artists collection",
+   "price": "0",
+   "beneficiary": "0x0000000000000000000000000000000000000000",
+   "metadata": {
+    "wearable": {
+     "name": "Infinity Cow Coat - Guest Artists Collection",
+     "description": "Infinity Cow Coat. | Art by Jonathan Wolfe - 3D Design by vrglit.ch | Guest Artists Collection",
+     "category": "upper_body",
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "rarity": "mythic"
+    }
+   }
+  }
+ ]
+}

@@ -1,77 +1,73 @@
 import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router";
-
-import LdInviteReferralView from "@ui/landings/pages/LdInviteReferralView";
+import { data } from "react-router";
 
 import { loadInviteReferral } from "@/data/lib/catalyst/landings/referral.server";
-import type { ReferrerVM, ReferralState } from "@/data/lib/catalyst/landings/referral";
+import { ETH_ADDRESS_RE } from "@/data/lib/catalyst/format/address";
+import type { ReferrerVM } from "@/data/lib/catalyst/landings/referral";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
+import { faceUrl } from "@/features/social/community/view";
+import { InvitePage } from "@/pages/invite/InvitePage";
+
+import {
+  DEFAULT_SOCIAL_DESCRIPTION,
+  DEFAULT_SOCIAL_TITLE,
+  SOCIAL_LOGO,
+  absoluteImage,
+  absoluteUrl,
+  publicBase,
+  socialMeta,
+} from "../lib/social-meta";
 import type { Route } from "./+types/invite.($referrer)";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "landings/invite-referral";
 
-type Step = "view" | "download" | "rewards" | "faqs";
-
-const parseStep = (raw: string | null): Step => (raw === "download" || raw === "rewards" || raw === "faqs" ? raw : "view");
-
-// The title names the referrer when the node knows the name.
-export function meta({ loaderData }: Route.MetaArgs) {
-  const name = loaderData?.referrer?.name;
-  return [
-    { title: name ? `${name} invited you to join Decentraland` : "Join Decentraland - A Virtual World Built by Its Community" },
-    {
-      name: "description",
-      content:
-        "Decentraland is where you hang out online. Join movie screenings, live music, trivia, and other community events. Show up anytime and see who's around.",
-    },
-  ];
+// The card names the referrer when the node knows the name, with their face as a small image.
+export function meta({ loaderData, matches, location }: Route.MetaArgs) {
+  const referrer = loaderData?.referrer;
+  const param = loaderData?.referrerParam ?? "";
+  const path = ETH_ADDRESS_RE.test(param) ? `/invite/${param.toLowerCase()}` : location.pathname;
+  const base = publicBase(matches);
+  return socialMeta({
+    title: referrer?.name ? `${referrer.name} invited you to join Decentraland` : DEFAULT_SOCIAL_TITLE,
+    description: DEFAULT_SOCIAL_DESCRIPTION,
+    // Profile data anyone can write: only this site's profile-image or content paths, under the public base.
+    image: absoluteImage(base, faceUrl(referrer?.face256)),
+    smallImage: true,
+    url: absoluteUrl(base, path),
+    extra: [{ property: "og:logo", content: SOCIAL_LOGO }],
+  });
 }
 
 export async function loader({ request, context, params }: Route.LoaderArgs) {
-  const url = new URL(request.url);
   const referrerParam = params.referrer?.trim() ?? "";
-  const step = parseStep(url.searchParams.get("step"));
 
   const { sid, wrap } = sidLoader(request, context);
 
-  const load = await loadInviteReferral(referrerParam, request.signal).catch(() => null);
+  // An invite is someone's: no referrer, or one that names no wallet, is not a page.
+  if (!referrerParam) throw data(null, { status: 404, statusText: "Not Found" });
+  // A lookup that fails keeps the page, without a referrer; the log is what shows the node could not answer.
+  const load = await loadInviteReferral(referrerParam, request.signal).catch((err: unknown) => {
+    if (!request.signal.aborted) console.error(`[invite] referrer lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
+  if (load && !load.referrer.address) throw data(null, { status: 404, statusText: "Not Found" });
   return wrap({
     sid,
-    step,
     referrerParam,
     referrer: load?.referrer ?? null,
-    referral: load?.referral ?? null,
   });
 }
 
 export default function InviteReferral({ loaderData }: Route.ComponentProps) {
-  const { sid, step, referrerParam, referrer, referral } = loaderData;
-  const [, setSearchParams] = useSearchParams();
-  const hasReferrer = Boolean(referrerParam);
-  useInviteTelemetry(sid, step, hasReferrer, referrer, referral);
-  return (
-    <LdInviteReferralView
-      step={step}
-      handle={referrer?.name ?? null}
-      referrerAddress={referrer?.address ?? null}
-      referrerHasClaimedName={referrer?.hasClaimedName ?? false}
-      invitedUsersAccepted={referral?.invitedUsersAccepted ?? 0}
-      onStep={(s) =>
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          if (s === "view") next.delete("step");
-          else next.set("step", s);
-          return next;
-        }, { preventScrollReset: false })
-      }
-    />
-  );
+  const { sid, referrerParam, referrer } = loaderData;
+  useInviteTelemetry(sid, Boolean(referrerParam), referrer);
+  return <InvitePage referrerName={referrer?.name ?? null} referrerAddress={referrer?.address ?? null} />;
 }
 
-function useInviteTelemetry(sid: string, step: Step, hasReferrer: boolean, referrer: ReferrerVM | null, referral: ReferralState | null) {
+function useInviteTelemetry(sid: string, hasReferrer: boolean, referrer: ReferrerVM | null) {
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -89,11 +85,4 @@ function useInviteTelemetry(sid: string, step: Step, hasReferrer: boolean, refer
       { sid, story: STORY },
     );
   }, [sid, hasReferrer, referrer]);
-
-  const rewardsFired = useRef(false);
-  useEffect(() => {
-    if (step !== "rewards" || rewardsFired.current || !referral) return;
-    rewardsFired.current = true;
-    track("lp_invite_rewards_viewed", { accepted: referral.invitedUsersAccepted, current_tier: referral.currentTier }, { sid, story: STORY });
-  }, [sid, step, referral]);
 }

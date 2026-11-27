@@ -1,14 +1,19 @@
-import { check } from "../../validate";
+import { check } from "@web-core/validate";
 
-import { SignProxyOkSchema, ThirdwebAuthResultSchema } from "./thirdwebSchema";
+import { SignProxyOkSchema, ThirdwebAuthResultSchema, type ThirdwebAuthResult } from "@web-core/auth/thirdwebSchema";
 
 const THIRDWEB_API_BASE = "https://api.thirdweb.com";
 
 const LOGIN_CHAIN_ID = 1;
 
-function viteEnv(name: string): string {
+// One static read per key: Vite inlines `import.meta.env.X` as that value alone, but a computed
+// `import.meta.env[key]` as the whole env object, every build-time `VITE_*` value, into the bundle.
+function viteEnv(name: "VITE_DCL_THIRDWEB_CLIENT_ID" | "VITE_DCL_THIRDWEB_SIGN_PROXY"): string {
   try {
-    const v = (import.meta.env as Record<string, unknown> | undefined)?.[name];
+    const v: unknown =
+      name === "VITE_DCL_THIRDWEB_CLIENT_ID"
+        ? import.meta.env?.VITE_DCL_THIRDWEB_CLIENT_ID
+        : import.meta.env?.VITE_DCL_THIRDWEB_SIGN_PROXY;
     return typeof v === "string" ? v : "";
   } catch {
     return "";
@@ -46,13 +51,7 @@ export class ThirdwebError extends Error {
   }
 }
 
-export type ThirdwebAuthResult = {
-  isNewUser: boolean;
-  token: string;
-  userId: string;
-  walletAddress: string;
-  type: string;
-};
+export type { ThirdwebAuthResult };
 
 type ThirdwebSocialProvider =
   | "google"

@@ -4,15 +4,18 @@ import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
+import { fetchMemberProfiles } from "@/data/lib/catalyst/social/member-profiles";
 
 import type { SceneChat } from "./scene-chat/useSceneChat";
 import { usePlaceDetailChat, usePlaceDetailCreator } from "./place-detail-profiles";
 
-vi.mock("@ui/data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: vi.fn() }));
+vi.mock("@/data/lib/catalyst/social/member-profiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/lib/catalyst/social/member-profiles")>()),
+  fetchMemberProfiles: vi.fn(),
+}));
 
 const OWNER = "0x797066a17f83425c1b4c7a8cca52d19095520a52";
-const lookup = vi.mocked(fetchCommunityProfiles);
+const lookup = vi.mocked(fetchMemberProfiles);
 
 afterEach(() => {
   cleanup();

@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../components/Modal";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import type { ShopClient } from "@shop/api/shop";
@@ -228,10 +228,10 @@ export default function RentalListingModal({
               </li>
             </ul>
             <div className="shop-land-actions">
-              <Button onClick={authorize} disabled={busy}>
+              <Button size="md" onClick={authorize} disabled={busy}>
                 {busy ? "Confirm in your wallet…" : "Proceed"}
               </Button>
-              <Button variant="secondary" onClick={onClose} disabled={busy}>
+              <Button size="md" variant="secondary" onClick={onClose} disabled={busy}>
                 Cancel
               </Button>
             </div>
@@ -244,8 +244,8 @@ export default function RentalListingModal({
             <p>The current tenant will hold operator permissions until it is rented again.</p>
             <p>To retake operator permissions, claim it back (network fees involved).</p>
             <div className="shop-land-actions">
-              <Button onClick={() => setStep("form")}>List for Rent Again</Button>
-              <Button variant="secondary" onClick={onClose}>
+              <Button size="md" onClick={() => setStep("form")}>List for Rent Again</Button>
+              <Button size="md" variant="secondary" onClick={onClose}>
                 Cancel
               </Button>
             </div>
@@ -295,15 +295,15 @@ export default function RentalListingModal({
               {expiryInvalid ? <small role="alert">Invalid date</small> : <small>If no one rents your LAND, the listing is removed on this date.</small>}
             </label>
             <div className="shop-land-actions">
-              <Button type="submit" disabled={invalid || !changed}>
+              <Button size="md" type="submit" disabled={invalid || !changed}>
                 {listForRentAgain ? "List for Rent Again" : editing ? "Update listing" : "List for rent"}
               </Button>
               {editing && onRemove ? (
-                <Button variant="secondary" onClick={onRemove}>
+                <Button size="md" variant="outline" tone="danger" onClick={onRemove}>
                   Remove listing
                 </Button>
               ) : (
-                <Button variant="secondary" onClick={onClose}>
+                <Button size="md" variant="secondary" onClick={onClose}>
                   Cancel
                 </Button>
               )}
@@ -334,10 +334,10 @@ export default function RentalListingModal({
               </div>
             </dl>
             <div className="shop-land-actions">
-              <Button onClick={sign} disabled={busy}>
+              <Button size="md" onClick={sign} disabled={busy}>
                 {busy ? "Sign in your wallet…" : "Confirm"}
               </Button>
-              <Button variant="secondary" onClick={() => setStep("form")} disabled={busy}>
+              <Button size="md" variant="secondary" onClick={() => setStep("form")} disabled={busy}>
                 Back
               </Button>
             </div>
@@ -367,7 +367,7 @@ export default function RentalListingModal({
             </ol>
             {!stepOneDone ? (
               <div className="shop-land-actions">
-                <Button variant="secondary" onClick={() => setStep("form")} disabled={busy}>
+                <Button size="md" variant="secondary" onClick={() => setStep("form")} disabled={busy}>
                   Back
                 </Button>
               </div>

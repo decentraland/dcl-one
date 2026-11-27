@@ -9,6 +9,8 @@ import { setPublicReelFetcher } from '../../features/gallery/publicReels'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import type { Profile } from '@explorer-core/engine/protocol'
+import { pending } from '@explorer-core/lib/analytics'
+import passportStyles from '../../features/profile/ProfilePassport.module.css'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from
 // the profile store until it lands, and shows the presentational ProfilePassport; openPassport mounts it.
@@ -33,8 +35,7 @@ const RICH: Profile = {
   picture: 'a.png',
   hasClaimedName: true,
   isGuest: false,
-  description: 'gm from the plaza',
-  mutuals: 5
+  description: 'gm from the plaza'
 }
 
 describe('Passport container', () => {
@@ -43,7 +44,26 @@ describe('Passport container', () => {
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
     expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('gm from the plaza')).toBeTruthy() // rich field from the fetched profile
-    expect(screen.getByText('5 Mutual')).toBeTruthy()
+  })
+
+  it("asks for another user's mutual friends and shows them from the session", async () => {
+    receiveProfile('0xabc', RICH)
+    const s = await renderWithSession(<Passport userId="0xABC" onClose={vi.fn()} />, (s) => {
+      s.profile = fakeProfileState({ data: { ...RICH, address: '0xme', name: 'Me' } })
+      s.friends.mutuals = { '0xabc': [{ address: '0x1', name: 'Mojito' }, { address: '0x2', name: 'Sharknado' }] }
+    })
+    expect(s.friends.loadMutuals).toHaveBeenCalledWith('0xABC')
+    expect(screen.getByText('2 Mutual')).toBeTruthy()
+  })
+
+  it('asks for no mutual friends on your own passport', async () => {
+    receiveProfile('0xme', { ...RICH, address: '0xme', name: 'Me' })
+    const s = await renderWithSession(<Passport userId="0xme" onClose={vi.fn()} />, (s) => {
+      s.profile = fakeProfileState({ data: { ...RICH, address: '0xme', name: 'Me' } })
+      s.friends.mutuals = { '0xme': [{ address: '0x1', name: 'Mojito' }] }
+    })
+    expect(s.friends.loadMutuals).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Mutual/)).toBeNull()
   })
 
   it('renders identity-only from a roster seed while the fetch is in flight', async () => {
@@ -60,6 +80,15 @@ describe('Passport container', () => {
       openPassport('0xabc')
     })
     expect(screen.getByText('gm from the plaza')).toBeTruthy()
+  })
+
+  it('openPassport puts the passport scrim on its backdrop', async () => {
+    receiveProfile('0xabc', RICH)
+    await renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc')
+    })
+    expect(document.getElementsByClassName(passportStyles.scrim)).toHaveLength(1)
   })
 
   it('openPassport opens on the tab it is given', async () => {
@@ -83,17 +112,113 @@ describe('Jump In from a passport photo', () => {
     receiveProfile('0xabc', RICH)
     setPublicReelFetcher(async () => ({ ok: true, photos: [{ id: 'p0', url: 'https://img/0.jpg', thumbnailUrl: 'https://img/0_t.jpg', dateTime: '1707000000', isPublic: true }], total: 1, max: 500 }))
     const onClose = vi.fn()
-    const s = await renderWithSession(<Passport userId="0xabc" initialTab="photos" onClose={onClose} />, (session) => {
-      session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
-      session.map.teleport = vi.fn(() => outcome)
-    })
+    const s = await renderWithSession(
+      <>
+        <Passport userId="0xabc" initialTab="photos" onClose={onClose} />
+        <PopupHost />
+      </>,
+      (session) => {
+        session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
+        session.map.teleportToPlace = vi.fn(() => outcome)
+      }
+    )
     const tile = await screen.findByRole('button', { name: 'Open photo' })
     fireEvent.load(tile.querySelector('img') as HTMLImageElement)
     await userEvent.click(tile)
-    await userEvent.click(screen.getByRole('button', { name: 'Jump In' }))
-    expect(s.map.teleport).toHaveBeenCalledWith(-9, 14)
+    await userEvent.click(screen.getByRole('button', { name: /Jump In/ }))
+    expect(s.map.teleportToPlace).toHaveBeenCalledWith(-9, 14)
     expect(onClose).toHaveBeenCalledTimes(closes)
     expect(screen.queryAllByRole('dialog', { name: 'Photo' })).toHaveLength(1 - closes)
+  })
+})
+
+// The node's social butterfly badge counts the other players' passports opened; one's own is
+// reported apart.
+describe('Passport analytics', () => {
+  const ME: Profile = { ...RICH, address: '0xme', name: 'Me' }
+  const opened = (from: number): unknown[] =>
+    pending()
+      .slice(from)
+      .filter((e) => e.event === 'passport_opened' || e.event === 'profile_opened')
+      .map((e) => [e.event, e.properties.receiver_id])
+  const signedIn = (s: EngineSession): void => {
+    s.profile = fakeProfileState({ data: ME })
+  }
+
+  it('reports passport_opened with the receiver for another player', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />, signedIn)
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
+  })
+
+  it('reports profile_opened, not passport_opened, for your own', async () => {
+    receiveProfile('0xme', ME)
+    const from = pending().length
+    await renderWithSession(<Passport userId="0xme" onClose={vi.fn()} />, signedIn)
+    expect(opened(from)).toEqual([['profile_opened', '0xme']])
+  })
+
+  it('waits for your own profile, so your own passport opened early is still profile_opened', async () => {
+    receiveProfile('0xme', ME)
+    const from = pending().length
+    const s = fakeSession()
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xme" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    expect(opened(from)).toEqual([])
+    const loaded = { ...s, profile: fakeProfileState({ data: ME }) }
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={loaded}>
+          <Passport userId="0xme" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['profile_opened', '0xme']])
+  })
+
+  it('waits for your own profile before reporting another player\'s passport opened early', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    const s = fakeSession()
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xabc" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    expect(opened(from)).toEqual([])
+    const loaded = { ...s, profile: fakeProfileState({ data: ME }) }
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={loaded}>
+          <Passport userId="0xabc" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
+  })
+
+  it('reports the same player once when the address changes case', async () => {
+    receiveProfile('0xabc', RICH)
+    const from = pending().length
+    const s = fakeSession()
+    signedIn(s)
+    const view = await renderSettled(
+      <SessionProvider value={s}>
+        <Passport userId="0xabc" onClose={vi.fn()} />
+      </SessionProvider>
+    )
+    await act(async () => {
+      view.rerender(
+        <SessionProvider value={s}>
+          <Passport userId="0xABC" onClose={vi.fn()} />
+        </SessionProvider>
+      )
+    })
+    expect(opened(from)).toEqual([['passport_opened', '0xabc']])
   })
 })
 
@@ -110,19 +235,20 @@ describe('Passport block & report', () => {
     expect(s.friends.act).toHaveBeenCalledWith('block', '0xabc')
   })
 
-  it('reads blocked-by from the session: no CHAT for a user who blocked you', async () => {
+  it('reads blocked-by from the session: no Chat or Call for a user who blocked you', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />, (s) => {
       s.friends.blockedBy = ['0xabc']
     })
-    expect(screen.queryByRole('button', { name: 'CHAT' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Call' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'ADD FRIEND' })).toBeNull()
   })
 
-  it('shows CHAT and ADD FRIEND for anyone else', async () => {
+  it('shows Chat and ADD FRIEND for anyone else', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'CHAT' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'ADD FRIEND' })).toBeTruthy()
   })
 })

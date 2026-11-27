@@ -7,8 +7,13 @@ export interface Console {
   /** Run one console line and resolve with its `Ok` text; reject with a `ConsoleError` on `Err`. */
   run(line: string): Promise<string>
   close(): Promise<void>
+  /** How long the transport waits for one command, where it has a limit. */
+  readonly commandTimeoutMs?: number
   /** What the page said and how it looks now, the HUD included, where the transport can tell. */
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
+  /** Lay the page out at `[width, height]` CSS px in the same window, or at the window's size
+   *  again with `null`, and resolve once the app frame has drawn at it. Optional. */
+  resizeView?(size: [number, number] | null): Promise<void>
 }
 
 /** A whole run of base64 characters (either alphabet). */
@@ -281,6 +286,12 @@ export class ConsoleError extends Error {
 /** Whitespace as the engine splits a console line on it (`crates/console/src/line.rs`): Unicode's
  *  White_Space, which `\s` differs from (no U+0085, and U+FEFF beside). */
 export const CONSOLE_SPACE = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/
+
+/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
+ *  quoted when it is empty or holds whitespace or a double quote. */
+export function quoteWord(word: string): string {
+  return word === '' || word.includes('"') || CONSOLE_SPACE.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
+}
 
 /** A line as the transports send it: one leading `/`, single spaces between arguments, and a
  *  double-quoted run (one argument to the engine, `\"` and `\\` escaping inside it) as written. */

@@ -143,9 +143,12 @@ async fn build(
                     .ok_or_else(|| bad("the bid names no token id".into()))?;
                 checks.push(owner_check(reader, contract, token_id, actor).await);
                 if let Some(net) = chain.net {
-                    let (verdict, ready) = facts::trade_verdict(&state.pool, net, &trade.id)
-                        .await
+                    let chain_id = crate::types::chain_id_column(chain.chain_id.0)
                         .map_err(|e| bad(e.to_string()))?;
+                    let (verdict, ready) =
+                        facts::trade_verdict(&state.pool, net, chain_id, &trade.id)
+                            .await
+                            .map_err(|e| bad(e.to_string()))?;
                     checks.push(verify::trade_verdict_check(
                         verdict.as_ref(),
                         trade.checks.uses,
@@ -290,7 +293,9 @@ async fn build(
                                     format!("the contract records {lessor:#x} as the lessor"),
                                 )
                             });
-                            let now = U256::from(chrono::Utc::now().timestamp().max(0) as u64);
+                            let now = U256::from(
+                                u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0),
+                            );
                             checks.push(if end <= now {
                                 Check::pass("rentOver", format!("ended at {end}"))
                             } else {

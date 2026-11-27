@@ -9,9 +9,15 @@ use web_time::Instant;
 
 use crate::{
     initialize_scene::{SceneHash, SceneLoading},
-    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    renderer_context::{RendererSceneContext, FROZEN_BLOCK, STARTUP_TICKS},
+    update_world::gltf_container::GLTF_LOADING,
     vec3_to_parcel, ContainingScene,
 };
+
+/// The target every line here is logged under.
+pub const LOG_TARGET: &str = "scene_timing";
+/// How the arrival line starts, before its milliseconds.
+pub const FIRST_RING_READY: &str = "player's scene and first ring ready";
 
 /// When the lifecycle spawned the scene.
 #[derive(Component, Clone, Copy, Debug)]
@@ -21,8 +27,9 @@ pub struct SpawnedAt(pub Instant);
 #[derive(Component, Debug)]
 pub struct ReadyLogged;
 
-/// One arrival: the player's scene spawned while the player stood in it, and the time until it
-/// and its first ring of neighbours are ready has not been reported yet.
+/// One arrival: the player's scene spawned while the player stood in it or waited for it behind
+/// the loading screen, and the time until it and its first ring of neighbours are ready has not
+/// been reported yet.
 #[derive(Resource, Default, Debug)]
 pub struct FirstRingTiming {
     pub arrival: Option<(Entity, Instant)>,
@@ -39,10 +46,28 @@ pub fn ring_of(parcel: IVec2, parcels: impl IntoIterator<Item = IVec2>) -> u16 {
         .unwrap_or(u16::MAX)
 }
 
-/// The scene has loaded as far as it ever will: five ticks (when `animate_ready_scene` raises
-/// it), or a terminal state.
+/// The scene will load no further on its own: it is broken, or frozen (`/freeze_scene`, the
+/// editor's freeze) with none of its glTFs still loading. A frozen scene never advances its tick,
+/// but its glTFs keep loading renderer-side, and with them the colliders the player lands on. The
+/// load timing, the teleport's release of the player and the settling commands (`util::settle`)
+/// all stop waiting for such a scene.
+pub(crate) fn scene_is_halted(context: &RendererSceneContext) -> bool {
+    context.broken()
+        || (context.blocked.contains(FROZEN_BLOCK) && !context.blocked.contains(GLTF_LOADING))
+}
+
+/// The scene has loaded as far as it will: it has started
+/// ([`RendererSceneContext::started`]: past its [`STARTUP_TICKS`], nothing blocking it), or it is
+/// halted. The teleport releases the player onto the scene on this, and a settling command stops
+/// waiting for it.
+pub fn scene_has_loaded(context: &RendererSceneContext) -> bool {
+    context.started() || scene_is_halted(context)
+}
+
+/// What the load timing logs a scene as ready on: its last startup tick ([`STARTUP_TICKS`], when
+/// `animate_ready_scene` raises it), or a halted scene.
 pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
-    context.tick_number >= 5 || context.broken() || context.blocked.contains(FROZEN_BLOCK)
+    context.tick_number >= STARTUP_TICKS || scene_is_halted(context)
 }
 
 pub fn report_scene_load_times(
@@ -65,8 +90,10 @@ pub fn report_scene_load_times(
     let player_parcel = vec3_to_parcel(player_transform.translation());
     let now = Instant::now();
 
-    // a new current scene is an arrival worth timing only while it is still loading
-    if let Some(current) = containing_scene.get_parcel(player) {
+    // a new current scene is an arrival worth timing only while it is still loading; behind the
+    // loading screen (spawn, teleport) the player's provisional parcel is the destination, which
+    // is still loading there
+    if let Some(current) = containing_scene.get_parcel_oow(player) {
         if timing.arrival.is_none_or(|(scene, _)| scene != current) {
             if let Ok((_, _, spawned, context, _, _)) = scenes.get(current) {
                 let loading = context.is_none_or(|context| !scene_is_ready(context));
@@ -83,7 +110,7 @@ pub fn report_scene_load_times(
         let ring = context.map(|context| ring_of(player_parcel, context.parcels.iter().copied()));
         if ready && !logged {
             info!(
-                target: "scene_timing",
+                target: LOG_TARGET,
                 "scene ready {} ms after spawn: {} ring {} tick {}{}",
                 now.duration_since(spawned.0).as_millis(),
                 hash.0,
@@ -100,11 +127,15 @@ pub fn report_scene_load_times(
         }
     }
 
-    if let Some((_, arrival)) = timing.arrival {
-        if !timing.reported && first_ring_complete {
+    if let Some((scene, arrival)) = timing.arrival {
+        // a scene despawned before it was ready (a realm change during the landing) ends the
+        // arrival unreported
+        if scenes.get(scene).is_err() {
+            timing.arrival = None;
+        } else if !timing.reported && first_ring_complete {
             info!(
-                target: "scene_timing",
-                "player's scene and first ring ready {} ms after the scene spawned",
+                target: LOG_TARGET,
+                "{FIRST_RING_READY} {} ms after the scene spawned",
                 now.duration_since(arrival).as_millis()
             );
             timing.reported = true;

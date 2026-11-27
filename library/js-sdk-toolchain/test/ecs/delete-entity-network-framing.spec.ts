@@ -1,4 +1,4 @@
-import { Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { CrdtMessageProtocol } from '../../packages/@dcl/ecs/src/serialization/crdt'
 import { DeleteEntity } from '../../packages/@dcl/ecs/src/serialization/crdt/deleteEntity'

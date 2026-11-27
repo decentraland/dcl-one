@@ -3,13 +3,13 @@ use common::{
     debug_panic,
     inputs::SystemAction,
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
-    structs::{ClientWindowFocus, MicState},
+    structs::MicState,
 };
 use dcl_component::proto_components::kernel::apis::{
     VideoTrackSourceType, VideoTracksActiveStreamsData, VideoTracksActiveStreamsResponse,
 };
 use input_manager::{InputManager, InputPriority};
-use livestream_manager::ActiveTransmitter;
+use livestream_manager::{livekit_track_url, ActiveTransmitter, LIVEKIT_CURRENT_STREAM};
 use system_bridge::SystemApi;
 use tokio::{sync::mpsc, task::JoinHandle};
 #[cfg(not(target_arch = "wasm32"))]
@@ -54,8 +54,12 @@ impl Plugin for LivekitPlugin {
 
         #[cfg(target_arch = "wasm32")]
         {
+            // the page dispatch fills these; the microphone routes and the Microphone setting
+            // read them
             app.insert_resource(crate::livekit::web::take_event_receiver())
                 .init_resource::<crate::livekit::web::MicrophoneStatus>()
+                .init_resource::<common::structs::MicrophoneDevices>()
+                .init_resource::<crate::livekit::web::MicrophoneTrackInputs>()
                 .add_systems(PreUpdate, crate::livekit::web::dispatch_page_events);
         }
 
@@ -88,8 +92,10 @@ impl Plugin for LivekitPlugin {
             app.add_systems(Startup, build_kira_audio_manager);
             app.add_systems(
                 Update,
-                respond_to_audio_settings_change
-                    .run_if(resource_exists_and_changed::<AudioSettings>),
+                respond_to_audio_settings_change.run_if(
+                    resource_exists::<LivekitAudioManager>
+                        .and(resource_exists_and_changed::<AudioSettings>),
+                ),
             );
         }
 
@@ -389,20 +395,12 @@ fn handle_input(
 fn respond_to_system_api(
     mut events: EventReader<SystemApi>,
     mut mic: ResMut<MicState>,
-    focus: Option<Res<ClientWindowFocus>>,
+    focus: super::mic::MicrophoneFocus,
 ) {
     for ev in events.read() {
         match ev {
-            // headless has no client window focus and never pauses the mic
             SystemApi::GetMicState(rpc_result_sender) => {
-                rpc_result_sender.send(
-                    mic.gated_by_client_window_focus(
-                        focus
-                            .as_deref()
-                            .copied()
-                            .unwrap_or(ClientWindowFocus::Focused),
-                    ),
-                );
+                rpc_result_sender.send(mic.gated_by_client_window_focus(focus.get()));
             }
             SystemApi::SetMicEnabled(enabled) => {
                 mic.request_enabled(*enabled);
@@ -449,12 +447,12 @@ fn respond_to_rpc_calls(
                         tracks.iter_many(publishing.collection())
                     {
                         let identity = participant.identity().0;
-                        let track_sid = format!("livekit-video://{}/{}", identity, track.sid());
+                        let track_sid = livekit_track_url(&identity, track.sid());
 
                         if has_active_streamer {
                             streams.push(VideoTracksActiveStreamsData {
                                 identity: participant.identity().0.clone(),
-                                track_sid: "livekit-video://current-stream".to_owned(),
+                                track_sid: LIVEKIT_CURRENT_STREAM.to_owned(),
                                 source_type: match source {
                                     (Some(_), _) => VideoTrackSourceType::VtstCamera as i32,
                                     (_, Some(_)) => VideoTrackSourceType::VtstScreenShare as i32,

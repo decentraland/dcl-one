@@ -1,6 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import type { HTMLAttributes, KeyboardEvent, RefObject } from 'react'
+import type { HTMLAttributes, KeyboardEvent, ReactElement, RefObject } from 'react'
 import { GeneralInfoButton } from '../../foundations/icons/general'
+import {
+  HudDropdown,
+  HudSortDropdown,
+  type HudDropdownProps,
+  type HudSortDropdownProps
+} from './HudDropdown'
 import styles from './Dropdown.module.css'
 
 export type DropdownOption<T extends string = string> = {
@@ -39,12 +45,16 @@ export type DropdownSingleProps<T extends string> = DropdownCommon<T> & {
 export type DropdownMultipleProps<T extends string> = DropdownCommon<T> & {
   multiple: true
   value: readonly T[]
-  /** Called with the chosen values in the order of `options`. */
+  /** Selected options follow list order. Selected values absent from the list keep their order at the end. */
   onChange: (value: T[]) => void
   valueText?: (chosen: readonly DropdownOption<T>[]) => string
 }
 
-export type DropdownProps<T extends string = string> = DropdownSingleProps<T> | DropdownMultipleProps<T>
+export type DropdownProps<T extends string = string> = (DropdownSingleProps<T> | DropdownMultipleProps<T>) & {
+  appearance?: 'default'
+}
+
+type WithoutAppearance<P> = P extends unknown ? Omit<P, 'appearance'> : never
 
 const GUTTER = 16
 
@@ -105,7 +115,7 @@ function useInViewport(
   }, [open, popup, anchor])
 }
 
-function Help({ id, text, label }: { id: string; text: string; label: string }) {
+function Help({ id, text, label, onActivate }: { id: string; text: string; label: string; onActivate: () => void }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLSpanElement>(null)
   const button = useRef<HTMLButtonElement>(null)
@@ -127,7 +137,10 @@ function Help({ id, text, label }: { id: string; text: string; label: string }) 
         aria-label={label}
         aria-expanded={open}
         aria-controls={id}
-        onClick={() => setOpen((now) => !now)}
+        onClick={() => {
+          onActivate()
+          setOpen((now) => !now)
+        }}
       >
         <GeneralInfoButton size={18} aria-hidden="true" focusable="false" />
       </button>
@@ -142,8 +155,28 @@ function Help({ id, text, label }: { id: string; text: string; label: string }) 
  * A labelled choice from a list, one option or several: a button with the `combobox` role that
  * opens a `listbox`. The focus stays on the button. Arrow keys, Home, End and typed letters move
  * through the options; Enter or Space chooses; Escape, Tab and a press outside close the list.
+ *
+ * With `appearance="hud"` it is the Explorer HUD's select instead (`HudDropdownProps`): a field that opens a
+ * list of option buttons. With `kind="sort"` too, it is the HUD's sort list (`HudSortDropdownProps`): a compact
+ * field over plain text options, with keyboard navigation.
  */
-export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
+export function Dropdown(props: HudSortDropdownProps): ReactElement
+export function Dropdown(props: HudDropdownProps): ReactElement
+export function Dropdown<T extends string = string>(props: DropdownProps<T>): ReactElement
+export function Dropdown<T extends string = string>({
+  appearance = 'default',
+  ...props
+}: DropdownProps<T> | HudDropdownProps | HudSortDropdownProps) {
+  if (appearance === 'hud') {
+    const { kind = 'field', ...hud } = props as Omit<HudDropdownProps | HudSortDropdownProps, 'appearance'>
+    if (kind === 'sort')
+      return <HudSortDropdown {...(hud as Omit<HudSortDropdownProps, 'appearance' | 'kind'>)} />
+    return <HudDropdown {...(hud as Omit<HudDropdownProps, 'appearance' | 'kind'>)} />
+  }
+  return <FigmaDropdown {...(props as WithoutAppearance<DropdownProps<T>>)} />
+}
+
+function FigmaDropdown<T extends string = string>(props: WithoutAppearance<DropdownProps<T>>) {
   const {
     label,
     labelHidden = false,
@@ -197,10 +230,13 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
     const picked = options[index]?.value
     if (disabled || picked === undefined || !enabled(index)) return
     if (multiple) {
-      const next = options
-        .filter((option) => (option.value === picked ? !chosen.includes(picked) : chosen.includes(option.value)))
-        .map((option) => option.value)
-      onChange(next)
+      const remaining = new Set(chosen)
+      if (!remaining.delete(picked)) remaining.add(picked)
+      const visible: T[] = []
+      for (const option of options) {
+        if (remaining.delete(option.value)) visible.push(option.value)
+      }
+      onChange([...visible, ...remaining])
     } else {
       if (picked !== value) onChange(picked)
       close()
@@ -224,6 +260,7 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
   const keyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return
     const { key } = event
+    if (key === 'Shift') return
     if (event.altKey) {
       if (key === 'ArrowDown' || key === 'ArrowUp') {
         event.preventDefault()
@@ -265,16 +302,12 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
       ref={root}
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-disabled={disabled || undefined}
-      onBlur={(event) => {
-        if (!root.current?.contains(event.relatedTarget)) close()
-        rest.onBlur?.(event)
-      }}
     >
       <span className={labelHidden && !help ? styles.hidden : styles.header}>
         <span id={labelId} className={labelHidden ? styles.hidden : styles.label} onClick={() => trigger.current?.focus()}>
           {label}
         </span>
-        {help && <Help id={`${id}-bubble`} text={help} label={helpLabel} />}
+        {help && <Help id={`${id}-bubble`} text={help} label={helpLabel} onActivate={close} />}
       </span>
       {help && (
         <span id={helpId} className={styles.hidden}>
@@ -298,6 +331,7 @@ export function Dropdown<T extends string = string>(props: DropdownProps<T>) {
           if (open) close()
           else show()
         }}
+        onBlur={close}
         onKeyDown={keyDown}
       >
         <span className={styles.value} data-placeholder={text === '' || undefined}>

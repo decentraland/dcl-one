@@ -21,6 +21,14 @@ describe("watchRefusal", () => {
     });
   });
 
+  it("shows a private world's access denial as a refusal", () => {
+    expect(watchRefusal(err(401, "Access denied, you are not authorized to access this world"))).toEqual({
+      kind: "error",
+      title: "You can't watch this Cast",
+      message: "Access denied, you are not authorized to access this world",
+    });
+  });
+
   it("keeps any other server message and falls back on a network failure", () => {
     expect(watchRefusal(err(401, "Access denied, deny-listed wallet"))).toMatchObject({
       kind: "error",

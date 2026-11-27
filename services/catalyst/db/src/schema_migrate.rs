@@ -552,6 +552,7 @@ pub fn classify_step(stmt: &str) -> Result<StepStatement, String> {
             "a step extends an enum with ALTER TYPE ... ADD VALUE IF NOT EXISTS and changes a type in no other way",
         ),
         ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "FUNCTION" => Ok(StepStatement::Plain),
+        ("CREATE", "OR") if k(2) == "REPLACE" && k(3) == "TRIGGER" => Ok(StepStatement::Plain),
         ("CREATE", "FUNCTION") => match at(2).split_once('.') {
             Some((schema, name)) if hash_named_prefix(name).is_some() => {
                 Ok(StepStatement::CreateFunction {
@@ -1644,14 +1645,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_binding_objects_preserve_existing_identity_and_transaction_history() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("binding_upgrade_{}", uuid::Uuid::new_v4().simple());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}; CREATE TABLE {schema}.world_scene_place(world_name text,identity uuid,entity_id text,active boolean); INSERT INTO {schema}.world_scene_place VALUES ('test.eth','11111111-1111-4111-8111-111111111111','old',true)")))
+            .execute(&pool).await.unwrap();
+        let objects = plan(crate::SCHEMA_SQL)
+            .unwrap()
+            .into_iter()
+            .filter(|p| match &p.step {
+                Step::Create {
+                    object: Object::Relation(name),
+                    ..
+                } => name == "explore.world_scene_binding",
+                Step::Create {
+                    object: Object::Function { schema, name },
+                    ..
+                } => schema == "explore" && name == "retain_world_scene_binding",
+                Step::Create {
+                    object: Object::Trigger { name, table },
+                    ..
+                } => name == "world_scene_binding_retained" && table == "explore.world_scene_place",
+                _ => false,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            objects.len(),
+            3,
+            "all recovery objects must be in the upgrade plan"
+        );
+        for object in objects {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(
+                object.sql.replace("explore.", &format!("{schema}.")),
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {schema}.world_scene_place SET entity_id='rolled-back'"
+        )))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {schema}.world_scene_binding"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "rolled-back publication must not leave recovery evidence"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("UPDATE {schema}.world_scene_place SET entity_id='new'; UPDATE {schema}.world_scene_place SET active=false,entity_id=NULL; UPDATE {schema}.world_scene_place SET active=true,entity_id='new'; DELETE FROM {schema}.world_scene_place")))
+            .execute(&pool).await.unwrap();
+        let bindings: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT entity_id,identity::text FROM {schema}.world_scene_binding ORDER BY entity_id"
+        )))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bindings,
+            vec![
+                ("new".into(), "11111111-1111-4111-8111-111111111111".into()),
+                ("old".into(), "11111111-1111-4111-8111-111111111111".into())
+            ]
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn existing_catalogue_migration_installs_removal_triggers_and_seeds_once() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;
         };
         let schema = format!("removal_mig_{}", uuid::Uuid::new_v4().simple());
-        let columns = "id text PRIMARY KEY, creator_address text, world boolean NOT NULL DEFAULT false, world_name text, base_position text NOT NULL DEFAULT '0,0', raw jsonb NOT NULL DEFAULT '{}', disabled boolean NOT NULL DEFAULT false";
+        let columns = "id text PRIMARY KEY, creator_address text, world boolean NOT NULL DEFAULT false, world_name text, base_position text NOT NULL DEFAULT '0,0', raw jsonb NOT NULL DEFAULT '{}', removal_admin_keys text[] NOT NULL DEFAULT '{}', disabled boolean NOT NULL DEFAULT false";
         let older = format!(
-            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.place ({columns}); CREATE TABLE {schema}.place_world_local ({columns}); CREATE TABLE {schema}.place_moderation (place_id text PRIMARY KEY, disabled boolean, reason text); CREATE VIEW {schema}.place_indexed AS SELECT * FROM {schema}.place UNION ALL SELECT * FROM {schema}.place_world_local; INSERT INTO {schema}.place (id, disabled) VALUES ('existing-disabled', true), ('existing-active', false);"
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.place ({columns}); CREATE TABLE {schema}.place_world_local ({columns}); CREATE TABLE {schema}.place_moderation (place_id text PRIMARY KEY, disabled boolean, reason text); CREATE TABLE {schema}.world_scene_place (identity uuid PRIMARY KEY, world_name text, active boolean); CREATE TABLE {schema}.scene_admins (place_id text, admin_address text, added_by text, active boolean); CREATE VIEW {schema}.place_indexed AS SELECT * FROM {schema}.place UNION ALL SELECT * FROM {schema}.place_world_local; INSERT INTO {schema}.place (id, disabled) VALUES ('existing-disabled', true), ('existing-active', false);"
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(older.clone()))
             .execute(&pool)
@@ -1665,7 +1745,8 @@ mod tests {
             .next()
             .unwrap();
         let newer = format!("{older}\n-- A sparse removal outbox.{additions}")
-            .replace("explore.", &format!("{schema}."));
+            .replace("explore.", &format!("{schema}."))
+            .replace("social.", &format!("{schema}."));
         let done = migrate(&pool, &newer, "").await.unwrap();
         assert!(
             done.created.iter().any(
@@ -1679,6 +1760,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(seeded, 1);
+        let notify: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT notify FROM {schema}.place_removal_pending WHERE place_id='existing-disabled'"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !notify,
+            "first-activation seed must retain cleanup without historical notices"
+        );
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {schema}.place WHERE id = 'existing-active'"
         )))
@@ -1694,6 +1785,16 @@ mod tests {
         assert_eq!(
             captured, 2,
             "trigger captures removals from preexisting tables"
+        );
+        let notify: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT notify FROM {schema}.place_removal_pending WHERE place_id='existing-active'"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            notify,
+            "live removals remain enabled after historical seeding"
         );
         assert!(migrate(&pool, &newer, "").await.unwrap().is_empty());
         let after: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
@@ -1747,6 +1848,68 @@ mod tests {
         ));
         changed.name.push_str("_another");
         assert!(!step_retired(&changed, 3).unwrap());
+    }
+
+    #[tokio::test]
+    async fn streaming_recipient_upgrade_preserves_scalar_intents_and_delivery_progress() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("stream_notice_mig_{}", uuid::Uuid::new_v4().simple());
+        let older = format!(
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.scene_stream_cleanup (recipient text,metadata jsonb); CREATE TABLE {schema}.place_removal_pending (owner_address text); INSERT INTO {schema}.scene_stream_cleanup VALUES ('saved-owner','{{\"title\":\"saved\"}}'); INSERT INTO {schema}.place_removal_pending VALUES ('place-owner');"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(older))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let steps = parse_steps(crate::MIGRATIONS_SQL);
+        let step = steps
+            .iter()
+            .find(|s| s.name == "0058_streaming_notification_recipients")
+            .unwrap();
+        lint_steps(std::slice::from_ref(step)).unwrap();
+        let sql = step
+            .sql
+            .replace("social.", &format!("{schema}."))
+            .replace("explore.", &format!("{schema}."));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.clone()))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state:(String,String,Vec<String>,bool,i32)=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT recipient,metadata->>'title',recipients,recipients_resolved,recipient_cursor FROM {schema}.scene_stream_cleanup")))
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            state,
+            ("saved-owner".into(), "saved".into(), vec![], false, 0)
+        );
+        let state:(String,bool,bool,i32)=sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT owner_address,notify,recipients_resolved,recipient_cursor FROM {schema}.place_removal_pending")))
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(state, ("place-owner".into(), true, false, 0));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("UPDATE {schema}.scene_stream_cleanup SET recipients='{{saved-owner,admin}}',recipients_resolved=true,recipient_cursor=1; UPDATE {schema}.place_removal_pending SET recipients='{{place-owner,admin}}',recipients_resolved=true,recipient_cursor=1,notify=false;")))
+            .execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state: (bool, i32) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT recipients_resolved,recipient_cursor FROM {schema}.scene_stream_cleanup"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (true, 1));
+        let state: (bool, i32, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT recipients_resolved,recipient_cursor,notify FROM {schema}.place_removal_pending"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (true, 1, false));
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -1813,6 +1976,7 @@ mod tests {
             "ALTER TABLE a.t ALTER COLUMN c DROP NOT NULL",
             "ALTER TYPE a.kind ADD VALUE IF NOT EXISTS 'x'",
             "CREATE OR REPLACE FUNCTION a.f() RETURNS int LANGUAGE sql AS $f$ SELECT 1 $f$",
+            "CREATE OR REPLACE TRIGGER a_t AFTER INSERT ON a.t FOR EACH ROW EXECUTE FUNCTION a.f()",
             "CREATE FUNCTION a.f_47d21316abf2(text) RETURNS int LANGUAGE sql RETURN 1",
             "UPDATE a.t SET c = 1 WHERE c IS NULL",
             "COMMENT ON COLUMN a.t.c IS 'x'",

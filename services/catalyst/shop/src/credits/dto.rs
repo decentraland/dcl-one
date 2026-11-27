@@ -2,8 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the float is whole and in [-2^63, 2^63), so it fits i64 exactly"
+)]
 fn serialize_number<S: serde::Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value < -(i64::MIN as f64) {
+    use crate::types::TWO_POW_63;
+    if value.fract() == 0.0 && *value >= -TWO_POW_63 && *value < TWO_POW_63 {
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)
@@ -156,11 +161,30 @@ pub struct GoalProgressData {
     pub completed_steps: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "credits/"))]
 pub struct GoalMetadata {
-    #[serde(rename = "photosTaken")]
-    pub photos_taken: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub photos_taken: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub dates: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub events_visited_and_stayed: Option<Vec<GoalEventStay>>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "credits/"))]
+pub struct GoalEventStay {
+    pub id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub total_time_spent: i64,
+    #[serde(rename = "startedAt")]
+    #[cfg_attr(feature = "ts", ts(type = "number | null"))]
+    pub started_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
