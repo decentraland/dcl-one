@@ -394,12 +394,15 @@ impl Serialize for CatalogPage {
 
 type Page = Arc<(Vec<CatalogItem>, i64)>;
 
-/// Descriptive pages keyed by `(filters, the catalogue read's copy)`
-/// ([`CatalogueRead::key`]) and anonymous pick stats keyed by the page's
-/// ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
+type BookCopy = Vec<(String, i64, chrono::NaiveDateTime, Option<i64>)>;
+type CatalogPageKey = (CatalogFilters, String, Option<BookCopy>);
+
+/// V1 pages keyed by filters, the catalogue and the book's publication
+/// and expiry interval. Anonymous pick stats are keyed by the page's ids.
+/// Both use `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
 pub struct Cache {
     enabled: bool,
-    pages: TtlMap<(CatalogFilters, String), Page>,
+    pages: TtlMap<CatalogPageKey, Page>,
     picks: TtlMap<Vec<String>, Arc<Vec<PickStats>>>,
 }
 
@@ -434,7 +437,7 @@ impl Cache {
     /// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]).
     async fn page_or_fetch_holding<F>(
         &self,
-        key: (CatalogFilters, String),
+        key: CatalogPageKey,
         held: &mut Option<CatalogueRead>,
         fetch: F,
     ) -> Result<Option<Page>, Response>
@@ -770,6 +773,24 @@ fn build_offchain_orders_cte(b: &mut Builder, f: &CatalogFilters, books: Option<
     if f.only_minting {
         b.push(" AND u.type = 'public_item_order'");
     }
+    if let Some(scope) = books {
+        let mints = scope
+            .v3_mints
+            .iter()
+            .map(|net| net.db_name().to_owned())
+            .collect::<Vec<_>>();
+        let resales = scope
+            .v3_resales
+            .iter()
+            .map(|net| net.db_name().to_owned())
+            .collect::<Vec<_>>();
+        let mints = b.bind_strings(&mints);
+        let resales = b.bind_strings(&resales);
+        b.push(&format!(
+            " AND ((u.type='public_item_order' AND lower(u.network)=ANY({mints}))
+               OR (u.type='public_nft_order' AND lower(u.network)=ANY({resales})))"
+        ));
+    }
     if let Some(mn) = &f.min_price {
         let p = b.bind_string(mn.clone());
         b.push(&format!(" AND u.amount_received >= {p}::numeric"));
@@ -785,23 +806,32 @@ struct CatalogScope {
     catalogue: Catalogue,
     nets: Vec<ChainNet>,
     reads_book: bool,
+    v3_mints: Vec<ChainNet>,
+    v3_resales: Vec<ChainNet>,
+}
+
+impl CatalogScope {
+    fn new(catalogue: Catalogue, nets: Vec<ChainNet>) -> Self {
+        Self {
+            catalogue,
+            nets,
+            reads_book: false,
+            v3_mints: Vec::new(),
+            v3_resales: Vec::new(),
+        }
+    }
 }
 
 fn catalogue_chain_sql(alias: &str, catalogue: Catalogue) -> String {
-    let ethereum = catalogue.chain_id(ChainNet::Ethereum);
-    let matic = catalogue.chain_id(ChainNet::Matic);
-    let verification = if catalogue == Catalogue::Testnet {
-        format!(" AND {alias}.testnet_verified")
-    } else {
-        String::new()
-    };
+    let belongs = |net| catalogue::membership_sql(alias, net, catalogue.chain_id(net));
     format!(
-        "(({alias}.network = 'ethereum' AND {alias}.chain_id = {ethereum})
-          OR ({alias}.network = 'matic' AND {alias}.chain_id = {matic})){verification}"
+        "({} OR {})",
+        belongs(ChainNet::Ethereum),
+        belongs(ChainNet::Matic)
     )
 }
 
-/// Concrete contract filters also bound the order aggregation.
+/// Resolve an Ethereum v1 order's Issue wearable ID on the served chain.
 fn legacy_wearable_item_join(catalogue: Catalogue) -> String {
     format!(
         " LEFT JOIN shop.items i ON n.network = 'ethereum'
@@ -811,6 +841,7 @@ fn legacy_wearable_item_join(catalogue: Catalogue) -> String {
     )
 }
 
+/// Concrete contract filters also bound the order aggregation.
 fn listing_contracts(f: &CatalogFilters) -> Vec<String> {
     if !f.contract_addresses.is_empty() {
         return f
@@ -1531,6 +1562,7 @@ async fn catalog_scope(
     state: &MarketplaceState,
     read: &mut CatalogueRead,
     f: &CatalogFilters,
+    is_v2: bool,
 ) -> Result<CatalogScope, Response> {
     let walkers = super::owned_items::walks_here(state);
     let needs_book = f.needs_resales();
@@ -1565,11 +1597,7 @@ async fn catalog_scope(
             only_minting: false,
             ..f.clone()
         };
-        let scope = CatalogScope {
-            catalogue,
-            nets: nets.clone(),
-            reads_book: false,
-        };
+        let scope = CatalogScope::new(catalogue, nets.clone());
         build_where(
             &mut b,
             &candidates,
@@ -1588,44 +1616,93 @@ async fn catalog_scope(
             .map_err(super::nft_reads::read_error)?;
         nets.retain(|net| matched.iter().any(|network| network == net.db_name()));
     }
-    let mut scope = CatalogScope {
-        catalogue,
-        nets,
-        reads_book: false,
-    };
-    if f.only_minting || !walkers || scope.nets.is_empty() {
+    let mut scope = CatalogScope::new(catalogue, nets);
+    if scope.nets.is_empty() {
         return Ok(scope);
     }
-    // Ordinary catalogue pages can omit the legacy listing cells when a
-    // required publication is withdrawn. SQL errors have their own envelope.
-    let book = super::orders::require_published_book(
-        state,
-        &mut read.tx,
-        &scope.nets,
-        read.now,
-        super::orders::BookRoute::Catalog,
-    )
-    .await;
-    match book {
-        Ok(()) => {}
-        Err(super::owned_items::ReadError::NotReady(..)) if !needs_book => return Ok(scope),
-        Err(error) => return Err(super::readers::index_source_error(error)),
-    }
-    let mut passes = Vec::new();
-    for &net in &scope.nets {
-        let verdict = catalogue::require_collections_on(&mut read.tx, state, net, read.now).await;
+    // Ordinary reads omit an unavailable listing leg. A page that filters
+    // or sorts on a listing requires the inputs that decide its results.
+    let book = if walkers && !f.only_minting {
+        let verdict = super::orders::require_published_book(
+            state,
+            &mut read.tx,
+            &scope.nets,
+            read.now,
+            super::orders::BookRoute::Catalog,
+        )
+        .await;
         match verdict {
-            Ok(Some(at)) => passes.push((net, at)),
-            Ok(None) => {}
-            Err(super::owned_items::ReadError::NotReady(..)) if !needs_book => return Ok(scope),
+            Ok(()) => true,
+            Err(super::owned_items::ReadError::NotReady(..)) if !needs_book => false,
+            Err(error) => return Err(super::readers::index_source_error(error)),
+        }
+    } else {
+        false
+    };
+    if !book && !is_v2 {
+        return Ok(scope);
+    }
+    let mut collections = Vec::new();
+    for &net in &scope.nets {
+        match catalogue::require_collections_on(&mut read.tx, state, net, read.now).await {
+            Ok(pass) => {
+                if let Some(at) = pass {
+                    read.note_collection_copy(net, at);
+                }
+                collections.push(net);
+            }
+            Err(super::owned_items::ReadError::NotReady(..))
+                if !needs_book && !(is_v2 && f.only_minting) => {}
             Err(error) => return Err(super::readers::index_source_error(error)),
         }
     }
-    for (net, at) in passes {
-        read.note_collection_copy(net, at);
+    scope.reads_book = book && collections.len() == scope.nets.len();
+    if is_v2 {
+        scope.v3_mints = collections;
+        if !f.only_minting {
+            for &net in &scope.v3_mints {
+                // The legacy book is a stronger check. When only its
+                // publication is unavailable, the v3 leg may still have
+                // current seller ownership on this snapshot.
+                let published = scope.reads_book
+                    || super::chain_walk::rows_published_on(
+                        &mut read.tx,
+                        super::chain_walk::INDEXER_NFT,
+                        net,
+                        &["nft"],
+                    )
+                    .await
+                    .map_err(super::readers::index_read_error)?;
+                if published {
+                    scope.v3_resales.push(net);
+                }
+            }
+        }
     }
-    scope.reads_book = true;
     Ok(scope)
+}
+
+/// The admitted NFT folds and the next raw expiry on each of their
+/// networks. Within the same deadline interval the set of unexpired book
+/// rows is constant. The check may include expiries the page cannot return.
+async fn read_book_copy(
+    read: &mut CatalogueRead,
+    scope: &CatalogScope,
+) -> Result<BookCopy, sqlx::Error> {
+    let networks: Vec<&str> = scope.nets.iter().map(|net| net.db_name()).collect();
+    sqlx::query_as(
+        "SELECT c.network, c.folded_block, c.folded_at, (
+             SELECT o.expires_at FROM shop.legacy_order o
+             WHERE o.network=c.network AND o.status='open' AND o.expires_at>$2
+             ORDER BY o.expires_at LIMIT 1
+         )
+         FROM shop.chain_cursor c
+         WHERE c.indexer='nft' AND c.network=ANY($1) ORDER BY c.network",
+    )
+    .bind(&networks)
+    .bind(read.now.timestamp_millis())
+    .fetch_all(&mut *read.tx)
+    .await
 }
 
 async fn catalog_inner(
@@ -1662,20 +1739,24 @@ async fn catalog_inner(
             Ok(read) => read,
             Err(envelope) => return envelope,
         };
-        let scope = match catalog_scope(&state, &mut read, &filters).await {
+        let scope = match catalog_scope(&state, &mut read, &filters, is_v2).await {
             Ok(scope) => scope,
             Err(envelope) => return envelope,
         };
-        if is_v2 {
+        if is_v2 && !scope.v3_mints.is_empty() {
             let now = read.now;
-            if let Err(error) =
-                super::trades::ready_checked_for_networks_on(&state, &mut read.tx, &scope.nets, now)
-                    .await
+            if let Err(error) = super::trades::ready_checked_for_networks_on(
+                &state,
+                &mut read.tx,
+                &scope.v3_mints,
+                now,
+            )
+            .await
             {
-                return error.into_response(super::nft_reads::read_error);
+                return error.into_response(super::readers::index_read_error);
             }
         }
-        if is_v2 || scope.reads_book {
+        if is_v2 {
             match fetch_page(&state, &mut read, &filters, is_v2, Some(&scope)).await {
                 Ok(page) => {
                     read.note(&state);
@@ -1684,7 +1765,16 @@ async fn catalog_inner(
                 Err(e) => return e,
             }
         }
-        let (key, stamp) = ((filters.clone(), read.key()), read.stamp());
+        let orders = if scope.reads_book && state.catalog_cache.enabled() {
+            match read_book_copy(&mut read, &scope).await {
+                Ok(book) => Some(book),
+                Err(error) => return super::readers::index_read_error(error),
+            }
+        } else {
+            None
+        };
+        let stamp = read.stamp();
+        let key = (filters.clone(), read.key(), orders.clone());
         let mut held = Some(read);
         match state
             .catalog_cache
@@ -1697,6 +1787,9 @@ async fn catalog_inner(
         {
             Ok(Some(page)) => {
                 stamp.note(&state);
+                for (_, _, at, _) in orders.into_iter().flatten() {
+                    super::mirrors::note_index_copy(at);
+                }
                 break page;
             }
             Ok(None) => continue,
@@ -1754,6 +1847,44 @@ pub async fn get_catalog_v2(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn the_book_memo_key_changes_at_the_exact_expiry_boundary() {
+        let Some(db) = super::super::tests::support::OwnDb::create("catalog_book_expiry").await
+        else {
+            return;
+        };
+        let state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+        );
+        sqlx::raw_sql(
+            "INSERT INTO shop.legacy_order (network,marketplace_address,order_id,
+               contract_address,token_id,seller,price,expires_at,status,created_block,
+               created_log,created_at,updated_block,updated_log,updated_at)
+             VALUES ('matic',repeat('a',42),'book',repeat('b',42),1,repeat('c',42),
+               20,2001,'open',1,0,1,1,0,1);
+             INSERT INTO shop.chain_cursor (indexer,network,chain_id,start_block,last_block,folded_block,folded_at,full_history)
+             VALUES ('nft','matic',137,0,105,100,timezone('UTC',now()),true)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let scope = CatalogScope::new(Catalogue::Mainnet, vec![ChainNet::Matic]);
+        let mut read = catalogue::begin_unchecked(&state).await;
+        read.now = chrono::DateTime::from_timestamp_millis(2000).unwrap();
+        let first = read_book_copy(&mut read, &scope).await.unwrap();
+        assert_eq!(first[0].3, Some(2001));
+        read.now = chrono::DateTime::from_timestamp_millis(2001).unwrap();
+        let next = read_book_copy(&mut read, &scope).await.unwrap();
+        assert_eq!(next[0].3, None);
+        assert_eq!(first[0].1, next[0].1);
+        assert_eq!(first[0].2, next[0].2);
+        assert_ne!(first, next);
+        drop(read);
+        db.drop().await;
+    }
 
     fn pairs(raw: &[(&str, &str)]) -> Vec<(String, String)> {
         raw.iter()

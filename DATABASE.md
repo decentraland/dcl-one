@@ -3938,6 +3938,12 @@ meanwhile never splits an answer. A reader that joins the open trades
 snapshot, at the read's instant. That instant also decides the rows' open
 trades, trade floor and coupon window, on every page of the read.
 
+The shared catalogue admission statement is uncached and probes:
+`collection_projection (network)`, `chain_cursor (indexer, network)`,
+`mirror_state (mirror, network)`, the first row of `collections` and of
+`items` by their `(network, …)` keys, and the first `collection_event` past
+the publication by `(network, block_number, log_index)`.
+
 Catalog v1 and v2 read resale listings from the legacy order book on the
 catalogue snapshot. The book must stand at the published NFT fold and have
 no queued refold or unacknowledged writes to orders or ownership. The request
@@ -3957,15 +3963,22 @@ book can answer. When a sort does not depend on listings, the read selects
 the page and its count first and aggregates legacy listings for those items.
 The default cheapest sort uses the admitted listings to order the whole
 candidate set by the same price the page displays.
-V2 combines the legacy counts and prices with backed v3 resales. Explicit
-mint-only requests take the mint legs. V1 pages with a legacy leg read it
-on every request so a change of owner or expiry can take effect immediately.
+V2 combines the legacy counts and prices with backed v3 resales. A v3
+resale needs published NFT ownership even when the legacy book is withheld.
+V3 mint offers need a collection publication for the minter permission.
+Explicit mint-only V2 reads require this proof. Ordinary pages omit an
+unavailable contribution and keep the item page.
 
-The statement is uncached and probes primary keys only:
-`collection_projection (network)`, `chain_cursor (indexer, network)`,
-`mirror_state (mirror, network)`, the first row of `collections` and of
-`items` by their `(network, …)` keys, and the first `collection_event` past
-the publication by `(network, block_number, log_index)`.
+V1 shares a short memo under `MARKETPLACE_CATALOG_CACHE_TTL_SECS`. Before
+using it the route admits the book on its read snapshot and keys the result
+by the catalogue copies, each NFT publication and the next legacy order
+expiry on its network. A withdrawal, republication or crossing an expiry
+changes the key before reading prices. Open orders outside the page can
+shorten the interval and trigger a fresh read. The partial
+`legacy_order_open_expiry_idx (network, expires_at)` supplies the first
+future expiry per network. A request waiting for a fetch of the same key
+releases its database connection.
+
 
 The transaction holds a pooled connection, so a reader never waits on
 anything else while it holds it:
@@ -5530,8 +5543,9 @@ they took 48 ms and 46 ms respectively.
 ## Legacy Marketplace orders
 
 `shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
-`/v1/orders/open-by-items` (and credits pricing through it) and the activity
-feed's orders leg on a node that walks the nft index. It is one row per
+`/v1/orders/open-by-items` (and credits pricing through it), the activity
+feed's orders leg and the legacy listings of both catalog versions on a
+node that walks the NFT index. It is one row per
 `OrderCreated` of the Marketplace contracts the nft walk takes in, folded
 from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
 in the nft fold's transaction, so it is published with the ownership it is
@@ -5639,6 +5653,8 @@ between a fold's commit and its publication. The denominator is
 attempted network's publication check. Both counters use `network` and
 `route` labels. The route is `orders`, `open_by_items`, `activity` or `catalog`.
 Each activity page takes its own book snapshot and counts its checks.
+For the catalog label this also counts a withheld book leg on an
+ordinary page that can still serve item metadata.
 
 ### Fold-written projections and their publication
 

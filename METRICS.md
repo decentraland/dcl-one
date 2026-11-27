@@ -74,24 +74,20 @@ without a book-result cache.
 
 A PostgreSQL 17.6 fixture held 1,000,000 legacy orders, including 18,867
 open ones with seller ownership on Ethereum and Polygon, and 20,000 items
-over 2,000 collections. The local aggregation joined ownership and item
-identity, computed prices and counts, and sorted and capped the page at 20.
-`EXPLAIN (ANALYZE, BUFFERS)` took 859 ms on the first broad read and 158
-to 171 ms on the next two. The one-contract read took 1.11 ms, then 0.43
-and 0.32 ms. These measurements cover the legacy SQL leg and item join.
-V3 trades, readiness and HTTP transport are outside the measurements.
-The workload uses the existing order and catalogue indexes.
+over 2,000 collections. The listing SQL joined ownership and item
+identity, computed prices and counts, and capped the page at 20.
+The legacy leg of a cheapest page took 234–375 ms in three single-session
+runs and averaged 345 ms with eight clients and varying offsets. A
+listing-dependent newest page (`isOnSale=true` on the fixture's resale
+rows) took 322–448 ms and averaged 323 ms with eight clients. A newest
+page without a listing predicate uses the page-first shape and took
+10.5–12.7 ms. Its eight-client run averaged 21 ms with varying offsets.
 
-On the same-size fixture, a 20-row newest page and its total took 10.5–12.7 ms
-with the page selected before listing enrichment. The original aggregate-first
-newest query took 2.45–2.57 s, with a nested loop rejecting 38 million pairs.
-The two queries returned identical rows and totals. With eight clients
-requesting offsets across 19,800 rows for ten seconds, average latency
-fell from 1.92 s to 21 ms for that shape. The broad cheapest page still
-uses prices from the whole candidate set. Explicit network and chain
-predicates let PostgreSQL choose a hash join for that shape. Its three
-single-session runs took 234–375 ms and its eight-client run averaged 345 ms.
-These measurements exclude the v3 leg and share the existing indexes.
+V1's memo preflight reads publication and the next expiry on each
+network. The index-only expiry lookup and cursor join took 0.068–0.209 ms
+and averaged 0.149 ms with eight clients. A memo miss uses the applicable
+listing query. These measurements exclude the v3 leg, the other readiness
+checks and HTTP transport.
 
 ## Ethereum collections-v1 first walk
 

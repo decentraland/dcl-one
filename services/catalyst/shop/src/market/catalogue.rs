@@ -50,13 +50,18 @@ pub use crate::chain_index::catalogue::{
 
 /// Whether collection row `c` belongs to the served network and chain.
 pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    membership_sql("c", net, chain)
+}
+
+/// The served chain and any testnet row proof for a catalogue alias.
+pub(super) fn membership_sql(alias: &str, net: ChainNet, chain: i64) -> String {
     let proof = if chain == net.chain_id() {
-        ""
+        String::new()
     } else {
-        " AND c.testnet_verified"
+        format!(" AND {alias}.testnet_verified")
     };
     format!(
-        "(c.network = '{}' AND c.chain_id = {chain}{proof})",
+        "({alias}.network = '{}' AND {alias}.chain_id = {chain}{proof})",
         net.db_name()
     )
 }

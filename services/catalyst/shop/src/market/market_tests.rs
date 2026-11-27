@@ -10811,7 +10811,8 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     }
     sqlx::query(
         "UPDATE shop.items SET search_is_collection_approved = true,
-         search_is_store_minter = item_id = 3, price = 5000000000000000000,
+         search_is_store_minter = item_id = 3,
+         price = CASE WHEN item_id = 3 THEN 5000000000000000000 ELSE 100000000000000000000 END,
          first_listed_at = 1 WHERE contract_address=$1",
     )
     .bind(&contract)
@@ -10894,7 +10895,7 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         Asset {
             asset_type: 3,
             contract: contract.clone(),
-            value: v3_token,
+            value: v3_token.clone(),
         },
         Asset {
             asset_type: 1,
@@ -10975,6 +10976,42 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         assert_eq!(code, StatusCode::OK, "{expensive}");
         assert_eq!(expensive["data"][0]["itemId"], "2");
     }
+    let mut memo_settings = state.settings.clone();
+    memo_settings.market.catalog_cache_ttl = Duration::from_secs(30);
+    let memo = market_router(Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        memo_settings,
+    )));
+    let default_page = format!("/v1/catalog?contractAddress={contract}");
+    let (code, cached) = get(memo.clone(), &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{cached}");
+    let ids = cached["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["itemId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["3", "1", "2", "4"]);
+    let (code, v2) = get(app(), &format!("/v2/catalog?contractAddress={contract}")).await;
+    assert_eq!(code, StatusCode::OK, "{v2}");
+    let ids = v2["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["itemId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["3", "2", "1", "4"]);
+    let (code, v2) = get(
+        app(),
+        &format!("/v2/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=1"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{v2}");
+    assert_eq!(v2["total"], 4);
+    assert_eq!(v2["data"][0]["itemId"], "2");
+    assert_eq!(v2["data"][0]["listings"], 3);
+
     // Ordinary pagination retains its total but enriches only the chosen item.
     let ordinary = format!("/v1/catalog?contractAddress={contract}&sortBy=newest&first=1&skip=1");
     let (code, page) = get(app(), &ordinary).await;
@@ -11075,12 +11112,69 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
         assert_eq!(code, StatusCode::OK, "{offered}");
         assert_eq!(offered["data"][0]["minPrice"], "500000000000000000");
     }
+    // The v3 quote uses the published owner even when the book is withheld.
+    let change_v3_owner = |owner: &'static str| {
+        sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='matic' AND token_id=$2::numeric")
+            .bind(owner)
+            .bind(&v3_token)
+            .execute(pool)
+    };
+    change_v3_owner(WALLET_B).await.unwrap();
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 2);
+    change_v3_owner(WALLET_A).await.unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 0);
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    sqlx::query("DELETE FROM shop.legacy_order_cursor WHERE network='matic'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["listings"], 1);
+    assert_eq!(page["data"][0]["minListingPrice"], "10000000000000000000");
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+
+    let mint_path = format!("{}&onlyMinting=true&maxPrice=1", v2_exact("2"));
+    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE mirror='collections' AND network='matic'")
+        .execute(pool).await.unwrap();
+    let (code, page) = get(app(), &mint_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "collections-mirror");
+    let (code, page) = get(app(), &v2_exact("2")).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert!(
+        page["data"][0].get("tradeId").is_none_or(Value::is_null),
+        "{page}"
+    );
+    sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()) WHERE mirror='collections' AND network='matic'")
+        .execute(pool).await.unwrap();
+    let (code, page) = get(app(), &mint_path).await;
+    assert_eq!(code, StatusCode::OK, "{page}");
+    assert_eq!(page["data"][0]["price"], "500000000000000000");
+
     sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='matic' AND token_id=$2::numeric")
         .bind(WALLET_B)
         .bind(token(1, 1))
         .execute(pool)
         .await
         .unwrap();
+    let (code, fallback) = get(memo.clone(), &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{fallback}");
+    assert!(
+        fallback["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["listings"] == 0)
+    );
     let uri = format!("/v1/catalog?contractAddress={contract}&onlyListing=true");
     let (code, unavailable) = get(app(), &uri).await;
     assert_eq!(
@@ -11093,6 +11187,15 @@ async fn catalog_resales_read_the_published_legacy_book_and_v3_listings() {
     assert_eq!(code, StatusCode::OK, "{reduced}");
     assert_eq!(reduced["total"], 1);
     assert_eq!(reduced["data"][0]["itemId"], "2");
+    let (code, republished) = get(memo, &default_page).await;
+    assert_eq!(code, StatusCode::OK, "{republished}");
+    let entry = republished["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["itemId"] == "1")
+        .unwrap();
+    assert_eq!(entry["listings"], 0);
     super::trade_events::tests::publish_cursors(pool).await;
     let mut mirror_settings = state.settings.clone();
     mirror_settings.market.indexes.nft_enabled = false;
