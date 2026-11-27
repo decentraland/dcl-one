@@ -227,7 +227,7 @@ async fn a_stranger_cannot_save_over_a_collection_someone_else_owns() {
         ),
     )
     .await;
-    assert_eq!(status, 401, "{body}");
+    assert_eq!(status, 403, "{body}");
     assert!(refused_upsert(&body), "{body}");
     assert_eq!(collection_named(&pool, id).await, ("Hats".into(), owner));
 }
@@ -266,7 +266,7 @@ async fn only_the_owner_of_a_loose_item_or_of_its_collection_deletes_it() {
     }
     for id in [loose, kept] {
         let (status, body, _) = send(&app, &delete_item(STRANGER_KEY, id)).await;
-        assert_eq!(status, 401, "{body}");
+        assert_eq!(status, 403, "{body}");
         assert!(unauthorized(&body, &stranger, "items"), "{body}");
         assert_eq!(items_left(&pool, id).await, 1);
     }
@@ -343,10 +343,10 @@ async fn a_write_refuses_a_caller_who_lost_the_collection_after_the_route_admitt
         .unwrap();
     handover.commit().await.unwrap();
     let (status, body, _) = rename.await.unwrap();
-    assert_eq!(status, 401, "{body}");
+    assert_eq!(status, 403, "{body}");
     assert!(refused_upsert(&body), "{body}");
     let (status, body, _) = delete.await.unwrap();
-    assert_eq!(status, 401, "{body}");
+    assert_eq!(status, 403, "{body}");
     assert!(unauthorized(&body, &owner, "items"), "{body}");
     assert_eq!(
         collection_named(&pool, collection).await,
