@@ -226,11 +226,30 @@ fn stamp_owner_check(mut response: Response) -> Response {
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
 fn trades_leg_sql(extra: &str) -> String {
-    format!(
-        "WITH {} SELECT {} {TRADE_ORDER_FROM} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}",
-        unified_trades_cte("$1", "$2"),
-        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
-    )
+    let trades = unified_trades_cte("$1", "$2");
+    let columns = TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT);
+    if extra.is_empty() {
+        // Process candidates in creation order and verify each before
+        // the limit so a newer unbacked trade cannot displace an older
+        // eligible one.
+        format!(
+            "WITH {trades}
+             SELECT verified.* FROM (
+                 SELECT id, created_at FROM shop.trades
+                 WHERE type = 'public_nft_order' AND expires_at > $1 AND effective_since <= $1
+                 ORDER BY created_at DESC, id::text ASC OFFSET 0
+             ) candidate
+             CROSS JOIN LATERAL (
+                 SELECT {columns} {TRADE_ORDER_FROM} AND u.id = candidate.id OFFSET 0
+             ) verified
+             ORDER BY candidate.created_at DESC, candidate.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    } else {
+        format!(
+            "WITH {trades} SELECT {columns} {TRADE_ORDER_FROM} {extra}
+             ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}"
+        )
+    }
 }
 
 /// An open v3 listing ([`TRADE_ORDER_COLUMNS`]' row) as an order: its id is the
@@ -1075,13 +1094,33 @@ async fn book_total(
     let Some((from, binds)) = book_from(&served(state), f, now_ms, land) else {
         return Ok(0);
     };
+    let unfiltered = f.status.is_none()
+        && f.marketplace_address.is_none()
+        && f.owner.is_none()
+        && f.buyer.is_none()
+        && f.contract_address.is_none()
+        && f.token_id.is_none()
+        && f.item_id.is_none();
+    let cap = cap.max(0);
     let mut total = 0;
     for net in nets_of(f.network) {
-        let sql = format!(
-            "SELECT count(*) FROM (SELECT 1 {from} AND o.network = '{}' LIMIT {}) x",
-            net.db_name(),
-            cap.max(0)
-        );
+        let from = format!("{from} AND o.network = '{}'", net.db_name());
+        let sql = if unfiltered {
+            // The open-expiry index can fill a shallow count on its own.
+            // Count unexpired terminal orders only for the remaining cap.
+            format!(
+                "WITH live AS (
+                     SELECT count(*) AS found FROM (
+                         SELECT 1 {from} AND o.status = 'open' LIMIT {cap}
+                     ) open_orders
+                 )
+                 SELECT live.found + (SELECT count(*) FROM (
+                     SELECT 1 {from} AND o.status <> 'open' LIMIT ({cap} - live.found)
+                 ) terminal_orders) FROM live"
+            )
+        } else {
+            format!("SELECT count(*) FROM (SELECT 1 {from} LIMIT {cap}) x")
+        };
         let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(sql));
         for b in &binds {
             q = q.bind(b);
