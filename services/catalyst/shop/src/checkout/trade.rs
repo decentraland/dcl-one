@@ -276,6 +276,11 @@ pub struct TradeExpectations {
     pub usd_pegged: Option<UsdPeggedExpectation>,
 }
 
+/// An asset type the checks above already pinned to a small positive value.
+fn asset_type(raw: i64) -> Result<u64, ApiError> {
+    u64::try_from(raw).map_err(|_| err(format!("assetType {raw} is negative")))
+}
+
 fn err(msg: impl Into<String>) -> ApiError {
     ApiError::InvalidTransaction(msg.into())
 }
@@ -518,8 +523,8 @@ pub fn validate_trade(
         signature: Bytes::from(sig_bytes.clone()),
         checks: SolChecks {
             uses: U256::from(c.uses),
-            expiration: U256::from(expiration_s.max(0) as u64),
-            effective: U256::from(effective_s.max(0) as u64),
+            expiration: U256::from(u64::try_from(expiration_s).unwrap_or(0)),
+            effective: U256::from(u64::try_from(effective_s).unwrap_or(0)),
             salt,
             contractSignatureIndex: U256::from(c.contract_signature_index),
             signerSignatureIndex: U256::from(c.signer_signature_index),
@@ -528,14 +533,14 @@ pub fn validate_trade(
             externalChecks: vec![],
         },
         sent: vec![SolAsset {
-            assetType: U256::from(sent.asset_type as u64),
+            assetType: U256::from(asset_type(sent.asset_type)?),
             contractAddress: sent_contract,
             value: sent_value,
             beneficiary: Address::ZERO,
             extra: Bytes::from(sent_extra),
         }],
         received: vec![SolAsset {
-            assetType: U256::from(recv.asset_type as u64),
+            assetType: U256::from(asset_type(recv.asset_type)?),
             contractAddress: recv_contract,
             value: signed_amount,
             beneficiary: recv_beneficiary,

@@ -120,7 +120,7 @@ impl ExecutionRow {
     pub fn dto(&self) -> ExecutionDto {
         ExecutionDto {
             id: self.id.to_string(),
-            chain_id: crate::types::ChainId(self.chain_id.max(0) as u64),
+            chain_id: crate::types::ChainId(u64::try_from(self.chain_id).unwrap_or(0)),
             tx_hash: self.tx_hash.clone(),
             kind: self.kind.clone(),
             actor: self.actor.clone(),
@@ -155,7 +155,10 @@ fn lower(a: Address) -> String {
 /// A row the tracker found was sent by another wallet than its reporter is
 /// claimed again, and re-checked, by a reporter proven to have sent it
 /// (`proven_sender`).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded execution field"
+)]
 pub async fn record(
     pool: &PgPool,
     chain_id: u64,
@@ -184,7 +187,7 @@ pub async fn record(
          RETURNING {COLUMNS}",
         sender_mismatch = super::tracker::SENDER_MISMATCH,
     )))
-    .bind(chain_id as i64)
+    .bind(crate::types::chain_id_column::<i64>(chain_id)?)
     .bind(tx_hash)
     .bind(kind)
     .bind(lower(actor))
@@ -206,7 +209,7 @@ pub async fn record(
     let existing = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM shop.executions WHERE chain_id = $1 AND tx_hash = $2"
     )))
-    .bind(chain_id as i64)
+    .bind(crate::types::chain_id_column::<i64>(chain_id)?)
     .bind(tx_hash)
     .fetch_one(pool)
     .await?;
@@ -573,7 +576,10 @@ async fn check_reporter(
     match reader.has_code(actor).await {
         Ok(false) => Reporter::Foreign,
         Ok(true) => {
-            let row = expected_row(chain_id.0, tx_hash, kind, actor, e);
+            let Ok(chain_id) = crate::types::chain_id_column(chain_id.0) else {
+                return Reporter::Unknown;
+            };
+            let row = expected_row(chain_id, tx_hash, kind, actor, e);
             if super::tracker::names_actor(&row, &receipt, actor) {
                 Reporter::Proven
             } else {
@@ -586,7 +592,7 @@ async fn check_reporter(
 
 /// The row a report would store, for checking a receipt against it.
 fn expected_row(
-    chain_id: u64,
+    chain_id: i64,
     tx_hash: &str,
     kind: &str,
     actor: Address,
@@ -595,7 +601,7 @@ fn expected_row(
     let now = Utc::now().naive_utc();
     ExecutionRow {
         id: uuid::Uuid::nil(),
-        chain_id: chain_id as i64,
+        chain_id,
         tx_hash: tx_hash.to_string(),
         kind: kind.to_string(),
         actor: lower(actor),

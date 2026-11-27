@@ -138,7 +138,7 @@ impl PortalSettings {
         for net in ChainNet::ALL {
             let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
             anyhow::ensure!(
-                reader.chain() == net.chain_id() as u64,
+                reader.chain() == net.chain_id_u64(),
                 "the {} portal dataset {:?} is not {} mainnet",
                 net.db_name(),
                 reader.dataset(),
@@ -1124,7 +1124,7 @@ async fn settle_one(
             slot.checkpoint = None;
             slot.invitable = false;
             slot.line = format!("failed; next in {} s", wait.as_secs());
-            tracing::warn!(lease = %projection.lease, acquisition = number, error = %format!("{err:#}"), wait_ms = wait.as_millis() as u64, "marketplace chain index pass failed");
+            tracing::warn!(lease = %projection.lease, acquisition = number, error = %format!("{err:#}"), wait_ms = super::casts::millis(wait), "marketplace chain index pass failed");
             ctx.error(format!("{}: {err:#}", projection.lease));
         }
         Attempt::Panicked(msg) => {
@@ -1455,14 +1455,9 @@ fn visit_projections(
             Arc::new(move || {
                 let state = state.clone();
                 async move {
-                    Ok(
-                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
-                            format!(
-                                "nft {}: waiting for the collections mirror's first complete pass",
-                                net.db_name()
-                            )
-                        }),
-                    )
+                    Ok(super::nft_index::catalogue_wait(&state.pool, net, chain_id)
+                        .await?
+                        .map(|why| format!("nft {}: {why}", net.db_name())))
                 }
                 .boxed()
             })
@@ -1473,7 +1468,8 @@ fn visit_projections(
             Arc::new(move || {
                 Arc::new(
                     super::nft_index::NftIndex::for_chain(net, chain_id)
-                        .expect("validated NFT index chain"),
+                        .expect("validated NFT index chain")
+                        .with_catalogue_gate(),
                 )
             }),
             Some(gate),
@@ -1493,7 +1489,8 @@ fn visit_projections(
         && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
     {
         let index = super::sales_index::SalesIndex::for_chain(chain_id)
-            .expect("validated sales index chain");
+            .expect("validated sales index chain")
+            .with_catalogue_gate();
         let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
@@ -1507,9 +1504,9 @@ fn visit_projections(
                         super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
-                        "sales matic: waiting for the collections mirror's first complete pass".to_string()
-                    }))
+                    Ok(super::nft_index::catalogue_wait(&state.pool, net, chain_id)
+                        .await?
+                        .map(|why| format!("sales {}: {why}", net.db_name())))
                 }
                 .boxed()
             })
@@ -1570,6 +1567,21 @@ fn visit_projections(
                 })
             },
             Some(gate),
+            market_cfg(),
+        );
+    }
+    if settings.collections_enabled && net == ChainNet::Ethereum && mainnet {
+        // The closed collections-v1 set: a static filter, no gate.
+        let project = settings.collections_owned.contains(&ChainNet::Ethereum);
+        add(
+            "collections-index",
+            state.chain_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(super::collections_v1::CollectionsV1Index::projecting(
+                    project,
+                ))
+            }),
+            None,
             market_cfg(),
         );
     }
@@ -1817,6 +1829,23 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         tracing::warn!(
             job = "collections-index",
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
+    let ethereum_walk = settings.serves_mainnet(ChainNet::Ethereum)
+        && state.chain_rpc_url(ChainNet::Ethereum).is_some();
+    if settings.collections_enabled && settings.serves_mainnet(ChainNet::Ethereum) && !ethereum_walk
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Ethereum JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, else ETH_RPC_URL): the collections-v1 walk stays off"
+        );
+    }
+    if settings.collections_owned.contains(&ChainNet::Ethereum)
+        && !(settings.collections_enabled && ethereum_walk)
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but this process runs no collections-v1 walk (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint), so it walks and projects nothing on Ethereum"
         );
     }
     if settings.third_party_registry_enabled

@@ -31,6 +31,7 @@
     "check:flowmap": "tsx scripts/check-flowmap-routes.mts",
     "smoke": "node scripts/drive/smoke.mts",
     "drive:cast": "node scripts/drive/cast.mts",
+    "drive:scene-world": "node scripts/drive/scene-world.mts",
     "gen:docs-content": "node scripts/gen-docs-content.mts",
     "gen:docs-content:capture": "node scripts/gen-docs-content.mts --capture",
     "gen:docs-content:check": "node scripts/gen-docs-content.mts --check",

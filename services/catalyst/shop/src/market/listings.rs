@@ -103,8 +103,16 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "the Sepolia chain id is a small constant"
+)]
 pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "the Amoy chain id is a small constant"
+)]
 pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
@@ -426,7 +434,7 @@ fn uint_word(value: &str) -> Result<[u8; 32], SignatureError> {
 }
 
 fn to_seconds(ms: i64) -> u64 {
-    (ms / 1000).max(0) as u64
+    u64::try_from(ms / 1000).unwrap_or(0)
 }
 
 fn hash_external_checks(checks: &TradeChecksInput) -> Result<[u8; 32], SignatureError> {
@@ -475,7 +483,9 @@ fn hash_assets(
     let mut members = Vec::with_capacity(assets.len());
     for asset in assets {
         let mut fields = vec![
-            word_u64(asset.asset_type as u64),
+            word_u64(u64::try_from(asset.asset_type).map_err(|_| {
+                SignatureError::Malformed(format!("assetType {} is negative", asset.asset_type))
+            })?),
             address_word(&asset.contract_address)?,
             uint_word(&asset.signed_value()?)?,
             hash_dynamic(&hex_bytes(asset.extra.as_deref().unwrap_or("0x"))?),
@@ -502,7 +512,7 @@ fn trade_domain_separator(
             hash_dynamic(marketplace.name.as_bytes()),
             hash_dynamic(marketplace.version.as_bytes()),
             word_address(parse_address(marketplace.address)?),
-            word_u64(chain_id.max(0) as u64),
+            word_u64(u64::try_from(chain_id).unwrap_or(0)),
         ],
     ))
 }
@@ -1309,7 +1319,10 @@ pub(crate) async fn insert_trade<'e>(
     let signature = trade.signature.to_lowercase();
     let inserted: Option<(String,)> = sqlx::query_as(CREATE_TRADE_SQL)
         .bind(network)
-        .bind(trade.chain_id as i32)
+        .bind(
+            i32::try_from(trade.chain_id)
+                .map_err(|_| TradeCreationError::UnsupportedChain(trade.chain_id))?,
+        )
         .bind(&signature)
         .bind(hashed_signature(&signature))
         .bind(checks_json(&trade.checks))
@@ -1533,6 +1546,14 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::test_support::*;
     use super::*;
 

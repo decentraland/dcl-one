@@ -284,7 +284,7 @@ describe('opening the editor changes nothing by itself', () => {
     rerender(
       <>
         <ProfilePassport
-          profile={{ ...profile, badges: [], mutuals: 3 }}
+          profile={{ ...profile, badges: [] }}
           isSelf
           editing={editing()}
           onClose={vi.fn()}

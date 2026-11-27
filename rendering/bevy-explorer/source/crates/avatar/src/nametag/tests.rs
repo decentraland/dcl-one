@@ -1,8 +1,9 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::{
     profile::SerializedProfile,
-    structs::{CameraOverride, CinematicSettings},
+    structs::{CameraOverride, CameraZoomLevel, CinematicSettings, PlayerModifiers},
 };
+use comms::BlockedOrBanned;
 
 use dcl_component::{proto_components::common::Color3, SceneEntityId};
 use scene_runner::{
@@ -11,6 +12,7 @@ use scene_runner::{
 };
 
 use super::*;
+use crate::BeyondMaxAvatars;
 
 const ADDRESS: &str = "0x00000000000000000000000000000000000012ab";
 
@@ -121,22 +123,14 @@ fn a_tag_keeps_its_size_on_screen() {
 
 #[test]
 fn a_name_shows_in_range_of_the_camera() {
-    let view = |first_person| TagView {
-        position: Vec3::ZERO,
-        first_person,
-    };
-    let third = view(false);
-    assert!(third.shows(Vec3::new(0.0, 0.0, -2.0), false));
-    assert!(third.shows(Vec3::new(0.0, 0.0, -40.0), false));
-    assert!(!third.shows(Vec3::new(0.0, 0.0, -1.9), false));
-    assert!(!third.shows(Vec3::new(0.0, 0.0, -40.1), false));
+    let shows = |player| in_range(player, Vec3::ZERO);
+    assert!(shows(Vec3::new(0.0, 0.0, -2.0)));
+    assert!(shows(Vec3::new(0.0, 0.0, -40.0)));
+    assert!(!shows(Vec3::new(0.0, 0.0, -1.9)));
+    assert!(!shows(Vec3::new(0.0, 0.0, -40.1)));
     // behind the camera or off to the side: the frustum's to cull
-    assert!(third.shows(Vec3::new(0.0, 0.0, 5.0), false));
-    assert!(third.shows(Vec3::new(30.0, 0.0, -1.0), false));
-    // the local player's own, in third person only
-    assert!(third.shows(Vec3::new(0.0, 0.0, -3.0), true));
-    assert!(!view(true).shows(Vec3::new(0.0, 0.0, -3.0), true));
-    assert!(view(true).shows(Vec3::new(0.0, 0.0, -3.0), false));
+    assert!(shows(Vec3::new(0.0, 0.0, 5.0)));
+    assert!(shows(Vec3::new(30.0, 0.0, -1.0)));
 }
 
 #[test]
@@ -645,21 +639,32 @@ fn first_person_hides_only_the_local_players_own_name() {
     app.update();
     assert!(shown(&app, me) && shown(&app, other));
 
-    let set_camera = |app: &mut App, distance: f32, scene_override| {
+    let set_camera = |app: &mut App, level: CameraZoomLevel, scene_override| {
         let mut cameras = app.world_mut().query::<&mut PrimaryCamera>();
         let mut camera = cameras.single_mut(app.world_mut()).unwrap();
-        camera.distance = distance;
+        camera.level = level;
         camera.scene_override = scene_override;
         app.update();
     };
-    set_camera(&mut app, 0.0, None);
+    set_camera(&mut app, CameraZoomLevel::FirstPerson, None);
     assert!(!shown(&app, me));
     assert!(shown(&app, other));
+    set_camera(&mut app, CameraZoomLevel::Drone, None);
+    assert!(shown(&app, me));
 
     // a scene's camera wins over the player's own zoom, either way
-    set_camera(&mut app, 0.0, Some(CameraOverride::Distance(1.0)));
+    let forced = |level| Some(CameraOverride::Level(level));
+    set_camera(
+        &mut app,
+        CameraZoomLevel::FirstPerson,
+        forced(CameraZoomLevel::ThirdPerson),
+    );
     assert!(shown(&app, me));
-    set_camera(&mut app, 3.0, Some(CameraOverride::Distance(0.0)));
+    set_camera(
+        &mut app,
+        CameraZoomLevel::ThirdPerson,
+        forced(CameraZoomLevel::FirstPerson),
+    );
     assert!(!shown(&app, me));
     let cinematic = CameraOverride::Cinematic(CinematicSettings {
         origin: Entity::PLACEHOLDER,
@@ -671,7 +676,7 @@ fn first_person_hides_only_the_local_players_own_name() {
         transition: None,
         fov: FOV,
     });
-    set_camera(&mut app, 0.0, Some(cinematic));
+    set_camera(&mut app, CameraZoomLevel::FirstPerson, Some(cinematic));
     assert!(shown(&app, me));
 }
 

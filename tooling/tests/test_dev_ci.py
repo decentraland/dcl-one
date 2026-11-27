@@ -188,6 +188,28 @@ class DevCiTest(unittest.TestCase):
                 self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job in ('rust', 'clippy'))
         self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
 
+    def test_clippy_lints_the_workspace_with_and_without_the_ts_feature_in_one_target_dir(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        job = workflow.split('\n  clippy:\n', 1)[1].split('\n  smoke:\n', 1)[0] + '\n'
+        target = 'CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy\n'
+        command = 'cargo clippy --manifest-path services/catalyst/Cargo.toml --locked --workspace --all-targets '
+        self.assertEqual(job.count(target), 2)
+        self.assertIn(command + '-- -D warnings\n', job)
+        self.assertIn(command + '--features catalyst/ts -- -D warnings\n', job)
+        self.assertLess(job.index(command + '-- -D'), job.index(command + '--features catalyst/ts'))
+
+    def test_clippy_then_fails_on_unused_dependencies_with_the_flake_machete(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        job = workflow.split('\n  clippy:\n', 1)[1].split('\n  smoke:\n', 1)[0] + '\n'
+        build = 'nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete\n'
+        run = '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli\n'
+        self.assertIn(build, job)
+        self.assertIn(run, job)
+        self.assertLess(job.index('--features catalyst/ts -- -D warnings'), job.index(build))
+        self.assertLess(job.index(build), job.index(run))
+        # Machete skips gitignored paths: the job's target dir must be one of them.
+        self.assertIn('/target-*/\n', (dev.ROOT / 'services/catalyst/.gitignore').read_text())
+
     def rust(self, *changed):
         return dev.needs_rust(changed, 'HEAD', self.dev)[0]
 

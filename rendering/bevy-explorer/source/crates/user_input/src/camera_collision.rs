@@ -226,7 +226,7 @@ pub(crate) struct CameraCollisionState {
     smoothed_distance: f32,
     smoothed_time: f32,
     /// None takes the next target at once
-    shoulder_length: Option<f32>,
+    shoulder_cut: Option<f32>,
 }
 
 impl CameraCollisionState {
@@ -236,7 +236,7 @@ impl CameraCollisionState {
         self.previous_displacement = Vec3::ZERO;
         self.smoothed_distance = 0.0;
         self.smoothed_time = 0.0;
-        self.shoulder_length = None;
+        self.shoulder_cut = None;
     }
 
     fn update_distance_smoothing(&mut self, distance: f32, now: f32) {
@@ -343,7 +343,8 @@ pub(crate) fn resolve(
 
 /// The shoulder `offset` from `pivot`, kept clear of obstacles beside it. It must move the pivot
 /// before [`resolve`]: applied after, it shifts the camera sideways at once as a wall comes in
-/// range, most of all in a corner. It eases rather than jumps, and is cut at once only where the
+/// range, most of all in a corner. What an obstacle takes off the offset eases rather than jumps,
+/// so an offset with nothing beside it is returned as given; it is cut at once only where the
 /// camera's ball would enter the obstacle.
 pub(crate) fn shoulder_offset(
     obstacles: &CameraObstacles,
@@ -354,7 +355,7 @@ pub(crate) fn shoulder_offset(
 ) -> Vec3 {
     let full = offset.length();
     if full <= 0.0 {
-        state.shoulder_length = Some(0.0);
+        state.shoulder_cut = Some(0.0);
         return offset;
     }
     let direction = offset / full;
@@ -364,12 +365,12 @@ pub(crate) fn shoulder_offset(
         .map(|(toi, _)| toi);
 
     let target = match hit {
-        Some(toi) if toi <= full => (toi - SHOULDER_DISTANCE_FROM_OBSTACLE).clamp(0.0, full),
-        _ => full,
+        Some(toi) if toi <= full => full - (toi - SHOULDER_DISTANCE_FROM_OBSTACLE).clamp(0.0, full),
+        _ => 0.0,
     };
-    let mut length = match state.shoulder_length {
+    let cut = match state.shoulder_cut {
         Some(current) => {
-            let damp_time = if target < current {
+            let damp_time = if target > current {
                 DAMPING_WHEN_OCCLUDED
             } else {
                 DAMPING
@@ -378,11 +379,12 @@ pub(crate) fn shoulder_offset(
         }
         None => target,
     };
+    let mut length = full - cut;
     if let Some(toi) = hit {
         length = length.min((toi - CAMERA_RADIUS).max(0.0));
     }
     let length = length.clamp(0.0, full);
-    state.shoulder_length = Some(length);
+    state.shoulder_cut = Some(full - length);
     direction * length
 }
 

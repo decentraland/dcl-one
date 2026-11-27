@@ -10,22 +10,25 @@
 //! - **The key:** a `publicationFees` target signs with
 //!   `WERT_PUBLICATION_FEES_PRIVATE_KEY`, and any other with `WERT_PRIVATE_KEY`.
 //!   Both are read from their `_FILE` alone.
-//! - **The checks** run in upstream's order. A request must be signed (a
-//!   scene-signed chain counts as unsigned), and the message's `address` and
-//!   the session's `wallet_address` must both be the signer, else 401. A
-//!   target other than `default` or `publicationFees` is 400 "Invalid target".
+//! - A request must be signed (a scene-signed chain counts as unsigned),
+//!   and both request wallets must match the signer, else 401. An invalid
+//!   target returns 400 "Invalid target".
+//! - The startup allow-list binds the chain, contract address and key target.
+//!   A tuple outside it returns 400 "Invalid contract" before signing or
+//!   requesting a Wert session. `WERT_EXTRA_CONTRACTS` adds approved tuples.
 //! - **Differences from upstream:**
 //!   - A message with a missing, extra or mistyped field is 400 "Invalid
 //!     message". Upstream throws, which is a 500.
 //!   - A session Wert does not create is 502, with nothing of Wert's reply
 //!     passed on. Upstream surfaces it as a 500.
-//! - **Logs:** each signature logs the contract, the network and the target,
-//!   never the caller or the session, so a later allow-list of contracts can
-//!   be built from real use.
+//! - **Logs:** signatures and policy refusals record the normalized network,
+//!   contract and target, with the reason on refusal. Wallets, calldata and
+//!   session fields stay out of the logs.
 //!
 //! With none of the four `WERT_*` settings, the route answers the unavailable
 //! envelope naming them.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,7 +43,10 @@ use serde_json::{Map, Value, json};
 
 use super::signed::optional_signer;
 use super::wire::ApiError;
-use super::{SharedState, Source, check_upstream, unavailable};
+use super::{SharedState, Source, check_upstream, listings, unavailable};
+use crate::credits::batch::collection_store;
+use crate::evm::contracts_addrs::{DclContracts, NameContracts};
+use crate::types::{ChainId, EvmAddress};
 
 /// The route, as `DataWrites` sees it: it writes nothing here.
 pub(super) const PATH: &str = "/v1/wert/sign";
@@ -56,13 +62,112 @@ const VARIABLES: [&str; 4] = [
     "WERT_API_KEY",
 ];
 
-/// The partner keys and API. No derived `Debug`: it would print the keys.
+const NETWORKS: [(ChainId, &str); 4] = [
+    (ChainId::ETHEREUM, "ethereum"),
+    (ChainId::POLYGON, "polygon"),
+    (ChainId::AMOY, "amoy"),
+    (ChainId::SEPOLIA, "sepolia"),
+];
+
+fn network(value: &str) -> Option<(ChainId, &'static str)> {
+    NETWORKS
+        .into_iter()
+        .find(|(_, name)| name.eq_ignore_ascii_case(value))
+}
+
+/// Signing policy built at startup and shared by both route mounts.
+pub struct WertPolicy {
+    contracts: HashSet<(ChainId, EvmAddress, Target)>,
+}
+
+impl WertPolicy {
+    pub fn new(
+        credits_manager: Option<(ChainId, EvmAddress)>,
+        polygon_publication_manager: EvmAddress,
+        extras: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let mut contracts = HashSet::new();
+        for (chain, _) in NETWORKS {
+            for marketplace in listings::offchain_marketplaces(i64::try_from(chain.0)?) {
+                contracts.insert((
+                    chain,
+                    EvmAddress::parse(marketplace.address)?,
+                    Target::Default,
+                ));
+            }
+            if let Some(addresses) = DclContracts::for_chain(chain.0) {
+                contracts.insert((chain, addresses.marketplace_v2.into(), Target::Default));
+                contracts.insert((
+                    chain,
+                    addresses.offchain_marketplace.into(),
+                    Target::Default,
+                ));
+            }
+            if let Some(addresses) = NameContracts::for_chain(chain.0) {
+                contracts.insert((chain, addresses.marketplace.into(), Target::Default));
+            }
+            if let Some(address) = collection_store(chain) {
+                contracts.insert((chain, address, Target::Default));
+            }
+        }
+        if let Some((chain, address)) = credits_manager {
+            anyhow::ensure!(
+                chain.is_polygon(),
+                "CREDITS_MANAGER_CONTRACT requires a Polygon or Amoy COLLECTIONS_CHAIN_ID for Wert"
+            );
+            contracts.insert((chain, address, Target::Default));
+        }
+        contracts.insert((
+            ChainId::POLYGON,
+            polygon_publication_manager,
+            Target::PublicationFees,
+        ));
+
+        if let Some(extras) = extras.map(str::trim).filter(|value| !value.is_empty()) {
+            for (index, entry) in extras.split(',').enumerate() {
+                let mut fields = entry.split(':').map(str::trim);
+                let (Some(chain), Some(address), Some(target), None) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                else {
+                    anyhow::bail!(
+                        "WERT_EXTRA_CONTRACTS entry {} must be network:address:target",
+                        index + 1
+                    );
+                };
+                let Some((chain, _)) = network(chain) else {
+                    anyhow::bail!(
+                        "WERT_EXTRA_CONTRACTS entry {} has an unsupported network",
+                        index + 1
+                    );
+                };
+                let Some(target) = Target::from_name(target) else {
+                    anyhow::bail!(
+                        "WERT_EXTRA_CONTRACTS entry {} has an invalid target",
+                        index + 1
+                    );
+                };
+                let address = EvmAddress::parse(address).map_err(|_| {
+                    anyhow::anyhow!(
+                        "WERT_EXTRA_CONTRACTS entry {} has an invalid EVM address",
+                        index + 1
+                    )
+                })?;
+                contracts.insert((chain, address, target));
+            }
+        }
+
+        Ok(Self { contracts })
+    }
+}
+
+/// The partner keys, API and signing policy. Debug omits the credentials.
 #[derive(Clone)]
 pub struct WertSettings {
     default_key: Arc<SigningKey>,
     publication_fees_key: Arc<SigningKey>,
     api_url: String,
     api_key: String,
+    policy: Arc<WertPolicy>,
 }
 
 impl std::fmt::Debug for WertSettings {
@@ -83,6 +188,7 @@ impl WertSettings {
         api_url: Option<&str>,
         api_key: Option<&str>,
         self_hosts: &[String],
+        policy: impl FnOnce() -> anyhow::Result<WertPolicy>,
     ) -> anyhow::Result<Option<Self>> {
         let values = [private_key, publication_fees_private_key, api_url, api_key]
             .map(|v| v.map(str::trim).filter(|v| !v.is_empty()));
@@ -120,18 +226,8 @@ impl WertSettings {
             publication_fees_key: Arc::new(seed("WERT_PUBLICATION_FEES_PRIVATE_KEY", fees_key)?),
             api_url: api_url.to_string(),
             api_key: api_key.to_string(),
+            policy: Arc::new(policy()?),
         }))
-    }
-
-    /// Obviously fake keys (`0x11…`, `0x22…`) and a test API.
-    #[cfg(test)]
-    pub(crate) fn for_tests(api_url: &str) -> Self {
-        Self {
-            default_key: Arc::new(SigningKey::from_bytes(&[0x11; 32])),
-            publication_fees_key: Arc::new(SigningKey::from_bytes(&[0x22; 32])),
-            api_url: api_url.to_string(),
-            api_key: "wert-api-key-example".to_string(),
-        }
     }
 
     fn key(&self, target: Target) -> &SigningKey {
@@ -154,7 +250,7 @@ fn seed(name: &str, value: &str) -> anyhow::Result<SigningKey> {
 }
 
 /// The key a signature uses, upstream's `Target`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Target {
     Default,
     PublicationFees,
@@ -167,8 +263,16 @@ impl Target {
         match target {
             None | Some(Value::Null) | Some(Value::Bool(false)) => Some(Self::Default),
             Some(Value::Number(n)) if n.as_f64() == Some(0.0) => Some(Self::Default),
-            Some(Value::String(s)) if s.is_empty() || s == "default" => Some(Self::Default),
-            Some(Value::String(s)) if s == "publicationFees" => Some(Self::PublicationFees),
+            Some(Value::String(s)) if s.is_empty() => Some(Self::Default),
+            Some(Value::String(s)) => Self::from_name(s),
+            _ => None,
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "default" => Some(Self::Default),
+            "publicationFees" => Some(Self::PublicationFees),
             _ => None,
         }
     }
@@ -257,17 +361,41 @@ pub async fn sign(State(state): State<SharedState>, headers: HeaderMap, body: By
     let Some(text) = request.message.signed_text() else {
         return ApiError::bad_request("Invalid message").into_response();
     };
+    let network = network(&request.message.network);
+    let contract = EvmAddress::parse(&request.message.sc_address).ok();
+    let (network_name, contract) = match (network, contract) {
+        (Some((chain, name)), Some(address))
+            if wert.policy.contracts.contains(&(chain, address, target)) =>
+        {
+            (name, address)
+        }
+        _ => {
+            let reason = match (network, contract) {
+                (None, _) => "unsupported_network",
+                (_, None) => "invalid_address",
+                _ => "contract_not_allowed",
+            };
+            log_refusal(network.map(|(_, name)| name), contract, target, reason);
+            return ApiError::bad_request("Invalid contract").into_response();
+        }
+    };
     let signature = sign_text(wert.key(target), &text);
     let session_id = match create_session(&state, wert, &request.session).await {
         Ok(session_id) => session_id,
         Err(error) => {
-            tracing::warn!(%error, "Wert did not create a card purchase session");
+            tracing::warn!(
+                sc_address = %contract,
+                network = network_name,
+                wert_target = target.name(),
+                reason = %error,
+                "Wert did not create a card purchase session"
+            );
             return ApiError::http(502, "Wert session could not be created").into_response();
         }
     };
     tracing::info!(
-        sc_address = %request.message.sc_address,
-        network = %request.message.network.to_lowercase(),
+        sc_address = %contract,
+        network = network_name,
         wert_target = target.name(),
         "signed a Wert card purchase"
     );
@@ -276,6 +404,19 @@ pub async fn sign(State(state): State<SharedState>, headers: HeaderMap, body: By
         Json(json!({ "ok": true, "data": { "signature": signature, "sessionId": session_id } })),
     )
         .into_response()
+}
+
+fn log_refusal(network: Option<&str>, contract: Option<EvmAddress>, target: Target, reason: &str) {
+    tracing::warn!(
+        sc_address = contract
+            .map(|address| address.to_string())
+            .as_deref()
+            .unwrap_or("invalid"),
+        network = network.unwrap_or("unknown"),
+        wert_target = target.name(),
+        reason,
+        "refused a Wert card purchase"
+    );
 }
 
 /// `POST {WERT_API_URL}/create-session` with the session as the caller sent

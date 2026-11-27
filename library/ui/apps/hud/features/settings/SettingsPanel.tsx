@@ -1,10 +1,11 @@
 // React Settings — a page inside the shared MainMenuShell (consistent top bar with
 // Backpack/etc). "Settings" + category sub-tabs and a two-column grid of controls
-// (light Select / ruby Toggle / arrow Slider). Data + actions via the bridge relay
+// (light Select / ruby Switch / arrow Slider). Data + actions via the bridge relay
 // of BevyApi.getSettings / setSetting.
 
+import { Slider, Switch, Tooltip } from '@dcl/one-ui'
 import { memo, useEffect, useId, useMemo, useState } from 'react'
-import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
+import { Select, Tabs, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, EngineSession, ProfileState, SettingsState } from '../session/useEngineSession'
@@ -138,8 +139,21 @@ function isBinary(s: Setting): boolean {
   if (s.namedVariants.length === 2) return s.namedVariants.every((v) => /^(off|on)$/i.test(v.name))
   return s.namedVariants.length === 0 && s.maxValue - s.minValue <= 1 && s.stepSize >= 1
 }
+// Any named choice is a select, even a lone one: the engine's Microphone lists only System Default
+// until the browser reveals the inputs.
+function isSelect(s: Setting): boolean {
+  return !isBinary(s) && s.namedVariants.length > 0
+}
 function isSlider(s: Setting): boolean {
-  return !isBinary(s) && s.namedVariants.length < 2
+  return !isBinary(s) && !isSelect(s)
+}
+// The engine's Microphone choices follow the devices plugged in. On open the fields render the held
+// list first, and the re-read can bring new or renamed choices under the same value.
+function sameVariants(a: Setting, b: Setting): boolean {
+  return (
+    a.namedVariants.length === b.namedVariants.length &&
+    a.namedVariants.every((v, i) => v.name === b.namedVariants[i].name && v.description === b.namedVariants[i].description)
+  )
 }
 // Values are f32 widened to f64 on the way over, so 19.95 arrives as 19.950000762939453. Showing
 // them at f32's own precision drops the noise, and the trailing zeros with it. Display only.
@@ -171,9 +185,9 @@ function Control({ s, onSet, describedBy }: { s: Setting; onSet: (name: string, 
   const unset = s.value < 0
   const locked = unset || s.disabled
   if (isBinary(s)) {
-    return <Toggle checked={s.value >= 1} disabled={locked} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} aria-describedby={describedBy} />
+    return <Switch appearance="hud" checked={s.value >= 1} disabled={locked} onCheckedChange={(c) => onSet(s.name, c ? 1 : 0)} label={s.name} labelHidden aria-describedby={describedBy} />
   }
-  if (s.namedVariants.length >= 2) {
+  if (isSelect(s)) {
     return (
       <Select
         variant="light"
@@ -202,7 +216,7 @@ const SettingField = memo(
       <div className={styles.field}>
         <div className={styles.fieldHead}>
           {description ? (
-            <Tooltip label={description} side="bottom" multiline className={styles.hint}>
+            <Tooltip appearance="hud" label={description} side="bottom" multiline className={styles.hint}>
               {label}
             </Tooltip>
           ) : (
@@ -218,7 +232,12 @@ const SettingField = memo(
       </div>
     )
   },
-  (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.s.disabled === next.s.disabled && prev.onSet === next.onSet
+  (prev, next) =>
+    prev.s.name === next.s.name &&
+    prev.s.value === next.s.value &&
+    prev.s.disabled === next.s.disabled &&
+    sameVariants(prev.s, next.s) &&
+    prev.onSet === next.onSet
 )
 
 /** The chat settings kept by the HUD rather than the engine: translation (the language is the
@@ -229,7 +248,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
+          <Tooltip appearance="hud" label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>
@@ -253,7 +272,7 @@ function AutoTranslateField(): React.JSX.Element {
           <span className={styles.label}>Auto-Translate New Conversations</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={prefs.autoDefault} onChange={setAutoTranslateDefault} aria-label="Auto-Translate New Conversations" />
+          <Switch appearance="hud" checked={prefs.autoDefault} onCheckedChange={setAutoTranslateDefault} label="Auto-Translate New Conversations" labelHidden />
         </div>
       </div>
   )
@@ -269,7 +288,7 @@ function AskBeforeLeavingField(): React.JSX.Element {
           <span className={styles.label}>Ask Before Leaving the Page</span>
         </div>
         <div className={styles.control}>
-          <Toggle checked={ask} onChange={setAskBeforeLeaving} aria-label="Ask Before Leaving the Page" />
+          <Switch appearance="hud" checked={ask} onCheckedChange={setAskBeforeLeaving} label="Ask Before Leaving the Page" labelHidden />
         </div>
       </div>
   )

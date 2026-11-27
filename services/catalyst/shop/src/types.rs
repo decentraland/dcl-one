@@ -51,6 +51,31 @@ impl fmt::Display for ChainId {
     }
 }
 
+/// 2^63 as an f64: `i64::MAX as f64` without the cast. `-TWO_POW_63` is `i64::MIN`.
+pub const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+
+/// A chain id that does not fit the integer column it is stored in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("chain id {0} does not fit its column")]
+pub struct ChainIdOverflow(pub u64);
+
+/// `id` as the `bigint` (`i64`) or `integer` (`i32`) column that stores it.
+pub fn chain_id_column<T: TryFrom<u64>>(id: u64) -> Result<T, ChainIdOverflow> {
+    T::try_from(id).map_err(|_| ChainIdOverflow(id))
+}
+
+impl From<ChainIdOverflow> for sqlx::Error {
+    fn from(e: ChainIdOverflow) -> Self {
+        sqlx::Error::Encode(Box::new(e))
+    }
+}
+
+impl From<ChainIdOverflow> for crate::evm::errors::ApiError {
+    fn from(e: ChainIdOverflow) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     #[error("an address is 0x followed by 40 hex digits")]
@@ -526,7 +551,8 @@ impl ManaWei {
         if cents.get() <= 0 || rate.is_zero() {
             return None;
         }
-        let usd_wei = U256::from(cents.get() as u64).checked_mul(U256::from(WEI_PER_MANA))?
+        let usd_wei = U256::from(u64::try_from(cents.get()).ok()?)
+            .checked_mul(U256::from(WEI_PER_MANA))?
             / U256::from(100u64);
         let scale = U256::from(10u64).checked_pow(U256::from(decimals))?;
         let base = usd_wei.checked_mul(scale)? / rate;
@@ -584,8 +610,8 @@ impl ManaWei {
         }
         let numerator = price_wei
             .0
-            .checked_mul(U256::from(remainder.get() as u64))?;
-        let denominator = U256::from(price.get() as u64);
+            .checked_mul(U256::from(u64::try_from(remainder.get()).ok()?))?;
+        let denominator = U256::from(u64::try_from(price.get()).ok()?);
         Some(Self(numerator.div_ceil(denominator)))
     }
 
@@ -1012,8 +1038,28 @@ pub enum SettlementOperation {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chain_id_past_its_column_is_refused() {
+        assert_eq!(chain_id_column::<i32>(137), Ok(137));
+        assert_eq!(
+            chain_id_column::<i32>(1 << 31),
+            Err(ChainIdOverflow(1 << 31))
+        );
+        assert_eq!(
+            chain_id_column::<i64>(u64::MAX),
+            Err(ChainIdOverflow(u64::MAX))
+        );
+    }
 
     #[test]
     fn the_asset_type_codes_are_the_ones_from_code_reads() {

@@ -1,0 +1,39 @@
+/* The rarity tone of an item tile: --item-rarity, read from the element's `data-rarity`. The values are the
+   foundations' Rarities; `base`, a missing value and one that is no rarity take Neutrals/Silver, as the
+   Explorer HUD's Backpack tiles do. WearableCard and EquippedItemCard put this class on their root. It sits
+   outside the cascade layer, as their own rules do. */
+.tone {
+  --item-rarity: var(--dcl-neutrals-silver);
+}
+
+.tone[data-rarity='common'] {
+  --item-rarity: var(--dcl-rarities-common);
+}
+
+.tone[data-rarity='uncommon'] {
+  --item-rarity: var(--dcl-rarities-uncommon);
+}
+
+.tone[data-rarity='rare'] {
+  --item-rarity: var(--dcl-rarities-rare);
+}
+
+.tone[data-rarity='epic'] {
+  --item-rarity: var(--dcl-rarities-epic);
+}
+
+.tone[data-rarity='legendary'] {
+  --item-rarity: var(--dcl-rarities-legendary);
+}
+
+.tone[data-rarity='mythic'] {
+  --item-rarity: var(--dcl-rarities-mythic);
+}
+
+.tone[data-rarity='unique'] {
+  --item-rarity: var(--dcl-rarities-unique);
+}
+
+.tone[data-rarity='exotic'] {
+  --item-rarity: var(--dcl-rarities-exotic);
+}

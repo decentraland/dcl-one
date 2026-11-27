@@ -20,10 +20,10 @@ import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '@shop/detail/lib/body
 import { hostOr } from '@shop-host'
 import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names/name'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
+import { Chip, ChevronDown, ChevronLeft, OptionMenu, Pager, SearchField, showConfirm, showToast, Tabs, type TabItem } from '@hud/design'
 import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
-import type { EngineViewportRegion, PreviewFocus, Wearable } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, PreviewFocus, PreviewStageFraming, Wearable } from '@explorer-core/engine/protocol'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { splitName } from '@explorer-core/lib/identity'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
@@ -46,7 +46,7 @@ import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, w
 import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
 import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
-import { ShopCardSkeleton } from '@dcl/one-ui'
+import { Button, EmptyState, MaskIcon, ScrollThumb, ShopCardSkeleton, Spinner } from '@dcl/one-ui'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
 import { inShell } from '@explorer-core/lib/shell'
@@ -84,9 +84,9 @@ export interface InWorldShopProps {
   preview: (urns: string[] | null) => void
   /** Frames the preview avatar, whose framing the Backpack shares. */
   focus: (focus: PreviewFocus) => void
-  /** Where the page draws its stage image, for the engine to draw the same behind the avatar; null restores
-   *  the Backpack's backdrop. */
-  stage: (rect: Rect | null) => void
+  /** Where the page draws its stage image, for the engine to draw the same behind the avatar, and how the page
+   *  draws the avatar; null restores the Backpack's backdrop. */
+  stage: (rect: Rect | null, framing?: PreviewStageFraming) => void
   /** Plays an emote on the preview avatar (again on every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turns the preview avatar by these degrees (a drag over it). */
@@ -318,6 +318,16 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   useEffect(() => restoreLook, [restoreLook])
   useEffect(() => stopEmote, [stopEmote])
 
+  // Names draws the avatar smaller and lower than the catalogue does, with room over its head for the nametag. A
+  // change of page tells the engine again, the stage staying up (the effect below would take it down and back).
+  const framing: PreviewStageFraming = section === 'names' ? 'names' : 'catalog'
+  const framingRef = useRef(framing)
+  const pushStage = useRef<(() => void) | null>(null)
+  useLayoutEffect(() => {
+    framingRef.current = framing
+    pushStage.current?.()
+  }, [framing])
+
   // The engine draws the stage image behind the avatar where the page draws it, so the avatar's window
   // shows no seam: the backdrop's top-left, the image 70px above it, at the reference canvas's scale.
   useLayoutEffect(() => {
@@ -326,13 +336,15 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     const push = (): void => {
       const r = el.getBoundingClientRect()
       const scale = el.offsetHeight > 0 ? r.height / el.offsetHeight : 1
-      stage({ x: r.left, y: r.top - STAGE.top * scale, width: STAGE.width * scale, height: STAGE.height * scale })
+      stage({ x: r.left, y: r.top - STAGE.top * scale, width: STAGE.width * scale, height: STAGE.height * scale }, framingRef.current)
     }
     push()
+    pushStage.current = push
     const ro = new ResizeObserver(push)
     ro.observe(el)
     const unsubscribe = subscribeHudScale(push)
     return () => {
+      pushStage.current = null
       ro.disconnect()
       unsubscribe()
       stage(null)
@@ -542,7 +554,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           <div className={styles.tools}>
             <>
                 <div className={styles.menuWrap}>
-                  <Button variant="light" className={styles.toolBtn} aria-expanded={menu === 'filters'} onClick={() => setMenu((m) => (m === 'filters' ? null : 'filters'))}>
+                  <Button appearance="hud" variant="light" className={styles.toolBtn} aria-expanded={menu === 'filters'} onClick={() => setMenu((m) => (m === 'filters' ? null : 'filters'))}>
                     <MaskIcon src={filterIcon} size={24} />
                     Filters
                     <ChevronDown size={18} />
@@ -552,7 +564,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                   )}
                 </div>
                 <div className={styles.menuWrap}>
-                  <Button variant="light" className={`${styles.toolBtn} ${styles.sortBtn}`} aria-label={`Sort by: ${sortLabel}`} aria-expanded={menu === 'sort'} onClick={() => setMenu((m) => (m === 'sort' ? null : 'sort'))}>
+                  <Button appearance="hud" variant="light" className={`${styles.toolBtn} ${styles.sortBtn}`} aria-label={`Sort by: ${sortLabel}`} aria-expanded={menu === 'sort'} onClick={() => setMenu((m) => (m === 'sort' ? null : 'sort'))}>
                     Sort by
                     <ChevronDown size={18} />
                   </Button>
@@ -657,7 +669,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           )}
           {grid.isPending && isCatalogue(section) && (
             <div className={styles.avatarLoading} role="status" aria-label="Loading the avatar">
-              <Spinner variant="shop" size={64} />
+              <Spinner variant="thick" size={64} />
             </div>
           )}
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>

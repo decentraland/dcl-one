@@ -1107,7 +1107,10 @@ async fn forward(
     .unwrap();
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per seeded event column"
+)]
 async fn nft_event(
     pool: &PgPool,
     block: i64,

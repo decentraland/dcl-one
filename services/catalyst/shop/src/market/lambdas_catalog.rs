@@ -373,12 +373,12 @@ fn parse_catalog_query(
     } else {
         "emotes"
     };
-    if item_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(item_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't ask for more than {MAX_LIMIT} {items_label}"
         ))));
     }
-    if collection_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(collection_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't filter for more than {MAX_LIMIT} collection ids"
         ))));
@@ -558,8 +558,7 @@ impl UrnSource {
 
 /// Where the URNs come from: the catalogue, read through its gate; the
 /// subgraphs only where the mirrors refused and no network belongs to the
-/// collections index (the legacy path the mirrors had, which never stands
-/// in for the index: a network it owns answers from it, or the envelope).
+/// collections index or is waiting for its first native publication.
 async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
     match catalogue::begin_checked(
         state,
@@ -575,10 +574,7 @@ async fn urn_source(state: &MarketplaceState) -> Result<UrnSource, Response> {
         // index owns, so no subgraph stands in; lamb2's own 500.
         Err(refusal) if refusal.refused.is_none() => Err(lambdas_internal_error()),
         Err(refusal)
-            if refusal.refused.is_some()
-                && !refusal.by_index
-                && refusal.owned.is_empty()
-                && graph::any_collections_reader(&state.index) =>
+            if refusal.may_fall_back_to_graph && graph::any_collections_reader(&state.index) =>
         {
             Ok(UrnSource::Subgraphs)
         }
@@ -759,7 +755,7 @@ fn merge_items(mut items: Vec<SubgraphItem>, ext: &ExtendedFilters, limit: i64) 
         let primary = if desc { primary.reverse() } else { primary };
         primary.then_with(|| a.urn.to_lowercase().cmp(&b.urn.to_lowercase()))
     });
-    items.truncate(limit.max(0) as usize);
+    items.truncate(crate::market::casts::page(limit));
     items.into_iter().map(|i| i.urn).collect()
 }
 
@@ -832,9 +828,9 @@ fn paginate_merged(
 ) -> (Vec<Value>, Option<String>) {
     on_chain.sort_by(|a, b| locale_cmp(&id_key(a), &id_key(b)));
     merged.extend(on_chain);
-    let has_more = merged.len() as i64 > limit;
+    let has_more = crate::market::casts::len_i64(merged.len()) > limit;
     if has_more {
-        merged.truncate(limit as usize);
+        merged.truncate(crate::market::casts::page(limit));
     }
     let next = if has_more {
         merged
@@ -955,7 +951,7 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
             &base,
             filters,
             &query.last_id,
-            (limit + 1) as usize,
+            crate::market::casts::page(limit + 1),
             &state.settings.content_public_url,
         )
     } else {
@@ -991,10 +987,10 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
     // The definitions are read through the pool: the catalogue read's
     // connection goes back first.
     drop(source);
-    let remaining = limit - off_chain.len() as i64;
+    let remaining = limit - crate::market::casts::len_i64(off_chain.len());
     let mut on_chain_defs = Vec::new();
     if want_on_chain && remaining >= 0 {
-        urns.truncate((remaining + 1) as usize);
+        urns.truncate(crate::market::casts::page(remaining + 1));
         let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
         on_chain_defs = match definitions_for(state, pointers, extract_wearable_definition).await {
             Ok(definitions) => definitions,

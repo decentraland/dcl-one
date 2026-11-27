@@ -722,6 +722,120 @@ fn a_long_chain_of_cloned_blob_slices_does_not_abort() {
     });
 }
 
+/// Every upstream op outside `UPSTREAM_OPS` fails when a scene calls it, among them the ones
+/// that abort the process on scene input. Every entry of the list is an op that exists.
+#[test]
+fn upstream_ops_outside_the_list_are_disabled() {
+    use super::super::{scene_ops, UPSTREAM_OPS};
+    run_in_child("upstream_ops_outside_the_list_are_disabled", || {
+        let mut runtime = client_runtime();
+        let names: Vec<String> = serde_json::from_str(
+            &eval(&mut runtime, "JSON.stringify(Object.keys(Deno.core.ops))".to_owned()).unwrap(),
+        )
+        .unwrap();
+        let (own, replaced) = scene_ops(true);
+        for listed in UPSTREAM_OPS {
+            assert!(names.iter().any(|name| name == listed), "{listed} is not an op");
+        }
+        let unlisted: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                !UPSTREAM_OPS.contains(name)
+                    && !replaced.contains_key(name)
+                    && !own.iter().any(|op| op.name == *name)
+            })
+            .collect();
+        for aborting in [
+            "op_panic",
+            "op_leak_tracing_submit",
+            "op_leak_tracing_get",
+            "op_leak_tracing_get_all",
+            "op_current_user_call_site",
+        ] {
+            assert!(unlisted.contains(&aborting), "{aborting} is enabled");
+        }
+        eval(
+            &mut runtime,
+            format!(
+                "globalThis.__errors = {{}};
+                for (const name of {}) {{
+                    __errors[name] = 'no error';
+                    (async () => Deno.core.ops[name]())().catch((e) => {{ __errors[name] = String(e); }});
+                }}",
+                serde_json::to_string(&unlisted).unwrap()
+            ),
+        )
+        .unwrap();
+        run_event_loop(&mut runtime);
+        let errors: std::collections::BTreeMap<String, String> = serde_json::from_str(
+            &eval(&mut runtime, "JSON.stringify(__errors)".to_owned()).unwrap(),
+        )
+        .unwrap();
+        for (name, error) in &errors {
+            assert!(error.contains("disabled"), "{name}: {error}");
+        }
+        assert_eq!(errors.len(), unlisted.len());
+        format!("{} disabled", errors.len())
+    });
+}
+
+/// An op one of the compiled-in scripts or `~system/*` modules names is one a scene runtime
+/// can call.
+#[test]
+fn every_op_a_loaded_script_names_is_enabled() {
+    use super::super::{scene_ops, sources, UPSTREAM_OPS};
+    let mut runtime = client_runtime();
+    let names: Vec<String> = serde_json::from_str(
+        &eval(&mut runtime, "JSON.stringify(Object.keys(Deno.core.ops))".to_owned()).unwrap(),
+    )
+    .unwrap();
+    let (own, replaced) = scene_ops(true);
+    let mut checked = 0;
+    let mut scripts: Vec<(String, String)> = [
+        sources::own(),
+        sources::deno_fetch(),
+        sources::deno_web(),
+        sources::deno_webidl(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|file| {
+        (
+            file.specifier.to_string(),
+            file.load().unwrap().as_str().to_owned(),
+        )
+    })
+    .collect();
+    // the `~system/*` modules `op_require` serves
+    let modules = concat!(env!("CARGO_MANIFEST_DIR"), "/../dcl_js/src/modules");
+    for entry in std::fs::read_dir(modules).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "js") {
+            scripts.push((
+                path.display().to_string(),
+                std::fs::read_to_string(&path).unwrap(),
+            ));
+        }
+    }
+    assert!(scripts.iter().any(|(name, _)| name.ends_with("EngineApi.js")));
+    for (script, code) in &scripts {
+        let named = code
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|word| word.starts_with("op_") && names.iter().any(|name| name == word));
+        for op in named {
+            assert!(
+                UPSTREAM_OPS.contains(&op)
+                    || replaced.contains_key(op)
+                    || own.iter().any(|own| own.name == op),
+                "{script} names {op}, which is disabled"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "{checked}");
+}
+
 /// Upstream writes nine entries into the buffer without checking its length.
 #[test]
 fn urlpattern_match_input_is_disabled() {

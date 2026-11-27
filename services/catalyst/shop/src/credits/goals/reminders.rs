@@ -155,7 +155,7 @@ async fn weekly(
         };
         let Some(last) = rows.last() else { break };
         after = last.get("address");
-        let done = (rows.len() as i64) < PAGE;
+        let done = i64::try_from(rows.len()).is_ok_and(|n| n < PAGE);
         for row in rows {
             let address: String = row.get("address");
             if gate.refusal(&address).is_some() {
@@ -206,7 +206,7 @@ async fn usage(
     let rows = sqlx::query("SELECT g.address, g.season_id, sum(g.amount_wei)::text AS amount, max(g.expires_at) AS expires FROM credits.goal_grants g WHERE g.claimed_at IS NOT NULL AND g.expires_at>$1 AND g.expires_at<=$2 AND NOT EXISTS(SELECT 1 FROM credits.usages u WHERE u.salt=g.salt AND u.chain_id=g.chain_id AND u.contract=g.contract AND u.credit_id=g.credit_hash AND u.sender=g.address) GROUP BY g.address, g.season_id ORDER BY g.address, g.season_id")
         .bind(now).bind(now + window).fetch_all(&state.credits.pool).await?;
     let mut sent = 0;
-    for chunk in rows.chunks(PAGE as usize) {
+    for chunk in rows.chunks(usize::try_from(PAGE).unwrap_or(1)) {
         if cancel.is_cancelled() {
             break;
         }

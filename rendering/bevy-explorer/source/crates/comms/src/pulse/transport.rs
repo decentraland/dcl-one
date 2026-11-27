@@ -9,7 +9,8 @@
 //! is the native ENet thread or the wasm WebTransport task.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -39,6 +40,9 @@ pub enum FrameKind {
     Emote,
     /// Everything else: handshakes, resync, profile announcements, scene-listener updates.
     Control,
+    /// Never sent: a driver holding a teleport back drops it, as the pacer drops its waiting one,
+    /// because the realm it names was left.
+    WithdrawTeleport,
 }
 
 /// One outbound unit of work: an already-encoded `ClientMessage` plus how to deliver it.
@@ -180,11 +184,42 @@ pub struct PulseTransportConfig {
     pub cert_hash: Option<Vec<u8>>,
 }
 
+/// What the native driver's uplink gate holds back, as of its last pass, for the debug panel and
+/// the Pulse state reply.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UplinkSnapshot {
+    /// Reliable traffic has gone unacknowledged long enough that inputs are held.
+    pub stalled: bool,
+    /// Reliable messages unacknowledged; teleports and emotes wait at 8.
+    pub unacknowledged_reliable: usize,
+    pub held_teleport: bool,
+    pub held_emote: bool,
+    /// The latest input waits for the uplink (only one ever waits). An input waiting only for its
+    /// spacing is not held.
+    pub held_input: bool,
+    /// Pings sent to probe the uplink.
+    pub probes: u64,
+    /// ENet's smoothed round trip.
+    pub round_trip: Duration,
+    /// The least time between two inputs; zero below the round trip that paces them.
+    pub input_spacing: Duration,
+    /// Times an input was held since the connection came up, the one going on included.
+    pub input_holds: u64,
+    /// Their total length.
+    pub input_held_for: Duration,
+    /// The longest of them.
+    pub longest_input_hold: Duration,
+}
+
+/// The driver's latest [`UplinkSnapshot`]; `None` from a driver without a gate (WebTransport).
+pub type UplinkReport = Arc<Mutex<Option<UplinkSnapshot>>>;
+
 /// Protocol-layer end of the boundary (held by the Bevy plugin). `Send + Sync`, so it lives in a
 /// resource.
 pub struct PulseLink {
     outbound: mpsc::Sender<PulseFrame>,
     pub(super) traffic: crate::traffic::PayloadTraffic,
+    pub(super) uplink: UplinkReport,
     pub inbound: mpsc::Receiver<Vec<u8>>,
     pub status: mpsc::Receiver<PulseStatus>,
 }
@@ -204,6 +239,23 @@ impl PulseLink {
         self.traffic.record_received(bytes.len());
         Some(bytes)
     }
+
+    /// Tell the driver to drop a teleport it holds back. In band, so a teleport sent after this is
+    /// never the one dropped.
+    pub(crate) fn withdraw_teleport(&mut self) {
+        // A full queue drops the signal, and a held teleport then goes once the uplink is
+        // confirmed: at worst a brief misplacement in the realm left, which is accepted. The queue
+        // is full only while the driver is not draining it.
+        let _ = self.outbound.try_send(PulseFrame {
+            bytes: Vec::new(),
+            reliability: PulseReliability::Reliable,
+            kind: FrameKind::WithdrawTeleport,
+        });
+    }
+
+    pub(crate) fn uplink(&self) -> Option<UplinkSnapshot> {
+        self.uplink.lock().ok().and_then(|report| *report)
+    }
 }
 
 /// Driver end of the boundary (moved into the native thread / wasm task).
@@ -211,6 +263,7 @@ pub struct PulseDriverChannels {
     pub outbound: mpsc::Receiver<PulseFrame>,
     pub inbound: mpsc::Sender<Vec<u8>>,
     pub status: mpsc::Sender<PulseStatus>,
+    pub uplink: UplinkReport,
 }
 
 /// Build a matched [`PulseLink`] / [`PulseDriverChannels`] pair.
@@ -218,11 +271,13 @@ pub fn pulse_channels(capacity: usize) -> (PulseLink, PulseDriverChannels) {
     let (outbound_tx, outbound_rx) = mpsc::channel(capacity);
     let (inbound_tx, inbound_rx) = mpsc::channel(capacity);
     let (status_tx, status_rx) = mpsc::channel(16);
+    let uplink = UplinkReport::default();
 
     (
         PulseLink {
             outbound: outbound_tx,
             traffic: Default::default(),
+            uplink: uplink.clone(),
             inbound: inbound_rx,
             status: status_rx,
         },
@@ -230,6 +285,7 @@ pub fn pulse_channels(capacity: usize) -> (PulseLink, PulseDriverChannels) {
             outbound: outbound_rx,
             inbound: inbound_tx,
             status: status_tx,
+            uplink,
         },
     )
 }

@@ -672,5 +672,78 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertLess(max(installs), steps.index(save))
 
 
+class WindowsMetricsWorkflowTest(unittest.TestCase):
+    FLOW = WORKFLOW.with_name('metrics-windows.yml')
+
+    def test_runs_when_the_crate_or_the_workspace_build_inputs_change(self):
+        inputs = ['library/dcl-metrics/**', 'services/catalyst/Cargo.lock', 'services/catalyst/Cargo.toml',
+                  'services/catalyst/clippy.toml', 'services/catalyst/rust-toolchain.toml',
+                  '.github/workflows/metrics-windows.yml']
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
+        for event in ('push', 'pull_request'):
+            self.assertEqual(local['workflow_paths']('metrics-windows.yml', event), inputs, event)
+
+    def test_lints_the_crate_on_windows_with_the_workspace_toolchain_read_only(self):
+        text = self.FLOW.read_text()
+        channel = re.search(r'(?m)^channel = "([^"]+)"',
+                            (WORKFLOW.parents[2] / 'services/catalyst/rust-toolchain.toml').read_text())[1]
+        self.assertIn(f'          toolchain: {channel}\n', text)
+        self.assertIn(f'cargo +{channel} clippy --manifest-path services/catalyst/Cargo.toml --locked '
+                      '-p dcl-metrics --lib -- -D warnings', text)
+        self.assertIn('    runs-on: windows-', text)
+        self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
+        self.assertNotRegex(text, r':\s*write\b|secrets\.')
+        for action in re.findall(r'uses: (\S+)', text):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
+
+
+class RustDependencyWorkflowTest(unittest.TestCase):
+    DEPS = WORKFLOW.with_name('rust-deps.yml')
+    DENY = WORKFLOW.parents[2] / 'services/catalyst/deny.toml'
+
+    def test_runs_on_dependency_changes_and_daily(self):
+        text = self.DEPS.read_text()
+        self.assertRegex(text, r"(?m)^  schedule:\n    - cron: '[\d ]+\* \* \*'\n")
+        inputs = ['**/Cargo.lock', '**/Cargo.toml', 'services/catalyst/deny.toml',
+                  'services/catalyst/rust-toolchain.toml', 'flake.*', '.github/workflows/rust-deps.yml']
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
+        for event in ('push', 'pull_request'):
+            self.assertEqual(local['workflow_paths']('rust-deps.yml', event), inputs, event)
+        self.assertIn('  push:\n    branches: [main]\n', text)
+
+    def test_checks_both_workspaces_with_the_shared_policy_read_only(self):
+        text = self.DEPS.read_text()
+        self.assertIn('\npermissions:\n  contents: read\nconcurrency:', text)
+        self.assertNotRegex(text, r':\s*write\b|secrets\.')
+        for action in re.findall(r'uses: (\S+)', text):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
+        self.assertIn('checks: [advisories, bans licenses sources]', text)
+        for manifest in ('services/catalyst/Cargo.toml', 'services/catalyst/cast-bot/Cargo.toml'):
+            self.assertIn(f'cargo deny --manifest-path {manifest} \\\n'
+                          '            --workspace --config services/catalyst/deny.toml --locked check $CHECKS', text)
+
+    def test_only_pull_request_advisories_are_non_blocking(self):
+        expression = re.search(r'(?m)^    continue-on-error: \$\{\{ (.+) \}\}$', self.DEPS.read_text()).group(1)
+        expression = expression.replace('&&', 'and')
+        for event, checks, expected in (('pull_request', 'advisories', True),
+                                        ('pull_request', 'bans licenses sources', False),
+                                        ('push', 'advisories', False), ('schedule', 'advisories', False)):
+            with self.subTest(event=event, checks=checks):
+                self.assertEqual(eval(expression, {'__builtins__': {}}, {
+                    'github': SimpleNamespace(event_name=event), 'matrix': SimpleNamespace(checks=checks),
+                }), expected)
+
+    def test_policy_denies_unknown_sources_and_explains_every_ignored_advisory(self):
+        import tomllib
+        policy = tomllib.loads(self.DENY.read_text())
+        self.assertEqual(policy['advisories']['yanked'], 'deny')
+        for entry in policy['advisories']['ignore']:
+            self.assertRegex(entry['id'], r'^RUSTSEC-\d{4}-\d{4}$')
+            self.assertTrue(entry['reason'].strip(), entry['id'])
+        self.assertEqual(policy['bans']['multiple-versions'], 'warn')
+        self.assertEqual((policy['sources']['unknown-registry'], policy['sources']['unknown-git']), ('deny', 'deny'))
+        self.assertEqual(policy['sources']['allow-git'], ['https://github.com/decentraland/dcl-one'])
+
+
 if __name__ == '__main__':
     unittest.main()

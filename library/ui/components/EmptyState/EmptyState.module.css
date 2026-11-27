@@ -1,0 +1,177 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: the Explorer HUD's empty and error state. A caller sets `--es-pad`, `--es-screen-h` or
+   `--es-screen-bg` on an ancestor to change its padding, or the height and fill of the `screen` variant. Its
+   translucent whites, its hover ruby and its 10px and 14px corners have no token. */
+@layer dcl.components {
+  .root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 12px;
+    padding: var(--es-pad, 70px 20px);
+  }
+
+  .card {
+    gap: 14px;
+    padding: var(--es-pad, 56px 20px);
+    border: 1px solid rgba(255, 255, 255, 0.08); /* = HUD --line */
+    border-radius: 14px; /* = HUD --r-card */
+    background: rgba(255, 255, 255, 0.04); /* = HUD --fill-1 */
+  }
+
+  .inline {
+    padding: var(--es-pad, 28px 16px);
+    gap: 8px;
+  }
+
+  .screen {
+    min-height: 100%;
+    height: var(--es-screen-h, 100vh);
+    padding: var(--es-pad, 40px 20px);
+    background: var(--es-screen-bg, transparent);
+    overflow: hidden;
+  }
+  .screen .icon {
+    width: 120px;
+    height: 120px;
+    opacity: 0.8;
+    margin-bottom: 24px;
+  }
+  .screen .icon svg {
+    width: 100%;
+    height: 100%;
+  }
+  .screen .title {
+    font-size: 24px;
+    opacity: 0.8;
+  }
+  .screen .sub {
+    max-width: 480px;
+    line-height: 24px;
+    opacity: 0.8;
+  }
+
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+    margin-bottom: 4px;
+  }
+  .iconWash {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.06); /* = HUD --fill-2 */
+    margin-bottom: 8px;
+  }
+
+  .title {
+    margin: 0;
+    color: var(--dcl-neutrals-snow);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .inline .title {
+    font-size: 15px;
+  }
+  .error .title {
+    font-size: 22px;
+    font-weight: 700;
+  }
+
+  .sub {
+    margin: 0;
+    max-width: 340px;
+    color: var(--dcl-transparencies-white-60);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .sub a {
+    color: var(--dcl-brand-ruby);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .sub a:hover {
+    text-decoration: underline;
+  }
+
+  .shop .icon {
+    color: var(--dcl-text-secondary);
+  }
+  .shop .title {
+    color: var(--dcl-text-primary);
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+  .shop:not(.inline, .screen, .error) .title {
+    font-size: 17px;
+  }
+  .shop .sub {
+    color: var(--dcl-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    opacity: 1;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: var(--es-actions-gap, 4px);
+  }
+
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 40px;
+    padding: 0 22px;
+    border: 0;
+    border-radius: 10px; /* = HUD --r-control */
+    background: var(--dcl-brand-ruby);
+    color: var(--dcl-neutrals-white);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .cta:hover {
+    background: #ff4d70; /* = HUD --brand-hover */
+  }
+
+  .ctaOutline {
+    height: auto;
+    padding: 9px 20px;
+    background: transparent;
+    border: 1px solid var(--dcl-brand-ruby);
+    border-radius: var(--dcl-radius-full);
+    color: var(--dcl-brand-ruby);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .ctaOutline:hover {
+    background: color-mix(in srgb, var(--dcl-brand-ruby) 12%, transparent);
+  }
+
+  .ctaGhost {
+    height: auto;
+    padding: 9px 16px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08); /* = HUD --line */
+    border-radius: 10px; /* = HUD --r-control */
+    color: var(--dcl-neutrals-snow);
+  }
+  .ctaGhost:hover {
+    background: rgba(255, 255, 255, 0.06); /* = HUD --fill-2 */
+  }
+}

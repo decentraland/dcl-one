@@ -77,9 +77,9 @@ pub fn parse_verification(v: &Value) -> Result<ManaPaymentVerification, ApiError
                 to: field("to")?,
                 value_wei: field("valueWei")?,
                 block: TransferBlock {
-                    number: number("blockNumber")?.max(0) as u64,
+                    number: u64::try_from(number("blockNumber")?).unwrap_or(0),
                     timestamp: number("blockTimestamp")?,
-                    confirmations: number("confirmations")?.max(0) as u64,
+                    confirmations: u64::try_from(number("confirmations")?).unwrap_or(0),
                 },
             })
         }

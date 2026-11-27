@@ -17,6 +17,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import textwrap
@@ -1306,6 +1307,25 @@ def stale_graph(config):
     return set(project(config)['processes']) - running
 
 
+# LiveKit Ingress binds `<TMPDIR>/<resource id>/service_ipc.sock`; macOS caps a socket path at 103 bytes.
+INGRESS_SOCKET_SUFFIX = len('/RT_000000000000/service_ipc.sock')
+SOCKET_PATH_MAX = 103
+
+
+def supervisor_temporary():
+    """The stack's TMPDIR: `.cache/dev/tmp`, or a private folder under /tmp when a deep checkout would make
+    the ingress's socket path too long."""
+    temporary = STATE / 'tmp'
+    if len(os.fsencode(temporary)) + INGRESS_SOCKET_SUFFIX > SOCKET_PATH_MAX:
+        digest = hashlib.sha256(os.fsencode(STATE.resolve())).hexdigest()[:12]
+        temporary = Path('/tmp') / f'foundation-dev-{digest}'
+    temporary.mkdir(exist_ok=True, mode=0o700)
+    found = temporary.lstat()
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid() or found.st_mode & 0o077:
+        raise RuntimeError(f'{temporary} must be a folder only you can use; remove it and run foundation-dev up again.')
+    return temporary
+
+
 def prepare_supervisor(postgres_only=False):
     """Write the process graph; returns the supervisor's `up` arguments and environment, or None if it runs."""
     config = settings(create=True)
@@ -1324,8 +1344,7 @@ def prepare_supervisor(postgres_only=False):
     if not ports_free(config['port'], pulse_ports(config)[:2] if public(config) else ()) \
             or not ingress_ports_free(config['ingress_port'], router=bool(message_router_bin(config))):
         raise RuntimeError('Configured ports are occupied. Stop the conflicting service or edit .cache/dev/settings.json.')
-    temporary = STATE / 'tmp'
-    temporary.mkdir(exist_ok=True, mode=0o700)
+    temporary = supervisor_temporary()
     save_json(STATE / 'process-compose.json', project(config, postgres_only))
     return (['up', '--config', str(STATE / 'process-compose.json'), '--disable-dotenv', '--ordered-shutdown', '--tui=false'],
             {**os.environ, 'TMPDIR': str(temporary), 'TMP': str(temporary), 'TEMP': str(temporary)})

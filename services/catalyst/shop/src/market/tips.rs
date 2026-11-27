@@ -493,7 +493,7 @@ async fn evict(
         NET.chain_id()
     )))
     .bind(sender)
-    .bind(min_age_secs as f64)
+    .bind(super::casts::secs_f64(min_age_secs))
     .bind(limit)
     .execute(conn)
     .await?
@@ -510,11 +510,13 @@ async fn retry_after(conn: &mut PgConnection, sender: &str, own: bool) -> sqlx::
         unmatched()
     )))
     .bind(own.then_some(sender))
-    .bind(if own { 0.0 } else { EVICTABLE_AFTER_SECS as f64 })
+    .bind(if own { 0.0 } else { super::casts::secs_f64(EVICTABLE_AFTER_SECS) })
     .fetch_one(conn)
     .await?;
     Ok(wait
-        .map_or(POLL_SECS as i64, |w| w.ceil() as i64)
+        .map_or(i64::try_from(POLL_SECS).unwrap_or(i64::MAX), |w| {
+            super::casts::saturating_i64(w.ceil())
+        })
         .clamp(1, EVICTABLE_AFTER_SECS))
 }
 
@@ -714,7 +716,7 @@ async fn expire(pool: &PgPool) -> anyhow::Result<u64> {
     Ok(sqlx::query(
         "DELETE FROM shop.tip_claim WHERE created_at < timezone('UTC', now()) - make_interval(secs => $1)",
     )
-    .bind(CLAIM_TTL_SECS as f64)
+    .bind(super::casts::secs_f64(CLAIM_TTL_SECS))
     .execute(pool)
     .await?
     .rows_affected())
@@ -774,6 +776,14 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
 
     #[test]
@@ -802,7 +812,10 @@ mod tests {
         chrono::Utc::now().timestamp()
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per seeded transfer column"
+    )]
     async fn transfer(
         pool: &PgPool,
         block: i64,

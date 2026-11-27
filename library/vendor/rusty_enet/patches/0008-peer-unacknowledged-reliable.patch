@@ -1,0 +1,61 @@
+diff --git a/src/peer.rs b/src/peer.rs
+index 2e48e3a99..09a54e3af 100644
+--- a/src/peer.rs
++++ b/src/peer.rs
+@@ -302,6 +302,56 @@ impl<S: Socket> Peer<S> {
+         Duration::from_millis(u64::from(unsafe { (*self.0).round_trip_time_variance }))
+     }
+ 
++    /// Whether a reliable command is unacknowledged: sent and awaiting its acknowledgement, or a
++    /// reliable packet queued and not yet sent. A ping counts once [`Host::service`] or
++    /// [`Host::flush`] has sent it; it is queued apart until then.
++    ///
++    /// [`Host::service`]: crate::Host::service
++    /// [`Host::flush`]: crate::Host::flush
++    #[must_use]
++    pub fn has_unacknowledged_reliable(&self) -> bool {
++        unsafe {
++            let peer = self.0;
++            (*peer).sent_reliable_commands.sentinel.next
++                != core::ptr::addr_of_mut!((*peer).sent_reliable_commands.sentinel)
++                || (*peer).outgoing_send_reliable_commands.sentinel.next
++                    != core::ptr::addr_of_mut!((*peer).outgoing_send_reliable_commands.sentinel)
++        }
++    }
++
++    /// How many reliable packet commands (one per fragment; pings excluded) are unacknowledged:
++    /// sent and awaiting their acknowledgement, or queued and not yet sent.
++    #[must_use]
++    pub fn unacknowledged_reliable_packets(&self) -> usize {
++        unsafe {
++            let peer = self.0;
++            let mut count = 0;
++            for list in [
++                core::ptr::addr_of_mut!((*peer).sent_reliable_commands),
++                core::ptr::addr_of_mut!((*peer).outgoing_send_reliable_commands),
++            ] {
++                let sentinel = core::ptr::addr_of_mut!((*list).sentinel);
++                let mut node = (*sentinel).next;
++                while node != sentinel {
++                    let command: *mut crate::ENetOutgoingCommand = node.cast();
++                    if !(*command).packet.is_null() {
++                        count += 1;
++                    }
++                    node = (*node).next;
++                }
++            }
++            count
++        }
++    }
++
++    /// The host's service time, in milliseconds, when this peer last acknowledged a reliable
++    /// command; 0 before the first. Only a change is meaningful: it wraps, and it is on the host's
++    /// clock.
++    #[must_use]
++    pub fn last_acknowledgement(&self) -> u32 {
++        unsafe { (*self.0).last_receive_time }
++    }
++
+     /// Address of the remote peer, or [`None`] if this peer has never been connected.
+     ///
+     /// If the peer has disconnected, the previously connected peer's address will be returned.

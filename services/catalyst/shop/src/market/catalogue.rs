@@ -28,7 +28,9 @@
 //! serves, and a complete pass of each mirror the route reads for every
 //! network it may return rows of and every configured network the index does
 //! not own, the items one within its money budget for a priced read
-//! ([`mirrors::price_verdict`]).
+//! ([`mirrors::price_verdict`]). A configured native network awaiting its
+//! first publication requires those mirror passes on the served chain,
+//! even without a configured subgraph or any catalogue rows.
 //!
 //! [`CatalogueRead::key`] names what was read (source, network and copy), so
 //! a memo filed under one read never answers for another: a mirror pass, a
@@ -47,6 +49,24 @@ pub use crate::chain_index::catalogue::{
     ITEM_WAIT_COLUMNS, ItemWait, NetworkState, Publication, Purpose, STATE_COLUMNS, STATE_JOINS,
     Waited, index_verdict, read_snapshot,
 };
+
+/// Whether collection row `c` belongs to the served network and chain.
+pub(super) fn collection_membership_sql(net: ChainNet, chain: i64) -> String {
+    membership_sql("c", net, chain)
+}
+
+/// The served chain and any testnet row proof for a catalogue alias.
+pub(super) fn membership_sql(alias: &str, net: ChainNet, chain: i64) -> String {
+    let proof = if chain == net.chain_id() {
+        String::new()
+    } else {
+        format!(" AND {alias}.testnet_verified")
+    };
+    format!(
+        "({alias}.network = '{}' AND {alias}.chain_id = {chain}{proof})",
+        net.db_name()
+    )
+}
 
 /// Whether the read's transaction may write (a campaign whose approval
 /// check and tag write share one snapshot).
@@ -97,6 +117,24 @@ impl CatalogueRead {
     /// Whether the index owns `network` in this read's snapshot.
     pub fn owns(&self, network: Network) -> bool {
         self.owned.iter().any(|(n, _)| *n == network)
+    }
+
+    /// Whether this read admitted item metadata on this network.
+    pub(super) fn covers_items(&self, net: ChainNet) -> bool {
+        self.owned.iter().any(|(n, _)| n.db_name() == net.db_name())
+            || self.mirror.as_ref().is_some_and(|copy| {
+                copy.passes.iter().any(|(mirror, network, _)| {
+                    *mirror == Mirror::Items && network == net.db_name()
+                })
+            })
+    }
+
+    /// Include the collection copy the order leg uses in the answer's stamp.
+    pub(super) fn note_collection_copy(&mut self, net: ChainNet, at: NaiveDateTime) {
+        self.mirror
+            .get_or_insert_with(MirrorCopy::default)
+            .passes
+            .push((Mirror::Collections, net.db_name().to_string(), at));
     }
 
     /// The identity of what was read, for a memo key: every mirror pass on
@@ -157,7 +195,7 @@ impl CatalogueRead {
     pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
         super::nft_reads::set_read_timeout(&mut self.tx)
             .await
-            .map_err(super::nft_reads::read_error)?;
+            .map_err(super::readers::index_read_error)?;
         super::trades::ready_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
@@ -200,6 +238,7 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+            .map_err(super::trades::CheckError::refusal)
     }
 }
 
@@ -211,6 +250,11 @@ pub struct Stamp {
 }
 
 impl Stamp {
+    /// Date a fold that supplied fields on this read.
+    pub(super) fn note_fold(&mut self, folded_at: NaiveDateTime) {
+        self.index.push(folded_at);
+    }
+
     /// Records the copies for the answer's `as_of` and staleness.
     pub fn note(&self, state: &MarketplaceState) {
         for (m, at) in &self.mirror {
@@ -228,10 +272,9 @@ pub struct Refusal {
     /// The source that cannot answer and why; `None` when the snapshot
     /// could not be read (an internal error).
     pub refused: Option<(Source, String)>,
-    /// The index refused: a network it owns cannot answer.
-    pub by_index: bool,
-    /// The networks the index owned in the refusing snapshot.
-    pub owned: Vec<Network>,
+    /// A graph read may replace this snapshot only when no catalogue in
+    /// scope belongs to, or is preparing to switch to, the index.
+    pub may_fall_back_to_graph: bool,
 }
 
 impl Refusal {
@@ -387,6 +430,57 @@ fn mirror_verdict(
     Ok(copy)
 }
 
+/// Whether this process expects to publish the requested network natively.
+fn expects_projection(state: &MarketplaceState, net: ChainNet) -> bool {
+    let indexes = &state.settings.market.indexes;
+    indexes.collections_enabled
+        && indexes.collections_owned.contains(&net)
+        && indexes.serves_mainnet(net)
+        && state.settings.catalogue_chain(net) == Some(net.chain_id())
+}
+
+fn require_mirror_during_takeover(
+    state: &MarketplaceState,
+    network: Network,
+    snapshot: &NetworkState,
+    needs: &[Mirror],
+    purpose: Purpose,
+    now: DateTime<Utc>,
+) -> Result<MirrorCopy, String> {
+    let chain = ChainNet::from(network).chain_id();
+    let absent = needs.iter().find(|mirror| {
+        let (_, pass, pass_chain) = pass_row(snapshot, **mirror);
+        pass.is_none() || pass_chain != Some(chain)
+    });
+    if let Some(mirror) = absent {
+        return Err(format!(
+            "the collections index has not published {} yet and the {} mirror has no complete pass on chain {chain}",
+            network.db_name(),
+            mirror.name(),
+        ));
+    }
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[snapshot],
+            returnable: &[network],
+            served: &[],
+            // A prior stored pass can serve during takeover after the
+            // posture stops configuring the mirror's URL.
+            configured: true,
+            owned: &[],
+            asked: Some(network),
+        },
+        needs,
+        purpose,
+        now,
+    )
+    .map_err(|(_, reason)| format!(
+        "the collections index has not published {} yet and its mirror cannot serve this read: {reason}",
+        network.db_name(),
+    ))
+}
+
 /// The copy a network's catalogue rows come from: the index's projection,
 /// by its generation (every projection raises it, a same-height repair and a
 /// hand-back too, so it is never reused), or the mirrors' passes.
@@ -446,6 +540,66 @@ async fn read_states(conn: &mut PgConnection) -> Result<Vec<NetworkState>, sqlx:
     rows.iter().map(NetworkState::from_row).collect()
 }
 
+/// Require the collection membership of one network in the route's existing
+/// snapshot. The native catalogue must hold its published fold. The mirror
+/// must have published a complete pass even when its current copy is empty.
+pub(super) async fn require_collections_on(
+    tx: &mut Transaction<'static, Postgres>,
+    state: &MarketplaceState,
+    net: ChainNet,
+    now: DateTime<Utc>,
+) -> Result<Option<NaiveDateTime>, super::owned_items::ReadError> {
+    let states = read_states(tx).await?;
+    let catalogue = states
+        .iter()
+        .find(|s| s.network == net.db_name())
+        .expect("every catalogue network has a state");
+    if catalogue.owned {
+        return index_verdict(
+            catalogue,
+            state.settings.catalogue_chain(net),
+            Purpose::Describe,
+            now,
+        )
+        .map(|_| None)
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let network = match net {
+        ChainNet::Ethereum => Network::Ethereum,
+        ChainNet::Matic => Network::Matic,
+    };
+    if expects_projection(state, net) {
+        return require_mirror_during_takeover(
+            state,
+            network,
+            catalogue,
+            &[Mirror::Collections],
+            Purpose::Describe,
+            now,
+        )
+        .map(|copy| copy.oldest(Some(Mirror::Collections)))
+        .map_err(|why| super::owned_items::ReadError::NotReady(Source::CollectionsIndex, why));
+    }
+    let configured = state.settings.collection_networks().contains(&network);
+    let served = if configured { &[network][..] } else { &[] };
+    mirror_verdict(
+        state,
+        &MirrorScope {
+            unowned: &[catalogue],
+            returnable: &[network],
+            served,
+            configured,
+            owned: &[],
+            asked: Some(network),
+        },
+        &[Mirror::Collections],
+        Purpose::Describe,
+        now,
+    )
+    .map(|copy| copy.oldest(Some(Mirror::Collections)))
+    .map_err(|(source, why)| super::owned_items::ReadError::NotReady(source, why))
+}
+
 /// [`begin_checked`], answering a refusal with its envelope.
 pub async fn begin(
     state: &MarketplaceState,
@@ -494,8 +648,7 @@ async fn open(
         tracing::error!(error = %e, "catalogue snapshot read failed");
         Refusal {
             refused: None,
-            by_index: false,
-            owned: Vec::new(),
+            may_fall_back_to_graph: false,
         }
     };
     let mut tx = state.pool.begin().await.map_err(failed)?;
@@ -514,10 +667,18 @@ async fn open(
         .filter(|s| s.owned)
         .filter_map(|s| Network::parse_db(&s.network))
         .collect();
-    let refused = |source: Source, message: String, by_index: bool| Refusal {
+    let preparing: Vec<Network> = states
+        .iter()
+        .filter(|s| !s.owned)
+        .filter_map(|s| Network::parse_db(&s.network))
+        .filter(|&network| {
+            scope.is_none_or(|scope| network == scope) && expects_projection(state, network.into())
+        })
+        .collect();
+    let may_fall_back_to_graph = owned_networks.is_empty() && preparing.is_empty();
+    let refused = |source: Source, message: String| Refusal {
         refused: Some((source, message)),
-        by_index,
-        owned: owned_networks.clone(),
+        may_fall_back_to_graph,
     };
     // The chain this node serves for each network (a testnet reader serves
     // Sepolia and Amoy), as the mirrors' rule binds their passes.
@@ -535,7 +696,7 @@ async fn open(
             .find(|s| s.network == network.db_name())
             .expect("every network is read");
         let publication = index_verdict(s, pair.map(|p| p.chain_id(net)), purpose, now)
-            .map_err(|why| refused(Source::CollectionsIndex, why, true))?;
+            .map_err(|why| refused(Source::CollectionsIndex, why))?;
         owned.push((*network, publication));
     }
     // Every network the index does not own that the read may return rows
@@ -549,11 +710,21 @@ async fn open(
         None
     } else {
         let all_unowned: Vec<&NetworkState> = states.iter().filter(|s| !s.owned).collect();
+        for &snapshot in &unowned {
+            let network =
+                Network::parse_db(&snapshot.network).expect("every catalogue network is known");
+            if preparing.contains(&network) {
+                require_mirror_during_takeover(state, network, snapshot, needs, purpose, now)
+                    .map_err(|why| refused(Source::CollectionsIndex, why))?;
+            }
+        }
         // Polygon first, as a missing subgraph is named.
         let mut returnable: Vec<Network> = unowned
             .iter()
-            .filter(|s| s.has_rows)
-            .filter_map(|s| Network::parse_db(&s.network))
+            .filter_map(|s| {
+                let network = Network::parse_db(&s.network)?;
+                (s.has_rows || preparing.contains(&network)).then_some(network)
+            })
             .collect();
         returnable.sort_by_key(|n| *n != Network::Matic);
         let served: Vec<Network> = configured
@@ -568,7 +739,7 @@ async fn open(
                     unowned: &all_unowned,
                     returnable: &returnable,
                     served: &served,
-                    configured: !configured.is_empty(),
+                    configured: !configured.is_empty() || !preparing.is_empty(),
                     owned: &owned_networks,
                     asked: scope,
                 },
@@ -576,7 +747,7 @@ async fn open(
                 purpose,
                 now,
             )
-            .map_err(|(source, why)| refused(source, why, false))?,
+            .map_err(|(source, why)| refused(source, why))?,
         )
     };
     Ok(CatalogueRead {

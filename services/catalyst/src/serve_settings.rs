@@ -81,6 +81,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         checkout_cancel_url_builder: non_empty(&config.shop.credits_checkout_cancel_url_builder),
         public_url: config.node.public_url.clone(),
         daily_studio_deposit_limit_cents: config.shop.credits_daily_studio_deposit_limit_cents,
+        studio_grant_max_cents: config.shop.credits_studio_grant_max_cents,
         usage_index_enabled: config.shop.credits_usage_index_enabled,
         usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
         usage_chain_id: config.economy.collections_chain_id as i64,
