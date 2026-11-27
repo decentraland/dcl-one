@@ -305,6 +305,43 @@ export function Translate({ size = 18, className }: GlyphProps): React.JSX.Eleme
   )
 }
 
+export function Message({ size = 20, className, strokeWidth = 1.8, lines = false }: StrokeGlyphProps & { lines?: boolean }): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H9l-4.2 3.2A.5.5 0 0 1 4 19.8V6.5Z" stroke="currentColor" strokeWidth={strokeWidth} strokeLinejoin="round" />
+      {lines && <path d="M8 8.6h8M8 12.2h5.5" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />}
+    </svg>
+  )
+}
+
+/** A person with a mark at the shoulder: a plus, a heart, a cross, a clock or a no-entry sign. */
+export function FriendshipIcon({ kind, size = 20, className }: GlyphProps & { kind: 'add' | 'friend' | 'remove' | 'pending' | 'blocked' }): React.JSX.Element {
+  const stroke = { stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <circle cx="10" cy="7.5" r="3.4" {...stroke} />
+      <path d="M4 19.5c0-3.2 2.7-5.2 6-5.2.8 0 1.6.1 2.3.4" {...stroke} />
+      {kind === 'add' && <path d="M17.5 13.5v6M14.5 16.5h6" {...stroke} />}
+      {kind === 'remove' && <path d="M15.2 14.2l4.6 4.6M19.8 14.2l-4.6 4.6" {...stroke} />}
+      {kind === 'friend' && (
+        <path d="M17.5 20.2s-3.6-2-3.6-4.3a1.9 1.9 0 0 1 3.6-.9 1.9 1.9 0 0 1 3.6.9c0 2.3-3.6 4.3-3.6 4.3Z" fill="currentColor" />
+      )}
+      {kind === 'pending' && (
+        <>
+          <circle cx="17.5" cy="16.5" r="3.8" {...stroke} />
+          <path d="M17.5 14.8v1.9l1.2.8" {...stroke} strokeWidth={1.4} />
+        </>
+      )}
+      {kind === 'blocked' && (
+        <>
+          <circle cx="17.5" cy="16.5" r="3.8" {...stroke} />
+          <path d="M15 14l5 5" {...stroke} />
+        </>
+      )}
+    </svg>
+  )
+}
+
 export function Copy({ size = 16, className, strokeWidth = 1.6 }: StrokeGlyphProps): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>

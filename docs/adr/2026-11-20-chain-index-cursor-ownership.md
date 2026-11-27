@@ -13,14 +13,14 @@ A row also did not record which chain its history came from. The network name `m
 
 - **Ownership.** The job that walks a projection claims it on the session that holds its lease: one bounded transaction raises `owner_generation` (creating the row when there is none) and the job keeps that generation for the lease acquisition. A process without leases claims on the pool.
 - **Jobs.** One supervisor per network (`chain-walk-<network>`) walks the projections its process enables, each under its own lease, `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`). A lease per index alone would not tell the networks apart, and one per network would let a process with fewer projections enabled hold a network and starve another's. Each lease acquisition gets a fresh index (no in-memory state outlives it, and a pass that panicked gets a new one), its own holdings and backoff, and at most one pass in flight in its own task; a lease request runs in a task of its own too, to its end. A projection keeps its own cadence, so one that fails, panics, waits on its endpoint or waits for its lease never holds another back; one that reached the target may join a due companion's shared walk ahead of its turn, so projections walking together go at the faster cadence. A lost lease or a stopping process ends the pass at once, even inside a fold, and the supervisor collects it before letting the lease go. A process that runs no fleet jobs takes no lease.
-- **Fencing.** Every transaction that writes a projection ends by locking its cursor row and comparing that generation, the chain binding and the quarantine; on a mismatch it rolls back. This covers:
+- **Fencing.** A transaction that writes a projection locks its cursor row and compares the generation, chain binding and quarantine. On a mismatch it rolls back. This covers:
   - the window commit, which also requires the checkpoint it read (height and hash);
   - a rewind;
   - the nft backfill lane;
   - every fold, including each trade-events digest batch;
   - the fold record, the publish and its withdrawal.
 
-  A fenced job drops its generation, and its next pass claims again, which only succeeds while it still holds the lease.
+  NFT and sales writers lock the chain cursor before their projection writes. Writers that also move notification producers' cursors take those cursors first. A fenced job drops its generation and claims again on its next pass while it holds the lease.
 - **Binding.** `chain_id` records the chain the history was read from. The source's chain is checked every pass. A row from before the binding is adopted only when it has no history or when its stored last-block hash equals the source's at that height. Adoption is a compare-and-set on the generation and the checkpoint.
 - **Quarantine.** A history that cannot be proven is set apart, with a reason, and its publication withdrawn: a differing hash, no stored hash, or a binding to another chain. A source that does not answer decides nothing. A row in quarantine is not walked, rewound or published.
 - **Readiness.** Readers require the binding to the chain they expect and no quarantine besides the existing rule. Indexes that read mainnet only expect chain 1 or 137. The readers of `trade_events` expect the configured chain: the Rust readers and the notification producers pass it, and its verdict fragments in the listing SQL read the chains the process serves. The transfer notices match two indexes at the same heights, so they run only when both read Polygon mainnet.
@@ -34,7 +34,7 @@ A row also did not record which chain its history came from. The network name `m
 
 - Every index checks the source's chain each pass (one `eth_chainId`); before, only trade events, committee and rentals did. A source of another chain fails only that projection's pass, which backs off on its own.
 - A control operation whose statement the database refuses (a lock or statement timeout) fails alone. An error that ends the session (FATAL or PANIC, a broken connection, the keepalive bound) drops every lease of the process at once.
-- The cursor row lock is held only for the commit that takes it, not for a fold's duration. Writers that also move the notification producers' cursors move them first.
+- NFT and legacy bid folds hold their cursor locks until the transaction ends. A lease claim waits up to 1.5 s for a lock and can time out repeatedly during a rebuild. The 3,600 s statement timeout bounds individual fold statements. [The writer lock order](https://github.com/decentraland/dcl-one/pull/2530) also affects [sales ledger publication](../../DATABASE.md#market-chain-index-cursors).
 - A reorg past the confirmation depth no longer replays a projection's whole history: it rewinds to the newest recovery point still on the chain. The fold after it is still a rebuild. A window that extends a hashed checkpoint costs one more header read, and an nft backfill window two.
 
 ## Validation

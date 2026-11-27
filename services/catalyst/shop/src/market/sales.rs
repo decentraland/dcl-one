@@ -109,8 +109,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<SaleFilters, InvalidP
             }
         });
     Ok(SaleFilters {
-        first: p.get_number("first", None).map(|v| v as i64),
-        skip: p.get_number("skip", None).map(|v| v as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         sale_type,
         categories: p.get_list(
@@ -122,8 +122,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<SaleFilters, InvalidP
         contract_address: p.get_address("contractAddress", true, None),
         token_id: p.get_string("tokenId", None),
         item_id: p.get_string("itemId", None),
-        from: p.get_number("from", None).map(|v| v as i64),
-        to: p.get_number("to", None).map(|v| v as i64),
+        from: p.get_integer("from"),
+        to: p.get_integer("to"),
         min_price: p.get_string("minPrice", None),
         max_price: p.get_string("maxPrice", None),
         network,

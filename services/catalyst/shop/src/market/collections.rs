@@ -31,8 +31,8 @@ pub struct ContractFilters {
 pub fn parse_contract_filters(pairs: &[(String, String)]) -> ContractFilters {
     let p = Params::new(pairs);
     ContractFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         category: p
             .get_value("category", NFT_CATEGORY_VALUES, None)
             .and_then(|s| NftCategory::parse(&s)),
@@ -361,13 +361,16 @@ pub async fn get_contracts(
         };
         all.extend(collections);
     }
-    let total = all.len() as i64;
+    let total = crate::market::casts::len_i64(all.len());
     let first = filters.first.unwrap_or(0);
-    let skip = filters.skip.unwrap_or(0).max(0) as usize;
+    let skip = crate::market::casts::page(filters.skip.unwrap_or(0));
     let data: Vec<Contract> = if first <= 0 {
         all.into_iter().skip(skip).collect()
     } else {
-        all.into_iter().skip(skip).take(first as usize).collect()
+        all.into_iter()
+            .skip(skip)
+            .take(crate::market::casts::page(first))
+            .collect()
     };
     Json(DataTotal { data, total }).into_response()
 }
@@ -417,8 +420,8 @@ pub fn parse_collection_filters(pairs: &[(String, String)]) -> CollectionFilters
             _ => CollectionSortBy::Name,
         });
     CollectionFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         name: p.get_string("name", None),
         search: p.get_string("search", None),

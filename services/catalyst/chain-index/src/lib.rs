@@ -10,6 +10,14 @@
 //! `MarketplaceState` builds it, and content, land_authz, worlds, social and
 //! builder read through it without depending on the shop.
 
+// Money and block numbers: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_shared as shared;
 pub(crate) use dcl_http as http;

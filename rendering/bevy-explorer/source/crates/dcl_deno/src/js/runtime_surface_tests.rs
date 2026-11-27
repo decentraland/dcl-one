@@ -637,6 +637,205 @@ fn compile_function_is_disabled() {
     });
 }
 
+/// Runs `script`, which sets `globalThis.__outcome`, to the end of its event loop.
+fn outcome_of(runtime: &mut JsRuntime, script: &str) -> String {
+    eval(runtime, script.to_owned()).unwrap();
+    run_event_loop(runtime);
+    eval(runtime, "String(globalThis.__outcome)".to_owned()).unwrap()
+}
+
+#[test]
+fn a_slice_of_a_blob_slice_reads_the_right_bytes() {
+    let mut runtime = client_runtime();
+    let outcome = outcome_of(
+        &mut runtime,
+        r#"
+        (async () => {
+            const blob = await new Request("https://a/", { method: "POST", body: "0123456789" }).blob();
+            const inner = blob.slice(2, 8).slice(1, 4);
+            const ops = Deno.core.ops;
+            const part = ops.op_blob_slice_part(ops.op_blob_create_part(new Uint8Array(4)), { start: 1, len: 3 });
+            let refused = "no error";
+            try {
+                ops.op_blob_slice_part(part, { start: 1, len: 3 });
+            } catch (e) {
+                refused = e.message;
+            }
+            return [await inner.text(), inner.size, await blob.slice(8).slice(0, 5).text(), refused].join();
+        })().then((x) => { globalThis.__outcome = x; }, (e) => { globalThis.__outcome = String(e); });
+        "#,
+    );
+    assert_eq!(
+        outcome,
+        "345,3,89,start + len can not be larger than blob part size"
+    );
+}
+
+/// Upstream nests one part per slice, and reading or dropping the chain overflows the stack.
+#[test]
+fn a_long_chain_of_blob_slices_does_not_abort() {
+    run_in_child("a_long_chain_of_blob_slices_does_not_abort", || {
+        let mut runtime = client_runtime();
+        let outcome = outcome_of(
+            &mut runtime,
+            r#"
+            (async () => {
+                let blob = await new Request("https://a/", { method: "POST", body: "0123456789" }).blob();
+                for (let i = 0; i < 100000; i++) blob = blob.slice(i < 5 ? 1 : 0);
+                return await blob.text();
+            })().then((x) => { globalThis.__outcome = x; }, (e) => { globalThis.__outcome = String(e); });
+            "#,
+        );
+        assert_eq!(outcome, "56789");
+        drop(runtime);
+        outcome
+    });
+}
+
+/// The same chain through the ops a client scene can call, cloning each part before slicing it.
+#[test]
+fn a_long_chain_of_cloned_blob_slices_does_not_abort() {
+    run_in_child("a_long_chain_of_cloned_blob_slices_does_not_abort", || {
+        let mut runtime = client_runtime();
+        let outcome = outcome_of(
+            &mut runtime,
+            r#"
+            (async () => {
+                const ops = Deno.core.ops;
+                let id = ops.op_blob_create_part(new Uint8Array([1, 2, 3]));
+                for (let i = 0; i < 100000; i++) {
+                    const clone = ops.op_blob_clone_part(id).uuid;
+                    const slice = ops.op_blob_slice_part(clone, { start: i === 0 ? 1 : 0, len: 2 });
+                    ops.op_blob_remove_part(id);
+                    ops.op_blob_remove_part(clone);
+                    id = slice;
+                }
+                const bytes = await ops.op_blob_read_part(id);
+                ops.op_blob_remove_part(id);
+                return Array.from(bytes).join();
+            })().then((x) => { globalThis.__outcome = x; }, (e) => { globalThis.__outcome = String(e); });
+            "#,
+        );
+        assert_eq!(outcome, "2,3");
+        drop(runtime);
+        outcome
+    });
+}
+
+/// Every upstream op outside `UPSTREAM_OPS` fails when a scene calls it, among them the ones
+/// that abort the process on scene input. Every entry of the list is an op that exists.
+#[test]
+fn upstream_ops_outside_the_list_are_disabled() {
+    use super::super::{scene_ops, UPSTREAM_OPS};
+    run_in_child("upstream_ops_outside_the_list_are_disabled", || {
+        let mut runtime = client_runtime();
+        let names: Vec<String> = serde_json::from_str(
+            &eval(&mut runtime, "JSON.stringify(Object.keys(Deno.core.ops))".to_owned()).unwrap(),
+        )
+        .unwrap();
+        let (own, replaced) = scene_ops(true);
+        for listed in UPSTREAM_OPS {
+            assert!(names.iter().any(|name| name == listed), "{listed} is not an op");
+        }
+        let unlisted: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                !UPSTREAM_OPS.contains(name)
+                    && !replaced.contains_key(name)
+                    && !own.iter().any(|op| op.name == *name)
+            })
+            .collect();
+        for aborting in [
+            "op_panic",
+            "op_leak_tracing_submit",
+            "op_leak_tracing_get",
+            "op_leak_tracing_get_all",
+            "op_current_user_call_site",
+        ] {
+            assert!(unlisted.contains(&aborting), "{aborting} is enabled");
+        }
+        eval(
+            &mut runtime,
+            format!(
+                "globalThis.__errors = {{}};
+                for (const name of {}) {{
+                    __errors[name] = 'no error';
+                    (async () => Deno.core.ops[name]())().catch((e) => {{ __errors[name] = String(e); }});
+                }}",
+                serde_json::to_string(&unlisted).unwrap()
+            ),
+        )
+        .unwrap();
+        run_event_loop(&mut runtime);
+        let errors: std::collections::BTreeMap<String, String> = serde_json::from_str(
+            &eval(&mut runtime, "JSON.stringify(__errors)".to_owned()).unwrap(),
+        )
+        .unwrap();
+        for (name, error) in &errors {
+            assert!(error.contains("disabled"), "{name}: {error}");
+        }
+        assert_eq!(errors.len(), unlisted.len());
+        format!("{} disabled", errors.len())
+    });
+}
+
+/// An op one of the compiled-in scripts or `~system/*` modules names is one a scene runtime
+/// can call.
+#[test]
+fn every_op_a_loaded_script_names_is_enabled() {
+    use super::super::{scene_ops, sources, UPSTREAM_OPS};
+    let mut runtime = client_runtime();
+    let names: Vec<String> = serde_json::from_str(
+        &eval(&mut runtime, "JSON.stringify(Object.keys(Deno.core.ops))".to_owned()).unwrap(),
+    )
+    .unwrap();
+    let (own, replaced) = scene_ops(true);
+    let mut checked = 0;
+    let mut scripts: Vec<(String, String)> = [
+        sources::own(),
+        sources::deno_fetch(),
+        sources::deno_web(),
+        sources::deno_webidl(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|file| {
+        (
+            file.specifier.to_string(),
+            file.load().unwrap().as_str().to_owned(),
+        )
+    })
+    .collect();
+    // the `~system/*` modules `op_require` serves
+    let modules = concat!(env!("CARGO_MANIFEST_DIR"), "/../dcl_js/src/modules");
+    for entry in std::fs::read_dir(modules).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "js") {
+            scripts.push((
+                path.display().to_string(),
+                std::fs::read_to_string(&path).unwrap(),
+            ));
+        }
+    }
+    assert!(scripts.iter().any(|(name, _)| name.ends_with("EngineApi.js")));
+    for (script, code) in &scripts {
+        let named = code
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|word| word.starts_with("op_") && names.iter().any(|name| name == word));
+        for op in named {
+            assert!(
+                UPSTREAM_OPS.contains(&op)
+                    || replaced.contains_key(op)
+                    || own.iter().any(|own| own.name == op),
+                "{script} names {op}, which is disabled"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 100, "{checked}");
+}
+
 /// Upstream writes nine entries into the buffer without checking its length.
 #[test]
 fn urlpattern_match_input_is_disabled() {

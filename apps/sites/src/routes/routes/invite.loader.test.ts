@@ -13,9 +13,9 @@ import { loader } from "./invite.($referrer)";
 
 const ADDRESS = "0xabcdef0123456789abcdef0123456789abcdef01";
 
-const read = (referrer?: string, signal?: AbortSignal) =>
+const read = (referrer?: string, signal?: AbortSignal, query = "") =>
   loader({
-    request: new Request(`https://site.test/invite${referrer ? `/${referrer}` : ""}`, { signal }),
+    request: new Request(`https://site.test/invite${referrer ? `/${referrer}` : ""}${query}`, { signal }),
     context: {},
     params: { referrer },
   } as never);
@@ -43,7 +43,7 @@ describe("Invite loader", () => {
 
   describe("when the referrer names no wallet", () => {
     it("should answer 404", async () => {
-      loadInviteReferral.mockResolvedValue({ referrer: { name: null, address: null }, referral: null });
+      loadInviteReferral.mockResolvedValue({ referrer: { name: null, address: null } });
       expect(await status("nobody")).toBe(404);
     });
   });
@@ -51,8 +51,16 @@ describe("Invite loader", () => {
   describe("when the referrer resolves to a wallet", () => {
     it("should return the referrer", async () => {
       const referrer = { name: "Jane", address: ADDRESS };
-      loadInviteReferral.mockResolvedValue({ referrer, referral: null });
+      loadInviteReferral.mockResolvedValue({ referrer });
       expect(await read("Jane")).toMatchObject({ referrerParam: "Jane", referrer });
+    });
+
+    it("should return the same page for any step query, as decentraland.org does", async () => {
+      const referrer = { name: "Jane", address: ADDRESS };
+      loadInviteReferral.mockResolvedValue({ referrer });
+      const page = await read("Jane", undefined, "?step=rewards");
+      expect(page).toEqual(await read("Jane"));
+      expect(page).not.toHaveProperty("step");
     });
   });
 

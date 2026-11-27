@@ -113,7 +113,9 @@ pub(crate) async fn newest_spot(pool: &sqlx::PgPool) -> Result<Option<(String, i
 /// unix seconds): within `price::store::SNAPSHOT_MAX_AGE`, the budget
 /// `PriceSnapshot::is_fresh_at` applies.
 pub(crate) fn spot_is_fresh(quoted_at: i64, now: i64) -> bool {
-    now - quoted_at <= crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64
+    // Saturates: the budget is a 30 minute constant.
+    now - quoted_at
+        <= i64::try_from(crate::price::store::SNAPSHOT_MAX_AGE.as_secs()).unwrap_or(i64::MAX)
 }
 
 /// The newest price snapshot within its freshness budget.
@@ -579,6 +581,12 @@ pub async fn post_purchase_offers(
 /// The states a route needs, shared with the actions and executions.
 pub type Shared = Arc<super::State>;
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;

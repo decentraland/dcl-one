@@ -33,7 +33,7 @@ interface Entry {
   profile: Profile | undefined
   /** `profile` is the engine's copy (a `userProfile` reply): complete, and versioned. */
   full: boolean
-  /** The passport's extras (badges, equipped items) were fetched, so a re-read keeps them. */
+  /** The passport's extras (badges, equipped items, the official mark) were fetched, so a re-read keeps them. */
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
@@ -66,7 +66,7 @@ const IDLE_TTL = 120_000
 const MISSING_TTL = 60_000
 const SWEEP_EVERY = 30_000
 
-const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes'] as const
+const EXTRAS = ['badges', 'equippedWearables', 'equippedEmotes', 'official'] as const
 
 const entries = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
@@ -241,7 +241,7 @@ function applyProfile(key: string, e: Entry, profile: Profile): void {
     // that service stops sending faces — either way the row keeps the one it has.
     if (next.name === '' || next.name.toLowerCase() === key) next.name = prev.name
     if (next.picture == null) next.picture = prev.picture
-    // A plain identity reply carries no badges/equipped items; a passport's extras survive
+    // A plain identity reply carries no badges, equipped items or official mark; a passport's extras survive
     // the re-reads that follow. Everything else is the engine's word, including a cleared field.
     for (const k of EXTRAS) if (next[k] === undefined && prev[k] !== undefined) Object.assign(next, { [k]: prev[k] })
   }

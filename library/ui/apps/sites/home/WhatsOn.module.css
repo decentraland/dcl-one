@@ -338,29 +338,6 @@ a.creator:focus-visible {
   letter-spacing: normal; /* reference normal (Figma 0.5px) */
 }
 
-/* View All is the tertiary Button with the reference's 2px white outline, size and label, which no
-   variant has; two classes outrank the Button's own. */
-.root .viewAll {
-  gap: var(--dcl-space-12);
-  height: auto;
-  padding: 9px var(--dcl-space-32);
-  border: 2px solid var(--dcl-neutrals-white);
-  border-radius: 10px;
-  box-shadow: none;
-  background: transparent;
-  color: var(--dcl-neutrals-white);
-  font-size: var(--dcl-font-size-body-md);
-  font-weight: 700;
-  line-height: 16px;
-  letter-spacing: inherit;
-}
-
-.viewAllIcon {
-  width: 20px;
-  height: 20px;
-  fill: currentColor;
-}
-
 /* Source's useDesktopMediaQuery: the row replaces the carousel. */
 @media (min-width: 991px) {
   .root {

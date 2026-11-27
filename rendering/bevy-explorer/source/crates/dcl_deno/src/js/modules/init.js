@@ -52,7 +52,11 @@ function require(moduleName) {
 
     // create a wrapper for the imported script
     source = source.replace(/^#!.*?\n/, "");
-    const head = "(function (exports, require, module, __filename, __dirname, Deno) { (function (exports, require, module, __filename, __dirname, Deno) {";
+    // Our own modules run strict: a non-strict function exposes its `arguments` through
+    // `caller`, so a scene setter that a module's assignment runs could read `Deno` from the
+    // wrapper. The scene's own wrapper stays non-strict, as scenes are written for.
+    const strict = moduleName === "~scene.js" ? "" : '"use strict"; ';
+    const head = `(function (exports, require, module, __filename, __dirname, Deno) { ${strict}(function (exports, require, module, __filename, __dirname, Deno) {`;
     const foot = "\n}).call(this, exports, require, module, __filename, __dirname, Deno); })";
     source = `${head}${source}${foot}`;
 
@@ -64,7 +68,7 @@ function require(moduleName) {
         sealRealm();
     }
 
-    const [wrapped, err] = denoRef.core.evalContext(source, "file://${moduleName}");
+    const [wrapped, err] = denoRef.core.evalContext(source, `file://${moduleName}`);
     if (err) {
         throw err.thrown;
     }

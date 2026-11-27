@@ -3,6 +3,14 @@
 //! get-outfits,...}.spec.ts and test/unit/logic/outfits.spec.ts, re-expressed
 //! through the router), plus the pure checks.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

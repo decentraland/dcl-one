@@ -676,6 +676,70 @@ describe("when Nav Profile reads the matching browser wallet", () => {
       expect(await screen.findByRole("combobox", { name: "Red de la billetera" })).toBeTruthy();
     });
 
+    describe("and Polygon is chosen", () => {
+      let select: HTMLSelectElement;
+      let polygon: string;
+      let answerSwitch: (outcome: "switch" | "refuse") => void;
+
+      beforeEach(async () => {
+        select = (await screen.findByRole("combobox", { name: "Red de la billetera" })) as HTMLSelectElement;
+        polygon = within(select).getByRole("option", { name: "Polygon" }).getAttribute("value")!;
+        let chain = "0x1";
+        request.mockImplementation(async ({ method }: { method: string }) => {
+          if (method === "eth_accounts") return [checksummedAccount];
+          if (method === "eth_chainId") return chain;
+          if (method === "wallet_switchEthereumChain") {
+            return new Promise((resolve, reject) => {
+              answerSwitch = (outcome) => {
+                if (outcome === "refuse") {
+                  reject(Object.assign(new Error("User rejected the request."), { code: 4001 }));
+                  return;
+                }
+                chain = `0x${Number(polygon).toString(16)}`;
+                resolve(null);
+              };
+            });
+          }
+          throw new Error(method);
+        });
+        fireEvent.change(select, { target: { value: polygon } });
+        await waitFor(() => expect(select.disabled).toBe(true));
+      });
+
+      it("should ask the wallet for Polygon", () => {
+        expect(request).toHaveBeenCalledWith({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: `0x${Number(polygon).toString(16)}` }],
+        });
+      });
+
+      it("should hold the control while the wallet answers", () => {
+        expect(select.disabled).toBe(true);
+      });
+
+      describe("and the wallet switches", () => {
+        beforeEach(async () => {
+          await act(async () => answerSwitch("switch"));
+          await waitFor(() => expect(select.disabled).toBe(false));
+        });
+
+        it("should show Polygon", () => {
+          expect(select.value).toBe(polygon);
+        });
+      });
+
+      describe("and the wallet refuses", () => {
+        beforeEach(async () => {
+          await act(async () => answerSwitch("refuse"));
+          await waitFor(() => expect(select.disabled).toBe(false));
+        });
+
+        it("should keep Ethereum", () => {
+          expect(select.value).toBe("1");
+        });
+      });
+    });
+
     describe("and the MANA reads settle with a Polygon RPC failure", () => {
       let openPanel: HTMLElement | null;
 

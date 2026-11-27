@@ -92,8 +92,8 @@ pub async fn fetch_and_count(
                 .map_err(|e| readers::upstream_failed("/v1/owners", &e))?;
         let got: Vec<Value> = got
             .into_iter()
-            .skip(offset as usize)
-            .take(first as usize)
+            .skip(crate::market::casts::page(offset))
+            .take(crate::market::casts::page(first))
             .collect();
         if got.is_empty() {
             continue;
@@ -132,8 +132,8 @@ pub async fn get_owners(
     let contract_address = p.get_string("contractAddress", None);
     let item_id = p.get_string("itemId", None);
     let order_direction = p.get_string("orderDirection", Some("desc"));
-    let first = p.get_number("first", None).map(|f| f as i64);
-    let skip = p.get_number("skip", None).map(|f| f as i64);
+    let first = p.get_integer("first");
+    let skip = p.get_integer("skip");
     let (contract_address, item_id) = match (contract_address, item_id) {
         (Some(c), Some(i)) => (c, i),
         _ => {
@@ -186,12 +186,13 @@ pub async fn get_top_owners(
         Some("asc") => true,
         _ => return ApiError::bad_request("orderDirection must be asc or desc").into_response(),
     };
-    let first = (p
-        .get_number("first", None)
-        .filter(|n| !n.is_nan())
-        .unwrap_or(20.0) as i64)
-        .clamp(1, 100);
-    let skip = (p.get_number("skip", None).unwrap_or_default() as i64).max(0);
+    let first = super::casts::saturating_i64(
+        p.get_number("first", None)
+            .filter(|n| !n.is_nan())
+            .unwrap_or(20.0),
+    )
+    .clamp(1, 100);
+    let skip = super::casts::saturating_i64(p.get_number("skip", None).unwrap_or_default()).max(0);
     if let Err(response) = readers::check_window(first, skip) {
         return response;
     }

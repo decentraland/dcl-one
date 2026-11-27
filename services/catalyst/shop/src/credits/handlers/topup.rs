@@ -87,6 +87,10 @@ pub struct TopupPolicy {
 }
 
 /// A transfer with no recorded MANA/USD rate at its block is credited only this soon after it.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "SNAPSHOT_MAX_AGE is the constant 1800 s"
+)]
 const UNPRICED_MAX_AGE_SECS: i64 = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -155,7 +159,7 @@ async fn rate_at(pool: &sqlx::PgPool, block_timestamp: i64) -> Result<Option<Str
          ORDER BY taken_at DESC LIMIT 1",
     )
     .bind(at.naive_utc())
-    .bind(UNPRICED_MAX_AGE_SECS as f64)
+    .bind(crate::price::store::SNAPSHOT_MAX_AGE.as_secs_f64())
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|r| r.get::<String, _>("rate")))

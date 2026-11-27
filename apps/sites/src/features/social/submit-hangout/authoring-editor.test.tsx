@@ -12,6 +12,8 @@ vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
 });
 
+// The form passes variant="tertiary"; Button draws it with its outline look and reports data-variant="outline".
+
 describe("when a signed-in creator opens the single-page Events editor", () => {
   let user: ReturnType<typeof userEvent.setup>;
   let submit: ReturnType<typeof vi.fn<SubmitFn>>;
@@ -43,6 +45,35 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     vi.resetAllMocks();
   });
 
+  it("should keep each field's limits, type and rows", () => {
+    expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("maxLength", 150);
+    expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("maxLength", 5000);
+    expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("maxLength", 5000);
+    expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("rows", 3);
+    expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("rows", 3);
+    expect(screen.getByRole("textbox", { name: "Contact email" })).toHaveProperty("type", "email");
+    const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
+    expect([duration.getAttribute("min"), duration.getAttribute("max"), duration.getAttribute("step")]).toEqual(["0.25", "24", "0.25"]);
+    expect(screen.getByLabelText("Date")).toHaveProperty("type", "date");
+    expect(screen.getByLabelText("Start (UTC)")).toHaveProperty("type", "time");
+  });
+
+  it("should show the repeat options only while Repeat Hangout is on", async () => {
+    const repeat = screen.getByRole<HTMLInputElement>("switch", { name: "Repeat Hangout" });
+    expect(repeat.checked).toBe(false);
+    expect(screen.queryByRole("combobox", { name: "Repeat" })).toBeNull();
+    expect(screen.queryByLabelText("Ends")).toBeNull();
+    await user.click(repeat);
+    expect(repeat.checked).toBe(true);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Repeat" }), "every_month");
+    expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Repeat" }).value).toBe("every_month");
+    expect(screen.getByLabelText("Ends")).toHaveProperty("type", "date");
+    await user.click(repeat);
+    expect(repeat.checked).toBe(false);
+    expect(screen.queryByRole("combobox", { name: "Repeat" })).toBeNull();
+    expect(screen.queryByLabelText("Ends")).toBeNull();
+  });
+
   describe("and the required details are incomplete", () => {
     it("should block the preview", () => {
       expect(screen.getByRole<HTMLButtonElement>("button", { name: "Preview" }).disabled).toBe(true);
@@ -71,6 +102,31 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     expect(summary.parentElement).toHaveProperty("open", true);
     await user.upload(screen.getByLabelText("Upload vertical cover"), image);
     expect(await screen.findByRole("img", { name: "Vertical hangout cover" })).toBeTruthy();
+  });
+
+  it("should draw Remove cover image as an outlined button that removes the cover", async () => {
+    await user.upload(screen.getByLabelText("Upload cover image"), image);
+    const remove = await screen.findByRole("button", { name: "Remove cover image" });
+    expect(remove.dataset).toMatchObject({ variant: "outline", size: "md" });
+    await user.click(remove);
+    expect(screen.queryByRole("img", { name: "Hangout cover" })).toBeNull();
+  });
+
+  describe("and a cover is replaced while the new one uploads", () => {
+    beforeEach(async () => {
+      await user.click(screen.getByText("Add Vertical Cover").closest("summary")!);
+      await user.upload(screen.getByLabelText("Upload vertical cover"), image);
+      await screen.findByRole("img", { name: "Vertical hangout cover" });
+      upload.mockImplementationOnce(() => new Promise<string>(() => {}));
+      await user.upload(screen.getByLabelText("Upload cover image"), image);
+    });
+
+    it("should keep Remove vertical cover disabled until the upload ends", async () => {
+      const remove = screen.getByRole<HTMLButtonElement>("button", { name: "Remove vertical cover" });
+      expect(remove.disabled).toBe(true);
+      await user.click(remove);
+      expect(screen.getByRole("img", { name: "Vertical hangout cover" })).toBeTruthy();
+    });
   });
 
   describe("and the first cover upload fails", () => {
@@ -114,7 +170,7 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
       const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
       await user.clear(duration);
       await user.type(duration, "3");
-      await user.click(screen.getByRole("checkbox", { name: "Repeat Hangout" }));
+      await user.click(screen.getByRole("switch", { name: "Repeat Hangout" }));
       await user.type(screen.getByLabelText("Ends"), "2099-07-29");
       await user.click(screen.getByRole("button", { name: "Preview" }));
       const preview = within(screen.getByRole("dialog"));

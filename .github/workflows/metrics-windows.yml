@@ -1,0 +1,43 @@
+name: Windows metrics
+# dcl-metrics reads process times through kernel32 on Windows; no other job compiles that code.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'library/dcl-metrics/**'
+      - 'services/catalyst/Cargo.lock'
+      - 'services/catalyst/Cargo.toml'
+      - 'services/catalyst/clippy.toml'
+      - 'services/catalyst/rust-toolchain.toml'
+      - '.github/workflows/metrics-windows.yml'
+  pull_request:
+    paths:
+      - 'library/dcl-metrics/**'
+      - 'services/catalyst/Cargo.lock'
+      - 'services/catalyst/Cargo.toml'
+      - 'services/catalyst/clippy.toml'
+      - 'services/catalyst/rust-toolchain.toml'
+      - '.github/workflows/metrics-windows.yml'
+permissions:
+  contents: read
+concurrency:
+  group: metrics-windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  clippy:
+    name: dcl-metrics clippy (windows)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      # aws-lc-sys (through the Prometheus exporter) assembles with its prebuilt objects, no NASM.
+      AWS_LC_SYS_PREBUILT_NASM: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The channel of services/catalyst/rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+          components: clippy
+      - name: Clippy
+        run: cargo +1.99.1 clippy --manifest-path services/catalyst/Cargo.toml --locked -p dcl-metrics --lib -- -D warnings

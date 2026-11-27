@@ -1,6 +1,6 @@
 //! A child `dcl-scene-cli` under test: its piped streams read while it runs,
 //! a bounded wait for its exit, and a SIGTERM-first stop.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test target uses part of it")]
 
 use std::io::Read;
 use std::process::{Child, ExitStatus};
@@ -87,8 +87,10 @@ pub fn wait_bounded(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
 /// preview server runs no such handler. The sidecar sits in its own process
 /// group, so it would be orphaned onto the developer's machine holding a port
 /// and a pile of worker threads, once per run of this file.
+#[allow(unsafe_code, reason = "signals the child through libc")]
 pub fn terminate(child: &mut Child) -> ExitStatus {
     #[cfg(unix)]
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     unsafe {
         libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
     }
