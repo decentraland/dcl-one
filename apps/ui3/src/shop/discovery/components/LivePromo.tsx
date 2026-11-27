@@ -56,12 +56,16 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
   const bevyFlag = useRemoteFlagState(REMOTE_FLAG.bevyAvatarPreview, allowed);
   const bevy = bevyFlag === true && !bevyFailed;
 
+  // Decided the first time the tile nears the screen: a visitor who never scrolls to it does not pay for the link probe.
+  const [near, setNear] = useState(false);
+  if (onScreen && !near) setNear(true);
   useEffect(() => {
+    if (!near) return;
     if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     return decidePreviewDevice((decision) => {
       if (decision.renderer === "full") setAllowed(true);
     });
-  }, []);
+  }, [near]);
 
   useEffect(() => {
     const el = ref.current;
