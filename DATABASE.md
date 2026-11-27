@@ -1864,8 +1864,9 @@ table.
 - `GET /v1/addresses`: the public search's listing over published standard
   collections only. It resolves the published ids first
   (`items_minted_collection_idx`), then probes each one's items for the tags
-  (`items_collection_created_idx`), and answers at most 1,000 contract
-  addresses, with their total only when paginated.
+  (`items_collection_created_idx`). Without pages it answers every
+  published standard collection's contract address; a page holds at most
+  1,000, with the total.
 
 Workload, at the reference size (50,015 collections, 112,955 items, 406,229
 content rows, 293,927 upload records, 52,000 chain rows of which 5,105 are
@@ -1877,6 +1878,7 @@ statements the node sends):
 | an item's utility, the contract with the most minted items (70) | under 0.5 ms (1.6 ms cold) |
 | an item's contents, the minted item with the most entries (173) | about 1 ms warm, 10 ms cold |
 | addresses, unfiltered (1,000 rows) | published ids 5 ms, the page 6 to 10 ms |
+| addresses, unfiltered without pages (5,461 published of 50,015) | 53 to 60 ms through the router, 76 ms cold |
 | addresses by the most used tag (187 collections) | 40 to 60 ms |
 | addresses with `q`, five 64-character tags, paginated (the worst the bounds allow) | about 75 ms with its total |
 
