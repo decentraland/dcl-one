@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { PreviewRenderer } from '@dcl/schemas'
 import { previewRendererOverride } from '@/data/lib/creators/config'
 import { track } from '@/data/lib/creators/analytics'
-import { measureDownlinkMbps } from '@/data/lib/creators/connectionSpeed'
+import { measureDownlinkMbps } from '@web-core/connection-speed'
 import { FeatureFlag, getIsFeatureEnabled } from '@/data/lib/creators/featureFlags'
 import { pickRenderer, type RendererDecision } from '@/data/lib/creators/pickRenderer'
 
