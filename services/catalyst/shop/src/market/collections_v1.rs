@@ -85,12 +85,11 @@ pub const TOPICS: [B256; 3] = [
     CollectionV1::OwnershipTransferred::SIGNATURE_HASH,
 ];
 
-/// Items left out for want of a static representation, as this process's
-/// last projection counted them. The count is a function of the log up to
-/// the projected block and of the vendored data, so a publication rolled
-/// back after counting is retried and counts the same, and a walk's first
-/// publication (each process or lease) rebuilds the rows and sets it again.
-/// It is absent until then.
+/// The `AddWearable`s the published catalogue leaves out for want of a
+/// static representation, recounted after each committed publication
+/// ([`committed_unrepresented`]): a publication rolled back never sets it,
+/// and a process's first publication, an event-free one included, restores
+/// it. It is absent until then.
 const UNREPRESENTED: GaugeFamily<0> = GaugeFamily::new(
     "catalyst_index_collections_v1_unrepresented_items",
     "Ethereum v1 items the collections projection left out: no static representation of their wearable id.",
@@ -399,8 +398,21 @@ pub async fn project_in(
         .bind(net.db_name())
         .execute(&mut *conn)
         .await?;
+    let written_from = crate::shared::now_utc();
     super::collections_projection::write(conn, net, &folded).await?;
-    UNREPRESENTED.handle([]).set(unrepresented as f64);
+    // The v1 royalty catalogue follows the rows the projection wrote, as it
+    // follows a completed mirror pass (`shop.publish_v1_royalty_catalogue`,
+    // which the mirror's pass marker triggers): the rows of this write, and
+    // none of an earlier copy.
+    let written_to = crate::shared::now_utc();
+    for copy in ["collections", "items"] {
+        sqlx::query("SELECT shop.publish_v1_royalty_catalogue($1, $2, $3)")
+            .bind(copy)
+            .bind(written_from)
+            .bind(written_to)
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(Projected {
         rebuilt: true,
         collections: folded.len(),
@@ -410,6 +422,37 @@ pub async fn project_in(
     })
 }
 
+/// The `AddWearable`s the committed projection leaves out: those up to its
+/// block whose wearable id no static representation has, counted from the
+/// log as the fold counts them. `None` while the index does not own
+/// Ethereum's catalogue.
+pub async fn committed_unrepresented(pool: &PgPool) -> sqlx::Result<Option<usize>> {
+    let through: Option<i64> = sqlx::query_scalar(
+        "SELECT projected_through FROM shop.collection_projection \
+         WHERE network = $1 AND owned_at IS NOT NULL",
+    )
+    .bind(ChainNet::Ethereum.db_name())
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    let Some(through) = through else {
+        return Ok(None);
+    };
+    let ids: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT metadata FROM shop.collection_event \
+         WHERE network = $1 AND kind = 'add_item' AND block_number <= $2",
+    )
+    .bind(ChainNet::Ethereum.db_name())
+    .bind(through)
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(
+        ids.iter()
+            .filter(|id| catalogue::representation(id.as_deref().unwrap_or_default()).is_none())
+            .count(),
+    ))
+}
+
 /// The Ethereum walk of the v1 collections.
 #[derive(Default)]
 pub struct CollectionsV1Index {
@@ -417,10 +460,12 @@ pub struct CollectionsV1Index {
     /// and `shop.items` (`MARKETPLACE_COLLECTIONS_INDEX_OWNS` lists
     /// `ethereum`); otherwise it keeps the log alone.
     project: bool,
-    /// Whether this instance's publications already rebuilt the rows once.
-    /// The first one rebuilds them whatever was walked, so a change to the
-    /// fold or to the vendored data reaches them with the next process (or
-    /// lease), and the unrepresented gauge is set again.
+    /// Whether a publication of this instance, which rebuilt the rows, has
+    /// committed: set after the commit ([`ChainIndex::published`]). Until
+    /// then every publication rebuilds them whatever was walked, so a change
+    /// to the fold or to the vendored data reaches them with the next
+    /// process (or lease), and a publication rolled back (a failed close
+    /// included) leaves the next one to rebuild them.
     rebuilt: AtomicBool,
 }
 
@@ -495,6 +540,23 @@ impl ChainIndex for CollectionsV1Index {
         Ok(())
     }
 
+    /// After a committed publication: the rows stand rebuilt, and the
+    /// unrepresented gauge is recounted from the committed projection.
+    async fn published(&self, pool: &PgPool, _upto: i64) {
+        if !self.project {
+            return;
+        }
+        self.rebuilt.store(true, Ordering::SeqCst);
+        match committed_unrepresented(pool).await {
+            Ok(Some(count)) => UNREPRESENTED.handle([]).set(count as f64),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                error = %e,
+                "collections ethereum: the unrepresented items cannot be counted"
+            ),
+        }
+    }
+
     /// The log is the fold: the catalogue is projected from it when the
     /// fold is published ([`ChainIndex::publish`]).
     async fn fold(
@@ -511,7 +573,7 @@ impl ChainIndex for CollectionsV1Index {
     /// in the transaction that publishes the fold at `upto`.
     async fn publish(&self, conn: &mut PgConnection, upto: i64) -> anyhow::Result<()> {
         if self.project {
-            if !self.rebuilt.swap(true, Ordering::SeqCst) {
+            if !self.rebuilt.load(Ordering::SeqCst) {
                 // In the publishing transaction: no reader sees the block
                 // cleared, only the rebuilt rows.
                 super::collections_projection::invalidate(conn, ChainNet::Ethereum).await?;
@@ -871,12 +933,73 @@ mod tests {
         assert_eq!(rows(&pool).await, first);
     }
 
-    /// A walk's first publication rebuilds the rows whatever was walked, so a
-    /// change to the fold or to the vendored data reaches them with the next
-    /// process or lease; later ones write nothing until an event is walked,
-    /// and a failed pass makes the next one rebuild again.
+    /// Each rebuild publishes the v1 royalty catalogue from the rows it
+    /// wrote, as a completed mirror pass does: an owned Ethereum keeps the
+    /// sales summary's royalty attribution, and a collection the walk no
+    /// longer projects leaves it.
     #[tokio::test]
-    async fn a_fresh_walk_rebuilds_the_rows_once() {
+    async fn a_rebuild_publishes_the_v1_royalty_catalogue() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let upto = 26_499_473;
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(&mut conn, ChainNet::Ethereum, &walked())
+            .await
+            .unwrap();
+        drop(conn);
+        // A copy the mirror left of a collection the walk does not project.
+        sqlx::query(
+            "INSERT INTO shop.v1_royalty_collection (contract_address, urn, creator) \
+             VALUES ('0xabababababababababababababababababababab', 'urn:gone', '0xab')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        project(&pool, upto).await;
+        let collections: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT contract_address, urn, creator FROM shop.v1_royalty_collection ORDER BY contract_address",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let owner = "0x1fbf26781e289883a1ec8da235f7159b455d1160";
+        assert_eq!(
+            collections,
+            [
+                (
+                    MEME.into(),
+                    "urn:decentraland:ethereum:collections-v1:meme_dontbuythis".into(),
+                    owner.into()
+                ),
+                (
+                    XMASH.into(),
+                    "urn:decentraland:ethereum:collections-v1:xmash_up_2020".into(),
+                    owner.into()
+                ),
+            ]
+        );
+        let items: Vec<(String, String)> =
+            sqlx::query_as("SELECT urn, creator FROM shop.v1_royalty_item ORDER BY urn")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(items.len(), 9);
+        assert!(items.contains(&(
+            "urn:decentraland:ethereum:collections-v1:xmash_up_2020:xmash_up_cap_hat".into(),
+            owner.into()
+        )));
+    }
+
+    /// A walk rebuilds the rows at each publication until one that rebuilt
+    /// them has committed (`published`, after the commit), whatever was
+    /// walked: a change to the fold or to the vendored data reaches them
+    /// with the next process or lease. A first publication rolled back, as a
+    /// failed close leaves it, leaves the retry to rebuild; after a committed
+    /// one, a publication with nothing walked writes nothing; a failed pass
+    /// makes the next one rebuild again.
+    #[tokio::test]
+    async fn a_fresh_walk_rebuilds_the_rows_until_a_rebuild_commits() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
@@ -907,26 +1030,22 @@ mod tests {
             .unwrap();
         };
         let ix = CollectionsV1Index::projecting(true);
-        let publish = |at: i64| {
-            let (pool, ix) = (pool.clone(), &ix);
-            async move {
-                let mut tx = pool.begin().await.unwrap();
-                ix.publish(&mut tx, at).await.unwrap();
-                tx.commit().await.unwrap();
-            }
-        };
         stale().await;
-        publish(upto + 1).await;
-        assert_eq!(name().await, fresh, "the first publication rebuilds");
+        publish_at(&pool, &ix, upto + 1, false).await;
+        assert_eq!(name().await, "stale", "rolled back");
+        publish_at(&pool, &ix, upto + 1, true).await;
+        ix.published(&pool, upto + 1).await;
+        assert_eq!(name().await, fresh, "the retry rebuilds");
         stale().await;
-        publish(upto + 2).await;
+        publish_at(&pool, &ix, upto + 2, true).await;
+        ix.published(&pool, upto + 2).await;
         assert_eq!(
             name().await,
             "stale",
             "nothing walked since: nothing written"
         );
         ix.abandon();
-        publish(upto + 3).await;
+        publish_at(&pool, &ix, upto + 3, true).await;
         assert_eq!(name().await, fresh, "after a failed pass it rebuilds again");
     }
 
@@ -942,12 +1061,13 @@ mod tests {
         }
     }
 
-    /// The unrepresented gauge after a restart and after a rollback: a fresh
-    /// walk's first publication sets it again though nothing was walked,
-    /// and a publication rolled back after counting counts what its retry
-    /// commits.
+    /// The unrepresented gauge follows committed publications only: a
+    /// publication rolled back sets nothing, the count is set once one
+    /// commits, and after a restart the first publication sets it again
+    /// though nothing was walked since. (`chain_walk::close` calls
+    /// `published` after the commit: `index_tests::the_v1_gauge_follows_the_committed_publication`.)
     #[tokio::test(flavor = "current_thread")]
-    async fn the_unrepresented_gauge_survives_a_restart_and_a_rollback() {
+    async fn the_unrepresented_gauge_follows_committed_publications() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
@@ -987,35 +1107,29 @@ mod tests {
         };
         const ONE: Option<&str> = Some("catalyst_index_collections_v1_unrepresented_items 1");
 
-        // The first process publishes the log: one item left out.
+        // Nothing owned yet: a rolled-back first publication sets nothing.
         let (recorder, handle) = process();
         {
             let _local = dcl_metrics::set_default_local_recorder(&recorder);
-            publish_at(&pool, &CollectionsV1Index::projecting(true), upto, true).await;
+            let ix = CollectionsV1Index::projecting(true);
+            // A failed close never calls `published`.
+            publish_at(&pool, &ix, upto, false).await;
+            ix.abandon();
+            assert_eq!(gauge(&handle), None, "a rollback sets nothing");
+            publish_at(&pool, &ix, upto, true).await;
+            ix.published(&pool, upto).await;
+            assert_eq!(gauge(&handle).as_deref(), ONE, "the committed count");
         }
-        assert_eq!(gauge(&handle).as_deref(), ONE);
 
-        // A restart: nothing walked since, and the first publication sets it.
+        // A restart: a quiet publication (nothing walked since) restores it.
         let (recorder, handle) = process();
         {
             let _local = dcl_metrics::set_default_local_recorder(&recorder);
             let ix = CollectionsV1Index::projecting(true);
             assert_eq!(gauge(&handle), None, "absent until a publication");
             publish_at(&pool, &ix, upto + 1, true).await;
-            assert_eq!(gauge(&handle).as_deref(), ONE, "set again after a restart");
-        }
-
-        // A rollback after counting: the retry commits the same count.
-        let (recorder, handle) = process();
-        {
-            let _local = dcl_metrics::set_default_local_recorder(&recorder);
-            let ix = CollectionsV1Index::projecting(true);
-            publish_at(&pool, &ix, upto + 2, false).await;
-            ix.abandon();
-            let counted = gauge(&handle);
-            publish_at(&pool, &ix, upto + 2, true).await;
-            assert_eq!(counted.as_deref(), ONE);
-            assert_eq!(gauge(&handle).as_deref(), ONE, "what the retry committed");
+            ix.published(&pool, upto + 1).await;
+            assert_eq!(gauge(&handle).as_deref(), ONE, "restored after a restart");
         }
         let left_out: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM shop.items WHERE network = 'ethereum' AND urn LIKE '%no_such_wearable'",

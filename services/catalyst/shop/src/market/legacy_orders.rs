@@ -826,6 +826,7 @@ mod tests {
                 crate::market::chain_walk::INDEXER_NFT,
                 ChainNet::Matic,
                 &["nft"],
+                None,
             )
             .await
             .unwrap();

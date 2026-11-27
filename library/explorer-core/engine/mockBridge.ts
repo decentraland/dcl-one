@@ -436,7 +436,7 @@ const mockSettings: Setting[] = [
   level('Avatar & Emotes SFX', 'audio', 100),
   { ...level('Streaming Volume', 'audio', 100), description: 'The volume of videos, audio streams and livestreams played by scenes in the world.' },
   { ...level('Voice Volume', 'audio', 100), description: "The volume of nearby players' voices." },
-  choice('Microphone', 'audio', ['Default', 'Headset Microphone', 'Webcam Microphone'], 0),
+  choice('Microphone', 'audio', ['System Default', 'Headset Microphone', 'Webcam Microphone'], 0),
   choice('Mute Mic in Background', 'audio', ON_OFF, 1),
   level('Vertical sensitivity', 'controls', 1, 2, 0.1, 0.01),
   level('Horizontal sensitivity', 'controls', 1, 2, 0.1, 0.01),

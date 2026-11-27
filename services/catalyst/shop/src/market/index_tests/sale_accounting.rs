@@ -2409,7 +2409,28 @@ async fn an_advanced_ethereum_sales_cursor_repairs_the_bid_lifecycle_after_publi
     // Two-block windows: the repaired creations stay out of the book until
     // the last window refolds it.
     let small = state_over(db.pool.clone(), &url, index_settings(20, 2), false);
-    for position in [first + 1, first + 3, first + 5, last] {
+    // A creation the repair cannot decode fails its window, as the forward
+    // walk fails, and the marker holds before it: the history is never
+    // called complete without that bid.
+    let at = |block: u64| {
+        let logs = chain.logs.lock();
+        logs.iter()
+            .position(|l| l["blockNumber"] == format!("0x{block:x}"))
+            .unwrap()
+    };
+    let created = at(first + 3);
+    let data = std::mem::replace(
+        &mut chain.logs.lock()[created]["data"],
+        serde_json::Value::String("0x01".into()),
+    );
+    assert!(pass(&small, &url, &ix).await.published);
+    assert_eq!(marker().await.unwrap(), (first as i64 + 1, last as i64));
+    assert!(pass(&small, &url, &ix).await.published);
+    assert_eq!(marker().await.unwrap(), (first as i64 + 1, last as i64));
+    assert_eq!(book().await.unwrap(), vec![forward.clone()]);
+    assert!(!complete().await);
+    chain.logs.lock()[created]["data"] = data;
+    for position in [first + 3, first + 5, last] {
         assert!(pass(&small, &url, &ix).await.published);
         assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
         if position < last {
