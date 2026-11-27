@@ -758,6 +758,8 @@ pub struct AppConfig {
     /// goes off again.
     pub max_avatars_unlimited: bool,
     pub constrain_scene_ui: bool,
+    /// Holding the pointer button and dragging turns the camera.
+    pub left_drag_camera: bool,
     /// "Allow overriding scene controls": the player may change what the scene they stand in
     /// controls, today the time of day.
     pub allow_scene_control_override: bool,
@@ -841,6 +843,7 @@ impl Default for AppConfig {
             max_avatars: 20,
             max_avatars_unlimited: false,
             constrain_scene_ui: false,
+            left_drag_camera: false,
             allow_scene_control_override: false,
             player_settings: Default::default(),
             max_videos: 1,

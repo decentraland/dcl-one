@@ -42,6 +42,7 @@ use common::{
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
+use left_drag_camera::LeftDragCameraSetting;
 use max_avatars::MaxAvatarsSetting;
 use max_avatars_unlimited::UnlimitedAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
@@ -75,6 +76,7 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+mod left_drag_camera;
 pub mod lens_flare_setting;
 pub mod max_avatars;
 pub mod max_avatars_unlimited;
@@ -260,6 +262,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<LeftDragCameraSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<scene_control_override::SceneControlOverrideSetting>(
             app,
             &mut settings,

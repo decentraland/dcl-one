@@ -166,6 +166,26 @@ collections and 1,000 items. The tables and indexes occupied 32 KiB and
 and 1.89 ms for items on the measured run. The publication leaves unchanged
 attribution rows in place and replaces the rows a completed sweep changes.
 
+## Unfiltered Marketplace order browse (2026-11-27)
+
+A local PostgreSQL 17.6 fixture on Apple Silicon held one million legacy
+orders, including 130,435 stored open and 10,032 unexpired open rows, and
+25,300 v3 trades with 5,060 active listings. Each repetition for
+`/v1/orders?first=24` ran the prepared legacy page, both per-network capped
+counts, and the v3 leg. With forced generic plans over 20 warmed
+repetitions, the median went from 787 to 119 ms, p95 from 1,973 to
+160 ms, and the maximum from 1,978 to 160 ms. The first execution before
+and after took 813 and 144 ms. Eight order runs in a mixed four-client
+probe had a median of 200 ms and a maximum of 228 ms.
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` showed the old v3 leg checking
+thousands of listings before sorting. The read now walks candidates in
+creation order and checks eligibility before applying the same cap.
+The legacy count probes the open-expiry index first and reads unexpired
+terminal orders to fill the rest of the cap. All four prepared statements
+returned identical rows and counts to the baseline. These are local SQL
+timings, with no schema or writer changes.
+
 ## Published sales reads
 
 A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
