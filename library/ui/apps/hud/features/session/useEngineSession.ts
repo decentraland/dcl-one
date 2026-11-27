@@ -292,6 +292,10 @@ export interface BackpackState {
   dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
+  /** Show a saved outfit on the avatar until `restoreOutfitPreview`, unless it is equipped. */
+  previewOutfit: (slot: number) => void
+  /** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
+  restoreOutfitPreview: () => void
   /** The randomize bar's state for this Backpack session. */
   outfitHistory: OutfitHistory
   /** Put a random look from the owned and base wearables on (keeps body shape and colors). */
@@ -2394,7 +2398,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'outfitBusy': {
           // An end clears only the work it names.
           const { slot, action, busy } = msg
-          if (action === 'equip') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
+          if (action === 'equip' || action === 'preview') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
           else setOutfitOperation((prev) => (busy ? { slot, action } : prev?.slot === slot && prev.action === action ? null : prev))
           break
         }
@@ -4221,6 +4225,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   useEffect(() => {
     if (backpackWasOpen.current && !backpackOpen) {
       driverRef.current?.send({ kind: 'resetOutfitHistory' })
+      // An outfit shown but not equipped is not part of the look that deploys.
+      driverRef.current?.send({ kind: 'restoreOutfitPreview' })
       driverRef.current?.send({ kind: 'commitAvatar' })
       setOutfitHistory(NO_OUTFIT_HISTORY)
     }
@@ -4315,6 +4321,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     if (driver == null) return
     setOutfitEquipping(slot)
     driver.send({ kind: 'equipOutfit', slot })
+  }, [])
+  const previewOutfit = useCallback((slot: number) => {
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitEquipping(slot)
+    driver.send({ kind: 'previewOutfit', slot })
+  }, [])
+  const restoreOutfitPreview = useCallback(() => {
+    driverRef.current?.send({ kind: 'restoreOutfitPreview' })
   }, [])
   // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
   const randomizeOutfit = useCallback(() => {
@@ -5619,7 +5634,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, outfitOperation, outfitEquipping, warnAboutClearingExtraOutfits,
-      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit, previewOutfit, restoreOutfitPreview,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },

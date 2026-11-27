@@ -12,6 +12,7 @@ use sqlx::{FromRow, PgConnection};
 
 use super::{ChainNet, Rpc, chain_walk, ethereum_sales, nft_index, sales_index, trade_events};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
+use crate::market::casts;
 
 #[derive(FromRow)]
 struct Execution {
@@ -501,7 +502,7 @@ async fn save(
         .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(split.payer).bind(split.payee).execute(&mut *conn).await?;
     for (n, l) in split.legs.iter().enumerate() {
         sqlx::query("INSERT INTO shop.sale_payout (network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text::numeric)")
-            .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(n as i32).bind(l.role).bind(&l.recipient).bind(l.amount.to_string()).execute(&mut *conn).await?;
+            .bind(net.db_name()).bind(p.block).bind(p.index).bind(p.ordinal).bind(casts::len_i32(n)?).bind(l.role).bind(&l.recipient).bind(l.amount.to_string()).execute(&mut *conn).await?;
     }
     Ok(())
 }
@@ -620,8 +621,8 @@ pub(super) async fn write(
         let heights: BTreeSet<_> = receipts
             .iter()
             .filter(|(_, r)| r["status"] == "0x1")
-            .map(|(h, _)| txs[h][0].block as u64)
-            .collect();
+            .map(|(h, _)| casts::to_u64(txs[h][0].block))
+            .collect::<Result<_, _>>()?;
         let (headers, _) = rpc
             .block_headers(&heights.into_iter().collect::<Vec<_>>())
             .await?;
@@ -638,7 +639,7 @@ pub(super) async fn write(
                     && receipt["blockNumber"].as_str().and_then(hex_to_i64) == Some(first.block),
                 "receipt position mismatch"
             );
-            let hash = &headers[&(first.block as u64)].hash;
+            let hash = &headers[&casts::to_u64(first.block)?].hash;
             ensure!(
                 receipt["blockHash"]
                     .as_str()

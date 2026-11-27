@@ -3635,11 +3635,10 @@ Those events are the items added, rescued and edited, the mints (`Issue`),
 the global and item minters and managers, approval, editability,
 completion, creatorship and ownership. The walk keeps them in
 `shop.collection_event`, appended with each window's cursor advance and
-deleted past a rewind. A process that runs the collections mirror
-(`MARKETPLACE_MIRRORS_ENABLED=true`) keeps the log alone. One that does not
-also projects it into `shop.collections` and `shop.items` (see
-"Projection"). Either way, the publication means everything the fold wrote
-is complete to `folded_block`.
+deleted past a rewind. A process projects the log into `shop.collections`
+and `shop.items` for the networks in `MARKETPLACE_COLLECTIONS_INDEX_OWNS`
+(see "Projection"). The collections and items mirrors may still write
+another network. A publication covers the fold through `folded_block`.
 Account inventory and creator rankings require the Polygon log
 publication. Creatorship transitions are indexed by contract and by both
 wallet roles.
@@ -4117,8 +4116,8 @@ With no subgraph configured, a network an index owns answers. An unscoped
 priced read names the subgraph of the network without a source; a
 descriptive or authorizing read serves the passes the tables record. The
 lambdas catalogue falls back to asking the subgraphs only when the mirrors
-refused and the index owns no network; it never stands in for a network the
-index owns.
+refused and no network is owned by the index or awaiting configured native
+ownership.
 
 A memo over catalogue rows is filed under what its read saw: each mirror's
 pass on each network it may take rows from, configured or not (the oldest
@@ -4142,36 +4141,62 @@ registered address when the requested window overlaps its recorded backfill.
 Newly discovered contracts enter through the existing backfill lane when
 they predate the live window.
 
-**Switching a network from the mirror.** Run this only once two things
-hold:
-- every reader above follows the index, the other readers included;
-- the NFT and sales walks take their contracts from the index.
+### Mainnet catalogue cutover
 
-Deploys are manual, one process at a time:
+On the mainnet mirror posture the collections index takes `matic,ethereum`
+by default. The collections and items jobs mirror each network until the
+index publishes its ownership. A start or stop block override excludes
+that network from default ownership. An explicit list can keep either
+network mirrored. Both collections subgraph URLs also serve direct readers
+such as `/v1/owners` and `/v1/trendings`. They stay configured after the
+projection takes over. Sepolia and Amoy keep both mirrors. Island and
+journey leave ownership empty and their mirrors off.
 
-1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
-   process that runs the mirror, and wait until the `collections` cursor of
-   each network to hand over publishes. That is the catch-up: on `matic`
-   (chain 137) from block 15,202,000; on `ethereum` (chain 1, the 42
-   collections-v1 contracts) from block 8,828,687, about 37 minutes
-   (`METRICS.md`). The mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks
-   (`matic`, `ethereum`, or both), and start it again. Two processes must
-   never write the catalogue under different settings. The mirror switch
-   stays as it was: the mirror keeps walking any network not listed. The
-   next pass's publication on each listed network rebuilds its rows from the
-   log and takes the network (on Ethereum, with the v1 royalty catalogue).
-3. Check `SELECT owned_at, projected_through, pending, generation FROM
-   shop.collection_projection`.
+Until a configured native network first publishes, a scoped or combined
+read needs the mirror proof for that network. A read without its required
+mirror copy returns `503 collections-index`. A priced read also needs the
+items pass within its money budget.
 
-**Handing a network back to the mirror.**
-1. Stop the index process, remove the network from
-   `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
-   the log alone from then.
-2. Run this transaction. It takes the exclusive catalogue lock, and removes
-   the network's rows, the mirror's pass markers and the ownership together.
-   It is shown for `matic`; for `ethereum`, write `'ethereum'` for the
-   network and `1` for the lock's second key (the chain id):
+**Before switching an existing database**
+
+1. Run the owner-aware NFT and sales walkers on the database before handing
+   over the catalogue. To warm the collections walks with the mirror still
+   serving, explicitly set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=` and
+   `MARKETPLACE_MIRRORS_ENABLED=true`. Preserve the two previous subgraph
+   URLs if the deployment overrides them.
+2. Verify `shop.chain_cursor` rows for `indexer='collections'` and the
+   networks being handed over. Polygon is chain 137 from block 15,202,000.
+   Ethereum is chain 1 from block 8,828,687. Each cursor needs full history,
+   a published `folded_block` and `folded_at`, and no quarantine or detected
+   divergence. Ethereum's first walk takes about 37 minutes of back-to-back
+   passes. See [the measured replay](METRICS.md#ethereum-collections-v1-first-walk).
+3. During the cutover window, stop the catalogue writers sharing the
+   database. Use the same ownership list on each replacement writer.
+   Set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic,ethereum`, or let the
+   mainnet mirror posture choose it. Keep both collections subgraph URLs
+   for direct reads. The first publication replaces the network's
+   catalogue rows and takes ownership in the same transaction. Ethereum
+   publishes its v1 royalty catalogue with those rows.
+4. Check `SELECT network, owned_at, projected_through, pending, generation
+   FROM shop.collection_projection ORDER BY network`. Each handed-over
+   network should have `owned_at` and `projected_through` set, with no
+   unresolved collections. Compare the chain-bound collection counts
+   against the warmed catalogue at a common height and confirm normal
+   catalogue and royalty reads. Confirm NFT and Polygon sales cursors
+   advance, badge sales runs, and owned mirrors make no requests.
+
+**Handing a network back to the mirror**
+
+1. Stop the catalogue writers. On each writer, explicitly set
+   `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks that stay owned,
+   or to an empty value if neither stays owned. Enable
+   `MARKETPLACE_MIRRORS_ENABLED=true` and restore the handed-back network's
+   subgraph URL. Unsetting an explicitly blank URL restores the default
+   under the mirror posture.
+2. Before restarting, run this transaction. It takes the exclusive
+   catalogue lock and removes the network's rows, pass markers and ownership
+   together. For Ethereum, replace `'matic'` with `'ethereum'` and use `1`
+   as the advisory lock's chain ID.
 
    ```sql
    BEGIN;
@@ -4188,15 +4213,25 @@ Deploys are manual, one process at a time:
    COMMIT;
    ```
 
-   Every statement acts only while the index still owns the network, so
-   running the transaction again (after a commit that went unconfirmed)
-   changes nothing the mirror wrote since.
+   For Ethereum, add the two deletes below inside the same transaction,
+   before the ownership update.
 
-Every read of the network then answers the unavailable envelope until the
-mirror's next complete collections and items passes, which rewrite it with
-the mirror's rows alone (`collections_projection::hand_back` runs the same
-statements). On Ethereum, deleting the pass markers also empties the v1
-royalty catalogue (the markers' trigger), and those passes publish it again.
+   ```sql
+   DELETE FROM shop.v1_royalty_item
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   DELETE FROM shop.v1_royalty_collection
+    WHERE EXISTS (SELECT 1 FROM shop.collection_projection
+                  WHERE network = 'ethereum' AND owned_at IS NOT NULL);
+   ```
+
+   The ownership guard makes a retry safe after the mirror recovers.
+
+3. Restart the writers with the updated settings. The mirror's first
+   complete collections pass admits the NFT and sales address loads again.
+   Catalogue reads wait for their required collections and items passes.
+   On Ethereum, the hand-back clears the v1 royalty catalogue and the
+   mirror passes publish it again.
 
 ## Auth API relay state workload
 
@@ -5634,9 +5669,13 @@ Invariants:
   follows restores the orders whose creation remains.
 - `transferred` is not stored: a reader derives it on its snapshot from the
   token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
-  estates). An open order reads `open` only while that owner is its seller;
-  another owner, none (burned, dissolved) or no row reads `transferred`,
-  before the status filter, the total and the page. The reader serves only
+  estates). An open order reads `open` while the published fold proves its
+  seller holds it. An owner row or a raw transfer beyond the fold withholds
+  that proof, as does an unfinished NFT contract backfill or refold. A
+  testnet collection also needs an active watch and a verified collection
+  row on the served chain. The Ethereum NAME registrar uses its fixed
+  deployment. An unproven open order reads `transferred` before the status
+  filter, total and page. The reader serves only
   the orders of the catalogue the nft index walks on the served chain (a
   `shop.collections` row of that `chain_id`, `testnet_verified` on a
   testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
@@ -5658,9 +5697,17 @@ Invariants:
   network's. The queue holds a repair window's tokens until the next fold.
   The trigger costs one primary-key read of `shop.legacy_order_cursor` per
   order event written; transfers do not fire it. While a network has a
-  refold queued, its book is not read (`legacy_orders::caught_up`, on the
-  read's snapshot): an earlier binary can republish the same height
-  without folding it. Another network's queue does not withhold it.
+  refold queued, its book is not read. The `nft-index` message names the
+  queued refold separately from a book behind its published fold, and
+  `catalyst_shop_order_book_readiness_refusals_total` counts them by
+  network, route and reason (`refold_queued` or `fold_behind`). The reader
+  reports a queued refold once the book reaches the published fold.
+  An earlier binary can republish that network
+  without draining the queue. Refusals can continue until a writer with
+  the order fold takes the walk and publishes. Another network's queue
+  does not withhold this one. Operators can inspect the queue with no read
+  traffic using `SELECT network, count(*) FROM shop.legacy_order_refold
+  GROUP BY network`.
 - The book stands only while the nft walk's recovery point at its block
   (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
   points past its target, so a branch republished at the same height carries

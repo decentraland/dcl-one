@@ -469,11 +469,30 @@ pub struct SceneDrivenAnimationFeedbackState {
 /// `PBVirtualCamera.fov` default, per the proto definition.
 pub const PLAYER_CAMERA_FOV: f32 = std::f32::consts::PI / 3.0;
 
+/// The player camera's zoom level. The wheel steps between the three; there is no zoom within one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraZoomLevel {
+    FirstPerson,
+    #[default]
+    ThirdPerson,
+    Drone,
+}
+
+/// Which shoulder the third-person and drone cameras look over while the cursor is locked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraShoulder {
+    #[default]
+    Right,
+    Left,
+}
+
 // main camera entity
 #[derive(Component)]
 pub struct PrimaryCamera {
     // settings
-    pub distance: f32,
+    /// The player's own zoom level; a scene's override wins while it is set.
+    pub level: CameraZoomLevel,
+    pub shoulder: CameraShoulder,
     pub sensitivity: f32,
     // impl details (todo: move to separate private struct)
     pub initialized: bool,
@@ -495,20 +514,22 @@ pub enum CameraView {
 }
 
 impl PrimaryCamera {
-    /// The camera is in first person when it is this close behind the player.
-    pub const FIRST_PERSON_DISTANCE: f32 = 0.05;
+    /// The zoom level in effect: a scene's override wins over the player's own. None while a
+    /// scene's cinematic camera has the view.
+    pub fn level_in_effect(&self) -> Option<CameraZoomLevel> {
+        match self.scene_override {
+            Some(CameraOverride::Cinematic(_)) => None,
+            Some(CameraOverride::Level(level)) => Some(level),
+            None => Some(self.level),
+        }
+    }
 
-    /// The view in effect: a scene's override wins over the player's own zoom.
+    /// The view in effect, as scenes are told it: the drone level is third person to them.
     pub fn view(&self) -> CameraView {
-        let distance = match self.scene_override {
-            Some(CameraOverride::Cinematic(_)) => return CameraView::Cinematic,
-            Some(CameraOverride::Distance(distance)) => distance,
-            None => self.distance,
-        };
-        if distance <= Self::FIRST_PERSON_DISTANCE {
-            CameraView::FirstPerson
-        } else {
-            CameraView::ThirdPerson
+        match self.level_in_effect() {
+            None => CameraView::Cinematic,
+            Some(CameraZoomLevel::FirstPerson) => CameraView::FirstPerson,
+            Some(CameraZoomLevel::ThirdPerson | CameraZoomLevel::Drone) => CameraView::ThirdPerson,
         }
     }
 }
@@ -535,14 +556,14 @@ pub enum AvatarControl {
 
 #[derive(Clone, Debug)]
 pub enum CameraOverride {
-    Distance(f32),
+    Level(CameraZoomLevel),
     Cinematic(CinematicSettings),
 }
 
 impl CameraOverride {
     pub fn effectively_equals(&self, other: &CameraOverride) -> bool {
         match (self, other) {
-            (CameraOverride::Distance(x), CameraOverride::Distance(y)) => x == y,
+            (CameraOverride::Level(x), CameraOverride::Level(y)) => x == y,
             (CameraOverride::Cinematic(c0), CameraOverride::Cinematic(c1)) => {
                 c0.origin == c1.origin
             }
@@ -559,7 +580,8 @@ impl Default for PrimaryCamera {
             yaw: Default::default(),
             pitch: Default::default(),
             roll: Default::default(),
-            distance: 1.0,
+            level: Default::default(),
+            shoulder: Default::default(),
             scene_override: None,
             scene_override_owner: None,
         }
@@ -2009,6 +2031,9 @@ impl SceneImposterBake {
 
 #[derive(Resource, Default)]
 pub struct CursorLocks(pub HashSet<&'static str>);
+
+/// The `CursorLocks` entry held while the pointer turns the camera.
+pub const CAMERA_CURSOR_LOCK: &str = "camera";
 
 /// Controls engine-level overrides to avatar movement, independent of scene-driven movement.
 #[derive(Resource, Default)]

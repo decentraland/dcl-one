@@ -80,8 +80,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> AccountFilters {
             _ => None,
         });
     AccountFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         id: p.get_string("id", None),
         address: p.get_list("address", &[]),

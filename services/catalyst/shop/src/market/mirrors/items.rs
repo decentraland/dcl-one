@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use crate::jobs::JobContext;
 
 use super::super::MarketplaceState;
+use super::super::casts::RowCount;
 use super::super::graph::Network;
 use super::super::readers::{
     at, bool_of, int_of, opt_bool_of, opt_int_of, opt_str_of, str_of, strings_of,
@@ -275,7 +276,7 @@ pub async fn upsert(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(done.rows_affected() as i64)
+    Ok(done.rows_i64())
 }
 
 #[cfg(test)]

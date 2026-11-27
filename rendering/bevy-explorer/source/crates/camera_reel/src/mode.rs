@@ -167,7 +167,7 @@ pub(crate) fn apply_photo_mode_requests(
         // the camera-to-player dither would show in the photos; the player camera restores it
         commands
             .entity(entity)
-            .insert((PhotoMode, photo, ViewUserValue(0.0)));
+            .insert((PhotoMode, photo, ViewUserValue(Vec4::ZERO)));
         if first_person {
             commands.entity(entity).insert(SystemTween {
                 target: start,

@@ -348,13 +348,13 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
         notice_cursor::advance(&mut txn, PRODUCER, None, done_block, done_log).await?;
         txn.commit().await?;
         // A page short of full read everything up to the bound.
-        let drained = held.is_none() && rows.len() < PAGE_SIZE as usize;
+        let drained = held.is_none() && rows.len() < crate::market::casts::page(PAGE_SIZE);
         notice_cursor::report_lag(
             PRODUCER,
             rows[0].upto,
             if drained { rows[0].upto } else { done_block },
         );
-        if held.is_some() || rows.len() < PAGE_SIZE as usize {
+        if held.is_some() || rows.len() < crate::market::casts::page(PAGE_SIZE) {
             break;
         }
     }

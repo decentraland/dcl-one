@@ -12,13 +12,6 @@
 //! batched form, and every guard that decides whether a charge covers a
 //! payment works on the decimal text, never an `f64`.
 
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -950,7 +943,11 @@ fn json_as_i64(v: &serde_json::Value) -> Option<i64> {
 }
 
 #[cfg(all(test, feature = "ts"))]
-#[allow(clippy::cast_possible_truncation, reason = "test support")]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "test support"
+)]
 mod ts_peg_export {
     use super::CREDIT_USD;
 
@@ -993,8 +990,7 @@ mod tests {
                 crate::market::Source::CollectionsIndex,
                 "the collections index on matic has no published fold".into(),
             )),
-            by_index: true,
-            owned: vec![crate::market::graph::Network::Matic],
+            may_fall_back_to_graph: false,
         };
         let response = catalogue_refused(refusal).into_response();
         assert_eq!(

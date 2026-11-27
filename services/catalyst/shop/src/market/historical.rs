@@ -381,10 +381,16 @@ fn rpc_endpoint(state: &MarketplaceState, net: ChainNet) -> Option<String> {
 }
 
 async fn eth_block(rpc: &Rpc<'_>, block: i64) -> Result<BlockHeader, Failure> {
-    tokio::time::timeout(Duration::from_secs(5), rpc.block_header(block as u64))
-        .await
-        .map_err(|_| Failure::SourceUnavailable("ethereum-rpc"))?
-        .map_err(|_| Failure::SourceUnavailable("ethereum-rpc"))
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        rpc.block_header(
+            u64::try_from(block)
+                .map_err(|_| Failure::BadRequest(format!("block {block} is out of range")))?,
+        ),
+    )
+    .await
+    .map_err(|_| Failure::SourceUnavailable("ethereum-rpc"))?
+    .map_err(|_| Failure::SourceUnavailable("ethereum-rpc"))
 }
 
 async fn old_enough(state: &MarketplaceState, block: i64) -> Result<(), Failure> {
@@ -458,7 +464,8 @@ async fn linked_timestamp(
             .iter()
             .map(|number| {
                 crate::http::jsonrpc::request(
-                    *number as u64,
+                    // The id only labels the request; replies are matched by number.
+                    u64::try_from(*number).unwrap_or_default(),
                     "eth_getBlockByNumber",
                     json!([format!("0x{number:x}"), false]),
                 )
@@ -608,7 +615,7 @@ async fn require_nft_backfill(
               AND (cardinality($4::text[])=0 OR c.contract_address=ANY($4))
          )",
     )
-    .bind(net.db_name()).bind(net.chain_id() as i32).bind(block).bind(contracts)
+    .bind(net.db_name()).bind(net.chain_id_i32()).bind(block).bind(contracts)
     .fetch_one(db).await?;
     if missing {
         return Err(Failure::SourceUnavailable("nft-index"));
