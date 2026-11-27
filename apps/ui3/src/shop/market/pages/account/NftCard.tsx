@@ -4,7 +4,7 @@
 
 import { Link } from "react-router";
 
-import ThumbnailImage from "../../../../components/ThumbnailImage";
+import { ShopThumbnailImage } from "@dcl/one-ui";
 import Icon from "../../../discovery/components/Icon";
 import { categoryIcon, genderIcon } from "../../../discovery/lib/itemIcons";
 import { rarityMedia } from "@shop/discovery/lib/rarity";
@@ -25,7 +25,7 @@ export default function NftCard({ asset }: { asset: AccountNft }) {
         {asset.category === "ens" ? (
           <span className="acct-card__ens">{asset.name}</span>
         ) : asset.image ? (
-          <ThumbnailImage src={asset.image} fallbackSrc={asset.image} alt="" loading="lazy" decoding="async" />
+          <ShopThumbnailImage src={asset.image} fallbackSrc={asset.image} alt="" loading="lazy" decoding="async" />
         ) : null}
       </div>
       <div className="acct-card__body">

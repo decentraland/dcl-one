@@ -5796,6 +5796,14 @@
           "kind": "regular"
         },
         {
+          "name": "ShopThumbnailImage.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopThumbnailImage.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "assets",
           "kind": "directory"
         },
@@ -15183,8 +15191,12 @@
       "sha256": "adecdd1675c231e687d5ee70969c4c76a576f57a245440d59fcb49e5d89a143c"
     },
     {
+      "path": "library/ui/apps/shop/ShopThumbnailImage.tsx",
+      "sha256": "c5b923eab580adc715a2792e88a3b6a94a6d7013d3dcd8c7eb9bf3cbfede7bb4"
+    },
+    {
       "path": "library/ui/apps/shop/index.ts",
-      "sha256": "b11110d174b5ce44ffc1e7af3ef4a7da7e3446d238fb94b83194f06ae878d940"
+      "sha256": "e400061f34634e2acae63458a1a8720dd09eada5f621451a75b7efe149dd8f42"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -52873,6 +52885,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopThumbnailImage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopThumbnailImage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopThumbnailImage.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/sites/CopyAddress.tsx",
       "to": "library/ui/apps/sites/CopyAddress.module.css",
       "kind": "native:runtime"
@@ -70575,6 +70602,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopSearch.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopThumbnailImage.tsx",
       "kind": "type"
     },
     {
