@@ -672,6 +672,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+  The native driver also holds teleports and emotes while 8 reliable messages are
+  unacknowledged, and holds inputs once traffic has been in flight for 600 ms with no
+  acknowledgement arriving, so what a stall delivers at once stays within the servers' bursts.
+  The count is ENet's, so resyncs, a fragmented handshake and announcements count too: a burst of
+  them holds a teleport or emote for a round trip, which ENet's acknowledgements, not tracked per
+  message, cannot tell apart. A realm change withdraws a held teleport, as it does the pacer's.
+  WebTransport exposes no acknowledgements, so the web build has no such gate (`native.rs`).
+- **The native uplink is probed every 250 ms, and inputs are spaced on a long round trip.**
+  ENet's own ping waits 500 ms after the last acknowledgement and only while nothing reliable is
+  in flight; probing only then as well keeps one probe out and an acknowledgement once per round
+  trip. Above a 600 ms round trip a working link then reads as stalled every cycle (inputs held
+  22% of the time at 800 ms, 48% at 1.2 s, 68% at 2 s, in the simulation), and at 300 ± 100 ms
+  one lost probe holds inputs for up to 300 ms, which 2% loss does about every 10 s. A ping every
+  250 ms whatever is in flight removes both (no hold up to a 2 s round trip, none in two minutes
+  of that loss), but the gate then closes about a round trip and 600 ms after a stall begins
+  rather than within a second, and a stall that queues what was sent meanwhile delivers it at
+  once: 18 inputs at a 1.2 s round trip and 36 at 3 s against the servers' burst of 16. So from a
+  smoothed round trip of 600 ms inputs are spaced so that a round trip and 600 ms hold at most 8
+  (6.7 a second at 600 ms, 3.1 at 2 s, at most 12 delivered at once up to 3 s). Holding inputs
+  whenever the uplink is unconfirmed on such links, the other way to stay within the burst, stops
+  movement for most of each round trip; spacing keeps updates regular, which observers smooth.
+  A teleport that goes drops an input queued before it and still waiting for its spacing: sent
+  after it, that pose would snap observers back before the next input. The input is newer than
+  the teleport when the teleport waited in the pacer; Pulse then keeps the facing from before the
+  teleport until the next input, about a second at most. An emote leaves the input waiting.
+  The rules run over simulated ENet links in `native/link_sim_tests.rs`.
 - **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
   60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
   outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
