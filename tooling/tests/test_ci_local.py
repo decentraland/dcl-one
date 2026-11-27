@@ -324,6 +324,7 @@ class HookTest(unittest.TestCase):
         hooks = root / '.git/hooks'
         for name in ('pre-push', 'post-checkout'):
             (hooks / name).write_text(stock_lfs_hook(name))
+        (hooks / 'pre-commit').write_text(f'#!/bin/sh\n{ci.MARKER}\nexec python3 tooling/old-ci-local.py\n')
         for attempt in ('first', 'again', 'after the old install set .githooks again'):
             with self.subTest(attempt=attempt):
                 if attempt != 'again':
@@ -362,6 +363,7 @@ class HookTest(unittest.TestCase):
                              for hook in (stock_lfs_hook, old_lfs_hook)
                              for injected in ('$(./check.sh)', '`./check.sh`', '"; ./check.sh; echo "')),
                            ('pre-push', stock_lfs_hook('pre-push').replace('exit 2; }', 'exit 2; }; ./check.sh')),
+                           *(('pre-commit', f'#!/bin/sh\n./lint.sh {separator}{ci.MARKER}\n') for separator in (' ', '\f')),
                            ('pre-commit', None)):
             with self.subTest(hook=name, text=text):
                 root = self.repo()
@@ -395,6 +397,32 @@ class HookTest(unittest.TestCase):
                 self.assertFalse((root / '.git/hooks/pre-commit').exists())
                 self.assertEqual(self.hooks_path(root), before)
                 ci.git('config', f'--{scope}', '--unset', key, cwd=root)
+
+    def test_install_refuses_a_folder_where_a_hook_goes(self):
+        root = self.repo()
+        (root / '.git/hooks/pre-commit').mkdir()
+        self.assertFalse(self.install())
+        self.assertTrue((root / '.git/hooks/pre-commit').is_dir())
+        self.assertFalse((root / '.git/hooks/pre-push').exists())
+
+    def test_install_reads_the_hooks_path_of_every_worktree_still_on_disk(self):
+        root = self.repo()
+        ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+        linked, gone, orphan = self.folder / 'linked', self.folder / 'gone', self.folder / 'orphan'
+        for tree in (linked, gone, orphan):
+            ci.git('worktree', 'add', '-q', str(tree), cwd=root)
+        shutil.rmtree(gone)
+        (orphan / '.git').unlink()
+        ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+        ci.git('config', 'core.repositoryFormatVersion', '1', cwd=root)
+        ci.git('config', 'extensions.worktreeConfig', 'true', cwd=root)
+        ci.git('config', '--worktree', 'core.hooksPath', '.husky', cwd=linked)
+        self.assertFalse(self.install())
+        self.assertIn("'.husky'", self.output)
+        self.assertFalse((root / '.git/hooks/pre-commit').exists())
+        ci.git('config', '--worktree', '--unset', 'core.hooksPath', cwd=linked)
+        self.assertTrue(self.install())
+        self.assertEqual(self.hooks_path(root), '')
 
     def test_install_needs_a_python3_that_runs(self):
         run = subprocess.run
@@ -504,7 +532,7 @@ class HookTest(unittest.TestCase):
             return run(command, *args, **kwargs)
         with patch('subprocess.run', side_effect=fake), \
                 patch.object(ci, 'check_commit', return_value=passed) as check, \
-                patch.object(ci, 'changes_for_push', return_value=set()), \
+                patch.object(ci, 'changes_for_push', return_value=set()) as self.changes, \
                 patch('sys.stdin', io.StringIO(line)), patch('builtins.print'):
             ok = ci.pre_push(['origin', 'https://example.invalid/repo.git'])
         return ok, check, uploads
@@ -524,6 +552,20 @@ class HookTest(unittest.TestCase):
         ok, check, uploads = self.pre_push(line, passed=False)
         self.assertFalse(ok)
         self.assertEqual(uploads, [])
+
+    def test_pre_push_compares_with_the_commit_the_remote_ref_names(self):
+        root = self.repo()
+        for message in ('first', 'second'):
+            ci.git('commit', '-q', '--allow-empty', '-m', message, cwd=root)
+        first, second = ci.git('rev-parse', 'HEAD~', 'HEAD', cwd=root).split()
+        blob = ci.git('hash-object', '-w', '--stdin', cwd=root, input='blob\n')
+        for name, target in (('on-commit', first), ('on-blob', blob)):
+            ci.git('tag', '-a', name, '-m', name, target, cwd=root)
+        for old, compared in ((ci.git('rev-parse', 'on-commit', cwd=root), first),
+                              (ci.git('rev-parse', 'on-blob', cwd=root), ci.ZERO), ('f' * 40, ci.ZERO)):
+            with self.subTest(compared=compared, old=old):
+                self.assertTrue(self.pre_push(f'refs/tags/t {second} refs/tags/t {old}\n')[0])
+                self.changes.assert_called_once_with(second, compared)
 
     def test_ci_local_skip_skips_the_pre_commit_checks(self):
         with patch.dict(os.environ, {'CI_LOCAL_SKIP': '1'}), patch.object(ci, 'locked') as locked, \

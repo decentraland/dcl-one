@@ -385,8 +385,7 @@ def pre_commit():
 def changes_for_push(sha, remote_sha):
     env = clean_env()
     changed = set()
-    if remote_sha != ZERO and subprocess.run(['git', 'cat-file', '-e', remote_sha], cwd=ROOT, env=env,
-                                             capture_output=True).returncode == 0:
+    if remote_sha != ZERO:
         changed |= changed_files(remote_sha, sha, env=env)
     base = git('merge-base', sha, 'origin/main', check=False, env=env)
     if base:
@@ -417,16 +416,19 @@ def pre_push(args):
             if not commit or commit in seen:
                 continue
             seen.add(commit)
-            if not check_commit(commit, changes_for_push(commit, remote_sha), f'pre-push {commit[:10]}'):
+            if not check_commit(commit, changes_for_push(commit, peel(remote_sha) or ZERO), f'pre-push {commit[:10]}'):
                 print('  Bypass (not recommended): CI_LOCAL_SKIP=1 git push ..., which still uploads the Git LFS '
                       'objects that git push --no-verify skips')
                 return False
     return subprocess.run(['git', 'lfs', 'pre-push', *args], input=updates, text=True).returncode == 0
 
 
-HOOKS = {'pre-commit': '#!/bin/sh\n[ -f tooling/ci-local.py ] || exit 0\nexec python3 tooling/ci-local.py pre-commit\n',
+MARKER = '# Written by tooling/ci-local.py install, which overwrites this file.'
+HOOKS = {'pre-commit': f'#!/bin/sh\n{MARKER}\n[ -f tooling/ci-local.py ] || exit 0\n'
+                       'exec python3 tooling/ci-local.py pre-commit\n',
          # The check covers worktrees on older branches too, whose ci-local skips the upload without git-lfs.
-         'pre-push': '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { echo >&2 "ci-local: git-lfs is not on PATH, '
+         'pre-push': f'#!/bin/sh\n{MARKER}\n'
+                     'command -v git-lfs >/dev/null 2>&1 || { echo >&2 "ci-local: git-lfs is not on PATH, '
                      'so this push would not upload its Git LFS objects"; exit 2; }\n'
                      '[ -f tooling/ci-local.py ] || exec git lfs pre-push "$@"\n'
                      'exec python3 tooling/ci-local.py pre-push "$@"\n'}
@@ -442,6 +444,10 @@ def is_stock_lfs_hook(path):
         r'exit 2; \}', lines[1]) is not None)
 
 
+def hooks_path(*scope, cwd=None):
+    return git('config', '-z', *scope, '--get-all', 'core.hooksPath', cwd=cwd, check=False).split('\0')[:-1]
+
+
 def install():
     # Windows ships a python3 stub that only opens the Store, so run it rather than look it up.
     try:
@@ -451,27 +457,28 @@ def install():
     if not usable:
         print('ci-local: the hooks run python3, which does not run here', file=sys.stderr)
         return False
+    trees = [Path(line[9:]) for line in git('worktree', 'list', '--porcelain').splitlines()
+             if line.startswith('worktree ')]
     # --local skips includes, worktree, global, system and -c values; -z keeps an empty one, which turns hooks off.
-    local, everywhere = (git('config', '-z', *scope, '--get-all', 'core.hooksPath', check=False).split('\0')[:-1]
-                         for scope in (['--local'], []))
-    if local not in ([], ['.githooks']) or everywhere != local:
-        print(f'ci-local: core.hooksPath is set ({", ".join(map(repr, everywhere))}), so git runs hooks from there '
+    local = hooks_path('--local')
+    everywhere = [hooks_path(cwd=tree) for tree in trees if (tree / '.git').exists()]
+    if local not in ([], ['.githooks']) or any(values != local for values in everywhere):
+        shown = sorted({value for values in everywhere for value in values})
+        print(f'ci-local: core.hooksPath is set ({", ".join(map(repr, shown))}), so git runs hooks from there '
               'instead of the repository\'s hooks folder; install changed nothing', file=sys.stderr)
         return False
     hooks = ROOT / git('rev-parse', '--git-common-dir') / 'hooks'
-    for name, text in HOOKS.items():
+    for name in HOOKS:
         path = hooks / name
-        current = None if path.is_symlink() or not path.exists() else path.read_bytes()
-        if path.is_symlink() or current not in (None, text.encode()) and not (
-                name == 'pre-push' and is_stock_lfs_hook(path)):
+        if path.is_symlink() or path.exists() and not (
+                path.is_file() and MARKER.encode() in path.read_bytes().split(b'\n')
+                or name == 'pre-push' and is_stock_lfs_hook(path)):
             print(f'ci-local: {path} is another hook, so install changed nothing; remove it and run install again',
                   file=sys.stderr)
             return False
     started = []
     if local:
         # Unsetting it swaps each worktree's untracked .githooks, where only git-lfs writes hooks, for the shared folder.
-        trees = [Path(line[9:]) for line in git('worktree', 'list', '--porcelain').splitlines()
-                 if line.startswith('worktree ')]
         stopped = [path for tree in trees for path in sorted((tree / '.githooks').glob('*')) if not is_stock_lfs_hook(path)]
         if stopped:
             print(f'ci-local: core.hooksPath is .githooks, and unsetting it would stop git running '
