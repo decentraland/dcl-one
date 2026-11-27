@@ -4,8 +4,10 @@
 //! services for it: the marketing CMS (Contentful) for the campaign entry
 //! and its banners, and the Builder for the collections carrying the
 //! campaign's tags (`GET /v1/addresses?tag=`). Neither is a Shop authority
-//! v2 has: the Builder here keeps no collection tags, and a CMS is not
-//! configured on every node. So the Shop owns the campaign as data
+//! v2 has: the Builder here answers `GET /v1/addresses?tag=` from the tags
+//! creators write in their items' `data.tags`, which any creator sets, not
+//! from a selection the operator curates, and a CMS is not configured on
+//! every node. So the Shop owns the campaign as data
 //! (`shop.campaigns`: one row per campaign, its window, its tags and the
 //! banner content; `shop.campaign_collections`: the approved collections a
 //! tag selects), written by the operator behind the market's admin bearer

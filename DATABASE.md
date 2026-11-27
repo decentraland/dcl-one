@@ -1848,11 +1848,16 @@ day per email, 1,000 an hour per node.
 ## Builder small reads workload
 
 The builder answers four unsigned reads from its own rows and the chain copy
-(`services/catalyst/builder/src/handlers/small_reads.rs`). The marketplace
-web calls the item contents read for a smart wearable's video and the
-addresses read by tag, on each page view. Neither has a rate limit: an
-addresses read costs 40 to 100 ms of database time at the reference size,
-and a request that varies its query string misses any cache the five-minute
+(`services/catalyst/builder/src/handlers/small_reads.rs`). The Shop's item
+page (`apps/ui3/src/shop/detail/builder.ts`) calls the item contents read
+for a smart wearable's video on each view. No client in this repository
+calls the addresses read: the Shop reads a campaign's collections from its
+own `GET /shop-api/v1/campaign-collections`, and the addresses read by tag
+serves builder-server's clients. Every builder read spends one token of its
+source address's budget of reads (`limits::SOURCE_READS`, 3,000 a minute);
+an addresses read spends `limits::ADDRESSES_TOKENS` (50) more, since it
+costs 40 to 100 ms of database time at the reference size, and a request
+that varies its query string misses any cache the five-minute
 `Cache-Control` lets in front of it. The rarities and `GET /v1/info` read no
 table.
 
