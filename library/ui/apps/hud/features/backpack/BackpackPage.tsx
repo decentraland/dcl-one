@@ -81,7 +81,6 @@ const VIEWS: { id: ViewKey; label: string }[] = [
   { id: 'collectibles', label: 'Collectibles only' },
   { id: 'smart', label: 'Smart Wearables only' }
 ]
-const NO_DESC = 'This wearable does not have a description set.'
 const HINTS = [
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Left-click and drag avatar to rotate.' },
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Click items x1 to view their info. x2 to equip/unequip.' },
@@ -225,6 +224,7 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
   }
   const rarity = item.rarity ?? 'base'
   const category = 'category' in item ? item.category : 'emote'
+  const description = item.description?.trim() ?? ''
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
       <div className={styles.detailImage}>
@@ -237,7 +237,9 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
         </div>
         <span className={styles.detailRarity} data-rarity={rarity}>{rarity}</span>
         <div className={styles.detailDescLabel}>DESCRIPTION</div>
-        <div className={styles.detailDesc}>{NO_DESC}</div>
+        <div className={styles.detailDesc}>
+          {description !== '' ? description : `This ${category === 'emote' ? 'emote' : 'wearable'} does not have a description set.`}
+        </div>
         {'hides' in item && item.hides != null && item.hides.length > 0 && (
           <>
             <div className={styles.detailHidesLabel}>

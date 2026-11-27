@@ -21,7 +21,7 @@ type CatalogElement = {
   category: string
   // Per-owned-token data; carries the tokenId we need for the deployable URN.
   individualData?: Array<{ id?: string; tokenId?: string }>
-  entity?: { metadata?: { thumbnail?: string; data?: HideData }; content?: Array<{ file: string; hash: string }> }
+  entity?: { metadata?: { description?: string; thumbnail?: string; data?: HideData }; content?: Array<{ file: string; hash: string }> }
 }
 
 // item-urn → deployable token urn (see tokenUrnOf), what the equip handler sends. The map
@@ -99,6 +99,7 @@ export async function fetchWearablesPage(
     return {
       urn: el.urn,
       name: el.name,
+      description: el.entity?.metadata?.description,
       rarity: el.rarity,
       category: el.category,
       thumbnail: hash != null ? `${baseUrl}/content/contents/${hash}` : undefined,

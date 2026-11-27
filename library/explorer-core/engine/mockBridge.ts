@@ -318,6 +318,8 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
   return {
     urn,
     name: b.label,
+    // Every other item has one, so the detail panel shows both a description and its fallback.
+    description: i % 2 === 0 ? `A mock ${b.label.toLowerCase()} for trying the backpack without an engine.` : undefined,
     rarity: RARITIES[i % RARITIES.length],
     category: b.category,
     thumbnail: thumb(urn),
