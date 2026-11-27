@@ -455,7 +455,9 @@ fn ms_duration(raw: &str) -> Result<u64, String> {
         "y" | "yr" | "yrs" | "year" | "years" => 31_557_600e3,
         other => return Err(format!("unknown duration unit {other:?} in {raw:?}")),
     };
-    Ok((value * unit_ms).round() as u64)
+    Ok(catalyst_shared::casts::f64_to_u64(
+        (value * unit_ms).round(),
+    ))
 }
 
 impl ContentConfig {
