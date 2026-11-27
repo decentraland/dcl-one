@@ -25,6 +25,7 @@ import {
   GeneralSecondaryBarSettingsOutline,
   GeneralSecondaryBarWearables,
   type NavBarLinkProps,
+  WebSelect,
 } from "@dcl/one-ui";
 import { chainLabel } from "@shop/model/chain";
 import { browserProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
@@ -101,9 +102,8 @@ function ProfileNetwork({ provider, label, ethereum, polygon }: { provider: Eip1
   const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
   if (chainId === null) return null;
   return (
-    <select
+    <WebSelect
       aria-label={label}
-      className={styles.profileNetwork}
       value={pendingChainId ?? chainId}
       disabled={pendingChainId !== null}
       onChange={(event) => void switchTo(Number(event.currentTarget.value))}
@@ -113,7 +113,7 @@ function ProfileNetwork({ provider, label, ethereum, polygon }: { provider: Eip1
       ) : null}
       <option value={ethereum}>{chainLabel(ethereum)}</option>
       <option value={polygon}>{chainLabel(polygon)}</option>
-    </select>
+    </WebSelect>
   );
 }
 
