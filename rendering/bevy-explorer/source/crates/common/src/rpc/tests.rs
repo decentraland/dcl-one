@@ -296,3 +296,53 @@ fn sign_request_body_hash_crosses_messagepack_bridge() {
         assert_eq!(rx.try_recv().unwrap().unwrap()[0].1, "MixedCase");
     }
 }
+
+#[test]
+fn move_player_faces_the_avatar_target_and_aims_the_camera_from_its_focus() {
+    let parts = |call| match call {
+        RpcCall::MovePlayer {
+            to,
+            looking_at,
+            camera_rotation,
+            ..
+        } => (to, looking_at, camera_rotation),
+        _ => panic!("a move"),
+    };
+    // Decentraland's z is bevy's -z
+    let (to, looking_at, camera_rotation) = parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        None,
+        None,
+        None,
+        None,
+    ));
+    assert_eq!(to, Vec3::new(8.0, 0.0, -8.0));
+    assert_eq!((looking_at, camera_rotation), (None, None));
+
+    // a camera target alone also turns the avatar; the camera looks at it from its focus, so a
+    // point at the focus's height ahead is straight ahead
+    let camera_target = [8.0, CAMERA_FOCUS_HEIGHT, 18.0];
+    let (_, looking_at, camera_rotation) = parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        Some(camera_target),
+        None,
+        None,
+        None,
+    ));
+    assert_eq!(looking_at, Some(Vec3::new(8.0, CAMERA_FOCUS_HEIGHT, -18.0)));
+    let forward = camera_rotation.expect("an aim") * Vec3::NEG_Z;
+    assert!(forward.distance(Vec3::NEG_Z) < 1e-5, "{forward}");
+
+    // an avatar target wins for the avatar, and the camera still looks at its own target
+    let (_, looking_at, camera_rotation) = parts(RpcCall::move_player(
+        [8.0, 0.0, 8.0],
+        Some([8.0, CAMERA_FOCUS_HEIGHT + 10.0, 18.0]),
+        Some([18.0, 0.0, 8.0]),
+        None,
+        None,
+    ));
+    assert_eq!(looking_at, Some(Vec3::new(18.0, 0.0, -8.0)));
+    let forward = camera_rotation.expect("an aim") * Vec3::NEG_Z;
+    let expected = Vec3::new(0.0, 1.0, -1.0).normalize();
+    assert!(forward.distance(expected) < 1e-5, "{forward}");
+}

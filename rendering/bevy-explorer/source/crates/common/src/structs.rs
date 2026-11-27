@@ -470,6 +470,10 @@ pub struct SceneDrivenAnimationFeedbackState {
 /// `PBVirtualCamera.fov` default, per the proto definition.
 pub const PLAYER_CAMERA_FOV: f32 = std::f32::consts::PI / 3.0;
 
+/// The player camera's focus, in metres above the player's feet: where the first-person camera
+/// sits, and the point the third-person and drone cameras follow and aim at.
+pub const CAMERA_FOCUS_HEIGHT: f32 = 1.75;
+
 /// The player camera's zoom level. The wheel steps between the three; there is no zoom within one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraZoomLevel {

@@ -5,11 +5,14 @@ mod tests;
 
 use crate::{
     profile::{CompactProfile, SerializedProfile},
-    structs::{EmoteMask, PermissionType},
+    structs::{EmoteMask, PermissionType, CAMERA_FOCUS_HEIGHT},
 };
 use alloy_core::primitives::Address;
 use bevy::{platform::collections::HashMap, prelude::*};
-use dcl_component::proto_components::kernel::apis::VideoTracksActiveStreamsResponse;
+use dcl_component::{
+    proto_components::kernel::apis::VideoTracksActiveStreamsResponse,
+    transform_and_parent::DclTranslation,
+};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, sync::Arc};
 pub use tokio_util::sync::CancellationToken;
@@ -390,6 +393,37 @@ pub enum RpcCall {
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },
+}
+
+impl RpcCall {
+    /// The move `movePlayerTo` asks for, from a scene's op and the console's `/move_player_to`
+    /// alike: the player to `position`, turned to face `avatar_target` (`camera_target` when there
+    /// is none), and the camera aimed at `camera_target` from its focus,
+    /// [`CAMERA_FOCUS_HEIGHT`] above `position`, the point the first-person camera sits at and the
+    /// orbiting ones turn around. Points are Decentraland coordinates: relative to the scene's base
+    /// parcel from a scene, in the world from the engine.
+    pub fn move_player(
+        position: [f32; 3],
+        camera_target: Option<[f32; 3]>,
+        avatar_target: Option<[f32; 3]>,
+        duration: Option<f32>,
+        response: Option<RpcResultSender<bool>>,
+    ) -> Self {
+        let bevy = |point| DclTranslation(point).to_bevy_translation();
+        let to = bevy(position);
+        let focus = to + Vec3::Y * CAMERA_FOCUS_HEIGHT;
+        RpcCall::MovePlayer {
+            to,
+            looking_at: avatar_target.or(camera_target).map(bevy),
+            duration,
+            camera_rotation: camera_target.map(|target| {
+                Transform::IDENTITY
+                    .looking_at(bevy(target) - focus, Vec3::Y)
+                    .rotation
+            }),
+            response,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

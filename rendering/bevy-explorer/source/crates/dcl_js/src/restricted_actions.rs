@@ -1,9 +1,5 @@
 use anyhow::anyhow;
-use bevy::{
-    log::debug,
-    math::{IVec2, Vec3},
-    transform::components::Transform,
-};
+use bevy::{log::debug, math::IVec2};
 use common::{
     rpc::{OpenExplorerUiResult, RpcCall, RpcResultSender, RpcUiFocusAction},
     structs::EmoteMask,
@@ -26,17 +22,6 @@ pub async fn op_move_player_to(
 ) -> Result<bool, anyhow::Error> {
     debug!("move player to {position:?}, camera: {camera_target:?}, rotate: {avatar_target:?}, duration: {duration:?}");
 
-    let to = DclTranslation([position.x, position.y, position.z]).to_bevy_translation();
-    let looking_at_source = avatar_target.or(camera_target);
-    let looking_at =
-        looking_at_source.map(|t| DclTranslation([t.x, t.y, t.z]).to_bevy_translation());
-    let camera_rotation = camera_target.map(|camera| {
-        let camera_target = DclTranslation([camera.x, camera.y, camera.z]).to_bevy_translation();
-        Transform::IDENTITY
-            .looking_at(camera_target - to, Vec3::Y)
-            .rotation
-    });
-
     let (response, rx) = duration
         .map(|_| {
             let (sx, rx) = RpcResultSender::<bool>::channel();
@@ -46,15 +31,16 @@ pub async fn op_move_player_to(
 
     {
         let mut op_state = state.borrow_mut();
+        let point = |v: DclVector3| [v.x, v.y, v.z];
         op_state
             .borrow_mut::<RpcCalls>()
-            .push(RpcCall::MovePlayer {
-                to,
-                looking_at,
+            .push(RpcCall::move_player(
+                point(position),
+                camera_target.map(point),
+                avatar_target.map(point),
                 duration,
-                camera_rotation,
                 response,
-            })?;
+            ))?;
     }
 
     Ok(if let Some(rx) = rx {
@@ -306,4 +292,74 @@ pub async fn op_copy_to_clipboard(
     }
 
     rx.await.map_err(|e| anyhow!(e))?.map_err(|e| anyhow!(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::math::{Quat, Vec3};
+
+    use super::*;
+    use crate::test_state::TestState;
+
+    fn vector(x: f32, y: f32, z: f32) -> DclVector3 {
+        DclVector3 { x, y, z }
+    }
+
+    /// What a scene's `movePlayerTo` pushes, without a duration (which would wait for the move).
+    fn pushed(camera_target: Option<DclVector3>, avatar_target: Option<DclVector3>) -> RpcCall {
+        let mut state = TestState::default();
+        state.put(RpcCalls::default());
+        let state = Rc::new(RefCell::new(state));
+        let moved = futures_lite::future::block_on(op_move_player_to(
+            state.clone(),
+            vector(8.0, 0.0, 8.0),
+            camera_target,
+            avatar_target,
+            None,
+        ));
+        assert!(moved.unwrap());
+        let mut calls = state.borrow_mut().take::<RpcCalls>().into_iter();
+        let call = calls.next().expect("one call");
+        assert!(calls.next().is_none());
+        call
+    }
+
+    fn parts(call: RpcCall) -> (Vec3, Option<Vec3>, Option<Quat>) {
+        let RpcCall::MovePlayer {
+            to,
+            looking_at,
+            camera_rotation,
+            ..
+        } = call
+        else {
+            panic!("a move");
+        };
+        (to, looking_at, camera_rotation)
+    }
+
+    #[test]
+    fn the_op_maps_its_targets_through_the_shared_move() {
+        let camera = vector(8.0, 1.75, 16.0);
+        let avatar = vector(0.0, 0.0, 8.0);
+        for (camera_target, avatar_target) in [
+            (None, None),
+            (Some(camera), None),
+            (None, Some(avatar)),
+            (Some(camera), Some(avatar)),
+        ] {
+            let point = |v: DclVector3| [v.x, v.y, v.z];
+            let expected = RpcCall::move_player(
+                [8.0, 0.0, 8.0],
+                camera_target.map(point),
+                avatar_target.map(point),
+                None,
+                None,
+            );
+            assert_eq!(
+                parts(pushed(camera_target, avatar_target)),
+                parts(expected),
+                "{camera_target:?} {avatar_target:?}"
+            );
+        }
+    }
 }

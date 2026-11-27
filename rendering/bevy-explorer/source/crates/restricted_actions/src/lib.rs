@@ -448,16 +448,13 @@ fn apply_player_move(
             }
 
             if let Some(camera_rotation) = camera_rotation {
-                if origin.scene().is_some() {
-                    commands.send_event(RpcCallEvent {
-                        origin,
-                        call: RpcCall::MoveCamera {
-                            facing: camera_rotation,
-                        },
-                    });
-                } else {
-                    warn!("MoveTo action without scene had camera_rotation");
-                }
+                // from the move's own origin: a scene's is checked again in `move_camera`
+                commands.send_event(RpcCallEvent {
+                    origin,
+                    call: RpcCall::MoveCamera {
+                        facing: camera_rotation,
+                    },
+                });
             }
         }
 
@@ -606,30 +603,32 @@ pub fn update_player_move(
     }
 }
 
+/// Turns the player camera as a `MoveCamera` asks: from a scene the player stands in, or from the
+/// engine (the console's `/move_player_to --camera-target`).
 pub fn move_camera(
     mut events: EventReader<RpcCallEvent>,
     mut camera: Query<&mut PrimaryCamera>,
     player: Query<(&Transform, Entity), With<PrimaryUser>>,
     containing_scene: ContainingScene,
 ) {
-    for (root, facing) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
-        (RpcOrigin::Scene { entity: scene, .. }, RpcCall::MoveCamera { facing }) => {
-            Some((scene, facing))
-        }
+    for (origin, facing) in events.read().filter_map(|ev| match &ev.call {
+        RpcCall::MoveCamera { facing } => Some((&ev.origin, facing)),
         _ => None,
     }) {
-        if !player
-            .single()
-            .ok()
-            .is_some_and(|(_, e)| containing_scene.get(e).contains(root))
-        {
-            warn!("invalid camera move request from non-containing scene");
-            warn!("request from {root:?}");
-            warn!(
-                "containing scenes {:?}",
-                player.single().map(|(_, p)| containing_scene.get(p))
-            );
-            return;
+        if let Some(root) = origin.scene() {
+            if !player
+                .single()
+                .ok()
+                .is_some_and(|(_, e)| containing_scene.get(e).contains(&root))
+            {
+                warn!("invalid camera move request from non-containing scene");
+                warn!("request from {root:?}");
+                warn!(
+                    "containing scenes {:?}",
+                    player.single().map(|(_, p)| containing_scene.get(p))
+                );
+                continue;
+            }
         }
 
         let (yaw, pitch, roll) = facing.to_euler(EulerRot::YXZ);
@@ -3472,5 +3471,85 @@ mod signed_fetch_body_tests {
         assert_eq!(signed_fetch_tld("decentraland.zone"), "zone");
         assert_eq!(signed_fetch_tld("decentraland.today"), "today");
         assert_eq!(signed_fetch_tld("custom.example"), "org");
+    }
+}
+
+#[cfg(test)]
+mod player_move_tests {
+    use std::f32::consts::FRAC_PI_2;
+
+    use common::structs::{AppConfig, PermissionUsed, PrimaryPlayerRes, CAMERA_FOCUS_HEIGHT};
+    use scene_runner::{
+        initialize_scene::{LiveScenes, PortableScenes, ScenePointers},
+        permissions::PermissionManager,
+    };
+
+    use super::*;
+
+    /// The move and the camera turn it asks for, with a player at the origin and its camera.
+    fn app() -> (App, Entity, Entity) {
+        let mut app = App::new();
+        app.add_event::<RpcCallEvent>()
+            .add_event::<PlayerTeleported>()
+            .add_event::<PermissionUsed>()
+            .init_resource::<AppConfig>()
+            .init_resource::<CurrentRealm>()
+            .init_resource::<PermissionManager>()
+            .init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<EngineMovementControl>()
+            .init_resource::<AvatarMovementInfo>()
+            .init_resource::<Time>()
+            .add_systems(Update, (handle_player_move_requests, move_camera).chain());
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                Transform::default(),
+                GlobalTransform::default(),
+                AvatarDynamicState::default(),
+            ))
+            .id();
+        app.insert_resource(PrimaryPlayerRes(player));
+        let camera = app.world_mut().spawn(PrimaryCamera::default()).id();
+        (app, player, camera)
+    }
+
+    #[test]
+    fn the_engine_moves_the_player_and_turns_its_camera_as_a_scene_does() {
+        let (mut app, player, camera) = app();
+        // a scene the player is not in may not turn the camera; the engine's turn still lands
+        let elsewhere = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: elsewhere,
+                hash: "elsewhere".into(),
+            },
+            call: RpcCall::MoveCamera {
+                facing: Quat::from_rotation_y(1.0),
+            },
+        });
+        let (response, mut moved) = RpcResultSender::<bool>::channel();
+        app.world_mut()
+            .send_event(RpcCallEvent::engine(RpcCall::move_player(
+                [8.0, 0.0, 8.0],
+                Some([18.0, CAMERA_FOCUS_HEIGHT, 8.0]),
+                Some([8.0, 0.0, 18.0]),
+                None,
+                Some(response),
+            )));
+        app.update();
+
+        assert_eq!(moved.poll_once(), Ok(Some(true)));
+        let transform = app.world().get::<Transform>(player).unwrap();
+        assert_eq!(transform.translation, Vec3::new(8.0, 0.0, -8.0));
+        // the avatar faces its own target, north
+        let facing = transform.forward().as_vec3();
+        assert!(facing.distance(Vec3::NEG_Z) < 1e-5, "{facing}");
+        // the camera looks east, level
+        let camera = app.world().get::<PrimaryCamera>(camera).unwrap();
+        assert!((camera.yaw + FRAC_PI_2).abs() < 1e-5, "{}", camera.yaw);
+        assert!(camera.pitch.abs() < 1e-5, "{}", camera.pitch);
     }
 }

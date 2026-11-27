@@ -11,8 +11,9 @@ use std::f32::consts::{FRAC_PI_2, PI};
 use bevy::prelude::*;
 use common::structs::{CameraShoulder, CameraZoomLevel};
 
-/// The point the camera follows and aims at, above the player's feet.
-pub const FOCUS_HEIGHT: f32 = 1.75;
+/// The point the camera follows and aims at, above the player's feet: shared with the move that
+/// aims the camera (`RpcCall::move_player`).
+pub use common::structs::CAMERA_FOCUS_HEIGHT as FOCUS_HEIGHT;
 /// Seconds a change of level takes.
 const BLEND_SECS: f32 = 0.5;
 /// Metres per second the shoulder offset moves towards its target.
