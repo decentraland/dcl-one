@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from 'react'
 import styles from './EmptyState.module.css'
 
 export type EmptyStateActionVariant = 'solid' | 'outline' | 'ghost'
@@ -13,7 +13,9 @@ export type EmptyStateAction = {
   icon?: ReactNode
 }
 
-export type EmptyStateProps = {
+export type EmptyStateProps = Omit<ComponentPropsWithoutRef<'div'>, 'children' | 'title'> & {
+  titleAs?: 'p' | 'h2'
+  appearance?: 'shop'
   icon?: ReactNode
   /** Draws the icon inside a 76px translucent circle. */
   iconWash?: boolean
@@ -27,8 +29,6 @@ export type EmptyStateProps = {
   tone?: 'error'
   /** The space above the actions. A number is in pixels. */
   actionsGap?: number | string
-  className?: string
-  style?: CSSProperties
 }
 
 const ACTION_CLASS: Record<EmptyStateActionVariant, string | undefined> = {
@@ -63,23 +63,30 @@ export function EmptyState({
   icon,
   iconWash = false,
   title,
+  titleAs: Title = 'p',
+  appearance,
   subtitle,
   actions,
   variant,
   tone,
   actionsGap,
   className,
-  style
+  style,
+  ...rest
 }: EmptyStateProps) {
   const gap = actionsGap ?? (tone === 'error' ? 40 : undefined)
   const merged =
     gap != null
-      ? ({ ...style, '--es-actions-gap': typeof gap === 'number' ? `${gap}px` : gap } as CSSProperties)
+      ? ({
+          ...style,
+          '--es-actions-gap': typeof gap === 'number' ? `${gap}px` : gap
+        } as CSSProperties)
       : style
   return (
     <div
       className={[
         styles.root,
+        appearance === 'shop' && styles.shop,
         variant != null && styles[variant],
         tone === 'error' && styles.error,
         className
@@ -89,6 +96,7 @@ export function EmptyState({
       data-variant={variant}
       data-tone={tone}
       style={merged}
+      {...rest}
     >
       {icon != null && (
         <div
@@ -98,7 +106,7 @@ export function EmptyState({
           {icon}
         </div>
       )}
-      {title != null && <p className={styles.title}>{title}</p>}
+      {title != null && <Title className={styles.title}>{title}</Title>}
       {subtitle != null && <p className={styles.sub}>{subtitle}</p>}
       {Array.isArray(actions)
         ? actions.length > 0 && (

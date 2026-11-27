@@ -13,6 +13,8 @@ import {
   type InputWebCreatorToolsProps,
   CharCounter,
   CodeInput,
+  ColorPicker,
+  DateField,
   FieldLabel,
   SubmitField,
   Slider
@@ -553,6 +555,51 @@ export const formEntries: GalleryEntry[] = [
     ]
   },
   {
+    name: 'ColorPicker',
+    group: 'Forms',
+    summary:
+      'A button showing a colour that opens preset toggles and hue, saturation and brightness bars.',
+    components: ['ColorPicker'],
+    minHeight: 640,
+    examples: [
+      {
+        id: 'full',
+        title: 'The COLOR button: presets and the three bars',
+        render: () => <ColorPickerExample />
+      },
+      {
+        id: 'swatch',
+        title: 'A swatch with the hue bar only, beside a name',
+        render: () => <ColorPickerExample swatch />
+      }
+    ]
+  },
+  {
+    name: 'DateField',
+    group: 'Forms',
+    summary: 'A date entered as three lists, day, month and year, with no native date picker.',
+    components: ['DateField'],
+    minHeight: 420,
+    examples: [
+      {
+        id: 'dark',
+        title: 'Unset, then chosen part by part',
+        render: () => <DateFieldExample initial="" />
+      },
+      {
+        id: 'light',
+        title: 'The light variant, with a date',
+        surface: 'light',
+        render: () => <DateFieldExample initial="1995-02-28" variant="light" />
+      },
+      {
+        id: 'disabled',
+        title: 'Disabled',
+        render: () => <DateFieldExample initial="2001-07-04" disabled />
+      }
+    ]
+  },
+  {
     name: 'Slider',
     group: 'Forms',
     summary: 'A range input with a ruby fill, in four tracks, with optional steppers.',
@@ -647,6 +694,63 @@ function SubmitFieldExample() {
         canSubmit={false}
         error="Invalid email"
       />
+    </div>
+  )
+}
+
+const HAIR_COLORS = [
+  '#1c1c1c',
+  '#3c210b',
+  '#5b310f',
+  '#7b4818',
+  '#985f37',
+  '#8c2014',
+  '#e98234',
+  '#ffbe28'
+]
+const NAME_COLORS = ['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']
+
+function ColorPickerExample({ swatch = false }: { swatch?: boolean }) {
+  const [color, setColor] = useState(swatch ? '#40eaff' : '#5b310f')
+  if (!swatch)
+    return (
+      <ColorPicker label="Hair color" value={color} presets={HAIR_COLORS} onChange={setColor} />
+    )
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color }}>
+      Ada
+      <ColorPicker
+        label="Name color"
+        value={color}
+        presets={NAME_COLORS}
+        hueOnly
+        swatch
+        onChange={setColor}
+      />
+    </span>
+  )
+}
+
+function DateFieldExample({
+  initial,
+  variant,
+  disabled
+}: {
+  initial: string
+  variant?: 'light'
+  disabled?: boolean
+}) {
+  const [date, setDate] = useState(initial)
+  return (
+    <div className={layout.field}>
+      <DateField
+        label="Birth date"
+        value={date}
+        onChange={setDate}
+        variant={variant}
+        disabled={disabled}
+      />
+      <p>{date === '' ? 'No date yet' : date}</p>
     </div>
   )
 }

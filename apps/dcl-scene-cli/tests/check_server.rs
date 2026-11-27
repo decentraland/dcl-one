@@ -1,6 +1,7 @@
 //! The preview's long-lived type checker against the compiler it stands in
 //! for: after every kind of edit, its report and exit status are those of a
 //! freshly spawned `tsc` given the same arguments.
+#![allow(clippy::unwrap_used, reason = "test support")]
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

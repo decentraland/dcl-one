@@ -181,7 +181,8 @@ pub struct RawSettings {
     /// signed requests may change the studios, and read what a read admin reads.
     pub write_admin_addresses: String,
     /// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` (false): refuse a wallet's
-    /// admin write that signs no `bodySha256` (`admin::require_write_admin`).
+    /// admin write (`admin::require_write_admin`) or studio grant
+    /// (`handlers::studio_operators`) that signs no `bodySha256`.
     pub admin_writes_require_bound_body: bool,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
@@ -355,8 +356,8 @@ pub struct Settings {
     /// the studios with a signed request (`admin::require_write_admin`); they
     /// read too.
     pub write_admin_addresses: Vec<String>,
-    /// A wallet's admin write must sign its body (`bodySha256`); off, one
-    /// that signs none is accepted with a warning.
+    /// A wallet's admin write or studio grant must sign its body
+    /// (`bodySha256`); off, one that signs none is accepted with a warning.
     pub admin_writes_require_bound_body: bool,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,

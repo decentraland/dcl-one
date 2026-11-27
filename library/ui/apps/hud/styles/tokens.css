@@ -56,6 +56,7 @@
   --brand-strong: #f02148; /* compact primary hover */
   --menu-rim: #302d36; /* user menu popover rim */
   --danger-strong: #ff0000; /* destructive hover outline (remove friend / cancel request) */
+  --blocked-fill: #6b0000; /* the passport's BLOCKED button */
   --black-40: var(--dcl-transparencies-black-40);
   --black-80: rgba(0, 0, 0, 0.8); /* Transparencies/Black 80: an outfit card's hover row */
   --black-30: rgba(0, 0, 0, 0.3);
@@ -111,7 +112,6 @@
 
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
-  --modal-scrim: rgba(18, 7, 33, 0.6);
   /* a soft round glow, as an alpha mask (an ellipse in a non-square box) */
   --glow-mask: radial-gradient(
     closest-side,
@@ -166,6 +166,9 @@
   /* ---- typography (Inter scale) ---- */
   --font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', monospace;
+  /* The colour emoji face by name: through the text stack, Chromium and WebKit on Linux take a
+     monochrome glyph from the system's sans (DejaVu has the smileys) before they reach it. */
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   --fs-2xs: 0.6rem; /* micro labels — rarity tags and the like */
   --fs-xs: 0.72rem;
   --fs-sm: 0.82rem;
@@ -210,7 +213,6 @@
      lighter: 50% black ≈ 29%, 40% ≈ 22%, 10% white ≈ 26%. */
   --scrim-head: rgba(0, 0, 0, 0.29);
   --surface-light: var(--text); /* light buttons, fields, popups */
-  --surface-light-hover: #f5f5f5;
   --surface-light-press: #c8c8c8;
   --ink-on-light: var(--panel);
   --ink-muted: var(--dcl-neutrals-cloudy-sky); /* placeholders, idle nav labels */
@@ -227,7 +229,6 @@
   --scrim-20: rgba(0, 0, 0, 0.1); /* 10 % black under this name; not an alias of the foundation's black-10 */
   --divider-pink: rgba(247, 85, 255, 0.25);
   --tab-hover: rgba(255, 255, 255, 0.26);
-  --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
   --menu-bar: var(--panel);
   --menu-tab-hover: #232226;
   --menu-tab-selected: #393641;
@@ -244,7 +245,6 @@
   --glow-pink-faint: rgba(255, 75, 237, 0.14);
   --hide-overlay: #4e0e78;
   --shown: #36d41d; /* a hidden item shown anyway */
-  --smart-badge: linear-gradient(90deg, #e82af7 0%, #b229df 100%);
   --cta-flare: linear-gradient(90deg, #ff3156 0%, #ff5757 50%, #ff7d58 100%);
   --scrim-60: rgba(0, 0, 0, 0.4); /* 40 % black under this name; not an alias of the foundation's black-40 */
   --scrim-card: var(--dcl-transparencies-black-60); /* the lobby dimmed around a card it presents */
@@ -259,9 +259,6 @@
   /* sidebar rail — sRGB equivalents of the reference's linear-space blends */
   --rail-bg: rgba(0, 0, 0, 0.7); /* a navigation button's circle */
   --rail-divider: var(--dcl-transparencies-white-20);
-  --rail-me-ring: rgba(255, 255, 255, 0.7); /* the ring inside the Me button */
-  --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
-  --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */
   --rail-tag: #727272; /* the #tag after the player's name in the Me panel */
   --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups; the shared MenuDivider copies this value */
   --rail-panel-left: 66px; /* where a panel beside the navigation column starts */
@@ -400,11 +397,6 @@
   --lobby-card: rgba(20, 20, 26, 0.84);
   --lobby-ink: var(--dcl-neutrals-snow);
   --lobby-ink-dim: rgb(191, 191, 199);
-  --rail-dot: var(--dcl-transparencies-white-60);
-  --rail-dot-active: rgb(255, 51, 153);
-  --rail-arrow: rgba(28, 28, 33, 0.7);
-  --rail-arrow-hover: rgb(56, 56, 66);
-  --rail-arrow-pressed: rgb(13, 13, 15);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
   --type-96: 96px;
   --fw-light: 300;
@@ -515,7 +507,6 @@
      Alphas are the sRGB equivalents of overlays designed for linear-space blending, each worked
      out over the surface it sits on. */
   --events-dot: rgba(255, 255, 255, 0.32); /* a carousel dot that is not the current one */
-  --modal-scrim-deep: rgba(0, 0, 0, 0.68);
   --tint-shade: rgba(0, 0, 0, 0.54);
   --tint-veil: rgba(255, 255, 255, 0.15); /* the detail's buttons, over its picture's shade */
   --tint-veil-hover: rgba(255, 255, 255, 0.25);

@@ -11,6 +11,13 @@
 //! (`src/treasury::{refill,swap,reconcile,notifications}`), and the card
 //! receivable versus USDC received distinction they keep.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 pub mod payments;
 
 use crate::shared::routing::{get, post};

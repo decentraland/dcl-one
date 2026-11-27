@@ -41,6 +41,7 @@ import type {
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   SetAvatarData,
@@ -171,6 +172,9 @@ export type BevyApiInterface = {
   acceptTerms?: () => Promise<void>
   getSettings: () => Promise<Setting[]>
   setSetting: (name: string, value: number) => Promise<void>
+  /** The settings list now, then again whenever a value or choice changes (a microphone plugged in
+   *  or out). Optional: absent on runtimes whose SystemApi predates it. */
+  getSettingsStream?: () => Promise<AsyncIterable<Setting[]>>
   /** Full binding table: [Action, InputIdentifier[]] pairs, e.g. [{System:'Map'}, ['KeyM','Tab']].
    *  Shapes pinned to crates/common/src/inputs.rs (see protocol.ts wire types). */
   getInputBindings: () => Promise<{ bindings: Array<[ActionWire, string[]]> }>
@@ -207,6 +211,9 @@ export type BevyApiInterface = {
   /** React with an emoji, shown over the local user's avatar; an emoji the wire does not carry
    *  does nothing. Optional: absent on runtimes whose SystemApi predates it. */
   sendReaction?: (emoji: string) => void
+  /** Situational reactions as they play, the local user's included; none while the "Chat
+   *  Reactions" setting is off. Optional: absent on runtimes whose SystemApi predates it. */
+  getReactionStream?: () => Promise<AsyncIterable<ReactionData>>
   getVoiceStream: () => Promise<AsyncIterable<VoiceMessage>>
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>

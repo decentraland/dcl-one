@@ -209,6 +209,26 @@ pub async fn op_set_setting(
     Ok(())
 }
 
+pub async fn op_get_settings_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetSettingsStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_settings_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<SettingInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_kernel_fetch_headers(
     state: Rc<RefCell<impl State>>,
     uri: String,

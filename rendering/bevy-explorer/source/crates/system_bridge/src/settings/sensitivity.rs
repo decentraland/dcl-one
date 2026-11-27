@@ -124,7 +124,7 @@ sensitivity_setting!(
     CameraZoomSensitivitySetting,
     InputDirectionSetLabel::CameraZoom,
     "Camera Zoom",
-    "Controls the sensitivity of Camera Zoom inputs.",
+    "Controls how fast zoom inputs change the photo camera's field of view. The player camera steps one zoom level per input whatever this is set to.",
     0.3,
     1.1,
 );

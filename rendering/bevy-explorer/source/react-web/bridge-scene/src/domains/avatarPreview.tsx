@@ -105,6 +105,9 @@ const SHOP_STAGE = 'images/shop-stage.jpg'
 // and how long to wait for an avatar to load at all.
 const LOBBY_SETTLE_FRAMES = 45
 const LOBBY_LOOK_FRAMES = 600
+// Frames for a loaded avatar's parts to be drawn in: on the web build some were still missing 0.2 s
+// after the engine's report, and all were there by 0.7 s.
+const LOOK_DRAWN_FRAMES = 45
 // The lobby's standby avatar lives on a layer no camera draws: a look loads there out of sight.
 const STANDBY_LAYER = 11
 // A new look's entrance: the avatar on show turns its back, and the new one, loaded, turns to the
@@ -174,6 +177,7 @@ let wanted: { key: string; shape: ShapeData } | null = null
 let showLoad: LoadWatch | null = null
 let standbyLoad: LoadWatch | null = null
 let shownLoaded = false
+let lookLoad: { watch: LoadWatch; done: () => void } | null = null
 
 /** An avatar's load on its entity, from the engine's reports since it was given its look. */
 type LoadWatch = {
@@ -802,6 +806,16 @@ export function registerAvatarPreview(ctx: Ctx): void {
         shownLoaded = true
       }
     }
+    if (lookLoad != null) {
+      // a Backpack closed meanwhile loads nothing more
+      if (stage === 'backpack' && avatarEntity === lookLoad.watch.entity) pollLoad(lookLoad.watch)
+      else lookLoad.watch.done = true
+      if (lookLoad.watch.done) {
+        const { done } = lookLoad
+        lookLoad = null
+        done()
+      }
+    }
   })
   ctx.push((dt) => {
     if (framingT >= 1 || cameraEntity == null || stage !== 'backpack') return
@@ -909,6 +923,23 @@ export function registerAvatarPreview(ctx: Ctx): void {
     acc = 0
     syncShape()
   })
+}
+
+/** Puts the look on the Backpack's avatar now and resolves once it is drawn: the engine reports it
+ *  loaded (well or not, or after long enough that it never will), then draws its parts in over the
+ *  next frames. At once when the avatar already wears it, when the Backpack's preview isn't open, and
+ *  for an earlier call when a later one changes the look again. */
+export async function lookShown(): Promise<void> {
+  if (stage !== 'backpack' || avatarEntity == null) return
+  const before = lastShapeKey
+  const watch = watchLoad(avatarEntity)
+  syncShape()
+  if (lastShapeKey === before) return
+  lookLoad?.done()
+  await new Promise<void>((resolve) => {
+    lookLoad = { watch, done: resolve }
+  })
+  await waitFrames(LOOK_DRAWN_FRAMES)
 }
 
 export async function waitFrames(frames: number): Promise<void> {

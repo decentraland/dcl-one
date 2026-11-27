@@ -95,7 +95,7 @@ pub async fn reconcile_once(
     let rows = receipt_batch(
         &state.pool,
         "broker_purchases",
-        signer.chain_id() as i64,
+        crate::types::chain_id_column(signer.chain_id())?,
         pass_clock,
     )
     .await?;
@@ -148,7 +148,7 @@ pub async fn reconcile_name_transfers_once(
     let rows = receipt_batch(
         &state.pool,
         "name_transfers",
-        signer.chain_id() as i64,
+        crate::types::chain_id_column(signer.chain_id())?,
         pass_clock,
     )
     .await?;
@@ -192,7 +192,7 @@ pub async fn reconcile_escrow_actions_once(
     let rows = receipt_batch(
         &state.pool,
         "escrow_actions",
-        signer.chain_id() as i64,
+        crate::types::chain_id_column(signer.chain_id())?,
         pass_clock,
     )
     .await?;

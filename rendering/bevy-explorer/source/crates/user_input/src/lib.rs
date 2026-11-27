@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 
 pub mod avatar_movement;
-pub mod camera;
+mod camera;
 mod camera_collision;
+mod camera_zoom;
 mod debug_panel;
 pub mod point_at;
 
@@ -58,15 +59,16 @@ impl Plugin for UserInputPlugin {
         app.init_resource::<EngineMovementControl>()
             .init_resource::<CursorLocks>()
             .init_resource::<camera_collision::CameraCollision>();
-        require_camera_collision_state(app);
+        require_camera_state(app);
         app.add_preview_console_command::<NoClipCommand, _>(no_clip);
         app.add_preview_console_command::<SpeedCommand, _>(speed_cmd);
         app.add_preview_console_command::<JumpCommand, _>(jump_cmd);
     }
 }
 
-fn require_camera_collision_state(app: &mut App) {
-    app.register_required_components::<PrimaryCamera, camera_collision::CameraCollisionState>();
+fn require_camera_state(app: &mut App) {
+    app.register_required_components::<PrimaryCamera, camera_zoom::CameraZoom>()
+        .register_required_components::<PrimaryCamera, camera_collision::CameraCollisionState>();
 }
 
 fn manage_player_visibility(
@@ -99,9 +101,10 @@ fn manage_player_visibility(
             }
         }
 
-        let distance =
-            (cam_transform.translation() - player_transform.translation() - Vec3::Y * 1.81)
-                .length();
+        let distance = (cam_transform.translation()
+            - player_transform.translation()
+            - Vec3::Y * camera_zoom::FOCUS_HEIGHT)
+            .length();
 
         // the photo camera may pass through the head; the avatar stays whole for the photo
         #[allow(clippy::collapsible_else_if)]

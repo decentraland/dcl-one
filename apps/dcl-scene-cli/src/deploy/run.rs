@@ -105,6 +105,7 @@ fn size_cell(len: usize) -> (&'static str, String) {
     (sgr, human)
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn print_file_listing(files: &[(String, String, Vec<u8>)]) {
     let color = ux::stdout_color();
     let name_w = files
@@ -130,6 +131,7 @@ struct Packed {
 }
 
 /// Mint the entity, narrate it, and honour `--entity-out`.
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn pack(opts: &DeployOptions, prepared: &Prepared, total_steps: usize) -> Result<Packed> {
     let timestamp = opts.timestamp.unwrap_or_else(now_ms);
     let (entity_id, entity_bytes) = build_entity(prepared, timestamp)?;
@@ -170,6 +172,7 @@ fn validates(opts: &DeployOptions) -> bool {
 /// `Ok` is what was published, its message the upload's outcome line. A
 /// programmatic run also prints the final deployment state as one JSON line,
 /// whatever ended it.
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn deploy(opts: &DeployOptions) -> Result<Published> {
     let outcome = publish(opts).await;
     if opts.programmatic {

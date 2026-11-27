@@ -1003,7 +1003,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 }
 
 /// [`unreadable`]'s source and reason.
-fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
+pub(super) fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
     tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
     (
         Source::TradeEventsIndex,

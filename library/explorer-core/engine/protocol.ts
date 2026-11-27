@@ -18,6 +18,7 @@ import type {
   OutfitsData,
   PlatformBanNotice,
   PortableInfo,
+  ReactionData,
   SatelliteView,
   SceneLoadingUi,
   TextureOptimizationStatus,
@@ -108,7 +109,8 @@ export interface SendChatReactionRequest {
 }
 
 /** React with an emoji, shown over the local user's avatar (page → engine via the scene's
- *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. */
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. One that plays comes back
+ *  as a ReactionMessage while the "Chat Reactions" setting is on. */
 export interface SendReactionRequest {
   kind: 'sendReaction'
   emoji: string
@@ -238,6 +240,8 @@ export type PageToScene =
   | SaveOutfitRequest
   | DeleteOutfitRequest
   | EquipOutfitRequest
+  | PreviewOutfitRequest
+  | RestoreOutfitPreviewRequest
   | RandomizeOutfitRequest
   | UndoOutfitRequest
   | RedoOutfitRequest
@@ -387,6 +391,17 @@ export interface ChatReaction {
 export interface ChatReactionMessage {
   kind: 'chatReaction'
   reaction: ChatReaction
+}
+
+/** A situational reaction as it plays: an emoji shown for `from`, the local user or a peer. The
+ *  engine's own type, so a field it gains is here too. */
+export type SituationalReaction = ReactionData
+
+/** Streamed situational reactions (scene → page): one for each that plays, the local user's
+ *  included, and none while the "Chat Reactions" setting is off. */
+export interface ReactionMessage {
+  kind: 'reaction'
+  reaction: SituationalReaction
 }
 
 /** Streamed incoming chat messages (scene → page). */
@@ -744,8 +759,8 @@ export interface Profile {
   bodyImage?: string
   badges?: Badge[]
   info?: ProfileInfo
-  /** Mutual-friends count shown under the name. */
-  mutuals?: number
+  /** An official Decentraland wallet; set by the passport fetch. */
+  official?: boolean
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */
@@ -872,6 +887,8 @@ export interface Emote {
   slot?: number
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Base emotes have none. */
+  description?: string
   thumbnail?: string
   rarity?: string
   /** Marketplace deep link (…/shop/item/<contract>/<itemId>) — set only for on-chain collectibles;
@@ -2155,6 +2172,8 @@ export interface GalleryWriteMessage {
 export interface Wearable {
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Set on the owned catalog's items only. */
+  description?: string
   rarity: string
   category: string
   thumbnail?: string
@@ -2403,12 +2422,13 @@ export interface OutfitSaveFailedMessage {
   message: string
 }
 
-/** A save, a delete or an equip of the saved outfit in `slot` runs in the scene from `busy: true` until
- *  `busy: false`, which follows every outcome (scene → page). */
+/** A save, a delete, a preview or an equip of the saved outfit in `slot` runs in the scene from
+ *  `busy: true` until `busy: false`, which follows every outcome (scene → page). A preview's and an
+ *  equip's ends once the Backpack's avatar has loaded the outfit. */
 export interface OutfitBusyMessage {
   kind: 'outfitBusy'
   slot: number
-  action: 'save' | 'delete' | 'equip'
+  action: 'save' | 'delete' | 'preview' | 'equip'
   busy: boolean
 }
 
@@ -2432,6 +2452,18 @@ export interface DeleteOutfitRequest {
 export interface EquipOutfitRequest {
   kind: 'equipOutfit'
   slot: number
+}
+
+/** Show a saved outfit on the Backpack's avatar: its body shape, colors and wearables go on the
+ *  Backpack's look until `restoreOutfitPreview`, unless an `equipOutfit` keeps them. */
+export interface PreviewOutfitRequest {
+  kind: 'previewOutfit'
+  slot: number
+}
+
+/** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
+export interface RestoreOutfitPreviewRequest {
+  kind: 'restoreOutfitPreview'
 }
 
 /** Put a random look from the owned and base wearables on the Backpack's look, keeping the body
@@ -2676,6 +2708,7 @@ export type SceneToPage =
   | TextureOptimizationMessage
   | ChatRelayMessage
   | ChatReactionMessage
+  | ReactionMessage
   | ConsoleReplyMessage
   | ChatVisibilityMessage
   | FocusChatMessage

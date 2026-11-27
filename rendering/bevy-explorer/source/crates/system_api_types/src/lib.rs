@@ -1047,14 +1047,14 @@ pub struct SetPermanentPermission {
     pub allow: Option<PermissionValue>,
 }
 
-#[derive(Serialize, Deserialize, Clone, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, ts_rs::TS)]
 #[ts(export)]
 pub struct NamedVariant {
     pub name: String,
     pub description: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
 #[ts(export)]

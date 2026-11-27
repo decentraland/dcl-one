@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { breakpoints, layout, textClasses, theme } from '@dcl/one-ui'
 import * as foundations from '@dcl/one-ui/foundations'
 import type { IconProps } from '@dcl/one-ui/foundations'
+import { sortByLabel } from '../order'
 import styles from './FoundationPages.module.css'
 
 export type FoundationPage = {
@@ -38,7 +39,7 @@ const icons = foundations.iconComponentNames.map(
     [name, (foundations as unknown as Record<string, ComponentType<IconProps>>)[name]!] as const
 )
 
-export const foundationPages: readonly FoundationPage[] = [
+const pages: readonly FoundationPage[] = [
   {
     name: 'colors',
     title: 'Colors',
@@ -155,3 +156,6 @@ export const foundationPages: readonly FoundationPage[] = [
     )
   }
 ]
+
+/** The foundations pages by title (`sortByLabel`), the label the sidebar lists them under. */
+export const foundationPages: readonly FoundationPage[] = sortByLabel(pages, (page) => page.title)

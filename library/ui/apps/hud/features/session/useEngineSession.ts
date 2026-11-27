@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewNametag, type PreviewStageFraming } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewNametag, type PreviewStageFraming, type SituationalReaction } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -294,6 +294,10 @@ export interface BackpackState {
   dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
+  /** Show a saved outfit on the avatar until `restoreOutfitPreview`, unless it is equipped. */
+  previewOutfit: (slot: number) => void
+  /** Put back the look from before the first outfit preview, unless an outfit was equipped since. */
+  restoreOutfitPreview: () => void
   /** The randomize bar's state for this Backpack session. */
   outfitHistory: OutfitHistory
   /** Put a random look from the owned and base wearables on (keeps body shape and colors). */
@@ -930,6 +934,9 @@ export interface ChatState {
   react: (messageId: string, emoji: string, remove: boolean) => void
   /** Reacts with an emoji, shown over the local user's avatar. An emoji the wire does not carry does nothing. */
   sendReaction: (emoji: string) => void
+  /** Hears each situational reaction as it plays, the local user's included, until the returned
+   *  function is called. None arrive while the "Chat Reactions" setting is off. */
+  onReaction: (listener: (reaction: SituationalReaction) => void) => () => void
   /** The Nearby lines, whichever channel is shown. */
   nearby: ChatLine[]
   /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
@@ -1537,6 +1544,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Reactions to Nearby lines, by message id; a DM tab's come with its stored history.
   const [nearbyReactions, setNearbyReactions] = useState<Record<string, MessageReaction[]>>({})
   const nearbyIdsRef = useRef<Set<string>>(new Set())
+  const reactionListeners = useRef(new Set<(reaction: SituationalReaction) => void>())
   // Every community the local user is a member of, as chat tabs (closed ones included: `closed`
   // says which are hidden), most recently active first. The handler reads the refs.
   const [communityConvos, setCommunityConvos] = useState<CommunityConversation[]>([])
@@ -2103,6 +2111,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           })
           break
         }
+        case 'reaction':
+          // straight to whoever shows them: a reaction that plays is no state of the session
+          for (const listener of reactionListeners.current) listener(msg.reaction)
+          break
         case 'chatReaction': {
           const r = msg.reaction
           if (r.channel === 'Nearby') {
@@ -2388,7 +2400,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'outfitBusy': {
           // An end clears only the work it names.
           const { slot, action, busy } = msg
-          if (action === 'equip') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
+          if (action === 'equip' || action === 'preview') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
           else setOutfitOperation((prev) => (busy ? { slot, action } : prev?.slot === slot && prev.action === action ? null : prev))
           break
         }
@@ -3415,6 +3427,12 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const sendReaction = useCallback((emoji: string) => {
     driverRef.current?.send({ kind: 'sendReaction', emoji })
   }, [])
+  const onReaction = useCallback((listener: (reaction: SituationalReaction) => void) => {
+    reactionListeners.current.add(listener)
+    return () => {
+      reactionListeners.current.delete(listener)
+    }
+  }, [])
   const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
     driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
   }, [])
@@ -4209,6 +4227,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   useEffect(() => {
     if (backpackWasOpen.current && !backpackOpen) {
       driverRef.current?.send({ kind: 'resetOutfitHistory' })
+      // An outfit shown but not equipped is not part of the look that deploys.
+      driverRef.current?.send({ kind: 'restoreOutfitPreview' })
       driverRef.current?.send({ kind: 'commitAvatar' })
       setOutfitHistory(NO_OUTFIT_HISTORY)
     }
@@ -4306,6 +4326,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     if (driver == null) return
     setOutfitEquipping(slot)
     driver.send({ kind: 'equipOutfit', slot })
+  }, [])
+  const previewOutfit = useCallback((slot: number) => {
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitEquipping(slot)
+    driver.send({ kind: 'previewOutfit', slot })
+  }, [])
+  const restoreOutfitPreview = useCallback(() => {
+    driverRef.current?.send({ kind: 'restoreOutfitPreview' })
   }, [])
   // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
   const randomizeOutfit = useCallback(() => {
@@ -5532,6 +5561,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       playSound: playUiSound,
       react: reactInChat,
       sendReaction,
+      onReaction,
       nearby: messages,
       bubbleText,
       channel,
@@ -5609,7 +5639,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, nametag: nametagPreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, outfitOperation, outfitEquipping, warnAboutClearingExtraOutfits,
-      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit, previewOutfit, restoreOutfitPreview,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },

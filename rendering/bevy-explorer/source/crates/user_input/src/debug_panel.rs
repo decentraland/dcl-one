@@ -13,6 +13,7 @@ use crate::{
         ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, LastMovementStep,
     },
     camera_collision::{CameraCollision, CameraCollisionState},
+    camera_zoom::CameraZoom,
 };
 
 pub(super) struct InputDebugPanelPlugin;
@@ -27,7 +28,11 @@ impl Plugin for InputDebugPanelPlugin {
                 title: "Camera",
                 query: "/camera_state",
                 fields: &[
-                    ("Follow distance (m)", "distance"),
+                    ("Zoom level", "level"),
+                    ("Level in effect", "levelInEffect"),
+                    ("Shoulder", "shoulder"),
+                    ("Shoulder offset right / up (m)", "shoulderOffset"),
+                    ("Blending between levels", "blending"),
                     ("Far clip (m)", "far"),
                     ("Vertical FOV (degrees)", "fov"),
                     ("Scene override", "override"),
@@ -131,11 +136,16 @@ fn camera_collisions(
 
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
-    camera: Query<(&PrimaryCamera, &Projection, &CameraCollisionState)>,
+    camera: Query<(
+        &PrimaryCamera,
+        &CameraZoom,
+        &Projection,
+        &CameraCollisionState,
+    )>,
     collision: Res<CameraCollision>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
-    let Ok((camera, projection, state)) = camera.single() else {
+    let Ok((camera, zoom, projection, state)) = camera.single() else {
         cmd.reply_failed("player camera unavailable");
         return;
     };
@@ -143,10 +153,18 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
+    let level_name = |level| format!("{level:?}");
+    let shoulder_offset = zoom
+        .level()
+        .map(|level| zoom.shoulder_offset(level).to_array());
     cmd.reply_ok(
         json!({
             "sensitivity": camera.sensitivity,
-            "distance": camera.distance,
+            "level": level_name(camera.level),
+            "levelInEffect": zoom.level().map(level_name),
+            "shoulder": format!("{:?}", camera.shoulder),
+            "shoulderOffset": shoulder_offset,
+            "blending": zoom.blending(),
             "far": far,
             "fov": fov,
             "override": camera.scene_override.is_some(),
@@ -255,7 +273,7 @@ mod tests {
             .add_event::<PrintConsoleLine>()
             .init_resource::<CameraCollision>()
             .add_systems(Update, camera_state);
-        crate::require_camera_collision_state(&mut app);
+        crate::require_camera_state(&mut app);
         let camera = app
             .world_mut()
             .spawn((PrimaryCamera::default(), Projection::default()))

@@ -1,7 +1,7 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::{
     profile::SerializedProfile,
-    structs::{CameraOverride, CinematicSettings, PlayerModifiers},
+    structs::{CameraOverride, CameraZoomLevel, CinematicSettings, PlayerModifiers},
 };
 use comms::BlockedOrBanned;
 
@@ -1034,21 +1034,32 @@ fn first_person_hides_only_the_local_players_own_name() {
     app.update();
     assert!(shown(&app, me) && shown(&app, other));
 
-    let set_camera = |app: &mut App, distance: f32, scene_override| {
+    let set_camera = |app: &mut App, level: CameraZoomLevel, scene_override| {
         let mut cameras = app.world_mut().query::<&mut PrimaryCamera>();
         let mut camera = cameras.single_mut(app.world_mut()).unwrap();
-        camera.distance = distance;
+        camera.level = level;
         camera.scene_override = scene_override;
         app.update();
     };
-    set_camera(&mut app, 0.0, None);
+    set_camera(&mut app, CameraZoomLevel::FirstPerson, None);
     assert!(!shown(&app, me));
     assert!(shown(&app, other));
+    set_camera(&mut app, CameraZoomLevel::Drone, None);
+    assert!(shown(&app, me));
 
     // a scene's camera wins over the player's own zoom, either way
-    set_camera(&mut app, 0.0, Some(CameraOverride::Distance(1.0)));
+    let forced = |level| Some(CameraOverride::Level(level));
+    set_camera(
+        &mut app,
+        CameraZoomLevel::FirstPerson,
+        forced(CameraZoomLevel::ThirdPerson),
+    );
     assert!(shown(&app, me));
-    set_camera(&mut app, 3.0, Some(CameraOverride::Distance(0.0)));
+    set_camera(
+        &mut app,
+        CameraZoomLevel::ThirdPerson,
+        forced(CameraZoomLevel::FirstPerson),
+    );
     assert!(!shown(&app, me));
     let cinematic = CameraOverride::Cinematic(CinematicSettings {
         origin: Entity::PLACEHOLDER,
@@ -1060,7 +1071,7 @@ fn first_person_hides_only_the_local_players_own_name() {
         transition: None,
         fov: FOV,
     });
-    set_camera(&mut app, 0.0, Some(cinematic));
+    set_camera(&mut app, CameraZoomLevel::FirstPerson, Some(cinematic));
     assert!(shown(&app, me));
 }
 

@@ -12,8 +12,8 @@ use sha2::{Digest, Sha256};
 
 use super::tests::{
     OwnDatabase, RevokedContract, Wallet, admin_bearer, app, call, contract_wallet_headers,
-    create_test_studio, grant_state, grant_state_with, scratch_wallet, send, signed_headers,
-    signed_headers_with,
+    create_test_studio, grant_state, grant_state_bound, grant_state_with, scratch_wallet, send,
+    signed_headers, signed_headers_with,
 };
 
 /// Adds `address` as an operator of `studio` over the admin route.
@@ -182,6 +182,15 @@ async fn an_operator_grants_out_of_the_studio_budget() {
     assert_eq!(detail["studioId"], studio.as_str());
     assert_eq!(detail["studioName"], "Acme");
     assert_eq!(detail["reason"], "Event winner");
+    let same_time: bool = sqlx::query_scalar(
+        "SELECT e.created_at = l.created_at FROM credits.studio_budget_entries e \
+         JOIN credits.ledger l ON l.id = e.ledger_id WHERE e.ledger_id = $1",
+    )
+    .bind(ledger_id)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(same_time, "one time for the grant on every surface");
     let (entry_kind, cents, note, created_by): (String, i64, Option<String>, String) =
         sqlx::query_as(
             "SELECT kind, usd_cents, note, created_by FROM credits.studio_budget_entries WHERE ledger_id = $1",
@@ -781,11 +790,26 @@ async fn an_admin_grant_refuses_a_studio_name() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
+    // Blank is none, as for every optional field of the admin routes.
+    for blank in ["", "  "] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/credits/grant",
+            admin_bearer(),
+            Some(json!({ "address": player.address, "amount": "5", "studioName": blank })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{blank:?}: {v}");
+    }
     db.drop().await;
 }
 
-/// Each operator wallet is paced: past the window's grants, a request is
-/// answered 429 before its body is read, and another operator is not slowed.
+/// Each operator wallet is paced: a grant, or a repeat of one, counts once
+/// its wallet is known to act for the studio, and past the window's grants
+/// the next is answered 429. A wallet that does not act for the studio is
+/// told it does not exist and is never counted, so it cannot fill the
+/// limiter; another operator is not slowed.
 #[tokio::test]
 async fn an_operator_is_paced() {
     let Some(db) = OwnDatabase::create("studio_grant_pace").await else {
@@ -794,21 +818,40 @@ async fn an_operator_is_paced() {
     let app = app(grant_state(db.pool.clone(), Some(500)));
     let operator = scratch_wallet();
     let other = scratch_wallet();
+    let stranger = scratch_wallet();
+    let player = scratch_wallet();
     let studio = funded_studio(&app, "Pace", 10, &operator).await;
-    let path = format!("/credits/operator/studios/{studio}/grants");
+    add_operator(&app, &studio, &other.address).await;
     let limit = super::handlers::studio_operators::GRANTS_PER_WINDOW;
-    for _ in 0..limit {
-        let (status, _) = call(&app, &operator, "post", &path, &[], Some(json!({}))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+    for _ in 0..limit + 5 {
+        let (status, _) = grant(&app, &stranger, &studio, &player.address, 1, "pace-key-01").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a stranger is never counted");
     }
-    let (status, v) = call(&app, &operator, "post", &path, &[], Some(json!({}))).await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
-    assert_eq!(v["retryAfterSeconds"], 60);
-    let (status, _) = call(&app, &other, "post", &path, &[], Some(json!({}))).await;
+    // The bucket refills continuously (one grant a second at these settings),
+    // so the first refusal comes after at least the window's grants, a few
+    // more when the requests are slow; it must come within a bound.
+    let mut allowed = 0;
+    let refused = loop {
+        let (status, v) = grant(&app, &operator, &studio, &player.address, 1, "pace-key-01").await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            break v;
+        }
+        let want = if allowed == 0 {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(status, want, "attempt {allowed}: {v}");
+        allowed += 1;
+        assert!(allowed <= 3 * limit, "never paced after {allowed} attempts");
+    };
+    assert!(allowed >= limit, "paced after {allowed} of {limit}");
+    assert_eq!(refused["retryAfterSeconds"], 60);
+    let (status, v) = grant(&app, &other, &studio, &player.address, 1, "pace-key-02").await;
     assert_eq!(
         status,
-        StatusCode::BAD_REQUEST,
-        "another wallet is not slowed"
+        StatusCode::CREATED,
+        "another operator is not slowed: {v}"
     );
     db.drop().await;
 }
@@ -1140,6 +1183,145 @@ async fn a_whole_credit_amount_sent_as_a_decimal_is_granted() {
     assert_eq!(
         (v["credits"].clone(), v["usdCents"].clone()),
         (json!(2), json!(20))
+    );
+    assert_eq!(balance_cents(&db.pool, &studio).await, 80);
+    db.drop().await;
+}
+
+/// A grant that signs no `bodySha256` follows
+/// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY`, as an admin write does: refused,
+/// writing nothing, while it is on; accepted while it is off. A grant that
+/// signs its body's hash is accepted either way.
+#[tokio::test]
+async fn a_grant_without_a_body_hash_follows_the_bound_body_switch() {
+    let Some(db) = OwnDatabase::create("studio_grant_switch").await else {
+        return;
+    };
+    let operator = scratch_wallet();
+    let player = scratch_wallet();
+    let setup = app(grant_state(db.pool.clone(), Some(500)));
+    let studio = funded_studio(&setup, "Switch", 10, &operator).await;
+    let path = format!("/credits/operator/studios/{studio}/grants");
+    let bound = |body: &Value| -> &'static str {
+        let hash = hex::encode(Sha256::digest(body.to_string().as_bytes()));
+        Box::leak(json!({ "bodySha256": hash }).to_string().into_boxed_str())
+    };
+    for (required, unsigned, signed) in [
+        (true, StatusCode::UNAUTHORIZED, StatusCode::CREATED),
+        (false, StatusCode::CREATED, StatusCode::CREATED),
+    ] {
+        let app = app(grant_state_bound(db.pool.clone(), Some(500), required));
+        let before = written(&db.pool).await;
+        let body = grant_body(&player.address, 1, &format!("switch-{required}-unsigned"));
+        let headers = signed_headers(&operator, "post", &path).await;
+        let (status, _, v) = send(&app, "POST", &path, headers, Some(body)).await;
+        assert_eq!(status, unsigned, "required={required}, no hash: {v}");
+        if required {
+            assert_eq!(written(&db.pool).await, before, "the refusal wrote nothing");
+        }
+        let body = grant_body(&player.address, 1, &format!("switch-{required}-signed"));
+        let headers = signed_headers_with(&operator, "post", &path, bound(&body)).await;
+        let (status, _, v) = send(&app, "POST", &path, headers, Some(body)).await;
+        assert_eq!(status, signed, "required={required}, a matching hash: {v}");
+    }
+    db.drop().await;
+}
+
+/// The key's request includes who grants: another operator repeating the
+/// same key, player, amount and reason is refused as a reused key, never
+/// answered with the first operator's grant.
+#[tokio::test]
+async fn an_operator_is_never_answered_with_anothers_grant() {
+    let Some(db) = OwnDatabase::create("studio_grant_granter").await else {
+        return;
+    };
+    let app = app(grant_state(db.pool.clone(), Some(500)));
+    let first = scratch_wallet();
+    let second = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Two", 10, &first).await;
+    add_operator(&app, &studio, &second.address).await;
+    let (status, v) = grant(&app, &first, &studio, &player.address, 1, "shared-key-1").await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let (status, v) = grant(&app, &second, &studio, &player.address, 1, "shared-key-1").await;
+    assert_eq!(
+        (status, v["code"].clone()),
+        (StatusCode::CONFLICT, json!("IDEMPOTENCY_KEY_REUSED")),
+        "{v}"
+    );
+    let (status, v) = grant(&app, &first, &studio, &player.address, 1, "shared-key-1").await;
+    assert_eq!(
+        (status, v["replayed"].clone()),
+        (StatusCode::OK, json!(true)),
+        "{v}"
+    );
+    db.drop().await;
+}
+
+/// A grant stored by the first release, whose hash has no granter, is still
+/// answered to a retry from the operator that made it: the response the
+/// operator lost is not turned into a refusal across the upgrade. Another
+/// operator, or a changed amount, is refused as a reused key.
+#[tokio::test]
+async fn a_first_release_grant_is_replayed_to_its_own_operator() {
+    let Some(db) = OwnDatabase::create("studio_grant_legacy").await else {
+        return;
+    };
+    let app = app(grant_state(db.pool.clone(), Some(500)));
+    let first = scratch_wallet();
+    let second = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Legacy", 10, &first).await;
+    add_operator(&app, &studio, &second.address).await;
+    let (status, made) = grant(&app, &first, &studio, &player.address, 2, "legacy-key-1").await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    // As the first release stored it.
+    let legacy =
+        super::studio_grants::legacy_grant_request_hash(&player.address, 20, "Event winner", None);
+    let rewritten = sqlx::query(
+        "UPDATE credits.studio_budget_entries SET request_hash = $1 \
+         WHERE studio_id = $2::uuid AND idempotency_key = 'legacy-key-1' AND created_by = $3",
+    )
+    .bind(&legacy)
+    .bind(&studio)
+    .bind(&first.address)
+    .execute(&db.pool)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(rewritten, 1);
+    let before = written(&db.pool).await;
+
+    let (status, v) = grant(&app, &first, &studio, &player.address, 2, "legacy-key-1").await;
+    assert_eq!(
+        (status, v["replayed"].clone()),
+        (StatusCode::OK, json!(true)),
+        "{v}"
+    );
+    assert_eq!(v["creditId"], made["creditId"]);
+    for (operator, credits, who) in [
+        (&second, 2, "another operator"),
+        (&first, 3, "a changed amount"),
+    ] {
+        let (status, v) = grant(
+            &app,
+            operator,
+            &studio,
+            &player.address,
+            credits,
+            "legacy-key-1",
+        )
+        .await;
+        assert_eq!(
+            (status, v["code"].clone()),
+            (StatusCode::CONFLICT, json!("IDEMPOTENCY_KEY_REUSED")),
+            "{who}: {v}"
+        );
+    }
+    assert_eq!(
+        written(&db.pool).await,
+        before,
+        "the replay and the refusals wrote nothing"
     );
     assert_eq!(balance_cents(&db.pool, &studio).await, 80);
     db.drop().await;
