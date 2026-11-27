@@ -8,6 +8,13 @@
 //! the result. One live probe against a real endpoint runs only with
 //! `LAND_AUTHZ_LIVE_RPC_URL`.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 

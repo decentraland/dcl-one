@@ -142,7 +142,7 @@ fn abi_string(data: &str) -> Option<String> {
         if w[..24].iter().any(|b| *b != 0) {
             return None;
         }
-        Some(u64::from_be_bytes(w[24..].try_into().ok()?) as usize)
+        usize::try_from(u64::from_be_bytes(w[24..].try_into().ok()?)).ok()
     };
     let offset = word(0)?;
     let len = word(offset)?;

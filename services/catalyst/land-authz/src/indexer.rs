@@ -47,6 +47,13 @@ use crate::jobs::JobContext;
 
 use crate::chain_index::rpc::{BlockHeader, HEADER_BATCH, RpcLog, hex_to_i64};
 use crate::chain_index::rpc::{Rpc, RpcError};
+use crate::shared::casts::{RowCount, len_i64, saturating_i64};
+
+/// A block height as its `bigint` column. Every height is at most the chain
+/// head, which a pass checks against the `i64` range, so this never saturates.
+fn row_block(n: u64) -> i64 {
+    saturating_i64(n)
+}
 
 impl From<RpcError> for IndexError {
     fn from(error: RpcError) -> Self {
@@ -192,8 +199,8 @@ pub fn decode_logs(logs: &[RpcLog]) -> Result<Vec<AuthzEvent>, IndexError> {
         let block = hex_to_i64(&log.block_number)
             .ok_or_else(|| IndexError::Rpc(format!("bad blockNumber {}", log.block_number)))?;
         let index = hex_to_i64(&log.log_index)
-            .ok_or_else(|| IndexError::Rpc(format!("bad logIndex {}", log.log_index)))?
-            as i32;
+            .and_then(|i| i32::try_from(i).ok())
+            .ok_or_else(|| IndexError::Rpc(format!("bad logIndex {}", log.log_index)))?;
         let time = log
             .block_timestamp
             .as_deref()
@@ -245,13 +252,17 @@ fn tx_hash_of(log: &RpcLog) -> Option<String> {
 pub fn decode_estate_data_logs(logs: &[RpcLog], estate_registry: &str) -> Vec<EstateDataEvent> {
     logs.iter()
         .filter_map(|log| {
+            let Ok(index) = i32::try_from(hex_to_i64(&log.log_index)?) else {
+                tracing::warn!(index = %log.log_index, "land-authz: skipped a data document with an out-of-range log index");
+                return None;
+            };
             decode_estate_data(
                 estate_registry,
                 &log.address,
                 &log.topics,
                 &log.data,
                 hex_to_i64(&log.block_number)?,
-                hex_to_i64(&log.log_index)? as i32,
+                index,
             )
         })
         .collect()
@@ -294,7 +305,7 @@ pub async fn insert_estate_data(
         .bind(&descriptions)
         .execute(&mut *conn)
         .await?
-        .rows_affected() as usize;
+        .rows_usize();
     }
     Ok(written)
 }
@@ -307,7 +318,7 @@ fn timestamp_header(block: &Value, expected: u64) -> Option<BlockHeader> {
     let number = block["number"]
         .as_str()
         .and_then(hex_to_i64)
-        .filter(|n| *n >= 0)? as u64;
+        .and_then(|n| u64::try_from(n).ok())?;
     if number != expected {
         return None;
     }
@@ -348,8 +359,7 @@ async fn fill_missing_timestamps(
         })
         .map(|log| {
             hex_to_i64(&log.block_number)
-                .filter(|n| *n >= 0)
-                .map(|n| n as u64)
+                .and_then(|n| u64::try_from(n).ok())
                 .ok_or_else(|| IndexError::Rpc("invalid block number for timestamp lookup".into()))
         })
         .collect::<Result<_, _>>()?;
@@ -367,7 +377,10 @@ async fn fill_missing_timestamps(
         .copied()
         .find(|number| !headers.contains_key(number));
     for log in logs {
-        if let Some(header) = hex_to_i64(&log.block_number).and_then(|n| headers.get(&(n as u64))) {
+        if let Some(header) = hex_to_i64(&log.block_number)
+            .and_then(|n| u64::try_from(n).ok())
+            .and_then(|n| headers.get(&n))
+        {
             if !log
                 .block_hash
                 .as_deref()
@@ -410,7 +423,7 @@ async fn repair_timestamps(
     let start = *requests;
     loop {
         let blocks: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT block_number FROM land_authz.authz_event WHERE block_time <= 0 AND token_address IN ($1, $2) ORDER BY block_number LIMIT $3")
-            .bind(&settings.land_registry).bind(&settings.estate_registry).bind(HEADER_BATCH as i64).fetch_all(pool).await?;
+            .bind(&settings.land_registry).bind(&settings.estate_registry).bind(len_i64(HEADER_BATCH)).fetch_all(pool).await?;
         if blocks.is_empty() {
             sqlx::query("UPDATE land_authz.index_cursor SET history_timestamps_ready = true WHERE network = $1 AND land_registry = $2 AND estate_registry = $3")
                 .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry).execute(pool).await?;
@@ -436,15 +449,10 @@ async fn repair_timestamps(
         if headers.is_empty() {
             return Ok(());
         }
-        let repaired: Vec<i64> = numbers
+        let (repaired, times): (Vec<i64>, Vec<i64>) = numbers
             .iter()
-            .filter(|n| headers.contains_key(n))
-            .map(|n| *n as i64)
-            .collect();
-        let times: Vec<i64> = repaired
-            .iter()
-            .map(|n| headers[&(*n as u64)].timestamp)
-            .collect();
+            .filter_map(|n| headers.get(n).map(|h| (row_block(*n), h.timestamp)))
+            .unzip();
         // One statement: the log's rewrite count moves with the times it
         // rewrote, so a reader comparing it sees the change (`rewrites`).
         sqlx::query("WITH fixed AS (UPDATE land_authz.authz_event e SET block_time = b.time FROM unnest($1::bigint[], $2::bigint[]) b(number, time) WHERE e.block_number = b.number AND e.block_time <= 0 AND e.token_address IN ($3, $4) RETURNING 1) \
@@ -511,12 +519,14 @@ async fn repair_transfer_parties(
         }
         let first = u64::try_from(first)
             .map_err(|_| IndexError::Rpc("negative historical block".into()))?;
+        let ceiling_block = u64::try_from(ceiling)
+            .map_err(|_| IndexError::Rpc("negative checkpoint block".into()))?;
         let upper = first
             .saturating_add(TRANSFER_REPAIR_WINDOW - 1)
-            .min(ceiling as u64);
+            .min(ceiling_block);
         let same = |header: &BlockHeader| header.hash.eq_ignore_ascii_case(&checkpoint);
         *requests += 1;
-        if !same(&rpc.block_header(ceiling as u64).await?) {
+        if !same(&rpc.block_header(ceiling_block).await?) {
             return Err(IndexError::Rpc(format!(
                 "checkpoint block {ceiling} changed; the transfer repair waits for the cursor check"
             )));
@@ -539,24 +549,24 @@ async fn repair_transfer_parties(
             Err(error) => return Err(error.into()),
         };
         *requests += used + 1;
-        if !same(&rpc.block_header(ceiling as u64).await?) {
+        if !same(&rpc.block_header(ceiling_block).await?) {
             return Err(IndexError::Rpc(format!(
                 "checkpoint block {ceiling} changed while blocks {first}..={reached} were read"
             )));
         }
         let mut read = Columns::default();
         for log in &logs {
-            let (Some(block), Some(index)) =
-                (hex_to_i64(&log.block_number), hex_to_i64(&log.log_index))
-            else {
+            let (Some(block), Some(index)) = (
+                hex_to_i64(&log.block_number),
+                hex_to_i64(&log.log_index).and_then(|i| i32::try_from(i).ok()),
+            ) else {
                 continue;
             };
-            let Ok(ev) = decode_log(&log.address, &log.topics, &log.data, block, index as i32, 0)
-            else {
+            let Ok(ev) = decode_log(&log.address, &log.topics, &log.data, block, index, 0) else {
                 continue;
             };
             read.blocks.push(block);
-            read.indexes.push(index as i32);
+            read.indexes.push(index);
             read.addrs.push(ev.token_address);
             read.token_ids.push(ev.token_id);
             read.accounts.push(ev.account);
@@ -588,8 +598,8 @@ async fn repair_transfer_parties(
              WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL) \
                AND block_number BETWEEN $1 AND $2 ORDER BY block_number, log_index LIMIT 1",
         )
-        .bind(first as i64)
-        .bind(reached as i64)
+        .bind(row_block(first))
+        .bind(row_block(reached))
         .fetch_optional(&mut *tx)
         .await?;
         if let Some((block, index)) = unfilled {
@@ -678,7 +688,7 @@ pub async fn insert_events(
         .bind(&c.hashes)
         .execute(&mut *conn)
         .await?;
-        written += result.rows_affected() as usize;
+        written += result.rows_usize();
     }
     Ok(written)
 }
@@ -809,7 +819,7 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
         .bind(&settings.network)
         .bind(&settings.land_registry)
         .bind(&settings.estate_registry)
-        .bind(settings.start_block as i64 - 1)
+        .bind(row_block(settings.start_block) - 1)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -914,7 +924,7 @@ async fn rewind_for_replay(
     settings: &Settings,
     from: u64,
 ) -> Result<ReplayStart, sqlx::Error> {
-    let before = from as i64 - 1;
+    let before = row_block(from) - 1;
     let full = from <= settings.start_block;
     let mut tx = pool.begin().await?;
     let previous: Option<(String, String)> = sqlx::query_as(
@@ -1097,7 +1107,7 @@ pub async fn mark_folded(
            AND land_registry = $3 AND estate_registry = $4",
     )
     .bind(&settings.network)
-    .bind(head as i64)
+    .bind(row_block(head))
     .bind(&settings.land_registry)
     .bind(&settings.estate_registry)
     .execute(pool)
@@ -1436,7 +1446,7 @@ pub async fn sync_range(
     .bind(&state.settings.network)
     .bind(&state.settings.land_registry)
     .bind(&state.settings.estate_registry)
-    .bind(from as i64 - 1)
+    .bind(row_block(from) - 1)
     .fetch_optional(&state.pool)
     .await?
     .flatten();
@@ -1517,7 +1527,8 @@ pub async fn sync_range(
             .collect();
         let needs_headers = !missing.is_empty();
         if let Some(first_uncovered) = missing.into_iter().nth(HEADER_BATCH) {
-            reached = (first_uncovered - 1) as u64;
+            reached = u64::try_from(first_uncovered - 1)
+                .map_err(|_| IndexError::Rpc(format!("bad blockNumber {first_uncovered}")))?;
             logs.retain(|log| hex_to_i64(&log.block_number).is_some_and(|n| n < first_uncovered));
         }
         outcome.requests += used;
@@ -1541,7 +1552,9 @@ pub async fn sync_range(
                 outcome.paused = true;
                 return Ok(());
             }
-            logs.retain(|log| hex_to_i64(&log.block_number).is_some_and(|n| n < unresolved as i64));
+            logs.retain(|log| {
+                hex_to_i64(&log.block_number).is_some_and(|n| n < row_block(unresolved))
+            });
         }
         let events = decode_logs(&logs)?;
         let documents = decode_estate_data_logs(&logs, &state.settings.estate_registry);
@@ -1562,7 +1575,7 @@ pub async fn sync_range(
         }
         let header = reached_header.unwrap_or(after);
         if logs.iter().any(|log| {
-            hex_to_i64(&log.block_number) == Some(reached as i64)
+            hex_to_i64(&log.block_number) == Some(row_block(reached))
                 && log
                     .block_hash
                     .as_deref()
@@ -1572,13 +1585,14 @@ pub async fn sync_range(
                 "block {reached} changed while its logs were read"
             )));
         }
+        let reached_row = row_block(reached);
         let mut tx = state.pool.begin().await?;
         let written = insert_events(&mut tx, &events).await?;
         insert_estate_data(&mut tx, &documents).await?;
-        set_cursor(&mut tx, &state.settings, reached as i64, Some(&header.hash)).await?;
+        set_cursor(&mut tx, &state.settings, reached_row, Some(&header.hash)).await?;
         tx.commit().await?;
         outcome.events_written += written;
-        outcome.indexed_to = reached as i64;
+        outcome.indexed_to = reached_row;
         tracing::info!(network = %network, from = next, to = reached, logs = logs.len(), written, "land-authz: indexed range");
         if let Some(ctx) = ctx {
             ctx.progress(format!(
@@ -1610,9 +1624,11 @@ async fn check_cursor_block(
     last_block: i64,
 ) -> Result<Option<i64>, IndexError> {
     let settings = &state.settings;
-    if last_block < settings.start_block as i64 {
+    if last_block < row_block(settings.start_block) {
         return Ok(None);
     }
+    // At or past the start block, so non-negative.
+    let last_height = last_block.unsigned_abs();
     let Some((stored, checkpoint_block, checkpoint_hash)): Option<(
         Option<String>,
         Option<i64>,
@@ -1631,7 +1647,7 @@ async fn check_cursor_block(
         // Moved or rebound since it was read: the next pass checks it.
         return Ok(None);
     };
-    let header = rpc.block_header(last_block as u64).await?;
+    let header = rpc.block_header(last_height).await?;
     match stored {
         None => {
             sqlx::query(
@@ -1649,12 +1665,13 @@ async fn check_cursor_block(
             Ok(None)
         }
         Some(stored) if stored.eq_ignore_ascii_case(&header.hash) => {
-            let depth = CHECKPOINT_DEPTH_BLOCKS as i64;
+            let depth = row_block(CHECKPOINT_DEPTH_BLOCKS);
             let candidate = last_block - depth;
             let stale = checkpoint_block.is_none_or(|block| last_block - block >= 2 * depth);
-            if stale && candidate >= settings.start_block as i64 {
-                let checkpoint = rpc.block_header(candidate as u64).await?;
-                let again = rpc.block_header(last_block as u64).await?;
+            if stale && candidate >= row_block(settings.start_block) {
+                // At or past the start block, so non-negative.
+                let checkpoint = rpc.block_header(candidate.unsigned_abs()).await?;
+                let again = rpc.block_header(last_height).await?;
                 if again.hash.eq_ignore_ascii_case(&stored) {
                     sqlx::query(
                         "UPDATE land_authz.index_cursor SET checkpoint_block = $5, checkpoint_hash = $6 \
@@ -1675,12 +1692,12 @@ async fn check_cursor_block(
             Ok(None)
         }
         Some(stored) => {
-            let mut to = (settings.start_block as i64 - 1, None);
+            let mut to = (row_block(settings.start_block) - 1, None);
             if let (Some(block), Some(hash)) = (checkpoint_block, checkpoint_hash)
                 && block < last_block
-                && block >= settings.start_block as i64
+                && block >= row_block(settings.start_block)
                 && rpc
-                    .block_header(block as u64)
+                    .block_header(block.unsigned_abs())
                     .await?
                     .hash
                     .eq_ignore_ascii_case(&hash)
@@ -1882,6 +1899,10 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         });
     }
     let head = rpc.head_block().await.context("eth_blockNumber")?;
+    // Every height the pass handles is at most the head ([`row_block`]).
+    if i64::try_from(head).is_err() {
+        bail!("eth_blockNumber {head} is past the bigint range");
+    }
     let confirmed = head.saturating_sub(settings.confirmations);
     let target = settings.stop_block.map_or(confirmed, |s| s.min(confirmed));
     let mut outcome = PassOutcome {
@@ -1889,7 +1910,8 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         indexed_to: row.last_block,
         ..Default::default()
     };
-    let from = (row.last_block + 1) as u64;
+    let from = u64::try_from(row.last_block + 1)
+        .with_context(|| format!("cursor block {} is below the start", row.last_block))?;
     if from <= target {
         sync_range(
             state,
