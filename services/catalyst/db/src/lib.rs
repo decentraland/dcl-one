@@ -144,6 +144,7 @@ pub async fn connect_pool(url: &str, settings: &PoolSettings) -> Result<PgPool, 
     if matches!(connect_opts.get_ssl_mode(), PgSslMode::VerifyCa) {
         return Err(PoolError::VerifyCaUnsupported);
     }
+    tracing::info!(sslmode = ?connect_opts.get_ssl_mode(), "connecting the PostgreSQL pool");
 
     let mut pool_opts = PgPoolOptions::new()
         .max_connections(settings.max_connections)
