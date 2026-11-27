@@ -1078,7 +1078,8 @@ pub async fn collection_items(
 /// `GET /v1/items/:id`: any signer reads a minted item of a published
 /// standard collection and a curated item of a published third-party
 /// collection (one with an item curation), as the collection's listing
-/// shows them ([`collection_items`]); the collection's owner, the provider's
+/// shows them ([`collection_items`]), or one the node's content serves
+/// ([`served`]); the collection's owner, the provider's
 /// manager (the item's owner for an item with no collection) and the
 /// committee read any. `full` is false for a caller who reads only what
 /// any signer may; for a published item the committee only widens the view,
@@ -1098,7 +1099,6 @@ pub async fn read_item(
         Some(parent_id) => Some(parent(&mut conn, &view, parent_id, providers(&registry)).await?),
         None => None,
     };
-    drop(conn);
     let s = signer.as_str();
     let owns = match &parent {
         Some(c) => c.role(s),
@@ -1107,8 +1107,15 @@ pub async fn read_item(
     if owns {
         return Ok(ItemRead { id, full: true });
     }
-    if let Some(c) = parent.filter(|c| c.published && (i.minted || (c.third_party && i.published)))
-    {
+    let public = match &parent {
+        Some(c) if c.published && (i.minted || (c.third_party && i.published)) => Ok(true),
+        Some(c) if c.published && c.third_party => {
+            served(&mut conn, id, state.content_sync.is_own_content_authority()).await
+        }
+        _ => Ok(false),
+    };
+    drop(conn);
+    if let (Ok(true), Some(c)) = (&public, &parent) {
         let full = c.owner(s)
             || c.manager(s)
             || c.minter(s)
@@ -1118,7 +1125,29 @@ pub async fn read_item(
     if on_committee(state, Since::read(), s).await? {
         return Ok(ItemRead { id, full: true });
     }
+    public?;
     Err(ApiError::forbidden("Unauthorized").with_data(json!({ "id": raw, "eth_address": s })))
+}
+
+/// Whether this node's content serves item `id` at its URN, told as the
+/// save's URN check tells a taken URN ([`urn_taken`]): when the content
+/// lacks it, 503 unless the node can tell a URN it lacks from one it hasn't
+/// synced ([`content_knows_items`]).
+async fn served(conn: &mut PgConnection, id: Uuid, own_content: bool) -> Result<bool, ApiError> {
+    let urn: Option<String> =
+        sqlx::query_scalar("SELECT urn_suffix FROM builder.items WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+    let Some(urn) = urn else {
+        return Ok(false);
+    };
+    if urn_deployed(conn, &urn).await? {
+        return Ok(true);
+    }
+    content_knows_items(conn, own_content).await?;
+    urn_deployed(conn, &urn).await
 }
 
 /// `PUT /v1/collections/:id`: anyone creates a standard collection under a

@@ -1524,7 +1524,10 @@ Invariants:
   both item types, read before the last entity probe; otherwise 503 and
   nothing written. A third-party collection save that changes the
   collection's URN refuses (409) to move an item onto a URN with an active
-  entity ("Builder collection listings workload"). The builder never writes
+  entity ("Builder collection listings workload"). A signer with no role
+  reads an uncurated item of a published third-party collection by id only
+  when an active entity holds its URN; when none does, the same coverage
+  rule answers 503 before the refusal (401). The builder never writes
   these tables.
 - Bounds. A collection's or an address's items answer at most 20,000 rows
   per response, `GET /v1/items` 1,000; an upload carries at most 256 parts,
