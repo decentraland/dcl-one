@@ -1,0 +1,11 @@
+{
+  "thresholds": {
+    "timeToWorldMs": 120000,
+    "teleportMs": 60000
+  },
+  "locations": [
+    { "name": "Genesis Plaza", "position": "0,0" },
+    { "name": "DCL Museum", "position": "20,80" },
+    { "name": "MetaZone Tower", "position": "61,-27" }
+  ]
+}

@@ -308,7 +308,7 @@ mod log_order_tests {
             TimePlugin,
             FrameCountPlugin,
             DiagnosticsPlugin,
-            crate::world_state::ArrivalsPlugin,
+            scene_runner::load_timing::ArrivalsPlugin,
             RunControlPlugin,
             crate::client_window_focus::ClientWindowFocusPlugin,
             PerformanceMeasurementPlugin,

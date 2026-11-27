@@ -22,12 +22,12 @@ use common::{
         Autopilot, AutopilotPhase, CsvFailed, ARRIVE_TIMEOUT_SECONDS, EXIT_MARKER, LOG_TARGET,
         MEASURE_SECONDS,
     },
-    structs::{CurrentRealm, OutOfWorld, PrimaryUser, WorldHold},
+    structs::{Arrivals, CurrentRealm, OutOfWorld, PrimaryUser, WorldHold},
 };
 use console::DoAddConsoleCommand;
 use wallet::Wallet;
 
-use crate::world_state::{Arrivals, WorldState};
+use crate::world_state::WorldState;
 
 pub(crate) mod walk;
 
@@ -256,7 +256,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::world_state::ArrivalsPlugin;
+    use scene_runner::load_timing::ArrivalsPlugin;
 
     /// A minimal app on a manual clock: every `update` advances `Time<Real>` by `step`.
     fn app(measure: bool, step: Duration) -> App {

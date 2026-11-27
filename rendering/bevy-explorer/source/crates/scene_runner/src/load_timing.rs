@@ -1,22 +1,46 @@
 //! How long scenes take to become ready after they spawn, for load-time comparisons between
 //! builds. Logged under the `scene_timing` target: one line per scene when it reaches its
 //! fifth tick, and one per arrival when the player's scene and every scene in its first ring
-//! are ready. Filter the log with `scene_timing=info`.
+//! are ready. Filter the log with `scene_timing=info`. [`FirstRingTiming::ready`] also keys the
+//! first ring's readiness to the player's [`Arrivals`], for `/scene_loading_state`.
 
 use bevy::prelude::*;
-use common::structs::PrimaryUser;
+use common::structs::{Arrivals, OutOfWorld, PrimaryUser};
+use serde_json::{json, Value};
 use web_time::Instant;
 
 use crate::{
-    initialize_scene::{SceneHash, SceneLoading},
+    initialize_scene::{PointerResult, SceneHash, SceneLoading},
     renderer_context::{RendererSceneContext, FROZEN_BLOCK},
-    vec3_to_parcel, ContainingScene,
+    ring_parcels, vec3_to_parcel, ContainingScene,
 };
 
 /// The target every line here is logged under.
 pub const LOG_TARGET: &str = "scene_timing";
 /// How the arrival line starts, before its milliseconds.
 pub const FIRST_RING_READY: &str = "player's scene and first ring ready";
+
+/// Counts the player's [`Arrivals`]: one each time the player's `OutOfWorld` is removed, in
+/// `PreUpdate`, before `Update` reads the count. [`crate::SceneRunnerPlugin`] adds it.
+pub struct ArrivalsPlugin;
+
+impl Plugin for ArrivalsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Arrivals>()
+            .add_systems(PreUpdate, count_arrivals);
+    }
+}
+
+fn count_arrivals(
+    mut arrivals: ResMut<Arrivals>,
+    mut released: RemovedComponents<OutOfWorld>,
+    player: Query<(), With<PrimaryUser>>,
+) {
+    arrivals.0 += released
+        .read()
+        .filter(|entity| player.contains(*entity))
+        .count() as u64;
+}
 
 /// When the lifecycle spawned the scene.
 #[derive(Component, Clone, Copy, Debug)]
@@ -33,6 +57,19 @@ pub struct ReadyLogged;
 pub struct FirstRingTiming {
     pub arrival: Option<(Entity, Instant)>,
     pub reported: bool,
+    /// The latest arrival whose first ring around the player has been ready since.
+    pub(crate) ready: Option<FirstRingReady>,
+}
+
+/// The first ring was ready at `at`, in world after arrival number `arrival` ([`Arrivals`]): the
+/// first frame of that arrival when it was already loaded, else the frame it completed. Each of
+/// the nine parcels around the player is resolved, and empty, its scene one the lifecycle does
+/// not load there (`LiveScenes::required`: banned, or outside the load distance and the live
+/// ring), or its scene spawned and ready.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FirstRingReady {
+    pub(crate) arrival: u64,
+    pub(crate) at: Instant,
 }
 
 /// Chebyshev distance in parcels from `parcel` to the nearest of `parcels`; `u16::MAX` with
@@ -53,7 +90,8 @@ pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
 
 pub fn report_scene_load_times(
     mut commands: Commands,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    player: Query<(Entity, &GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
+    arrivals: Res<Arrivals>,
     containing_scene: ContainingScene,
     scenes: Query<(
         Entity,
@@ -65,7 +103,7 @@ pub fn report_scene_load_times(
     )>,
     mut timing: ResMut<FirstRingTiming>,
 ) {
-    let Ok((player, player_transform)) = player.single() else {
+    let Ok((player, player_transform, out_of_world)) = player.single() else {
         return;
     };
     let player_parcel = vec3_to_parcel(player_transform.translation());
@@ -108,6 +146,38 @@ pub fn report_scene_load_times(
         }
     }
 
+    // from the parcels, not the spawned scenes: the lifecycle defers a neighbour's spawn until the
+    // player's scene has loaded. The `FIRST_RING_READY` line keeps the spawned-scene rule above
+    if !out_of_world && timing.ready.map_or(0, |ready| ready.arrival) < arrivals.0 {
+        // the lifecycle runs later in the frame: its set is judged only around the parcel it saw
+        let required = &containing_scene.live_scenes.required;
+        let parcels_ready = required.around == Some(player_parcel)
+            && ring_parcels(player_parcel, 1).all(|parcel| {
+                match containing_scene.pointers.get(parcel) {
+                    None => false,
+                    Some(PointerResult::Nothing) => true,
+                    Some(PointerResult::Exists { hash, .. }) if !required.hashes.contains(hash) => {
+                        true
+                    }
+                    Some(PointerResult::Exists { hash, .. }) => containing_scene
+                        .live_scenes
+                        .scenes
+                        .get(hash)
+                        .and_then(|scene| scenes.get(*scene).ok())
+                        .is_some_and(|(_, _, _, context, loading, _)| {
+                            matches!(loading, Some(SceneLoading::Failed))
+                                || context.is_some_and(scene_is_ready)
+                        }),
+                }
+            });
+        if parcels_ready {
+            timing.ready = Some(FirstRingReady {
+                arrival: arrivals.0,
+                at: now,
+            });
+        }
+    }
+
     if let Some((scene, arrival)) = timing.arrival {
         // a scene despawned before it was ready (a realm change during the landing) ends the
         // arrival unreported
@@ -122,6 +192,15 @@ pub fn report_scene_load_times(
             timing.reported = true;
         }
     }
+}
+
+/// `/scene_loading_state`'s `firstRing`: the latest arrival whose first ring has been ready, and
+/// the milliseconds since; `null` before one.
+pub(crate) fn first_ring_json(timing: &FirstRingTiming, now: Instant) -> Value {
+    json!(timing.ready.map(|ready| json!({
+        "arrival": ready.arrival,
+        "sinceReadyMs": now.duration_since(ready.at).as_millis() as u64,
+    })))
 }
 
 #[cfg(test)]

@@ -843,6 +843,18 @@ pub(crate) fn initialize_scene(
 pub struct LiveScenes {
     pub scenes: HashMap<String, Entity>,
     pub block_new_scenes: bool,
+    pub(crate) required: RequiredScenes,
+}
+
+/// The scene hashes the lifecycle loads around the player, as of its last pass: the load distance
+/// and the live ring, banned scenes left out, before it defers the rest to a loading current
+/// scene. A scene a pointer names but this leaves out is not spawned while the player is at
+/// `around`.
+#[derive(Default, Debug)]
+pub(crate) struct RequiredScenes {
+    /// The player's parcel on that pass; `None` before one.
+    pub(crate) around: Option<IVec2>,
+    pub(crate) hashes: HashSet<String>,
 }
 
 pub struct PortableSource {
@@ -1830,6 +1842,7 @@ pub fn process_scene_lifecycle(
     let Ok(focus) = focus.single() else {
         return;
     };
+    let player_parcel = vec3_to_parcel(focus.translation());
 
     let mut pointers_iter = pointers.pointers.iter();
     let head = pointers_iter.next();
@@ -1929,6 +1942,24 @@ pub fn process_scene_lifecycle(
     };
     required_scene_ids.retain(|scene, _| allowed(scene));
     keep_scene_ids.retain(allowed);
+    // rewritten only when it differs, and without marking `LiveScenes` changed: its change
+    // stays tied to scenes spawned and despawned, which the scene layout readers filter on
+    {
+        let required_hashes: HashSet<&String> =
+            required_scene_ids.keys().map(|(hash, _)| hash).collect();
+        let required = &live_scenes.required;
+        if required.around != Some(player_parcel)
+            || required.hashes.len() != required_hashes.len()
+            || !required_hashes
+                .iter()
+                .all(|hash| required.hashes.contains(*hash))
+        {
+            let required = &mut live_scenes.bypass_change_detection().required;
+            required.around = Some(player_parcel);
+            required.hashes.clear();
+            required.hashes.extend(required_hashes.into_iter().cloned());
+        }
+    }
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

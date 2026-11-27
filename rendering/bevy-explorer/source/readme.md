@@ -264,6 +264,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   `/teleport_state` (`pending`, the spawn point a landing under way looks for by name, and `last`:
   the `name` the last such landing looked for and `found`, whether its scene had it;
   `/teleport <x> <y> [realm] --spawn <name>` asks for such a landing),
+  `/scene_loading_state` (scenes by loading stage and `firstRing`: the latest arrival whose
+  first ring, the player's scene and every scene within one parcel, has been ready, with
+  `sinceReadyMs`),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),

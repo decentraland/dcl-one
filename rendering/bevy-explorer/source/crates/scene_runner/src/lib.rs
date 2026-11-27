@@ -494,6 +494,8 @@ impl Plugin for SceneRunnerPlugin {
                 .in_set(SceneSets::PostLoop),
         );
         app.init_resource::<load_timing::FirstRingTiming>();
+        // first-ring readiness is keyed to the arrivals
+        app.add_plugins(load_timing::ArrivalsPlugin);
         app.add_systems(
             Update,
             load_timing::report_scene_load_times.in_set(SceneSets::PostLoop),

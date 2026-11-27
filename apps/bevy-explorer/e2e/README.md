@@ -199,6 +199,55 @@ the machine's GPU (`pnpm run gpu-probe`) with the results. At the end the demo a
 cleared, the session goes back to the Max Avatars setting, and nametags and the demo emote go
 back to what they were.
 
+## Loading-time check
+
+`scripts/loading-time.ts` measures the live web client at the fixed locations of
+`loading-time.json`. It is a measurement, not a scenario:
+
+- **Time to world**, per location: a fresh client (a new browser profile, nothing cached) opened
+  at the location and signed in as a guest, from the browser's launch until the first ring is
+  ready: the player's scene and every scene within one parcel of the player. It includes the
+  sign-in through `/hud_login` and the new guest's first profile deploy.
+- **Teleport time**: the last client teleports from its location to the first, then on through the
+  list, each leg from the `/teleport` until the same readiness at the destination.
+
+Readiness is the engine's own, keyed to the arrival `/world_state` counts: `/scene_loading_state`'s
+`firstRing.arrival` must reach the arrival after the boot or the teleport. Its instant is the
+reply's time less `firstRing.sinceReadyMs`, so polling adds only the reply's transit time. A
+destination already loaded, or an empty parcel, is ready on its first frame in world; a neighbour
+whose pointer is unresolved or whose scene has not spawned holds it.
+
+```sh
+pnpm run loading-time                                   # the live client: decentraland.org/play, the main realm
+DCL_E2E_WEB_URL=https://decentraland.zone/play DCL_E2E_BASE_DOMAIN=decentraland.zone \
+  DCL_E2E_REALM=https://peer.decentraland.zone pnpm run loading-time
+pnpm run loading-time --config <file> --out <dir> --deadline-minutes 30
+```
+
+It writes `results.json` and `summary.md` to `report/loading-time/` after every reading, each replaced whole.
+`results.json` holds each reading; `slow`, the readings over their threshold; and `unmeasured`,
+the readings not taken, with their errors. The script prints the summary and exits 0 whatever the readings. Past the
+deadline (30 minutes by default, well under the workflow step's 45, since an abandoned boot can finish its current wait first) a boot in progress is
+abandoned and the readings left are recorded as skipped. A client without `firstRing` fails its
+first reading at once, and the readings after it are not attempted. A failed boot keeps its
+evidence under `report/boot-failures/`, as in the suite. The thresholds in `loading-time.json`
+are ceilings for a regression, not targets.
+
+`.github/workflows/bevy-explorer-loading-time.yml` runs it three times a day on the GPU runner of
+[CI](#ci) and keeps each run's `report/` as an artifact for 90 days. A run with a `slow` reading
+taken on the NVIDIA adapter opens one issue, *the live web client is over its threshold*, or
+comments on the open one; its unmeasured readings go in the same issue. Any other run does the same
+on *the measurement could not run* when it has an `unmeasured` reading, a `slow` one on the
+fallback adapter (the GPU probe found no NVIDIA adapter), no readable `results.json`, or a
+measuring job that did not succeed (a run cut short leaves only the readings it finished; a
+scheduled run cancelled, past the job's timeout, or still queued after 150 minutes, when a
+watchdog job cancels it, counts).
+
+Each location's guest is a new account: its first sign-in deploys a profile to the target's
+catalyst, and its session reaches the target's analytics like a player's. Against the live client
+that is three new profiles per run, none of them removed. The workflow shares the runner with the
+scenarios job, so a run can wait for it.
+
 ## How a spec is written
 
 One file per explorer-automation fixture under `specs/`, headed by a table of its test cases
@@ -444,6 +493,9 @@ A reference counts as approved once a reviewer has checked it against the scene'
 
 `tooling/bevy-ci.py` selects no engine lane for a change under this folder.
 
+The [loading-time check](#loading-time-check) has a workflow of its own on the same runner,
+without the `e2e` environment.
+
 Not in this workflow yet: the standalone (`DCL_E2E_TRANSPORT=native` drives a native build
 through its loopback console; no CI job runs one), a macOS leg, and sharding across accounts.
 
@@ -506,6 +558,7 @@ change on the left updates what is on the right in the same change, then runs th
 | The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
 | Selected Cast video frames and playback state in `/media_state` (`crates/av/src/debug_panel.rs`) | `MediaPlayerRow` in `driver/explorer.ts` and the media-state reply tests in `test/explorer.test.ts` | `pnpm run typecheck`; `pnpm test` |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| `/scene_loading_state`'s `firstRing` or the first-ring timing it reads (`crates/scene_runner/src/load_timing.rs`), `scripts/loading-time.ts`, `driver/loading-time.ts` or `loading-time.json` | `SceneLoadingState` in `driver/explorer.ts`, `driver/loading-time.ts` and `test/loading-time.test.ts`; "Loading-time check" above; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `cargo test -p scene_runner load_timing`; `pnpm test` |
 | `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
 | A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |

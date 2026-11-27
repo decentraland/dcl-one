@@ -16,6 +16,7 @@
     "drive": "node scripts/drive.ts",
     "gpu-probe": "node scripts/gpu-probe.ts",
     "avatar-sweep": "node scripts/avatar-sweep.ts",
+    "loading-time": "node scripts/loading-time.ts",
     "check:environment": "node scripts/check-environment.ts"
   },
   "dependencies": {

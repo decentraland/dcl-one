@@ -6,12 +6,14 @@ use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_material::SceneMaterial;
 use serde_json::{json, Value};
+use web_time::Instant;
 
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
     initialize_scene::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
+    load_timing::{first_ring_json, FirstRingTiming},
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
@@ -170,6 +172,8 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Running scenes", "running"),
                     ("Blocked scenes", "blocked"),
                     ("Broken scenes", "broken"),
+                    ("First ring ready for arrival", "firstRing.arrival"),
+                    ("Since first ring ready (ms)", "firstRing.sinceReadyMs"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
                 inputs: &[],
@@ -607,6 +611,11 @@ fn permissions_in_force_state(
     }
 }
 
+/// Report, as JSON, the scenes by loading stage, the current parcel's stage and pending resources,
+/// and `firstRing`: the latest arrival (`/world_state`'s `arrivals`) whose first ring, the player's
+/// scene and every scene within one parcel of the player, has been ready, and the milliseconds
+/// since it was. An arrival at a scene that is already loaded, or at an empty parcel, is ready on
+/// its first frame in world.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_loading_state")]
 struct LoadingState;
@@ -614,6 +623,7 @@ struct LoadingState;
 fn loading_state(
     mut input: ConsoleCommand<LoadingState>,
     current: Res<CurrentSceneLoading>,
+    timing: Res<FirstRingTiming>,
     containing: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     stages: Query<&SceneLoading>,
@@ -685,7 +695,9 @@ fn loading_state(
         }
     }
     input.reply_ok(json!({"current":current.0, "stage": stage, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
-        "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures}).to_string());
+        "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures,
+        "firstRing": first_ring_json(&timing, Instant::now()),
+        "unavailable": {"firstRing": "No arrival has had its first ring ready yet."}}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

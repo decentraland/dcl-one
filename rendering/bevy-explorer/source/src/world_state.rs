@@ -4,7 +4,9 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold};
+use common::structs::{
+    Arrivals, CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold,
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use input_manager::InputPriorities;
 use ipfs::IpfsResource;
@@ -12,7 +14,8 @@ use wallet::Wallet;
 
 /// `/world_state` and the [`Arrivals`] counter it and the autopilot read. It needs no window, HUD
 /// or input, so the client and the headless client add it alike (the autopilot expects it in the
-/// client). It adds [`ArrivalsPlugin`] itself.
+/// client). The scene runner counts the arrivals
+/// ([`ArrivalsPlugin`](scene_runner::load_timing::ArrivalsPlugin)).
 pub struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
@@ -38,8 +41,7 @@ impl Plugin for WorldStatePlugin {
                 kind: DebugInputKind::Text,
             });
         }
-        app.add_plugins(ArrivalsPlugin)
-            .add_console_command::<WorldStateCommand, _>(world_state_cmd)
+        app.add_console_command::<WorldStateCommand, _>(world_state_cmd)
             .add_debug_section(DebugSection {
                 title: "World",
                 inputs: &inputs,
@@ -57,36 +59,6 @@ impl Plugin for WorldStatePlugin {
                 actions: &[],
             });
     }
-}
-
-/// The [`Arrivals`] counter alone, for an app without the console (a test of the autopilot).
-pub struct ArrivalsPlugin;
-
-impl Plugin for ArrivalsPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<Arrivals>()
-            // before `Update`, where `/world_state` and the autopilot read the count
-            .add_systems(PreUpdate, count_arrivals);
-    }
-}
-
-/// How many times the player has come into the world (its `OutOfWorld` removed). Every realm
-/// change and parcel teleport takes it out of world first, so a driver reads this before one and
-/// waits for it to grow: `inWorld` alone is still true for a frame or two after the request. It
-/// also catches a period out of world that began and ended between two samples, which leaves no
-/// trace in a query.
-#[derive(Resource, Default)]
-pub struct Arrivals(pub u64);
-
-fn count_arrivals(
-    mut arrivals: ResMut<Arrivals>,
-    mut released: RemovedComponents<OutOfWorld>,
-    player: Query<(), With<PrimaryUser>>,
-) {
-    arrivals.0 += released
-        .read()
-        .filter(|entity| player.contains(*entity))
-        .count() as u64;
 }
 
 /// What the player's being in the world is judged from.
@@ -178,6 +150,7 @@ mod tests {
 
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
     use console::ConsolePlugin;
+    use scene_runner::load_timing::ArrivalsPlugin;
 
     use super::*;
 
@@ -227,6 +200,7 @@ mod tests {
                 add_bevy_console: false,
             },
             WorldStatePlugin,
+            ArrivalsPlugin,
         ))
         .init_resource::<Wallet>()
         .init_resource::<CurrentRealm>();
@@ -272,6 +246,7 @@ mod tests {
                 add_bevy_console: false,
             },
             WorldStatePlugin,
+            ArrivalsPlugin,
         ))
         .init_resource::<Wallet>()
         .init_resource::<CurrentRealm>()
