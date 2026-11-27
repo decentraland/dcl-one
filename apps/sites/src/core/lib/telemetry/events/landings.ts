@@ -155,10 +155,6 @@ export type LandingsEvents = {
     resolved: boolean;
     source: string;
   };
-  lp_invite_rewards_viewed: {
-    accepted: number;
-    current_tier: number;
-  };
   lp_invite_viewed: {
     has_referrer: boolean;
     referrer_handle: null | string;

@@ -8,6 +8,14 @@
 //! after readiness (the envelope, then the answer), plus the neighbours
 //! build and the coupon reads, writes and state refresh.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use super::nft_index::deployments::Deployments;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -2074,6 +2082,22 @@ async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
     db.drop().await;
 }
 
+/// graph-node's `_meta(block: {number})`: the number, never the hash.
+fn graph_node_block_by_number(number: &Value) -> Value {
+    json!({"number":number,"hash":null})
+}
+
+/// graph-node's `_meta(block: {hash})`: the indexed block when the hash is its
+/// own, and an error when it has no block with that hash.
+fn graph_node_block_by_hash(indexed: &Value, asked: &Value) -> Value {
+    match indexed["hash"].as_str() {
+        Some(hash) if Some(hash) != asked.as_str() => json!({"errors":[{
+            "message":"Failed to decode `block.hash` value: `no block with that hash found`"
+        }]}),
+        _ => json!({"data":{"_meta":{"block":indexed}}}),
+    }
+}
+
 #[tokio::test]
 async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     let chain = FakeChain::new(100, vec![], 100, 100);
@@ -2085,7 +2109,18 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(|State(meta): State<Arc<Mutex<Value>>>, axum::Json(body): axum::Json<Value>| async move {
         let meta = meta.lock().clone();
-        let block = if body["variables"]["number"] == 90 || body["variables"]["block"].is_object() {
+        let vars = &body["variables"];
+        if vars["hash"].is_string() {
+            if meta["answersAnyHash"] == true {
+                // A misbehaving graph: it answers a hash pin with its own block.
+                let block = json!({"number":meta["number"],"hash":meta["hash"]});
+                return axum::Json(json!({"data":{"_meta":{"block":block}}}));
+            }
+            return axum::Json(graph_node_block_by_hash(&meta, &vars["hash"]));
+        }
+        let block = if vars["number"].is_u64() {
+            graph_node_block_by_number(&vars["number"])
+        } else if vars["block"].is_object() {
             meta.clone()
         } else if meta.is_null() {
             Value::Null
@@ -2125,6 +2160,38 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
             .to_string()
             .contains("no block hash")
     );
+    // The graph holds the chain's block, but at another height: a rejection.
+    *meta.lock() = json!({"number":91,"hash":good});
+    assert!(matches!(
+        prove().await.unwrap_err(),
+        super::mirrors::CatalogueProofError::Disagreement(_)
+    ));
+    // The right hash without a usable height is incomplete data, not a rejection.
+    for number in [Value::Null, json!("90")] {
+        *meta.lock() = json!({"number":number,"hash":good});
+        let error = prove().await.unwrap_err();
+        assert!(
+            matches!(
+                error,
+                super::mirrors::CatalogueProofError::GraphUnavailable(_)
+            ),
+            "{error}"
+        );
+    }
+    *meta.lock() = json!({"hash":good});
+    assert!(matches!(
+        prove().await.unwrap_err(),
+        super::mirrors::CatalogueProofError::GraphUnavailable(_)
+    ));
+    // A valid hash that contradicts the chain is a rejection, with or without a height.
+    for number in [Value::Null, json!(90)] {
+        *meta.lock() = json!({"answersAnyHash":true,"number":number,"hash":chain.hash_of(89)});
+        let error = prove().await.unwrap_err();
+        assert!(
+            matches!(error, super::mirrors::CatalogueProofError::Disagreement(_)),
+            "{error}"
+        );
+    }
     *meta.lock() = json!({"number":90,"hash":good});
     chain.fail_chain_id.store(true, Ordering::SeqCst);
     assert!(prove().await.is_err());
@@ -2203,7 +2270,15 @@ async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
                      axum::Json(body): axum::Json<Value>| async move {
                         let hash = hash.lock().clone();
                         let vars = &body["variables"];
-                        let block = if vars["number"] == 100 || vars["block"].is_object() {
+                        if vars["hash"].is_string() {
+                            return axum::Json(graph_node_block_by_hash(
+                                &json!({"number":100,"hash":hash}),
+                                &vars["hash"],
+                            ));
+                        }
+                        let block = if vars["number"].is_u64() {
+                            graph_node_block_by_number(&vars["number"])
+                        } else if vars["block"].is_object() {
                             json!({"number":100,"hash":hash})
                         } else {
                             json!({"number":200+net.confirmations()})
@@ -2339,8 +2414,13 @@ async fn serve_split_collections_graph(hash: String) -> String {
                             Vec::new()
                         };
                         json!({"_meta":{"block":{"hash":hash}},"collections":rows})
-                    } else if vars["number"] == 100 {
-                        json!({"_meta":{"block":{"number":100,"hash":hash}}})
+                    } else if vars["hash"].is_string() {
+                        return axum::Json(graph_node_block_by_hash(
+                            &json!({"number":100,"hash":hash}),
+                            &vars["hash"],
+                        ));
+                    } else if vars["number"].is_u64() {
+                        json!({"_meta":{"block":graph_node_block_by_number(&vars["number"])}})
                     } else {
                         json!({"_meta":{"block":{"number":100+ChainNet::Matic.confirmations()}}})
                     };
@@ -2458,9 +2538,15 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
             if failure == 502 {
                 return StatusCode::BAD_GATEWAY.into_response();
             }
+            if failure != 1 && vars["hash"].is_string() {
+                let indexed = json!({"number":100,"hash":graph.hash});
+                return axum::Json(graph_node_block_by_hash(&indexed, &vars["hash"])).into_response();
+            }
             let block = if failure == 1 {
                 Value::Null
-            } else if vars["number"] == 100 || vars["block"].is_object() {
+            } else if vars["number"].is_u64() {
+                graph_node_block_by_number(&vars["number"])
+            } else if vars["block"].is_object() {
                 json!({"number":100,"hash":graph.hash})
             } else {
                 json!({"number":100+ChainNet::Matic.confirmations()})

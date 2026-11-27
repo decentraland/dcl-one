@@ -758,8 +758,8 @@ export interface Profile {
   bodyImage?: string
   badges?: Badge[]
   info?: ProfileInfo
-  /** Mutual-friends count shown under the name. */
-  mutuals?: number
+  /** An official Decentraland wallet; set by the passport fetch. */
+  official?: boolean
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */
@@ -886,6 +886,8 @@ export interface Emote {
   slot?: number
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Base emotes have none. */
+  description?: string
   thumbnail?: string
   rarity?: string
   /** Marketplace deep link (…/shop/item/<contract>/<itemId>) — set only for on-chain collectibles;
@@ -2169,6 +2171,8 @@ export interface GalleryWriteMessage {
 export interface Wearable {
   urn: string
   name: string
+  /** The creator's description, from the catalog entity. Set on the owned catalog's items only. */
+  description?: string
   rarity: string
   category: string
   thumbnail?: string

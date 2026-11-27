@@ -479,9 +479,20 @@ describe('ShopCardPrice', () => {
 describe('ShopCardSkeleton', () => {
   let container: HTMLElement
 
+  it('opts into catalogue sizing and forwards the host test id', () => {
+    render(<ShopCardSkeleton variant="catalogue" data-testid="loading-card" />)
+    const card = screen.getByTestId('loading-card')
+    expect(card).toHaveClass('skeleton', 'skeletonCatalogue')
+    expect(card).toHaveAttribute('aria-hidden', 'true')
+  })
+
   describe('when rendered', () => {
     beforeEach(() => {
       ;({ container } = render(<ShopCardSkeleton />))
+    })
+
+    it('does not select catalogue sizing by default', () => {
+      expect(container.firstElementChild).not.toHaveClass('skeletonCatalogue')
     })
 
     it('should be hidden from assistive technology', () => {

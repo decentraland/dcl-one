@@ -54,7 +54,7 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
 | `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
 | `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
-| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
+| `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below). Sites signs with the viewer's session or a temporary browser identity when signed out | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
 | `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
 | `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs` `scene_stream_access` (GET), `active_access` | MATCH: the stored expiry is answered, and a credential past it answers 404 `Streaming access has expired` | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
@@ -141,7 +141,15 @@ the mic, hanging up, raising a hand, promoting, demoting, kicking and ending a s
 - `apps/sites` serves the streamer at `/cast/s/:token` and the watcher at `/cast/w/:location`
   (`apps/sites/src/features/social/cast-live`), which join the room with `livekit-client` through
   `GET /cast/stream-info/{streamingKey}`, `POST /cast/streamer-token` and the signed
-  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`).
+  `POST /cast/watcher-token` (`apps/sites/src/data/lib/catalyst/cast.ts`). The watcher uses the
+  viewer's signed-in identity, or a throwaway browser key held only in tab memory for signed-out
+  viewers. It never saves that key as an account session. Address bans apply to the signing wallet;
+  signing out therefore lets a banned account watch with a different address. Private-world access
+  checks still apply to that address. A world link without a parcel selects its only scene or asks
+  the viewer to choose among the first 100 scenes; a failed scene lookup keeps the parcel absent.
+  The pinned `decentraland/sites` (66e95db) sends an unsigned watcher request, which
+  `decentraland/comms-gatekeeper` refuses through `authWatcher` since #284. Sites here retains
+  the signed request contract.
 - The Creator Hub Admin Toolkit (Cast, live stream, scene admins and bans) calls the realm's own
   deployment: under a non-Decentraland realm's origin, `<origin>/comms-gatekeeper/...` and
   `<origin>/cast-presenter-service/presentations`; on a `decentraland.org`, `.zone` or `.today`

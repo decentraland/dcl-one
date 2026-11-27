@@ -10,6 +10,7 @@ const GROUPS: &[(&str, &str)] = &[
     ("Gameplay", "Gameplay settings"),
     ("Controls", "Control settings"),
     ("Audio", "Audio settings"),
+    ("Chat", "Chat settings"),
 ];
 
 // Settings use whole steps (including tens, tenths and twentieths). Convert the step count
@@ -195,7 +196,26 @@ mod tests {
     use super::*;
     use crate::settings::{
         player_settings::WalkSpeedSetting, render_scale_setting::RenderScaleSetting,
+        SettingCategory,
     };
+
+    #[test]
+    fn every_setting_category_has_a_panel_group() {
+        for category in [
+            SettingCategory::Gameplay,
+            SettingCategory::Graphics,
+            SettingCategory::Audio,
+            SettingCategory::Chat,
+            SettingCategory::Performance,
+            SettingCategory::Controls,
+        ] {
+            let name = category.to_string();
+            assert!(
+                GROUPS.iter().any(|(group, _)| *group == name),
+                "{name} settings have no debug panel group"
+            );
+        }
+    }
 
     #[test]
     fn gameplay_numbers_use_the_player_settings_decimal_steps() {

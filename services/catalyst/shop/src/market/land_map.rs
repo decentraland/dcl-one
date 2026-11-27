@@ -279,8 +279,10 @@ pub async fn land_market_marks(
             .bind(&contracts)
             .bind(super::trades::mirrored_since(&state.settings, naive_now))
             .bind(mana)
-            .bind(chain_id as i32)
-            .bind(rentals_contract(chain_id as u64))
+            .bind(crate::market::casts::to_i32(chain_id).map_err(sqlx::Error::from)?)
+            .bind(rentals_contract(
+                crate::market::casts::to_u64(chain_id).map_err(sqlx::Error::from)?,
+            ))
             .fetch_one(&mut *conn)
             .await?;
     // Every source the build's `check_ready` asks for, the trade-events
@@ -418,11 +420,13 @@ async fn read(
         created_at_ms: r.get("created_at_ms"),
     })
     .collect();
-    let rentals = match rentals_contract(chain_id as u64) {
+    let rentals = match rentals_contract(
+        crate::market::casts::to_u64(chain_id).map_err(sqlx::Error::from)?,
+    ) {
         Some(venue) => sqlx::query(sqlx::AssertSqlSafe(rentals_sql("$1", "$2", "$3", "$4")))
             .bind(&contracts)
             .bind(naive_now)
-            .bind(chain_id as i32)
+            .bind(crate::market::casts::to_i32(chain_id).map_err(sqlx::Error::from)?)
             .bind(venue)
             .fetch_all(&mut *conn)
             .await?
@@ -469,6 +473,14 @@ async fn read(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::Settings;
     use crate::market::tests::support::OwnDb;
