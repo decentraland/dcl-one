@@ -293,8 +293,8 @@ nodes, or on the floor where it has none.
 
 ### Settings
 
-One Graphics setting and the HUD's Graphics Preset set scene loading; the Performance tab's
-"Scene LODs" section tunes it further. The bands and counts are read each frame, so a change
+One Graphics setting and the HUD's Graphics Preset set the LOD bands and counts; the
+Performance tab's "Scene LODs" section tunes them further. The bands and counts are read each frame, so a change
 applies on the next one. All of them are hidden in preview mode.
 
 "Distant Scene Rendering" (Graphics; Off, Normal, Ultra) is the one switch for what draws past
@@ -305,14 +305,12 @@ through `AppConfig::far_lods_cap`, which is 0 while there are no imposter distan
 "Max Far LODs" and "Far LOD Ring" values, which the panel shows disabled until it is turned on
 again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs are unchanged.
 
-Each Graphics Preset sets every scene-loading value, so a preset is one profile (Medium is the
-engine default):
+Each Graphics Preset sets every LOD value, so a preset is one profile (Medium is the engine
+default). "Scene Load Distance" and "Scene Unload Distance" stay the player's, as before:
 
 | Setting | Range | Low | Medium | High | What it sets |
 | --- | --- | --- | --- | --- | --- |
 | Distant Scene Rendering | Off to Ultra | Normal | Normal | Ultra | imposters; Off also turns far LODs off |
-| Scene Load Distance | 10 to 150 m | 10 | 10 | 10 | scenes within it go live, past the live ring |
-| Scene Unload Distance | 0 to 100 m | 10 | 10 | 10 | extra distance before such a scene unloads |
 | Live Scene Ring | 0 to 3 | 1 | 1 | 1 | scenes within it go live; kept one ring further |
 | Near LOD Ring | 1 to 8 | 2 | 3 | 4 | near LODs start within it; kept one ring further |
 | Max Near LODs | 0 to 40 | 6 | 12 | 20 | near LODs drawn at once, in view and behind the camera; their colliders take no place |

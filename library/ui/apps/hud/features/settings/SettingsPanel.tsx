@@ -110,7 +110,7 @@ const SECTIONS: Record<string, { title: string; match?: RegExp }[]> = {
   performance: [
     { title: 'Avatars', match: /avatars/i },
     { title: 'General' },
-    { title: 'Scene LODs', match: /\blods?\b|\bring\b|scene (un)?load distance/i }
+    { title: 'Scene LODs', match: /\blods?\b|\bring\b/i }
   ],
   controls: [{ title: 'Mouse' }, { title: 'Point At', match: /point|marker/i }]
 }

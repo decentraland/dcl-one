@@ -95,9 +95,11 @@ describe('graphics presets', () => {
     })
   })
 
-  it('presets include the scene-loading settings, and skip what the engine does not publish', () => {
+  it('presets include the LOD settings, leave load distance to the player, and skip what the engine does not publish', () => {
     const names = presetTargets(nativeDefaults(), 2).map((t) => t.name)
-    expect(names).toEqual(expect.arrayContaining(['Distant Scene Rendering', 'Scene Load Distance', 'Max Far LODs']))
+    expect(names).toEqual(expect.arrayContaining(['Distant Scene Rendering', 'Near LOD Ring', 'Max Far LODs']))
+    expect(names).not.toContain('Scene Load Distance')
+    expect(names).not.toContain('Scene Unload Distance')
     expect(presetTargets(webDefaults(), 0).map((t) => t.name)).not.toContain('SSAO')
     expect(presetTargets(nativeDefaults(), 0).map((t) => t.name)).toContain('SSAO')
   })
@@ -105,12 +107,10 @@ describe('graphics presets', () => {
   it('Low and High load scenes differently: Low keeps far scenes cheap, High reaches further', () => {
     const scene = (preset: number): Record<string, number | undefined> =>
       Object.fromEntries(
-        ['Distant Scene Rendering', 'Scene Load Distance', 'Scene Unload Distance', 'Live Scene Ring', 'Near LOD Ring', 'Max Near LODs', 'Far LOD Ring', 'Max Far LODs'].map((n) => [n, target(webDefaults(), preset, n)])
+        ['Distant Scene Rendering', 'Live Scene Ring', 'Near LOD Ring', 'Max Near LODs', 'Far LOD Ring', 'Max Far LODs'].map((n) => [n, target(webDefaults(), preset, n)])
       )
     expect(scene(0)).toEqual({
       'Distant Scene Rendering': 1,
-      'Scene Load Distance': 10,
-      'Scene Unload Distance': 10,
       'Live Scene Ring': 1,
       'Near LOD Ring': 2,
       'Max Near LODs': 6,
@@ -119,8 +119,6 @@ describe('graphics presets', () => {
     })
     expect(scene(2)).toEqual({
       'Distant Scene Rendering': 2,
-      'Scene Load Distance': 10,
-      'Scene Unload Distance': 10,
       'Live Scene Ring': 1,
       'Near LOD Ring': 4,
       'Max Near LODs': 20,
