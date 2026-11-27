@@ -709,7 +709,6 @@ fn a_file_with_its_data_inside_references_no_file() {
     assert!(uris_in_file([]));
     assert!(!uris_in_file([None, Some("textures/wood.png")]));
     assert!(!uris_in_file([Some("model.bin")]));
-    // without a comma the loader resolves it as a file
     assert!(!uris_in_file([Some("data:tex.png")]));
 }
 
@@ -721,7 +720,6 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
     for (root, primitive) in roots.into_iter().zip(primitives) {
         spawn_container(&mut app, root, &["top", primitive]);
         app.update();
-        // tracked by the asset server, as a loaded glTF's meshes are
         let mesh = app.world().resource::<AssetServer>().add(triangle());
         let node = node(&mut app, primitive);
         app.world_mut().entity_mut(node).insert(Mesh3d(mesh));
@@ -747,7 +745,6 @@ fn two_scenes_with_the_same_mesh_draw_one_copy() {
 fn spawn_triangle(app: &mut App, root: Entity, primitive: &str) -> Handle<Mesh> {
     spawn_container(app, root, &[&format!("top_{primitive}"), primitive]);
     app.update();
-    // tracked by the asset server, as a loaded glTF's meshes are
     let mesh = app.world().resource::<AssetServer>().add(triangle());
     let node = node(app, primitive);
     app.world_mut()
@@ -769,7 +766,7 @@ fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
     app.world_mut().resource_mut::<SharedMeshes>().hash_salt = None;
     let [a, b] = [scene_root(&mut app), scene_root(&mut app)];
 
-    // scene A converts the triangle once and reuses that mesh for its second container
+    // scene A: two containers with the triangle
     spawn_triangle(&mut app, a, "a_first");
     spawn_triangle(&mut app, a, "a_second");
     give_context(&mut app, a);
@@ -777,15 +774,14 @@ fn without_a_salt_a_scene_takes_only_its_own_cached_mesh() {
     let a_mesh = drawn_mesh(&mut app, "a_first");
     assert_eq!(drawn_mesh(&mut app, "a_second"), a_mesh);
 
-    // scene B uses no mesh with that hash, so it converts its own, which replaces A's in the cache
+    // scene B: one container with the same triangle
     spawn_triangle(&mut app, b, "b_first");
     give_context(&mut app, b);
     app.update();
     let b_mesh = drawn_mesh(&mut app, "b_first");
     assert_ne!(b_mesh, a_mesh);
 
-    // a later container of A does not draw B's mesh. A's context is held back until the
-    // container's mesh is in place, so the container is processed with it
+    // a later container of A
     let context = app
         .world_mut()
         .entity_mut(a)
@@ -885,7 +881,7 @@ fn a_container_whose_definition_is_put_again_every_frame_is_spawned() {
     give_context(&mut app, root);
     let container = spawn_loaded_container(&mut app, root, "model_node");
 
-    // a scene that puts the same value every tick marks the definition changed each frame
+    // the same definition put again each frame
     for _ in 0..3 {
         let definition = app
             .world()
@@ -962,9 +958,9 @@ fn scenes_that_load_a_model_at_the_same_time_end_on_the_first_copy() {
     let second = load_model(&mut app);
 
     assert_eq!(adopt(&mut app, &first, true), None);
-    // the second copy finished loading too: its container takes the first
+    // the second copy, loaded
     assert_eq!(adopt(&mut app, &second, true), Some(first.id()));
-    // the first copy, back for its next container, keeps itself
+    // the first copy, for another container
     assert_eq!(adopt(&mut app, &first, true), None);
     assert_eq!(app.world().resource::<SharedGltfs>().models(), 1);
 }
@@ -976,7 +972,7 @@ fn a_copy_that_loads_after_the_shared_one_goes_is_shared_instead() {
     assert_eq!(adopt(&mut app, &first, true), None);
     let second = load_model(&mut app);
 
-    // the scene that held the first copy lets it go while the second is still loading
+    // the first copy dropped while the second loads
     drop(first);
     assert_eq!(adopt(&mut app, &second, true), None);
 

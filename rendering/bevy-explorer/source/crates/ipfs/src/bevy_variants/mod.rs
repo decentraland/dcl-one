@@ -775,9 +775,6 @@ impl BevyVariants {
             .ok_or(None)?
             .clone();
         let decoded = supported_format(&variant).ok_or(None)?.decoded;
-        // a `glb-br` variant is fetched as its Brotli copy, asked for by name, which the
-        // browser decodes; a `glb` variant's Brotli copy exists only when it is smaller, so its
-        // own path is fetched and the server sends the copy to a client that accepts `br`
         let url = match decoded {
             Decoded::BcTexture | Decoded::BcGlb => format!("{base}/{}", variant.path),
             #[cfg(target_arch = "wasm32")]
@@ -956,8 +953,8 @@ impl IpfsIo {
 
     /// The url the bytes of the content file at asset `path` are read from, when every read of
     /// that url gives the same bytes: the variant that answered it, else the original's url when
-    /// a content hash names the file, the session is not a preview and the server is not loopback
-    /// (a preview server's files change). Two loads with the same url hold the same file.
+    /// a content hash names the file, the session is not a preview and the server is not loopback.
+    /// Two loads with the same url hold the same file.
     ///
     /// Blocking: reads the context.
     pub fn immutable_source_url(&self, path: &Path) -> Option<String> {
@@ -970,7 +967,7 @@ impl IpfsIo {
 
     /// [`Self::immutable_source_url`] of a read of the content file at asset `path` that has not
     /// happened yet: the variant its entity's manifest picks now, else the original's url. None
-    /// while that manifest is pending, as the read would wait for it.
+    /// while that manifest is pending.
     ///
     /// Blocking: reads the context.
     pub(crate) fn planned_source_url(&self, path: &Path) -> Option<String> {

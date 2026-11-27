@@ -367,8 +367,7 @@ fn references_no_file(gltf: &Gltf) -> bool {
     })
 }
 
-/// True when each uri is absent (the data is in the file) or a data uri the glTF loader decodes
-/// itself: `data:<mime>,<data>`. A `data:` uri without a comma is resolved as a file.
+/// True when each uri is absent or has the form `data:<mime>,<data>`.
 fn uris_in_file<'a>(uris: impl IntoIterator<Item = Option<&'a str>>) -> bool {
     uris.into_iter().all(|uri| {
         uri.is_none_or(|uri| {
@@ -622,8 +621,8 @@ fn update_gltf(
         } else {
             RenderAssetTransferPriority::Priority(0)
         };
-        // the shared asset for this file's url, when one is loaded; never for a colliders part
-        // the url costs a blocking context read, so it is taken only while a model is shared
+        // the shared asset for this file's url, when one is loaded; never for a colliders part.
+        // Reading the url blocks on the context.
         let shared = (part != Some(&GltfPart::Colliders) && !shared_gltfs.0.is_empty())
             .then(|| ipfas.content_file_source_url(&gltf.0.src, content_hash))
             .flatten()
@@ -667,9 +666,7 @@ fn update_gltf(
     }
 
     for (ent, scene_ent, h_gltf, def, part, source) in unprocessed_gltfs.iter() {
-        // a definition that differs from the source acted on has its new model queued above, so
-        // this handle is the old one. The source is written by deferred commands, so it still
-        // holds the previous value this frame. An equal value put again keeps its handle
+        // `h_gltf` is the model of `source`, the definition last acted on
         if def.is_changed() && source.is_none_or(|source| source.0 != def.0) {
             continue;
         }
@@ -700,8 +697,6 @@ fn update_gltf(
         };
         let gltf_scene_handle = gltf.default_scene.as_ref();
 
-        // a loaded copy of a shared file is swapped for the shared asset; the first copy of a
-        // file that references no other becomes the shared one
         let id = h_gltf.0.id();
         let url = (part != Some(&GltfPart::Colliders))
             .then(|| ipfas.asset_server().get_path(id))
@@ -719,8 +714,7 @@ fn update_gltf(
             }
         }
 
-        // validate texture types. A mutable borrow marks the material changed, so it is taken
-        // only to disable a texture
+        // validate texture types; a material is borrowed mutably only to disable its texture
         for h_mat in gltf.materials.iter() {
             let invalid = base_mats
                 .get(h_mat)
@@ -1766,7 +1760,7 @@ pub(crate) fn update_ready_gltfs(
     }
 
     // now that nothing borrows `gltfs`, release the parsed documents + GLB blobs whose
-    // names we just cached. `get_mut` marks the asset Modified.
+    // names we just cached
     for id in drop_sources {
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;
