@@ -14205,7 +14205,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "a0fecb602dd5bcab36d47d9ac486c2f97662291779b618d104b2ce2f1134cc32"
+      "sha256": "de749ea4b45c8dc28e833daeece5724bda33fd10ef8f34308415fe9f096d5b21"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -14457,7 +14457,7 @@
     },
     {
       "path": "library/ui/apps/hud/lib/bindingLabels.ts",
-      "sha256": "232a024493bfa1022a33033256f2bb3c9f5b2392c226f8845c372ee18253295e"
+      "sha256": "573bc484bdf362abd798f9ae9721e5c9cb814869d7168f420bf25e1e6bec925d"
     },
     {
       "path": "library/ui/apps/hud/lib/hudInset.ts",
@@ -15001,7 +15001,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
-      "sha256": "83e97b1f03f63636267ef6f619b9b8787aafa0cf63e1f2652d54e8f8ad909467"
+      "sha256": "efecaf15a20356008e3d17193b5a43c744aa9e1e9f460dd6204b359b65601c16"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
@@ -51187,6 +51187,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/sliderCancel.test.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {

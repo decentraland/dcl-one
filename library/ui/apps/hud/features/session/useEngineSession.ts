@@ -5249,12 +5249,16 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // holds focus no actions resolve, so cancel could never escape it). Bubble phase, so a
     // widget that owns the key — chat's layered Escape — can stopPropagation first. A slider
     // has nothing to leave first: its cancel key also closes the top layer, as the engine's
-    // Cancel would from a button (bindingLabels states the rule).
+    // Cancel would from a button (bindingLabels states the rule). Only once the engine reports
+    // the keyboard claimed: before the slider's claim lands, a native engine still hears the
+    // key and resolves Cancel itself, so acting here too would close two layers. A widget that
+    // took the key (preventDefault) keeps it.
     const onKey = (e: KeyboardEvent): void => {
       if (!isCancelKey(e) || !isEditableTarget(e.target)) return
       const field = e.target as HTMLElement
       field.blur()
-      if (isSliderTarget(field)) systemActionRef.current('Cancel', true, true)
+      const engineHoldsKeys = (window as EngineFocusWindow).__engineTextFocus === true
+      if (isSliderTarget(field) && engineHoldsKeys && !e.defaultPrevented) systemActionRef.current('Cancel', true, true)
     }
     document.addEventListener('focusin', update, true)
     document.addEventListener('focusout', onFocusOut, true)

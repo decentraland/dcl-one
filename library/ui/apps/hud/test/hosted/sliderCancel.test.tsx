@@ -8,6 +8,7 @@ import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { ColorPicker, openPopup, resetPopups, PopupHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { lockInput } from '@explorer-core/lib/inputLock'
+import { Slider } from '@dcl/one-ui'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })
@@ -131,14 +132,39 @@ describe('the cancel key on a focused slider', () => {
     act(() => unlock())
   })
 
-  it('closes a popup a slider sits in (the shared Slider, as in the Volume panel)', async () => {
+  it('closes a popup the shared Slider sits in, as the Volume panel holds it', async () => {
     await world()
-    const slider = popupWith(<input type="range" aria-label="Master" />)
+    const slider = popupWith(<Slider variant="rail" value={50} min={0} max={100} step={1} onChange={vi.fn()} aria-label="Master" />)
+    expect(slider).toBe(screen.getByRole('slider', { name: 'Master' }))
     engineKeyboard.__engineTextFocus = true
     act(() => {
       fireEvent.keyDown(slider, { key: 'Escape', code: 'Escape' })
     })
     expect(screen.queryByTestId('popup')).toBeNull()
+  })
+
+  it("leaves the press to the engine before the bar's claim lands: one close in all", async () => {
+    // natively the engine still hears the key until the HUD's text focus reaches it, and resolves Cancel itself
+    const { h, bar } = await draggedHueBar()
+    engineKeyboard.__engineTextFocus = false
+    act(() => {
+      fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape' })
+    })
+    expect(popup()).not.toBeNull()
+    expect(document.activeElement).not.toBe(bar)
+    act(() => h.driver.emit(cancel))
+    expect(popup()).toBeNull()
+    expect(h.session().backpack.open).toBe(true)
+  })
+
+  it('leaves a press a widget took (preventDefault) with that widget', async () => {
+    const { h, bar } = await draggedHueBar()
+    bar.addEventListener('keydown', (e) => e.preventDefault())
+    act(() => {
+      fireEvent.keyDown(bar, { key: 'Escape', code: 'Escape' })
+    })
+    expect(popup()).not.toBeNull()
+    expect(h.session().backpack.open).toBe(true)
   })
 })
 

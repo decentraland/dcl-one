@@ -336,7 +336,7 @@ from HUD-side key matching. The rules:
   forwarding (`isTextField` in `../deploy/web/engine/boot.js`). A slider (a range input) keeps
   its keys like one, so its arrows, Home, End and Page keys never move the avatar; it types
   nothing, so its cancel key closes the top layer on the first press (the session's blur rule
-  dispatches `Cancel` after leaving it). A checkbox (every switch) or a radio is not one: Escape
+  dispatches `Cancel` after leaving it, while the engine reports the keyboard claimed). A checkbox (every switch) or a radio is not one: Escape
   and movement still reach the engine from it, and Space and Enter press it. Change both
   together; `src/test/bootKeyForwarding.test.ts` fails when they disagree.
 - **A new panel/popup/overlay must be visible to `uiFocus`** — panels via the session's

@@ -143,7 +143,8 @@ export function cancelKeyCodes(): string[] {
 // - A slider (a range input) keeps every key too: its arrows, Home, End, PageUp and PageDown adjust it and must
 //   not move the avatar or the camera. It types nothing, so its cancel key, printable or not, closes the top layer
 //   on the first press, as the engine's Cancel does from a button: useEngineSession leaves the slider and
-//   dispatches Cancel itself, since the engine never hears that key.
+//   dispatches Cancel itself while the engine reports the keyboard claimed, so never hears that key (before the
+//   claim lands a native engine still resolves the key, and its Cancel is the one close).
 // - Any other element (a button, a switch, a checkbox, a radio) leaves the keys to the engine.
 
 /** Inputs that take no text: the HUD's switches are native checkboxes, the permission prompt's choices radios. */
