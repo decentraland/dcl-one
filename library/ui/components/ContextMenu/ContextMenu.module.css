@@ -15,7 +15,8 @@
   --toggle-knob: var(--dcl-neutrals-snow);
   --toggle-knob-shadow: none;
   box-sizing: border-box;
-  width: var(--menu-width, auto);
+  /* As wide as its rows, whatever room it is placed in (a kebab's menu hangs from a button), up to the maximum. */
+  width: var(--menu-width, max-content);
   min-width: var(--menu-width, 180px);
   max-width: var(--menu-width, 280px);
   padding: var(--dcl-space-8);
@@ -37,7 +38,7 @@
   display: flex;
   align-items: center;
   gap: var(--dcl-space-12);
-  padding: 10px var(--dcl-space-12) 12px;
+  padding: 10px var(--dcl-space-12) var(--dcl-space-12);
 }
 .hinfo {
   min-width: 0;
@@ -126,8 +127,7 @@
 .item:active {
   background: rgba(255, 255, 255, 0.05);
 }
-.icon,
-.item > .subIcon {
+.icon {
   flex: none;
   display: flex;
   align-items: center;
@@ -141,8 +141,7 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.chev,
-.item > .subChev {
+.chev {
   flex: none;
   display: flex;
   color: var(--dcl-text-secondary);
@@ -156,7 +155,7 @@
 }
 
 /* A row that opens a list beside it. The row takes the host menu's row class too: in a ContextMenu its icon and
-   chevron take the menu's look (above), and elsewhere they keep the host row's own. */
+   chevron take the menu's look (above), and elsewhere they keep the look of the host row's. */
 .subWrap {
   position: relative;
 }
@@ -172,15 +171,13 @@
 }
 .subChev {
   flex: none;
-  display: flex;
   color: rgba(255, 255, 255, 0.45); /* = HUD --ink-45 */
+  font-size: 1.05rem; /* = HUD --fs-lg */
 }
-/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. As wide as its
-   list's rows, not as the row's room: a long name widens the list up to its maximum before it wraps. */
+/* Beside the row, a 4px gap from the surface it opens from, its first row level with the row. */
 .flyout {
   --menu-width: initial;
   position: absolute;
-  width: max-content;
   top: calc(-1 * var(--menu-edge, 0px));
   left: calc(100% + var(--menu-edge, 0px));
   padding-left: var(--dcl-space-4);

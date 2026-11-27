@@ -17065,11 +17065,11 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
-      "sha256": "88ba2b56f037f9b007a4536e499a47f0223fb29c43ef9460198ebce0552a56da"
+      "sha256": "b0e36f488bbb24f96c1fb2d8c4d290146bc598217db38d43f93b0c91d98ef4ac"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "d87199ed5111d6616228798841515be07b803a300cd505bccc95eaee74278386"
+      "sha256": "f77c8b02d545fe1e70ba3c31993629be015c779dcfae2b6e9ed84efedce52086"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",

@@ -1,4 +1,14 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import { GeneralCheck, GeneralRightArrow } from '../../foundations/icons/general'
 import { Switch } from '../Switch/Switch'
 import styles from './ContextMenu.module.css'
@@ -44,6 +54,9 @@ export interface ContextMenuProps {
   whileSubmenuOpen?: MenuWhileOpen
 }
 
+/** Whether a row sits in a ContextMenu: a Submenu row there takes the menu's icon box and chevron. */
+const InMenu = createContext(false)
+
 function shortAddress(address: string): string {
   if (address.length <= 13) return address
   return `${address.slice(0, 6)}…${address.slice(-4)}`
@@ -62,103 +75,105 @@ export function ContextMenu({
   'aria-label': ariaLabel
 }: ContextMenuProps) {
   return (
-    <div
-      className={classes(styles.ctx, scroll && styles.scroll)}
-      style={width != null ? ({ '--menu-width': `${width}px` } as CSSProperties) : undefined}
-      role="menu"
-      aria-label={ariaLabel}
-    >
-      {items.map((item, index) => {
-        if (item.kind === 'separator') return <div className={styles.sep} role="separator" key={index} />
+    <InMenu.Provider value={true}>
+      <div
+        className={classes(styles.ctx, scroll && styles.scroll)}
+        style={width != null ? ({ '--menu-width': `${width}px` } as CSSProperties) : undefined}
+        role="menu"
+        aria-label={ariaLabel}
+      >
+        {items.map((item, index) => {
+          if (item.kind === 'separator') return <div className={styles.sep} role="separator" key={index} />
 
-        if (item.kind === 'title') {
-          return (
-            <div className={styles.title} key={index}>
-              {item.label}
-            </div>
-          )
-        }
-
-        if (item.kind === 'caption') {
-          return (
-            <div className={styles.caption} key={index}>
-              {item.avatar != null && item.avatar}
-              <span className={styles.captionLabel}>{item.label}</span>
-            </div>
-          )
-        }
-
-        if (item.kind === 'header') {
-          return (
-            <div className={styles.header} key={index}>
-              {item.avatar != null && item.avatar}
-              <div className={styles.hinfo}>
-                <div className={styles.hname}>
-                  {item.name}
-                  {item.tag != null && <span className={styles.htag}>{item.tag}</span>}
-                </div>
-                {item.address != null && <span className={styles.wallet}>{shortAddress(item.address)}</span>}
+          if (item.kind === 'title') {
+            return (
+              <div className={styles.title} key={index}>
+                {item.label}
               </div>
-            </div>
-          )
-        }
+            )
+          }
 
-        if (item.kind === 'toggle') return <ToggleItem item={item} key={index} />
+          if (item.kind === 'caption') {
+            return (
+              <div className={styles.caption} key={index}>
+                {item.avatar != null && item.avatar}
+                <span className={styles.captionLabel}>{item.label}</span>
+              </div>
+            )
+          }
 
-        if (item.kind === 'option') {
+          if (item.kind === 'header') {
+            return (
+              <div className={styles.header} key={index}>
+                {item.avatar != null && item.avatar}
+                <div className={styles.hinfo}>
+                  <div className={styles.hname}>
+                    {item.name}
+                    {item.tag != null && <span className={styles.htag}>{item.tag}</span>}
+                  </div>
+                  {item.address != null && <span className={styles.wallet}>{shortAddress(item.address)}</span>}
+                </div>
+              </div>
+            )
+          }
+
+          if (item.kind === 'toggle') return <ToggleItem item={item} key={index} />
+
+          if (item.kind === 'option') {
+            return (
+              <button
+                type="button"
+                className={styles.item}
+                role="menuitemradio"
+                aria-checked={item.checked}
+                key={index}
+                onClick={item.onClick}
+              >
+                <span className={styles.icon} aria-hidden="true">
+                  {item.checked ? <GeneralCheck size={20} /> : null}
+                </span>
+                {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
+                <span className={styles.label}>{item.label}</span>
+              </button>
+            )
+          }
+
+          if (item.kind === 'submenu' && item.items != null) {
+            return (
+              <Submenu
+                key={index}
+                label={item.label}
+                icon={item.icon}
+                className={styles.item}
+                whileOpen={whileSubmenuOpen}
+              >
+                <ContextMenu items={item.items} scroll whileSubmenuOpen={whileSubmenuOpen} />
+              </Submenu>
+            )
+          }
+
           return (
             <button
               type="button"
-              className={styles.item}
-              role="menuitemradio"
-              aria-checked={item.checked}
+              className={classes(styles.item, item.danger && styles.itemDanger)}
+              role="menuitem"
               key={index}
               onClick={item.onClick}
             >
-              <span className={styles.icon} aria-hidden="true">
-                {item.checked ? <GeneralCheck size={20} /> : null}
-              </span>
               {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
               <span className={styles.label}>{item.label}</span>
+              {item.kind === 'submenu' && <Chevron />}
             </button>
           )
-        }
-
-        if (item.kind === 'submenu' && item.items != null) {
-          return (
-            <Submenu
-              key={index}
-              label={item.label}
-              icon={item.icon}
-              className={styles.item}
-              whileOpen={whileSubmenuOpen}
-            >
-              <ContextMenu items={item.items} scroll whileSubmenuOpen={whileSubmenuOpen} />
-            </Submenu>
-          )
-        }
-
-        return (
-          <button
-            type="button"
-            className={classes(styles.item, item.danger && styles.itemDanger)}
-            role="menuitem"
-            key={index}
-            onClick={item.onClick}
-          >
-            {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
-            <span className={styles.label}>{item.label}</span>
-            {item.kind === 'submenu' && <Chevron />}
-          </button>
-        )
-      })}
-    </div>
+        })}
+      </div>
+    </InMenu.Provider>
   )
 }
 
-function Chevron({ className = styles.chev }: { className?: string }) {
+function Chevron() {
   return (
-    <span className={className} aria-hidden="true">
+    <span className={styles.chev} aria-hidden="true">
       <GeneralRightArrow size={20} />
     </span>
   )
@@ -227,6 +242,7 @@ function clipEdges(element: HTMLElement): { right: number; bottom: number } {
  * the list's first item. The list opens to the right and down, and flips left or up where that side has no room.
  */
 export function Submenu({ label, icon, children, className, whileOpen }: SubmenuProps) {
+  const inMenu = useContext(InMenu)
   const [open, setOpen] = useState(false)
   const [flip, setFlip] = useState({ left: false, up: false })
   const [focusFirst, setFocusFirst] = useState(false)
@@ -285,9 +301,15 @@ export function Submenu({ label, icon, children, className, whileOpen }: Submenu
           setOpen(true)
         }}
       >
-        {icon != null && <span className={styles.subIcon}>{icon}</span>}
+        {icon != null && <span className={inMenu ? styles.icon : styles.subIcon}>{icon}</span>}
         <span className={styles.label}>{label}</span>
-        <Chevron className={styles.subChev} />
+        {inMenu ? (
+          <Chevron />
+        ) : (
+          <span className={styles.subChev} aria-hidden="true">
+            ›
+          </span>
+        )}
       </button>
       {open && (
         <div

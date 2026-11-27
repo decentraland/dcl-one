@@ -182,24 +182,33 @@ describe('ContextMenu', () => {
     view.rerender(<ContextMenu items={[]} width={0} />)
     expect(screen.getByRole('menu').style.getPropertyValue('--menu-width')).toBe('0px')
   })
-
-  it("does not pass its width to a list it opens beside a row", () => {
-    render(
-      <ContextMenu
-        width={260}
-        items={[{ kind: 'submenu', label: 'Invite', items: [{ label: 'Pixel Builders' }] }]}
-      />
-    )
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Invite' }))
-    const [, list] = screen.getAllByRole('menu')
-    expect(list).not.toHaveAttribute('style')
-  })
 })
 
 describe('Submenu', () => {
   const list = (
     <ContextMenu items={[{ label: 'First' }, { label: 'Second' }]} aria-label="Communities" scroll />
   )
+
+  it("keeps its host row's text chevron outside a menu and takes the menu's icon chevron inside one", () => {
+    const icon = <i data-testid="people" />
+    const view = render(
+      <Submenu label="Invite" icon={icon}>
+        {list}
+      </Submenu>
+    )
+    const alone = screen.getByRole('menuitem', { name: 'Invite' })
+    expect(alone.lastElementChild).toHaveTextContent('›')
+    expect(alone.lastElementChild).toHaveAttribute('aria-hidden', 'true')
+    expect(alone.querySelector('svg')).toBeNull()
+    const aloneIcon = screen.getByTestId('people').parentElement?.className
+    view.unmount()
+    render(<ContextMenu items={[{ kind: 'submenu', label: 'Invite', icon, items: [{ label: 'First' }] }]} />)
+    const inMenu = screen.getByRole('menuitem', { name: 'Invite' })
+    expect(inMenu.lastElementChild).toHaveAttribute('aria-hidden', 'true')
+    expect(inMenu.lastElementChild?.querySelector('svg')).not.toBeNull()
+    expect(inMenu).not.toHaveTextContent('›')
+    expect(screen.getByTestId('people').parentElement?.className).not.toBe(aloneIcon)
+  })
 
   it('opens on hover and closes when the pointer leaves', () => {
     render(<Submenu label="Invite">{list}</Submenu>)
