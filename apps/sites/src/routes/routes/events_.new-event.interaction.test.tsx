@@ -202,6 +202,28 @@ describe("when editing a hangout through its route", () => {
       expect(openSignIn).not.toHaveBeenCalled();
     });
 
+    it("should draw Cancel as an outlined link to the events page", async () => {
+      const cancel = await screen.findByRole("link", { name: "Cancel" });
+      expect(cancel.getAttribute("href")).toBe("/events");
+      expect(cancel.getAttribute("data-variant")).toBe("outline");
+      expect(cancel.getAttribute("data-size")).toBe("lg");
+    });
+
+    it("should return to the events page when Cancel is clicked", async () => {
+      await user.click(await screen.findByRole("link", { name: "Cancel" }));
+      expect(await screen.findByRole("heading", { name: "What's On" })).toBeTruthy();
+      expect(router.state.location.pathname + router.state.location.search).toBe("/events");
+    });
+
+    it("should leave a modified click on Cancel to the browser", async () => {
+      const cancel = await screen.findByRole("link", { name: "Cancel" });
+      cancel.addEventListener("click", (event) => event.preventDefault());
+      await user.keyboard("{Meta>}");
+      await user.click(cancel);
+      await user.keyboard("{/Meta}");
+      expect(router.state.location.pathname).toBe(CREATE_PATH);
+    });
+
     describe("and the session ends while they write the hangout", () => {
       beforeEach(async () => {
         vi.mocked(loadHangoutOptions).mockResolvedValue(options);
@@ -446,6 +468,14 @@ describe("when editing a hangout through its route", () => {
     it("should allow the owner to clear a community absent from the management list", async () => {
       await user.selectOptions(screen.getByRole("combobox", { name: "Community" }), "");
       expect((screen.getByRole("combobox", { name: "Community" }) as HTMLSelectElement).value).toBe("");
+    });
+
+    it("should return to the owner's events when Cancel is clicked", async () => {
+      const cancel = screen.getByRole("link", { name: "Cancel" });
+      expect(cancel.getAttribute("href")).toBe("/events?tab=my");
+      await user.click(cancel);
+      expect(await screen.findByRole("heading", { name: "What's On" })).toBeTruthy();
+      expect(router.state.location.pathname + router.state.location.search).toBe("/events?tab=my");
     });
 
     it("should place Delete with the form actions, before Cancel and Save changes", () => {

@@ -1047,14 +1047,9 @@
   cursor: pointer;
   transition: opacity var(--dur-tap) linear;
 }
-.outfitFull:hover .outfitEquipBtn,
-.outfitEquipping .outfitEquipBtn {
+.outfitFull:hover .outfitEquipBtn {
   opacity: 1;
   pointer-events: auto;
-}
-/* Shown without the pointer on the slot, so raised over the row below as a hovered slot is. */
-.outfitEquipping {
-  z-index: 2;
 }
 .outfitEquipping .outfitEquipBtn {
   display: flex;
