@@ -50,7 +50,7 @@ use common::{
 use console::DoAddConsoleCommand;
 use std::{
     f32::consts::PI,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 const SKY_ENVMAP_SHADER_HANDLE: Handle<Shader> =
@@ -64,9 +64,11 @@ const TRILIGHT_SAMPLES: u32 = 256;
 const WORKGROUP_SIZE: u32 = 8;
 // the filter passes generate every face but -y (see sky_envmap.wgsl)
 const GENERATED_FACES: u32 = 5;
-/// Frames between two filterings of the reflection map at the high setting. The sky redraws a
-/// 64th of its texels a frame, every frame, so the map is filtered eight times over the 64 frames
-/// of one redraw and is at most 7 frames behind the sky.
+/// Default frames between two filterings of the reflection map at the high setting
+/// (`SkyEnvmapSettings::filter_interval`). The sky redraws a 64th of its texels a frame, every
+/// frame, so the map is filtered eight times over the 64 frames of one redraw and is at most 7
+/// frames behind the sky. If the redraws stop, the slices redrawn since the last filtering are
+/// still filtered once the interval has passed.
 const FILTER_INTERVAL: u32 = 8;
 /// texels per face of the ambient map: enough for the gradient to read smoothly across a face
 const AMBIENT_SIZE: u32 = 8;
@@ -115,6 +117,9 @@ pub struct SkyEnvmapSettings {
     pub quality: SkyReflectionSetting,
     /// A scene supplies its own lower sky instead of the default reflected ground.
     pub authored_lower_hemisphere: bool,
+    /// frames between two filterings of the reflection map at the high setting (1 = every
+    /// redraw); `/envmap --interval` sets it live
+    pub filter_interval: u32,
 }
 
 impl Default for SkyEnvmapSettings {
@@ -127,6 +132,7 @@ impl Default for SkyEnvmapSettings {
             compression: 0.0,
             quality: SkyReflectionSetting::High,
             authored_lower_hemisphere: false,
+            filter_interval: FILTER_INTERVAL,
         }
     }
 }
@@ -392,7 +398,8 @@ fn write_sky_ambient(
 }
 
 /// scale the sky reflection map, the ambient map, and the floor the reflections are levelled
-/// towards, and set the compression above the floor
+/// towards, set the compression above the floor, and set how often the high reflection map is
+/// filtered: `/envmap [specular] [diffuse] [floor] [compression] [--interval <frames>]`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/envmap")]
 struct EnvmapConsoleCommand {
@@ -400,6 +407,9 @@ struct EnvmapConsoleCommand {
     diffuse: Option<f32>,
     floor: Option<f32>,
     compression: Option<f32>,
+    /// frames between two filterings of the high reflection map (1 = every redraw)
+    #[arg(long)]
+    interval: Option<u32>,
 }
 
 fn envmap_console_command(
@@ -419,9 +429,16 @@ fn envmap_console_command(
         if let Some(compression) = command.compression {
             settings.compression = compression.clamp(0.0, 1.0);
         }
+        if let Some(interval) = command.interval {
+            settings.filter_interval = interval.max(1);
+        }
         input.reply_ok(format!(
-            "envmap specular {} diffuse {} floor {} compression {}",
-            settings.specular, settings.diffuse, settings.floor, settings.compression
+            "envmap specular {} diffuse {} floor {} compression {} interval {}",
+            settings.specular,
+            settings.diffuse,
+            settings.floor,
+            settings.compression,
+            settings.filter_interval
         ));
     }
 }
@@ -600,10 +617,13 @@ struct SkyEnvmapResources {
     trilight: (BindGroup, u32),
     _intermediate: Texture,
     uniforms: DynamicUniformBuffer<Constants>,
-    /// frames since the node last filtered the map, which it does at `FILTER_INTERVAL`; new
-    /// constants or new textures make it due at once. Atomic because the node, which resets it
-    /// when it filters, only reads the world
+    /// frames since the node last filtered the map, which it does at the settings'
+    /// `filter_interval`; new constants or new textures make it due at once. Atomic because the
+    /// node, which resets it when it filters, only reads the world
     frames_since_filter: AtomicU32,
+    /// the sky was redrawn since the node last filtered the map, so a due filtering runs even on
+    /// a frame without an atmosphere update
+    redrawn_since_filter: AtomicBool,
 }
 
 /// Pushes the constants for every filter pass: one per specular mip, then the trilight pass. The
@@ -677,7 +697,7 @@ fn prepare_sky_envmap(
             let frames = existing.frames_since_filter.get_mut();
             *frames = frames.saturating_add(1);
             if settings.is_changed() {
-                *frames = FILTER_INTERVAL;
+                *frames = u32::MAX;
                 push_constants(&mut existing.uniforms, &settings);
                 existing.uniforms.write_buffer(&device, &queue);
             }
@@ -771,7 +791,8 @@ fn prepare_sky_envmap(
         trilight,
         _intermediate: intermediate,
         uniforms,
-        frames_since_filter: AtomicU32::new(FILTER_INTERVAL),
+        frames_since_filter: AtomicU32::new(u32::MAX),
+        redrawn_since_filter: AtomicBool::new(false),
     });
 }
 
@@ -784,13 +805,19 @@ impl render_graph::Node for SkyEnvmapNode {
         render_context: &mut bevy::render::renderer::RenderContext<'w>,
         world: &'w World,
     ) -> Result<(), render_graph::NodeRunError> {
-        // the sky only redraws when the atmosphere changes; follow it
-        if world.resource::<Events<AtmosphereUpdateEvent>>().is_empty() {
-            return Ok(());
-        }
         let Some(resources) = world.get_resource::<SkyEnvmapResources>() else {
             return Ok(());
         };
+        // the sky only redraws when the atmosphere changes; follow it, filtering what was
+        // redrawn since the last filtering
+        if !world.resource::<Events<AtmosphereUpdateEvent>>().is_empty() {
+            resources
+                .redrawn_since_filter
+                .store(true, Ordering::Relaxed);
+        }
+        if !resources.redrawn_since_filter.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let pipelines = world.resource::<SkyEnvmapPipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
         let settings = world.resource::<SkyEnvmapSettings>();
@@ -810,11 +837,14 @@ impl render_graph::Node for SkyEnvmapNode {
         };
         // the low setting's map is one dispatch of one texel per face: it follows every redraw
         if quality == SkyReflectionSetting::High
-            && resources.frames_since_filter.load(Ordering::Relaxed) < FILTER_INTERVAL
+            && resources.frames_since_filter.load(Ordering::Relaxed) < settings.filter_interval
         {
             return Ok(());
         }
         resources.frames_since_filter.store(0, Ordering::Relaxed);
+        resources
+            .redrawn_since_filter
+            .store(false, Ordering::Relaxed);
 
         let mut pass =
             render_context
