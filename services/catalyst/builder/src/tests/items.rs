@@ -1072,10 +1072,11 @@ async fn an_on_chain_manager_reads_an_unminted_item_of_a_published_collection_in
     );
 }
 
-/// Any signer reads by id exactly the items a published third-party
-/// collection's listing shows it: the curated ones, not a draft beside them.
+/// Any signer reads by id the items a published third-party collection's
+/// listing shows it, the curated ones, and an item the node's content
+/// already serves, as builder-server does; not a draft beside them.
 #[tokio::test]
-async fn a_stranger_reads_a_published_third_party_collections_curated_items_only() {
+async fn a_stranger_reads_a_published_third_party_collections_curated_and_served_items_only() {
     let Some(app) = app().await else {
         return;
     };
@@ -1091,8 +1092,8 @@ async fn a_stranger_reads_a_published_third_party_collections_curated_items_only
     .execute(&app.pool)
     .await
     .unwrap();
-    let (curated, draft) = (Uuid::new_v4(), Uuid::new_v4());
-    for (item, name) in [(curated, "curated"), (draft, "draft")] {
+    let (curated, draft, served) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    for (item, name) in [(curated, "curated"), (draft, "draft"), (served, "served")] {
         sqlx::query(
             "INSERT INTO builder.items (id, collection_id, eth_address, name, type, urn_suffix, local_content_hash) \
              VALUES ($1, $2, $3, $4, 'wearable', $5 || ':linked:' || $4, repeat('ab', 32))",
@@ -1114,6 +1115,27 @@ async fn a_stranger_reads_a_published_third_party_collections_curated_items_only
     .execute(&app.pool)
     .await
     .unwrap();
+    let entity = format!("bafkserved{}", served.simple());
+    let pointer = format!("{PROVIDER}:linked:served");
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+           entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ('0x0', 'v3', 'wearable', $1, json_build_object('v', json_build_object('id', $2::text)), \
+           timezone('UTC', now()), ARRAY[$2], timezone('UTC', now()), '[]'::json)",
+    )
+    .bind(&entity)
+    .bind(&pointer)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'wearable')",
+    )
+    .bind(&pointer)
+    .bind(&entity)
+    .execute(&app.pool)
+    .await
+    .unwrap();
     let (listed, body) = send(
         &app,
         STRANGER_KEY,
@@ -1130,7 +1152,7 @@ async fn a_stranger_reads_a_published_third_party_collections_curated_items_only
         .map(|i| i["id"].as_str().unwrap())
         .collect();
     assert_eq!((listed, ids), (200, vec![curated.to_string().as_str()]));
-    for (item, expected) in [(curated, 200), (draft, 401)] {
+    for (item, expected) in [(curated, 200), (served, 200), (draft, 401)] {
         let (status, body) = send(
             &app,
             STRANGER_KEY,
