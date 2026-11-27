@@ -1975,9 +1975,7 @@ pub fn process_scene_lifecycle(
 
         // a failed load is terminal: the entity is kept (so the scene isn't respawned while
         // in range) but it will never get further, so it must not defer other scenes. a
-        // frozen scene never advances its tick, so it's as loaded as it's going to get;
-        // without the exemption a scene frozen before `SCENE_LOADED_TICK` defers other scenes
-        // (and imposters) forever
+        // frozen scene never advances its tick, so it's as loaded as it's going to get
         let failed = matches!(maybe_loading, Some(SceneLoading::Failed));
         let still_loading = !failed
             && maybe_ctx.is_none_or(|ctx| {

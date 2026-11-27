@@ -388,8 +388,6 @@ pub async fn renderer_ipc_in(mut stream: RecvHalf) {
     }
 }
 
-/// The global updates `receiver` holds, at most the channel's allocated capacity (the next power
-/// of two of `SCENE_GLOBAL_UPDATE_CAPACITY`).
 pub fn replayed_global_updates(
     receiver: &tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
 ) -> u64 {

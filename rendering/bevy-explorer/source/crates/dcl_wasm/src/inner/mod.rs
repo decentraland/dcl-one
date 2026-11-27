@@ -65,8 +65,6 @@ pub fn queue_scene(data: SceneInitializationData) -> bool {
         .is_some()
 }
 
-/// The global updates a scene's spawn replays to other scenes: none, the relay pumps each scene's
-/// own receiver.
 pub fn replayed_global_updates(
     _receiver: &tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
 ) -> u64 {

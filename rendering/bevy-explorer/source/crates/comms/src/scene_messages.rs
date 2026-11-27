@@ -28,7 +28,6 @@ impl SceneMessageTraffic {
         self.delivered_to_scene.get(hash).copied().unwrap_or(0)
     }
 
-    /// Count a peer message handed to an inbound queue of the scene with `hash`.
     pub fn record_delivered(&mut self, hash: &str) {
         match self.delivered_to_scene.get_mut(hash) {
             Some(count) => *count += 1,

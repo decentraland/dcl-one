@@ -87,15 +87,13 @@ pub(crate) const SCENE_TICK_RATE_CAPS: [f32; SCENE_TICK_RATE_BANDS.len() + 2] = 
 /// behind cap applies.
 pub(crate) const BEHIND_SCENE_MAX_FORWARD_Y: f32 = 0.5;
 
-/// Whether a camera facing `forward` (unit length) applies the behind cap.
 pub(crate) fn behind_cap_applies(forward: Vec3) -> bool {
     forward.y.abs() < BEHIND_SCENE_MAX_FORWARD_Y
 }
 
 /// Why every scene ticks at the full rate this frame, or None while the distance bands cap them.
 /// `camera` is the rendering camera and whether it frames a photo; `caps_off` is the
-/// `/scene_tick_rate_caps` switch. The photo camera and a scene's cinematic camera lift every
-/// cap.
+/// `/scene_tick_rate_caps` switch.
 pub(crate) fn tick_rate_caps_lifted(
     camera: Option<(&PrimaryCamera, bool)>,
     caps_off: bool,
@@ -164,7 +162,7 @@ pub(crate) fn tick_rate_allows(rate: f32, age: f64, frame: f64) -> bool {
 }
 
 /// The global updates delivered to a capped scene's host since its last dispatch from which it
-/// is due: a quarter of `SCENE_GLOBAL_UPDATE_CAPACITY`.
+/// is due.
 pub(crate) const GLOBAL_UPDATE_BACKLOG_DUE: u64 =
     common::structs::SCENE_GLOBAL_UPDATE_CAPACITY as u64 / 4;
 

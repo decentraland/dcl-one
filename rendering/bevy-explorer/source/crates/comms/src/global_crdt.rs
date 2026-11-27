@@ -314,7 +314,6 @@ pub struct GlobalCrdtState {
     pub(crate) realm_bounds: (IVec2, IVec2),
     // per-component localizer registry (populated as components are first sent)
     localizers: HashMap<SceneComponentId, Localizer>,
-    // updates delivered to each scene host since the context was created (`sent`)
     sent: u64,
 }
 
@@ -466,7 +465,6 @@ impl GlobalCrdtState {
         self.sent
     }
 
-    /// Add `replayed` updates delivered a second time to every scene host of this context.
     pub fn count_replayed(&mut self, replayed: u64) {
         self.sent += replayed;
     }

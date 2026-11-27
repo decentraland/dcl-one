@@ -74,8 +74,7 @@ pub struct RendererSceneContext {
     /// each frame; `None` at the full rate.
     pub(crate) tick_rate_cap: Option<f32>,
     /// Whether this frame's queue holds the scene before its band allows, on unread global
-    /// updates or peer messages (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`); its
-    /// dispatch counts it.
+    /// updates or peer messages (`GLOBAL_UPDATE_BACKLOG_DUE`, `SCENE_MESSAGE_BACKLOG_DUE`).
     pub(crate) due_on_backlog: bool,
     /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch.
     pub(crate) global_updates_read: u64,
@@ -167,7 +166,6 @@ pub const SCENE_JS_SPAWN_TICK: u32 = 1;
 pub const SCENE_FIRST_DISPATCH_TICK: u32 = 2;
 /// The reply to the scene's first `onUpdate`.
 pub const SCENE_FIRST_UPDATE_TICK: u32 = 3;
-/// The tick from which a scene counts as loaded.
 pub(crate) const SCENE_LOADED_TICK: u32 = 7;
 
 pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
@@ -195,7 +193,6 @@ impl RendererSceneContext {
         matches!(self.state, SceneState::Broken)
     }
 
-    /// Whether the scene is not broken, and not blocked unless it is the system scene.
     pub(crate) fn schedulable(&self, is_super: bool) -> bool {
         !self.broken() && (self.blocked.is_empty() || is_super)
     }

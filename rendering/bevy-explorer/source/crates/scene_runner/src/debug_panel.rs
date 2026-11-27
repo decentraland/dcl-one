@@ -674,7 +674,6 @@ fn tick_rate_state(
     }
     let mut full = 0usize;
     let mut capped = [0usize; SCENE_TICK_RATE_CAPS.len()];
-    // the scenes `update_scene_priority` queues when due
     for (context, _) in scenes
         .iter()
         .filter(|(context, is_super)| context.schedulable(*is_super))

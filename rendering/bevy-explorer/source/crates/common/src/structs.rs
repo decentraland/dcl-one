@@ -2532,7 +2532,6 @@ pub struct DebugInfo {
     pub info: HashMap<&'static str, String>,
 }
 
-/// The capacity of a scene host's global update channel for one scene.
 pub const SCENE_GLOBAL_UPDATE_CAPACITY: usize = 1000;
 
 #[derive(Clone, Serialize, Deserialize)]

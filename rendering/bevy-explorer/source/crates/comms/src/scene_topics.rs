@@ -114,7 +114,6 @@ impl SceneTopicRouter<'_, '_> {
         }
     }
 
-    /// Count a peer message handed to the bus queue of the scene with `scene_hash`.
     pub(crate) fn record_delivered(&mut self, scene_hash: &str) {
         self.traffic.record_delivered(scene_hash);
     }

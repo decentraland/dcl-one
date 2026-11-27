@@ -735,8 +735,6 @@ fn update_scene_priority(
             context.due_on_backlog = false;
             if let Some(rate) = context.tick_rate_cap {
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
-                    // many unread global updates or peer messages make the scene due whatever
-                    // its band
                     let unread_updates =
                         global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
                             .saturating_sub(context.global_updates_read);
@@ -804,8 +802,6 @@ fn player_scenes(
     scenes
 }
 
-/// The global updates delivered to the scene's host, replays included: the count of its crdt
-/// context (`CrdtContexts::try_for_scene_hash`), 0 while it has none.
 fn global_updates_sent(
     crdt_context_ids: &CrdtContexts,
     crdt_contexts: &Query<&GlobalCrdtState>,
@@ -817,9 +813,7 @@ fn global_updates_sent(
         .map_or(0, GlobalCrdtState::sent)
 }
 
-/// Record a dispatch at `now`: the scene is in flight, and it reads every global update its host
-/// holds, `sent`, and every peer message its inbound queues hold, `delivered`. Returns whether the
-/// scene was sent before its band allowed, on an unread backlog.
+/// Returns whether the dispatch was sent before the scene's band allowed, on an unread backlog.
 fn record_dispatch(
     context: &mut RendererSceneContext,
     now: f64,
