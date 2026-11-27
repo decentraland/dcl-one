@@ -258,6 +258,10 @@ async fn fetch_owned_items(
     let mut grouped: HashMap<String, OwnedItem> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
     for (urn, token_id, transferred_at, rarity, price, item_type, category) in rows {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a millisecond timestamp, far below 2^53"
+        )]
         let transferred_num = transferred_at as f64;
         let individual = json!({
             "id": format!("{urn}:{token_id}"),
@@ -628,7 +632,7 @@ async fn fetch_base_items(state: &MarketplaceState) -> Vec<OwnedItem> {
 
 fn third_party_item(e: TpwElement) -> OwnedItem {
     OwnedItem {
-        amount: e.individual_data.len() as i64,
+        amount: crate::market::casts::len_i64(e.individual_data.len()),
         individual_data: e.individual_data,
         urn: e.urn,
         rarity: String::new(),
@@ -845,7 +849,7 @@ async fn compute_explorer_items(
     items.extend(third_party?);
     items.retain(|it| passes_filters(it, &q));
     sort_items(&mut items, &q.sort, &q.direction);
-    let total = items.len() as i64;
+    let total = crate::market::casts::len_i64(items.len());
     let include_item_type = category == "wearable";
     let elements: Vec<Value> = items
         .iter()

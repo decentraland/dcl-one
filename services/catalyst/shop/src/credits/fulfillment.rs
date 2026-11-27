@@ -188,8 +188,8 @@ impl OutboxWorker {
                 _ => candidates.push(r.get("id")),
             }
         }
-        metrics::pledges(Pledge::Expired, expired.max(0) as u64);
-        metrics::pledges(Pledge::Released, released.max(0) as u64);
+        metrics::pledges(Pledge::Expired, u64::try_from(expired).unwrap_or(0));
+        metrics::pledges(Pledge::Released, u64::try_from(released).unwrap_or(0));
         if expired > 0 || released > 0 {
             tracing::info!(
                 expired,

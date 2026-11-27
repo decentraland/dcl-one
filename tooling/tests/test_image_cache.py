@@ -275,7 +275,7 @@ class WorkflowSetupTest(unittest.TestCase):
                     'library/ui/apps/sites/assets/video_landing.webm',
                     'library/ui/assets/logo-pattern.webp',
                     'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2',
-                    'apps/ui3/public/assets/invite/referral.webm')
+                    'library/ui/apps/sites/assets/invite/referral.webm')
         for path in required:
             with self.subTest(path=path):
                 self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
@@ -332,13 +332,13 @@ class WorkflowSetupTest(unittest.TestCase):
             assets = root / 'library/ui/apps/sites/assets'
             shared = root / 'library/ui/assets'
             fonts = root / 'library/ui/foundations/typography/fonts'
-            invite = root / 'apps/ui3/public/assets/invite'
-            for path in (work, assets, shared, fonts, invite):
+            for path in (work, assets, shared, fonts):
                 path.mkdir(parents=True)
             media = assets / 'hero.webp'
             pattern = shared / 'logo-pattern.webp'
             font = fonts / 'inter.woff2'
-            clip = invite / 'referral.webm'
+            clip = assets / 'invite/referral.webm'
+            clip.parent.mkdir()
             payload = b'actual\0binary'
             media.write_bytes(payload)
             pattern.write_bytes(payload)

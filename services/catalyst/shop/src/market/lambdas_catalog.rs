@@ -373,12 +373,12 @@ fn parse_catalog_query(
     } else {
         "emotes"
     };
-    if item_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(item_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't ask for more than {MAX_LIMIT} {items_label}"
         ))));
     }
-    if collection_ids.len() as i64 > MAX_LIMIT {
+    if crate::market::casts::len_i64(collection_ids.len()) > MAX_LIMIT {
         return Err(Box::new(bad_request(&format!(
             "You can't filter for more than {MAX_LIMIT} collection ids"
         ))));
@@ -755,7 +755,7 @@ fn merge_items(mut items: Vec<SubgraphItem>, ext: &ExtendedFilters, limit: i64) 
         let primary = if desc { primary.reverse() } else { primary };
         primary.then_with(|| a.urn.to_lowercase().cmp(&b.urn.to_lowercase()))
     });
-    items.truncate(limit.max(0) as usize);
+    items.truncate(crate::market::casts::page(limit));
     items.into_iter().map(|i| i.urn).collect()
 }
 
@@ -828,9 +828,9 @@ fn paginate_merged(
 ) -> (Vec<Value>, Option<String>) {
     on_chain.sort_by(|a, b| locale_cmp(&id_key(a), &id_key(b)));
     merged.extend(on_chain);
-    let has_more = merged.len() as i64 > limit;
+    let has_more = crate::market::casts::len_i64(merged.len()) > limit;
     if has_more {
-        merged.truncate(limit as usize);
+        merged.truncate(crate::market::casts::page(limit));
     }
     let next = if has_more {
         merged
@@ -951,7 +951,7 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
             &base,
             filters,
             &query.last_id,
-            (limit + 1) as usize,
+            crate::market::casts::page(limit + 1),
             &state.settings.content_public_url,
         )
     } else {
@@ -987,10 +987,10 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
     // The definitions are read through the pool: the catalogue read's
     // connection goes back first.
     drop(source);
-    let remaining = limit - off_chain.len() as i64;
+    let remaining = limit - crate::market::casts::len_i64(off_chain.len());
     let mut on_chain_defs = Vec::new();
     if want_on_chain && remaining >= 0 {
-        urns.truncate((remaining + 1) as usize);
+        urns.truncate(crate::market::casts::page(remaining + 1));
         let pointers = urns.iter().map(|u| u.to_lowercase()).collect();
         on_chain_defs = match definitions_for(state, pointers, extract_wearable_definition).await {
             Ok(definitions) => definitions,

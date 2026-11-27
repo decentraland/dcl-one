@@ -107,6 +107,3 @@ library/ui/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
 rendering/bevy-explorer/source/movement-scene/**/*.[gG][lL][bB] filter=lfs diff=lfs merge=lfs -text
 rendering/bevy-explorer/source/movement-scene/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
 rendering/bevy-explorer/source/movement-scene/**/*.[wW][aA][vV] filter=lfs diff=lfs merge=lfs -text
-
-# The invite page's clip (apps/ui3/public/assets/invite, apps/ui3/src/web/pages/StInvite.tsx).
-apps/ui3/public/assets/invite/*.webm filter=lfs diff=lfs merge=lfs -text

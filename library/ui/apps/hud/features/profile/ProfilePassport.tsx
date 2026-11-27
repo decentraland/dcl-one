@@ -1,26 +1,27 @@
 // Passport — the full-screen profile view opened from the chat profile menu's
-// "View Profile" (Figma node 8337-…). Header (name/address/copy/mutuals + FRIEND /
-// ADD FRIEND), OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar as the catalyst full-body
+// "View Profile". Header (name, wallet, copy, mutual friends, then the friendship button, Chat,
+// Call, Jump to Location and the options menu),
+// OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar as the catalyst full-body
 // snapshot (2D, falling back to the face), then badges + about-me + fields + links.
 // (No engine/3D render here — that's only the Backpack's avatar preview.)
-//
-// NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
-// (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
-import { Button, EmptyState, EquippedItemCard, MaskIcon, ScrollThumb, Spinner, Tooltip, type EquippedItemCardProps } from '@dcl/one-ui'
+import { Button, DclLogo, EmptyState, EquippedItemCard, MaskIcon, ScrollThumb, Spinner, Tooltip, type EquippedItemCardProps } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, Icon, Kebab, Pencil, ReportFlag, Search, Tabs, showConfirm, type ContextMenuItem, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Check, Close, ColorPicker, ContextMenu, Copy, FriendshipIcon, Icon, Kebab, Message, Pencil, ReportFlag, Search, Tabs, showConfirm, type ContextMenuItem, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
+import callIcon from '../../assets/voice/call.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '@explorer-core/features/shop/shopApi'
 import { nativeProfileImage } from '@hud-host'
 import { CategoryIcon } from '../backpack/categoryIcons'
-import { catalystThumbUrl, shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
+import { catalystThumbUrl, shortWallet, splitName, userColor } from '@explorer-core/lib/identity'
 import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-core/engine/protocol'
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
+import { MutualFriends } from '../friends/MutualFriends'
+import type { MutualFriend } from '../session/useEngineSession'
 import { PassportPhotos, type PassportPhotoActions } from '../gallery/PassportPhotos'
 import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
@@ -36,14 +37,36 @@ const NAME_COLOR_PRESETS = [
   '#ffe340', '#b1ff40', '#40ff45', '#40eaff', '#4092ff', '#4740ff'
 ] as const
 
-function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
+const COPIED_MS = 1600
+
+function CopyButton({ value, label, copied }: { value: string; label: string; copied: string }): React.JSX.Element {
+  const [shown, setShown] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const copy = (): void => {
+    void navigator.clipboard
+      ?.writeText(value)
+      .then(() => {
+        setShown(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setShown(false), COPIED_MS)
+      })
+      .catch(() => {})
+  }
   return (
-    <button type="button" className={styles.copy} title={`Copy ${label}`} onClick={() => navigator.clipboard?.writeText(value).catch(() => {})}>
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
-        <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.7" />
-        <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-      </svg>
-    </button>
+    <span className={styles.copyWrap}>
+      <button type="button" className={styles.copy} title={`Copy ${label}`} onClick={copy}>
+        <Copy size={16} strokeWidth={1.7} />
+      </button>
+      <span role="status" className={styles.copied} data-shown={shown || undefined}>
+        {shown && (
+          <>
+            <Check size={18} />
+            {copied}
+          </>
+        )}
+      </span>
+    </span>
   )
 }
 
@@ -353,6 +376,7 @@ export function ProfilePassport({
   onJump,
   onGift,
   inviteItems = [],
+  mutuals,
   onClose,
   onDirtyChange,
   photoActions,
@@ -361,8 +385,8 @@ export function ProfilePassport({
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
   relationship?: Relationship
-  /** This user has blocked you. As in the reference client, the passport then offers neither CHAT
-   *  nor a friendship button; Block and Report stay in the options menu. */
+  /** This user has blocked you. The passport then offers no Chat, Call or friendship button;
+   *  Block and Report stay in the options menu. */
   blockedBy?: boolean
   /** Your own passport — hides the friend action (you can't friend yourself). */
   isSelf?: boolean
@@ -386,6 +410,7 @@ export function ProfilePassport({
   onGift?: (address: string) => void
   /** The Invite to Community submenu's communities; the option shows only when there are some. */
   inviteItems?: ContextMenuItem[]
+  mutuals?: MutualFriend[]
   onClose: () => void
   /** Announce unsaved edits, so the popup layer can refuse to close on a stray backdrop click. */
   onDirtyChange?: (dirty: boolean) => void
@@ -409,8 +434,11 @@ export function ProfilePassport({
   const canEdit = isSelf && editing != null
   // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
   const theyBlockedYou = blockedBy && relationship !== 'blocked'
+  const canTalk = !isSelf && relationship !== 'blocked' && !blockedBy
   const [menuOpen, setMenuOpen] = useState(false)
-  // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
+  const { base, tag } = splitName(profile.name)
+  const claimed = profile.hasClaimedName
+  const nameColor = userColor(profile.address, profile.name, claimed, profile.nameColor)
   const options: ContextMenuItem[] = []
   const pick = (fn: (address: string) => void) => (): void => {
     setMenuOpen(false)
@@ -430,6 +458,15 @@ export function ProfilePassport({
   if (!isSelf && onReport != null) destructive.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
   if (options.length > 0 && destructive.length > 0) options.push({ kind: 'separator' })
   options.push(...destructive)
+  if (options.length > 0) {
+    options.unshift({
+      kind: 'header',
+      name: base,
+      tag: claimed ? undefined : tag || undefined,
+      address: profile.address,
+      avatar: <Avatar src={profile.picture} name={base} color={nameColor} size={40} />
+    })
+  }
   const menuRef = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -489,9 +526,6 @@ export function ProfilePassport({
     wasSaving.current = editing.saving
   }, [editing])
   // (Escape is handled centrally by the popup stack — see popups.tsx.)
-  const { base, tag } = splitName(profile.name)
-  const claimed = profile.hasClaimedName
-  const nameColor = userColor(profile.address, profile.name, claimed, profile.nameColor)
   const fields = PROFILE_FIELDS.filter(({ key }) => profile.info?.[key])
   const hasBadges = unlockedBadges.length > 0
   const hasAbout = !!profile.description || fields.length > 0 || (profile.links?.length ?? 0) > 0
@@ -531,9 +565,15 @@ export function ProfilePassport({
           <div>
             <div className={styles.nameRow}>
               <span className={styles.name} style={{ '--name-color': nameColor } as React.CSSProperties}>{base}</span>
+              {!claimed && tag && <span className={styles.tag}>{tag}</span>}
               {claimed && <Verified />}
-              {tag && <span className={styles.tag}>{tag}</span>}
-              <CopyButton value={profile.name} label="name" />
+              {profile.official === true && (
+                <span className={styles.official}>
+                  <DclLogo size={16} />
+                  DCL Foundation
+                </span>
+              )}
+              <CopyButton value={claimed ? base : profile.name} label="name" copied="Name copied!" />
               {canEdit && (
                 <button type="button" className={styles.squareBtn} aria-label="Edit name" onClick={editing.editName}>
                   <Pencil size={20} />
@@ -554,60 +594,84 @@ export function ProfilePassport({
               )}
             </div>
             <div className={styles.addrRow}>
-              <span className={styles.addr}>{shortAddr(profile.address)}</span>
-              <CopyButton value={profile.address} label="address" />
+              <span className={styles.addr}>{shortWallet(profile.address)}</span>
+              <CopyButton value={profile.address} label="address" copied="User ID copied!" />
             </div>
-            {!isSelf && profile.mutuals != null && profile.mutuals > 0 && (
-              <div className={styles.mutual}>{profile.mutuals} Mutual</div>
-            )}
+            {!isSelf && <MutualFriends list={mutuals} size={20} className={styles.mutual} />}
           </div>
           <div className={styles.headActions}>
+            {/* Tips open below: the panel clips at its top edge, which a tip above these buttons would cross. */}
+            {!isSelf &&
+              !theyBlockedYou &&
+              (relationship === 'friend' ? (
+                <button type="button" className={`${styles.headBtn} ${styles.friendBtn} ${styles.headBtnSwap}`} data-state="friend" onClick={() => onUnfriend?.(profile.address)}>
+                  <span className={styles.idle}>
+                    <FriendshipIcon kind="friend" />
+                    FRIEND
+                  </span>
+                  <span className={styles.hover}>
+                    <FriendshipIcon kind="remove" />
+                    REMOVE FRIEND
+                  </span>
+                </button>
+              ) : relationship === 'requested' ? (
+                <button type="button" className={`${styles.headBtn} ${styles.friendBtn} ${styles.headBtnSwap}`} data-state="requested" onClick={() => onCancelRequest?.(profile.address)}>
+                  <span className={styles.idle}>
+                    <FriendshipIcon kind="pending" />
+                    REQUEST SENT
+                  </span>
+                  <span className={styles.hover}>
+                    <FriendshipIcon kind="remove" />
+                    CANCEL REQUEST
+                  </span>
+                </button>
+              ) : relationship === 'incoming' ? (
+                <button type="button" className={`${styles.headBtn} ${styles.friendBtn}`} data-state="offer" onClick={() => onAcceptRequest?.(profile.address)}>
+                  <FriendshipIcon kind="add" />
+                  ACCEPT FRIEND
+                </button>
+              ) : relationship === 'blocked' ? (
+                <button type="button" className={`${styles.headBtn} ${styles.friendBtn} ${styles.headBtnSwap}`} data-state="blocked" onClick={() => onUnblock?.(profile.address)}>
+                  <span className={styles.idle}>
+                    <FriendshipIcon kind="blocked" />
+                    BLOCKED
+                  </span>
+                  <span className={styles.hover}>UNBLOCK</span>
+                </button>
+              ) : (
+                <button type="button" className={`${styles.headBtn} ${styles.friendBtn}`} data-state="offer" onClick={() => onAddFriend?.(profile.address)}>
+                  <FriendshipIcon kind="add" />
+                  ADD FRIEND
+                </button>
+              ))}
+            {canTalk && onMessage != null && (
+              <Tooltip appearance="hud" label="Chat" side="bottom">
+                <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Chat" onClick={() => onMessage(profile.address)}>
+                  <Message size={24} lines />
+                </button>
+              </Tooltip>
+            )}
+            {canTalk && onCall != null && (
+              <Tooltip appearance="hud" label="Call" side="bottom">
+                <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Call" onClick={() => onCall(profile.address)}>
+                  <MaskIcon src={callIcon} size={24} />
+                </button>
+              </Tooltip>
+            )}
             {!isSelf && onJump != null && (
-              <Tooltip appearance="hud" label="Jump to Location" side="bottom">
+              <Tooltip appearance="hud" label="Jump To Location" side="bottom">
                 <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="Jump to Location" onClick={() => onJump(profile.address)}>
                   <img src={jumpInIcon} alt="" width={24} height={24} />
                 </button>
               </Tooltip>
             )}
-            {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
-              <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
-                CHAT
-              </button>
-            )}
-            {!isSelf && relationship !== 'blocked' && onCall != null && (
-              <button type="button" className={styles.headBtn} onClick={() => onCall(profile.address)}>
-                CALL
-              </button>
-            )}
-            {!isSelf &&
-              !theyBlockedYou &&
-              (relationship === 'friend' ? (
-                <button type="button" className={`${styles.headBtn} ${styles.headBtnSwap}`} onClick={() => onUnfriend?.(profile.address)}>
-                  <span className={styles.idle}>FRIEND</span>
-                  <span className={styles.hover}>REMOVE FRIEND</span>
-                </button>
-              ) : relationship === 'requested' ? (
-                <button type="button" className={styles.headBtn} onClick={() => onCancelRequest?.(profile.address)}>
-                  CANCEL REQUEST
-                </button>
-              ) : relationship === 'incoming' ? (
-                <button type="button" className={styles.headBtn} onClick={() => onAcceptRequest?.(profile.address)}>
-                  ACCEPT FRIEND
-                </button>
-              ) : relationship === 'blocked' ? (
-                <button type="button" className={styles.headBtn} onClick={() => onUnblock?.(profile.address)}>
-                  UNBLOCK
-                </button>
-              ) : (
-                <button type="button" className={styles.headBtn} onClick={() => onAddFriend?.(profile.address)}>
-                  ADD FRIEND
-                </button>
-              ))}
             {options.length > 0 && (
               <div ref={menuRef} className={styles.menuWrap}>
-                <ControlButton variant="faint" aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} aria-pressed={undefined} active={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
-                  <Kebab size={18} r={2} />
-                </ControlButton>
+                <Tooltip appearance="hud" label="Menu" side="bottom" disabled={menuOpen}>
+                  <button type="button" className={`${styles.headBtn} ${styles.headIconBtn}`} aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+                    <Kebab size={24} r={2.2} vertical />
+                  </button>
+                </Tooltip>
                 {menuOpen && (
                   <div className={styles.menu}>
                     <ContextMenu items={options} />
