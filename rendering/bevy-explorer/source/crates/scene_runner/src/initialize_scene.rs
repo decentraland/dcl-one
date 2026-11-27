@@ -1373,6 +1373,7 @@ fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
     range: Res<SceneLoadDistance>,
+    config: Res<AppConfig>,
     mut pointers: ResMut<ScenePointers>,
     mut pointer_request: Local<Option<(HashSet<IVec2>, HashMap<String, String>, ActiveEntityTask)>>,
     ipfas: IpfsAssetServer,
@@ -1536,9 +1537,18 @@ fn load_active_entities(
             .as_ivec2();
 
         if focus_parcel != stored_parcels.0 {
+            // the rings the live scenes and the stand-ins read, whatever the imposters reach:
+            // to the corner of the outermost parcel of the widest ring in use
+            let rings = Rings::from_config(&config);
+            let ring = if config.far_lods_cap() == 0 {
+                rings.live_keep.max(rings.near_keep)
+            } else {
+                rings.live_keep.max(rings.scan())
+            };
+            let ring_range = (f32::from(ring) + 1.0) * 16.0 * std::f32::consts::SQRT_2;
             let mut required_parcels: Vec<_> = parcels_in_range(
                 focus,
-                range.load.max(range.load_imposter),
+                range.load.max(range.load_imposter).max(ring_range),
                 pointers.min(),
                 pointers.max(),
             )

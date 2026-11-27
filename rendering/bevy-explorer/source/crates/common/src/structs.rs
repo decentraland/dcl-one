@@ -1121,11 +1121,14 @@ impl AppConfig {
         if self.settings_generation < 7 {
             // the load distance settings are gone: a raised one becomes the live ring that
             // covers it
-            let ring = (self.scene_load_distance / 16.0).ceil() as u16;
+            let covering = (self.scene_load_distance / 16.0).ceil() as u16;
+            let mut ring = self.live_scene_ring;
             if self.scene_load_distance > default.scene_load_distance {
-                let ring = self.live_scene_ring.max(ring);
-                self.set_scene_ring(SceneRing::Live, ring);
+                ring = ring.max(covering);
             }
+            // set even when unchanged: a saved config with its rings out of order is put in
+            // order here, the rings past the live ring pushed out
+            self.set_scene_ring(SceneRing::Live, ring);
             self.scene_load_distance = default.scene_load_distance;
             self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         }
@@ -3636,6 +3639,24 @@ mod tests {
         assert_eq!(migrated(150.0, 1), (10.0, 5));
         // a ring already wider stays
         assert_eq!(migrated(20.0, 3), (10.0, 3));
+
+        // rings saved out of order are put in order, pushed out from the live ring
+        let mut config = AppConfig {
+            settings_generation: 6,
+            live_scene_ring: 3,
+            near_lod_ring: 2,
+            far_lod_ring: 5,
+            ..Default::default()
+        };
+        config.reset_outdated_settings();
+        assert_eq!(
+            (
+                config.live_scene_ring,
+                config.near_lod_ring,
+                config.far_lod_ring
+            ),
+            (3, 4, 6)
+        );
     }
 
     #[test]

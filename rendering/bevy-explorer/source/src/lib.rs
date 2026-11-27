@@ -548,22 +548,7 @@ impl DecentralandApp {
                     // preview renders no imposters; a far distance keeps the fog off the scene
                     99999.0
                 } else {
-                    decentraland_app_config
-                        .app_config
-                        .scene_imposter_distances
-                        .last()
-                        .map(|last| {
-                            // actual distance we need is last + diagonal of the largest mip size
-                            let mip_size = (1
-                                << (decentraland_app_config
-                                    .app_config
-                                    .scene_imposter_distances
-                                    .len()
-                                    - 1)) as f32
-                                * 16.0;
-                            last + (2.0 * mip_size * mip_size).sqrt()
-                        })
-                        .unwrap_or(0.0)
+                    decentraland_app_config.app_config.imposter_range()
                 },
             })
             // the host page's analytics session (web), else one per engine run

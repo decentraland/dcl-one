@@ -320,7 +320,8 @@ is the engine default); changing one shows the preset as Custom.
   (`AppConfig::set_scene_ring`): one further out is pushed out, one further in is pulled in, so
   near LODs reach past the live ring, far LODs at least two rings past the near ring, and
   imposters at least as far as far LODs. Lowering the imposter ring below the far ring brings
-  the far ring down with it. Every preset is in order.
+  the far ring down with it. Every preset is in order, and the generation 7 migration puts a
+  saved config's rings in order once, pushed out from its live ring.
 - **The live ring replaces the load distance settings.** The live ring and its one-ring keep
   margin do what the load and unload distance sliders did, in the unit of the other bands. A
   saved config with a raised load distance moves once to the live ring that covers it (64 m to
@@ -329,6 +330,9 @@ is the engine default); changing one shows the preset as Custom.
   distances (Normal 100, 200, 400, 800, 1600 m and beyond; Ultra from 200 m) and the ring cuts
   the list at its distance (`AppConfig::set_imposters`), keeping the first so the level still
   reads back. At 150 nothing is cut.
+- **Pointers cover the rings.** The parcels whose scenes are resolved reach the widest ring in
+  use, whatever the imposters reach, so Off leaves the live ring and near LODs their scenes in
+  a realm that lists none.
 - **Off.** "Distant Scene Rendering" Off removes the imposters and turns far LODs off: the far
   LOD count is 0 while there are no imposter distances, and at 0 no far LOD is spawned or kept.
   "Far LOD Ring" and "Imposter Ring" keep their values, which the panel shows disabled until it
