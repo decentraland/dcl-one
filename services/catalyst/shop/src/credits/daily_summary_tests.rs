@@ -79,12 +79,13 @@ async fn the_day_is_queued_once_from_the_hour() {
     assert_eq!(first, PassOutcome::Queued(day(20)));
     let again = summary.run_pass(&credits, at(21, 23, 59, 0)).await.unwrap();
     assert_eq!(again, PassOutcome::AlreadyQueued(day(20)));
-    // A replica past the EXISTS check inserts nothing either.
+    // A replica past the EXISTS check inserts nothing either, and knows it.
     let payload = figures(&credits, day(20), at(21, 9, 0, 0)).await.unwrap();
     let mut conn = db.pool.acquire().await.unwrap();
-    super::alerts::record(&mut conn, DAILY_SUMMARY, "2026-11-20", payload)
+    let added = super::alerts::queue(&mut conn, DAILY_SUMMARY, "2026-11-20", payload)
         .await
         .unwrap();
+    assert!(!added);
     drop(conn);
     let rows = summaries(&db.pool).await;
     assert_eq!(rows.len(), 1, "{rows:?}");
@@ -223,8 +224,16 @@ async fn the_figures_read_the_closed_day() {
     purchase(&pool, "card", "refunded", "10", 100, at(20, 12, 0, 0)).await;
 
     let later = at(30, 0, 0, 0);
-    let (a1, a2, b0, b1, c1) = (salt(), salt(), salt(), salt(), salt());
-    for (auth, who) in [(&a1, &a), (&a2, &a), (&b0, &b), (&b1, &b), (&c1, &c)] {
+    let d = format!("0x{}", "d".repeat(40));
+    let (a1, a2, b0, b1, c1, d1) = (salt(), salt(), salt(), salt(), salt(), salt());
+    for (auth, who) in [
+        (&a1, &a),
+        (&a2, &a),
+        (&b0, &b),
+        (&b1, &b),
+        (&c1, &c),
+        (&d1, &d),
+    ] {
         authorization(&pool, auth, who, 300, "consumed", later).await;
     }
     lines(&pool, &a1, 2).await;
@@ -306,6 +315,32 @@ async fn the_figures_read_the_closed_day() {
         at(21, 0, 0, 0),
     )
     .await;
+    // a1's cart took a second credit: another log, the same items.
+    settled(
+        &pool,
+        8,
+        &a1,
+        &a,
+        "purchase",
+        "500000000000000000",
+        "1",
+        '1',
+        at(20, 10, 0, 0),
+    )
+    .await;
+    // A single item keeps its line on the authorization: one item.
+    settled(
+        &pool,
+        7,
+        &d1,
+        &d,
+        "purchase",
+        "1000000000000000000",
+        "2",
+        '7',
+        at(20, 13, 0, 0),
+    )
+    .await;
     // Outside the seven days that end with the 20th.
     settled(
         &pool,
@@ -325,10 +360,12 @@ async fn the_figures_read_the_closed_day() {
 
     expired_on(&pool, at(19, 23, 59, 59)).await;
     expired_on(&pool, at(20, 5, 0, 0)).await;
-    // A dispute records no amount: it is counted apart from the refunds.
+    // A dispute records no amount: it is counted apart from the refunds. A
+    // refund followed by a dispute keeps both on its row, and counts in both.
     for (intent, cents, disputed, when) in [
         ("pi_in", 500, false, at(20, 8, 0, 0)),
         ("pi_disputed", 0, true, at(20, 9, 0, 0)),
+        ("pi_both", 300, true, at(20, 10, 0, 0)),
         ("pi_after", 900, false, at(21, 0, 0, 0)),
     ] {
         sqlx::query("INSERT INTO credits.payment_reversals (payment_intent, refunded_cents, disputed, updated_at) VALUES ($1, $2, $3, $4)")
@@ -349,20 +386,96 @@ async fn the_figures_read_the_closed_day() {
             "day": "2026-11-20",
             "packs": { "count": 2, "credits": "100", "chargedCents": 1000 },
             "purchases": {
-                "items": 4,
-                "checkouts": 2,
-                "credits": "13",
-                "buyers": 2,
-                "newBuyers": 1,
-                "manaWei": "8100000000000000000",
+                "items": 5,
+                "checkouts": 3,
+                "credits": "16",
+                "buyers": 3,
+                "newBuyers": 2,
+                "manaWei": "9600000000000000000",
             },
             "checkout": { "credited": 2, "abandoned": 1, "failed": 1, "pending": 1 },
             "unspentCredits": "27",
             "owed": { "credits": "32", "manaWei": "0" },
-            "outflow7dWei": "9100000000000000000",
-            "integrity": { "expired": 1, "refunds": 1, "refundedCents": 500, "chargebacks": 1 },
+            "outflow7dWei": "10600000000000000000",
+            "integrity": { "expired": 1, "refunds": 2, "refundedCents": 800, "chargebacks": 2 },
         })
     );
+}
+
+/// A claimed goal grant owes its amount less its own usages: those of its
+/// salt on its chain, contract and credit, by its wallet, as the wallet's
+/// balance reads them. Another credit's usage that reuses the salt takes
+/// nothing off.
+#[tokio::test]
+async fn a_goal_grant_owes_what_its_own_usages_left() {
+    let Some(db) = OwnDatabase::create("daily_summary_goal_grant").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let credits = Credits::new(pool.clone());
+    let wallet = format!("0x{}", "e".repeat(40));
+    let grant = format!("0x{}", "5".repeat(64));
+    let credit = format!("0x{}", "6".repeat(64));
+    let contract = format!("0x{}", "c".repeat(40));
+    for statement in [
+        "INSERT INTO credits.seasons (id, name, start_date, end_date, max_mana_wei) VALUES (1, 'One', '2026-11-01', '2026-12-31', 0)",
+        "INSERT INTO credits.season_goals (season_id, goal_id, title, thumbnail, total_steps, reward_wei, start_week, end_week) VALUES (1, 'take-photo', 'Photo', 'p.png', 1, 0, 1, 20)",
+        "INSERT INTO credits.wallets (address) VALUES ($1)",
+        "INSERT INTO credits.goal_progress (address, season_id, week_id, goal_id, title, thumbnail, total_steps, reward_wei, completed_steps, completed_at) VALUES ($1, 1, 1, 'take-photo', 'Photo', 'p.png', 1, 0, 1, '2026-11-02')",
+    ] {
+        sqlx::query(statement)
+            .bind(&wallet)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO credits.goal_grants (address, season_id, week_id, goal_id, salt, chain_id, contract, credit_hash, amount_wei, signature, created_at, expires_at, claimed_at) \
+         VALUES ($1, 1, 1, 'take-photo', $2, 137, $3, $4, 100, '0xsig', '2026-11-02', '2026-11-30', '2026-11-02')",
+    )
+    .bind(&wallet)
+    .bind(&grant)
+    .bind(&contract)
+    .bind(&credit)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let used = async |log: i32,
+                      chain: i64,
+                      contract: &str,
+                      credit: &str,
+                      sender: &str,
+                      wei: i64| {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, block_time, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) \
+             VALUES ($1, 1, $2, $3, $4, '2026-11-03', $5, $6, $7, 1, 1, $8)",
+        )
+        .bind(chain)
+        .bind(log)
+        .bind(contract)
+        .bind(format!("0x{}", "f".repeat(64)))
+        .bind(sender)
+        .bind(credit)
+        .bind(&grant)
+        .bind(wei)
+        .execute(&pool)
+        .await
+        .unwrap();
+    };
+    let owed = async || {
+        let day = NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
+        figures(&credits, day, at(21, 9, 0, 0)).await.unwrap()["owed"]["manaWei"].clone()
+    };
+    let other = format!("0x{}", "9".repeat(40));
+    let other_credit = format!("0x{}", "8".repeat(64));
+    // Each differs from the grant in one of the four.
+    used(0, 1, &contract, &credit, &wallet, 100).await;
+    used(1, 137, &other, &credit, &wallet, 100).await;
+    used(2, 137, &contract, &other_credit, &wallet, 100).await;
+    used(3, 137, &contract, &credit, &other, 100).await;
+    assert_eq!(owed().await, json!("100"), "other credits' usages");
+    used(4, 137, &contract, &credit, &wallet, 40).await;
+    assert_eq!(owed().await, json!("60"), "its own partial usage");
 }
 
 /// A chain read that fails says "unavailable" in its line, and the day is
@@ -496,7 +609,7 @@ fn a_short_float_is_warned() {
 
 /// A JSON-RPC endpoint that answers `eth_call` by selector, or with an error
 /// to every call when `broken`.
-async fn rpc(broken: bool) -> String {
+async fn rpc(broken: bool, updated_at: i64) -> String {
     use axum::Router;
     use axum::routing::post;
     let word = |n: u128| format!("{n:064x}");
@@ -517,8 +630,8 @@ async fn rpc(broken: bool) -> String {
                     "0x{}{}{}{}{}",
                     word(1),
                     word(25_000_000),
-                    word(1_700_000_000),
-                    word(1_700_000_000),
+                    word(updated_at as u128),
+                    word(updated_at as u128),
                     word(1)
                 ),
                 _ => "0x".to_string(),
@@ -533,8 +646,9 @@ async fn rpc(broken: bool) -> String {
 }
 
 /// The reader decodes the CreditsManager's balance and the aggregator's
-/// round as `evm::oracle` does, and reports a failing endpoint as
-/// unavailable rather than failing the summary.
+/// round as `evm::oracle` does, and reports a failing endpoint, or a round
+/// older than its freshness, as unavailable rather than failing the
+/// summary. A stale round leaves the balance read.
 #[tokio::test]
 async fn the_chain_reader_reads_the_float_and_the_rate() {
     let reader = |url: String| super::daily_summary::ChainReader {
@@ -546,19 +660,25 @@ async fn the_chain_reader_reads_the_float_and_the_rate() {
         credits_manager: alloy_primitives::Address::repeat_byte(0x11),
         mana: alloy_primitives::Address::repeat_byte(0x22),
         aggregator: Some(alloy_primitives::Address::repeat_byte(0x33)),
+        max_age_secs: 900,
     };
-    let up = reader(rpc(false).await);
+    let fresh = chrono::Utc::now().timestamp() - 60;
+    let up = reader(rpc(false, fresh).await);
     assert_eq!(up.float_wei().await, mana(1_000));
     let quarter = U256::from(25u64) * U256::from(10u64).pow(U256::from(16u64));
     assert_eq!(up.mana_usd_18().await, Reading::Value(quarter));
 
-    let down = reader(rpc(true).await);
+    let stale = reader(rpc(false, fresh - 900).await);
+    assert_eq!(stale.float_wei().await, mana(1_000));
+    assert_eq!(stale.mana_usd_18().await, Reading::Unavailable);
+
+    let down = reader(rpc(true, fresh).await);
     assert_eq!(down.float_wei().await, Reading::Unavailable);
     assert_eq!(down.mana_usd_18().await, Reading::Unavailable);
 
     let no_feed = super::daily_summary::ChainReader {
         aggregator: None,
-        ..reader(rpc(false).await)
+        ..reader(rpc(false, fresh).await)
     };
     assert_eq!(no_feed.mana_usd_18().await, Reading::NotConfigured);
 }
@@ -582,8 +702,9 @@ fn the_hour_is_an_hour_of_the_day() {
     );
 }
 
-/// Reads that fail are an error before the day's last hour, so the pass is
-/// retried; in that hour the day is queued without its figures, and says so.
+/// Reads that fail are an error until [`LAST_CHANCE`] before the end of the
+/// reporting day, so the pass is retried; from then on the day is queued
+/// without its figures, and says so.
 #[tokio::test]
 async fn a_day_whose_reads_keep_failing_is_queued_without_figures() {
     let Some(db) = OwnDatabase::create("daily_summary_failing").await else {
@@ -601,13 +722,13 @@ async fn a_day_whose_reads_keep_failing_is_queued_without_figures() {
 
     assert!(
         summary
-            .run_pass(&credits, at(21, 22, 59, 59))
+            .run_pass(&credits, at(21, 22, 54, 59))
             .await
             .is_err()
     );
     assert!(summaries(&db.pool).await.is_empty());
 
-    let last = summary.run_pass(&credits, at(21, 23, 0, 0)).await.unwrap();
+    let last = summary.run_pass(&credits, at(21, 22, 55, 0)).await.unwrap();
     assert_eq!(
         last,
         PassOutcome::Queued(NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
@@ -622,4 +743,86 @@ async fn a_day_whose_reads_keep_failing_is_queued_without_figures() {
         ),
         "{text}"
     );
+}
+
+/// The cutoff is judged when the reads fail, not when the pass began: a
+/// pass that starts just before it and fails just after it queues the day,
+/// since a retry an hour later could fall on the next day.
+#[tokio::test]
+async fn a_pass_that_fails_past_the_cutoff_queues_the_day() {
+    let Some(db) = OwnDatabase::create("daily_summary_cutoff").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let summary = DailySummary {
+        hour_utc: 9,
+        chain: Arc::new(NoChain),
+    };
+    sqlx::query("ALTER TABLE credits.payment_reversals RENAME TO payment_reversals_gone")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let reads = std::sync::atomic::AtomicU32::new(0);
+    let clock = || {
+        if reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+            at(21, 22, 54, 59)
+        } else {
+            at(21, 22, 55, 9)
+        }
+    };
+    let outcome = summary.run_pass_on(&credits, clock).await.unwrap();
+    assert_eq!(
+        outcome,
+        PassOutcome::Queued(NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
+    );
+    let rows = summaries(&db.pool).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "2026-11-20");
+    assert_eq!(rows[0].1["figuresUnavailable"], true);
+}
+
+/// A chain whose balance read lets another pass queue the day first.
+struct Racing {
+    pool: PgPool,
+}
+
+#[async_trait]
+impl ChainFigures for Racing {
+    async fn float_wei(&self) -> Reading {
+        let mut conn = self.pool.acquire().await.unwrap();
+        super::alerts::record(
+            &mut conn,
+            DAILY_SUMMARY,
+            "2026-11-20",
+            json!({ "day": "2026-11-20" }),
+        )
+        .await
+        .unwrap();
+        Reading::NotConfigured
+    }
+    async fn mana_usd_18(&self) -> Reading {
+        Reading::NotConfigured
+    }
+}
+
+/// A pass that another queued the day ahead of, after its check, adds
+/// nothing and says the day was already queued.
+#[tokio::test]
+async fn a_pass_that_loses_the_race_reports_the_day_queued() {
+    let Some(db) = OwnDatabase::create("daily_summary_race").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let summary = DailySummary {
+        hour_utc: 9,
+        chain: Arc::new(Racing {
+            pool: db.pool.clone(),
+        }),
+    };
+    let outcome = summary.run_pass(&credits, at(21, 9, 0, 0)).await.unwrap();
+    assert_eq!(
+        outcome,
+        PassOutcome::AlreadyQueued(NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
+    );
+    assert_eq!(summaries(&db.pool).await.len(), 1);
 }

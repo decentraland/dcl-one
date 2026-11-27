@@ -1908,15 +1908,19 @@ operator must hear about (`shop/src/credits/alerts.rs`), one row per
     `authorizations` (a row per checkout attempt), `payment_reversals` (a
     row per reversed intent) and `wallets`. New buyers aggregate every
     purchase settlement in that same single scan. A claimed goal grant's
-    usage is read by salt through `usages_salt_idx`;
+    usage is read by salt through `usages_salt_idx`, keeping the usages of
+    the grant's chain, contract, credit and wallet;
   - a pass whose reads fail is retried after 5 minutes, doubling up to an
-    hour. A failure in the day's last UTC hour queues the day with
-    `figuresUnavailable`, so the channel shows the gap;
+    hour. A failure within 65 minutes of the end of the reporting day,
+    judged when it failed, may get no retry before the next day: it queues
+    the day with `figuresUnavailable`, so the channel shows the gap;
   - it then reads the CreditsManager's MANA balance and the MANA/USD round
-    over the CreditUsed index's RPC, 10 seconds each. A failed read is stored
-    as `unavailable`, and the row is queued anyway;
+    over the CreditUsed index's RPC, 10 seconds each. A failed read, or a
+    round older than `MANA_PRICE_MAX_STALENESS_SECS`, is stored as
+    `unavailable`, and the row is queued anyway;
   - the insert's `ON CONFLICT DO NOTHING` is the claim, so a second replica
-    or a restart adds nothing.
+    or a restart adds nothing, and the pass that lost reports the day as
+    already queued.
 
   The row is rendered from its payload at delivery. The figures, and those
   credits-server reported that the node doesn't, are listed in the module's

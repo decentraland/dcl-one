@@ -29,23 +29,26 @@
 //!   Stripe's published rate, as the pack feed estimates it;
 //! - **items bought, buyers, MANA moved**: the CreditUsed settlements of that
 //!   day (`credits.usage_settlements` by `settled_at`): items are the lines of
-//!   the purchases settled, checkouts the distinct (wallet, transaction)
-//!   pairs, credits spent the credits debited, MANA the value used. A buyer is
-//!   new when their first purchase settlement ever is that day;
+//!   the purchases settled, one for a purchase whose single item sits on its
+//!   authorization (as the purchase audit counts them), never a remainder;
+//!   checkouts the distinct (wallet, transaction) pairs, credits spent the
+//!   credits debited, MANA the value used. A buyer is new when their first
+//!   purchase settlement ever is that day;
 //! - **card checkout**: the card purchases created that day by status, in
 //!   credits-server's order vocabulary (`history::order_status`);
 //! - **unspent**: the paid slice of every wallet (`available -
 //!   earned_available`), now;
 //! - **float coverage**: what the CreditsManager still owes, now: every
 //!   wallet's spendable balance floored at zero, and the claimed, unexpired
-//!   goal grants (`credits.goal_grants`) less what their salt has used
-//!   (`credits.usages`); the pace is the value used over the seven days
-//!   ending with the reported day;
+//!   goal grants (`credits.goal_grants`) less what they have used
+//!   (`credits.usages` of the grant's salt, chain, contract, credit and
+//!   wallet, as the wallet's balance reads them); the pace is the value used
+//!   over the seven days ending with the reported day;
 //! - **warnings** (only when non-zero): authorizations created that day that
 //!   expired, and the Stripe reversals (`credits.payment_reversals`) last
-//!   updated that day: refunds at their cumulative refunded amount, and
-//!   chargebacks (a disputed intent) counted apart, since a dispute records
-//!   no amount.
+//!   updated that day: the reversals with a refunded amount and its sum, and
+//!   the disputed ones. A row records both when a refund was followed by a
+//!   dispute, and counts in both.
 //!
 //! "Unspent" is the `paid` bucket, which holds the credits sold and the
 //! credits an operator granted alike; the line says so.
@@ -58,9 +61,15 @@
 //! purchase settlements of all history, in the same one scan. A goal
 //! grant's usage is read by salt (`usages_salt_idx`). When the reads fail
 //! (past the statement timeout), the pass is retried with a backoff of up
-//! to an hour; a failure in the day's last hour, [`LAST_HOUR`], queues the
-//! day without its figures, so the channel sees the gap rather than
-//! nothing.
+//! to an hour. A failure within [`LAST_CHANCE`] (65 minutes) of the end of
+//! the reporting day, judged at the time it failed, may get no retry for
+//! that day: it queues the day without its figures, so the channel sees the
+//! gap rather than nothing.
+//!
+//! The rate is used only from a round no older than
+//! `MANA_PRICE_MAX_STALENESS_SECS`, the freshness the credits price
+//! feed is held to. An older round leaves the float in MANA with its USD
+//! value unavailable.
 //!
 //! What credits-server reports that this does not:
 //! - **collections published**: the node takes no credits for a publication;
@@ -99,8 +108,12 @@ const INTERVAL: Duration = Duration::from_secs(300);
 /// The longest wait between failed passes: a day whose reads keep failing
 /// is tried about once an hour, not every [`INTERVAL`].
 const MAX_ERROR_BACKOFF: Duration = Duration::from_secs(3600);
-/// The UTC hour whose failed pass queues the day without its figures.
-pub const LAST_HOUR: u32 = 23;
+/// How close to the end of its reporting day a failure is the day's last
+/// chance: the next pass comes up to [`MAX_ERROR_BACKOFF`] after the
+/// failure, plus a pass's slack, and may fall on the next day, which reports
+/// its own yesterday. Such a failure queues the day without its figures.
+pub const LAST_CHANCE: Duration =
+    Duration::from_secs(MAX_ERROR_BACKOFF.as_secs() + INTERVAL.as_secs());
 /// Each chain read (the balance, the rate) is given up after this long.
 pub const CHAIN_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Fewer days of float at the seven-day pace than this raise a warning.
@@ -176,6 +189,10 @@ pub struct ChainReader {
     pub credits_manager: Address,
     pub mana: Address,
     pub aggregator: Option<Address>,
+    /// The oldest round the rate is read from, in seconds
+    /// (`MANA_PRICE_MAX_STALENESS_SECS`, the credits price feed's
+    /// freshness); an older one makes the rate unavailable.
+    pub max_age_secs: i64,
 }
 
 #[async_trait]
@@ -211,6 +228,12 @@ impl ChainFigures for ChainReader {
         match read.await {
             Ok(Ok((decimals, round))) => {
                 match crate::evm::oracle::decode_rate_reading(&decimals, &round) {
+                    Ok(rate)
+                        if chrono::Utc::now().timestamp() - rate.updated_at_s
+                            > self.max_age_secs =>
+                    {
+                        unavailable("the MANA/USD rate's latest round is stale")
+                    }
                     Ok(rate) => Reading::Value(rate.rate_18),
                     Err(_) => unavailable("the MANA/USD rate answered an unusable round"),
                 }
@@ -224,11 +247,13 @@ impl ChainFigures for ChainReader {
 impl ChainReader {
     /// The reader over the CreditUsed index's chain and contract
     /// (`CREDITS_MANAGER_CONTRACT`), with that chain's MANA and, on Polygon,
-    /// the MANA/USD aggregator the economy module reads. [`NoChain`] where
-    /// the index is not configured or the chain is not one the node knows.
+    /// the MANA/USD aggregator the economy module reads, fresh within
+    /// `max_age_secs`. [`NoChain`] where the index is not configured or the
+    /// chain is not one the node knows.
     pub fn for_usage(
         chain: Option<&Arc<ChainComponent>>,
         usage: &super::usage::Settings,
+        max_age_secs: i64,
     ) -> Arc<dyn ChainFigures> {
         let manager = usage
             .contract
@@ -245,6 +270,7 @@ impl ChainReader {
                 mana,
                 aggregator: (chain_id == Some(137))
                     .then_some(crate::evm::oracle::MANA_USD_AGGREGATOR_POLYGON),
+                max_age_secs,
             }),
             _ => Arc::new(NoChain),
         }
@@ -281,6 +307,18 @@ impl DailySummary {
         credits: &Credits,
         now: NaiveDateTime,
     ) -> Result<PassOutcome, ApiError> {
+        self.run_pass_on(credits, || now).await
+    }
+
+    /// [`run_pass`](Self::run_pass) at `clock`'s time, read again when the
+    /// figures fail: a failure within [`LAST_CHANCE`] of the end of the day
+    /// after the reported one queues the day without them.
+    pub async fn run_pass_on(
+        &self,
+        credits: &Credits,
+        clock: impl Fn() -> NaiveDateTime,
+    ) -> Result<PassOutcome, ApiError> {
+        let now = clock();
         if now.hour() < self.hour_utc {
             return Ok(PassOutcome::BeforeTheHour);
         }
@@ -296,9 +334,13 @@ impl DailySummary {
         if queued {
             return Ok(PassOutcome::AlreadyQueued(day));
         }
+        let last_pass = (day + chrono::Days::new(2))
+            .and_hms_opt(0, 0, 0)
+            .unwrap_or_default()
+            - chrono::Duration::from_std(LAST_CHANCE).unwrap_or_default();
         let mut payload = match figures(credits, day, now).await {
             Ok(payload) => payload,
-            Err(e) if now.hour() >= LAST_HOUR => {
+            Err(e) if clock() >= last_pass => {
                 tracing::error!(job = JOB_NAME, %day, error = %e, "the daily summary's figures could not be read today; queueing the day without them");
                 json!({ "day": key, "figuresUnavailable": true })
             }
@@ -314,8 +356,12 @@ impl DailySummary {
         payload["floatWei"] = float.json();
         payload["manaUsd18"] = rate.json();
         let mut conn = credits.pool.acquire().await?;
-        alerts::record(&mut conn, DAILY_SUMMARY, &key, payload).await?;
-        Ok(PassOutcome::Queued(day))
+        // A pass that raced another past the check above adds nothing.
+        if alerts::queue(&mut conn, DAILY_SUMMARY, &key, payload).await? {
+            Ok(PassOutcome::Queued(day))
+        } else {
+            Ok(PassOutcome::AlreadyQueued(day))
+        }
     }
 }
 
@@ -348,8 +394,9 @@ pub(crate) async fn figures(
              LEFT JOIN credits.usages u ON u.chain_id = s.chain_id AND u.block_number = s.block_number \
                                        AND u.log_index = s.log_index \
              WHERE s.settled_at >= $1 AND s.settled_at < $2) \
-         SELECT (SELECT count(*) FROM credits.authorization_lines l \
-                 WHERE l.authorization_id IN (SELECT authorization_id FROM day WHERE kind = 'purchase')) AS items, \
+         SELECT (SELECT COALESCE(sum(GREATEST((SELECT count(*) FROM credits.authorization_lines l \
+                                                    WHERE l.authorization_id = p.authorization_id), 1)), 0)::bigint \
+                 FROM (SELECT DISTINCT authorization_id FROM day WHERE kind = 'purchase') p) AS items, \
                 count(DISTINCT (address, checkout)) FILTER (WHERE kind = 'purchase') AS checkouts, \
                 COALESCE(sum(debited_credits), 0)::text AS credits, \
                 count(DISTINCT address) FILTER (WHERE kind = 'purchase') AS buyers, \
@@ -405,7 +452,8 @@ pub(crate) async fn figures(
 
     let owed_mana: String = sqlx::query_scalar(
         "SELECT TRUNC(COALESCE(sum(GREATEST(g.amount_wei - COALESCE( \
-                    (SELECT sum(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), 0)), 0))::text \
+                    (SELECT sum(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt AND u.chain_id = g.chain_id \
+                     AND u.contract = g.contract AND u.credit_id = g.credit_hash AND u.sender = g.address), 0), 0)), 0))::text \
          FROM credits.goal_grants g \
          WHERE g.claimed_at IS NOT NULL AND g.expires_at > $1",
     )
@@ -432,8 +480,8 @@ pub(crate) async fn figures(
     .await?;
 
     let reversals = sqlx::query(
-        "SELECT count(*) FILTER (WHERE NOT disputed) AS refunds, \
-                COALESCE(sum(refunded_cents) FILTER (WHERE NOT disputed), 0)::bigint AS cents, \
+        "SELECT count(*) FILTER (WHERE refunded_cents > 0) AS refunds, \
+                COALESCE(sum(refunded_cents), 0)::bigint AS cents, \
                 count(*) FILTER (WHERE disputed) AS chargebacks \
          FROM credits.payment_reversals WHERE updated_at >= $1 AND updated_at < $2",
     )
@@ -766,7 +814,7 @@ pub fn spawn(jobs: &Jobs, credits: Credits, summary: DailySummary, writes_enable
                     return Ok(());
                 }
                 let outcome = summary
-                    .run_pass(&credits, now())
+                    .run_pass_on(&credits, now)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if let PassOutcome::Queued(day) = outcome {

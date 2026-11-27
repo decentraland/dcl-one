@@ -121,7 +121,17 @@ pub(crate) async fn record(
     dedupe_key: &str,
     payload: Value,
 ) -> sqlx::Result<()> {
-    sqlx::query(
+    queue(conn, kind, dedupe_key, payload).await.map(drop)
+}
+
+/// [`record`], and whether it added the row.
+pub(crate) async fn queue(
+    conn: &mut PgConnection,
+    kind: &str,
+    dedupe_key: &str,
+    payload: Value,
+) -> sqlx::Result<bool> {
+    let added = sqlx::query(
         "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
          VALUES ($1, $2, $3, $4, $4) ON CONFLICT (kind, dedupe_key) DO NOTHING",
     )
@@ -131,7 +141,7 @@ pub(crate) async fn record(
     .bind(now())
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(added.rows_affected() == 1)
 }
 
 /// Queues [`CAP_NEAR_LIMIT`] for `salt` in the caller's transaction when its

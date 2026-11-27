@@ -950,7 +950,11 @@ impl State {
         );
         let daily_summary = daily_summary::DailySummary {
             hour_utc: settings.daily_summary_hour_utc,
-            chain: daily_summary::ChainReader::for_usage(chain.as_ref(), &settings.usage),
+            chain: daily_summary::ChainReader::for_usage(
+                chain.as_ref(),
+                &settings.usage,
+                settings.mana_price_max_staleness_secs,
+            ),
         };
         let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
