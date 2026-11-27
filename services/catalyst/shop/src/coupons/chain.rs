@@ -1,9 +1,3 @@
-// Money and chain values: a silently truncated or sign-flipped cast is a bug.
-#![deny(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_wrap
-)]
 use alloy_primitives::{Address, U256, keccak256};
 use async_trait::async_trait;
 use futures::future::join_all;

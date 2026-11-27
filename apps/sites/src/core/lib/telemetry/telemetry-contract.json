@@ -3433,19 +3433,6 @@
         }
       }
     },
-    "lp_invite_rewards_viewed": {
-      "loose": false,
-      "props": {
-        "accepted": {
-          "kind": "number",
-          "optional": false
-        },
-        "current_tier": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
     "lp_invite_viewed": {
       "loose": false,
       "props": {

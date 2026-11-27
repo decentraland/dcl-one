@@ -758,8 +758,8 @@ export interface Profile {
   bodyImage?: string
   badges?: Badge[]
   info?: ProfileInfo
-  /** Mutual-friends count shown under the name. */
-  mutuals?: number
+  /** An official Decentraland wallet; set by the passport fetch. */
+  official?: boolean
   /** Currently-equipped wearables (category slots), resolved from the deployed avatar. */
   equippedWearables?: Wearable[]
   /** Currently-equipped emotes (wheel slots), resolved from the deployed avatar. */

@@ -367,7 +367,7 @@ pub async fn checkout(
 
     match &signed_intent {
         Some((intent, sig)) => {
-            let now = chrono::Utc::now().timestamp().max(0) as u64;
+            let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
             verify_purchase_intent(intent, sig, signer.as_str(), &idem, now)?;
         }
         None => ensure_intent_present(false, state.settings.require_purchase_intent)?,

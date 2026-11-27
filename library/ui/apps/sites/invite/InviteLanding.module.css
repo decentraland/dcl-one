@@ -1,6 +1,6 @@
 /* Colours, spacing, radii and font sizes are @dcl/one-ui tokens where decentraland.org's value equals one;
    the others keep the reference value and say so. */
-.stinvite {
+.root {
   --sti-bg: var(--dcl-bg-page);
   --sti-soft-black2: #242129;
   --sti-text: rgba(240, 240, 240, 1);
@@ -8,7 +8,11 @@
   /* reference #ffbc5b, no token; the stops and angle are the reference's, not --dcl-gradient-flare */
   --sti-flare: linear-gradient(261.51deg, var(--dcl-primary-primary) 6.92%, #ffbc5b 83.3%);
   --sti-overlay: linear-gradient(180deg, #410461 0%, #5d0089 100%);
-  --sti-faq-hover: linear-gradient(90deg, var(--dcl-neutrals-pale-black) 0%, var(--dcl-brand-purple) 100%);
+  --sti-faq-hover: linear-gradient(
+    90deg,
+    var(--dcl-neutrals-pale-black) 0%,
+    var(--dcl-brand-purple) 100%
+  );
 
   background: var(--sti-bg);
   color: var(--sti-text);
@@ -16,13 +20,13 @@
 
 /* The invite hero as decentraland.org draws it. Breakpoints are decentraland-ui2's
    down(): lg 1280, md 1024, sm 991, xs 768, and 390, each 0.05px under. */
-.stinvite__hero {
+.hero {
   position: relative;
   z-index: 1099;
   width: 100%;
   min-height: 100vh;
 }
-.stinvite__hero-inner {
+.heroInner {
   position: relative;
   width: 100%;
   min-height: 100vh;
@@ -34,13 +38,13 @@
   padding: var(--dcl-space-96) 0;
 }
 
-.stinvite__media {
+.media {
   position: absolute;
   inset: 0;
   z-index: 1;
   overflow: hidden;
 }
-.stinvite__video {
+.video {
   position: absolute;
   top: 0;
   right: 0;
@@ -52,7 +56,7 @@
   width: 100%;
   height: 100%;
 }
-.stinvite__overlay {
+.overlay {
   position: absolute;
   top: 0;
   left: 0;
@@ -63,7 +67,7 @@
   clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
 }
 
-.stinvite__avatar {
+.avatar {
   position: absolute;
   top: 0;
   right: 0;
@@ -72,25 +76,25 @@
   height: 100%;
   z-index: 2;
 }
-.stinvite__avatar-wrap {
+.avatarSlot {
   height: 100%;
 }
 
-.stinvite__rail {
+.rail {
   z-index: 2;
   max-width: 40vw;
   margin-left: 200px;
   margin-right: 0;
   text-align: left;
 }
-.stinvite__rail-text {
+.railText {
   margin-bottom: 120px;
 }
 
-.stinvite__mobile {
+.mobileOnly {
   display: none;
 }
-.stinvite__envelope {
+.envelope {
   position: relative;
   width: 120px;
   height: 120px;
@@ -101,7 +105,7 @@
   margin-bottom: var(--dcl-space-32);
   z-index: 11;
 }
-.stinvite__envelope-glow {
+.envelopeGlow {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -119,7 +123,7 @@
   );
   filter: blur(40px);
 }
-.stinvite__envelope-img {
+.envelopeImage {
   position: relative;
   z-index: 1;
   width: 115px;
@@ -127,7 +131,7 @@
   object-fit: contain;
 }
 
-.stinvite__title {
+.title {
   margin: 0 0 var(--dcl-space-48);
   font-weight: 600;
   font-size: var(--dcl-font-size-heading-xl);
@@ -135,14 +139,14 @@
   letter-spacing: -0.5px;
   color: var(--sti-text);
 }
-.stinvite__grad {
+.gradient {
   background: var(--sti-flare);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
 }
-.stinvite__subtitle {
+.subtitle {
   margin: 0;
   font-weight: 500;
   font-size: var(--dcl-font-size-heading-1);
@@ -151,14 +155,14 @@
   color: var(--sti-text);
 }
 
-.stinvite__actions {
+.actions {
   display: flex;
 }
 /* The hero CTA is @dcl/one-ui Button lg (primary, button/lg 15px uppercase). decentraland.org renders a ui2
    BannerButton: its padding, radius, weight, line height, tracking and white label are set here, it draws no
    border (the shared Button's 1px transparent border would add 2px to each side), and its hover keeps the
    primary fill. */
-.stinvite__cta-btn {
+.cta {
   height: auto;
   padding: 18.5px 61px;
   border: 0; /* reference: the contained MUI button draws none */
@@ -167,13 +171,15 @@
   font-weight: 600;
   line-height: 24px;
   letter-spacing: 0.4px;
-  transition: background 0.12s ease, transform 0.12s ease;
+  transition:
+    background 0.12s ease,
+    transform 0.12s ease;
 }
-.stinvite__cta-btn:hover {
+.cta:hover {
   background-color: var(--dcl-primary-primary);
 }
 
-.stinvite__faqs {
+.faqs {
   position: relative;
   width: 100%;
   box-sizing: border-box;
@@ -181,7 +187,7 @@
   color: var(--sti-text);
   padding: 200px 160px;
 }
-.stinvite__faqs-border {
+.faqsBorder {
   background:
     linear-gradient(to right, var(--sti-text) 4px, transparent 4px) 0 0,
     linear-gradient(to right, var(--sti-text) 4px, transparent 4px) 0 100%,
@@ -194,7 +200,7 @@
   background-repeat: no-repeat;
   background-size: 20px 20px;
 }
-.stinvite__faqs-inner {
+.faqsInner {
   margin: auto;
   width: 100%;
   max-width: 1000px;
@@ -202,7 +208,7 @@
   display: flex;
   flex-direction: column;
 }
-.stinvite__faqs-eyebrow {
+.faqsEyebrow {
   margin: 0;
   text-align: center;
   font-size: var(--dcl-font-size-body-sm);
@@ -212,7 +218,7 @@
   color: var(--sti-text-2);
   text-transform: uppercase;
 }
-.stinvite__faqs-title {
+.faqsTitle {
   margin: 0;
   text-align: center;
   font-size: clamp(2.25rem, 15.789vw - 6.632rem, 6rem); /* reference 36px to 96px, no token */
@@ -223,7 +229,7 @@
   white-space: pre-line;
 }
 
-.stinvite__faq {
+.faq {
   position: relative;
   z-index: 1;
   width: 100%;
@@ -238,8 +244,8 @@
   cursor: pointer;
   outline: none;
 }
-.stinvite__faq::after {
-  content: " ";
+.faq::after {
+  content: ' ';
   position: absolute;
   inset: 0;
   background: var(--sti-faq-hover), var(--sti-soft-black2);
@@ -247,39 +253,54 @@
   opacity: 0;
   transition: opacity 1200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.stinvite__faq:hover::after,
-.stinvite__faq:active::after,
-.stinvite__faq.is-open::after {
+.faq:hover::after,
+.faq:active::after,
+.faq[data-open]::after {
   opacity: 1;
 }
-.stinvite__faq:focus-visible {
+.faq:focus-visible {
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
-.stinvite__faq-row {
+.faqRow {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
-.stinvite__faq-q {
+.faqQuestion {
   font-weight: 300;
   font-size: 28px;
   line-height: 28px;
   letter-spacing: -0.011em;
   color: var(--sti-text-2);
 }
-.stinvite__arrow {
+.arrow {
   width: 57px;
   height: 57px;
   min-width: 57px;
   min-height: 57px;
   transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.stinvite__arrow.is-open {
+.arrow[data-open] {
   transform: rotate(180deg);
 }
+.arrowCircle {
+  fill: none;
+  stroke: var(--dcl-neutrals-white);
+  opacity: 0.2;
+}
+.arrow[data-open] .arrowCircle {
+  fill: var(--dcl-neutrals-white);
+  opacity: 1;
+}
+.arrowPath {
+  fill: var(--dcl-neutrals-white);
+}
+.arrow[data-open] .arrowPath {
+  fill: var(--sti-soft-black2);
+}
 
-.stinvite__faq-ans {
+.faqAnswer {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -288,12 +309,12 @@
     grid-template-rows 350ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 350ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.stinvite__faq-ans.is-open {
+.faqAnswer[data-open] {
   grid-template-rows: 1fr;
   opacity: 1;
   pointer-events: auto;
 }
-.stinvite__faq-a {
+.faqAnswerText {
   overflow: hidden;
   margin: 0;
   padding: 1em 0 2em;
@@ -304,7 +325,7 @@
   color: var(--sti-text);
 }
 
-.stinvite__faqs-cta {
+.faqsMore {
   margin-top: 40px;
   width: fit-content;
   align-self: center;
@@ -322,30 +343,35 @@
   cursor: pointer;
   transition: background-color 200ms ease;
 }
-.stinvite__faqs-cta:hover {
+.faqsMore:hover {
   background-color: rgba(255, 255, 255, 0.08);
 }
-.stinvite__faqs-cta:active {
+.faqsMore:active {
   background-color: rgba(255, 255, 255, 0.12);
 }
-.stinvite__faqs-cta:focus-visible {
+.faqsMore:focus-visible {
   outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
 
 @media (max-width: 1279.95px) {
-  .stinvite__title { font-size: var(--dcl-font-size-heading-lg); }
+  .title {
+    font-size: var(--dcl-font-size-heading-lg);
+  }
 }
 @media (max-width: 1023.95px) {
-  .stinvite__rail { margin-left: 192px; margin-right: 192px; }
+  .rail {
+    margin-left: 192px;
+    margin-right: 192px;
+  }
 }
 @media (max-width: 990.95px) {
-  .stinvite__hero--primary,
-  .stinvite__hero--primary .stinvite__hero-inner {
+  .primary,
+  .primary .heroInner {
     min-height: 100svh;
   }
 
-  .stinvite__hero--primary .stinvite__hero-inner {
+  .primary .heroInner {
     display: grid;
     /* The artwork gives up space to the copy when the viewport is short. */
     grid-template-columns: minmax(0, 1fr);
@@ -354,17 +380,25 @@
     padding: 0;
   }
 
-  .stinvite__hero--primary .stinvite__media {
+  /* The background spans both rows, behind the copy as on decentraland.org; the artwork keeps the first row. */
+  .primary .media {
+    position: relative;
+    grid-row: 1 / -1;
+    grid-column: 1;
+    display: grid;
+    grid-template-rows: subgrid;
+  }
+
+  .primary .avatar {
     position: relative;
     grid-row: 1;
+    inset: auto;
+    height: auto;
   }
 
-  .stinvite__hero--primary .stinvite__avatar {
-    inset: 0;
-    height: 100%;
-  }
-
-  .stinvite__hero--primary .stinvite__rail {
+  .primary .rail {
+    grid-row: 2;
+    grid-column: 1;
     position: relative;
     inset: auto;
     width: auto;
@@ -372,22 +406,23 @@
     min-height: 50svh;
     box-sizing: border-box;
     margin: 0;
-    padding: var(--dcl-space-24) clamp(var(--dcl-space-16), 8vw, var(--dcl-space-96)) var(--dcl-space-32);
+    padding: var(--dcl-space-24) clamp(var(--dcl-space-16), 8vw, var(--dcl-space-96))
+      var(--dcl-space-32);
   }
 
-  .stinvite__hero--primary .stinvite__rail-text {
+  .primary .railText {
     margin-bottom: var(--dcl-space-24);
   }
 
-  .stinvite__hero--primary .stinvite__title {
+  .primary .title {
     margin-bottom: clamp(var(--dcl-space-16), 4svh, var(--dcl-space-48));
   }
 
-  .stinvite__hero--primary .stinvite__actions {
+  .primary .actions {
     justify-content: center;
   }
 
-  .stinvite__rail {
+  .rail {
     position: absolute;
     top: 50%;
     bottom: 0;
@@ -403,28 +438,53 @@
     flex-direction: column;
     justify-content: center;
   }
-  .stinvite__desktop { display: none; }
-  .stinvite__mobile { display: block; }
-  .stinvite__envelope {
+  .desktopOnly {
+    display: none;
+  }
+  .mobileOnly {
+    display: block;
+  }
+  .envelope {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-100%, -50%);
     margin-bottom: 0;
   }
-  .stinvite__envelope-glow { width: 150px; height: 150px; }
-  .stinvite__envelope-img { width: 160px; height: 160px; }
-  .stinvite__subtitle { font-size: var(--dcl-font-size-heading-2); }
-  .stinvite__overlay {
+  .envelopeGlow {
+    width: 150px;
+    height: 150px;
+  }
+  .envelopeImage {
+    width: 160px;
+    height: 160px;
+  }
+  .subtitle {
+    font-size: var(--dcl-font-size-heading-2);
+  }
+  .overlay {
     width: 100vw;
     top: 50%;
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
   }
-  .stinvite__video { left: 0; bottom: 50%; }
-  .stinvite__avatar { height: 50%; top: 0; left: 0; bottom: 50%; width: 100%; }
-  .stinvite__avatar-wrap { margin-left: 140px; }
-  .stinvite__faqs { padding: var(--dcl-space-48) var(--dcl-space-32) 320px; }
-  .stinvite__faqs-border {
+  .video {
+    left: 0;
+    bottom: 50%;
+  }
+  .avatar {
+    height: 50%;
+    top: 0;
+    left: 0;
+    bottom: 50%;
+    width: 100%;
+  }
+  .avatarSlot {
+    margin-left: 140px;
+  }
+  .faqs {
+    padding: var(--dcl-space-48) var(--dcl-space-32) 320px;
+  }
+  .faqsBorder {
     background:
       linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 0,
       linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 100%,
@@ -437,31 +497,66 @@
     background-repeat: no-repeat;
     background-size: 10px 10px;
   }
-  .stinvite__faqs-inner { padding: 128px 0 144px; }
-  .stinvite__faqs-title { font-size: 36px; line-height: 36px; }
-  .stinvite__faq-q { font-size: var(--dcl-font-size-body-md); letter-spacing: -0.01em; }
+  .faqsInner {
+    padding: 128px 0 144px;
+  }
+  .faqsTitle {
+    font-size: 36px;
+    line-height: 36px;
+  }
+  .faqQuestion {
+    font-size: var(--dcl-font-size-body-md);
+    letter-spacing: -0.01em;
+  }
 }
 @media (max-width: 767.95px) {
-  .stinvite__hero-inner { padding-left: var(--dcl-space-16); padding-right: var(--dcl-space-16); }
-  .stinvite__rail {
+  .heroInner {
+    padding-left: var(--dcl-space-16);
+    padding-right: var(--dcl-space-16);
+  }
+  .rail {
     margin-left: var(--dcl-space-48);
     margin-right: var(--dcl-space-48);
-    width: calc(100% - 96px);
+    width: calc(100% - 2 * var(--dcl-space-48));
   }
-  .stinvite__subtitle { font-size: var(--dcl-font-size-heading-4); }
-  .stinvite__cta-btn { width: 100%; }
-  .stinvite__faq {
+  .subtitle {
+    font-size: var(--dcl-font-size-heading-4);
+  }
+  .cta {
+    width: 100%;
+  }
+  .faq {
     padding: 40px 40px 40px 72px;
     margin-bottom: 20px;
     border-radius: 50px;
   }
-  .stinvite__faq-a { line-height: 24px; }
-  .stinvite__arrow { width: 48px; height: 48px; min-width: 48px; min-height: 48px; }
-  .stinvite__faqs-cta { width: 100%; }
+  .faqAnswerText {
+    line-height: 24px;
+  }
+  .arrow {
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
+  }
+  .faqsMore {
+    width: 100%;
+  }
 }
 @media (max-width: 389.95px) {
-  .stinvite__rail { height: 70%; top: 30%; }
-  .stinvite__avatar { height: 30%; }
-  .stinvite__envelope-glow { width: 100px; height: 100px; }
-  .stinvite__envelope-img { width: 80px; height: 80px; }
+  .rail {
+    height: 70%;
+    top: 30%;
+  }
+  .avatar {
+    height: 30%;
+  }
+  .envelopeGlow {
+    width: 100px;
+    height: 100px;
+  }
+  .envelopeImage {
+    width: 80px;
+    height: 80px;
+  }
 }

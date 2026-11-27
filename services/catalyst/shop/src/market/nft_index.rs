@@ -75,6 +75,7 @@ use parking_lot::Mutex;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
 use crate::chain_index::rpc::RpcLog;
 use crate::land_authz::events::{TOPIC_CREATE_ESTATE, parse_estate_data};
@@ -166,7 +167,7 @@ pub(super) const LEGACY_EXPIRY_UNIT_THRESHOLD: i64 = 100_000_000_000;
 /// A legacy order's `expiresAt`: the Ethereum Marketplace took seconds
 /// from some clients and milliseconds from others; below 10^11 is seconds.
 pub fn expires_ms(raw: u128) -> i64 {
-    let v = raw.min(i64::MAX as u128) as i64;
+    let v = i64::try_from(raw).unwrap_or(i64::MAX);
     if v < LEGACY_EXPIRY_UNIT_THRESHOLD {
         v.saturating_mul(1000)
     } else {
@@ -177,7 +178,8 @@ pub fn expires_ms(raw: u128) -> i64 {
 /// One log as a row; `Ok(None)` for a topic this index does not model.
 pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, DecodeError> {
     let (block, index) = chain_walk::log_position(log);
-    let index = index as i32;
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let err = |what: &'static str, why: String| DecodeError {
         block,
         index,
@@ -429,7 +431,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
-        written += r.rows_affected() as usize;
+        written += r.rows_usize();
     }
     Ok(written)
 }
@@ -787,11 +789,15 @@ pub struct WalkedContract {
 
 impl WalkedContract {
     fn overlaps(&self, from: u64, to: u64) -> bool {
-        self.walked_from_block <= to as i64
+        let (from, to) = (
+            i64::try_from(from).unwrap_or(i64::MAX),
+            i64::try_from(to).unwrap_or(i64::MAX),
+        );
+        self.walked_from_block <= to
             || self
                 .backfill_from_block
                 .zip(self.backfilled_to_block)
-                .is_some_and(|(first, last)| first <= to as i64 && last >= from as i64)
+                .is_some_and(|(first, last)| first <= to && last >= from)
     }
 
     /// The range the backfill lane still owes, if any.
@@ -860,7 +866,7 @@ impl NftIndex {
             catalogue_snapshot(pool, self.net, self.chain_id(), self.check_catalogue).await?;
         let rows = sqlx::query("SELECT contract_address, created_at FROM shop.collections WHERE network = $1 AND chain_id = $2 AND ($3 OR testnet_verified) ORDER BY created_at, contract_address")
             .bind(self.net.db_name())
-            .bind(self.deployments.chain_id as i32)
+            .bind(casts::to_i32(self.deployments.chain_id)?)
             .bind(self.deployments.chain_id == self.net.chain_id())
             .fetch_all(&mut *tx)
             .await?;
@@ -883,7 +889,9 @@ impl NftIndex {
         .collect::<HashMap<_, _>>();
         let start = chain_walk::cursor(&mut *tx, INDEXER_NFT, self.net)
             .await?
-            .map_or(self.deployments.start, |c| c.start_block.max(0) as u64);
+            .map_or(self.deployments.start, |c| {
+                casts::to_u64(c.start_block).unwrap_or(0)
+            });
         tx.commit().await?;
         *self.walk_start.lock() = Some(start);
         *self.collections.lock() = Some(collections.clone());
@@ -1025,12 +1033,16 @@ impl ChainIndex for NftIndex {
                 // Taken in only now: when it may predate this window, the
                 // blocks since the walk's start before it are owed by the
                 // backfill lane (the first window of a walk owes nothing).
-                let backfill = (c.created_at <= before_from && from > walk_start).then(|| {
-                    chain_walk::block_at_or_before(self.net, anchor, c.created_at)
-                        .max(walk_start)
-                        .min(from - 1) as i64
-                });
-                pending.push((c.address.clone(), from as i64, backfill));
+                let backfill = (c.created_at <= before_from && from > walk_start)
+                    .then(|| {
+                        casts::to_i64(
+                            chain_walk::block_at_or_before(self.net, anchor, c.created_at)
+                                .max(walk_start)
+                                .min(from - 1),
+                        )
+                    })
+                    .transpose()?;
+                pending.push((c.address.clone(), casts::to_i64(from)?, backfill));
             }
         }
         addresses.sort();
@@ -1118,7 +1130,12 @@ impl ChainIndex for NftIndex {
         end: &crate::chain_index::rpc::BlockHeader,
     ) -> anyhow::Result<()> {
         if self.chain_id() == ChainNet::Ethereum.chain_id() {
-            estate_repair::record(conn, previous, (end.number as i64, Some(&end.hash))).await?;
+            estate_repair::record(
+                conn,
+                previous,
+                (casts::to_i64(end.number)?, Some(&end.hash)),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -1270,7 +1287,7 @@ impl ChainIndex for NftIndex {
                     (None, _) => None,
                 };
                 let w = source
-                    .window(next as u64, to as u64, &group, chunk)
+                    .window(casts::to_u64(next)?, casts::to_u64(to)?, &group, chunk)
                     .await
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
@@ -1326,11 +1343,11 @@ impl ChainIndex for NftIndex {
                 )
                 .bind(self.net.db_name())
                 .bind(&contract.contract_address)
-                .bind(w.reached as i64)
+                .bind(casts::to_i64(w.reached)?)
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await?;
-                next = w.reached as i64 + 1;
+                next = casts::to_i64(w.reached)? + 1;
             }
             tracing::info!(network = self.net.db_name(), contract = %contract.contract_address, "nft index: backfill complete; its tokens are refolded at the next fold");
         }

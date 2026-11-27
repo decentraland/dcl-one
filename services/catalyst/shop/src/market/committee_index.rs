@@ -130,7 +130,7 @@ impl ChainIndex for CommitteeIndex {
         .execute(conn)
         .await?
         .rows_affected();
-        Ok(written as usize)
+        Ok(super::casts::to_usize(written))
     }
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("DELETE FROM shop.committee_event WHERE network = $1 AND block_number > $2")
