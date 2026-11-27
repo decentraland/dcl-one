@@ -9856,6 +9856,14 @@
           "kind": "directory"
         },
         {
+          "name": "connection-speed.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "connection-speed.ts",
+          "kind": "regular"
+        },
+        {
           "name": "creator-hub-host.ts",
           "kind": "regular"
         },
