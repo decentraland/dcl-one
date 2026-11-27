@@ -261,9 +261,6 @@ impl ItemSave {
     pub fn signer(&self) -> &str {
         &self.signer
     }
-    pub fn collection(&self) -> Option<Uuid> {
-        self.collection
-    }
 }
 
 impl ItemChange {
