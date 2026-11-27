@@ -6,7 +6,10 @@
 //! calldata from the owner's wallet to that chain's manager, records it, and once
 //! the receipt is in a finalized canonical block reads the factory event,
 //! the deployed collection's creator and item count, and finishes the
-//! attempt as `published` or `reverted`. v2 never holds a signing key.
+//! attempt as `published` or `reverted`. A transaction the wallet sped up or
+//! replaced carries the same reviewed call under a new hash: it replaces the
+//! recorded one once the RPC no longer knows the recorded hash. v2 never
+//! holds a signing key.
 
 use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use alloy_sol_types::{SolCall, sol};
@@ -94,11 +97,9 @@ impl PublicationChain<'_> {
         let state = store.publication_state(publisher).await?.ok_or_else(|| {
             ApiError::not_found("Prepare this collection before submitting its transaction")
         })?;
-        if state.tx_hash.as_deref().is_some_and(|saved| saved != hash) {
-            return Err(ApiError::http(
-                409,
-                "Another transaction is already recorded for this publication",
-            ));
+        let replaced = state.tx_hash.as_deref().filter(|saved| *saved != hash);
+        if replaced.is_some() && state.status != "submitted" {
+            return Err(another_recorded());
         }
         if state.status == "published" || state.status == "reverted" {
             return Ok(state);
@@ -110,6 +111,14 @@ impl PublicationChain<'_> {
                 network.chain_id
             )));
         }
+        if let Some(saved) = replaced
+            && !self
+                .rpc("eth_getTransactionByHash", json!([saved]))
+                .await?
+                .is_null()
+        {
+            return Err(another_recorded());
+        }
         let transaction = self.rpc("eth_getTransactionByHash", json!([hash])).await?;
         if transaction.is_null() {
             return Err(ApiError::service_unavailable(
@@ -118,7 +127,7 @@ impl PublicationChain<'_> {
         }
         verify_transaction(network, &transaction, &state.preparation, &hash)?;
         store
-            .record_publication_tx(publisher, &hash, &state.preparation.revision)
+            .record_publication_tx(publisher, &hash, replaced, &state.preparation.revision)
             .await?;
         let receipt = self.rpc("eth_getTransactionReceipt", json!([hash])).await?;
         if receipt.is_null() {
@@ -185,6 +194,13 @@ impl PublicationChain<'_> {
             _ => Err(invalid("Publication receipt has an invalid status")),
         }
     }
+}
+
+fn another_recorded() -> ApiError {
+    ApiError::http(
+        409,
+        "Another transaction is already recorded for this publication",
+    )
 }
 
 async fn pending(

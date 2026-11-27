@@ -8,11 +8,13 @@ use uuid::Uuid;
 use crate::drafts::CollectionDraft;
 use crate::items::ItemsComponent;
 use crate::network::{AMOY, POLYGON};
+use crate::publication::PublicationPreparation;
 use crate::publication_chain::{PublicationChain, publication_calldata};
 use dcl_http::Outbound;
 
+use super::limits::{Call, node_over, send};
 use super::support::{
-    cleanup, contents_of, read_item, save_item, scratch_component, unique, upload,
+    OWNER_KEY, cleanup, contents_of, read_item, save_item, scratch_component, unique, upload,
 };
 
 const OWNER: &str = "0x1111111111111111111111111111111111111111";
@@ -20,12 +22,17 @@ const OTHER: &str = "0x2222222222222222222222222222222222222222";
 const CONTRACT: &str = "0x3333333333333333333333333333333333333333";
 const HASH: &str = "0x4444444444444444444444444444444444444444444444444444444444444444";
 const BLOCK: &str = "0x5555555555555555555555555555555555555555555555555555555555555555";
+const REPLACEMENT: &str = "0x7777777777777777777777777777777777777777777777777777777777777777";
 
 async fn rpc(State(state): State<Arc<Mutex<Value>>>, Json(req): Json<Value>) -> Json<Value> {
     let s = state.lock().unwrap();
     let result = match req["method"].as_str().unwrap() {
         "eth_chainId" => s.get("chain").cloned().unwrap_or(json!("0x89")),
-        "eth_getTransactionByHash" => s["tx"].clone(),
+        "eth_getTransactionByHash" => [&s["tx"], &s["replacement"]]
+            .into_iter()
+            .find(|tx| tx["hash"] == req["params"][0])
+            .cloned()
+            .unwrap_or(Value::Null),
         "eth_getTransactionReceipt" => s["receipt"].clone(),
         "eth_getBlockByNumber" => {
             if req["params"][0] == "finalized" {
@@ -50,6 +57,17 @@ async fn rpc(State(state): State<Arc<Mutex<Value>>>, Json(req): Json<Value>) -> 
     Json(json!({"jsonrpc":"2.0", "id":req["id"], "result":result}))
 }
 
+/// [`rpc`] over `state` on a loopback port: its URL and task.
+async fn serve_rpc(state: Arc<Mutex<Value>>) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let router = Router::new().route("/", post(rpc)).with_state(state);
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (url, task)
+}
+
 struct Draft {
     collection: CollectionDraft,
     item: Value,
@@ -57,6 +75,10 @@ struct Draft {
 }
 
 async fn draft(store: &ItemsComponent) -> Draft {
+    draft_of(store, OWNER).await
+}
+
+async fn draft_of(store: &ItemsComponent, owner: &str) -> Draft {
     let id = Uuid::new_v4();
     let collection: CollectionDraft = serde_json::from_value(
         json!({"id":id, "name":format!("Transaction {}", &id.simple().to_string()[..8])}),
@@ -64,7 +86,7 @@ async fn draft(store: &ItemsComponent) -> Draft {
     .unwrap();
     super::support::save_collection(
         store,
-        OWNER,
+        owner,
         serde_json::json!({"id": collection.id, "name": collection.name, "urn": collection.urn}),
     )
     .await
@@ -74,8 +96,8 @@ async fn draft(store: &ItemsComponent) -> Draft {
         "price":"1000000000000000001", "rarity":"rare", "thumbnail":"thumbnail.png",
         "contents": contents_of(&[("model.glb", &model), ("thumbnail.png", &image)]),
         "data":{"category":"hat", "representations":[{"mainFile":"model.glb", "contents":["model.glb"], "bodyShapes":["urn:decentraland:off-chain:base-avatars:BaseMale"]}]}});
-    save_item(store, OWNER, &item).await.unwrap();
-    upload(store, OWNER, item_id(&item), &[&model, &image])
+    save_item(store, owner, &item).await.unwrap();
+    upload(store, owner, item_id(&item), &[&model, &image])
         .await
         .unwrap();
     Draft {
@@ -127,14 +149,7 @@ async fn an_amoy_publication_is_verified_against_amoys_contracts_and_chain() {
         json!({"chain":"0x13882", "tx":transaction, "receipt":receipt,
         "finalized":"0x10", "canonical":BLOCK, "creator":OWNER, "count":1}),
     ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/", listener.local_addr().unwrap());
-    let router = Router::new()
-        .route("/", post(rpc))
-        .with_state(state.clone());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let (url, task) = serve_rpc(state.clone()).await;
     let http = Outbound::for_tests();
     let chain = PublicationChain {
         http: &http,
@@ -310,14 +325,7 @@ async fn frozen_revision_requires_a_matching_finalized_receipt_and_recovers_afte
     let state = Arc::new(Mutex::new(
         json!({"tx":transaction, "receipt":null, "finalized":"0x10", "canonical":BLOCK, "creator":OWNER, "count":1}),
     ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/", listener.local_addr().unwrap());
-    let router = Router::new()
-        .route("/", post(rpc))
-        .with_state(state.clone());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let (url, task) = serve_rpc(state.clone()).await;
     let http = Outbound::for_tests();
     let chain = PublicationChain {
         http: &http,
@@ -606,4 +614,129 @@ async fn a_waiting_detach_rechecks_the_committed_publication_lock_and_an_upload_
         writer_pool.close().await;
     }
     cleanup(&store, &created, &hashes).await;
+}
+
+/// A wallet that speeds up or replaces the publication's transaction sends
+/// the same reviewed call under a new hash. Once the Polygon RPC no longer
+/// knows the recorded hash, the node records the new one and publishes the
+/// collection from its receipt. While the recorded hash is still known, or
+/// when the new transaction calls something else (a wallet's cancel), the
+/// recorded hash stays.
+#[tokio::test]
+async fn a_replaced_publication_transaction_still_publishes_the_collection() {
+    let Some(pool) = super::validator::own_pool().await else {
+        return;
+    };
+    let rpc_state = Arc::new(Mutex::new(json!({"receipt":null, "finalized":"0x10",
+        "canonical":BLOCK, "count":1})));
+    let (url, task) = serve_rpc(rpc_state.clone()).await;
+    let (app, state) = node_over(pool, |state| {
+        state.settings.polygon_rpc_url = Some(url);
+    })
+    .await;
+    let owner = super::validator::address(OWNER_KEY);
+    rpc_state.lock().unwrap()["creator"] = json!(owner);
+    let Draft { collection, .. } = draft_of(&state.items, &owner).await;
+    let path = format!("/v1/collections/{}/publication", collection.id);
+    let call = |method, body: Value| Call {
+        method,
+        key: Some(OWNER_KEY),
+        body: body.to_string().into_bytes(),
+        ..Call::get(path.clone())
+    };
+    let answer = |(status, body, _): (u16, String, Option<String>)| {
+        let body: Value = serde_json::from_str(&body).unwrap();
+        (status, body)
+    };
+    let (status, prepared) = answer(
+        send(
+            &app,
+            &Call {
+                key: Some(OWNER_KEY),
+                ..Call::get(path.clone())
+            },
+        )
+        .await,
+    );
+    assert_eq!(status, 200, "{prepared}");
+    let prepared: PublicationPreparation =
+        serde_json::from_value(prepared["data"].clone()).unwrap();
+    let revision = json!({"revision": prepared.revision});
+    assert_eq!(send(&app, &call("POST", revision.clone())).await.0, 200);
+    assert_eq!(send(&app, &call("PATCH", revision)).await.0, 200);
+    let sent = json!({"hash":HASH, "from":owner, "to":POLYGON.collection_manager, "value":"0x0",
+        "input":publication_calldata(&prepared).unwrap(), "blockNumber":"0x10", "blockHash":BLOCK});
+    rpc_state.lock().unwrap()["tx"] = sent.clone();
+    let (status, recorded) = answer(send(&app, &call("PUT", json!({"tx_hash": HASH}))).await);
+    assert_eq!(
+        (status, recorded["data"]["status"].as_str()),
+        (200, Some("submitted")),
+        "{recorded}"
+    );
+    let mut faster = sent.clone();
+    faster["hash"] = json!(REPLACEMENT);
+    rpc_state.lock().unwrap()["replacement"] = faster.clone();
+    let (status, refused) = answer(send(&app, &call("PUT", json!({"tx_hash": REPLACEMENT}))).await);
+    assert_eq!(
+        status, 409,
+        "the recorded transaction is still known: {refused}"
+    );
+    let mut canceled = faster.clone();
+    canceled["to"] = json!(owner);
+    canceled["input"] = json!("0x");
+    {
+        let mut rpc = rpc_state.lock().unwrap();
+        rpc["tx"] = Value::Null;
+        rpc["replacement"] = canceled;
+    }
+    let (status, refused) = answer(send(&app, &call("PUT", json!({"tx_hash": REPLACEMENT}))).await);
+    assert_eq!(
+        status, 400,
+        "a wallet's cancel publishes nothing: {refused}"
+    );
+    let recorded = |state: &crate::SharedState| {
+        let pool = state.items.pool().clone();
+        let id = collection.id;
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT tx_hash FROM builder.collection_publications WHERE collection_id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(recorded(&state).await.as_deref(), Some(HASH));
+    rpc_state.lock().unwrap()["replacement"] = faster;
+    let (status, taken) = answer(send(&app, &call("PUT", json!({"tx_hash": REPLACEMENT}))).await);
+    assert_eq!(
+        (status, taken["data"]["status"].as_str()),
+        (200, Some("submitted")),
+        "{taken}"
+    );
+    assert_eq!(recorded(&state).await.as_deref(), Some(REPLACEMENT));
+    rpc_state.lock().unwrap()["receipt"] = json!({"transactionHash":REPLACEMENT, "from":owner,
+        "to":POLYGON.collection_manager, "status":"0x1", "blockNumber":"0x10", "blockHash":BLOCK,
+        "logs":[{"address":POLYGON.collection_factory, "topics":[format!("{:#x}", keccak256("ProxyCreated(address,bytes32)")),
+            format!("0x{:0>64}", &CONTRACT[2..])], "data":prepared.salt}]});
+    let (status, published) =
+        answer(send(&app, &call("PUT", json!({"tx_hash": REPLACEMENT}))).await);
+    assert_eq!(
+        (
+            status,
+            published["data"]["status"].as_str(),
+            published["data"]["contract_address"].as_str()
+        ),
+        (200, Some("published"), Some(CONTRACT)),
+        "{published}"
+    );
+    let pending: bool =
+        sqlx::query_scalar("SELECT publication_pending FROM builder.collections WHERE id = $1")
+            .bind(collection.id)
+            .fetch_one(state.items.pool())
+            .await
+            .unwrap();
+    assert!(!pending, "the collection stays locked");
+    task.abort();
 }

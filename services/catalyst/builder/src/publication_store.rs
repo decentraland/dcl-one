@@ -1,6 +1,6 @@
 //! The standard publication attempt (`builder.collection_publications`):
 //! begin a reviewed revision, claim one wallet-signing attempt, record the
-//! submitted transaction, finish with the verified outcome, or cancel an
+//! submitted transaction or the wallet's replacement of it, finish with the verified outcome, or cancel an
 //! unsubmitted attempt. Every transition takes the collection row `FOR
 //! UPDATE` by `(id, eth_address)` first and the items `FOR UPDATE ORDER BY
 //! id` before a snapshot, so two writers over one collection serialise; the
@@ -193,10 +193,13 @@ impl ItemsComponent {
         Ok(())
     }
 
+    /// Records `hash` as the attempt's transaction, in place of `replaced`
+    /// when that is the one recorded.
     pub(super) async fn record_publication_tx(
         &self,
         publisher: &Publisher,
         hash: &str,
+        replaced: Option<&str>,
         revision: &str,
     ) -> Result<(), ApiError> {
         let (signer, id) = (publisher.signer(), publisher.id());
@@ -208,8 +211,8 @@ impl ItemsComponent {
             .await?;
         let changed = sqlx::query("UPDATE builder.collection_publications p SET tx_hash=$3, status='submitted', updated_at=timezone('UTC', now()) \
             FROM builder.collections c WHERE c.id=p.collection_id AND c.id=$1 AND c.eth_address=$2 AND c.publication_pending \
-            AND p.status IN ('prepared','signing','submitted') AND (p.tx_hash IS NULL OR p.tx_hash=$3) AND p.preparation->>'revision'=$4")
-            .bind(id).bind(signer).bind(hash).bind(revision).execute(&mut *tx).await?.rows_affected();
+            AND p.status IN ('prepared','signing','submitted') AND (p.tx_hash IS NOT DISTINCT FROM $5 OR p.tx_hash=$3) AND p.preparation->>'revision'=$4")
+            .bind(id).bind(signer).bind(hash).bind(revision).bind(replaced).execute(&mut *tx).await?.rows_affected();
         if changed != 1 {
             return Err(ApiError::http(
                 409,
