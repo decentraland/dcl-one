@@ -388,7 +388,10 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   parcel), `entity`, `clip`, `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and
   `looping`).
 - Movement: `/movement_state` reads the locomotion settings, the last movement step and the
-  height over the ground.
+  height over the ground. `/move_player_to <x> <y> <z> [duration] [--camera-target x y z]
+  [--avatar-target x y z] [--wait [--timeout-seconds S]]` moves the player as a scene's
+  `movePlayerTo` does, aiming the camera and turning the avatar the same way; with `--wait` it
+  replies JSON (`position`, `parcel`, `settled`, `settleMs`, `warning`) once the player is still.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

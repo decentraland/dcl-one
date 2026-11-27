@@ -513,6 +513,19 @@ Movement:
 - `/movement_state`: the active locomotion settings, the last completed movement step's
   `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
   and its height over it (the debug panel's Locomotion section).
+- `/move_player_to <x> <y> <z> [duration] [--camera-target x y z] [--avatar-target x y z] [--wait
+  [--timeout-seconds S]]` (preview only): moves the player to a Decentraland world point, over
+  `duration` seconds or at once, as a scene's `movePlayerTo` does and through the same mapping
+  (`RpcCall::move_player`): `--camera-target` aims the camera at a point from its focus, 1.75 m
+  above the new position, and `--avatar-target` turns the avatar to face one (the camera target
+  without it). The first-person camera then centres the point; the third-person and drone
+  cameras turn to its heading and keep their own framing of the player. Without `--wait` it
+  replies `moved to (x, y, z)` or, with a duration, `arrived at (x, y, z)`. With `--wait` it
+  replies JSON once the player has moved and been still (under 0.3 m/s) for three frames:
+  `position` (Decentraland world coordinates), `parcel`, `settled`, `settleMs`; when
+  `--timeout-seconds` (10 s after the duration by default, at most 300) runs out first,
+  `settled` is `false` and `warning` names what it waited for. A move another move replaces
+  fails with `move cancelled` either way.
 
 Scene animations:
 

@@ -1,21 +1,25 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    rpc::{RpcCall, RpcCallEvent, RpcResultSender},
+    rpc::{RpcCall, RpcCallEvent, RpcResultReceiver, RpcResultSender},
     structs::PrimaryUser,
 };
-use console::{DoAddConsoleCommand, PendingConsoleResponses};
+use console::{reply, DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::transform_and_parent::DclTranslation;
 use scene_runner::{
     initialize_scene::{LiveScenes, PortableKind, PortableScenes},
     renderer_context::RendererSceneContext,
+    vec3_to_parcel,
 };
+use serde_json::json;
 
 pub struct AgentCommandsPlugin;
 
 impl Plugin for AgentCommandsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_preview_console_command::<MovePlayerToCommand, _>(move_player_to_cmd);
+        app.init_resource::<MoveWaits>()
+            .add_systems(Update, settle_moves)
+            .add_preview_console_command::<MovePlayerToCommand, _>(move_player_to_cmd);
         app.add_console_command::<WalkPlayerToCommand, _>(walk_player_to_cmd);
         app.add_console_command::<PlayerPositionCommand, _>(player_position_cmd);
         app.add_console_command::<ListPortablesCommand, _>(list_portables_cmd);
@@ -26,8 +30,19 @@ impl Plugin for AgentCommandsPlugin {
 
 // --- /move_player_to ---
 
-/// Move the player to a DCL world-space position, with optional linear interpolation.
-/// Coordinates are in Decentraland world space (x right, y up, z forward).
+/// How long `--wait` waits after the move's duration when `--timeout-seconds` is not given.
+const DEFAULT_WAIT_SECONDS: f32 = 10.0;
+const MAX_WAIT_SECONDS: f32 = 300.0;
+/// The speed, in metres a second, under which the player counts as still.
+const STILL_SPEED: f32 = 0.3;
+/// Frames in a row the player must be still to have settled.
+const STILL_FRAMES: u32 = 3;
+
+/// Move the player to a DCL world-space position, with optional linear interpolation, as a scene's
+/// movePlayerTo does. Coordinates are in Decentraland world space (x right, y up, z forward).
+/// --camera-target aims the camera at a point and --avatar-target turns the avatar to face one
+/// (the camera target without it). --wait replies, as JSON, once the player is still: position,
+/// parcel, settled, settleMs, and a warning when --timeout-seconds ran out first
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/move_player_to")]
 struct MovePlayerToCommand {
@@ -40,41 +55,196 @@ struct MovePlayerToCommand {
     /// Duration in seconds for linear interpolation. Omit for instant teleport.
     #[arg(allow_hyphen_values(true))]
     duration: Option<f32>,
+    /// A world point to aim the camera at, as movePlayerTo's cameraTarget.
+    #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+    camera_target: Option<Vec<f32>>,
+    /// A world point for the avatar to face, as movePlayerTo's avatarTarget.
+    #[arg(long, num_args = 3, value_names = ["X", "Y", "Z"], allow_negative_numbers = true)]
+    avatar_target: Option<Vec<f32>>,
+    /// Reply once the player has moved and is still.
+    #[arg(long)]
+    wait: bool,
+    /// How long --wait waits, from the command, in seconds: 10 after the duration by default, at
+    /// most 300.
+    #[arg(long, requires = "wait")]
+    timeout_seconds: Option<f32>,
+}
+
+/// The `--wait [--timeout-seconds S]` pair, checked: how long to wait, or `None` without `--wait`.
+fn wait_timeout(
+    wait: bool,
+    timeout_seconds: Option<f32>,
+    duration: Option<f32>,
+) -> Result<Option<f32>, String> {
+    if !wait {
+        return Ok(None);
+    }
+    let timeout =
+        timeout_seconds.unwrap_or(DEFAULT_WAIT_SECONDS + duration.unwrap_or(0.0).max(0.0));
+    if !timeout.is_finite() || timeout <= 0.0 || timeout > MAX_WAIT_SECONDS {
+        return Err(format!(
+            "--timeout-seconds takes more than 0 and at most {MAX_WAIT_SECONDS}; got {timeout}"
+        ));
+    }
+    Ok(Some(timeout))
 }
 
 fn move_player_to_cmd(
     mut input: ConsoleCommand<MovePlayerToCommand>,
     mut events: EventWriter<RpcCallEvent>,
     mut pending: ResMut<PendingConsoleResponses>,
+    mut waits: ResMut<MoveWaits>,
 ) {
-    if let Some(Ok(command)) = input.take() {
-        let to = DclTranslation([command.x, command.y, command.z]).to_bevy_translation();
-        let (response, rx) = RpcResultSender::<bool>::channel();
-        events.write(RpcCallEvent::engine(RpcCall::MovePlayer {
-            to,
-            looking_at: None,
-            duration: command.duration,
-            camera_rotation: None,
-            response: Some(response),
-        }));
-        let (x, y, z) = (command.x, command.y, command.z);
-        let has_duration = command.duration.is_some();
-        let responder = input.take_responder();
-        pending.push_receiver(
-            rx,
-            move |success| {
-                if success {
-                    Ok(if has_duration {
-                        format!("arrived at ({x}, {y}, {z})")
-                    } else {
-                        format!("moved to ({x}, {y}, {z})")
-                    })
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let point = |v: &Option<Vec<f32>>| v.as_deref().map(|v| [v[0], v[1], v[2]]);
+    let camera_target = point(&command.camera_target);
+    let avatar_target = point(&command.avatar_target);
+    let position = [command.x, command.y, command.z];
+    let finite = position
+        .into_iter()
+        .chain(camera_target.into_iter().flatten())
+        .chain(avatar_target.into_iter().flatten())
+        .chain(command.duration)
+        .all(f32::is_finite);
+    if !finite {
+        input.reply_failed("the coordinates and the duration must be finite numbers");
+        return;
+    }
+    let timeout = match wait_timeout(command.wait, command.timeout_seconds, command.duration) {
+        Ok(timeout) => timeout,
+        Err(e) => {
+            input.reply_failed(e);
+            return;
+        }
+    };
+    let (response, moved) = RpcResultSender::<bool>::channel();
+    events.write(RpcCallEvent::engine(RpcCall::move_player(
+        position,
+        camera_target,
+        avatar_target,
+        command.duration,
+        Some(response),
+    )));
+    let responder = input.take_responder();
+    if let Some(timeout) = timeout {
+        let (reply, rx) = RpcResultSender::channel();
+        waits.0.push(MoveWait {
+            moved: Some(moved),
+            timeout,
+            elapsed: 0.0,
+            last: None,
+            still: 0,
+            reply,
+        });
+        pending.push_receiver(rx, |reply| reply, responder);
+        return;
+    }
+    let (x, y, z) = (command.x, command.y, command.z);
+    let has_duration = command.duration.is_some();
+    pending.push_receiver(
+        moved,
+        move |success| {
+            if success {
+                Ok(if has_duration {
+                    format!("arrived at ({x}, {y}, {z})")
                 } else {
-                    Err("move cancelled".to_string())
+                    format!("moved to ({x}, {y}, {z})")
+                })
+            } else {
+                Err("move cancelled".to_string())
+            }
+        },
+        responder,
+    );
+}
+
+/// A `/move_player_to --wait`: the move, then the player until it is still.
+struct MoveWait {
+    /// The engine's answer to the move, until it comes.
+    moved: Option<RpcResultReceiver<bool>>,
+    timeout: f32,
+    elapsed: f32,
+    /// Where the player was the frame before, once the move was made.
+    last: Option<Vec3>,
+    /// Frames in a row the player has been still.
+    still: u32,
+    reply: RpcResultSender<Result<String, String>>,
+}
+
+/// The `/move_player_to --wait` replies still to come, answered by [`settle_moves`].
+#[derive(Resource, Default)]
+pub struct MoveWaits(Vec<MoveWait>);
+
+fn settle_moves(
+    mut waits: ResMut<MoveWaits>,
+    time: Res<Time>,
+    player: Query<&Transform, With<PrimaryUser>>,
+) {
+    if waits.0.is_empty() {
+        return;
+    }
+    let dt = time.delta_secs();
+    let position = player.single().ok().map(|transform| transform.translation);
+    waits.0.retain_mut(|wait| wait.advance(dt, position));
+}
+
+impl MoveWait {
+    /// One frame of the wait; `false` once it has replied.
+    fn advance(&mut self, dt: f32, position: Option<Vec3>) -> bool {
+        self.elapsed += dt;
+        let expired = self.elapsed >= self.timeout;
+        if let Some(moved) = &mut self.moved {
+            match moved.poll_once() {
+                Ok(Some(true)) => self.moved = None,
+                Ok(Some(false)) | Err(()) => {
+                    self.reply.send(Err("move cancelled".to_owned()));
+                    return false;
                 }
-            },
-            responder,
-        );
+                Ok(None) if expired => return self.finish(position, Some("the move to be made")),
+                Ok(None) => return true,
+            }
+        }
+        let Some(position) = position else {
+            self.reply.send(Err("the player was removed".to_owned()));
+            return false;
+        };
+        // still is a speed, not a distance a frame, so it means the same at any frame rate; a
+        // frame that took no time says nothing
+        if let Some(last) = self.last.filter(|_| dt > 0.0) {
+            self.still = if last.distance(position) / dt < STILL_SPEED {
+                self.still + 1
+            } else {
+                0
+            };
+        }
+        self.last = Some(position);
+        if self.still >= STILL_FRAMES {
+            self.finish(Some(position), None)
+        } else if expired {
+            self.finish(Some(position), Some("the player to be still"))
+        } else {
+            true
+        }
+    }
+
+    /// Replies where the player is; `waiting` names what the wait ran out on. Always `false`.
+    fn finish(&mut self, position: Option<Vec3>, waiting: Option<&str>) -> bool {
+        let mut reply = json!({
+            "position": position.map(|p| DclTranslation::from_bevy_translation(p).0.map(reply::round)),
+            "parcel": position.map(|p| vec3_to_parcel(p).to_array()),
+            "settled": waiting.is_none(),
+            "settleMs": (self.elapsed * 1000.0).round(),
+        });
+        if let Some(waiting) = waiting {
+            reply["warning"] = json!(format!(
+                "timed out after {} s waiting for {waiting}",
+                self.timeout
+            ));
+        }
+        self.reply.send(Ok(reply.to_string()));
+        false
     }
 }
 
@@ -265,5 +435,248 @@ fn get_user_data_cmd(
             },
             responder,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
+    use common::sync::MutexExt;
+    use console::ConsolePlugin;
+    use serde_json::Value;
+
+    use super::*;
+
+    type Answer = Arc<Mutex<Option<Result<String, String>>>>;
+
+    /// The console with `/move_player_to` alone, a player at the origin and a clock a test turns.
+    fn app() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .add_event::<RpcCallEvent>()
+        .init_resource::<MoveWaits>()
+        .init_resource::<Time>()
+        .add_systems(Update, (move_player_to_cmd, settle_moves).chain());
+        let player = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), Transform::default()))
+            .id();
+        (app, player)
+    }
+
+    /// A sixtieth of a second.
+    fn frame(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f64(1.0 / 60.0));
+        app.update();
+    }
+
+    /// Sends `/move_player_to <line>` and runs the frame that takes it.
+    fn send(app: &mut App, line: &str) -> Answer {
+        let answer = Answer::default();
+        let responder: ConsoleResponder = {
+            let answer = answer.clone();
+            Arc::new(move |result| *answer.lock_ignore_poison() = Some(result))
+        };
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/move_player_to".to_owned(),
+            args: line.split_whitespace().map(str::to_owned).collect(),
+            responder: Some(responder),
+        });
+        frame(app);
+        answer
+    }
+
+    fn reply(answer: &Answer) -> Option<Result<String, String>> {
+        answer.lock_ignore_poison().take()
+    }
+
+    /// The reply a wait has given, once the console has polled it (a frame later at most).
+    fn json_reply(app: &mut App, answer: &Answer) -> Value {
+        frame(app);
+        serde_json::from_str(&reply(answer).expect("answered").expect("a reply")).unwrap()
+    }
+
+    /// The moves asked of the engine since the last call.
+    fn moves(app: &mut App) -> Vec<RpcCall> {
+        app.world_mut()
+            .resource_mut::<Events<RpcCallEvent>>()
+            .drain()
+            .map(|event| event.call)
+            .collect()
+    }
+
+    /// Answers the one move asked for.
+    fn answer_move(app: &mut App, moved: bool) {
+        let mut moves = moves(app);
+        assert_eq!(moves.len(), 1);
+        let Some(RpcCall::MovePlayer {
+            response: Some(response),
+            ..
+        }) = moves.pop()
+        else {
+            panic!("a move with a reply");
+        };
+        response.send(moved);
+    }
+
+    #[test]
+    fn a_plain_move_asks_the_engine_and_answers_in_a_sentence_once_it_has_moved() {
+        let (mut app, _) = app();
+        let answer = send(&mut app, "8 0 -8");
+        assert!(reply(&answer).is_none(), "it waits for the engine");
+        answer_move(&mut app, true);
+        frame(&mut app);
+        assert_eq!(reply(&answer), Some(Ok("moved to (8, 0, -8)".to_owned())));
+
+        let answer = send(&mut app, "8 0 -8 2");
+        answer_move(&mut app, true);
+        frame(&mut app);
+        assert_eq!(reply(&answer), Some(Ok("arrived at (8, 0, -8)".to_owned())));
+
+        let answer = send(&mut app, "1.5 0 2");
+        answer_move(&mut app, false);
+        frame(&mut app);
+        assert_eq!(reply(&answer), Some(Err("move cancelled".to_owned())));
+    }
+
+    #[test]
+    fn the_targets_map_as_the_scene_op_maps_them() {
+        let (mut app, _) = app();
+        send(
+            &mut app,
+            "8 -1 -8 2.5 --camera-target -1 1.75 2 --avatar-target 3 0 -4",
+        );
+        let Some(RpcCall::MovePlayer {
+            to,
+            looking_at,
+            duration,
+            camera_rotation,
+            ..
+        }) = moves(&mut app).pop()
+        else {
+            panic!("a move");
+        };
+        let RpcCall::MovePlayer {
+            to: op_to,
+            looking_at: op_looking_at,
+            camera_rotation: op_camera_rotation,
+            ..
+        } = RpcCall::move_player(
+            [8.0, -1.0, -8.0],
+            Some([-1.0, 1.75, 2.0]),
+            Some([3.0, 0.0, -4.0]),
+            Some(2.5),
+            None,
+        )
+        else {
+            panic!("a move");
+        };
+        assert_eq!(
+            (to, looking_at, duration, camera_rotation),
+            (op_to, op_looking_at, Some(2.5), op_camera_rotation)
+        );
+    }
+
+    #[test]
+    fn a_waiting_move_answers_once_the_player_is_still() {
+        let (mut app, player) = app();
+        let answer = send(&mut app, "8 0 8 --wait");
+        answer_move(&mut app, true);
+        // the move lands where the engine puts it; the player then falls a little
+        app.world_mut()
+            .get_mut::<Transform>(player)
+            .unwrap()
+            .translation = Vec3::new(8.0, 1.0, -8.0);
+        frame(&mut app);
+        for y in [0.8, 0.5, 0.2] {
+            app.world_mut()
+                .get_mut::<Transform>(player)
+                .unwrap()
+                .translation
+                .y = y;
+            frame(&mut app);
+            assert!(reply(&answer).is_none(), "still falling");
+        }
+        for _ in 0..STILL_FRAMES - 1 {
+            frame(&mut app);
+            assert!(reply(&answer).is_none());
+        }
+        frame(&mut app);
+        let report = json_reply(&mut app, &answer);
+        assert_eq!(report["position"], serde_json::json!([8.0, 0.2, 8.0]));
+        assert_eq!(report["parcel"], serde_json::json!([0, 0]));
+        assert_eq!(report["settled"], true);
+        assert!(report.get("warning").is_none());
+    }
+
+    #[test]
+    fn a_waiting_move_that_runs_out_of_time_says_what_it_waited_for() {
+        let (mut app, player) = app();
+        // the engine never answers: the move is held here, so it is not dropped either
+        let answer = send(&mut app, "8 0 8 --wait --timeout-seconds 0.03");
+        let unanswered = moves(&mut app);
+        frame(&mut app);
+        let report = json_reply(&mut app, &answer);
+        assert_eq!(report["settled"], false);
+        // where the player still is
+        assert_eq!(report["position"], serde_json::json!([0.0, 0.0, 0.0]));
+        assert_eq!(
+            report["warning"],
+            "timed out after 0.03 s waiting for the move to be made"
+        );
+        drop(unanswered);
+
+        // the player keeps moving
+        let answer = send(&mut app, "8 0 8 --wait --timeout-seconds 0.1");
+        answer_move(&mut app, true);
+        for step in 0..8 {
+            app.world_mut()
+                .get_mut::<Transform>(player)
+                .unwrap()
+                .translation
+                .x = step as f32;
+            frame(&mut app);
+        }
+        let report = json_reply(&mut app, &answer);
+        assert_eq!(report["settled"], false);
+        assert_eq!(
+            report["warning"],
+            "timed out after 0.1 s waiting for the player to be still"
+        );
+
+        // a move another one replaced fails as the plain one does
+        let answer = send(&mut app, "8 0 8 --wait");
+        answer_move(&mut app, false);
+        frame(&mut app);
+        frame(&mut app);
+        assert_eq!(reply(&answer), Some(Err("move cancelled".to_owned())));
+    }
+
+    #[test]
+    fn the_wait_and_its_timeout_are_checked_before_anything_moves() {
+        let (mut app, _) = app();
+        for line in [
+            "8 0 8 --timeout-seconds 3",
+            "8 0 8 --wait --timeout-seconds 0",
+            "8 0 8 --wait --timeout-seconds 301",
+            "8 0 8 --camera-target 1 2",
+            "8 0 NaN",
+        ] {
+            let answer = send(&mut app, line);
+            assert!(
+                matches!(reply(&answer), Some(Err(_))),
+                "{line} is an argument error"
+            );
+            assert!(moves(&mut app).is_empty(), "{line}");
+        }
     }
 }

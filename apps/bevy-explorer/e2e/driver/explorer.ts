@@ -401,6 +401,17 @@ export interface Position {
   z: number
 }
 
+/** What `/move_player_to --wait` reports once the player is still, or once `timeoutSeconds` ran
+ *  out (`settled: false` and a `warning` naming what it waited for). `position` is Decentraland
+ *  world coordinates. */
+export interface MoveReport {
+  position: [number, number, number] | null
+  parcel: [number, number] | null
+  settled: boolean
+  settleMs: number
+  warning?: string
+}
+
 export interface LiveScene {
   title: string
   hash: string
@@ -810,6 +821,25 @@ export class Explorer {
   /** Walk to a world position through the movement controller; resolves on arrival (0.5 m). */
   async walkTo(x: number, y: number, z: number, timeoutS = 20): Promise<void> {
     await this.run(`/walk_player_to ${x} ${y} ${z} ${timeoutS}`)
+  }
+
+  /** Move straight to a world position (Decentraland coordinates) as a scene's `movePlayerTo`
+   *  does: `cameraTarget` aims the camera at a point and `avatarTarget` turns the avatar to face
+   *  one (the camera target without it). Resolves once the player is still, or after
+   *  `timeoutSeconds` (10 by default) with `settled: false`. The engine has `/move_player_to` in
+   *  preview only. */
+  moveTo(
+    x: number,
+    y: number,
+    z: number,
+    options: { cameraTarget?: [number, number, number]; avatarTarget?: [number, number, number]; timeoutSeconds?: number } = {}
+  ): Promise<MoveReport> {
+    let line = `/move_player_to ${x} ${y} ${z}`
+    if (options.cameraTarget) line += ` --camera-target ${options.cameraTarget.join(' ')}`
+    if (options.avatarTarget) line += ` --avatar-target ${options.avatarTarget.join(' ')}`
+    line += ' --wait'
+    if (options.timeoutSeconds !== undefined) line += ` --timeout-seconds ${options.timeoutSeconds}`
+    return this.json<MoveReport>(line)
   }
 
   /** `/player_position`, parsed: DCL axes, so the parcel is `floor(x / 16), floor(z / 16)`. */

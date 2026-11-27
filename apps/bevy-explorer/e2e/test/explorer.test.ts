@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CaptureSequence, type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
+import { type CaptureSequence, type CommandRecord, Explorer, type MoveReport, parseLiveScenes, parsePortables, parseSmartWearables, saveCaptureFrames, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -131,6 +131,18 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.userData(), { name: 'Jane Doe', address: '0x1111111111111111111111111111111111111111', version: 7, web3: false })
     assert.equal(await explorer.profileVersion(), 7)
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
+  })
+
+  test('moveTo sends the waiting move with its targets and parses the report', async () => {
+    const moved: MoveReport = { position: [2400, 0, 2400], parcel: [150, 150], settled: true, settleMs: 83 }
+    const fake = new FakeConsole({ move_player_to: JSON.stringify(moved) })
+    const explorer = new Explorer(fake)
+    assert.deepEqual(await explorer.moveTo(2400, 0, 2400, { cameraTarget: [2388, 1.75, 2400], avatarTarget: [2388, 0, 2410] }), moved)
+    await explorer.moveTo(-1.5, 0, 2, { timeoutSeconds: 4 })
+    assert.deepEqual(fake.lines, [
+      '/move_player_to 2400 0 2400 --camera-target 2388 1.75 2400 --avatar-target 2388 0 2410 --wait',
+      '/move_player_to -1.5 0 2 --wait --timeout-seconds 4'
+    ])
   })
 
   test('the voice chat actions compose their lines', async () => {
