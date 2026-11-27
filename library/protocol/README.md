@@ -24,7 +24,7 @@ scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update
 
 Publishing: a push to `main` that changes `library/protocol` publishes `@dcl/protocol` under the
 `next` dist-tag as `1.0.0-<run>.commit-<sha>` (`.github/workflows/protocol-release.yml`). Its
-publish job uses the `npm-release-protocol` environment, which only `main` may deploy to, and
+publish job uses the `npm-release` environment, which only `main` and `auth-server` may deploy to, and
 the package's npm trusted publisher requires it. A pull request from this repository publishes
 what it packed as `@dcl-regenesislabs/protocol` under the shared `pr` dist-tag
 (`.github/workflows/protocol.yml`) and adds the install command to the PR's CI status comment:

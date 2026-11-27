@@ -1,8 +1,8 @@
 name: Protocol / Release
 # next on every push to main that changes the protocol. It publishes @dcl/protocol, and only
-# through the npm-release-protocol environment (main only, a repository setting) that the npm
-# trusted publisher requires: no other branch's run can use it, whatever its workflow says. It is
-# not the SDK's npm-release, which also admits auth-server.
+# through the npm-release environment the SDK's releases use (main and auth-server only, a
+# repository setting) that the npm trusted publisher requires: no other branch's run can use it,
+# whatever its workflow says.
 on:
   push:
     branches: [main]
@@ -30,7 +30,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
-    environment: npm-release-protocol
+    environment: npm-release
     permissions:
       id-token: write # npm OIDC trusted publishing — no token secret
     steps:

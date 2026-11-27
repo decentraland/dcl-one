@@ -43,9 +43,8 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   environment, which only `main` and `auth-server` may deploy to (a repository setting), and each
   package's trusted publisher requires it. The environment is the gate, not the filename. A branch
   the environment admits can publish any dist-tag by editing its copy of the workflow, so
-  `auth-server` is a protected branch that takes pull requests only. An environment's branches
-  can publish every package whose trusted publisher names it, so `@dcl/protocol` has its own,
-  `npm-release-protocol`, which only `main` may deploy to.
+  `auth-server` is a protected branch that takes pull requests only. `@dcl/protocol`
+  publishes through the same environment, so it relies on that protection too.
 - PR previews cannot pass that gate: a pull request's run is not a run of those branches, and npm rejects
   trusted publishing from `pull_request_target`, which GitHub also blocks by default in public
   repositories. So previews publish from the pull request's own run to separate packages,
