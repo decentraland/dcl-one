@@ -7,8 +7,9 @@
 //! pending curation's hash to the saved content, so the hash answered is the
 //! item's current one; a pending curation whose hash the item no longer
 //! holds, which only rows written outside the node's saves (an import) can
-//! leave, is refused (409) rather than attested. The rows are read first;
-//! the registry is read holding no connection, and 503 when it can't tell.
+//! leave, is refused (409) rather than attested. The rows are read first,
+//! in one snapshot, so the cheque and the hashes are of one publish; the
+//! registry is read holding no connection, and 503 when it can't tell.
 
 use std::collections::BTreeMap;
 
@@ -38,10 +39,14 @@ pub struct ApprovalData {
 /// The approval data of the collection `read` names.
 pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<ApprovalData, ApiError> {
     let id = read.id();
+    let mut tx = state.items.pool().begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let provider: Option<Option<String>> =
         sqlx::query_scalar("SELECT third_party_id FROM builder.collections WHERE id = $1")
             .bind(id)
-            .fetch_optional(state.items.pool())
+            .fetch_optional(&mut *tx)
             .await?;
     let Some(Some(provider)) = provider else {
         return Err(
@@ -54,14 +59,14 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         crate::curation::ITEM_CURATED
     )))
     .bind(id)
-    .fetch_all(state.items.pool())
+    .fetch_all(&mut *tx)
     .await?;
     let cheque: Option<(Cheque, String)> = sqlx::query_as::<_, (i32, String, String, String)>(
         "SELECT qty, salt, signature, third_party_id FROM builder.slot_usage_cheques \
          WHERE collection_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1",
     )
     .bind(id)
-    .fetch_optional(state.items.pool())
+    .fetch_optional(&mut *tx)
     .await?
     .map(|(qty, salt, signature, third_party)| {
         (
@@ -84,7 +89,7 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         crate::curation::newest_item_curation("i.id", "k.content_hash"),
     )))
     .bind(id)
-    .fetch_all(state.items.pool())
+    .fetch_all(&mut *tx)
     .await?;
     if !changed.is_empty() {
         return Err(
@@ -96,8 +101,9 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         "SELECT EXISTS (SELECT 1 FROM builder.virtual_third_parties WHERE id = $1)",
     )
     .bind(&provider)
-    .fetch_one(state.items.pool())
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     let receipt = cheques::receipt_id(&state.settings.network, &cheque_provider, &cheque)
         .ok_or_else(|| ApiError::internal(format!("stored cheque of {id} unreadable")))?;
     let registry = state
