@@ -815,9 +815,12 @@ fn global_updates_sent(
         .map_or(0, GlobalCrdtState::sent)
 }
 
-/// Record a dispatch: the scene reads every global update its host holds, `sent`. Returns whether
-/// the scene was sent before its band allowed, on unread global updates.
-fn record_global_updates_read(context: &mut RendererSceneContext, sent: u64) -> bool {
+/// Record a dispatch at `now`: the scene is in flight, and it reads every global update its host
+/// holds, `sent`. Returns whether the scene was sent before its band allowed, on unread global
+/// updates.
+fn record_dispatch(context: &mut RendererSceneContext, now: f64, sent: u64) -> bool {
+    context.set_in_flight(true);
+    context.last_sent = now;
     context.global_updates_read = sent;
     std::mem::take(&mut context.due_on_global_updates)
 }
@@ -1553,9 +1556,11 @@ mod player_scenes_tests {
         let sent = world.get::<GlobalCrdtState>(crdt).unwrap().sent();
         let now = world.resource::<Time>().elapsed_secs_f64();
         let mut context = world.get_mut::<RendererSceneContext>(east).unwrap();
-        assert!(record_global_updates_read(&mut context, sent));
-        assert!(!record_global_updates_read(&mut context, sent));
-        context.last_sent = now;
+        assert!(record_dispatch(&mut context, now, sent));
+        // its reply arrives
+        context.set_in_flight(false);
+        assert!(!record_dispatch(&mut context, now, sent));
+        context.set_in_flight(false);
         world
             .resource_mut::<Time>()
             .advance_by(Duration::from_secs_f32(0.1));
@@ -2188,10 +2193,8 @@ fn send_scene_updates(
         );
         context.state = SceneState::Broken;
     } else {
-        context.set_in_flight(true);
-        context.last_sent = now;
         let sent = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
-        if record_global_updates_read(&mut context, sent) {
+        if record_dispatch(&mut context, now, sent) {
             updates.released_by_global_updates += 1;
         }
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));

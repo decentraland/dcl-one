@@ -53,7 +53,7 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
 pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
 
 /// The most ticks a second of a scene whose nearest parcel is under each distance (m) from the
-/// player, nearest band first. A scene beyond the last band ticks at `FAR_SCENE_TICK_RATE`.
+/// player, nearest band first, rounded to whole frames (`tick_rate_allows`). A scene beyond the last band ticks at `FAR_SCENE_TICK_RATE`.
 pub(crate) const SCENE_TICK_RATE_BANDS: [(f32, f32); 5] = [
     (16.0, 40.0),
     (32.0, 30.0),
@@ -72,15 +72,17 @@ pub(crate) const BEHIND_SCENE_TICK_RATE: f32 = 1.0;
 
 /// Every rate `scene_tick_rate` gives: the bands nearest first, then behind the camera, then
 /// beyond the last band.
-pub(crate) const SCENE_TICK_RATE_CAPS: [f32; 7] = [
-    SCENE_TICK_RATE_BANDS[0].1,
-    SCENE_TICK_RATE_BANDS[1].1,
-    SCENE_TICK_RATE_BANDS[2].1,
-    SCENE_TICK_RATE_BANDS[3].1,
-    SCENE_TICK_RATE_BANDS[4].1,
-    BEHIND_SCENE_TICK_RATE,
-    FAR_SCENE_TICK_RATE,
-];
+pub(crate) const SCENE_TICK_RATE_CAPS: [f32; SCENE_TICK_RATE_BANDS.len() + 2] = {
+    let mut caps = [0.0; SCENE_TICK_RATE_BANDS.len() + 2];
+    let mut band = 0;
+    while band < SCENE_TICK_RATE_BANDS.len() {
+        caps[band] = SCENE_TICK_RATE_BANDS[band].1;
+        band += 1;
+    }
+    caps[band] = BEHIND_SCENE_TICK_RATE;
+    caps[band + 1] = FAR_SCENE_TICK_RATE;
+    caps
+};
 
 /// The steepest camera pitch, as the height of the camera's unit forward direction, at which the
 /// behind cap applies. `is_behind` tests parcels against the flat forward direction, so looking

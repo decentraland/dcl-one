@@ -149,8 +149,8 @@ executor: a pass is a chain of systems that mostly find nothing to do.
 Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
-`update_scene_partitions`); both are divided by the time since the scene was last sent, so a
-starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
+`update_scene_partitions`); both are divided by the time since the scene was last sent, or for
+a capped scene since its interval passed (`queue_age`, below), so a starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
 it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking, subject to
 the tick rate bands below, and yields first when frame time runs short. Distance is always from the player; only facing comes from
 the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank

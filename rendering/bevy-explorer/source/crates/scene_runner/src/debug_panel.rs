@@ -40,7 +40,6 @@ pub(super) struct SceneDebugPanelPlugin;
 
 impl Plugin for SceneDebugPanelPlugin {
     fn build(&self, app: &mut App) {
-        // the `capped` field's components, in order
         let capped_label = format!(
             "Scenes capped at ticks a second ({})",
             SCENE_TICK_RATE_CAPS

@@ -61,8 +61,10 @@ and main-thread time each frame there is spare time, whether or not the player c
   camera still yields first. A scene released on unread global updates keeps its age since it
   was last sent. Age grows a frame at a time, so
   the interval counts as passed within a quarter of a frame of it: jitter cannot miss an
-  interval of whole frames, and one of a frame and a half always waits for the second frame. At
-  60 fps the 40 and 30 bands therefore both tick every other frame; they differ only above 60 Hz.
+  interval of whole frames, and one of a frame and a half always waits for the second frame. A
+  rate is therefore rounded to whole frames and can be passed by up to a quarter of a frame: at
+  60 fps the 40 and 30 bands both tick every other frame, and between 45 and 50 fps the 40 band
+  ticks every frame, 45 to 50 times a second.
 - **Full rate.** The player's scenes, the scenes at the player's position while out of world,
   portable and global scenes, the named priority scenes, the system scene, a scene under the
   inspector, the scene being baked into an imposter, and every scene before
