@@ -7286,10 +7286,6 @@
       "path": "library/ui/apps/sites/jump",
       "entries": [
         {
-          "name": "JumpButtons.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "JumpCard.module.css",
           "kind": "regular"
         },
@@ -10093,7 +10089,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
-      "sha256": "541420163f151e3adb47c4c147e3da9496f5807328597faaa6bd7b71fb28cd2d"
+      "sha256": "9f592928096b6b2fcda8a266336c909d28e5f3d98d00d601ccce5db44fc19915"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
@@ -10197,7 +10193,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
-      "sha256": "17499545bfb507b1b93394da8607e8fb0b252a8043dd2694cae36f46125d9697"
+      "sha256": "a07df6868a1c91b645df92b4003a388d0b4f6df0584e5af333ef3969f4fd194a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/welcome.ts",
@@ -10453,7 +10449,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeResolveWearables.test.ts",
-      "sha256": "5b5d5405163c10ffe4215a45e8e6f25846bffe6049e0c78629977ae276910be1"
+      "sha256": "193316ff29df96ffbf9c29765bca0eb619369e82279d2f61f25d996cdb8141b5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
@@ -10778,7 +10774,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "7235798e906885a41151ab0849deab702316d64b4c11ef514649be202286e92a"
+      "sha256": "6e2e1b2d5a9030bc96e9e958c7f70c239edc165096c8f2e1c0217c4c3bf7043d"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -10818,7 +10814,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "59266868ee63712f6ede1157c5f6ad4e180dfc946e74666385547e7b68e2554e"
+      "sha256": "658e6b88ef7493f3e95f974422d6319f9e64f10f3ad39c489833165a7d06a150"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -13154,11 +13150,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "8e4b6d9e40dcb256d08e41a6ae9fa4b2ab7a4b6b34e1cfcaefd35498bb54f60d"
+      "sha256": "2b001f5e27aed02166c688507c2b9461a83a52c043886b2f85a9c8ac9038b67b"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "e43613e70de2a12e90541996dff3d603135d60b00f303abcd86b0c459519ce2f"
+      "sha256": "4cc196f48ab9a3ba6a8ec409b3832f4002472acb017cab4692e049c30c4ec79b"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -14530,7 +14526,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpack.clicks.test.tsx",
-      "sha256": "d100f100e889c291fb91af354605c7d82aa3c287ed50f54ef3270f795ea42ad8"
+      "sha256": "58f66ab1fbb1fd2a54039f67040c882fc9cc16f1862691d86dc0fbccacf3a49c"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackColors.test.tsx",
@@ -16386,11 +16382,11 @@
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.module.css",
-      "sha256": "3d61fe681824a8e43e6e7afd34b9f769f01b3a8e436f0203d81f4e65ef1abf52"
+      "sha256": "7774c452480635e03735f17154d0e0d3aa8680f05bcc9f8b7c8995db9c48f5c0"
     },
     {
       "path": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "sha256": "e80b80586947e09739db906cf8dc10b3f1d0e141907dfb4f324796a13d36576a"
+      "sha256": "a1aa6073030fd5b104cc2216e00ca184f510cd8a29f2dbb3fe8fea50ca495f84"
     },
     {
       "path": "library/ui/apps/sites/home/ComeHangOut.module.css",
@@ -16418,35 +16414,31 @@
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.module.css",
-      "sha256": "f0a9622693971a661ceeb3dfd0d53c81aa4680d2ed03cf2a53fce64bf6159178"
+      "sha256": "97faf0e515e2656898d832d965c7ebc017204148293600baef82e11639bf129d"
     },
     {
       "path": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "sha256": "b0a1d0300427de110ca66e4858b2dbba38e11dc8ac1b8851540517e6f331a585"
+      "sha256": "0b43a8fb06cc39b87f6d279f7f13e6a71ee074b1c55391d191318f5f3641c567"
     },
     {
       "path": "library/ui/apps/sites/index.ts",
       "sha256": "4d2a28a688e8a79b1b8c8746038714ac6aeadfe53e57ee3ea1f5dd93a9bb5755"
     },
     {
-      "path": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "sha256": "ef2a11e010c87d9d1d06d6ef4a0fe58718bfcc296591a55f4689965147fdc3e0"
-    },
-    {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "sha256": "4d75bddf9d8de2d0d58003c5dae34c7ecb89ffe8c04d420c7aafb8a4ec009718"
+      "sha256": "9b52a7126529a2d6e14a8fd4768837354146576fe3d272586df3f7c2004c7b3e"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "sha256": "f80266271f67be617c459bb8128f7a943e608afb49b6b5f1026139e96245b42a"
+      "sha256": "b88131f2932754d1ddad72b79591027e5876c82f39f52aa2bd1b19c26aeda62d"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "sha256": "e8fb964bf4e308455421ae520fcc1e3147aa62fe5f6598e8b7701789ce01e52e"
+      "sha256": "d27c6cd77458be59ed6cbf5659eee61d37936b30aa4540631ea1a6ef496eea9b"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "sha256": "6d85e9a26c5116182c7641c4c124a2b8702e2646ce952302a28e650bf0292f4d"
+      "sha256": "9a25a8098b6525e8f32f853aa72a1282d3cd55cc6ff02526b458c291a7d5c1e3"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpIcons.tsx",
@@ -16454,11 +16446,11 @@
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "sha256": "f441c68144b826ff74185c36a565dbdcc469fa074d12998417bd46d1557fc756"
+      "sha256": "b35fc3f79b1d97ab2d6e2a5386c46338a672c17a128a2934a5e8b907d885139a"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "sha256": "02e6313b4b42f15bc54ff4854081d04fc8b0fcfff685e8ce0e333bdc237c8354"
+      "sha256": "7ae2b2537ff34b0b35015b840029d695458b65035b435276ae14d1d8c1f61c38"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpPage.module.css",
@@ -57560,32 +57552,32 @@
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/apps/sites/shared/Carousel.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/home/CatchTheVibe.tsx",
-      "to": "library/ui/apps/sites/shared/Carousel.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -57830,21 +57822,6 @@
     },
     {
       "from": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
       "to": "library/ui/apps/sites/shared/Carousel.tsx",
       "kind": "native:runtime"
     },
@@ -57871,6 +57848,21 @@
     {
       "from": "library/ui/apps/sites/home/WhatsOn.tsx",
       "to": "library/ui/apps/sites/shared/cssUrl.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/home/WhatsOn.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -59884,21 +59876,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpCard.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
-    },
-    {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/apps/sites/assets/dcl-logo.svg",
       "kind": "native:runtime"
@@ -59990,17 +59967,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -60017,21 +59994,6 @@
       "from": "library/ui/apps/sites/jump/JumpCard.tsx",
       "to": "library/ui/components/JumpInCTA/JumpInCTA.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.module.css",
@@ -60080,33 +60042,18 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpEventActions.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "native:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "production:composes"
-    },
-    {
-      "from": "library/ui/apps/sites/jump/JumpInvalid.module.css",
-      "to": "library/ui/apps/sites/jump/JumpButtons.module.css",
-      "kind": "test:composes"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
@@ -60140,17 +60087,17 @@
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/jump/JumpInvalid.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
