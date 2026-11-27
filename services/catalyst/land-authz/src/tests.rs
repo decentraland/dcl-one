@@ -477,7 +477,6 @@ async fn job_ctx() -> (Jobs, JobContext) {
     (jobs, ctx)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn ev(
     block: i64,
     index: i32,

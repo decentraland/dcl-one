@@ -4,9 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
-import { Button, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
+import { Button, KeyCap, MaskIcon, Skeleton, Spinner } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Chip, ColorPicker, HintsButton, KeyCap, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Chip, ColorPicker, HintsButton, OptionMenu, Pager, SearchField, Tabs, WearableCard, showConfirm, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -81,7 +81,6 @@ const VIEWS: { id: ViewKey; label: string }[] = [
   { id: 'collectibles', label: 'Collectibles only' },
   { id: 'smart', label: 'Smart Wearables only' }
 ]
-const NO_DESC = 'This wearable does not have a description set.'
 const HINTS = [
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Left-click and drag avatar to rotate.' },
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Click items x1 to view their info. x2 to equip/unequip.' },
@@ -225,6 +224,7 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
   }
   const rarity = item.rarity ?? 'base'
   const category = 'category' in item ? item.category : 'emote'
+  const description = item.description?.trim() ?? ''
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
       <div className={styles.detailImage}>
@@ -237,7 +237,9 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
         </div>
         <span className={styles.detailRarity} data-rarity={rarity}>{rarity}</span>
         <div className={styles.detailDescLabel}>DESCRIPTION</div>
-        <div className={styles.detailDesc}>{NO_DESC}</div>
+        <div className={styles.detailDesc}>
+          {description !== '' ? description : `This ${category === 'emote' ? 'emote' : 'wearable'} does not have a description set.`}
+        </div>
         {'hides' in item && item.hides != null && item.hides.length > 0 && (
           <>
             <div className={styles.detailHidesLabel}>
@@ -260,8 +262,10 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
 }
 
 // One Saved-Outfits slot: an empty slot (silhouette; the first one invites saving), or a saved
-// outfit with a hover EQUIP button and a delete button. Double-click also equips. A slot is a
-// skeleton until the saved outfits arrive and a spinner while its outfit is saved or deleted.
+// outfit with a hover EQUIP button and a delete button. A click shows the outfit on the avatar
+// without equipping it. A slot is a skeleton until the saved outfits arrive and a spinner while its
+// outfit is saved or deleted; while the avatar loads an outfit, shown or equipped, the spinner is in
+// that slot's EQUIP button and no slot answers.
 function OutfitSlotCard({
   index,
   outfit,
@@ -273,6 +277,7 @@ function OutfitSlotCard({
   equipping,
   inert,
   onSave,
+  onPreview,
   onEquip,
   onDelete
 }: {
@@ -283,10 +288,12 @@ function OutfitSlotCard({
   equipped: boolean
   loading: boolean
   busy: 'save' | 'delete' | null
+  /** The avatar is loading this slot's outfit, shown or equipped. */
   equipping: boolean
   /** Another slot's outfit is being saved, deleted or put on: this one answers nothing. */
   inert: boolean
   onSave: () => void
+  onPreview: () => void
   onEquip: () => void
   onDelete: () => void
 }): React.JSX.Element {
@@ -340,9 +347,9 @@ function OutfitSlotCard({
         )}
       </span>
       {/* the card's own button starts under the delete button's strip: the two never share an area */}
-      <button type="button" className={styles.outfitThumbs} disabled={equipping || inert} onDoubleClick={onEquip} aria-label={`Outfit ${index + 1}`} />
+      <button type="button" className={styles.outfitThumbs} disabled={equipping || inert} onClick={onPreview} aria-label={`Outfit ${index + 1}`} />
       <span className={styles.outfitRing} aria-hidden="true" />
-      <button type="button" className={styles.outfitDelete} disabled={inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
+      <button type="button" className={styles.outfitDelete} disabled={equipping || inert} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
         <MaskIcon src={deleteIcon} size={24} />
       </button>
       <button type="button" className={styles.outfitEquipBtn} disabled={equipping || inert} aria-busy={equipping} aria-label="EQUIP" onClick={onEquip}>
@@ -571,6 +578,12 @@ export function BackpackPage({
   useEffect(() => {
     if (!showingOutfits) backpack.dismissOutfitError()
   }, [showingOutfits, backpack.dismissOutfitError])
+  // An outfit shown but not equipped leaves the avatar with the Saved Outfits.
+  const outfitsWereShown = useRef(false)
+  useEffect(() => {
+    if (outfitsWereShown.current && !showingOutfits) backpack.restoreOutfitPreview()
+    outfitsWereShown.current = showingOutfits
+  }, [showingOutfits, backpack.restoreOutfitPreview])
 
   if (!backpack.open) return null
 
@@ -737,6 +750,7 @@ export function BackpackPage({
                               equipping={backpack.outfitEquipping === i}
                               inert={outfitWorkSlot != null && outfitWorkSlot !== i}
                               onSave={() => backpack.saveOutfit(i)}
+                              onPreview={() => backpack.previewOutfit(i)}
                               onEquip={() => backpack.equipOutfit(i)}
                               onDelete={() => confirmDeleteOutfit(i)}
                             />

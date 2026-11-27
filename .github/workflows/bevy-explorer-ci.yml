@@ -395,10 +395,10 @@ jobs:
       - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
-          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf -p bevy_animation --lib \
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf -p bevy_animation -p bevy_transform --lib \
             --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests \
             --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests.jsonl
-          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf -p bevy_animation --lib \
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf -p bevy_animation -p bevy_transform --lib \
             --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib --target-dir target/fork-tests \
             --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests-pbr.jsonl
@@ -1000,8 +1000,27 @@ jobs:
         if: steps.engine-cache.outputs.cache-matched-key != ''
         working-directory: .
         run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}
+      # The avatar preview (rendering/avatar-preview) compiles from the engine's crates: its key is the
+      # engine's inputs and its own crate (tooling/play-artifact.py preview-inputs).
+      - name: Identify compiled avatar preview inputs
+        id: preview-inputs
+        working-directory: .
+        run: |
+          key=$(python3 tooling/play-artifact.py preview-inputs)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Restore compiled avatar preview
+        id: preview-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/avatar-preview
+          key: avatar-preview-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.preview-inputs.outputs.key }}
+          restore-keys: avatar-preview-v1-optimized-${{ steps.preview-inputs.outputs.key }}
+      - name: Verify restored avatar preview before skipping compiler setup
+        if: steps.preview-cache.outputs.cache-matched-key != ''
+        working-directory: .
+        run: python3 tooling/play-artifact.py verify-preview .cache/avatar-preview ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}
       - name: Reserve disk space on the hosted Linux runner
-        if: steps.engine-cache.outputs.cache-matched-key == '' && runner.environment == 'github-hosted'
+        if: (steps.engine-cache.outputs.cache-matched-key == '' || steps.preview-cache.outputs.cache-matched-key == '') && runner.environment == 'github-hosted'
         working-directory: .
         run: |-
           avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
@@ -1015,13 +1034,13 @@ jobs:
           node-version: 24
       - run: corepack enable
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: (steps.engine-cache.outputs.cache-matched-key == '' || steps.preview-cache.outputs.cache-matched-key == '')
         with:
           toolchain: nightly-2026-04-15
           targets: wasm32-unknown-unknown
           components: rust-src
       - name: Stamp rust-src with the toolchain date so cached build-std artifacts stay fresh
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: (steps.engine-cache.outputs.cache-matched-key == '' || steps.preview-cache.outputs.cache-matched-key == '')
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
@@ -1078,13 +1097,31 @@ jobs:
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: (steps.engine-cache.outputs.cache-matched-key == '' || steps.preview-cache.outputs.cache-matched-key == '')
         uses: ./.github/actions/bevy-explorer-tools
         with:
           package: bevy-web-tools
       - name: Install the pinned WASM binding generator and optimizer
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: (steps.engine-cache.outputs.cache-matched-key == '' || steps.preview-cache.outputs.cache-matched-key == '')
         run: python3 ../../../apps/bevy-explorer/install-web-tools.py ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
+      # The preview's own workspace and target. A PR's build differs from main's only by skipping
+      # wasm-opt, so it reuses main's target; only main saves one.
+      - name: Restore the avatar preview target cache
+        if: steps.preview-cache.outputs.cache-matched-key == ''
+        id: preview-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/avatar-preview/target/
+          key: avatar-preview-target-v1-${{ hashFiles('rendering/avatar-preview/Cargo.lock', 'rendering/avatar-preview/Cargo.toml',
+            'rendering/avatar-preview/.cargo/config.toml', 'rendering/bevy-explorer/vendor/**') }}
+          restore-keys: avatar-preview-target-v1-
+      - name: Restore the avatar preview's path dependencies' cached file times
+        if: steps.preview-cache.outputs.cache-matched-key == ''
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore ../../avatar-preview/target
       # The pnpm store is kept between runs, keyed on the two lockfiles; only main saves it.
       - name: Restore the pnpm store
         id: pnpm-cache
@@ -1097,7 +1134,7 @@ jobs:
       - name: Build and test the local web app
         env:
           pnpm_config_store_dir: ${{ runner.temp }}/pnpm-store
-        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
+        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine --preview-cache ../../../.cache/avatar-preview ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
       - name: Save the pnpm store from main
         if: github.ref == 'refs/heads/main' && steps.pnpm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1145,6 +1182,26 @@ jobs:
           # the PR's dependencies.
           path: .cache/bevy-engine
           key: ${{ steps.engine-cache.outputs.cache-primary-key }}
+      - name: Record the avatar preview's path dependencies' file times for the cache
+        if: steps.preview-cache.outputs.cache-matched-key == ''
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record ../../avatar-preview/target
+      - name: Save the avatar preview target cache
+        if: github.ref == 'refs/heads/main' && steps.preview-cache.outputs.cache-matched-key == '' && steps.preview-target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/avatar-preview/target/
+          key: ${{ steps.preview-target-cache.outputs.cache-primary-key }}
+      - name: Save tested compiled avatar preview
+        if: steps.preview-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Small finished outputs, as the compiled engine above.
+          path: .cache/avatar-preview
+          key: ${{ steps.preview-cache.outputs.cache-primary-key }}
       - name: Upload the complete web app
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

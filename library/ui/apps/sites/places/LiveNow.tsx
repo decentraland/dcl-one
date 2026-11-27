@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { LiveEventCardSlot } from './cards/LiveEventCardSlot'
 import type { PlaceCardData, PlaceCardHandlers, PlaceCardLabels } from './cards/types'
 import styles from './LiveNow.module.css'
@@ -153,6 +153,7 @@ function LiveNow({ title, cards, labels, cardLabels, onOpen, onJumpIn }: LiveNow
           <>
             <div className={`${styles.arrow} ${styles.arrowStart}`}>
               <Button
+                size="lg"
                 variant="quaternary"
                 aria-label={labels.previous}
                 disabled={!edges.left}
@@ -163,6 +164,7 @@ function LiveNow({ title, cards, labels, cardLabels, onOpen, onJumpIn }: LiveNow
             </div>
             <div className={`${styles.arrow} ${styles.arrowEnd}`}>
               <Button
+                size="lg"
                 variant="quaternary"
                 aria-label={labels.next}
                 disabled={!edges.right}

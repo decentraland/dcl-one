@@ -141,7 +141,7 @@ Status values:
 | Shop CMS images `cms-images`. Active only when `VITE_SHOP_CMS_URL`, `_SPACE_ID`, `_ENVIRONMENT` and `_ADMIN_ENTRY` (or `__SHOP_CMS__`) are all set; nothing sets them. Status: inactive by default | `apps/ui3/src/shop/discovery/lib/contentful.ts` | `@decentraland/web-applications` | No target yet |
 | `/play` HUD services (realm provider, peer, places, events, map, marketplace, social, notifications and the rest). The HUD defaults to this deployment's gateway (`GATEWAY_PREFIXES`). It reaches `.org` or `.zone` only on a Decentraland origin, with the trusted `?baseDomain=`, or without `__DCL_PUBLIC__` (standalone). Status: inactive by default | `apps/ui3/src/play/lib/baseDomain.ts` | `@decentraland/web-applications` | Already served by the gateway prefixes; the exit is removing the `.org`/`.zone` fallback |
 | Scene editor host: `worlds-content-server`, comms gatekeeper, storage and multiplayer on `.org` or `.zone`, and `creators-data` (`/v2`). Offered only on loopback, or on Decentraland hosts with `editor-features=experimental`. Status: dev-only on dcl-one deployments | `apps/ui3/src/play/features/editorHost/source.ts`, `editorHost/config.ts` | `@decentraland/web-applications` | No target yet. The node has `/worlds-content-server`, `/comms-gatekeeper` and `/world-storage`, but no document moves the editor host to them |
-| `@dcl/sdk-commands`: `peer` and `peer.decentraland.zone` (`/lambdas/contracts/servers`, `/content/entities/active`, `POST /content/entities`), `quests`, `feature-flags.decentraland.zone`, `rpc/mainnet`. `DCL_CATALYST` (default `https://peer.decentraland.org`), others hardcoded. Status: production (creator CLI) | `library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/` | `@decentraland/infra` | `apps/dcl-scene-cli` replaces the package; no per-endpoint target |
+| `@dcl/sdk-commands`: `peer` and `peer.decentraland.zone` (`/lambdas/contracts/servers`, `/content/entities/active`, `POST /content/entities`), `feature-flags.decentraland.zone`, `rpc/mainnet`. `DCL_CATALYST` (default `https://peer.decentraland.org`), others hardcoded. Status: production (creator CLI) | `library/js-sdk-toolchain/packages/@dcl/sdk-commands/src/` | `@decentraland/infra` | `apps/dcl-scene-cli` replaces the package; no per-endpoint target |
 | Bevy Explorer E2E against `decentraland.zone` and `peer.decentraland.zone`. `vars.DCL_E2E_BASE_DOMAIN`, `vars.DCL_E2E_REALM`. Runs on the `ci:e2e` label, nightly or by hand. Status: CI-only | `.github/workflows/bevy-explorer-e2e.yml`, `apps/bevy-explorer/e2e/driver/target.ts` | `@decentraland/client` | No target yet |
 | Shop parity and trade journey harnesses: they record live traffic to the Shop's services and use `rpc` (`/mainnet`, `/amoy`, `/sepolia`). Run by hand; CI runs only their offline tests. Status: dev-only | `tooling/shop-parity/lib/services.mts`, `lib/session.mts`, `tooling/shop-trade-journey/lib/wallet.mts` | `@decentraland/web-applications` | No target yet |
 
@@ -272,6 +272,17 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a commit
 (default `HEAD`) locally, with the checks its changes since `origin/main` select (images
 need Linux or `CI_LOCAL_IMAGES=1`).
+
+`python3 tooling/ci-local.py install` makes ci-local's pre-commit and pre-push checks the
+git hooks of every worktree. Each run uses the `tooling/ci-local.py` its worktree has checked
+out, so a commit or push on another branch, a fork's included, runs that branch's version.
+pre-push also builds and runs the code of each commit it pushes, refs you never checked out
+included, so review a fork's commits before you push them, or push with `CI_LOCAL_SKIP=1`.
+`CI_LOCAL_SKIP=1` skips the checks; a push then still uploads its Git LFS objects, which
+`--no-verify` skips too. Afterwards `git lfs install` stops at the existing pre-push, so the
+README's `git lfs install --local && git lfs pull` never pulls: run `git lfs pull` on its
+own, and avoid `git lfs update --force`, which puts back the plain LFS hook. To uninstall,
+delete `.git/hooks/pre-commit` and `.git/hooks/pre-push`, then run `git lfs update`.
 
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.

@@ -62,16 +62,13 @@ pub(super) fn parcel_span(parcels: &[(i64, i64)]) -> String {
     match parcels {
         [] => "No parcels declared".to_string(),
         [(x, y)] => format!("Parcel {x},{y}"),
-        _ => {
-            let xs = parcels.iter().map(|(x, _)| *x);
-            let ys = parcels.iter().map(|(_, y)| *y);
-            format!(
-                "Parcels {},{}\u{2013}{},{}",
-                xs.clone().min().unwrap(),
-                ys.clone().min().unwrap(),
-                xs.max().unwrap(),
-                ys.max().unwrap()
-            )
+        [(x, y), rest @ ..] => {
+            let (min_x, min_y, max_x, max_y) =
+                rest.iter()
+                    .fold((*x, *y, *x, *y), |(min_x, min_y, max_x, max_y), (x, y)| {
+                        (min_x.min(*x), min_y.min(*y), max_x.max(*x), max_y.max(*y))
+                    });
+            format!("Parcels {min_x},{min_y}\u{2013}{max_x},{max_y}")
         }
     }
 }

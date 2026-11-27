@@ -17,9 +17,9 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin::{
-    FlagBody, RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
-    validate_idempotency_key, validate_positive_amount, validate_price_cents, validated_reason,
-    validated_studio_name,
+    FlagBody, RequireAdmin, normalize_address, paginate, refuse_studio_name, validate_currency,
+    validate_escrow_ref, validate_idempotency_key, validate_positive_amount, validate_price_cents,
+    validated_reason,
 };
 use crate::credits::admin_store::{GrantRequest, PackAdminRow, PackSpec};
 use crate::credits::errors::ApiError;
@@ -95,9 +95,9 @@ pub struct GrantBody {
     reason: Option<String>,
     #[serde(rename = "idempotencyKey", default)]
     idempotency_key: Option<String>,
-    /// Grant only: the studio the notice names as the giver.
+    /// Refused when set ([`refuse_studio_name`]).
     #[serde(rename = "studioName", default)]
-    studio_name: Option<String>,
+    studio_name: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -117,7 +117,7 @@ async fn grant_credits(
     let address = normalize_address(&b.address)?;
     let amount = validate_positive_amount(&b.amount)?;
     let reason = validated_reason(&b.reason)?;
-    let studio_name = validated_studio_name(&b.studio_name)?;
+    refuse_studio_name(b.studio_name.as_ref())?;
     let mut idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
     // A recovered MANA top-up takes the claim's own key and is paid for, like the claim.
     let topup = match idempotency_key
@@ -131,10 +131,7 @@ async fn grant_credits(
         None => false,
     };
     let actor = admin.audit_actor_description();
-    let mut detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
-    if let Some(studio) = &studio_name {
-        detail["studioName"] = json!(studio);
-    }
+    let detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
     let outcome = state
         .credits
         .admin_grant_credits(GrantRequest {
@@ -145,7 +142,7 @@ async fn grant_credits(
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),
             detail: &detail,
-            studio_name: studio_name.as_deref(),
+            studio_name: None,
         })
         .await?;
     Ok(Json(GrantOut {

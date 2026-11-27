@@ -35,6 +35,24 @@ describe('CommunityCreate', () => {
     })
   })
 
+  describe('when the form shows its text fields', () => {
+    it('should name each field once by its visible label and keep their limits', () => {
+      setup()
+      const name = screen.getByRole('textbox', { name: 'Community name' })
+      const description = screen.getByRole('textbox', { name: 'Description' })
+      expect(name).toBeRequired()
+      expect(name).toHaveProperty('maxLength', 30)
+      expect(description).not.toBeRequired()
+      expect(description).toHaveProperty('maxLength', 240)
+    })
+
+    it('should focus a field when its visible label is clicked', async () => {
+      setup()
+      await userEvent.click(screen.getByText('Description', { selector: 'label[id]' }))
+      expect(screen.getByRole('textbox', { name: 'Description' })).toHaveFocus()
+    })
+  })
+
   describe('when Create is pressed without a name', () => {
     it('should not send anything', async () => {
       const { create } = setup()
