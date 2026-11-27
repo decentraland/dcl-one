@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom'
 import type { CommunityConversation } from '../session/useEngineSession'
 import { Avatar, ContextMenu, ControlButton } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
-import { ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
+import { CHAT_MENU_WIDTH, ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
 import styles from './Chat.module.css'
 import { Button, MaskIcon } from '@dcl/one-ui'
@@ -80,7 +80,7 @@ function CommunityTitle({ community }: { community: CommunityConversation }): Re
         createPortal(
           <div ref={menu} className={styles.menuLayer} style={at} {...{ [MENU_LAYER]: '' }}>
             <ContextMenu
-              variant="sheet"
+              width={CHAT_MENU_WIDTH}
               items={[
                 {
                   label: VIEW_COMMUNITY,

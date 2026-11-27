@@ -5788,6 +5788,26 @@
           "kind": "regular"
         },
         {
+          "name": "ShopLoading.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopLoading.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopLoading.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopManaMark.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopManaMark.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ShopSearch.module.css",
           "kind": "regular"
         },
@@ -8534,6 +8554,10 @@
           "kind": "regular"
         },
         {
+          "name": "ContextMenu.figma.ts",
+          "kind": "regular"
+        },
+        {
           "name": "ContextMenu.module.css",
           "kind": "regular"
         },
@@ -8551,6 +8575,14 @@
         },
         {
           "name": "KebabMenu.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Menu.figma.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "MenuItem.figma.ts",
           "kind": "regular"
         }
       ]
@@ -13101,11 +13133,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "0be03b233e50b54c3b00ce728685ccfa454bfad0367730c7bc820fecf6cbd348"
+      "sha256": "4cd429d1c858ef846d480ba3676f666c9560f5f5bafdba2126299c8889d73832"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "16e474884dfda787a84dfab9c40d69dd1c8b9eabd15d7aadb28592ec48d0ed8f"
+      "sha256": "793853052bb70a49eeb63de2dbf6abf5e6758ca7572692bd41dc8ce01ab63af1"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
@@ -13185,11 +13217,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
-      "sha256": "b6e47f23d173e7b314b655df6f8c151245bd30999b6b1f7d63b634ce95067409"
+      "sha256": "bb605ccb5b6ea56b2109f3ca6604700f239ad7a633d345035e795749598f181c"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
-      "sha256": "cb5a03477f8c4ca905a99562642b1d8c7ee41ffe01081ce5eaf919302640c1f5"
+      "sha256": "29b86ae97610d25c02a52766a101cada6eab0ac45f6a5fb9cc831b64180cb4ab"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
@@ -13197,7 +13229,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "bfa5594abae4426274539a5434258d1eb3d54367671d0742f41f2296f15246a5"
+      "sha256": "cf82e04220b8465d1e403e309fe11b731f0c9bc75a68c9dfe14b33af9b999cd4"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -15188,6 +15220,18 @@
       "sha256": "e57083e759c3f00ca541d96f97d526efa9bc2d0094ff036606e60b9c1bd86280"
     },
     {
+      "path": "library/ui/apps/shop/ShopLoading.module.css",
+      "sha256": "a8db2080d9bf3fbe2894966317e69416a0c42d32507f1eb02282d2b197d34a54"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopLoading.tsx",
+      "sha256": "c9f3145a933dc86ff3abeb9eabf03ab8d580e0a1d227e049ee406d350fe6b0ad"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopManaMark.tsx",
+      "sha256": "9d46b40cdfe49cce98f4cbcff7f6b0e84a64525e8d067d3df442a697fbf5f275"
+    },
+    {
       "path": "library/ui/apps/shop/ShopSearch.module.css",
       "sha256": "33d378fd988c41d72800902b55ff5f33b3416a4b6454628ff349d4b3afa87745"
     },
@@ -15201,7 +15245,7 @@
     },
     {
       "path": "library/ui/apps/shop/index.ts",
-      "sha256": "e400061f34634e2acae63458a1a8720dd09eada5f621451a75b7efe149dd8f42"
+      "sha256": "17aa5bec086a3ca347f5c886d38a6e48a2a87fc39aafa635c078a20ca6a62fe2"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -16469,7 +16513,7 @@
     },
     {
       "path": "library/ui/apps/sites/invite/InviteLanding.module.css",
-      "sha256": "66e5ae4f4683a1d01bdebf0ab8476c77d3426a08fd392336105fa654776a1b11"
+      "sha256": "f7cce9048a002a5b30c9dc0b90f898b50d8e13490c2c60f7fe69e9c3cda26299"
     },
     {
       "path": "library/ui/apps/sites/invite/InviteLanding.tsx",
@@ -16949,7 +16993,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "e2474ac8f72e9fff864724973ceeae8dd1a57aae849214e0f8bac31ba2d138f1"
+      "sha256": "e0b3ef65d237d6033e8efe3346a72d78f612342a5a4b1cec503e1a487fb5ec07"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
@@ -17053,11 +17097,11 @@
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.module.css",
-      "sha256": "ed2265932b624c97a40f9eca3cf6e6a349e1154d4508906f0ea9e207f951a862"
+      "sha256": "b0e36f488bbb24f96c1fb2d8c4d290146bc598217db38d43f93b0c91d98ef4ac"
     },
     {
       "path": "library/ui/components/ContextMenu/ContextMenu.tsx",
-      "sha256": "0a343fff27d062cb2c52e6ce8fabc8ea4d29c13c6a5aed7db7e2030881c1b7c8"
+      "sha256": "f77c8b02d545fe1e70ba3c31993629be015c779dcfae2b6e9ed84efedce52086"
     },
     {
       "path": "library/ui/components/ContextMenu/KebabMenu.tsx",
@@ -17165,7 +17209,7 @@
     },
     {
       "path": "library/ui/components/InputField/InputField.module.css",
-      "sha256": "21e6e2b16729b03ef670a52b8079c5b682628cdecf3b4a9930d9391549928761"
+      "sha256": "8d1c720749464d4cbbe7fe77f5a6c7241c0845dc955017cc2c87b6c49b2ee2cd"
     },
     {
       "path": "library/ui/components/InputField/InputField.module.css.d.ts",
@@ -17377,11 +17421,11 @@
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.module.css",
-      "sha256": "1d0cbf97e7a456ce315987a7ae7660b31a54ad29292ca40491829775f2c6f7c2"
+      "sha256": "62d122a653ba0fa8586cb8d4ca4547a0e6f2f99585301ea71fe172b12c2a476f"
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.tsx",
-      "sha256": "7d6b906f6019452cd90186461d96ce2acb1078b6237fa26ce758d17b166df303"
+      "sha256": "512e99ed67d829fa45c0e33dbfdd0c9a0242a77857ec21867b03f78328c7f3ce"
     },
     {
       "path": "library/ui/components/Skeleton/Skeleton.module.css",
@@ -25590,6 +25634,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
       "to": "library/ui/apps/hud/assets/chat/close-thin.png",
       "kind": "native:runtime"
@@ -52770,6 +52829,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/apps/shop/ShopLoading.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/ShopCard/ShopCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopLoading.tsx",
+      "to": "library/ui/components/Skeleton/Skeleton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/shop/ShopSearch.tsx",
       "to": "library/shop/discovery/intl.ts",
       "kind": "native:runtime"
@@ -52872,6 +52991,36 @@
     {
       "from": "library/ui/apps/shop/index.ts",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
       "kind": "test:runtime"
     },
     {
@@ -63492,6 +63641,21 @@
     {
       "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
       "to": "library/ui/components/Switch/Switch.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ContextMenu/ContextMenu.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -70607,6 +70771,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopLoading.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
       "kind": "type"
     },
     {

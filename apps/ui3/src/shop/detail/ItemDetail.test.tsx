@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { GeneralMana, GeneralPolygonMana } from "@dcl/one-ui";
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
 import { COLLECTION, ITEM_ID, ITEM_META, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
@@ -675,8 +676,10 @@ describe("latest sales and owners", () => {
     const seen = { sales: [] as URL[], owners: [] as URL[] };
     itemPage({ overrides: { ...answers(seen), "/v1/sales": () => ({ data: [{ ...sale(1), chainId: 1, network: "ETHEREUM" }, sale(2)], total: 2 }) } });
     const rows = within(await screen.findByTestId("latest-sales")).getAllByTestId("sale-row");
-    expect(rows[0]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 13 14");
-    expect(rows[1]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 24 24");
+    const ethereum = render(<GeneralMana />).container.firstElementChild!;
+    const polygon = render(<GeneralPolygonMana />).container.firstElementChild!;
+    expect(rows[0]!.querySelector("svg")?.innerHTML).toBe(ethereum.innerHTML);
+    expect(rows[1]!.querySelector("svg")?.innerHTML).toBe(polygon.innerHTML);
   });
 
   it("says a later page failed, with a retry, instead of an empty table", async () => {
