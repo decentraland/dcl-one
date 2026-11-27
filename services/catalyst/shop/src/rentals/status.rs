@@ -122,7 +122,7 @@ async fn cancel_on(
     .bind(&reasons)
     .bind(now)
     .bind(membership.map(|(block, _)| block))
-    .bind(membership.map(|(_, time)| time as f64))
+    .bind(membership.map(|(_, time)| epoch_f64(time)))
     .execute(&mut *conn)
     .await?
     .rows_affected())
@@ -238,7 +238,7 @@ pub async fn cancel_moved(
         .bind(land.estate_registry.to_ascii_lowercase())
         .bind(folded)
         .bind(rentals_head)
-        .bind(head_time.unwrap_or(0) as f64)
+        .bind(epoch_f64(head_time.unwrap_or(0)))
         .bind(chain.event_network())
         .bind(chain.id())
         .fetch_all(&mut *snapshot.tx)
@@ -545,7 +545,23 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     );
 }
 
+/// Block seconds as the `double precision` the SQL takes.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "block timestamps in seconds stay far below 2^53"
+)]
+fn epoch_f64(secs: i64) -> f64 {
+    secs as f64
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
 

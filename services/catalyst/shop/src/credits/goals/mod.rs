@@ -54,6 +54,10 @@ impl Season {
                 - TimeDelta::days(i64::from(t.weekday().num_days_from_monday()))
         }
         let start = monday(now);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "chrono's date range spans under 2^31 weeks"
+        )]
         let number = ((start - monday(self.start_date)).num_days() / 7 + 1) as i32;
         (
             number,
@@ -348,7 +352,8 @@ pub async fn process_batch(state: &SharedState, limit: i64) -> Result<u64, ApiEr
     let ids = select(after, horizon).await?;
     state.goal_scan_after.store(after, Ordering::Relaxed);
     state.goal_scan_horizon.store(horizon, Ordering::Relaxed);
-    let round_complete = ids.len() < limit as usize || ids.last().is_some_and(|id| *id >= horizon);
+    let round_complete = ids.len() < usize::try_from(limit).unwrap_or(usize::MAX)
+        || ids.last().is_some_and(|id| *id >= horizon);
     let mut processed = 0;
     let mut error = None;
     // A failed event keeps no receipt and is retried by the next round; the
@@ -542,7 +547,7 @@ async fn grant(
     };
     let signature = signer.sign_credit(&credit).map_err(ApiError::Internal)?;
     sqlx::query("INSERT INTO credits.goal_grants(address,season_id,week_id,goal_id,salt,chain_id,contract,credit_hash,amount_wei,signature,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::numeric,$10,$11,$12)")
-        .bind(address).bind(season.id).bind(week).bind(goal).bind(format!("{salt:#x}")).bind(chain as i64).bind(format!("{manager:#x}"))
+        .bind(address).bind(season.id).bind(week).bind(goal).bind(format!("{salt:#x}")).bind(state.settings.usage.chain_id).bind(format!("{manager:#x}"))
         .bind(format!("{:#x}", credit.credit_hash())).bind(amount).bind(signature).bind(now).bind(expires).execute(&mut *conn).await?;
     let (key, notification) = goal_completed_notification(
         address,

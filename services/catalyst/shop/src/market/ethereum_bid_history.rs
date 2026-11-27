@@ -20,6 +20,7 @@ use anyhow::Context;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 
+use super::casts;
 use super::chain_walk::{self, ChainNet, LogGroup, LogSource, Owner};
 use super::{ethereum_sales, sales_index};
 use crate::chain_index::rpc::BlockHeader;
@@ -123,18 +124,18 @@ async fn read_window(
 ) -> anyhow::Result<(BlockHeader, BlockHeader, Vec<sales_index::SaleEvent>, usize)> {
     let chain = source.chain_id().await?;
     anyhow::ensure!(
-        chain.value == ChainNet::Ethereum.chain_id() as u64,
+        chain.value == ChainNet::Ethereum.chain_id_u64(),
         "the bid history repair reads Ethereum mainnet"
     );
     let before = source.header(block).await?;
     anyhow::ensure!(before.value.hash == hash, "bid history checkpoint diverged");
-    let lower = source.header(position as u64).await?;
+    let lower = source.header(casts::to_u64(position)?).await?;
     anyhow::ensure!(
         position_hash.is_none_or(|h| h == lower.value.hash),
         "bid history predecessor changed"
     );
     let upper = source.header(to).await?;
-    let from = position as u64 + 1;
+    let from = casts::to_u64(position)? + 1;
     let group = [LogGroup {
         addresses: vec![ethereum_sales::ERC721_BID.into()],
         topics: json!([[
@@ -156,7 +157,7 @@ async fn read_window(
         .chunk_by(|a, b| chain_walk::log_position(a).0 == chain_walk::log_position(b).0)
         .enumerate()
     {
-        let number = chain_walk::log_position(&logs[0]).0 as u64;
+        let number = casts::to_u64(chain_walk::log_position(&logs[0]).0)?;
         if i == remaining {
             reached_block = number - 1;
             break;
@@ -187,7 +188,7 @@ async fn read_window(
         Some(source.header(to).await?)
     };
     let end = upper_after.as_ref().unwrap_or(&reached);
-    let lower_after = source.header(position as u64).await?;
+    let lower_after = source.header(casts::to_u64(position)?).await?;
     anyhow::ensure!(
         lower.value == lower_after.value && upper.value == end.value,
         "bid history window bounds changed"
@@ -265,12 +266,12 @@ pub(super) async fn step(
     .bind(rewinds)
     .fetch_one(pool)
     .await?;
-    let to = (ceiling as u64).min((position as u64).saturating_add(window_blocks));
+    let to = casts::to_u64(ceiling)?.min(casts::to_u64(position)?.saturating_add(window_blocks));
     let (lower, end, rows, requests) = tokio::time::timeout(
         Duration::from_secs(30),
         read_window(
             source,
-            (block as u64, &hash),
+            (casts::to_u64(block)?, &hash),
             (position, position_hash.as_deref()),
             to,
             remaining,
@@ -305,7 +306,7 @@ pub(super) async fn step(
     )
     .bind(position)
     .bind(&lower.hash)
-    .bind(end.number as i64)
+    .bind(casts::to_i64(end.number)?)
     .bind(&end.hash)
     .fetch_one(&mut *tx)
     .await?;
@@ -320,7 +321,7 @@ pub(super) async fn step(
     .bind(WORKER)
     .bind(position)
     .bind(ceiling)
-    .bind(end.number as i64)
+    .bind(casts::to_i64(end.number)?)
     .bind(&end.hash)
     .bind(rewinds)
     .execute(&mut *tx)
@@ -330,7 +331,7 @@ pub(super) async fn step(
         "bid history repair range changed"
     );
     sales_index::insert_events(&mut tx, ChainNet::Ethereum, &rows).await?;
-    if end.number as i64 == ceiling {
+    if u64::try_from(ceiling).ok() == Some(end.number) {
         // The forward folds never saw the repaired creations (they sit below
         // their `since`): every Ethereum bid is folded again from its whole
         // history before the marker reads complete.

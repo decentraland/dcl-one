@@ -88,7 +88,7 @@ impl WertPolicy {
     ) -> anyhow::Result<Self> {
         let mut contracts = HashSet::new();
         for (chain, _) in NETWORKS {
-            for marketplace in listings::offchain_marketplaces(chain.0 as i64) {
+            for marketplace in listings::offchain_marketplaces(i64::try_from(chain.0)?) {
                 contracts.insert((
                     chain,
                     EvmAddress::parse(marketplace.address)?,

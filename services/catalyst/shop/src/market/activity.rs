@@ -94,10 +94,10 @@ where
     // One page at a time: a leg read from the shop's indexes holds a pooled
     // read snapshot per page, and a page that comes back short ends the leg.
     let mut out = Vec::new();
-    for skip in (0..INTERNAL_FETCH_CAP).step_by(READER_MAX_FIRST as usize) {
+    for skip in (0..INTERNAL_FETCH_CAP).step_by(crate::market::casts::page(READER_MAX_FIRST)) {
         match fetch(skip).await {
             Ok((rows, _)) => {
-                let short = (rows.len() as i64) < READER_MAX_FIRST;
+                let short = crate::market::casts::len_i64(rows.len()) < READER_MAX_FIRST;
                 out.extend(rows);
                 if short {
                     break;
@@ -256,12 +256,12 @@ pub async fn user_activity(
     events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
     let mut seen = HashSet::new();
     events.retain(|e| seen.insert(dedup_key(e)));
-    let total = events.len() as i64;
+    let total = crate::market::casts::len_i64(events.len());
     (
         events
             .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
+            .skip(crate::market::casts::page(offset))
+            .take(crate::market::casts::page(limit))
             .collect(),
         total,
         unavailable,
@@ -477,6 +477,14 @@ fn trade_to_event(t: &Trade) -> ActivityEvent {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use crate::market::wire::{ChainId, Network};
     use axum::http::StatusCode;

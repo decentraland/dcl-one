@@ -200,7 +200,7 @@ pub fn unsubscribe_url(shop_base_url: &str, contract: &str, item_id: &str) -> St
 
 /// The wait after the `attempts`-th failure: 30 s, 60 s, 120 s ... capped at an hour.
 pub fn backoff(attempts: i32) -> Duration {
-    let factor = 1u32 << attempts.clamp(1, 16).saturating_sub(1) as u32;
+    let factor = 1u32 << u32::try_from(attempts.clamp(1, 16).saturating_sub(1)).unwrap_or(0);
     BACKOFF_BASE.saturating_mul(factor).min(BACKOFF_MAX)
 }
 

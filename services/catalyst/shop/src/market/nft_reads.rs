@@ -864,11 +864,11 @@ fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
         wheres.push("c.emote_outcome_type IS NULL".into());
     }
     if let Some(mn) = f.min_estate_size {
-        let p = b.bind_i64(mn as i64);
+        let p = b.bind_i64(super::casts::saturating_i64(mn));
         wheres.push(format!("(c.category <> 'estate' OR c.estate_size >= {p})"));
     }
     if let Some(mx) = f.max_estate_size {
-        let p = b.bind_i64(mx as i64);
+        let p = b.bind_i64(super::casts::saturating_i64(mx));
         wheres.push(format!("(c.category <> 'estate' OR c.estate_size <= {p})"));
     }
     if matches!(f.category, Some(NftCategory::Estate))
@@ -879,11 +879,11 @@ fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
         wheres.push("(c.category <> 'estate' OR c.estate_size > 0)".into());
     }
     if let Some(mn) = f.min_distance_to_plaza {
-        let p = b.bind_i64(mn as i64);
+        let p = b.bind_i64(super::casts::saturating_i64(mn));
         wheres.push(format!("c.distance_to_plaza >= {p}"));
     }
     if let Some(mx) = f.max_distance_to_plaza {
-        let p = b.bind_i64(mx as i64);
+        let p = b.bind_i64(super::casts::saturating_i64(mx));
         wheres.push(format!("c.distance_to_plaza <= {p}"));
     }
     if f.adjacent_to_road {
@@ -1359,9 +1359,10 @@ fn row_to_result(
     catalogue: Catalogue,
 ) -> NftResult {
     let network = network_of(&r.get::<String, _>("network"));
-    let chain_id =
-        super::wire::ChainId::try_from(catalogue.chain_id(network.graph().into()) as u64)
-            .expect("supported NFT catalogue chain");
+    let chain_id = super::wire::ChainId::try_from(
+        super::casts::to_u64(catalogue.chain_id(network.graph().into())).unwrap_or(0),
+    )
+    .expect("supported NFT catalogue chain");
     let category: String = r.get("category");
     let contract: String = r.get("contract_address");
     let token_id: String = r.get("token_text");
