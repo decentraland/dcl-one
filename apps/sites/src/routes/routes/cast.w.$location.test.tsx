@@ -69,6 +69,28 @@ describe("world watcher route", () => {
     expect(vi.mocked(LiveCastWatch).mock.calls[0][0].scenes).toBeUndefined();
   });
 
+  it("renders the explicit parcel child through the world route without a scene lookup", async () => {
+    const handler = createStaticHandler([{
+      path: "/cast/w/:location",
+      Component: CastWatchPage as ComponentType,
+      loader: (args) => loader(args as never),
+      children: [{
+        path: "parcel/:parcel",
+        Component: CastWatchParcelPage as ComponentType,
+        loader: (args) => parcelLoader(args as never),
+      }],
+    }]);
+    const context = await handler.query(new Request(`https://sites.test/cast/w/${WORLD}/parcel/4,2`), {
+      requestContext: new RouterContextProvider(),
+    });
+    if (context instanceof Response) throw new Error(`Unexpected response: ${context.status}`);
+    renderToString(<StaticRouterProvider context={context} router={createStaticRouter(handler.dataRoutes, context)} hydrate={false} />);
+    expect(vi.mocked(LiveCastWatch).mock.calls.map(([props]) => props)).toEqual([
+      expect.objectContaining({ location: WORLD, parcel: "4,2" }),
+    ]);
+    expect(loadWorldScenes).not.toHaveBeenCalled();
+  });
+
   it("falls back to no scenes when the lookup fails", async () => {
     vi.mocked(loadWorldScenes).mockResolvedValue(null);
     expect((await loader(args(WORLD) as never)).data.scenes).toBeNull();

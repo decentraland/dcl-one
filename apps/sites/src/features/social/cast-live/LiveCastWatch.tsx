@@ -36,7 +36,7 @@ export function watchRefusal(err: unknown): WatchRefusal {
       message: "The stream link for this place has expired.",
     };
   }
-  if (status === 403) {
+  if (status === 403 || (status === 401 && server === "Access denied, you are not authorized to access this world")) {
     return { kind: "error", title: "You can't watch this Cast", message: server ?? "Access denied." };
   }
   return {

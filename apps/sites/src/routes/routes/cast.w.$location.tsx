@@ -1,3 +1,5 @@
+import { Outlet } from "react-router";
+
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
@@ -20,7 +22,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { sid, assignment, wrap } = await pageLoader(request, context, DEFAULT_ASSIGNMENT);
   const location = params.location.trim();
   let scenes: WorldScene[] | null = null;
-  if (isWorldLocation(location)) {
+  if (!params.parcel && isWorldLocation(location)) {
     const deadline = AbortSignal.timeout(3000);
     try {
       scenes = await loadWorldScenes(location, {
@@ -37,7 +39,8 @@ export function meta() {
   return [{ title: "Decentraland Cast" }, { name: "robots", content: "noindex" }];
 }
 
-export default function CastWatchPage({ loaderData }: Route.ComponentProps) {
+export default function CastWatchPage({ loaderData, params }: Route.ComponentProps) {
+  if (params.parcel) return <Outlet />;
   const { sid, assignment, location, scenes } = loaderData;
   return (
     <main className="cast-watch-route">
