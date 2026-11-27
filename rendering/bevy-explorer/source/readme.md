@@ -307,6 +307,15 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
+- Frames: `/screenshot` alone replies the frame as raw base64 PNG at full size; with
+  `--max-width N` (64 to 1920), `--jpg` or `--world-only` (no HUD or scene window UI) it replies
+  JSON with the base64 `image` and a `caption` naming the size, the `screen` and frame it was
+  scaled from, the parcel and any wait for a camera transition. `/screenshot --count N
+  [--interval-seconds S] [--max-width N] [--jpg] [--world-only] [--dir <path>]` captures frames
+  at a true interval and replies their paths, scene ticks and `late` frames, never images: files
+  natively, memory on the web (`/screenshot --frame <path>` reads one). Both wait for a camera
+  transition and refuse while another capture runs, naming it; `/screenshot --state` reads that
+  gate.
 - Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
   social service, as the passport does.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`,

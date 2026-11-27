@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
 use super::chain_walk::{topic_address, topic_u256};
 use super::nft_index::{self, DecodeError};
@@ -156,7 +157,7 @@ pub struct SaleEvent {
 
 fn seconds(v: U256) -> i64 {
     let v: u128 = v.try_into().unwrap_or(u128::MAX);
-    v.min(i64::MAX as u128) as i64
+    i64::try_from(v).unwrap_or(i64::MAX)
 }
 
 /// One log as a row; `Ok(None)` for a topic this index does not model and
@@ -172,7 +173,8 @@ fn decode_sale(
 ) -> Result<Option<SaleEvent>, DecodeError> {
     let store = index.polygon.map(|venues| venues.store);
     let (block, index) = chain_walk::log_position(log);
-    let index = index as i32;
+    // A missing index (`log_position`'s `i64::MAX`) reads -1.
+    let index = i32::try_from(index).unwrap_or(-1);
     let err = |what: &'static str, why: String| DecodeError {
         block,
         index,
@@ -299,7 +301,8 @@ pub(super) fn bought_at(
     let (block, index) = chain_walk::log_position(log);
     let err = |why: String| DecodeError {
         block,
-        index: index as i32,
+        // A missing index (`log_position`'s `i64::MAX`) reads -1.
+        index: i32::try_from(index).unwrap_or(-1),
         what: "Bought",
         why,
     };
@@ -387,7 +390,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.fingerprint.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
-        written += r.rows_affected() as usize;
+        written += r.rows_usize();
     }
     Ok(written)
 }
@@ -589,7 +592,7 @@ impl ChainIndex for SalesIndex {
             )
             .bind(self.net().db_name())
             .bind(bound)
-            .bind(self.chain as i32)
+            .bind(casts::to_i32(self.chain)?)
             .bind(self.chain == ChainNet::Matic.chain_id())
             .fetch_all(&mut *tx)
             .await?;

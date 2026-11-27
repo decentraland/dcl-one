@@ -31,6 +31,14 @@ pub(super) fn index_read_error(e: sqlx::Error) -> Response {
     }
 }
 
+/// Adapt an indexed query that also returns marketplace parameter or internal errors.
+pub(super) fn index_api_error(error: super::wire::ApiError) -> Response {
+    match error {
+        super::wire::ApiError::Database(e) => index_read_error(e),
+        e => e.into_response(),
+    }
+}
+
 pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
     match e {
         super::owned_items::ReadError::Db(e) => index_read_error(e),
@@ -758,7 +766,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         if n < first {
             exhausted = true;
@@ -766,22 +774,23 @@ async fn read_top(
         }
         skip += first;
     }
-    while !exhausted && (out.len() as i64) < want {
+    while !exhausted && super::casts::len_i64(out.len()) < want {
         let Some(cursor) = out.last().and_then(|r| r.get(p.order_by)).cloned() else {
             return Err(format!("a keyset page needs `{}` in every row", p.order_by));
         };
-        let ties = out
-            .iter()
-            .rev()
-            .take_while(|r| r.get(p.order_by) == Some(&cursor))
-            .count() as i64;
+        let ties = super::casts::len_i64(
+            out.iter()
+                .rev()
+                .take_while(|r| r.get(p.order_by) == Some(&cursor))
+                .count(),
+        );
         if ties > GRAPH_MAX_SKIP {
             return Err(format!(
                 "more than {GRAPH_MAX_SKIP} rows share one `{}`",
                 p.order_by
             ));
         }
-        let first = (want - out.len() as i64).min(size);
+        let first = (want - super::casts::len_i64(out.len())).min(size);
         let where_ = keyset_where(&p.where_, p.order_by, p.direction, &cursor);
         let got = page(
             state,
@@ -796,7 +805,7 @@ async fn read_top(
             },
         )
         .await?;
-        let n = got.len() as i64;
+        let n = super::casts::len_i64(got.len());
         out.extend(got);
         exhausted = n < first;
     }
@@ -924,7 +933,7 @@ pub async fn count_to(
             )
             .await?;
             let ids = rows(&data, entity);
-            let n = ids.len() as i64;
+            let n = super::casts::len_i64(ids.len());
             total += n;
             last_id = ids.last().map(|r| str_of(r, "id"));
             if n < page_size {

@@ -16,6 +16,12 @@ For mainnet with a chain-bound RPC, prove a block at the usual confirmation
 depth below the lower of the graph and RPC heads. Keep serving the last
 completed copy while proof is unavailable.
 
+The proof reads that block's hash from the RPC and asks the graph for the
+block by that hash. graph-node answers a `_meta` pinned by block number with
+a null hash, so the graph cannot supply the hash itself. A graph that holds
+no block with that hash, or holds it at another height, is a hash
+disagreement.
+
 Limit failed-pass retry delays to five minutes. Once RPC failures have
 persisted for ten minutes, let the next pass refresh from the configured
 graph without a pin. The next new pass attempts proof again. At the default

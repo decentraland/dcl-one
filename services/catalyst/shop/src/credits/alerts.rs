@@ -23,6 +23,8 @@
 //!   chargeback clawing it back, or matching no paid purchase yet (the Stripe
 //!   webhook's transaction); an item purchase settled on chain (the
 //!   settlement's transaction).
+//! - **The daily summary** (`daily_summary.rs`): one row per closed UTC day,
+//!   queued by its own job the morning after.
 //!
 //! A row is unique per (kind, key), so detecting the same case again adds
 //! nothing. The job claims due rows for a lease, posts each (no redirect
@@ -119,7 +121,17 @@ pub(crate) async fn record(
     dedupe_key: &str,
     payload: Value,
 ) -> sqlx::Result<()> {
-    sqlx::query(
+    queue(conn, kind, dedupe_key, payload).await.map(drop)
+}
+
+/// [`record`], and whether it added the row.
+pub(crate) async fn queue(
+    conn: &mut PgConnection,
+    kind: &str,
+    dedupe_key: &str,
+    payload: Value,
+) -> sqlx::Result<bool> {
+    let added = sqlx::query(
         "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
          VALUES ($1, $2, $3, $4, $4) ON CONFLICT (kind, dedupe_key) DO NOTHING",
     )
@@ -129,7 +141,7 @@ pub(crate) async fn record(
     .bind(now())
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(added.rows_affected() == 1)
 }
 
 /// Queues [`CAP_NEAR_LIMIT`] for `salt` in the caller's transaction when its
@@ -587,7 +599,7 @@ impl Delivery {
 
 /// The retry wait after `attempts` failed posts.
 fn backoff(attempts: i32) -> chrono::Duration {
-    let doublings = attempts.saturating_sub(1).clamp(0, 16) as u32;
+    let doublings = u32::try_from(attempts.saturating_sub(1).clamp(0, 16)).unwrap_or(0);
     BACKOFF
         .checked_mul(1 << doublings)
         .map_or(MAX_BACKOFF, |wait| wait.min(MAX_BACKOFF))
@@ -619,7 +631,7 @@ async fn retry(
     .bind(lease_until)
     .execute(&credits.pool)
     .await?;
-    Ok(result.rows_affected() as usize)
+    Ok(usize::try_from(result.rows_affected()).unwrap_or(usize::MAX))
 }
 
 /// Ends this pass's expired hold and refunds the unposted claim.
@@ -730,6 +742,7 @@ pub(crate) fn render(kind: &str, payload: &Value, shop: &str) -> String {
             text("paymentIntent").replace('`', "'"),
         ),
         PURCHASE_SETTLED => settled_message(&[payload], shop),
+        super::daily_summary::DAILY_SUMMARY => super::daily_summary::message(payload),
         other => format!("Credits alert {other}: {payload}"),
     }
 }
@@ -743,7 +756,7 @@ fn pack_credited(payload: &Value) -> String {
     let credits = whole_credits(raw);
     let cents = payload["chargedCents"].as_i64().unwrap_or(0);
     let quantity = payload["quantity"].as_i64().unwrap_or(1);
-    let fee = round_div(cents * STRIPE_FEE_PER_MILLE, 1000) + STRIPE_FEE_FIXED_CENTS;
+    let fee = stripe_fee_cents(cents, 1);
     let spread = match credits {
         Some(credits) if cents > 0 => {
             let spread = cents - credits * 10 - fee;
@@ -805,7 +818,7 @@ fn settled_message(payloads: &[&Value], shop: &str) -> String {
         plural(items, "item"),
         grouped(credits_of(cents)),
         usd(cents),
-        plural(buyers as i64, "buyer"),
+        plural(i64::try_from(buyers).unwrap_or(i64::MAX), "buyer"),
     );
     for payload in payloads {
         text.push_str("\n      • ");
@@ -836,8 +849,10 @@ fn settled_line(payload: &Value, shop: &str) -> String {
     // the items only when every line carries one.
     let bought = match payload["registeredName"].as_str() {
         Some(name) if lines == 1 => format!("NAME @{}", slack_label(name)),
-        _ if items.len() as i64 == lines && lines == 1 => items_list(&items, shop),
-        _ if items.len() as i64 == lines => format!("{count}: {}", items_list(&items, shop)),
+        _ if i64::try_from(items.len()) == Ok(lines) && lines == 1 => items_list(&items, shop),
+        _ if i64::try_from(items.len()) == Ok(lines) => {
+            format!("{count}: {}", items_list(&items, shop))
+        }
         _ => count,
     };
     let cents = payload["usdCents"].as_i64().unwrap_or(0);
@@ -970,18 +985,24 @@ fn credits_text(text: &str) -> String {
     }
 }
 
+/// Stripe's estimated fee on `payments` card payments charging `cents` in
+/// all.
+pub(super) fn stripe_fee_cents(cents: i64, payments: i64) -> i64 {
+    round_div(cents * STRIPE_FEE_PER_MILLE, 1000) + STRIPE_FEE_FIXED_CENTS * payments
+}
+
 /// `n / d` rounded half away from zero; 0 for a zero `d`.
-fn round_div(n: i64, d: i64) -> i64 {
+pub(super) fn round_div(n: i64, d: i64) -> i64 {
     if d == 0 {
         return 0;
     }
     let q = (2 * n.unsigned_abs() + d.unsigned_abs()) / (2 * d.unsigned_abs());
-    let q = q as i64;
+    let q = i64::try_from(q).unwrap_or(i64::MAX);
     if (n < 0) != (d < 0) { -q } else { q }
 }
 
 /// Tenths as a one-decimal number.
-fn tenths(tenths: i64) -> String {
+pub(super) fn tenths(tenths: i64) -> String {
     let sign = if tenths < 0 { "-" } else { "" };
     let abs = tenths.unsigned_abs();
     format!("{sign}{}.{}", abs / 10, abs % 10)
@@ -1004,12 +1025,12 @@ pub(super) fn grouped(n: i64) -> String {
 pub(super) fn usd(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.unsigned_abs();
-    format!("{sign}${}.{:02}", grouped((abs / 100) as i64), abs % 100)
+    format!("{sign}${}.{:02}", grouped((cents / 100).abs()), abs % 100)
 }
 
 /// 18-decimal MANA to at most four decimals, truncated: a settlement figure
 /// is never rounded up.
-fn mana(wei: &str) -> String {
+pub(super) fn mana(wei: &str) -> String {
     let Ok(wei) = U256::from_str(wei) else {
         return "an unknown amount of".to_string();
     };
@@ -1104,6 +1125,13 @@ pub fn spawn(jobs: &Jobs, credits: Credits, delivery: Delivery, writes_enabled: 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod unit_tests {
     use super::*;
 

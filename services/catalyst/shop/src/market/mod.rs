@@ -68,6 +68,7 @@ pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
 mod cancelled_trades;
+pub(crate) mod casts;
 pub mod catalog;
 pub mod catalogue;
 pub mod chain_group;
@@ -531,7 +532,9 @@ impl Settings {
 
     /// The catalogue pair selected by the validated chain settings.
     pub fn catalogue(&self) -> nft_index::Catalogue {
-        if self.market.indexes.chain_id_ethereum == crate::types::ChainId::SEPOLIA.0 as i64 {
+        if u64::try_from(self.market.indexes.chain_id_ethereum).ok()
+            == Some(crate::types::ChainId::SEPOLIA.0)
+        {
             nft_index::Catalogue::Testnet
         } else {
             nft_index::Catalogue::Mainnet
@@ -975,11 +978,12 @@ impl MarketplaceState {
         if crate::shared::network::ChainPair::from_eth_network(&self.settings.eth_network)
             != Some(crate::shared::network::ChainPair::Mainnet)
         {
+            let chain_id = i64::try_from(chain_id).ok()?;
             return self
                 .settings
                 .market
                 .trade_rpc_urls
-                .for_chain(chain_id as i64)
+                .for_chain(chain_id)
                 .map(str::to_string);
         }
         self.chain_rpc_url(net)
@@ -1054,7 +1058,7 @@ pub(crate) async fn ensure_chain(
     source: &dyn chain_walk::LogSource,
     expected: i64,
 ) -> anyhow::Result<()> {
-    let served = source.chain_id().await?.value as i64;
+    let served = casts::to_i64(source.chain_id().await?.value)?;
     if served != expected {
         return Err(chain_walk::WrongChain { served, expected }.into());
     }

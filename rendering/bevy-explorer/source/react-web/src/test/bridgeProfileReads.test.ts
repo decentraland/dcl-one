@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   resolveEquippedSet: vi.fn().mockResolvedValue([]),
   resolveEquippedEmotes: vi.fn().mockResolvedValue([]),
   getUserProfile: vi.fn<(address: string) => Promise<unknown>>(),
+  getOfficialWallets: undefined as (() => Promise<string[]>) | undefined,
   getJson: vi.fn<(url: string) => Promise<unknown>>()
 }))
 
@@ -40,6 +41,7 @@ beforeEach(() => {
   api.getUserProfile.mockReset().mockResolvedValue({ name: 'Tester', version: 3 })
   api.getJson.mockReset()
   api.getPlayer.mockReset().mockReturnValue(null)
+  api.getOfficialWallets = undefined
 })
 
 describe('bridge profile reads', () => {
@@ -62,6 +64,16 @@ describe('bridge profile reads', () => {
       { kind: 'userProfile', address: '0xabc', requestId: 17, profile: { badges: [{ id: 'badge' }] } },
       { kind: 'userProfile', address: '0xabc', requestId: 17, profile: { badges: [{ id: 'badge', tiers: [{ id: 'tier' }] }] } }
     ])
+  })
+
+  it("marks an official wallet on the passport's profile, and none on an engine without the read", async () => {
+    const passport = async (): Promise<unknown> =>
+      (await read({ kind: 'getUserProfile', address: '0xABC', requestId: 5, extras: true }))[0]
+    expect(await passport()).toMatchObject({ profile: { official: false } })
+    api.getOfficialWallets = vi.fn(async () => ['0xabc'])
+    expect(await passport()).toMatchObject({ profile: { official: true } })
+    api.getOfficialWallets = vi.fn(async () => ['0xdef'])
+    expect(await passport()).toMatchObject({ profile: { official: false } })
   })
 
   it('echoes the request ID even if a profile is unavailable', async () => {

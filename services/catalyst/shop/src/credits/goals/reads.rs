@@ -244,7 +244,7 @@ async fn read_credits(
         items,
         wire_number(&total.to_string())?,
         expiry
-            .map(|t| (t - now).num_seconds().max(0) as u64)
+            .map(|t| u64::try_from((t - now).num_seconds()).unwrap_or(0))
             .unwrap_or(0),
     ))
 }
@@ -358,8 +358,9 @@ pub(super) async fn progress_at(
                 reward: mana_number(&row.get::<String, _>("reward"))?,
                 is_claimed: row.get::<Option<NaiveDateTime>, _>("claimed_at").is_some(),
                 progress: GoalProgressData {
-                    total_steps: row.get::<i32, _>("total_steps") as u64,
-                    completed_steps: row.get::<i32, _>("completed_steps") as u64,
+                    total_steps: u64::try_from(row.get::<i32, _>("total_steps")).unwrap_or(0),
+                    completed_steps: u64::try_from(row.get::<i32, _>("completed_steps"))
+                        .unwrap_or(0),
                     metadata,
                 },
             });
@@ -411,6 +412,14 @@ pub(super) async fn progress_at(
     })
 }
 
+/// Whole weeks in `secs`, rounded up.
+fn ceil_weeks(secs: i64) -> i32 {
+    const WEEK: i64 = 604_800;
+    let weeks = secs.div_euclid(WEEK) + i64::from(secs.rem_euclid(WEEK) != 0);
+    // chrono's date range spans under 2^31 weeks.
+    i32::try_from(weeks).unwrap_or(i32::MAX)
+}
+
 pub async fn season_document(state: &SharedState) -> Result<SeasonsData, ApiError> {
     let is_paused = paused(state).await;
     let now = super::super::store::now();
@@ -431,8 +440,7 @@ pub async fn season_document(state: &SharedState) -> Result<SeasonsData, ApiErro
             end_date: iso(s.end_date),
             max_mana: s.max_mana_wei.clone(),
             time_left: (s.end_date - now).num_seconds().max(0),
-            amount_of_weeks: ((s.end_date - s.start_date).num_seconds() as f64 / 604800.0).ceil()
-                as i32,
+            amount_of_weeks: ceil_weeks((s.end_date - s.start_date).num_seconds()),
             state: if active {
                 if is_paused {
                     "ERR_PROGRAM_PAUSED".into()
@@ -448,10 +456,10 @@ pub async fn season_document(state: &SharedState) -> Result<SeasonsData, ApiErro
                 season: wire,
                 week: Week {
                     week_number: number,
-                    time_left: (end - now).num_seconds().max(0) as u64,
+                    time_left: u64::try_from((end - now).num_seconds()).unwrap_or(0),
                     start_date: iso(start),
                     end_date: iso(end),
-                    seconds_remaining: (end - now).num_seconds().max(0) as u64,
+                    seconds_remaining: u64::try_from((end - now).num_seconds()).unwrap_or(0),
                 },
             });
         } else {

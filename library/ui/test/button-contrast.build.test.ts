@@ -104,6 +104,20 @@ async function pointer(type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', m:
 function contrast(m: Metrics) {
   return colorContrast(m.color, m.background)
 }
+/** The ring's contrast with the host: the pixels 2px and 4px outside the box against the host 8px out. */
+async function focusRingContrast(focused: Metrics) {
+  const png = (await browser.session.send('Page.captureScreenshot', { format: 'png' })) as {
+    data: string
+  }
+  const pixels = await browser.evaluate<number[][]>(
+    `(async()=>{const image=new Image();image.src='data:image/png;base64,${png.data}';await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return[${Math.floor(focused.x - 2)},${Math.floor(focused.x - 4)},${Math.floor(focused.x - 8)}].map(x=>Array.from(ctx.getImageData(x,${Math.floor(focused.y + focused.height / 2)},1,1).data))})()`
+  )
+  const rgb = (pixel: number[]) => 'rgb(' + pixel.slice(0, 3).join(',') + ')'
+  return Math.max(
+    colorContrast(rgb(pixels[0]!), rgb(pixels[2]!)),
+    colorContrast(rgb(pixels[1]!), rgb(pixels[2]!))
+  )
+}
 afterEach(async () => {
   if (browser.session) {
     try {
@@ -231,19 +245,7 @@ describe('when the shared primary button preserves its design foreground', () =>
       const focused = await metrics()
       expect(focused.focused).toBe(true)
       expect([focused.width, focused.height]).toEqual([before.width, before.height])
-      const png = (await browser.session.send('Page.captureScreenshot', { format: 'png' })) as {
-        data: string
-      }
-      const pixels = await browser.evaluate<number[][]>(
-        `(async()=>{const image=new Image();image.src='data:image/png;base64,${png.data}';await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return[${Math.floor(focused.x - 2)},${Math.floor(focused.x - 4)},${Math.floor(focused.x - 8)}].map(x=>Array.from(ctx.getImageData(x,${Math.floor(focused.y + focused.height / 2)},1,1).data))})()`
-      )
-      const rgb = (pixel: number[]) => 'rgb(' + pixel.slice(0, 3).join(',') + ')'
-      expect(
-        Math.max(
-          colorContrast(rgb(pixels[0]!), rgb(pixels[2]!)),
-          colorContrast(rgb(pixels[1]!), rgb(pixels[2]!))
-        )
-      ).toBeGreaterThanOrEqual(3)
+      expect(await focusRingContrast(focused)).toBeGreaterThanOrEqual(3)
       expect(focused.color).toBe('rgb(255, 255, 255)')
       await key('Enter')
       expect(await actionCount()).toBe('1')
@@ -296,6 +298,25 @@ describe('when the primary design foreground shares the native Button root', () 
     await ready('?variant=' + variant)
     expect((await metrics()).color).toBe(color)
   })
+  it.each(['dark', 'light'])(
+    'should draw a keyboard focus ring on the inverse fill that reads on the %s host',
+    async (theme) => {
+      await ready('?variant=inverse&theme=' + theme)
+      const before = await metrics()
+      await key('Tab')
+      await key('Tab')
+      const focused = await metrics()
+      expect(focused.focused).toBe(true)
+      expect([focused.width, focused.height]).toEqual([before.width, before.height])
+      expect([focused.outlineColor, focused.outlineOffset, focused.shadow]).toEqual([
+        'rgb(255, 255, 255)',
+        '3px',
+        'rgb(0, 0, 0) 0px 0px 0px 3px'
+      ])
+      expect(await focusRingContrast(focused)).toBeGreaterThanOrEqual(3)
+      expect(focused.color).toBe('rgb(37, 33, 42)')
+    }
+  )
   it('should preserve the transparent icon-only foreground instead of applying filled-primary text paint', async () => {
     await ready('?compact')
     const m = await metrics()

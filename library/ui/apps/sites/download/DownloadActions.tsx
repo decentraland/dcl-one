@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { GeneralApple, GeneralWindows } from '../../../foundations/icons'
 import appStoreBadge from '../assets/download-on-the-app-store.svg'
 import epicIcon from '../assets/epic_icon.svg'
@@ -23,7 +23,7 @@ type DownloadAlternative = {
 } & ({ href: string; external?: boolean } | { href?: undefined; external?: undefined })
 
 type DownloadActionsProps = {
-  /** Opt into the measured landing CTA geometry without changing other download contexts. */
+  /** Opt into the landing layout (the reference's CTA widths and spacing) without changing other download contexts. */
   appearance?: DownloadAppearance
   /** The installer for the visitor's OS; absent when none can run there. Without `os` (a desktop
       the installers do not cover) the label keeps source's blank icon slot. */
@@ -40,17 +40,28 @@ type DownloadActionsProps = {
   align?: 'start' | 'center'
 }
 
-function OsIcon({ os, label, size = 32 }: { os: DesktopOs; label?: string; size?: number }) {
+function OsIcon({
+  os,
+  label,
+  size = 32,
+  className
+}: {
+  os: DesktopOs
+  label?: string
+  size?: number
+  className?: string
+}) {
   const a11y = label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true }
   return os === 'windows' ? (
-    <GeneralWindows size={size} {...a11y} />
+    <GeneralWindows size={size} className={className} {...a11y} />
   ) : (
-    <GeneralApple size={size} {...a11y} />
+    <GeneralApple size={size} className={className} {...a11y} />
   )
 }
 
 function AlternativeImage({ icon, source }: { icon: AlternativeIcon; source: boolean }) {
-  if (icon === 'windows' || icon === 'macos') return <OsIcon os={icon} size={source ? 24 : 32} />
+  if (icon === 'windows' || icon === 'macos')
+    return <OsIcon os={icon} size={source ? 24 : 32} className={styles.altMark} />
   return (
     <img
       className={source ? styles.sourceAltIcon : styles.altIcon}
@@ -74,7 +85,6 @@ function DownloadActions({
   const source = appearance === 'source'
   const hasAlternatives = groups.some((group) => group.length > 0)
   const actionClass = source ? styles.sourceAction : undefined
-  const alternativeClass = source ? styles.sourceAlternative : undefined
   const row = (base?: string) => [base, centered && styles.centeredRow].filter(Boolean).join(' ')
   return (
     <div className={centered ? `${styles.root} ${styles.centered}` : styles.root}>
@@ -86,29 +96,34 @@ function DownloadActions({
         >
           {primary ? (
             <Button className={actionClass} href={primary.href} onClick={primary.onClick}>
-              {/* The space keeps the accessible name "Download for Windows", not "forWindows". */}
-              {primary.label}{' '}
-              {primary.os ? (
-                <OsIcon os={primary.os} label={primary.osName} />
-              ) : (
-                <span className={styles.osSlot} aria-hidden="true" />
-              )}
+              {/* The OS mark names the platform, so it stays in the label rather than a decorative icon slot.
+                  The space keeps the accessible name "Download for Windows", not "forWindows". */}
+              <span className={styles.label}>
+                {primary.label}{' '}
+                {primary.os ? (
+                  <OsIcon os={primary.os} label={primary.osName} />
+                ) : (
+                  <span className={styles.osSlot} aria-hidden="true" />
+                )}
+              </span>
             </Button>
           ) : null}
           {epic ? (
             <Button
-              className={source ? `${styles.sourceAction} ${styles.sourceEpic}` : undefined}
+              className={actionClass}
               variant="inverse"
               href={epic.href}
               target="_blank"
               onClick={epic.onClick}
             >
-              {epic.label}{' '}
-              <img
-                className={source ? styles.sourceEpicIcon : styles.epic}
-                src={epicIcon}
-                alt={epic.iconLabel}
-              />
+              <span className={styles.label}>
+                {epic.label}{' '}
+                <img
+                  className={source ? styles.sourceEpicIcon : styles.epic}
+                  src={epicIcon}
+                  alt={epic.iconLabel}
+                />
+              </span>
             </Button>
           ) : null}
         </div>
@@ -140,8 +155,8 @@ function DownloadActions({
                 <li key={alt.icon}>
                   {alt.href !== undefined ? (
                     <Button
-                      className={alternativeClass}
                       variant="iconOnly"
+                      size="sm"
                       aria-label={alt.label}
                       href={alt.href}
                       onClick={alt.onClick}
@@ -151,8 +166,8 @@ function DownloadActions({
                     </Button>
                   ) : (
                     <Button
-                      className={alternativeClass}
                       variant="iconOnly"
+                      size="sm"
                       aria-label={alt.label}
                       onClick={alt.onClick}
                     >

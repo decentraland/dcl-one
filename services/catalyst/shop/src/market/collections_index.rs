@@ -35,6 +35,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_COLLECTIONS, LogGroup, Owner};
 use crate::chain_index::rpc::{BlockHeader, Rpc, RpcLog};
 
@@ -214,6 +215,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
         block >= 0 && block != i64::MAX && (0..=i64::from(i32::MAX)).contains(&index),
         "collections log without a valid position"
     );
+    let index = i32::try_from(index).context("collections log without a valid position")?;
     let topics = log
         .topics
         .iter()
@@ -227,7 +229,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> anyhow::Result<Option<Collec
     let emitter = log.address.to_ascii_lowercase();
     let base = |kind: &'static str| CollectionEvent {
         block_number: block,
-        log_index: index as i32,
+        log_index: index,
         block_time,
         kind,
         contract_address: emitter.clone(),
@@ -415,7 +417,7 @@ pub async fn insert_events(
         .bind(col(|r| r.content_hash.clone()))
         .execute(&mut *conn)
         .await?
-        .rows_affected() as usize;
+        .rows_usize();
     }
     Ok(written)
 }
@@ -609,7 +611,7 @@ impl ChainIndex for CollectionsIndex {
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
             .bind(READS_LOCK)
-            .bind(ChainNet::Matic.chain_id() as i32)
+            .bind(ChainNet::Matic.chain_id_i32())
             .execute(&mut *conn)
             .await?;
         sqlx::query("DELETE FROM shop.collection_event WHERE network = $1 AND block_number > $2")
@@ -761,7 +763,7 @@ pub async fn eth_calls(
                     let Some(id) = answer.get("id").and_then(Value::as_u64) else {
                         continue;
                     };
-                    let id = id as usize;
+                    let id = casts::to_usize(id);
                     if (start..start + len).contains(&id) {
                         got[id - start] = Some(answer_of(answer));
                     }
@@ -877,7 +879,7 @@ pub async fn refresh_hints(
         )
         .bind(net.db_name())
         .bind(factory)
-        .bind(*final_size as i32)
+        .bind(casts::to_i32(*final_size)?)
         .fetch_all(pool)
         .await?
         .into_iter()
@@ -886,8 +888,10 @@ pub async fn refresh_hints(
         let mut indexes = Vec::new();
         let mut i = 0u32;
         while i < *final_size && indexes.len() < budget.min(holes) {
-            if !have.contains(&(i as i32)) {
-                indexes.push(i as i32);
+            // `final_size` fits an `integer`, so every index below it does.
+            let Ok(index) = i32::try_from(i) else { break };
+            if !have.contains(&index) {
+                indexes.push(index);
             }
             i += 1;
         }
@@ -899,7 +903,7 @@ pub async fn refresh_hints(
     for (factory, final_size, latest_size) in &lists {
         let indexes: Vec<i32> = (*final_size..*latest_size)
             .take(budget)
-            .map(|i| i as i32)
+            .map_while(|i| i32::try_from(i).ok())
             .collect();
         budget -= indexes.len();
         out.provisional_unread +=
@@ -917,7 +921,8 @@ pub async fn refresh_hints(
                 let calls: Vec<(String, Vec<u8>)> = chunk
                     .iter()
                     .map(|i| {
-                        let index = U256::from(*i as u32);
+                        // Indexes come from `u32` sizes, so they are non-negative.
+                        let index = U256::from(i.unsigned_abs());
                         (
                             factory.to_string(),
                             Factory::collectionsCall { index }.abi_encode(),
@@ -956,7 +961,7 @@ pub async fn refresh_hints(
                 let mut tx = pool.begin().await?;
                 sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
                     .bind(READS_LOCK)
-                    .bind(net.chain_id() as i32)
+                    .bind(net.chain_id_i32())
                     .execute(&mut *tx)
                     .await?;
                 anyhow::ensure!(
@@ -981,7 +986,7 @@ pub async fn refresh_hints(
                 .bind(finalized.then_some(final_hash.as_str()))
                 .execute(&mut *tx)
                 .await?
-                .rows_affected() as usize;
+                .rows_usize();
                 tx.commit().await?;
             }
         }
@@ -1067,7 +1072,7 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
     )
     .bind(net.db_name())
     .bind(walked)
-    .bind(SEEDS_PER_GATE as i64)
+    .bind(casts::len_i64(SEEDS_PER_GATE))
     .fetch_all(pool)
     .await?;
     if pending.is_empty() {
@@ -1140,7 +1145,7 @@ pub async fn write_seeds(
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
         .bind(READS_LOCK)
-        .bind(net.chain_id() as i32)
+        .bind(net.chain_id_i32())
         .execute(&mut *tx)
         .await?;
     if reads_token(&mut *tx, net).await? != token {
@@ -1174,7 +1179,7 @@ pub async fn write_seeds(
     .bind(read_hash)
     .execute(&mut *tx)
     .await?
-    .rows_affected() as usize;
+    .rows_usize();
     tx.commit().await?;
     Ok(written)
 }
@@ -1286,7 +1291,10 @@ pub async fn revalidate_reads(
         .flatten();
     let mut left = Vec::new();
     if !turn.is_empty() {
-        let ask: Vec<u64> = turn.iter().map(|h| *h as u64).collect();
+        let ask = turn
+            .iter()
+            .map(|h| casts::to_u64(*h))
+            .collect::<Result<Vec<u64>, _>>()?;
         let hashes = block_hashes(rpc, &ask).await?;
         let stored: Vec<(i64, String)> = sqlx::query_as(
             "SELECT DISTINCT read_block, read_hash FROM shop.collection_hint \
@@ -1298,13 +1306,15 @@ pub async fn revalidate_reads(
         .await?;
         left = stored
             .into_iter()
-            .filter(|(block, hash)| hashes.get(&(*block as u64)) != Some(hash))
+            .filter(|(block, hash)| {
+                u64::try_from(*block).ok().and_then(|b| hashes.get(&b)) != Some(hash)
+            })
             .collect();
     }
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
         .bind(READS_LOCK)
-        .bind(net.chain_id() as i32)
+        .bind(net.chain_id_i32())
         .execute(&mut *tx)
         .await?;
     if reads_token(&mut *tx, net).await? != token {
@@ -1376,7 +1386,7 @@ pub async fn revalidate_reads(
     .bind(net.db_name())
     .execute(&mut *tx)
     .await?
-    .rows_affected() as usize;
+    .rows_usize();
     sqlx::query(concat!(
         slots!(),
         "UPDATE shop.collection_hint h SET verified = true ",
@@ -1399,7 +1409,7 @@ pub async fn revalidate_reads(
     .bind(INDEXER_COLLECTIONS)
     .execute(&mut *tx)
     .await?
-    .rows_affected() as usize;
+    .rows_usize();
     for (block, hash) in &left {
         undone += sqlx::query(concat!(
             demote!(),
@@ -1411,7 +1421,7 @@ pub async fn revalidate_reads(
         .bind(hash)
         .execute(&mut *tx)
         .await?
-        .rows_affected() as usize;
+        .rows_usize();
     }
     sqlx::query(
         "INSERT INTO shop.collection_walk (network, epoch, checked_through) VALUES ($1, $2, $3) \
@@ -1490,6 +1500,14 @@ pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        reason = "test fixtures use small literal values"
+    )]
+
     use super::*;
     use alloy_primitives::LogData;
     use std::sync::Arc;

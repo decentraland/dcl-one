@@ -5,6 +5,14 @@
 //! LAND and name routes over the land and nft indexes, the contract lists,
 //! each before its source is ready (the unavailable envelope) and after.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
+
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, U256};

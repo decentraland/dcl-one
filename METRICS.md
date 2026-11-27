@@ -123,6 +123,29 @@ lookup from `trade_assets_erc721_token_idx` and sorted at most one matching
 trade per token in this fixture. The timestamp sort also leaves the
 `(signer, created_at DESC)` index order available to the planner.
 
+### Newest Ethereum NFT browse (2026-11-27)
+
+On PostgreSQL 17.6 on Apple Silicon, a synthetic fixture held 3.5M NFTs,
+102,000 items, 5,100 collections, 92,000 LAND and estate rights and 368,000
+LAND authorization events. The page and capped count for `first=24`
+were executed together from exact prepared SQL with forced generic plans
+over 20 warmed repetitions.
+
+| `/v1/nfts` | First before / after | p50 before / after | p95 before / after | Max before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Ethereum | 698 / 346 ms | 685 / 261 ms | 1,157 / 302 ms | 1,198 / 304 ms |
+| Polygon | 189 / 125 ms | 168 / 117 ms | 211 / 155 ms | 297 / 182 ms |
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` showed the Ethereum LAND page doing
+92,000 first-transfer lookups and joining token details before limiting.
+Newest unfiltered pages still rank by those first transfers and attach
+details only to the top LAND window. The unfiltered capped count reads
+NAMEs first and can reach the cap before visiting the collection and
+LAND legs. The paired pages and totals returned identical rows. Separate
+v3 order enrichment of the 24 Ethereum tokens took 0.2–0.8 ms. The
+eight Ethereum runs in a mixed four-client probe had a median of 362 ms
+and a maximum of 399 ms. These are local SQL timings.
+
 ## Ethereum collections-v1 first walk
 
 On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 HTTP requests in all: `eth_getLogs` plus the headers of each window's bracket and of the blocks holding logs. That run recorded only the total. A two-pass rerun over the same start counted the requests by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
@@ -142,6 +165,26 @@ collections and 1,000 items. The tables and indexes occupied 32 KiB and
 168 KiB. Publishing an unchanged full sweep took 0.56 ms for collections
 and 1.89 ms for items on the measured run. The publication leaves unchanged
 attribution rows in place and replaces the rows a completed sweep changes.
+
+## Unfiltered Marketplace order browse (2026-11-27)
+
+A local PostgreSQL 17.6 fixture on Apple Silicon held one million legacy
+orders, including 130,435 stored open and 10,032 unexpired open rows, and
+25,300 v3 trades with 5,060 active listings. Each repetition for
+`/v1/orders?first=24` ran the prepared legacy page, both per-network capped
+counts, and the v3 leg. With forced generic plans over 20 warmed
+repetitions, the median went from 787 to 119 ms, p95 from 1,973 to
+160 ms, and the maximum from 1,978 to 160 ms. The first execution before
+and after took 813 and 144 ms. Eight order runs in a mixed four-client
+probe had a median of 200 ms and a maximum of 228 ms.
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` showed the old v3 leg checking
+thousands of listings before sorting. The read now walks candidates in
+creation order and checks eligibility before applying the same cap.
+The legacy count probes the open-expiry index first and reads unexpired
+terminal orders to fill the rest of the cap. All four prepared statements
+returned identical rows and counts to the baseline. These are local SQL
+timings, with no schema or writer changes.
 
 ## Published sales reads
 
@@ -225,6 +268,92 @@ The published cursor hash matched the Sepolia header at 12,217,105
 (`0x3b4a18568ecdfb3989f148294617774906ae5db307118e560094b173b9f45e53`).
 Separate measurements depend on RPC range limits and latency.
 
+## Default Marketplace catalog reads (2026-11-27)
+
+The baseline is `de3fb2cd3`. A disposable PostgreSQL 17.6 database on
+Apple Silicon used 128 MiB shared buffers and 4 MiB work memory. The
+synthetic fixture held 3.5M NFTs, 102,000 items, 5,100 collections, and 1M
+legacy orders. Of 130,435 stored open orders, 10,032 were unexpired at the
+query clock.
+
+The table gives milliseconds for the prepared SQL, before and after,
+over 20 warmed repetitions with one client and forced generic plans.
+Every request has `first=24`. The first execution follows statement
+preparation, with buffers carried over from setup and earlier reads.
+
+| Read | First before / after | p50 before / after | p95 before / after | Max before / after |
+| --- | ---: | ---: | ---: | ---: |
+| Catalog, default | 4,594 / 1,442 | 1,994 / 718 | 2,393 / 1,211 | 2,433 / 1,457 |
+| Catalog, Polygon | 1,766 / 370 | 2,344 / 313 | 3,511 / 443 | 3,633 / 456 |
+| Catalog, Polygon wearables on sale | 2,038 / 216 | 1,533 / 201 | 1,956 / 245 | 2,346 / 254 |
+| Catalog, newest | 1,489 / 170 | 2,361 / 142 | 4,022 / 190 | 4,375 / 190 |
+
+`EXPLAIN (ANALYZE, BUFFERS, SETTINGS)` of custom and generic plans
+showed that the combined legacy aggregation could scan the NFT table and
+evaluate Ethereum wearable joins for Polygon orders. Each network now
+resolves its own item key and probes the NFT primary key. Ethereum
+resolves the wearable by URN once it knows the token. All four paired
+prepared statements returned identical rows and counts. The queries use
+existing indexes and add no storage or write work.
+
+These measurements cover SQL on the local fixture. End-to-end latency
+after deployment has yet to be measured.
+
+## Polygon catalogue resale ranking (2026-11-27)
+
+A synthetic PostgreSQL 17.6 fixture held about 12,000 Polygon items,
+5.28M Polygon NFTs, and 1.02M Polygon legacy orders. About 69,700 orders
+were live and 138,400 were expired with a stored open status. Live orders
+covered about 2,100 items, with about 1,050 orders at the 99th percentile
+of items with a live order. The database used 128 MiB shared buffers and
+4 MiB work memory.
+
+The prior Polygon first page hit the 10-second statement timeout. An
+execution with a 30-second bound took 10.57 s. It made about 69,700
+NFT primary-key lookups and 55,800 individual checks for transfers above
+the published fold. PostgreSQL attributed 9.64 s of shared read time to
+those lookups. The expiry index filtered the expired orders before the
+ownership probes.
+
+The catalogue sorts live book rows by contract and token before making
+the NFT lookups. It reads at most 1,025 events above the published NFT
+fold in one range scan and checks the transfer keys from that read. If a
+1,025th event exists, the query uses its per-token check. The empty-tail
+plan used one event range scan and zero per-token event scans.
+
+| Prepared Polygon page | Plan | p95 before / after |
+| --- | --- | ---: |
+| Default, first 24 | Custom | 2.66 s / 1.94 s |
+| Default, first 24 | Generic | 3.50 s / 1.74 s |
+| On-sale wearables, first 24 | Custom | 3.49 s / 1.84 s |
+| On-sale wearables, first 24 | Generic | 3.81 s / 1.91 s |
+
+Each p95 uses 20 warmed, alternating prepared SQL executions per variant
+with one client. The paired result rows and totals matched. These are
+local SQL timings. Production latency depends on its cache and storage.
+
+## Primary related catalogue rail (2026-11-27)
+
+A local PostgreSQL 17.6 fixture held 69,712 live NFT resales, 9,131 live
+primary trades, and an equal number of expired trades. The generated
+query asked for 15 related primary listings over the synthetic Polygon
+catalogue. Its first execution hit the 10-second statement bound. With a
+30-second bound, the old query ran 69,712 NFT lookups and 69,712 post-fold
+transfer checks before discarding the resales.
+
+The related query applies the requested listing kind inside the shared
+trade CTE, ahead of the ownership and trade proofs. The primary rail's
+custom and generic plans each performed zero NFT and transfer probes.
+
+| Prepared primary rail | Before | After |
+| --- | ---: | ---: |
+| Custom plan | 8.09 s | 0.52 s |
+| Generic plan | 4.56 s | 0.51 s |
+
+These single-execution SQL timings reflect the local cache state.
+Primary, secondary, and mixed rails returned byte-identical pairs of
+15 rows in both plan modes, including listing counts and prices.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
@@ -245,7 +374,67 @@ The 525,000 resulting rows took 518 MB, with the primary key and the two seconda
 | `category=wearable` | 3.6 to 5.4 s | 4.5 to 7.1 s | 173 to 319 ms |
 | no category (collections, names and LAND) | 4.1 to 4.8 s | 6.0 to 7.0 s | 442 to 604 ms |
 
-Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
+Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. The recently sold sort now walks the sold tokens instead, through `nft_last_sale_recent_idx`; see [Recently sold](#recently-sold).
+
+## Recently sold
+
+`/v1/nfts?sortBy=recently_sold` walks each source's sold tokens newest first in two parts, then reads its unsold tokens by contract and token:
+- the latest sales, through `nft_last_sale_recent_idx`;
+- the legacy `OrderSuccessful` times, through `nft_sold_order_idx`, or for LAND from the registries' orders in `nft_event_successful_order`, aggregated per token.
+
+It walks when the page's capped total counts at least 400 candidates per row of the window (`first + skip`), or more than the cap with a window of at most 12,500, and when each sold part of a collection or NAME source fills the window within a budget of half the capped total in index rows. Otherwise, and for an owner's page, it sorts the candidates whole. The fixture is synthetic, measured on a laptop with PostgreSQL 17.6 while other builds and test suites ran, so treat the ranges as an order of magnitude.
+
+The seed is the one in [Latest sale per token](#latest-sale-per-token):
+- 3M Polygon tokens over 100,000 items of 5,000 collections;
+- 200,000 Ethereum v1 tokens, 300,000 names, 90,000 parcels and 2,000 estates;
+- a legacy sold time on 0.2% of the tokens (6,400 held), the 6,000 on Polygon all emotes;
+- 50,000 Ethereum `OrderSuccessful` events, 30,000 of them on LAND and estates;
+- latest sales on 20% of Polygon tokens (599,574), and 10% of v1 tokens, 5% of names and 2% of LAND (36,933 on Ethereum);
+- three items marked `unique`, with 90 tokens between them;
+- one more collection of 20,000 tokens, five of them sold, all five older than every other Polygon sale.
+
+Each page is `first=24`, the route's sources, both networks' latest sales admitted unless noted. Each read was timed in three runs after a warm-up, with the whole sort of the same page run between them, so the walk reads a cache the sort has churned. "Walk" is the walked page, one statement; when the walk misses its window, "Sorted after" is the whole sort that follows it. "Sorted whole" is the page read without walking. Both answered the same page in every case. The capped total, which both run first, is not in the times.
+
+| Page | Capped total | Walks | Sorted whole | Walk | Sorted after |
+| --- | ---: | --- | ---: | ---: | ---: |
+| `category=wearable` | 100,001 | yes | 2.1 to 2.2 s | 23 to 27 ms | |
+| no category (collections, names, LAND) | 100,001 | yes | 2.6 to 2.8 s | 137 to 143 ms | |
+| `category=wearable`, `skip=200` | 100,001 | yes | 2.3 to 2.4 s | 38 to 41 ms | |
+| `category=wearable`, `skip=1000` | 100,001 | yes | 2.7 s | 69 to 87 ms | |
+| `category=wearable`, `skip=10000` | 100,001 | yes | 3.1 to 3.4 s | 0.77 to 0.78 s | |
+| no category, `skip=10000` | 100,001 | yes | 3.2 to 3.7 s | 1.1 to 1.2 s | |
+| `category=wearable`, `skip=12000` | 100,001 | yes | 2.8 to 3.6 s | 0.78 to 0.84 s | |
+| `category=wearable`, no latest sales admitted | 100,001 | yes | 1.6 to 1.7 s | 17 to 18 ms | |
+| no category, no latest sales admitted | 100,001 | yes | 2.0 to 2.4 s | 88 to 126 ms | |
+| `category=wearable&isOnSale=false` | 100,001 | yes | 2.7 to 2.8 s | 60 to 71 ms | |
+| `category=emote` | 100,001 | yes | 0.53 to 0.63 s | 0.48 to 0.49 s | |
+| `category=emote`, `skip=1000` | 100,001 | yes | 0.51 to 0.58 s | 0.41 to 0.66 s | |
+| `category=emote`, `skip=10000` | 100,001 | misses | 0.58 to 0.67 s | 0.65 to 0.71 s | 0.62 to 0.75 s |
+| `category=emote`, `skip=20000` | 100,001 | no (window) | 0.61 to 0.69 s | | the same |
+| `category=wearable`, `skip=50000` | 100,001 | no (window) | 2.9 to 3.2 s | | the same |
+| `category=ens` | 100,001 | yes | 0.19 to 0.22 s | 2 ms | |
+| `isLand=true` | 90,000 | yes | 0.34 to 0.37 s | 142 to 160 ms | |
+| the collection of 20,000 tokens | 20,000 | misses | 55 to 62 ms | 5 ms | 53 to 56 ms |
+| its creator | 20,000 | misses | 86 to 88 ms | 34 to 36 ms | 86 to 93 ms |
+| `itemRarity=unique` | 90 | no | 79 to 82 ms | | the same |
+| one creator | 1,600 | no | 71 to 103 ms | | the same |
+| one collection | 600 | no | 6 to 9 ms | | the same |
+| `search` | 330 | no | 0.30 to 0.31 s | | the same |
+| an owner's 16 tokens | 16 | no (owner) | 0 to 3 ms | | the same |
+
+Four choices come from earlier runs of this benchmark. The emote miss at `skip=10000` costs more than it did when each part was bounded by a sale time (0.41 s then): it now reads its whole budget of rows before it gives up, which is what keeps the cost bounded whatever the ties.
+
+**The latest-sale part looks each sale's token up on its own** (a `LATERAL` lookup by primary key, `OFFSET 0`). Joined on `(network, contract_address, token_id)`, the planner multiplied the three columns' selectivities. It expected 419 Polygon tokens where 179,832 matched the wearable filter. At a window of 1,024 it read the window as most of the matches, so it hash-joined all 3M tokens to the 600,000 sales and sorted them (6.1 s of the part's 6.7 s). At a window of 24 it walked the index. Looked up one sale at a time, the estimate is one token per sale, and the walk holds at any depth: `skip=1000` took 3.3 to 5.1 s with the join and 123 to 169 ms with the lookup.
+
+**The walk needs enough candidates.** A walk reads about `window × held / candidates` rows of each part before it fills the window; a whole sort reads each candidate once. Walking the 90 `unique` tokens read every latest sale and every unsold token in key order: 13.6 to 14.8 s, against 0.27 s sorted whole. The two meet near `sqrt(window × held)` candidates. That is about 9,000 for 24 rows on 3.5M held tokens, hence 400 per row of the window.
+
+**The walk needs a budget.** The candidate count says nothing about how many of them sold. Walked without a bound, the collection of 20,000 tokens read every Polygon sale before giving up, as the `unique` tokens did. With the budget, a part that does not fill its window within half the capped total in index rows stops the walk, and the page is sorted whole. The deepest windows past the cap don't walk: the emotes are about a tenth of the sales, so at `skip=20000` they need more rows than the budget, and the walk would only add its cost to the sort's.
+
+**The budget is a count of index rows.** Each part reads its index's first rows under a `LIMIT`, a constant the planner can estimate, before any filter. An earlier version bounded each part by the time of its network's budget-th index row instead. Written as a subquery inside the page, that bound's value was unknown to the planner. For the Polygon legacy part (6,000 rows, none of them a wearable), it then chose a parallel scan of every item's tokens, 2.5 s, over the partial index, and `skip=10000` took 3.3 s. Read first as a literal, the time held the plan, but every row sharing that time passed the bound: 20,000 sales at the same second would all be read under a budget of 100.
+
+The indexes, built `CONCURRENTLY` on this seed:
+- `nft_last_sale_recent_idx` on `(network, sold_at DESC, contract_address, token_id)`: 73 MB over 636,507 rows (the table is 79 MB, its primary key 89 MB), 1.4 s;
+- `nft_sold_order_idx` on `shop.nft (network, sold_at DESC, contract_address, token_id)`, partial on held tokens with a legacy sold time: 768 kB over 6,400 rows, 1.2 s, against a 728 MB table.
 
 ## Credits metrics snapshot
 

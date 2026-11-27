@@ -8,9 +8,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
+import { Button, ShopSkeletonCards } from "@dcl/one-ui";
 import Icon from "../../discovery/components/Icon";
-import SkeletonCards from "../../discovery/components/SkeletonCards";
 import { useCreatorName, useSeo } from "../../discovery/hooks";
 import { shopPath } from "../../routes";
 import { MarketSignIn } from "../../seller/pages/SellerSignIn";
@@ -43,7 +42,7 @@ function Loading() {
       <span className="u-sr-only" role="status">
         Loading the list…
       </span>
-      <SkeletonCards count={8} />
+      <ShopSkeletonCards count={8} />
     </div>
   );
 }

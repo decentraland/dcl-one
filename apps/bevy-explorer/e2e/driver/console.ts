@@ -285,6 +285,12 @@ export class ConsoleError extends Error {
  *  White_Space, which `\s` differs from (no U+0085, and U+FEFF beside). */
 export const CONSOLE_SPACE = /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/
 
+/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
+ *  quoted when it is empty or holds whitespace or a double quote. */
+export function quoteWord(word: string): string {
+  return word === '' || word.includes('"') || CONSOLE_SPACE.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
+}
+
 /** A line as the transports send it: one leading `/`, single spaces between arguments, and a
  *  double-quoted run (one argument to the engine, `\"` and `\\` escaping inside it) as written. */
 export function normalizeLine(line: string): string {
