@@ -541,7 +541,7 @@
   },
   "library/ui/apps/sites/profile/ProfileBadges.module.css": {
     "primitives": 0,
-    "tokens": 18
+    "tokens": 17
   },
   "library/ui/apps/sites/profile/ProfileCommunities.module.css": {
     "primitives": 0,

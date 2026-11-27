@@ -7515,6 +7515,10 @@
           "kind": "regular"
         },
         {
+          "name": "ProfileBadges.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ProfileBadges.tsx",
           "kind": "regular"
         },
@@ -16550,11 +16554,11 @@
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileBadges.module.css",
-      "sha256": "2bc61dfd4c4a796d5ddcad20057262a3cb72e398ad5c773b39c4f031429b0b4e"
+      "sha256": "d740bd54ee4e67cf9e5a2fa29f5a24b97e6135fdffc552f7d4e21650de17aa30"
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileBadges.tsx",
-      "sha256": "5f79700e5ad21d0c21baa12a792bd0b8c2077df6fb4f1bfa70ddd67ed169b2ec"
+      "sha256": "725d94c9bfcf86b05fba7989700df9be722cfde85e6a9194c684b754b09720a1"
     },
     {
       "path": "library/ui/apps/sites/profile/ProfileCommunities.module.css",
@@ -61128,6 +61132,21 @@
     {
       "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
       "to": "library/ui/apps/sites/profile/ProfileBadges.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/profile/ProfileBadges.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {
