@@ -51,10 +51,18 @@ vi.mock('../../bridge-scene/src/domains/avatarDraft', () => ({
   editLook: (change: Partial<AvatarLook>) => editLook(change)
 }))
 const captureAvatarThumbnail = vi.fn<() => Promise<string | null>>()
-const waitFrames = vi.fn<(frames: number) => Promise<void>>()
+const lookShown = vi.fn<() => Promise<void>>()
 vi.mock('../../bridge-scene/src/domains/avatarPreview', () => ({
   captureAvatarThumbnail: () => captureAvatarThumbnail(),
-  waitFrames: (frames: number) => waitFrames(frames)
+  lookShown: () => lookShown()
+}))
+let accountChanged: () => void = () => {}
+vi.mock('../../bridge-scene/src/identity', () => ({
+  identity: {
+    onChange: (listener: () => void) => {
+      accountChanged = listener
+    }
+  }
 }))
 vi.mock('../../bridge-scene/src/domains/wearables', () => ({ sendEquipped: async () => {} }))
 
@@ -94,7 +102,9 @@ async function bridge() {
   const lastOutfits = (): OutfitsMetadata | undefined =>
     sent.flatMap((m) => (m.kind === 'outfits' ? [m.metadata] : [])).at(-1)
   const failures = (): SceneToPage[] => sent.filter((m) => m.kind === 'outfitSaveFailed')
-  return { request, lastOutfits, failures, sent }
+  /** What the page is told of the outfits, without the busy marks around each request. */
+  const settled = (): SceneToPage[] => sent.filter((m) => m.kind !== 'outfitBusy')
+  return { request, lastOutfits, failures, settled, sent }
 }
 
 describe('the bridge outfits domain', () => {
@@ -108,7 +118,10 @@ describe('the bridge outfits domain', () => {
     deployOutfits.mockResolvedValue(undefined)
     readOwnedNames.mockResolvedValue([])
     captureAvatarThumbnail.mockResolvedValue(PICTURE)
-    waitFrames.mockResolvedValue(undefined)
+    lookShown.mockResolvedValue(undefined)
+    editLook.mockImplementation((change) => {
+      if (look != null) look = { ...look, ...change }
+    })
   })
 
   afterEach(() => {
@@ -163,9 +176,9 @@ describe('the bridge outfits domain', () => {
       })
 
       it('should tell the page the save failed after showing the outfits as they were', async () => {
-        const { request, sent } = await bridge()
+        const { request, settled } = await bridge()
         await request({ kind: 'saveOutfit', slot: 1 })
-        expect(sent.slice(-2)).toEqual([
+        expect(settled().slice(-2)).toEqual([
           { kind: 'outfits', metadata: shown(stored) },
           { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' }
         ])
@@ -289,10 +302,10 @@ describe('the bridge outfits domain', () => {
     })
 
     it('should deploy nothing, show the stored outfits and tell the page the save failed', async () => {
-      const { request, sent } = await bridge()
+      const { request, settled } = await bridge()
       await request({ kind: 'saveOutfit', slot: 0 })
       expect(deployOutfits).not.toHaveBeenCalled()
-      expect(sent.slice(-2)).toEqual([
+      expect(settled().slice(-2)).toEqual([
         { kind: 'outfits', metadata: shown(stored) },
         { kind: 'outfitSaveFailed', slot: 0, action: 'save', message: 'Error: slot 0 holds an outfit' }
       ])
@@ -576,7 +589,7 @@ describe('the bridge outfits domain', () => {
     describe('and the slot is deleted while the wearables load', () => {
       it('should not picture the deleted slot', async () => {
         const { request } = await bridge()
-        waitFrames.mockImplementationOnce(async () => {
+        lookShown.mockImplementationOnce(async () => {
           await request({ kind: 'deleteOutfit', slot: 0 })
         })
         await request({ kind: 'equipOutfit', slot: 0 })
@@ -692,6 +705,326 @@ describe('the bridge outfits domain', () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'getOutfits' })
       expect(lastOutfits()?.outfits[0]?.thumbnail).toBeUndefined()
+    })
+  })
+
+  describe('when the player saves an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+    })
+
+    it('should tell the page the slot is busy until the outfits are shown', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(sent.map((m) => m.kind)).toEqual(['outfitBusy', 'outfits', 'outfitBusy'])
+      expect([sent[0], sent.at(-1)]).toEqual([
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+      ])
+    })
+
+    describe('and the catalyst refuses the deploy', () => {
+      beforeEach(() => {
+        deployOutfits.mockRejectedValue(new Error('failed to deploy'))
+      })
+
+      it('should end the busy state after telling the page the save failed', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'saveOutfit', slot: 1 })
+        expect(sent.slice(-2)).toEqual([
+          { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' },
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+        ])
+      })
+    })
+
+    describe('and taking the picture fails', () => {
+      beforeEach(() => {
+        captureAvatarThumbnail.mockRejectedValue(new Error('no frame'))
+      })
+
+      it('should end the busy state', async () => {
+        const { request, sent } = await bridge()
+        await expect(request({ kind: 'saveOutfit', slot: 1 })).rejects.toThrow('no frame')
+        expect(sent).toEqual([
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+        ])
+      })
+    })
+  })
+
+  describe('when an outfit is saved with no player', () => {
+    it('should end the busy state it started', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(sent).toEqual([
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+      ])
+    })
+  })
+
+  describe('when the player deletes an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+    })
+
+    it('should tell the page the slot is busy until the outfits are shown', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 0 })
+      expect(sent).toEqual([
+        { kind: 'outfitBusy', slot: 0, action: 'delete', busy: true },
+        { kind: 'outfits', metadata: { outfits: [], namesForExtraSlots: [] } },
+        { kind: 'outfitBusy', slot: 0, action: 'delete', busy: false }
+      ])
+    })
+  })
+
+  describe('when the player equips an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      look = { bodyShape: FEMALE, wearables: ['urn:old'], forceRender: [] } as unknown as AvatarLook
+    })
+
+    it('should keep the slot busy until the avatar has loaded the outfit', async () => {
+      const { request, sent } = await bridge()
+      let toldWhileLoading: SceneToPage[] = []
+      lookShown.mockImplementationOnce(async () => {
+        toldWhileLoading = [...sent]
+      })
+      await request({ kind: 'equipOutfit', slot: 0 })
+      expect([toldWhileLoading, sent.filter((m) => m.kind === 'outfitBusy')]).toEqual([
+        [{ kind: 'outfitBusy', slot: 0, action: 'equip', busy: true }],
+        [
+          { kind: 'outfitBusy', slot: 0, action: 'equip', busy: true },
+          { kind: 'outfitBusy', slot: 0, action: 'equip', busy: false }
+        ]
+      ])
+    })
+
+    it('should picture the outfit only after the busy state ends', async () => {
+      const { request, sent } = await bridge()
+      let toldBeforePicture: SceneToPage[] = []
+      captureAvatarThumbnail.mockImplementationOnce(async () => {
+        toldBeforePicture = [...sent]
+        return PICTURE
+      })
+      await request({ kind: 'equipOutfit', slot: 0 })
+      expect(toldBeforePicture.at(-1)).toEqual({ kind: 'outfitBusy', slot: 0, action: 'equip', busy: false })
+    })
+
+    describe('and the look changes while the picture is taken', () => {
+      it('should not keep the picture', async () => {
+        const { request } = await bridge()
+        captureAvatarThumbnail.mockImplementationOnce(async () => {
+          if (look != null) look = { ...look, hair: { r: 1, g: 0, b: 0 } }
+          return PICTURE
+        })
+        await request({ kind: 'equipOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([])
+      })
+    })
+
+    describe('and the slot holds no outfit', () => {
+      it('should end the busy state it started', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'equipOutfit', slot: 3 })
+        expect(editLook).not.toHaveBeenCalled()
+        expect(sent).toEqual([
+          { kind: 'outfitBusy', slot: 3, action: 'equip', busy: true },
+          { kind: 'outfitBusy', slot: 3, action: 'equip', busy: false }
+        ])
+      })
+    })
+  })
+
+  describe('when the player previews an outfit', () => {
+    const before = { bodyShape: FEMALE, eyes: null, hair: null, skin: null, wearables: ['urn:mine'], forceRender: ['hat'] }
+
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      look = { ...before, emotes: ['urn:wave'] } as unknown as AvatarLook
+      stored = { outfits: [{ slot: 0, outfit: outfit(['urn:old']) }, { slot: 1, outfit: outfit(['urn:other']) }], namesForExtraSlots: [] }
+      getJson.mockResolvedValue({ metadata: stored })
+    })
+
+    it('should put the outfit on the look', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'previewOutfit', slot: 0 })
+      expect(look?.wearables).toEqual(['urn:old'])
+    })
+
+    it('should keep the slot busy as a preview until the avatar has loaded the outfit', async () => {
+      const { request, sent } = await bridge()
+      let toldWhileLoading: SceneToPage[] = []
+      lookShown.mockImplementationOnce(async () => {
+        toldWhileLoading = [...sent]
+      })
+      await request({ kind: 'previewOutfit', slot: 0 })
+      expect([toldWhileLoading, sent.filter((m) => m.kind === 'outfitBusy')]).toEqual([
+        [{ kind: 'outfitBusy', slot: 0, action: 'preview', busy: true }],
+        [
+          { kind: 'outfitBusy', slot: 0, action: 'preview', busy: true },
+          { kind: 'outfitBusy', slot: 0, action: 'preview', busy: false }
+        ]
+      ])
+    })
+
+    it('should picture an outfit that has no picture', async () => {
+      const { request } = await bridge()
+      await request({ kind: 'previewOutfit', slot: 0 })
+      expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', PICTURE]])
+    })
+
+    describe('and the preview is restored', () => {
+      it('should put back what the outfit changed on the look, and keep the rest', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(look).toEqual({ ...before, emotes: ['urn:wave'] })
+      })
+
+      it('should change nothing when restored again', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'restoreOutfitPreview' })
+        editLook.mockClear()
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(editLook).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('and another outfit is previewed after it', () => {
+      it('should restore the look from before the first preview', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'previewOutfit', slot: 1 })
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(look?.wearables).toEqual(['urn:mine'])
+      })
+    })
+
+    describe('and the outfit is then equipped', () => {
+      it('should keep the outfit when restored', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'equipOutfit', slot: 0 })
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(look?.wearables).toEqual(['urn:old'])
+      })
+    })
+
+    describe('and the look is saved into an empty slot meanwhile', () => {
+      it('should save the previewed look', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'saveOutfit', slot: 2 })
+        expect(deployOutfits.mock.calls.at(-1)?.[1].outfits.find((o) => o.slot === 2)?.outfit.wearables).toEqual(['urn:old'])
+      })
+    })
+
+    describe('and the preview is restored while its outfit is still being read', () => {
+      it('should put nothing on the look', async () => {
+        const { request } = await bridge()
+        let answer: (value: unknown) => void = () => {}
+        getJson.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+        const preview = request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'restoreOutfitPreview' })
+        answer({ metadata: stored })
+        await preview
+        expect(look?.wearables).toEqual(['urn:mine'])
+      })
+    })
+
+    describe('and the look is reverted after a failed deploy', () => {
+      it('should not put the reverted look back when restored', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'revertAvatar' })
+        editLook.mockClear()
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(editLook).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('and the look is reverted while its outfit is still being read', () => {
+      it('should put nothing on the look', async () => {
+        const { request } = await bridge()
+        let answer: (value: unknown) => void = () => {}
+        getJson.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+        const preview = request({ kind: 'previewOutfit', slot: 0 })
+        await request({ kind: 'revertAvatar' })
+        answer({ metadata: stored })
+        await preview
+        expect(look?.wearables).toEqual(['urn:mine'])
+      })
+    })
+
+    describe('and the preview is restored while the avatar loads it, to a look with the same wearables', () => {
+      beforeEach(() => {
+        look = { ...before, wearables: ['urn:old'], hair: { r: 1, g: 0, b: 0 }, emotes: ['urn:wave'] } as unknown as AvatarLook
+      })
+
+      it('should not picture the outfit', async () => {
+        const { request } = await bridge()
+        lookShown.mockImplementationOnce(async () => {
+          await request({ kind: 'restoreOutfitPreview' })
+        })
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect([captureAvatarThumbnail.mock.calls.length, pictureWrites]).toEqual([0, []])
+      })
+    })
+
+    describe('and the look changes while the picture is taken', () => {
+      it('should not keep the picture', async () => {
+        const { request } = await bridge()
+        captureAvatarThumbnail.mockImplementationOnce(async () => {
+          if (look != null) look = { ...look, hair: { r: 1, g: 0, b: 0 } }
+          return PICTURE
+        })
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([])
+      })
+    })
+
+    describe('and the outfit was stored with a colour that is not opaque', () => {
+      beforeEach(() => {
+        const hair = { color: { r: 0.5, g: 0.5, b: 0.5, a: 0.5 } }
+        stored = { outfits: [{ slot: 0, outfit: { ...outfit(['urn:old']), hair } }], namesForExtraSlots: [] }
+        getJson.mockResolvedValue({ metadata: stored })
+      })
+
+      it('should picture the outfit', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([['outfit-thumb:0xa:0', PICTURE]])
+      })
+    })
+
+    describe('and the account changes', () => {
+      it('should not put the earlier account\'s look back', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 0 })
+        accountChanged()
+        editLook.mockClear()
+        await request({ kind: 'restoreOutfitPreview' })
+        expect(editLook).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('and the slot holds no outfit', () => {
+      it('should end the busy state it started and change nothing', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'previewOutfit', slot: 3 })
+        expect([editLook.mock.calls, sent]).toEqual([
+          [],
+          [
+            { kind: 'outfitBusy', slot: 3, action: 'preview', busy: true },
+            { kind: 'outfitBusy', slot: 3, action: 'preview', busy: false }
+          ]
+        ])
+      })
     })
   })
 })

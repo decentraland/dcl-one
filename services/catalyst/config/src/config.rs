@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 25] = [
+    pub const OPERATOR_SECRETS: [&'static str; 27] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -213,6 +213,8 @@ impl Config {
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
+        "HISTORICAL_ADMIN_TOKEN",
+        "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
         "PRICE_ADMIN_TOKEN",
         "CATALYRST_ECONOMY_ADMIN_TOKEN",
         "CATALYRST_CREDITS_ADMIN_TOKEN",
@@ -281,7 +283,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 90] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -437,6 +439,25 @@ impl Config {
                 "MARKET_ADMIN_TOKEN",
                 &mut self.marketplace.market_admin_token,
             ),
+            (
+                "HISTORICAL_ADMIN_TOKEN",
+                &mut self.marketplace.historical_admin_token,
+            ),
+            ("WERT_PRIVATE_KEY", &mut self.marketplace.wert_private_key),
+            (
+                "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+                &mut self.marketplace.wert_publication_fees_private_key,
+            ),
+            ("WERT_API_KEY", &mut self.marketplace.wert_api_key),
+            ("TRANSAK_API_KEY", &mut self.marketplace.transak_api_key),
+            (
+                "TRANSAK_API_SECRET",
+                &mut self.marketplace.transak_api_secret,
+            ),
+            (
+                "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+                &mut self.marketplace.transak_refresh_access_token_auth,
+            ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
             ("OZ_RELAYER_API_KEY", &mut self.economy.oz_relayer_api_key),
@@ -460,6 +481,10 @@ impl Config {
             (
                 "CREDITS_CAPTCHA_SECRET",
                 &mut self.shop.credits_captcha_secret,
+            ),
+            (
+                "CREDITS_ALERTS_SLACK_WEBHOOK",
+                &mut self.shop.credits_alerts_slack_webhook,
             ),
             ("STRIPE_SECRET_KEY", &mut self.shop.stripe_secret_key),
             (
@@ -519,15 +544,17 @@ impl Config {
     }
 
     /// The signing keys: each signs value on this node's behalf (treasury
-    /// credit claims, relayed transactions), so each is
+    /// credit claims, relayed transactions, Wert card purchases), so each is
     /// read from `<NAME>_FILE` alone (a `LoadCredential` or agenix file). A
     /// plain environment variable would sit in `/proc/<pid>/environ`,
     /// `systemctl show` and, set through a unit's `environment`, the unit
     /// file in the world-readable nix store.
-    pub const FILE_ONLY_SECRETS: [&'static str; 3] = [
+    pub const FILE_ONLY_SECRETS: [&'static str; 5] = [
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
         "RELAYER_PRIVATE_KEY",
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
     ];
 
     /// Secrets that fall back to a network default when unset
@@ -678,6 +705,15 @@ impl Config {
     pub fn parse_env_for_tests<K: Into<String>, V: Into<String>>(
         vars: impl IntoIterator<Item = (K, V)>,
     ) -> Result<Self, clap::Error> {
+        Self::parse_env_with_flags_for_tests(vars, &[])
+    }
+
+    /// As above, with explicit `--name=value` flags taking precedence.
+    pub(crate) fn parse_env_with_flags_for_tests<K: Into<String>, V: Into<String>>(
+        vars: impl IntoIterator<Item = (K, V)>,
+        flags: &[&str],
+    ) -> Result<Self, clap::Error> {
+        let flags: Vec<String> = flags.iter().map(|flag| flag.to_string()).collect();
         let vars: Vec<(String, String)> = vars
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -691,6 +727,13 @@ impl Config {
                     .find(|a| a.get_env().is_some_and(|e| e == key.as_str()))
                     .unwrap_or_else(|| panic!("{key} is not a serve variable"));
                 let long = arg.get_long().expect("every Config arg has a long flag");
+                if flags.iter().any(|flag| {
+                    flag.strip_prefix("--")
+                        .and_then(|flag| flag.split_once('='))
+                        .is_some_and(|(name, _)| name == long)
+                }) {
+                    continue;
+                }
                 if matches!(arg.get_action(), clap::ArgAction::SetTrue) {
                     if value == "true" {
                         argv.push(format!("--{long}"));
@@ -699,6 +742,7 @@ impl Config {
                     argv.push(format!("--{long}={value}"));
                 }
             }
+            argv.extend(flags);
             argv
         });
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -837,6 +881,14 @@ mod tests {
         "TRADE_RPC_URLS",
         "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
+        "CREDITS_ALERTS_SLACK_WEBHOOK",
+        // Wert's partner keys and API key: their shape is Wert's.
+        "WERT_PRIVATE_KEY",
+        "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        "WERT_API_KEY",
+        // Transak's partner credentials: their shape is Transak's.
+        "TRANSAK_API_KEY",
+        "TRANSAK_API_SECRET",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
@@ -1251,6 +1303,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the test writes <NAME>_FILE into the process environment"
+    )]
     fn secrets_are_hidden_from_help_and_read_from_files() {
         let help = match parse(&["x", "--help"]) {
             Err(e) => e.to_string(),
@@ -1304,6 +1360,13 @@ mod tests {
         for var in [
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
+            "HISTORICAL_ADMIN_TOKEN",
+            "WERT_PRIVATE_KEY",
+            "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+            "WERT_API_KEY",
+            "TRANSAK_API_KEY",
+            "TRANSAK_API_SECRET",
+            "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
@@ -1341,6 +1404,7 @@ mod tests {
             "CATALYST_TEST_SECRET_{}",
             uuid::Uuid::new_v4().simple().to_string().to_uppercase()
         );
+        // SAFETY: the name is unique to this test, and this crate reads the environment only through std, which locks it.
         unsafe { std::env::set_var(format!("{name}_FILE"), &file) };
         Config::read_secret_file(&name, &mut slot).unwrap();
         assert_eq!(slot.as_deref(), Some("s3cr3t"));
@@ -1351,6 +1415,7 @@ mod tests {
             .to_string();
         assert!(err.contains("both set"), "{err}");
 
+        // SAFETY: as above.
         unsafe { std::env::set_var(format!("{name}_FILE"), dir.join("missing")) };
         let mut missing = None;
         let err = Config::read_secret_file(&name, &mut missing)
@@ -1360,6 +1425,7 @@ mod tests {
             err.contains(&format!("{name}_FILE")) && !err.contains("s3cr3t"),
             "{err}"
         );
+        // SAFETY: as above.
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
         let _ = std::fs::remove_dir_all(&dir);
     }

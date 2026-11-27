@@ -5,12 +5,12 @@
 //       webapp/src/modules/bid/sagas.ts (ACCEPT_BID, CANCEL_BID); catalyrst-v2 ui3/src/marketplace/workflows/MkAcceptBidWizardView.tsx
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatEther } from "viem";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import ManaMark from "../../../atoms/ManaMark";
 import { sameAddress } from "@shop/model/address";
 import { formatMana } from "@shop/model/money";
 import { isPolygon } from "@shop/model/chain";
@@ -117,7 +117,7 @@ function BidRow({ bid, canAccept, isMine, onAccept }: { bid: Bid; canAccept: boo
               "—"
             ) : (
               <>
-                <ManaMark size={14} network={network} /> {formatMana(price, { group: true })}
+                <ShopManaMark size={14} network={network} /> {formatMana(price, { group: true })}
               </>
             )}
           </span>

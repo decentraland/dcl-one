@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
+import { Button, ShopSkeletonCards } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
 import AssetCard from "../components/AssetCard";
 import BrowseLayout from "../components/BrowseLayout";
@@ -15,7 +15,6 @@ import Filters, { type FilterStatus } from "../components/Filters";
 import IndexNotice from "../components/IndexNotice";
 import { useCollectionName, useCreatorNames } from "../components/PickerFilters";
 import LoadMore from "../components/LoadMore";
-import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { useShopFlags } from "../flags";
@@ -189,13 +188,13 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
           <>
             <div className="shop-grid" data-testid="grid">
               {showSkeletons ? (
-                <SkeletonCards count={skeletonCount} />
+                <ShopSkeletonCards count={skeletonCount} />
               ) : (
                 <>
                   {grid.items.map((item, i) => (
                     <AssetCard key={listingKey(item)} item={item} mode={isUnified ? "shop" : "view"} source="grid" position={i} />
                   ))}
-                  {grid.isFetchingNextPage ? <SkeletonCards count={6} /> : null}
+                  {grid.isFetchingNextPage ? <ShopSkeletonCards count={6} /> : null}
                 </>
               )}
             </div>

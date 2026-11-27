@@ -1,5 +1,8 @@
-//! Ethereum sales inputs outside the NFT walk: accepted ERC721 bids and
-//! the price the names controller charged for each registration.
+//! Ethereum sales inputs outside the NFT walk: the ERC721Bid lifecycle
+//! (created, accepted and cancelled bids, folded into `shop.nft_bid`) and
+//! the price the names controller charged for each registration. A cursor
+//! walked when only acceptances were read gets the earlier creations and
+//! cancellations from `ethereum_bid_history`.
 
 use std::collections::HashMap;
 
@@ -8,9 +11,10 @@ use anyhow::{Context, ensure};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 
+use super::casts::{self, RowCount};
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_SALES, LogGroup};
 use super::{nft_index, sales_index};
-use crate::chain_index::rpc::RpcLog;
+use crate::chain_index::rpc::{BlockHeader, RpcLog};
 
 pub const ERC721_BID: &str = "0xe479dfd9664c693b2e2992300930b00bfde08233";
 pub const BURNING_NAME_CONTROLLER: &str = "0x6843291bd86857d97f0d269e698939fb10d60772";
@@ -89,7 +93,11 @@ impl ChainIndex for EthereumSalesIndex {
             super::sale_terms::group(self.net()),
             LogGroup {
                 addresses: vec![ERC721_BID.into()],
-                topics: json!([[sales_index::TOPIC_BID_ACCEPTED]]),
+                topics: json!([[
+                    sales_index::TOPIC_BID_CREATED,
+                    sales_index::TOPIC_BID_ACCEPTED,
+                    sales_index::TOPIC_BID_CANCELLED
+                ]]),
             },
             LogGroup {
                 addresses: NAME_CONTROLLERS.iter().map(|&a| a.to_owned()).collect(),
@@ -115,7 +123,12 @@ impl ChainIndex for EthereumSalesIndex {
             if log.address.eq_ignore_ascii_case(ERC721_BID) {
                 if let Some(bid) = sales_index::decode_log(log, time)? {
                     ensure!(
-                        bid.kind == sales_index::KIND_BID_ACCEPTED,
+                        [
+                            sales_index::KIND_BID_CREATED,
+                            sales_index::KIND_BID_ACCEPTED,
+                            sales_index::KIND_BID_CANCELLED
+                        ]
+                        .contains(&bid.kind),
                         "unexpected Ethereum bid log"
                     );
                     bids.push(bid);
@@ -145,9 +158,24 @@ impl ChainIndex for EthereumSalesIndex {
             .bind(chunk.iter().map(|row| &row.tx_hash).collect::<Vec<_>>())
             .bind(chunk.iter().map(|row| &row.venue).collect::<Vec<_>>())
             .execute(&mut *conn).await?;
-            written += result.rows_affected() as usize;
+            written += result.rows_usize();
         }
         Ok(written)
+    }
+
+    async fn record_coverage(
+        &self,
+        conn: &mut PgConnection,
+        previous: (i64, Option<&str>),
+        end: &BlockHeader,
+    ) -> anyhow::Result<()> {
+        super::ethereum_bid_history::record(
+            conn,
+            previous,
+            (casts::to_i64(end.number)?, Some(&end.hash)),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
@@ -156,20 +184,43 @@ impl ChainIndex for EthereumSalesIndex {
             .bind(to)
             .execute(&mut *conn)
             .await?;
-        sqlx::query("DELETE FROM shop.sale_event WHERE network = 'ethereum' AND block_number > $1")
-            .bind(to)
-            .execute(conn)
-            .await?;
+        // The deleted bid events' keys lose their rows; the cleared fold
+        // marker makes the next fold a rebuild, which restores each key that
+        // keeps a creation.
+        sqlx::query(
+            "WITH gone AS (DELETE FROM shop.sale_event WHERE network = 'ethereum' AND block_number > $1 \
+                 RETURNING contract_address, token_id, buyer) \
+             DELETE FROM shop.nft_bid b USING (SELECT DISTINCT contract_address, token_id, buyer FROM gone) g \
+             WHERE b.network = 'ethereum' AND b.contract_address = g.contract_address AND b.token_id = g.token_id \
+               AND b.bidder = g.buyer",
+        )
+        .bind(to)
+        .execute(&mut *conn)
+        .await?;
+        super::ethereum_bid_history::rewind(conn, to).await?;
         Ok(())
     }
 
     async fn fold(
         &self,
-        _: &PgPool,
-        _: Option<i64>,
+        pool: &PgPool,
+        since: Option<i64>,
         _: i64,
-        _: &chain_walk::Owner,
+        owner: &chain_walk::Owner,
     ) -> anyhow::Result<bool> {
+        let bids = sales_index::fold(pool, since, owner).await?;
+        tracing::info!(bids, "ethereum sales index: folded");
         Ok(true)
+    }
+
+    async fn after_publish(
+        &self,
+        pool: &PgPool,
+        source: &dyn chain_walk::LogSource,
+        owner: &chain_walk::Owner,
+        window_blocks: u64,
+        remaining: usize,
+    ) -> anyhow::Result<usize> {
+        super::ethereum_bid_history::step(pool, source, owner, window_blocks, remaining).await
     }
 }

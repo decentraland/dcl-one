@@ -421,6 +421,7 @@ async fn pull_first(pull: &PullSource, hash: &str) -> Result<Option<Vec<u8>>, Up
 
 /// `catalyst builder seed <contents-base-url> <cid>...`: pre-pulls the listed
 /// files into the ONE store, verified; reports the liars and the misses.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn seed(
     blobs: &Storage,
     http: &Outbound,
@@ -538,6 +539,7 @@ async fn store_file(
 /// `catalyst builder catalog <packs-dir>` (the old `catalyrst-builder catalog
 /// <packs> <dir>`): walks the `@dcl/asset-packs` tree, stores every asset
 /// file in the ONE store under its CIDv1 and upserts the one catalogue row.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()> {
     let mut packs_json: Vec<Value> = Vec::new();
     let mut stored = 0usize;
@@ -664,6 +666,7 @@ pub async fn build(pool: &PgPool, blobs: &Storage, packs_dir: &str) -> Result<()
 /// nothing, so it takes no store lock; the files are pulled from
 /// `BUILDER_CONTENT_BUCKET_URL` on first read like any other miss, including a
 /// file an unlink batch removed before the row committed.
+#[allow(clippy::print_stdout, reason = "operator CLI summary on stdout")]
 pub async fn import(pool: &PgPool, catalog_json: &str) -> Result<()> {
     let catalog = read_json(Path::new(catalog_json))?;
     let packs = packs_from_catalog_json(&catalog)?;

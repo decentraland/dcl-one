@@ -297,8 +297,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         .filter_map(|d| d.parse::<i64>().ok())
         .collect();
     Ok(NftFilters {
-        first: p.get_number("first", None).map(|f| f as i64),
-        skip: p.get_number("skip", None).map(|f| f as i64),
+        first: p.get_integer("first"),
+        skip: p.get_integer("skip"),
         sort_by,
         category,
         owner: p.get_address("owner", true, None),
@@ -357,6 +357,18 @@ fn is_land_routed(f: &NftFilters) -> bool {
         || only_land_registries(&f.contract_addresses)
 }
 
+/// Whether `f` reads only the node's DCL names: the `ens` category, or a
+/// contract filter naming only the registrar.
+fn names_only(state: &MarketplaceState, f: &NftFilters) -> bool {
+    let registrar = state.settings.catalogue().registrar();
+    f.category == Some(NftCategory::Ens)
+        || (f.category.is_none()
+            && !f.contract_addresses.is_empty()
+            && f.contract_addresses
+                .iter()
+                .all(|a| a.eq_ignore_ascii_case(registrar)))
+}
+
 /// A contract filter naming only the LAND, estate and NAME registries reads the
 /// marketplace source, as upstream's `?contractAddress&tokenId` lookup does: the
 /// collections subgraphs never hold those tokens.
@@ -404,8 +416,8 @@ pub(super) fn filters_collections_only(f: &NftFilters) -> bool {
         || f.item_id.is_some()
 }
 
-/// The subgraph `where` for the filters; `now_ms` bounds the open order.
-pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
+/// The subgraph `where` for metadata and geography filters.
+fn graph_where(f: &NftFilters) -> Value {
     let mut w = json!({});
     if let Some(o) = &f.owner {
         w["owner"] = json!(o);
@@ -447,33 +459,19 @@ pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
         w["id_in"] = json!(f.ids);
     }
     if let Some(mn) = f.min_distance_to_plaza {
-        w["searchDistanceToPlaza_gte"] = json!(mn as i64);
+        w["searchDistanceToPlaza_gte"] = json!(super::casts::saturating_i64(mn));
     }
     if let Some(mx) = f.max_distance_to_plaza {
-        w["searchDistanceToPlaza_lte"] = json!(mx as i64);
+        w["searchDistanceToPlaza_lte"] = json!(super::casts::saturating_i64(mx));
     }
     if f.adjacent_to_road {
         w["searchAdjacentToRoad"] = json!(true);
     }
     if let Some(mn) = f.min_estate_size {
-        w["searchEstateSize_gte"] = json!(mn as i64);
+        w["searchEstateSize_gte"] = json!(super::casts::saturating_i64(mn));
     }
     if let Some(mx) = f.max_estate_size {
-        w["searchEstateSize_lte"] = json!(mx as i64);
-    }
-    if let Some(mn) = &f.min_price {
-        w["searchOrderPrice_gte"] = json!(mn);
-    }
-    if let Some(mx) = &f.max_price {
-        w["searchOrderPrice_lte"] = json!(mx);
-    }
-    match f.is_on_sale {
-        Some(true) => {
-            w["searchOrderStatus"] = json!("open");
-            w["searchOrderExpiresAt_gt"] = json!(now_ms.to_string());
-        }
-        Some(false) => w["searchOrderStatus_not"] = json!("open"),
-        None => {}
+        w["searchEstateSize_lte"] = json!(super::casts::saturating_i64(mx));
     }
     if f.emote_has_sound {
         w["searchEmoteHasSound"] = json!(true);
@@ -513,13 +511,12 @@ pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
     w
 }
 
-fn graph_sort(sort_by: Option<NftSortBy>) -> (&'static str, &'static str) {
+fn graph_sort(sort_by: Option<NftSortBy>) -> Option<(&'static str, &'static str)> {
     match sort_by {
-        Some(NftSortBy::Name) => ("name", "asc"),
-        Some(NftSortBy::RecentlySold) => ("soldAt", "desc"),
-        Some(NftSortBy::CheapestParcel) => ("searchOrderPrice", "asc"),
-        Some(NftSortBy::RecentlyListed) => ("searchOrderCreatedAt", "desc"),
-        Some(NftSortBy::Newest) | None => ("createdAt", "desc"),
+        Some(NftSortBy::Name) => Some(("name", "asc")),
+        Some(NftSortBy::RecentlySold) => Some(("soldAt", "desc")),
+        Some(NftSortBy::CheapestParcel | NftSortBy::RecentlyListed) => None,
+        Some(NftSortBy::Newest) | None => Some(("createdAt", "desc")),
     }
 }
 
@@ -539,9 +536,16 @@ fn parcels_of(v: Option<&Value>) -> Vec<EstateParcel> {
     v.and_then(Value::as_array)
         .map(|a| {
             a.iter()
-                .map(|p| EstateParcel {
-                    x: readers::int_of(p, "x") as i32,
-                    y: readers::int_of(p, "y") as i32,
+                // A parcel outside the `integer` range is not a parcel.
+                .filter_map(|p| {
+                    let (x, y) = (readers::int_of(p, "x"), readers::int_of(p, "y"));
+                    match (i32::try_from(x), i32::try_from(y)) {
+                        (Ok(x), Ok(y)) => Some(EstateParcel { x, y }),
+                        _ => {
+                            tracing::warn!(x, y, "/v1/nfts: dropped an out-of-range estate parcel");
+                            None
+                        }
+                    }
                 })
                 .collect()
         })
@@ -699,22 +703,42 @@ pub async fn list_nfts(
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
     validate(f)?;
+    let now = chrono::Utc::now();
     let chain_id = state.settings.market.indexes.chain_id_ethereum;
-    // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
-    // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
-    if super::owned_items::walks_here(state)
-        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
-        && f.network == Some(Network::Matic)
-        && (f.is_land
-            || matches!(
-                f.category,
-                Some(NftCategory::Parcel | NftCategory::Estate | NftCategory::Ens)
-            ))
-    {
-        return Ok((vec![], 0));
-    }
+    let network_filters;
+    let f = if f.network == Some(Network::Matic) {
+        // LAND, Estate and NAME registries are on Ethereum for both served
+        // pairs. A mixed contract filter can still name Polygon collections.
+        if f.is_land
+            || super::nft_reads::sources_for(f).land
+            || f.category == Some(NftCategory::Ens)
+        {
+            return Ok((vec![], 0));
+        }
+        let registrar = state.settings.catalogue().registrar();
+        let land = state.land_network();
+        let mut contracts = f.contract_addresses.clone();
+        contracts.retain(|address| {
+            !address.eq_ignore_ascii_case(registrar)
+                && !land.is_some_and(|land| {
+                    address.eq_ignore_ascii_case(land.land_registry)
+                        || address.eq_ignore_ascii_case(land.estate_registry)
+                })
+        });
+        if contracts.is_empty() && !f.contract_addresses.is_empty() {
+            return Ok((vec![], 0));
+        }
+        network_filters = NftFilters {
+            contract_addresses: contracts,
+            ..f.clone()
+        };
+        &network_filters
+    } else {
+        f
+    };
     let mut snapshot = None;
-    if super::owned_items::walks_here(state)
+    if (super::owned_items::walks_here(state)
+        || (super::nft_reads::needs_orders(f) && !merges_land(f)))
         && let Some(land) = state.land_network()
         && let Some(sources) = super::nft_reads::land_page_sources(f, land)
     {
@@ -726,7 +750,7 @@ pub async fn list_nfts(
             ))
             .into_response());
         }
-        let conn = super::nft_reads::land_page_snapshot(state, f, sources).await?;
+        let conn = super::nft_reads::land_page_snapshot(state, f, sources, now).await?;
         snapshot = Some((conn, sources));
     }
     let owner_filters;
@@ -755,7 +779,7 @@ pub async fn list_nfts(
         let listings = match snapshot.as_mut() {
             Some((conn, _)) => super::rentals::newest_listings(&mut **conn, chain_id, &statuses)
                 .await
-                .map_err(super::nft_reads::read_error)?,
+                .map_err(super::readers::index_read_error)?,
             None => super::rentals::newest_listings(&state.pool, chain_id, &statuses)
                 .await
                 .unwrap_or_else(|e| {
@@ -773,55 +797,29 @@ pub async fn list_nfts(
         f = &narrowed;
         prefetched = Some(listings);
     }
-    let (mut data, total) = match snapshot.as_mut() {
-        Some((conn, sources)) => {
+    let strict_land = snapshot.is_some();
+    let (mut data, total, mut snapshot) = match snapshot {
+        Some((mut conn, sources)) => {
             let (first, skip) = index_page(f);
-            super::nft_reads::list_page_on(state, f, first, skip, *sources, conn).await?
+            let (data, total) =
+                super::nft_reads::list_page_on(state, f, first, skip, sources, &mut conn, now)
+                    .await?;
+            (data, total, Some(conn))
         }
-        None => list_page(state, f).await?,
+        None => list_page(state, f, now).await?,
     };
-    let listings = match prefetched {
-        Some(listings) => listings,
-        None => {
-            let land: Vec<String> = data
-                .iter()
-                .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
-                .map(|r| r.nft.id.clone())
-                .collect();
-            match snapshot.as_mut() {
-                Some((conn, _)) => {
-                    super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
-                        .await
-                        .map_err(super::nft_reads::read_error)?
-                }
-                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
-                        Vec::new()
-                    }),
-            }
-        }
-    };
-    let by_nft: std::collections::HashMap<&str, &crate::rentals::types::RentalListing> =
-        listings.iter().map(|l| (l.nft_id.as_str(), l)).collect();
-    for r in &mut data {
-        if let Some(listing) = by_nft.get(r.nft.id.as_str()) {
-            r.nft.open_rental_id = Some(listing.id.clone());
-            r.rental = serde_json::to_value(listing).ok();
-        }
-    }
     // Both readers carry only the legacy order. An nft listed through the
     // off-chain marketplace carries its open v3 listing, signed by its
     // owner, as its order, so a client sees it on sale (and relists by
     // cancelling that trade). A node with no source of trades has no such
     // listing. A single token's read (the sell and relist flow) is strict,
-    // as `/v1/orders` is: unavailable until the trades mirror is ready, an
-    // error if the read fails, never the token shown as unlisted. A list
-    // page serves its legacy orders and logs when the mirror cannot answer.
+    // as `/v1/orders` is. A page filtered or sorted by orders also needs
+    // its v3 rows. An ordinary list page serves its legacy orders and
+    // logs when the mirror cannot answer.
     let has_trades =
         state.settings.trades_sync_upstream_url.is_some() || state.settings.data_writes_enabled;
-    let single_token = f.contract_addresses.len() == 1 && f.token_id.is_some();
+    let strict_orders = (f.contract_addresses.len() == 1 && f.token_id.is_some())
+        || super::nft_reads::needs_orders(f);
     let unlisted: Vec<(String, String, String, String)> = data
         .iter()
         .filter(|r| has_trades && r.order.is_none())
@@ -834,27 +832,50 @@ pub async fn list_nfts(
             )
         })
         .collect();
+    let rental_assets: Vec<String> = if prefetched.is_none() {
+        data.iter()
+            .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
+            .map(|r| r.nft.id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut trade_orders = if unlisted.is_empty() {
         Default::default()
     } else {
         let read = async {
-            if let Some((conn, _)) = snapshot.as_mut() {
-                // A price/order filter already checked this snapshot before reading the page.
-                if !super::nft_reads::needs_orders(f) {
-                    super::trades::ready_on(state, conn, chrono::Utc::now()).await?;
+            if let Some(conn) = snapshot.as_mut() {
+                let load = async |conn: &mut sqlx::PgConnection| {
+                    // A price/order filter already checked this snapshot.
+                    if !super::nft_reads::needs_orders(f) {
+                        super::trades::ready_on(state, conn, now).await?;
+                    }
+                    super::orders::open_trade_orders_on(state, conn, &unlisted, now.naive_utc())
+                        .await
+                        .map_err(super::readers::index_read_error)
+                };
+                if strict_orders || rental_assets.is_empty() {
+                    return load(conn).await;
                 }
-                return super::orders::open_trade_orders_on(state, &mut **conn, &unlisted)
+                // An optional order statement must leave the snapshot usable
+                // for the rentals query, including after a PostgreSQL timeout.
+                let mut savepoint = sqlx::Connection::begin(&mut **conn)
                     .await
-                    .map_err(super::nft_reads::read_error);
+                    .map_err(super::readers::index_read_error)?;
+                let result = load(&mut savepoint).await;
+                let finish = if result.is_ok() {
+                    savepoint.commit().await
+                } else {
+                    savepoint.rollback().await
+                };
+                finish.map_err(super::readers::index_read_error)?;
+                return result;
             }
-            super::trades::require_ready(state).await?;
-            super::orders::open_trade_orders(state, &unlisted)
-                .await
-                .map_err(IntoResponse::into_response)
+            super::orders::open_trade_orders(state, &unlisted).await
         };
         match read.await {
             Ok(orders) => orders,
-            Err(response) if single_token => return Err(response),
+            Err(response) if strict_orders => return Err(response),
             Err(response) => {
                 tracing::warn!(status = %response.status(), "/v1/nfts: the open v3 listings could not be read; serving legacy orders only");
                 Default::default()
@@ -871,6 +892,44 @@ pub async fn list_nfts(
         {
             r.nft.active_order_id = Some(order.id.clone());
             r.order = Some(order);
+        }
+    }
+    let listings = match prefetched {
+        Some(listings) => listings,
+        None => match snapshot.as_mut() {
+            Some(conn) => {
+                match super::rentals::listings_of_nfts(
+                    &mut **conn,
+                    chain_id,
+                    &rental_assets,
+                    &statuses,
+                )
+                .await
+                {
+                    Ok(listings) => listings,
+                    Err(e) if strict_land => return Err(super::readers::index_read_error(e)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
+                        Vec::new()
+                    }
+                }
+            }
+            None => {
+                super::rentals::listings_of_nfts(&state.pool, chain_id, &rental_assets, &statuses)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
+                        Vec::new()
+                    })
+            }
+        },
+    };
+    let by_nft: std::collections::HashMap<&str, &crate::rentals::types::RentalListing> =
+        listings.iter().map(|l| (l.nft_id.as_str(), l)).collect();
+    for r in &mut data {
+        if let Some(listing) = by_nft.get(r.nft.id.as_str()) {
+            r.nft.open_rental_id = Some(listing.id.clone());
+            r.rental = serde_json::to_value(listing).ok();
         }
     }
     Ok((data, total))
@@ -930,25 +989,51 @@ fn index_page(f: &NftFilters) -> (i64, i64) {
 async fn list_page(
     state: &MarketplaceState,
     f: &NftFilters,
-) -> Result<(Vec<NftResult>, i64), Response> {
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(Vec<NftResult>, i64, Option<super::nft_reads::ReadConn>), Response> {
     if super::owned_items::walks_here(state)
         && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
     {
         let (first, skip) = index_page(f);
-        return super::nft_reads::list_nfts(state, f, first, skip).await;
+        let (data, total, conn) =
+            super::nft_reads::indexed_page(state, f, first, skip, now).await?;
+        return Ok((data, total, Some(conn)));
+    }
+    // A NAME page reads the index where the node's latest sales are admitted,
+    // whatever its sort, as its deep pages do: the graph's `soldAt` counts
+    // other sales. The admission is checked on the snapshot that supplies
+    // the rows; a check that cannot run is the page's error.
+    if super::owned_items::walks_here(state) && names_only(state, f) {
+        let (first, skip) = index_page(f);
+        if let Some((data, total, conn)) =
+            super::nft_reads::names_page_if_admitted(state, f, first, skip, now).await?
+        {
+            return Ok((data, total, Some(conn)));
+        }
     }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {
-        Some(page) if is_land_routed(f) && f.search.is_none() => page,
+        Some(page)
+            if is_land_routed(f) && f.search.is_none() && !super::nft_reads::needs_orders(f) =>
+        {
+            page
+        }
         _ => {
             let (first, skip) = index_page(f);
-            return super::nft_reads::list_nfts(state, f, first, skip).await;
+            let (data, total, conn) =
+                super::nft_reads::indexed_page(state, f, first, skip, now).await?;
+            return Ok((data, total, Some(conn)));
         }
     };
-    // Shallow NAME queries and LAND queries on non-walkers use the configured graph.
-    let now_ms = readers::now_ms();
-    let where_ = graph_where(f, now_ms);
-    let (order_by, direction) = graph_sort(f.sort_by);
+    // Shallow NAME and non-walking LAND pages without order filters or
+    // sorts may still use the configured graph.
+    let now_ms = now.timestamp_millis();
+    let where_ = graph_where(f);
+    let Some((order_by, direction)) = graph_sort(f.sort_by) else {
+        return Err(super::owned_items::not_ready(
+            "the published NFT index serves order sorts",
+        ));
+    };
     let url = readers::require_marketplace(state)?;
     let page = GraphPage {
         entity: "nfts",
@@ -999,11 +1084,11 @@ async fn list_page(
     });
     let data = rows
         .into_iter()
-        .skip(offset as usize)
-        .take(first as usize)
+        .skip(crate::market::casts::page(offset))
+        .take(crate::market::casts::page(first))
         .map(|v| nft_from_graph(&v, Network::Ethereum, now_ms))
         .collect();
-    Ok((data, total))
+    Ok((data, total, None))
 }
 
 pub async fn get_nfts(
@@ -1045,15 +1130,7 @@ mod tests {
         assert_eq!(f.min_price.as_deref(), Some("1000000000000000000"));
         assert_eq!(f.max_price.as_deref(), Some("25000000000000000000"));
         assert_eq!(f.sort_by, Some(NftSortBy::CheapestParcel));
-        let w = graph_where(&f, 5_000);
-        assert_eq!(
-            (&w["searchOrderPrice_gte"], &w["searchOrderPrice_lte"]),
-            (
-                &json!("1000000000000000000"),
-                &json!("25000000000000000000")
-            )
-        );
-        assert_eq!(graph_sort(f.sort_by), ("searchOrderPrice", "asc"));
+        assert!(super::super::nft_reads::needs_orders(&f));
         let blank = parse_filters(&pairs(&[("minPrice", ""), ("maxPrice", " ")])).unwrap();
         assert_eq!((blank.min_price, blank.max_price), (None, None));
         let decimal = parse_filters(&pairs(&[
@@ -1093,11 +1170,9 @@ mod tests {
             ("emotePlayMode", "loop"),
         ]))
         .unwrap();
-        let w = graph_where(&f, 5_000);
+        let w = graph_where(&f);
         assert_eq!(w["owner"], "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
         assert_eq!(w["category"], "wearable");
-        assert_eq!(w["searchOrderStatus"], "open");
-        assert_eq!(w["searchOrderExpiresAt_gt"], "5000");
         assert_eq!(w["searchWearableRarity_in"], json!(["epic"]));
         assert_eq!(
             w["searchWearableBodyShapes_contains"],
@@ -1105,10 +1180,8 @@ mod tests {
         );
         assert!(w.get("searchEmoteOutcomeType").is_some_and(Value::is_null));
         assert_eq!(w["searchEmoteLoop"], true);
-        assert_eq!(
-            graph_sort(Some(NftSortBy::CheapestParcel)),
-            ("searchOrderPrice", "asc")
-        );
+        assert_eq!(graph_sort(Some(NftSortBy::Name)), Some(("name", "asc")));
+        assert_eq!(graph_sort(Some(NftSortBy::CheapestParcel)), None);
         assert!(is_land_routed(
             &parse_filters(&pairs(&[("category", "estate")])).unwrap()
         ));

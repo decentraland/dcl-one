@@ -5,6 +5,9 @@ import {
   GeneralControls,
   GeneralFilters,
   GeneralGraphics,
+  MenusDelete,
+  MenusNotifications,
+  MenusTranslate,
   NavBar,
   NavCreditsBalance,
   NavMenuItem,
@@ -18,11 +21,82 @@ import {
   TitleBar,
   decentralandPublicNavSections,
   type TitleBarProps,
-  type TitleBarSection
+  type TitleBarSection,
+  PagedRail,
+  Pager,
+  BrowseControl,
+  BrowseLoading,
+  BrowsePanel,
+  BrowseToolbar,
+  MenuDivider,
+  MenuList,
+  MenuPanel,
+  MenuRow,
+  AnchoredMenu,
+  ContextMenu,
+  KebabMenu,
+  Submenu,
+  OptionMenu
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people, placeholderFace } from './data'
 import layout from './layout.module.css'
+
+function AnchoredMenuExample() {
+  const [opener, setOpener] = useState<HTMLSpanElement | null>(null)
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null)
+  return (
+    <div style={{ minHeight: 160 }}>
+      <span ref={setOpener} style={{ display: 'inline-block' }}>
+        <Button
+          onClick={(event: MouseEvent<HTMLElement>) =>
+            setAnchor({ x: event.clientX, y: event.clientY })
+          }
+        >
+          Photo options
+        </Button>
+      </span>
+      <AnchoredMenu
+        open={anchor != null}
+        anchor={anchor ?? { x: 0, y: 0 }}
+        aria-label="Photo options"
+        ignore={opener}
+        onClose={() => setAnchor(null)}
+        items={[{ label: 'Share' }, { label: 'Download' }, { label: 'Delete', danger: true }]}
+      />
+    </div>
+  )
+}
+
+function OptionMenuExample() {
+  const [sort, setSort] = useState('newest')
+  const [view, setView] = useState('all')
+  return (
+    <OptionMenu
+      onClose={() => undefined}
+      sections={[
+        {
+          label: 'Sort by',
+          options: [
+            { id: 'newest', label: 'Newest' },
+            { id: 'oldest', label: 'Oldest' }
+          ],
+          value: sort,
+          onChange: setSort
+        },
+        {
+          label: 'View',
+          options: [
+            { id: 'all', label: 'All Items' },
+            { id: 'collectibles', label: 'Collectibles only' }
+          ],
+          value: view,
+          onChange: setView
+        }
+      ]}
+    />
+  )
+}
 
 const publicSections = decentralandPublicNavSections('explore', '/explore', {
   marketplaceEligible: true
@@ -392,6 +466,34 @@ export const navigationEntries: GalleryEntry[] = [
     components: ['TabsBar'],
     examples: [
       {
+        id: 'hud',
+        title: 'Explorer HUD strips: pill, underline, section, shop, subtab and a filled underline',
+        render: () => (
+          <div className={layout.stack} style={{ minWidth: 0, maxWidth: '100%' }}>
+            {(['pill', 'underline', 'section', 'shop', 'subtab'] as const).map((variant) => (
+              <TabsBar
+                key={variant}
+                appearance="hud"
+                variant={variant}
+                label={`${variant} strip`}
+                scrollable
+                style={{ maxWidth: '100%' }}
+              >
+                <Tabs appearance="hud" label="Wearables" selected />
+                <Tabs appearance="hud" label="Emotes" />
+                <Tabs appearance="hud" label="Unavailable" disabled />
+              </TabsBar>
+            ))}
+            <div style={{ height: 44 }}>
+              <TabsBar appearance="hud" variant="underline" fill label="filled strip">
+                <Tabs appearance="hud" label="Friends" selected />
+                <Tabs appearance="hud" label="Requests" />
+              </TabsBar>
+            </div>
+          </div>
+        )
+      },
+      {
         id: 'underline',
         title: 'Panel, underline',
         render: () => <PanelTabsDemo variant="underline" />
@@ -433,5 +535,261 @@ export const navigationEntries: GalleryEntry[] = [
       title: controls.variant[0]!.toUpperCase() + controls.variant.slice(1),
       render: () => <TitleBarDemo controls={controls} />
     }))
+  },
+  {
+    name: 'BrowsePage',
+    group: 'Navigation',
+    summary: 'The frame of a browse page: a toolbar of tabs and controls over a results panel.',
+    components: ['BrowseToolbar', 'BrowseControl', 'BrowsePanel', 'BrowseLoading'],
+    examples: [
+      {
+        id: 'frame',
+        title: 'A toolbar over a loading panel and a panel with results',
+        render: () => (
+          <div className={layout.strip}>
+            <div style={{ width: 720 }}>
+              <BrowseToolbar tabs={<strong>Wearables</strong>}>
+                <BrowseControl size="search">
+                  <input aria-label="Search the shop" placeholder="Search" />
+                </BrowseControl>
+                <BrowseControl size="select">
+                  <select aria-label="Sort by">
+                    <option>Newest</option>
+                  </select>
+                </BrowseControl>
+              </BrowseToolbar>
+              <div className={layout.stack}>
+                <BrowsePanel label="Results, loading" busy>
+                  <BrowseLoading />
+                </BrowsePanel>
+                <BrowsePanel label="Results">Nothing on sale here.</BrowsePanel>
+              </div>
+            </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'ContextMenu',
+    group: 'Navigation',
+    summary:
+      "The design system's context menu: a stacked menu of rows, with the forms that open it from a kebab button or a point.",
+    components: ['ContextMenu', 'Submenu', 'KebabMenu', 'AnchoredMenu'],
+    examples: [
+      {
+        id: 'menu',
+        title: 'A header, items, a switch, exclusive options and a danger row',
+        render: () => (
+          <ContextMenu
+            aria-label="Player options"
+            items={[
+              { kind: 'header', name: 'Aria', tag: '#a3f1', address: '0x1234567890abcdef1234' },
+              { kind: 'separator' },
+              { label: 'View profile' },
+              { kind: 'toggle', label: 'Mute', checked: true },
+              { kind: 'title', label: 'Sort by' },
+              { kind: 'option', label: 'Newest', checked: true },
+              { kind: 'option', label: 'Oldest', checked: false },
+              { kind: 'separator' },
+              { label: 'Block', danger: true }
+            ]}
+          />
+        )
+      },
+      {
+        id: 'chat',
+        title:
+          "A chat's conversation menu, 260px wide: point at Notification Ping to open its list",
+        render: () => (
+          <div style={{ minHeight: 150 }}>
+            <ContextMenu
+              aria-label="Conversation options"
+              width={260}
+              items={[
+                {
+                  kind: 'submenu',
+                  label: 'Notification Ping',
+                  icon: <MenusNotifications size={20} />,
+                  items: [
+                    { kind: 'option', label: 'All Messages', checked: true },
+                    { kind: 'option', label: 'Mentions Only', checked: false },
+                    { kind: 'option', label: 'None', checked: false }
+                  ]
+                },
+                {
+                  kind: 'toggle',
+                  label: 'Auto-Translate',
+                  icon: <MenusTranslate size={20} />,
+                  checked: true
+                },
+                { kind: 'separator' },
+                { label: 'Delete Chat History', icon: <MenusDelete size={20} />, danger: true }
+              ]}
+            />
+          </div>
+        )
+      },
+      {
+        id: 'submenu',
+        title: 'A row that opens a list beside it, on hover or press; a long name wraps',
+        render: () => (
+          <div style={{ width: 240, minHeight: 150 }}>
+            <Submenu label="Invite to Community">
+              <ContextMenu
+                items={[
+                  { label: 'Pixel Builders' },
+                  { label: 'Neon Club' },
+                  { label: 'The Northern District Builders and Friends of Genesis Plaza' }
+                ]}
+                scroll
+              />
+            </Submenu>
+          </div>
+        )
+      },
+      {
+        id: 'kebab',
+        title: 'Opened from a kebab button, in both sizes',
+        render: () => (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, minHeight: 120 }}>
+            <KebabMenu
+              label="Conversation options"
+              items={(close) => [{ label: 'View Community', onClick: close }]}
+            />
+            <KebabMenu
+              size="sm"
+              label="Participant options"
+              items={(close) => [{ label: 'View profile', onClick: close }]}
+            />
+          </div>
+        )
+      },
+      {
+        id: 'anchored',
+        title: 'Opened from the point of a press: press the button',
+        render: () => <AnchoredMenuExample />
+      }
+    ]
+  },
+  {
+    name: 'MenuPanel',
+    group: 'Navigation',
+    summary: 'The panel a navigation button opens, with its rows.',
+    components: ['MenuPanel', 'MenuList', 'MenuRow', 'MenuDivider'],
+    examples: [
+      {
+        id: 'panel',
+        title: 'A titled panel with two groups of rows',
+        render: () => (
+          <MenuPanel label="Discover" title="DISCOVER">
+            <MenuList>
+              <MenuRow label="Events" hint="X" trailing={<strong>3</strong>} />
+              <MenuRow label="Places" hint="C" />
+            </MenuList>
+            <MenuDivider />
+            <MenuList>
+              <MenuRow label="Communities" />
+              <MenuRow label="Unavailable" disabled />
+            </MenuList>
+          </MenuPanel>
+        )
+      }
+    ]
+  },
+  {
+    name: 'OptionMenu',
+    group: 'Navigation',
+    summary:
+      'A light list of single-choice sections, the chosen option of each marked with a check.',
+    components: ['OptionMenu'],
+    examples: [
+      {
+        id: 'sections',
+        title: 'Two sections; choose an option of each',
+        render: () => <OptionMenuExample />
+      }
+    ]
+  },
+  {
+    name: 'PagedRail',
+    group: 'Navigation',
+    summary:
+      'A row of cards paged a whole page at a time, with arrows on hover or focus and a dot per page.',
+    components: ['PagedRail'],
+    examples: [
+      {
+        id: 'pages',
+        title: 'Eight cards, three to a page',
+        note: 'Point at the row, or move the focus into it, for its arrows. The last page ends on the last card.',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(8)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'shop',
+        title: 'The shop variant, with room for a card that grows, and a row without dots',
+        render: () => (
+          <div className={`${layout.railRoom} ${layout.rows}`}>
+            <PagedRail variant="shop" perPage={3} gap={8} bleed={12}>
+              {railCards(7)}
+            </PagedRail>
+            <PagedRail perPage={3} gap={8} dots={false}>
+              {railCards(5)}
+            </PagedRail>
+          </div>
+        )
+      },
+      {
+        id: 'fits',
+        title: 'Every card fits: no arrows and no dots',
+        render: () => (
+          <div className={layout.railRoom}>
+            <PagedRail perPage={3} gap={8}>
+              {railCards(2)}
+            </PagedRail>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Pager',
+    group: 'Navigation',
+    summary: 'Previous and next arrows around a window of page numbers.',
+    components: ['Pager'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'The two variants, on the third of nine pages',
+        render: () => <PagerExample />
+      }
+    ]
   }
 ]
+
+function railCards(count: number) {
+  return Array.from({ length: count }, (_, index) => (
+    <div key={index} className={layout.railCard}>
+      Card {index + 1}
+    </div>
+  ))
+}
+
+function PagerExample() {
+  const [page, setPage] = useState(2)
+  return (
+    <div className={layout.rows}>
+      <div className={layout.strip}>
+        <Pager page={page} count={9} onChange={setPage} />
+      </div>
+      <div className={layout.strip}>
+        <Pager variant="shop" page={page} count={9} onChange={setPage} />
+      </div>
+    </div>
+  )
+}

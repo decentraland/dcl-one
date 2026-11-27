@@ -7,7 +7,6 @@
 
 import { useRef } from 'react'
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
-import { ScrollThumb } from '@hud/design'
 import closeIcon from '../assets/cart/close.svg'
 import heartIcon from '../assets/cart/heart.svg'
 import minusIcon from '../assets/cart/minus.svg'
@@ -18,6 +17,7 @@ import { CreditsIcon } from './CreditsIcon'
 import { pressedWith, type PressedWith } from './pressedWith'
 import { ShopItemTile } from './ShopItemTile'
 import styles from './ShopCart.module.css'
+import { ScrollThumb } from '@dcl/one-ui'
 
 export interface ShopCartLine {
   key: string

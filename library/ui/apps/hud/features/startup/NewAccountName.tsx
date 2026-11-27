@@ -3,8 +3,8 @@
 // account with its look and goes straight in; Back signs out of the new account.
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
+import { Button, Checkbox, MaskIcon, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Button, Checkbox, MaskIcon, Spinner } from '../../design'
 import { StartupBack } from './StartupBack'
 import logo from '../../assets/loading/logo-icon.webp'
 import warning from '../../assets/startup/warning.png'
@@ -92,9 +92,9 @@ export function NewAccountName({
         {email != null && (
           <div className={styles.row}>
             <Checkbox
-              variant="light"
+              appearance="hud"
               checked={newsletter}
-              onChange={setNewsletter}
+              onCheckedChange={setNewsletter}
               aria-label="Subscribe to newsletter"
               id="new-account-newsletter"
             />
@@ -105,9 +105,9 @@ export function NewAccountName({
         )}
         <div className={styles.row}>
           <Checkbox
-            variant="light"
+            appearance="hud"
             checked={terms}
-            onChange={setTerms}
+            onCheckedChange={setTerms}
             aria-label="I agree with the Terms of Use and Privacy Policy"
             id="new-account-terms"
           />
@@ -135,7 +135,7 @@ export function NewAccountName({
             .*
           </label>
         </div>
-        <Button
+        <Button appearance="hud"
           size="start"
           className={styles.jumpIn}
           disabled={!valid || !terms || saving}

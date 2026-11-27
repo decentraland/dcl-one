@@ -26,6 +26,13 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
@@ -55,8 +62,13 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
-Ordinary and authoritative hosted scenes use their own address policies. For native scene
-WebSockets, access to private resolved addresses is preview-only.
+Ordinary and authoritative hosted scenes use their own address policies. Native scene
+WebSockets follow the same rule as native Fetch: preview (on desktop or on an authoritative
+server launched in preview), the bundled bridge and an operator-selected `--system-scene` on
+desktop may use `ws://` and reach loopback and LAN addresses; every other scene, including
+every non-preview scene on the authoritative server, needs `wss://` to a public address.
+Link-local and metadata addresses stay blocked in every mode. TLS
+certificates are checked against the operating system's trust store.
 
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
 credentials in cleartext.
@@ -287,9 +299,9 @@ State, in every build:
   on the player, nearest first, so part of the crowd is behind the camera.
   `seed <n>` gives the avatar at each position the same look in every session of one build, so
   two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
-  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range, and
-  `cap all` sets no cap, so real players and scene avatars hide no demo avatar: either wins
-  over the Max Avatars setting, which it neither changes nor saves, until `cap` alone goes back
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range (1 to 100), and
+  `cap all` sets no cap, as the player's Unlimited Avatars setting does, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars and Unlimited Avatars settings, which it neither changes nor saves, until `cap` alone goes back
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
@@ -306,6 +318,15 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>)`: the time the sky shows. While
+  the scene the player stands in holds it (`/sky_state` `sceneLocked`), the Skybox menu is off
+  and a `/time` without `--force` moves the clock, not the sky. With the "Allow overriding
+  scene controls" setting on nothing is locked and a time the clock is stopped at here wins
+  until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
+  `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
+  `overrideAllowed`, the Skybox debug section's readings.
 - `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
   `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
   neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
@@ -334,6 +355,32 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
+- `/reaction_state`: the situational reactions, as JSON: `world` (the Chat bubbles and
+  reactions setting lets them show over avatars), `screenLane` (the Chat Reactions setting
+  passes them to the HUD), `picked` (the local user's picks that played, which no peer's
+  reaction moves), `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent`
+  (messages put on a room's transport, one per emoji per send: none with no room to carry it),
+  `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
+  waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
+  frame, and waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+  `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from), `streamed` (the
+  reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause: `blocked`,
+  `duplicate`, `unknownEmoji`, `rateLimited`, `queueFull`, `particleCap`, `notShown` (reactions
+  that played with no particle, nothing being drawn over their player: no avatar or a hidden
+  one, far from the camera, or the local user in first person) and `noGlyphs` (reactions that
+  played with no particle, their emoji not laid out or with no glyph in colour). The counts are
+  of the session.
+  `/reaction_send <emoji>` reacts as the local user, the way the HUD's Reactions button does: the
+  reaction is sent to the players nearby and reported to analytics, and an emoji the wire has no
+  index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
+  `/reaction_atlas_rebuild` has the reactions' glyph atlas rebuilt at its next upkeep, as a
+  glyph that finds no room in it does: its textures are replaced, the glyphs no particle shows
+  are freed and every particle alive gets a mesh for the new page; an atlas with no glyph to
+  free is left as it is. It replies with nothing. The debug panel's "Rebuild the glyph atlas"
+  runs it.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
@@ -351,7 +398,8 @@ State, in every build:
   Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the variants origin, `null`
-  when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
+  when off or waiting for the endpoint flag), `baseSource` (what set it), `state` (on, off and
+  why, waiting for the endpoint flag, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
   wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
@@ -404,6 +452,54 @@ State, in every build:
   `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/screenshot [--max-width N] [--jpg] [--world-only]`: the primary window's frame, read back at
+  the end of the frame it was rendered in. Alone, the reply is raw base64 PNG at full size (no
+  `data:` prefix; the scene editor's thumbnail reads it). With any option it is JSON: `image`
+  (base64), `format` (`png`, or `jpg` at quality 75), `width`, `height`, `frame` (the size
+  captured, device pixels), `screen` (as `/entity_screen_position`'s), `parcel`, `worldOnly`,
+  `blendWaitMs`, and `caption`, e.g. `640x325 (screen 1600x813, frame 3200x1626) full-view
+  capture at parcel (149,149)`. `--max-width` (64 to 1920) scales down, never up, on the CPU:
+  off the main thread natively, on the engine's own thread on the web, where a large encode can
+  cost a frame. `--world-only` hides the native HUD and every scene's window UI while the
+  capture runs (UI drawn to a texture stays); what `/show_ui` chose, before or during the
+  capture, shows when it ends. Every capture, the bare one included, first waits two frames,
+  then while the camera is in a timed transition (a virtual camera handing back, a mode area;
+  an instant cut is none), at most 1.5 s: the caption then ends `, waited N ms for the camera
+  blend` or `, camera still blending after N ms -- the frame may be mid-transition`, `N` being
+  `blendWaitMs`. On the
+  web the capture is the engine's canvas, never the page's HUD, and the reply's `info` says so.
+  One capture runs at a time, a single frame or a sequence: another fails with
+  `{"refused": "a capture is already in progress (<holder>); retry when it completes", "cause":
+  {"holder"}}`, the holder `screenshot` or `screenshot --count`.
+- `/screenshot --count N [--interval-seconds S] [--max-width N] [--jpg] [--world-only]
+  [--dir <path>]`: a sequence of `N` frames (1 to 20) `S` seconds apart (0.05 to 2, default
+  0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640).
+  `--interval-seconds` and `--dir` need `--count`. The schedule
+  runs from the first frame. At most six frames wait at the window's full size for the encoder:
+  while six do, the next is not asked for, so an encoder that falls behind makes later frames
+  `late` instead of holding every frame in memory. Natively the frames are files in
+  `--dir` (created on the IO task pool before the first frame; a relative path is the client's
+  working directory's; one that cannot be created ends the capture with a refusal) or a new
+  `captures/capture-<ms>` folder in the client's cache, and `directory` and each `path` are
+  absolute. A `--dir` that already holds frames is written over from `frame-000`; the capture
+  deletes nothing, so an earlier, longer sequence's higher-numbered frames stay, and the reply
+  then carries `staleFrames` (their count) and a `warning`: read only the paths in `frames`, or
+  give each sequence its own folder. The web client
+  cannot write the host's disk, refuses `--dir` and keeps the frames in memory (the last sequence
+  only), `capture://<n>/frame-000.png`, which `/screenshot --frame <path>` returns as raw base64
+  (`--frame` takes no other flag). JSON
+  reply, no image: `directory`, `stored` (`disk` or `memory`), `count`, `format`, `worldOnly`,
+  `requestedIntervalSeconds`, `meanIntervalSeconds` (null for one frame), `late` (frames taken
+  more than half an interval after their time), `screen`, `parcel`, `note`, and `frames` (`index`,
+  `path`, `width`, `height`, `bytes`, `atSeconds` from the first, `intervalFromPreviousSeconds`,
+  `engineFrame`, `tick` of the scene `/set_scene` chose, else the one under the player, `late`).
+  It shares the gate and the camera
+  wait with a single frame.
+- `/screenshot --state` (no other flag): captures nothing and replies the capture gate as JSON,
+  the Frame capture section of the debug panel:
+  `holder` (`screenshot`, `screenshot --count` or `none`), `framesTaken` and `count` of the running
+  capture, `worldOnly`, and the `framesInMemory` and `bytesInMemory` the last in-memory sequence
+  keeps.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
   `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
   once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's
@@ -450,6 +546,22 @@ On the web only:
 - `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
   reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
   each relay at its next step. The reply names the mode; an unknown name fails with the list.
+
+Movement:
+
+- `/movement_state`: the active locomotion settings, the last completed movement step's
+  `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
+  and its height over it (the debug panel's Locomotion section).
+
+Scene animations:
+
+- `/scene_animations` (JSON: the `models` that animate and how many are `withAnimator`; the
+  clips `playing`, `stopped` by their scene and `finished`; `finishReports`, the ended clips
+  reported to their scenes; and up to 32 `clips`, each with its `scene`, `entity`, `clip`,
+  `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`). The debug panel's
+  Scene animations section shows the counts. A clip that ended reads `finished` until its
+  scene writes the Animator again: `stopped` after a write that keeps its state stopped, and
+  `playing` after one that plays it again.
 
 The HUD and input:
 

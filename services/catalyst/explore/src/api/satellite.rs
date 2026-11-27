@@ -420,7 +420,7 @@ impl SatelliteState {
             return Ok(Some(r));
         }
         let lock = self.decoding.claim(&cid.to_string());
-        let result = async {
+        async {
             let _guard = lock.lock().await;
             if let Some(r) = self.sources.lock().get(&cid.to_string()) {
                 return Ok(Some(r));
@@ -441,8 +441,7 @@ impl SatelliteState {
                 .insert(cid.to_string(), region.clone(), region.bytes());
             Ok(Some(region))
         }
-        .await;
-        result
+        .await
     }
 
     #[cfg(test)]

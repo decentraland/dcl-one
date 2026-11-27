@@ -114,7 +114,8 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   run the test suite and the headless smoke test: they start when the PR is marked ready for
   review, or on the next push with the `ci:engine` label. The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
-  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
+  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, the native platform layer
+  (`crates/platform/src/native.rs` and `native/`), a file or folder named
   `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine
   source (the workflow, the selector, `library/vendor/rusty_enet`, `apps/bevy-explorer` build
   scripts); when it is labelled `ci:macos` (then push or reopen); and on every main push and

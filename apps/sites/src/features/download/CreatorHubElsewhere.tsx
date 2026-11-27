@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { Button } from "@dcl/one-ui";
 import { docsUrl } from "@web-core/docs";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -56,16 +57,16 @@ export default function CreatorHubElsewhere({ sid }: { sid: string }) {
     <div className={styles.root}>
       <p className={styles.note}>{copy.note}</p>
       <div className={styles.actions}>
-        <a
-          className={styles.docs}
+        <Button
+          size="lg"
           href={docsUrl("creator")}
           onClick={() => track("lp_creatorhub_docs_clicked", {}, { sid, story: CREATOR_HUB_DOWNLOAD_STORY })}
         >
           {copy.docs}
-        </a>
-        <button type="button" className={styles.share} onClick={share} aria-live="polite">
+        </Button>
+        <Button size="lg" variant="outline" onClick={share} aria-live="polite">
           {copied ? copy.copied : copy.share}
-        </button>
+        </Button>
       </div>
     </div>
   );

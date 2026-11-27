@@ -11,6 +11,7 @@ use sqlx::PgConnection;
 
 use super::{ChainNet, Rpc, chain_walk};
 use crate::chain_index::rpc::{RpcLog, hex_to_i64};
+use crate::market::casts;
 
 static CHANGED: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -43,13 +44,17 @@ pub(super) async fn write(
          ORDER BY a.block_number,a.contract_address,l.issue_log")
         .bind(net.db_name()).bind(from).bind(to).fetch_all(&mut *c).await?;
     let mut days = BTreeSet::new();
-    let heights: BTreeSet<_> = mints.iter().map(|x| x.0 as u64).collect();
+    let stored: BTreeSet<i64> = mints.iter().map(|x| x.0).collect();
+    let heights = stored
+        .iter()
+        .map(|&h| casts::to_u64(h))
+        .collect::<Result<BTreeSet<u64>, _>>()?;
     sqlx::query(
         "UPDATE shop.sale_execution SET creator_attempted_at=timezone('UTC',now())
         WHERE network=$1 AND kind='store' AND block_number=ANY($2)",
     )
     .bind(net.db_name())
-    .bind(heights.iter().map(|&h| h as i64).collect::<Vec<_>>())
+    .bind(stored.into_iter().collect::<Vec<_>>())
     .execute(&mut *c)
     .await?;
     let (headers, _) = rpc
@@ -61,7 +66,7 @@ pub(super) async fn write(
         let mut requests = Vec::new();
         for (i, g) in batch.iter().enumerate() {
             let m = &g[0];
-            let hash = &headers[&(m.0 as u64)].hash;
+            let hash = &headers[&casts::to_u64(m.0)?].hash;
             requests.push(json!({"jsonrpc":"2.0","id":2*i,"method":"eth_call",
                 "params":[{"to":m.3,"data":selector},{"blockHash":hash,"requireCanonical":true}]}));
             requests.push(json!({"jsonrpc":"2.0","id":2*i+1,"method":"eth_getLogs",
@@ -69,7 +74,7 @@ pub(super) async fn write(
         }
         let mut answers = BTreeMap::new();
         for a in rpc.batch(&requests).await? {
-            let id = a["id"].as_u64().context("creator response id")? as usize;
+            let id = casts::to_usize(a["id"].as_u64().context("creator response id")?);
             ensure!(
                 id < requests.len() && answers.insert(id, a).is_none(),
                 "duplicate or invalid creator response"
@@ -77,7 +82,7 @@ pub(super) async fn write(
         }
         'collection: for (i, g) in batch.iter().enumerate() {
             let m = &g[0];
-            let hash = &headers[&(m.0 as u64)].hash;
+            let hash = &headers[&casts::to_u64(m.0)?].hash;
             let Some(mut creator) = answers
                 .get(&(2 * i))
                 .and_then(|a| a["result"].as_str())
@@ -129,11 +134,7 @@ pub(super) async fn write(
                 continue;
             }
             for &(block, index, ordinal, _, issue) in g.iter().rev() {
-                while history
-                    .last()
-                    .is_some_and(|(at, _, _)| *at > i64::from(issue))
-                {
-                    let (_, prev, _) = history.pop().unwrap();
+                while let Some((_, prev, _)) = history.pop_if(|(at, _, _)| *at > i64::from(issue)) {
                     creator = prev;
                 }
                 days.insert(block);

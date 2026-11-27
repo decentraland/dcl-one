@@ -20,3 +20,6 @@ crc32fast = "1"
 [build-dependencies]
 prost-types = "0.14"
 protox = "0.10"
+
+[lints]
+workspace = true

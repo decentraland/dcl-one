@@ -33,7 +33,7 @@ pub async fn get_pointer_changes(
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/json")
         .body(axum::body::Body::from(body))
-        .unwrap())
+        .expect("a constant status and header always build a response"))
 }
 
 fn parse_pointer_changes_options(query_string: &str) -> AppResult<PointerChangesQueryOptions> {

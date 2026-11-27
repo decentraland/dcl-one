@@ -4,7 +4,7 @@ vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 
 import type { ReferrerVM } from "@/data/lib/catalyst/landings/referral";
 
-import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_IMAGE } from "../lib/social-meta";
+import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_IMAGE, SOCIAL_LOGO } from "../lib/social-meta";
 import { canonicalHrefs, rootMatches, tagContent } from "../lib/social-meta.test-utils";
 import { meta } from "./invite.($referrer)";
 
@@ -24,7 +24,7 @@ const BASE = "https://public.test";
 
 const head = (referrerParam: string, value: ReferrerVM | null, base: string | undefined = BASE) =>
   meta({
-    loaderData: { sid: "s1", step: "view", referrerParam, referrer: value, referral: null },
+    loaderData: { sid: "s1", referrerParam, referrer: value },
     matches: rootMatches(base),
     location: { pathname: referrerParam ? `/invite/${referrerParam}` : "/invite" },
   } as never);
@@ -54,6 +54,10 @@ describe("when rendering the /invite head", () => {
     it("should point the canonical at the lowercased address", () => {
       expect(tagContent(tags, "og:url")).toEqual([`https://public.test/invite/${ADDRESS.toLowerCase()}`]);
       expect(canonicalHrefs(tags)).toEqual([`https://public.test/invite/${ADDRESS.toLowerCase()}`]);
+    });
+
+    it("should carry the Decentraland logo once, as decentraland.org does", () => {
+      expect(tagContent(tags, "og:logo")).toEqual([SOCIAL_LOGO]);
     });
   });
 
@@ -94,6 +98,7 @@ describe("when rendering the /invite head", () => {
       expect(tagContent(tags, "description")).toEqual([DEFAULT_SOCIAL_DESCRIPTION]);
       expect(tagContent(tags, "og:image")).toEqual([DEFAULT_SOCIAL_IMAGE]);
       expect(tagContent(tags, "twitter:card")).toEqual(["summary_large_image"]);
+      expect(tagContent(tags, "og:logo")).toEqual([SOCIAL_LOGO]);
     });
   });
 

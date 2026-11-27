@@ -242,7 +242,7 @@ impl DirectSigner {
             if Instant::now() >= deadline {
                 tracing::warn!(
                     tx_hash = %tx_hash_hex,
-                    timeout_ms = self.receipt_timeout.as_millis() as u64,
+                    timeout_ms = u64::try_from(self.receipt_timeout.as_millis()).unwrap_or(u64::MAX),
                     "broker tx not mined within receipt timeout; leaving for reconciler"
                 );
                 return Ok((ReceiptOutcome::Pending, Vec::new()));

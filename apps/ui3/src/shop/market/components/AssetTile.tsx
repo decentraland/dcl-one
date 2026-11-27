@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import ThumbnailImage from "../../../components/ThumbnailImage";
+import { ShopThumbnailImage } from "@dcl/one-ui";
 import { shopPath } from "../../routes";
 import type { MyAsset } from "../lib/api";
 import { ManaAmount, manaNetworkOf } from "./kit";
@@ -28,7 +28,7 @@ export default function AssetTile({ asset, actions }: { asset: MyAsset; actions?
   return (
     <article className="mk-tile" data-testid="shop-asset-tile" aria-label={asset.name}>
       <Link to={href} className="mk-tile__media" data-rarity={asset.rarity ?? undefined}>
-        {asset.image ? <ThumbnailImage src={asset.image} fallbackSrc={asset.image} alt="" loading="lazy" decoding="async" /> : <span className="mk-tile__glyph" aria-hidden="true">{asset.name.slice(0, 1)}</span>}
+        {asset.image ? <ShopThumbnailImage src={asset.image} fallbackSrc={asset.image} alt="" loading="lazy" decoding="async" /> : <span className="mk-tile__glyph" aria-hidden="true">{asset.name.slice(0, 1)}</span>}
       </Link>
       <div className="mk-tile__body">
         <Link to={href} className="mk-tile__name u-truncate">

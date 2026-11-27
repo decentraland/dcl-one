@@ -12,8 +12,9 @@
 //!   EIP-712 domain table, the selector allowlist, the contract allowlist
 //!   (`CONTRACT_ADDRESSES_URL` JSON ∪ `shop.collections`, the mirror
 //!   that replaces the crate's one `squid.collection` read; while the
-//!   mirror has no complete pass an address outside the JSON is a 503, never
-//!   "not a collection"), `MIN_SALE_VALUE_IN_WEI`,
+//!   mirror has no complete pass, or the collections index owns the network
+//!   and cannot authorize a read, an address outside the JSON is a 503,
+//!   never "not a collection"), `MIN_SALE_VALUE_IN_WEI`,
 //!   `MAX_GAS_PRICE_ALLOWED_IN_WEI`, the caller's simulation, the per-day
 //!   quota reserved in `economy.transactions` under a per-user advisory lock
 //!   with the request's clock bound. v2 never signs a user's transaction;
@@ -25,9 +26,10 @@
 //!   upstream forward, in that order under the Auto preference.
 //! - `GET /v1/transactions/{address}`: local.
 //! - `GET /v1/contracts/{address}`: `shop.collections` ∪ the
-//!   whitelist cache; the unavailable envelope (`marketplace::unavailable`,
-//!   `Source::CollectionsMirror`) while the collections mirror has no
-//!   complete pass on the relay's network.
+//!   whitelist cache; the unavailable envelope (`marketplace::unavailable`)
+//!   while the collections mirror has no complete pass on the relay's
+//!   network (`Source::CollectionsMirror`), or the collections index owns it
+//!   and cannot authorize a read (`Source::CollectionsIndex`).
 //! - `/v1/payments/{config,nonce,balance,verify}`: config and JSON-RPC
 //!   readers over `RPC_ENDPOINT_POLYGON` (no table); `verify` stays open
 //!   under the write gate.
@@ -61,6 +63,12 @@ pub mod transaction;
 pub mod transfer_shortfall;
 pub mod upstream;
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests;
 

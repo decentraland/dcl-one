@@ -7,9 +7,13 @@ import type { UiSound } from '@explorer-core/engine/protocol'
 
 const SOUND_ATTR = 'data-ui-sound'
 
-function buttonAt(target: EventTarget | null): HTMLButtonElement | null {
-  const button = target instanceof Element ? target.closest('button') : null
-  return button != null && !button.disabled && button.getAttribute('aria-disabled') !== 'true' ? button : null
+// A menu's toggle row counts as a button: its control is a switch, a native checkbox, and a click beside the
+// switch toggles it too.
+function buttonAt(target: EventTarget | null): HTMLElement | null {
+  const button = target instanceof Element ? target.closest<HTMLElement>('button, [role="menuitemcheckbox"]') : null
+  if (button == null || button.getAttribute('aria-disabled') === 'true') return null
+  const control = button instanceof HTMLButtonElement ? button : button.querySelector<HTMLInputElement>('input[role="switch"]')
+  return control?.disabled ? null : button
 }
 
 export function buttonSoundHandlers(play: (sound: UiSound) => void): {

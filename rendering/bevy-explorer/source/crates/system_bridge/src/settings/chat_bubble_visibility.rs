@@ -22,20 +22,20 @@ impl AppSetting for ChatBubbleVisibility {
     type Param = ();
 
     fn title() -> String {
-        "Chat bubbles".to_owned()
+        "Chat bubbles and reactions".to_owned()
     }
 
     fn category() -> SettingCategory {
-        SettingCategory::Gameplay
+        SettingCategory::Chat
     }
 
     fn description(&self) -> String {
         format!(
-            "Controls which chat messages show in a bubble over the nametag of whoever wrote them.\n\n{}",
+            "Controls which chat messages show in a bubble over the nametag of whoever wrote them, and whether reactions show over avatars.\n\n{}",
             match self {
-                Self::All => "Show nearby, community and direct messages",
-                Self::NearbyOnly => "Show nearby messages only",
-                Self::None => "Don't show chat bubbles",
+                Self::All => "Show nearby, community and direct messages, and reactions",
+                Self::NearbyOnly => "Show nearby messages only, and reactions",
+                Self::None => "Don't show chat bubbles or reactions over avatars",
             }
         )
     }
@@ -48,7 +48,7 @@ impl AppSetting for ChatBubbleVisibility {
         config.chat_bubble_visibility
     }
 
-    // read from the config when a message arrives
+    // read from the config when a message arrives or a reaction plays
     fn apply(
         &self,
         _param: bevy::ecs::system::SystemParamItem<Self::Param>,

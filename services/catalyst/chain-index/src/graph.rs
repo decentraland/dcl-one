@@ -417,7 +417,13 @@ fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, Strin
         .get("nfts")
         .and_then(Value::as_array)
         .ok_or("subgraph response without nfts")?;
-    match rows.len().cmp(&(THE_GRAPH_PAGE_SIZE as usize)) {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "THE_GRAPH_PAGE_SIZE is the constant 1000"
+    )]
+    let page = THE_GRAPH_PAGE_SIZE as usize;
+    match rows.len().cmp(&page) {
         std::cmp::Ordering::Less => Ok(None),
         std::cmp::Ordering::Greater => Err("subgraph returned more NFTs than requested".into()),
         std::cmp::Ordering::Equal => last_id(data)
@@ -1169,6 +1175,7 @@ mod tests {
 /// mutable registry: the name authority of the worlds tests (the old tests
 /// seeded squid's `ens`/`nft` tables).
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-13
+- Updated: 2026-11-21
 
 ## Context
 
@@ -62,20 +63,21 @@ decisions; the rest of both stands.
 Where the layout differs from pnpm's default:
 
 - `library/js-sdk-toolchain`, `library/protocol`, the scenes built with the SDK
-  (`apps/ui3/editor-scene`, the Explorer's bridge scene, the Creator Hub's Bevy agent) and
+  (`apps/ui3/editor-scene`, the Explorer's bridge and movement scenes, the Creator Hub's Bevy
+  agent) and
   `apps/creator-hub` set `nodeLinker: hoisted`. The SDK's published type declarations reach a
   sibling package by relative path, and the Creator Hub's packaging and tests read one flat
   `node_modules`. In these projects an import of an undeclared package is not caught at install.
 - `library/js-sdk-toolchain` is one pnpm workspace with a single lockfile, `library/hashing`
   included, and keeps its workspace packages out of the root `node_modules`
-  (`hoistWorkspacePackages: false`), where 11.28 started placing them. It drops the published SDK
-  `@dcl/quests-client` asks for, which `sdk-commands` never loads and pnpm 12 places in the root.
+  (`hoistWorkspacePackages: false`), where 11.28 started placing them.
 - `apps/creator-hub` holds, through overrides, the versions its packaged app shipped under npm
   where pnpm would deduplicate them to another locked version, each until its dependent's next
-  upgrade, and keeps `@dcl/quests-client`'s
-  request for the `latest` `@dcl/sdk` on the SDK it pins. Its `electron-builder.cjs` makes
-  electron-builder collect dependencies by walking `node_modules`, since the pnpm collector picks
-  registry copies of workspace packages.
+  upgrade. Its `electron-builder.cjs` makes electron-builder collect dependencies by walking
+  `node_modules`, since the pnpm collector picks registry copies of workspace packages.
+- `apps/creator-hub`, the Creator Hub's Bevy agent and `apps/ui3/editor-scene` install a published
+  `@dcl/sdk-commands` that depends on `@dcl/quests-client`, and an override keeps that package's
+  request for the `latest` `@dcl/sdk` on the SDK each project pins.
 
 What stays on npm:
 

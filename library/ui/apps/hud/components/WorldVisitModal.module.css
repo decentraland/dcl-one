@@ -1,5 +1,5 @@
 /* World-travel confirmation — matches unity-explorer's ChangeRealmPrompt. Just the card: the popup
-   layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates it in. */
+   layer (PopupHost's ModalBackdrop) draws the scrim, DPI-scales it and animates it in. */
 .modal {
   position: relative;
   width: 420px;

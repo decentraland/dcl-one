@@ -93,6 +93,15 @@ fn coupon_error_response(e: CouponError) -> Response {
     match e {
         CouponError::Duplicate => error_response(409, message),
         CouponError::NotFound(_) => error_response(404, message),
+        CouponError::CatalogueUnavailable(_) => {
+            // The collections index publishes within a pass.
+            let mut response = error_response(503, message);
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("60"),
+            );
+            response
+        }
         CouponError::Db(_) | CouponError::Internal(_) => {
             tracing::error!(error = %message, "coupon request failed");
             error_response(500, COULD_NOT_CREATE.to_string())

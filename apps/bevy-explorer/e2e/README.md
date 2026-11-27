@@ -75,6 +75,7 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_PROFILE_DIR` | Absolute directory for a spawned native client's config, logs and content cache; use a directory in the test workspace | OS profile when unset |
 | `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
 
 A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
@@ -156,7 +157,7 @@ pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
-| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the Max Avatars and Unlimited Avatars settings and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
 | `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
@@ -273,7 +274,9 @@ check. `test/client-login-storage.test.ts` checks the browser queue's transactio
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
-Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
+Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer,
+and that the chat's `Reactions` button plays a reaction (`/reaction_state`), keeps its bar open and
+sets the `Chat Reactions` setting from the bar's switch.
 
 `specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
 and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
@@ -301,7 +304,7 @@ banned topic sender increments both `bannedSenderDrops` and `receiveDropped`.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
+test is in the spec file's header. Port 49, Partial 34, Gap 4, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -319,7 +322,7 @@ test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |
-| BackpackOutfits (4) | `backpack-outfits` | 2 | 2 | | | No delete confirmation; two closes to commit a look |
+| BackpackOutfits (4) | `backpack-outfits` | 3 | 1 | | | Two closes to commit a look |
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
 | Passport (5) | `passport` | 1 | 4 | | | Opens from the Profile row of the rail's Me panel; header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
@@ -497,11 +500,13 @@ change on the left updates what is on the right in the same change, then runs th
 | The lobby's default layout or its Landing card (`library/explorer-core/features/lobby/layout.ts`, `LobbyCards.tsx`), or the layout editor's controls (`LobbyEditor.tsx`: `Customize lobby layout`, `Reset to Default`, `SAVE`) | `enterWorld` in `driver/session.ts`, which presses the first button named exactly `Jump In`: only the Landing card carries that name. The web driver starts each run on a fresh browser profile, so the default layout is shown. A native run reads the layout the client stored; when the lobby shows no `Jump In` for `NO_LANDING_POLLS` polls, `enterWorld` resets it to the shipped layout through the editor and saves it, then jumps in | `pnpm test`; the scenarios in CI |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` and `/hud_logout` do with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick, the sign-out) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `pnpm test`; the HUD's tests (`react-web`: `pnpm test`) |
 | `/hover_entity`, `/click_entity`, `/raycast_stats`, `/raycast_budget`, `/scene_logs` or the `pointer-targets` and `raycast-storm` scenes | `driver/explorer.ts`, `test/explorer.test.ts`, `specs/visual/pointer.test.ts`, `specs/visual/raycast-budget.test.ts`, `rendering/bevy-explorer/docs/guidelines/interaction.md`; `scenes/README.md` for a scene | `pnpm test`; the two scenarios, e.g. `pnpm run e2e --visual --filter 'the box behind the wall'` and `--filter 'a zero budget holds'` (the scenarios of `pointer.test.ts` and `raycast-budget.test.ts` have their own names; a pattern on a file name selects nothing). On the web these commands reach the engine through `engine_console_command` and write Bevy input events, not the page's trusted input |
-| How a console line splits into arguments (`crates/console/src/line.rs`, `SystemApi::ConsoleLine`), or the reply conventions (`screen`, normalized coordinates: `crates/console/src/reply.rs`) | `quoteWord` and a command's `rest` in the engine's `deploy/web/engine/engine.js` and `extract_js_api` (`src/web.rs`); `normalizeLine` and `CONSOLE_SPACE` in `driver/console.ts`; the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md); the readme section | `pnpm test`; the engine's `cargo test -p console` |
+| How a console line splits into arguments (`crates/console/src/line.rs`, `SystemApi::ConsoleLine`), or the reply conventions (`screen`, normalized coordinates: `crates/console/src/reply.rs`) | `quoteWord` and a command's `rest` in the engine's `deploy/web/engine/engine.js` and `extract_js_api` (`src/web.rs`); `normalizeLine`, `CONSOLE_SPACE` and the driver's own `quoteWord` in `driver/console.ts`; the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md); the readme section | `pnpm test`; the engine's `cargo test -p console` |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `pnpm test`; the web driver's tests |
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
+| Selected Cast video frames and playback state in `/media_state` (`crates/av/src/debug_panel.rs`) | `MediaPlayerRow` in `driver/explorer.ts` and the media-state reply tests in `test/explorer.test.ts` | `pnpm run typecheck`; `pnpm test` |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| `/screenshot` (bare reply, options, or its `--count`, `--frame` and `--state` forms) | `screenshot`, `captureSequence`, `captureFrame`, `captureState` and `saveCaptureFrames` in `driver/explorer.ts`, `test/explorer.test.ts`; the Creator Hub's `BevyRenderer.ts` and the editor host read the bare reply | `pnpm test`; a Visual scenario for the bare frame, e.g. `pnpm run e2e --visual --filter 'core matches its reference'` (it writes `frame.png`; the comparison needs the CI references) |
 | `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
 | A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |

@@ -1,0 +1,12 @@
+/* The wearable-preview iframe fills the stage it is placed in, which positions it; its scene draws without a background. */
+.frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  /* The Shop's root is dark and the preview documents declare no scheme: a mismatch paints the iframe an opaque
+     white backdrop over the rarity glow, whatever the renderer draws (as Sites' WearablePreview.module.css). */
+  color-scheme: light;
+}

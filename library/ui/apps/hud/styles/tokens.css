@@ -1,17 +1,21 @@
-/* Design tokens — the single source of truth for the React HUD.
-   New components use the canonical tokens below; the legacy --color-* aliases
-   keep login, chat and loading components working. */
+/* Design tokens of the React HUD. A token whose value and role a foundation token has takes it from there
+   (`var(--dcl-…)`); one that only shares a value with a foundation token of another role or opacity keeps a
+   literal, and says so, unless design assigned it that palette colour, which its comment then states. So
+   every document that loads this file loads the foundations' colours and spacing too:
+   react-web's entry, the Sites root (the `/play` shell and its app document) and the UI gallery's HUD canvas.
+   New components use the canonical tokens below; the legacy --color-* aliases keep login, chat and loading
+   components working. */
 :root {
   /* ---- palette ---- */
-  --brand: #ff2d55; /* primary / ruby */
+  --brand: var(--dcl-brand-ruby); /* primary / ruby */
   --brand-hover: #ff4d70;
   --brand-active: rgba(229, 39, 75, 0.5);
-  --panel: #161518; /* dark panel surface */
-  --accent: #ff743a; /* category / selected orange */
+  --panel: var(--dcl-neutrals-shadow); /* dark panel surface */
+  --accent: var(--dcl-primary-alt-primary-alt); /* category / selected orange */
   --accent-hover: #ff8a5a;
   --accent-ink: #1a1206; /* dark text/icon on an --accent (orange) fill */
-  --text: #fcfcfc;
-  --gold: #ffc95b;
+  --text: var(--dcl-neutrals-snow);
+  --gold: var(--dcl-brand-yellow);
   --purple: #982de2;
 
   /* The radial backdrop of the gallery page and the mobile gate, brightest in the upper right.
@@ -19,76 +23,70 @@
   --menu-bg: radial-gradient(circle at 66% 38%, #b528d8 0%, #8016b8 44%, #54098a 100%);
 
   /* DCL named palette (Explorer 2.0 design system) */
-  --pearl: #ecebed; /* DCL/Pearl — menu dots */
+  --pearl: var(--dcl-neutrals-pearl); /* DCL/Pearl — menu dots */
   --green: #30cd00; /* DCL/Green — connection/stream status */
-  --lavender: #c640cd; /* DCL/Lavender — secondary badge */
+  --lavender: var(--dcl-brand-lavender); /* DCL/Lavender — secondary badge */
   --red: #ff0000; /* DCL/Red — blocked */
-  --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
+  --white-10: var(--dcl-transparencies-white-10); /* DCL/White10% — dividers */
   --white-50: rgba(255, 255, 255, 0.5); /* the sign-in screens' footer icons and version line */
   --white-3: rgba(255, 255, 255, 0.03); /* the sign-in screens' Back */
-  --white-30: rgba(255, 255, 255, 0.3); /* the sign-in screens' focused email field ring */
-  --black-60: rgba(0, 0, 0, 0.6); /* the sign-in screens' method buttons */
+  --white-30: rgba(255, 255, 255, 0.3); /* the name screen's focused field ring and its hint */
+  --black-60: var(--dcl-transparencies-black-60); /* the sign-in screens' method buttons */
   --black-70: rgba(0, 0, 0, 0.7);
-  --signin-field-focus: #f2f2f2; /* the email field, focused */
-  --signin-error-ring: #e00000; /* the email field's ring on an invalid address */
-  --signin-error-text: #ffcdcd; /* "Invalid email" */
-  --signin-code-success: #e9ffd3; /* the code's slots, accepted */
-  --signin-code-error: #ffd3df; /* the code's slots, refused */
+  --signin-error-ring: #e00000; /* the name screen's field ring on a refused name */
+  --signin-error-text: #ffcdcd; /* the name screen's error text */
   --signin-incorrect: #ff5757; /* "Incorrect code"'s icon */
-  --signin-spinner-1: #ffbc5b; /* the sign-in spinner's arc, first of its three colours */
-  --signin-select: #ff7439; /* a picked starting look's ring, the sign-in checkmarks */
+  --signin-select: var(--dcl-brand-orange); /* a picked starting look's ring, the sign-in checkmarks */
   --signin-option-hover: #cdcbd1; /* the body type menu's option, hovered */
-  --signin-name-placeholder: #716b7c; /* the new account's name field placeholder */
+  --signin-name-placeholder: var(--dcl-neutrals-cloudy-sky); /* the new account's name field placeholder */
   /* the faint fill of the sign-in screens' BACK square and body type button: white 3% (10% on hover)
      blended in linear light, which over the purple reads as this grey film */
   --signin-film: rgba(150, 160, 180, 0.3);
   --signin-film-hover: rgba(170, 170, 180, 0.5);
-  --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
-  --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
-  --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
-  --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
+  --shop-card-hover: var(--dcl-transparencies-white-20); /* DCL/White20% — the Shop cart's hovered card */
+  --pale-black: var(--dcl-neutrals-pale-black); /* DCL/Pale Black — the Shop toast's rim */
+  --silver: var(--dcl-neutrals-silver); /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
+  --divider-strong: var(--dcl-transparencies-white-20); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
   --panel-head: rgba(0, 0, 0, 0.55); /* header band layered on --panel-translucent */
   --list-row-hover: rgba(255, 255, 255, 0.15); /* list row hover over --panel-translucent */
   --row-action: rgba(255, 255, 255, 0.14); /* compact secondary action on a hovered row */
   --row-action-hover: rgba(255, 255, 255, 0.24);
-  --row-menu-hover: rgba(255, 255, 255, 0.2);
+  --row-menu-hover: var(--dcl-transparencies-white-20);
   --brand-strong: #f02148; /* compact primary hover */
-  --brand-pressed: #e41e43;
   --menu-rim: #302d36; /* user menu popover rim */
   --danger-strong: #ff0000; /* destructive hover outline (remove friend / cancel request) */
-  --black-40: rgba(0, 0, 0, 0.4);
+  --blocked-fill: #6b0000; /* the passport's BLOCKED button */
+  --black-40: var(--dcl-transparencies-black-40);
   --black-80: rgba(0, 0, 0, 0.8); /* Transparencies/Black 80: an outfit card's hover row */
   --black-30: rgba(0, 0, 0, 0.3);
   --black-50: rgba(0, 0, 0, 0.5);
   --black-90: rgba(0, 0, 0, 0.9); /* the Shop's dialog scrim */
-  --black-60: rgba(0, 0, 0, 0.6); /* the camera-reel options button */
+  --black-60: var(--dcl-transparencies-black-60); /* the camera-reel options button */
   --black-70: rgba(0, 0, 0, 0.7); /* ...pressed */
-  --black-10: rgba(0, 0, 0, 0.1); /* the Shop toast's shadow */
+  --black-10: var(--dcl-transparencies-black-10); /* the Shop toast's shadow */
   --black-55: rgba(0, 0, 0, 0.55); /* the minimap's compass badges */
   --cart-badge-ring: #2b0044; /* the Shop cart badge's ring */
-  --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
-  /* Neutrals/Gray (the design system's --dcl-neutrals-gray, whose foundations the /play shell's dialog overlay doesn't
-     load): a Shop dialog's body text, its balance's label and a checkbox's border. */
-  --shop-gray: #cfcdd4;
+  --shop-modal: var(--dcl-brand-purple-dark); /* the New Shop's dialogs (Buy Item, Purchase successful…) */
+  /* A Shop dialog's body text, its balance's label and a checkbox's border. */
+  --shop-gray: var(--dcl-neutrals-gray);
   /* The design system's explorer-modal glows and the item card's SMART badge. */
   --shop-modal-glow-top: rgba(255, 75, 237, 0.3);
   --shop-modal-glow-bottom: rgba(255, 75, 237, 0.42);
   --shop-smart: linear-gradient(180deg, #fb2bff 0%, #af2ade 100%);
-  --shop-option: rgba(255, 255, 255, 0.1); /* a payment option (Transparencies/White 10) */
-  --shop-option-on: rgba(255, 255, 255, 0.2); /* a payment option picked or hovered (Transparencies/White 20) */
+  --shop-option: var(--dcl-transparencies-white-10); /* a payment option (Transparencies/White 10) */
+  --shop-option-on: var(--dcl-transparencies-white-20); /* a payment option picked or hovered (Transparencies/White 20) */
   --shop-option-ring: linear-gradient(180.67deg, #ff7439 2.82%, #ff2d55 97.47%); /* a picked option's 2px rim (Gradients/Button Primary) */
-  --shop-face-rim: rgba(255, 255, 255, 0.6); /* Transparencies/White 60: a profile picture's ring */
-  --shop-chip-bg: rgba(0, 0, 0, 0.2); /* Transparencies/Black 20: a category chip (what an item hides) */
-  --brand-purple: #691fa9; /* Brand/Purple: a card's thumbnail base, the skeleton's band */
-  --brand-purple-dark: #4c147c; /* Brand/Purple Dark: the skeleton's base */
+  --shop-face-rim: var(--dcl-transparencies-white-60); /* Transparencies/White 60: a profile picture's ring */
+  --shop-chip-bg: var(--dcl-transparencies-black-20); /* Transparencies/Black 20: a category chip (what an item hides) */
+  --brand-purple: var(--dcl-brand-purple); /* Brand/Purple: a card's thumbnail base, the skeleton's band */
+  --brand-purple-dark: var(--dcl-brand-purple-dark); /* Brand/Purple Dark: the skeleton's base */
   --name-card-base: #604cb0; /* the Shop's NAME card art, under its glows */
   --name-card-shine: #d3d3d3; /* the Shop's NAME card art's shine border */
 
   /* status */
   --online: #57df41;
-  --away: #ffa25a;
-  --offline: #a09ba8;
+  --offline: var(--dcl-neutrals-silver);
   --error: #ff2424;
   --error-text: #ffd0d8; /* soft error text on dark (readable, vs the solid --error) */
   --success: #44b600;
@@ -97,14 +95,14 @@
   --fill-1: rgba(255, 255, 255, 0.04);
   --fill-2: rgba(255, 255, 255, 0.06);
   --fill-3: rgba(255, 255, 255, 0.08);
-  --fill-4: rgba(255, 255, 255, 0.1);
+  --fill-4: var(--dcl-transparencies-white-10);
   --fill-5: rgba(255, 255, 255, 0.12);
   --line: rgba(255, 255, 255, 0.08);
   --ink-95: rgba(255, 255, 255, 0.95);
   --ink-85: rgba(255, 255, 255, 0.85);
   --ink-7: rgba(255, 255, 255, 0.7);
   --ink-65: rgba(255, 255, 255, 0.65);
-  --ink-6: rgba(255, 255, 255, 0.6);
+  --ink-6: var(--dcl-transparencies-white-60);
   --ink-45: rgba(255, 255, 255, 0.45);
   --text-dim: rgba(255, 255, 255, 0.55); /* muted secondary label text (ProfileCard tag/copy/submenu) */
   --scrim: rgba(0, 0, 0, 0.5);
@@ -114,7 +112,6 @@
 
   /* ---- modal (the shared violet design-system dialog: permissions, communities, etc.) ---- */
   --modal-bg: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
-  --modal-scrim: rgba(18, 7, 33, 0.6);
   /* a soft round glow, as an alpha mask (an ellipse in a non-square box) */
   --glow-mask: radial-gradient(
     closest-side,
@@ -131,7 +128,7 @@
     transparent 100%
   );
   /* Connection Lost modal colors, shared by both HUD builds. */
-  --connection-modal-bg: #4c147c;
+  --connection-modal-bg: var(--dcl-brand-purple-dark);
   --connection-modal-scrim: rgba(0, 0, 0, 0.8);
   --connection-modal-glow: #ff4bed;
   --connection-modal-glow-top: 0.101960786;
@@ -169,6 +166,9 @@
   /* ---- typography (Inter scale) ---- */
   --font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', monospace;
+  /* The colour emoji face by name: through the text stack, Chromium and WebKit on Linux take a
+     monochrome glyph from the system's sans (DejaVu has the smileys) before they reach it. */
+  --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   --fs-2xs: 0.6rem; /* micro labels — rarity tags and the like */
   --fs-xs: 0.72rem;
   --fs-sm: 0.82rem;
@@ -199,7 +199,7 @@
   --dur-photo-panel: 500ms; /* the info panel slides in and out */
   --photo-close: rgba(0, 0, 0, 0.031); /* the close and info buttons at rest */
   --photo-close-hover: rgba(255, 255, 255, 0.051);
-  --photo-avatar-ring: rgba(255, 255, 255, 0.2); /* a person's picture */
+  --photo-avatar-ring: var(--dcl-transparencies-white-20); /* a person's picture */
   --photo-tag: rgba(255, 255, 255, 0.298); /* an unclaimed name's #tag */
   --photo-empty: rgba(255, 255, 255, 0.698); /* "No collectibles equipped…" */
   --photo-buy-radius: 11px;
@@ -213,26 +213,22 @@
      lighter: 50% black ≈ 29%, 40% ≈ 22%, 10% white ≈ 26%. */
   --scrim-head: rgba(0, 0, 0, 0.29);
   --surface-light: var(--text); /* light buttons, fields, popups */
-  --surface-light-hover: #f5f5f5;
   --surface-light-press: #c8c8c8;
   --ink-on-light: var(--panel);
-  --ink-muted: #716b7c; /* placeholders, idle nav labels */
+  --ink-muted: var(--dcl-neutrals-cloudy-sky); /* placeholders, idle nav labels */
   --ink-subtle: var(--offline); /* section labels on light surfaces */
   --ink-50: rgba(255, 255, 255, 0.68);
   --row-hover: var(--pearl);
-  --row-press: #cfcdd4;
-  --black: #000000;
-  --white: #ffffff;
+  --row-press: var(--dcl-neutrals-gray);
+  --black: var(--dcl-neutrals-black);
+  --white: var(--dcl-neutrals-white);
   --fill-faint: rgba(255, 255, 255, 0.06); /* hover wash on dark buttons */
   --scrim-40: rgba(0, 0, 0, 0.22);
   --scrim-photo: rgba(0, 0, 0, 0.58); /* photo mode: 85% black outside the photo frame */
-  --splash: #ffffff; /* photo mode: the shutter flash */
-  --scrim-20: rgba(0, 0, 0, 0.1);
+  --splash: var(--dcl-neutrals-white); /* photo mode: the shutter flash */
+  --scrim-20: rgba(0, 0, 0, 0.1); /* 10 % black under this name; not an alias of the foundation's black-10 */
   --divider-pink: rgba(247, 85, 255, 0.25);
-  --tab-idle: rgba(120, 90, 160, 0.14); /* a faint lift on the header */
   --tab-hover: rgba(255, 255, 255, 0.26);
-  --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
-  --outline-faint: rgba(255, 255, 255, 0.45); /* clear boxes on chips */
   --menu-bar: var(--panel);
   --menu-tab-hover: #232226;
   --menu-tab-selected: #393641;
@@ -242,19 +238,16 @@
   --slot-empty: #582987;
   --slot-edge: #a14bf3;
   --slot-edge-20: rgba(161, 75, 243, 0.2);
-  --skeleton: rgba(138, 65, 212, 0.62);
-  --pager-idle: rgba(161, 75, 243, 0.28);
-  --unequip-hover: #43404a;
+  --unequip-hover: var(--dcl-neutrals-pale-black);
   --outfit-banner: #67279b;
   --outfit-edge: rgba(130, 69, 190, 0.6);
   --glow-pink: rgba(255, 75, 237, 0.2);
   --glow-pink-faint: rgba(255, 75, 237, 0.14);
   --hide-overlay: #4e0e78;
   --shown: #36d41d; /* a hidden item shown anyway */
-  --smart-badge: linear-gradient(90deg, #e82af7 0%, #b229df 100%);
   --cta-flare: linear-gradient(90deg, #ff3156 0%, #ff5757 50%, #ff7d58 100%);
-  --scrim-60: rgba(0, 0, 0, 0.4);
-  --scrim-card: rgba(0, 0, 0, 0.6); /* the lobby dimmed around a card it presents */
+  --scrim-60: rgba(0, 0, 0, 0.4); /* 40 % black under this name; not an alias of the foundation's black-40 */
+  --scrim-card: var(--dcl-transparencies-black-60); /* the lobby dimmed around a card it presents */
   --scrim-control: rgba(0, 0, 0, 0.35); /* a control's plate over a page's header band */
   --scrim-close: rgba(0, 0, 0, 0.82); /* a modal's close plate on its header band */
   --lava-1: #500090; /* backpack background: left */
@@ -265,15 +258,9 @@
   /* loading screen */
   /* sidebar rail — sRGB equivalents of the reference's linear-space blends */
   --rail-bg: rgba(0, 0, 0, 0.7); /* a navigation button's circle */
-  --rail-divider: rgba(255, 255, 255, 0.2);
-  --rail-avatar-ring: rgba(255, 255, 255, 0.47);
-  --rail-me-ring: rgba(255, 255, 255, 0.7); /* the ring inside the Me button */
-  --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
-  --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */
-  --rail-row-hover: #2e2d30; /* a navigation panel's row under the pointer */
-  --rail-hint: #797979; /* the key beside a navigation panel row's label */
+  --rail-divider: var(--dcl-transparencies-white-20);
   --rail-tag: #727272; /* the #tag after the player's name in the Me panel */
-  --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups */
+  --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups; the shared MenuDivider copies this value */
   --rail-panel-left: 66px; /* where a panel beside the navigation column starts */
   --shadow-rail-panel: 0 6px 4px rgba(0, 0, 0, 0.25); /* the Nearby Voice and Volume popovers */
   --shadow-rail-panel-wide: 0 6px 8px rgba(0, 0, 0, 0.25); /* the Notifications panel */
@@ -283,18 +270,12 @@
   --shop-panel-cta: linear-gradient(180.67deg, #ff7439 2.82%, #ff2d55 97.47%); /* a banner's button */
   --shadow-shop-panel-coin: 1.077px 1.077px 1.347px rgba(0, 0, 0, 0.25);
   /* compact switches / thick sliders / nearby voice (sRGB equivalents of linear blends) */
-  --switch-off: rgba(255, 255, 255, 0.38);
-  --switch-knob-off: rgba(236, 235, 237, 0.73);
-  --switch-off-on-light: rgba(0, 0, 0, 0.15); /* a switch's off track on a light panel: black 30% */
-  --slider-track: rgba(255, 255, 255, 0.19);
   --control-track: rgba(255, 255, 255, 0.42); /* a settings switch or slider while off or unfilled */
-  --switch-off-menu: #454545; /* a switch in a menu sheet, off */
-  --switch-off-rail: #423f49; /* a switch in a rail popover, off */
-  --menu-sheet: #1e1e1e; /* a flat menu sheet over the chat */
+  --switch-off-rail: var(--dcl-neutrals-pale-black); /* a switch in a rail popover, off */
   --voice-divider: rgba(255, 255, 255, 0.14);
   --voice-fill: rgba(255, 255, 255, 0.19);
   --voice-fill-hover: #696473;
-  --voice-green: #34ce76;
+  --voice-green: var(--dcl-system-green);
   --voice-live: #30cd00;
   --voice-stream: #36d41d; /* the chat's "Live Voice Stream" banner */
   --voice-speaking-fill: rgba(26, 198, 45, 0.2);
@@ -309,26 +290,25 @@
   --loading-pill-edge: #ba67f1;
 
   --r-minimap: 5px; /* the minimap's square */
-  --r-xs: 6px;
+  --r-xs: var(--dcl-radius-xs);
   --r-shop-cart-close: 7.5px; /* the Shop cart's close button */
   --r-shop-cart-action: 5.429px; /* the Shop cart card's favourite and remove */
   --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-shop-panel-buy: 6.491px; /* the SHOP panel's BUY CREDITS */
   --r-shop-panel-cta: 8.454px; /* a SHOP panel banner's button */
   --r-shop-panel-banner: 14.384px; /* a SHOP panel banner */
-  --r-sm: 8px;
+  --r-sm: var(--dcl-radius-sm);
   --r-button: 9.6px;
-  --r-md: 12px; /* light buttons and popups */
+  --r-md: var(--dcl-radius-md); /* light buttons and popups */
   --r-slot: 15px;
-  --r-lg: 16px;
-  --r-xl: 24px;
+  --r-lg: var(--dcl-radius-lg);
+  --r-xl: var(--dcl-radius-xl);
 
   --type-9: 9px;
   --type-10: 10px;
   --type-11: 11px;
   --type-12: 12px;
   --type-13: 13px;
-  --type-rail-hint: 13.239px; /* the key beside a navigation panel row's label */
   --type-10: 10px;
   --type-14: 14px;
   --type-15: 15px;
@@ -361,53 +341,51 @@
   --lobby-cell: 114px;
   --lobby-gutter: 2px;
   --lobby-card-fill: rgba(20, 20, 26, 0.9);
-  --lobby-card-bone: rgb(20, 20, 26);
+  --lobby-card-bone: var(--dcl-neutrals-shadow); /* design's palette choice; the two translucent card fills keep their own hue */
   --lobby-landing-static: rgba(16, 16, 20, 0.45);
   --lobby-white-1: rgba(255, 255, 255, 0.01);
   --lobby-white-2: rgba(255, 255, 255, 0.02);
   --lobby-white-5: rgba(255, 255, 255, 0.05);
   --lobby-white-6: rgba(255, 255, 255, 0.06);
-  --lobby-white-10: rgba(255, 255, 255, 0.1);
-  --lobby-white-20: rgba(255, 255, 255, 0.2);
+  --lobby-white-10: var(--dcl-transparencies-white-10);
+  --lobby-white-20: var(--dcl-transparencies-white-20);
   --lobby-white-25: rgba(255, 255, 255, 0.25);
-  --lobby-white-40: rgba(255, 255, 255, 0.4);
-  --lobby-white-60: rgba(255, 255, 255, 0.6);
+  --lobby-white-40: var(--dcl-transparencies-white-40);
+  --lobby-white-60: var(--dcl-transparencies-white-60);
   --lobby-white-70: rgba(255, 255, 255, 0.7);
   --lobby-white-80: rgba(255, 255, 255, 0.8);
-  --lobby-black-40: rgba(0, 0, 0, 0.4);
-  --lobby-black-55: rgba(0, 0, 0, 0.55);
-  --lobby-black-60: rgba(0, 0, 0, 0.6);
+  --lobby-black-40: var(--dcl-transparencies-black-40);
+  --lobby-black-60: var(--dcl-transparencies-black-60);
   --lobby-black-80: rgba(0, 0, 0, 0.8);
   --lobby-black-95: rgba(0, 0, 0, 0.95);
-  --lobby-button-hover: rgba(90, 90, 90, 0.55);
-  --lobby-snow: rgb(252, 252, 252);
-  --lobby-silver: rgb(160, 155, 168);
-  --lobby-shadow: rgb(22, 21, 24);
-  --lobby-subtitle: rgb(207, 205, 212);
-  --lobby-grip: rgb(113, 107, 124);
-  --lobby-accent: rgb(255, 45, 85);
-  --lobby-accent-hover: rgb(255, 77, 111);
+  --lobby-snow: var(--dcl-neutrals-snow);
+  --lobby-silver: var(--dcl-neutrals-silver);
+  --lobby-shadow: var(--dcl-neutrals-shadow);
+  --lobby-subtitle: var(--dcl-neutrals-gray);
+  --lobby-grip: var(--dcl-neutrals-cloudy-sky);
+  --lobby-accent: var(--dcl-primary-primary);
+  --lobby-accent-hover: var(--dcl-primary-primary-light-1);
   --lobby-accent-pressed: rgb(200, 35, 67);
   --lobby-accent-tint: rgb(255, 230, 235);
-  --lobby-view-all-arrow: rgb(204, 29, 44);
-  --lobby-outline-to: rgb(198, 64, 205);
+  --lobby-view-all-arrow: var(--dcl-system-red-dark-2);
+  --lobby-outline-to: var(--dcl-brand-lavender);
   --lobby-live-red: rgb(255, 0, 0);
   --lobby-online-green: rgb(48, 205, 0);
-  --lobby-status-online: rgb(52, 206, 119);
-  --lobby-status-away: rgb(255, 162, 90);
-  --lobby-friend-hover: rgb(37, 33, 42);
+  --lobby-status-online: var(--dcl-system-green);
+  --lobby-status-away: var(--dcl-brand-melon); /* design assigned the brand melon to the away status */
+  --lobby-friend-hover: var(--dcl-neutrals-charcoal);
   --lobby-menu-border: rgb(34, 33, 36);
   --lobby-menu-separator: rgb(42, 41, 44);
-  --lobby-menu-pressed: rgb(45, 42, 51);
+  --lobby-menu-pressed: var(--dcl-neutrals-onix-dark-1);
   --lobby-remove-hover: rgb(43, 42, 46);
-  --lobby-drop-valid: rgb(52, 206, 119);
+  --lobby-drop-valid: var(--dcl-system-green);
   --lobby-drop-valid-edge: rgba(52, 206, 119, 0.5);
   --lobby-drop-valid-fill: rgba(52, 206, 119, 0.1);
   --lobby-drop-invalid-edge: rgba(255, 45, 85, 0.5);
   --lobby-drop-invalid-fill: rgba(255, 45, 85, 0.1);
   --lobby-modal-drop-fill: rgba(14, 40, 27, 0.9);
   --lobby-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
-  --lobby-gradient-tint: rgba(0, 0, 0, 0.6);
+  --lobby-gradient-tint: var(--dcl-transparencies-black-60);
   --lobby-image-rest: rgb(230, 230, 230);
   --lobby-dur-press: 100ms;
   --lobby-dur-arrow: 150ms;
@@ -418,16 +396,8 @@
 
   /* The welcome and guest start pages' panel over the stage. */
   --lobby-card: rgba(20, 20, 26, 0.84);
-  --lobby-ink: rgb(252, 252, 252);
+  --lobby-ink: var(--dcl-neutrals-snow);
   --lobby-ink-dim: rgb(191, 191, 199);
-  --header-btn: var(--black);
-  --header-btn-hover: rgb(31, 31, 31);
-  --header-btn-ring: rgba(255, 255, 255, 0.18); /* measured: rgb(46,46,46) over black */
-  --rail-dot: rgba(255, 255, 255, 0.6);
-  --rail-dot-active: rgb(255, 51, 153);
-  --rail-arrow: rgba(28, 28, 33, 0.7);
-  --rail-arrow-hover: rgb(56, 56, 66);
-  --rail-arrow-pressed: rgb(13, 13, 15);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
   --type-96: 96px;
   --fw-light: 300;
@@ -456,7 +426,7 @@
   --chat-bubble: rgba(0, 0, 0, 0.7);
   --chat-mention: #3a0f50;
   --chat-mention-rim: linear-gradient(180deg, #fe2d57 0%, #c740cd 100%);
-  --chat-day: rgba(0, 0, 0, 0.6);
+  --chat-day: var(--dcl-transparencies-black-60);
   --chat-input: rgba(0, 0, 0, 0.37);
   --chat-input-focus: rgba(0, 0, 0, 0.71);
   --chat-new: rgba(255, 45, 85, 0.73);
@@ -464,11 +434,11 @@
   --chat-link: #00b2ff;
   --chat-hover: rgba(255, 255, 255, 0.24); /* white α0.051 over black, in linear light */
   --chat-pressed: rgba(255, 255, 255, 0.18);
-  --chat-divider: rgba(255, 255, 255, 0.2);
+  --chat-divider: var(--dcl-transparencies-white-20);
   --chat-avatar-ring: rgba(255, 255, 255, 0.48);
-  --counter-half: #ffbc5b;
-  --emoji-tab: #a09ba8;
-  --emoji-hover: #43404a;
+  --counter-half: var(--dcl-system-orange-light-1);
+  --emoji-tab: var(--dcl-neutrals-silver);
+  --emoji-hover: var(--dcl-neutrals-pale-black);
   --emoji-search: #d6d6d6;
   --chat-dur-chrome: var(--dur-slide);
   --chat-dur-arrive: 500ms;
@@ -478,8 +448,8 @@
      Translucent values are the sRGB equivalents of overlays blended in linear light. */
   --map-bg: #201c26; /* behind the atlas, under the background tile */
   --map-panel: #e4e4e4; /* the places and events panel */
-  --map-rule: #cfcdd4; /* separators on light surfaces */
-  --map-ink: #161518;
+  --map-rule: var(--dcl-neutrals-gray); /* separators on light surfaces */
+  --map-ink: var(--dcl-neutrals-shadow);
   --map-ink-soft: #323232; /* tab labels, the caret */
   --map-toolbar: rgba(0, 0, 0, 0.52); /* black 80% */
   --map-band: rgba(0, 0, 0, 0.21); /* black 40%: the band behind the search bar */
@@ -488,7 +458,7 @@
   /* Transparencies/Overlay 80, kept as the raw design alpha on purpose (not converted like the
      values above): the parcels map's age label matches the web Shop's LAND map label, which a
      browser draws with this value. */
-  --map-age: rgba(38, 38, 38, 0.8);
+  --map-age: var(--dcl-transparencies-overlay-80);
   --map-button-hover: #e7e7e7;
   --map-button-press: #c8c8c8;
   --map-chip-hover: #e0e0e0;
@@ -501,9 +471,9 @@
   --map-nav-hover: #ffd7d7;
   --map-nav-press: #fab6b6;
   --map-jump-press: #dd2749;
-  --map-field-btn: rgba(0, 0, 0, 0.1); /* black 20% */
-  --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 30% */
-  --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 40% */
+  --map-field-btn: rgba(0, 0, 0, 0.1); /* black 10% */
+  --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 15% */
+  --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 21% */
   --map-sort-idle: rgba(0, 0, 0, 0.05); /* black 10% */
   --map-card: rgba(255, 255, 255, 0.5);
   --map-action: rgba(255, 255, 255, 0.7);
@@ -519,9 +489,6 @@
   --ease-outback: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* ---- modal ---- */
-  --modal-pad: 30px;
-  --modal-gap: 20px;
-  --modal-btn-h: 46px;
   --z-dialog: 1200;
   --z-toast: 2000;
 
@@ -535,15 +502,12 @@
   --color-bg: var(--panel);
   --font-title-xl: var(--fs-display);
   --font-title-l: var(--fs-title);
-  --font-body: var(--fs-md);
   --font-button: var(--fs-md);
 
   /* ---- events ---- the Events page: its calendar, cards and detail.
      Alphas are the sRGB equivalents of overlays designed for linear-space blending, each worked
      out over the surface it sits on. */
   --events-dot: rgba(255, 255, 255, 0.32); /* a carousel dot that is not the current one */
-  --scroll-thumb-dark: rgba(0, 0, 0, 0.68); /* a column's scroll handle, under its white rim */
-  --modal-scrim-deep: rgba(0, 0, 0, 0.68);
   --tint-shade: rgba(0, 0, 0, 0.54);
   --tint-veil: rgba(255, 255, 255, 0.15); /* the detail's buttons, over its picture's shade */
   --tint-veil-hover: rgba(255, 255, 255, 0.25);
@@ -553,7 +517,7 @@
   --tint-glass: rgba(255, 255, 255, 0.095); /* the header's Today */
   --tint-faint: rgba(255, 255, 255, 0.128); /* a card's round-cornered icon buttons, the time pill */
   --tint-faint-hover: rgba(255, 255, 255, 0.176);
-  --events-day-bar-top: #ffa15a; /* the day bar, top to bottom */
+  --events-day-bar-top: var(--dcl-brand-melon); /* the day bar, top to bottom; design assigned the brand melon */
   --events-day-bar-bottom: #ff6257;
   --events-day-today-top: rgba(255, 234, 128, 0.99); /* the "Today" pill, top to bottom */
   --events-day-today-bottom: rgba(255, 228, 128, 0.7);
@@ -587,10 +551,10 @@
   --events-detail-label: rgba(255, 255, 255, 0.68);
   --events-detail-line: rgba(255, 255, 255, 0.155);
   --events-detail-icon: #d28dff;
-  --events-schedule-hover: #ff7439;
+  --events-schedule-hover: var(--dcl-brand-orange);
   --place-access-restricted: #c2b8ca; /* the place detail's INVITE ONLY and PASSWORD REQUIRED */
   --place-access-open: #33cc33; /* the place detail's YOU ARE INVITED */
-  --place-chip: rgba(255, 255, 255, 0.1); /* a category on the place detail */
+  --place-chip: var(--dcl-transparencies-white-10); /* a category on the place detail */
   --explore-modal-scrim: rgba(0, 0, 0, 0.85); /* behind the lobby's Map, Places and Events modal */
   --passport-scrim: rgba(0, 0, 0, 0.92); /* the passport's backdrop */
 }
@@ -598,8 +562,9 @@
 /* ---- item rarity ----
    Set `data-rarity` on a tile and read --rm (main) / --rl (light sheen) anywhere inside it,
    pseudo-elements included. Unknown or missing values fall through to base.
-   --rarity / --rarity-light are the design system's (DCL-ONE UI Style Guide, Rarities/<rarity> and its
-   Light; base is Neutrals/Gray), which the Shop's cards draw with. */
+   Both pairs take the design system's rarity colours (DCL-ONE UI Style Guide, Rarities/<rarity> and its
+   Light), so a Backpack card and a Shop card of one rarity draw the same colour. They differ only at
+   base: --rm is Neutrals/Silver for the Backpack's tiles, --rarity is Neutrals/Gray for the Shop's cards. */
 /* Form controls take the HUD's face. A browser gives them its own control font (Arial 13.33px),
    which is a different face on every OS; their size stays the browser's unless a component sets it. */
 :where(button, input, select, textarea) {
@@ -607,56 +572,56 @@
 }
 
 [data-rarity] {
-  --rm: #a09ba8;
-  --rl: #cfcdd4;
-  --rarity: #cfcdd4;
-  --rarity-light: #cfcdd4;
+  --rm: var(--dcl-neutrals-silver);
+  --rl: var(--dcl-neutrals-gray);
+  --rarity: var(--dcl-neutrals-gray);
+  --rarity-light: var(--dcl-neutrals-gray);
 }
 [data-rarity='common'] {
-  --rm: #73d3d3;
-  --rl: #b5fff6;
-  --rarity: #73d3d3;
-  --rarity-light: #acf8f8;
+  --rm: var(--dcl-rarities-common);
+  --rl: var(--dcl-rarities-common-light);
+  --rarity: var(--dcl-rarities-common);
+  --rarity-light: var(--dcl-rarities-common-light);
 }
 [data-rarity='uncommon'] {
-  --rm: #ff8362;
-  --rl: #ffe0c8;
-  --rarity: #ff8362;
-  --rarity-light: #ffe0b2;
+  --rm: var(--dcl-rarities-uncommon);
+  --rl: var(--dcl-rarities-uncommon-light);
+  --rarity: var(--dcl-rarities-uncommon);
+  --rarity-light: var(--dcl-rarities-uncommon-light);
 }
 [data-rarity='rare'] {
-  --rm: #34ce76;
-  --rl: #9bf3c2;
-  --rarity: #34ce76;
-  --rarity-light: #73ffaf;
+  --rm: var(--dcl-rarities-rare);
+  --rl: var(--dcl-rarities-rare-light);
+  --rarity: var(--dcl-rarities-rare);
+  --rarity-light: var(--dcl-rarities-rare-light);
 }
 [data-rarity='epic'] {
-  --rm: #438fff;
-  --rl: #a9d4ff;
-  --rarity: #438fff;
-  --rarity-light: #81e1ff;
+  --rm: var(--dcl-rarities-epic);
+  --rl: var(--dcl-rarities-epic-light);
+  --rarity: var(--dcl-rarities-epic);
+  --rarity-light: var(--dcl-rarities-epic-light);
 }
 [data-rarity='legendary'] {
-  --rm: #b058ff;
-  --rl: #e0c0ff;
-  --rarity: #a14bf3;
-  --rarity-light: #e8b9ff;
+  --rm: var(--dcl-rarities-legendary);
+  --rl: var(--dcl-rarities-legendary-light);
+  --rarity: var(--dcl-rarities-legendary);
+  --rarity-light: var(--dcl-rarities-legendary-light);
 }
 [data-rarity='mythic'] {
-  --rm: #ff4bec;
-  --rl: #ffb0f3;
-  --rarity: #ff4bed;
-  --rarity-light: #f6c1ff;
+  --rm: var(--dcl-rarities-mythic);
+  --rl: var(--dcl-rarities-mythic-light);
+  --rarity: var(--dcl-rarities-mythic);
+  --rarity-light: var(--dcl-rarities-mythic-light);
 }
 [data-rarity='unique'] {
-  --rm: #ffc747;
-  --rl: #ffe6a8;
-  --rarity: #fea217;
-  --rarity-light: #fff280;
+  --rm: var(--dcl-rarities-unique);
+  --rl: var(--dcl-rarities-unique-light);
+  --rarity: var(--dcl-rarities-unique);
+  --rarity-light: var(--dcl-rarities-unique-light);
 }
 [data-rarity='exotic'] {
-  --rm: #a5e242;
-  --rl: #d6f59a;
-  --rarity: #9cd71e;
-  --rarity-light: #dbf0ad;
+  --rm: var(--dcl-rarities-exotic);
+  --rl: var(--dcl-rarities-exotic-light);
+  --rarity: var(--dcl-rarities-exotic);
+  --rarity-light: var(--dcl-rarities-exotic-light);
 }

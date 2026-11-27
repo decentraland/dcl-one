@@ -1,8 +1,9 @@
 // The cards an event shows as: small and big in a calendar column, big in a day's grid, the
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
+import { Button, MaskIcon, Skeleton, Tooltip } from '@dcl/one-ui'
 import { useState, type CSSProperties } from 'react'
-import { Button, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
+import { Avatar, ContextMenu, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import addGradientIcon from '../../assets/events/add-icn-gradient.png'
@@ -81,7 +82,7 @@ export function FriendFaces({ friends, tip = 'top' }: { friends: Friend[]; tip?:
   return (
     <span className={styles.friends}>
       {friends.slice(0, FRIEND_FACES).map((f) => (
-        <Tooltip key={f.address} label={f.name} side={tip} className={styles.friend}>
+        <Tooltip appearance="hud" key={f.address} label={f.name} side={tip} className={styles.friend}>
           <Avatar src={f.picture} name={f.name} size={26} />
         </Tooltip>
       ))}
@@ -179,7 +180,7 @@ export function EventActionButtons({
   return (
     <span className={`${styles.actions} ${size === 'small' ? styles.actionsSmall : styles.actionsLarge} ${className}`.trim()}>
       {!event.live && (
-        <Button size="bare"
+        <Button appearance="hud" size="bare"
           radius={radius}
           variant={tone}
           className={`${remind} ${styles.remind}`}
@@ -194,17 +195,17 @@ export function EventActionButtons({
         </Button>
       )}
       {!event.live && (
-        <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
+        <Button appearance="hud" size="bare" radius={radius} variant={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
           <MaskIcon src={calendarAddIcon} size={icon} />
         </Button>
       )}
       {event.live && (
-        <Button size="bare" radius={radius} variant="primary" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
+        <Button appearance="hud" size="bare" radius={radius} variant="primary" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
           <span>JUMP IN</span>
           <MaskIcon src={jumpInIcon} size={24} />
         </Button>
       )}
-      <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
+      <Button appearance="hud" size="bare" radius={radius} variant={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
         <MaskIcon src={shareIcon} size={icon} />
       </Button>
     </span>
@@ -274,7 +275,7 @@ export function EventCardBig({ event, friends, community, actions, onOpen, wide 
         <SocialInfo event={event} friends={friends} />
       </span>
       {community != null && (
-        <Tooltip label={community.name} side="top" className={styles.community}>
+        <Tooltip appearance="hud" label={community.name} side="top" className={styles.community}>
           <CommunityThumb src={community.thumbnail} />
         </Tooltip>
       )}

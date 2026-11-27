@@ -21,6 +21,10 @@ fn expanded(posture: Posture, pairs: &[(&str, &str)]) -> HashMap<&'static str, S
 /// The config a process would parse: the explicit pairs, then the
 /// posture's expansion for the keys they leave unset.
 fn parsed(pairs: &[(&str, &str)]) -> Config {
+    parsed_with_flags(pairs, &[])
+}
+
+fn parsed_with_flags(pairs: &[(&str, &str)], flags: &[&str]) -> Config {
     let map = env(pairs);
     let mut all = map.clone();
     if let Some((_, vars)) = resolve(&lookup(&map)).unwrap() {
@@ -28,20 +32,138 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
             all.insert(k.to_string(), v);
         }
     }
-    Config::parse_env_for_tests(all).unwrap()
+    Config::parse_env_with_flags_for_tests(all, flags).unwrap()
+}
+
+#[test]
+fn cli_ownership_overrides_keep_a_catalogue_writer() {
+    let env_pairs = [(ENV, "mirror"), ("DATABASE_URL", "postgres:///catalyst")];
+    for (flag, ownership, index_enabled) in [
+        ("--marketplace-collections-index-owns=matic", "matic", true),
+        ("--marketplace-collections-index-owns=", "", true),
+        (
+            "--marketplace-collections-index-enabled=false",
+            "matic,ethereum",
+            false,
+        ),
+    ] {
+        let config = parsed_with_flags(&env_pairs, &[flag]);
+        let market = &config.marketplace;
+        assert_eq!(
+            market.marketplace_collections_index_owns, ownership,
+            "{flag}"
+        );
+        assert_eq!(
+            market.marketplace_collections_index_enabled, index_enabled,
+            "{flag}"
+        );
+        assert!(market.marketplace_mirrors_enabled, "{flag}");
+        assert!(
+            Config::non_empty(&config.market_upstreams.eth_collections_subgraph_url).is_some(),
+            "{flag}"
+        );
+        assert!(
+            Config::non_empty(&config.market_upstreams.matic_collections_subgraph_url).is_some(),
+            "{flag}"
+        );
+        check(&config, &lookup(&env(&env_pairs))).unwrap();
+    }
+}
+
+#[test]
+fn a_bounded_mainnet_walk_retains_its_mirror() {
+    for (chain, owned) in [("MATIC", "ethereum"), ("ETHEREUM", "matic")] {
+        for bound in ["START", "STOP"] {
+            let key = format!("MARKETPLACE_INDEX_{bound}_BLOCK_{chain}");
+            let values = [
+                (ENV, "mirror"),
+                ("DATABASE_URL", "postgres:///catalyst"),
+                (key.as_str(), "26000000"),
+            ];
+            let vars = expanded(Posture::Mirror, &values);
+            assert_eq!(vars["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], owned, "{key}");
+            assert_eq!(vars["MARKETPLACE_MIRRORS_ENABLED"], "true", "{key}");
+            assert!(vars.contains_key("ETH_COLLECTIONS_SUBGRAPH_URL"), "{key}");
+            assert!(vars.contains_key("MATIC_COLLECTIONS_SUBGRAPH_URL"), "{key}");
+            check(&parsed(&values), &lookup(&env(&values))).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_parsed_replay_bound_with_ownership_and_no_mirror_is_refused() {
+    let values = [
+        (ENV, "mirror"),
+        ("DATABASE_URL", "postgres:///catalyst"),
+        ("MARKETPLACE_MIRRORS_ENABLED", "false"),
+    ];
+    let flag = "--marketplace-index-stop-block-matic=16000000";
+    let config = parsed_with_flags(&values, &[flag]);
+    let error = check(&config, &lookup(&env(&values))).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("MARKETPLACE_INDEX_STOP_BLOCK_MATIC"),
+        "{error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("MARKETPLACE_COLLECTIONS_INDEX_OWNS"),
+        "{error}"
+    );
 }
 
 #[test]
 fn the_mirror_sources_follow_the_catalogue_chain_pair() {
     let main = expanded(Posture::Mirror, &[]);
+    assert_eq!(main["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "matic,ethereum");
+    assert_eq!(main["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    let hand_back = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "")],
+    );
+    assert_eq!(hand_back["MARKETPLACE_MIRRORS_ENABLED"], "true");
     assert_eq!(
-        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-ethereum-mainnet"
     );
     assert_eq!(
-        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-matic-mainnet"
     );
+    let partial = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_OWNS", " polygon ")],
+    );
+    assert_eq!(partial["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    assert_eq!(
+        partial["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert_eq!(
+        main["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["ETH_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert_eq!(
+        main["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    assert_eq!(
+        partial["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        hand_back["MATIC_COLLECTIONS_SUBGRAPH_URL"]
+    );
+    let disabled = expanded(
+        Posture::Mirror,
+        &[("MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false")],
+    );
+    assert_eq!(disabled["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+    assert_eq!(disabled["MARKETPLACE_MIRRORS_ENABLED"], "true");
+    for posture in [Posture::Island, Posture::Journey] {
+        let local = expanded(posture, &[]);
+        assert_eq!(local["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+        assert_eq!(local["MARKETPLACE_MIRRORS_ENABLED"], "false");
+    }
     let cfg = expanded(
         Posture::Mirror,
         &[
@@ -49,6 +171,8 @@ fn the_mirror_sources_follow_the_catalogue_chain_pair() {
             ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
         ],
     );
+    assert_eq!(cfg["MARKETPLACE_COLLECTIONS_INDEX_OWNS"], "");
+    assert_eq!(cfg["MARKETPLACE_MIRRORS_ENABLED"], "true");
     assert_eq!(
         cfg["ETH_COLLECTIONS_SUBGRAPH_URL"],
         "https://subgraph.decentraland.org/collections-ethereum-sepolia"
@@ -180,17 +304,34 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
         "{err}"
     );
-    // The collections subgraphs are no profile ownership source, but they
-    // are the catalogue the nft walk takes its contracts from: a node that
-    // fills its own catalogue may blank neither, one whose catalogue another
-    // node fills may.
+    // A mirrored network needs a source URL. The native catalogue and a
+    // catalogue another process fills can both serve without one.
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
+    check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", "matic"),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap();
     for (key, blank) in [
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
     ] {
-        let err = check_of(&[db, (ENV, "mirror"), (key, blank)])
-            .unwrap_err()
-            .to_string();
+        let err = check_of(&[
+            db,
+            (ENV, "mirror"),
+            ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
+            (key, blank),
+        ])
+        .unwrap_err()
+        .to_string();
         assert!(
             err.contains(&format!("{key} is empty")) && err.contains("never publishes"),
             "{err}"
@@ -201,6 +342,7 @@ fn a_mirror_refuses_blank_profile_ownership_readers() {
         (ENV, "mirror"),
         ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
         ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+        ("MARKETPLACE_COLLECTIONS_INDEX_OWNS", ""),
         ("MARKETPLACE_MIRRORS_ENABLED", "false"),
     ])
     .unwrap();
@@ -1270,6 +1412,12 @@ fn island_and_journey_refuse_any_variable_naming_an_outside_host() {
             refuse_remote_hosts(Posture::Island, &island, &lookup(&map)).is_ok(),
             "{key}={value}"
         );
+    }
+    // The purchase receipt's images are a link mail clients follow, like
+    // SHOP_BASE_URL: a CDN never stops an island or a journey from starting.
+    for posture in ["island", "journey"] {
+        let images = ("SHOP_EMAIL_ASSETS_URL", "https://cdn.example.org/email");
+        assert_eq!(refusal(&[db, (ENV, posture), images]), None, "{posture}");
     }
     let err = refusal(&[db, (ENV, "journey"), ("NATS_URL", "nats://192.0.2.7:4222")]).unwrap();
     assert!(err.contains("NATS_URL names 192.0.2.7"), "{err}");

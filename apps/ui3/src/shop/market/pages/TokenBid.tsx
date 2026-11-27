@@ -4,6 +4,7 @@
 //       catalyrst-v2 ui3/src/marketplace/pages/{MkBidPage,MkBidPage2}.tsx
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
@@ -11,7 +12,6 @@ import { Link, useLocation, useNavigate } from "react-router";
 import type { EvmAddress } from "@shop/model/address";
 import { CHAIN, chainLabel, isPolygon, nativeGasRequired, type ChainId } from "@shop/model/chain";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
-import ManaMark from "../../../atoms/ManaMark";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { WalletGuidance } from "@shop/model/settlement";
 import { shopPath } from "../../routes";
@@ -168,7 +168,7 @@ export function BidForm({ subject, now = Date.now }: { subject: BidSubject; now?
           content={
             <>
               <p>
-                You are about to bid on <b>{subject.name}</b> for <ManaMark size={14} network={network} /> {formatMana(amount, { group: true })}.
+                You are about to bid on <b>{subject.name}</b> for <ShopManaMark size={14} network={network} /> {formatMana(amount, { group: true })}.
               </p>
               <p>Please re-enter the price to confirm:</p>
             </>

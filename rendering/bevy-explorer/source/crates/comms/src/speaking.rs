@@ -23,8 +23,10 @@ impl Plugin for SpeakingPlugin {
 mod livekit {
     use alloy_core::primitives::Address;
     use bevy::{ecs::relationship::Relationship, platform::collections::HashMap, prelude::*};
-    use common::{structs::PrimaryUser, util::AsH160};
-    use wallet::Wallet;
+    use common::{
+        structs::{PlayerAddress, PrimaryUser},
+        util::AsH160,
+    };
 
     use super::Speaking;
     use crate::{
@@ -39,9 +41,10 @@ mod livekit {
         mut commands: Commands,
         speakers: Query<(&LivekitParticipant, Option<&HostedBy>), With<ActiveSpeaker>>,
         voice_rooms: Query<(), With<VoiceRoom>>,
-        players: Query<(Entity, &ForeignPlayer, Option<&Speaking>)>,
-        local: Query<(Entity, Option<&Speaking>), With<PrimaryUser>>,
-        wallet: Res<Wallet>,
+        players: Query<
+            (Entity, &PlayerAddress, Option<&Speaking>),
+            Or<(With<PrimaryUser>, With<ForeignPlayer>)>,
+        >,
     ) {
         let mut speaking = HashMap::<Address, bool>::new();
         for (participant, room) in &speakers {
@@ -51,14 +54,7 @@ mod livekit {
             }
         }
 
-        let local = local
-            .single()
-            .ok()
-            .and_then(|(entity, current)| Some((entity, wallet.address()?, current)));
-        let players = players
-            .iter()
-            .map(|(entity, player, current)| (entity, player.address, current));
-        for (entity, address, current) in players.chain(local) {
+        for (entity, &PlayerAddress(address), current) in &players {
             match (speaking.get(&address), current) {
                 (Some(&in_call), current) if current != Some(&Speaking { in_call }) => {
                     commands.entity(entity).try_insert(Speaking { in_call });

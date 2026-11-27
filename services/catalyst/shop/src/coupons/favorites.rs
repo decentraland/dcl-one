@@ -30,13 +30,13 @@ use crate::shared::notifications::{NewNotification, insert_notifications};
 pub const KIND: &str = "item_discounted";
 const INTERVAL: Duration = Duration::from_secs(5 * 60);
 pub const MAX_PER_USER_PER_DAY: usize = 3;
-const MIN_TIME_LEFT_SECS: i64 = 6 * 3600;
+const MIN_TIME_LEFT_SECS: u32 = 6 * 3600;
 const COUPONS_PER_RUN: i64 = 20;
 const CATALOGUE_GRACE_SECS: i64 = 30 * 60;
-const RETRY_BASE_SECS: i64 = 5 * 60;
+const RETRY_BASE_SECS: u32 = 5 * 60;
 const MAX_ATTEMPTS: i32 = 6;
-const MAX_ANNOUNCE_AGE_SECS: i64 = 24 * 3600;
-const ITEM_COOLDOWN_SECS: i64 = 7 * 24 * 3600;
+const MAX_ANNOUNCE_AGE_SECS: u32 = 24 * 3600;
+const ITEM_COOLDOWN_SECS: u32 = 7 * 24 * 3600;
 
 /// A coupon's discounted listings (the Shop catalogue; a fake in tests).
 pub type Listings<'a> = &'a (
@@ -163,7 +163,7 @@ async fn defer(pool: &PgPool, coupon: Uuid, now: NaiveDateTime) -> anyhow::Resul
     )
     .bind(coupon)
     .bind(now)
-    .bind(RETRY_BASE_SECS as f64)
+    .bind(f64::from(RETRY_BASE_SECS))
     .execute(pool)
     .await?;
     Ok(())
@@ -199,8 +199,8 @@ pub async fn run_once(
          ON CONFLICT (coupon_id) DO UPDATE SET notified_at = EXCLUDED.notified_at",
     )
     .bind(now)
-    .bind(MIN_TIME_LEFT_SECS as f64)
-    .bind(MAX_ANNOUNCE_AGE_SECS as f64)
+    .bind(f64::from(MIN_TIME_LEFT_SECS))
+    .bind(f64::from(MAX_ANNOUNCE_AGE_SECS))
     .bind(MAX_ATTEMPTS)
     .execute(pool)
     .await?;
@@ -285,7 +285,7 @@ async fn announce(
     .bind(&users)
     .bind(now)
     .bind(KIND)
-    .bind(ITEM_COOLDOWN_SECS as f64)
+    .bind(f64::from(ITEM_COOLDOWN_SECS))
     .fetch_all(pool)
     .await?;
     let mut already = HashSet::new();
@@ -333,6 +333,21 @@ async fn catalogue_listings(
 ) -> anyhow::Result<Vec<Discounted>> {
     let coupon_id = coupon.id.to_string();
     let mut out: HashMap<String, Discounted> = HashMap::new();
+    // The discounts are prices: one priced catalogue read covers every page.
+    let mut read = crate::market::catalogue::begin(
+        state,
+        crate::market::catalogue::Purpose::Priced,
+        &[crate::market::mirrors::Mirror::Items],
+        None,
+        crate::market::catalogue::Access::ReadOnly,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("the shop catalogue cannot price the coupon's listings yet"))?;
+    // The listings join the open trades: their pass and verdicts, read in the
+    // same snapshot.
+    read.trades_ready(state)
+        .await
+        .map_err(|_| anyhow::anyhow!("the shop's trades cannot be read yet"))?;
     for contract in &coupon.collections {
         let mut skip = 0;
         loop {
@@ -345,7 +360,7 @@ async fn catalogue_listings(
                 skip: Some(skip),
                 ..Default::default()
             };
-            let (page, total) = crate::market::shop::shop_listings(state, &filters)
+            let (page, total) = crate::market::shop::shop_listings(state, &mut read, &filters)
                 .await
                 .map_err(|e| anyhow::anyhow!("shop catalogue: {e:?}"))?;
             for l in page {
@@ -354,12 +369,15 @@ async fn catalogue_listings(
                 else {
                     continue;
                 };
+                let Ok(sale) = i64::try_from(sale) else {
+                    continue;
+                };
                 let applied = l
                     .sale
                     .coupon
                     .as_ref()
                     .and_then(|c| c.get("id")?.as_str().map(str::to_string));
-                if applied.as_deref() != Some(coupon_id.as_str()) || sale as i64 >= list {
+                if applied.as_deref() != Some(coupon_id.as_str()) || sale >= list {
                     continue;
                 }
                 out.entry(l.trade_id).or_insert(Discounted {
@@ -372,7 +390,7 @@ async fn catalogue_listings(
                     rarity: l.rarity,
                     network: l.network.wire().to_string(),
                     list_price: list,
-                    sale_price: sale as i64,
+                    sale_price: sale,
                 });
             }
             skip += SHOP_MAX_PAGE_SIZE;
@@ -409,6 +427,13 @@ pub fn spawn_job(state: &Arc<MarketplaceState>, shop_base_url: String, jobs: &Jo
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    reason = "test fixtures use small literal values"
+)]
 mod tests {
     use super::*;
     use chrono::Duration as D;
