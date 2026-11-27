@@ -139,7 +139,6 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
       { title: 'Twitter', url: 'https://twitter.com' },
       { title: 'Discord', url: 'https://discord.com' }
     ],
-    mutuals: 30,
     badges: mockBadges(),
     equippedWearables: equippedNow(),
     equippedEmotes: mockEquippedEmotes().filter((e) => e.slot != null),
@@ -318,6 +317,8 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
   return {
     urn,
     name: b.label,
+    // Every other item has one, so the detail panel shows both a description and its fallback.
+    description: i % 2 === 0 ? `A mock ${b.label.toLowerCase()} for trying the backpack without an engine.` : undefined,
     rarity: RARITIES[i % RARITIES.length],
     category: b.category,
     thumbnail: thumb(urn),

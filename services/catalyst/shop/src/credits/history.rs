@@ -18,6 +18,10 @@ use crate::types::UsdCents;
 /// Upstream's page bounds: `limit` default 200 (purchases cap 200, credit
 /// orders cap 500), `offset` default 0.
 pub fn clamp_page(limit: Option<&str>, offset: Option<&str>, max_limit: i64) -> (i64, i64) {
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "float-to-int `as` saturates; the value is clamped next"
+    )]
     let parse = |raw: Option<&str>| {
         raw.and_then(|s| s.trim().parse::<f64>().ok())
             .filter(|n| n.is_finite())
@@ -248,7 +252,12 @@ impl Credits {
                 let credits = if usd_cents % 10 == 0 {
                     serde_json::Number::from(usd_cents / 10)
                 } else {
-                    serde_json::Number::from_f64(usd_cents as f64 / 10.0)
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        reason = "credits-server's JSON has fractional Credits as a number; exact below 2^53 cents"
+                    )]
+                    let credits = usd_cents as f64 / 10.0;
+                    serde_json::Number::from_f64(credits)
                         .unwrap_or_else(|| serde_json::Number::from(0))
                 };
                 GiftOut {

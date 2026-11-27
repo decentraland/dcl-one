@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
-import type { Outfit, OutfitSlot, Wearable } from '@explorer-core/engine/protocol'
+import type { Emote, Outfit, OutfitSlot, Wearable } from '@explorer-core/engine/protocol'
 import type { BackpackState } from '../../features/session/useEngineSession'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { fakeProfileState, fakeSession } from '../harness'
@@ -22,9 +22,11 @@ const outfitSlot = (slot: number, wearables: string[]): OutfitSlot => {
   return { slot, outfit }
 }
 
-function renderBackpack(over: Partial<BackpackState> = {}, modal = false): BackpackState {
+const WAVE: Emote = { slot: 1, urn: 'urn:wave', name: 'Wave' }
+
+function renderBackpack(over: Partial<BackpackState> = {}, modal = false, emoteList: Emote[] = [WAVE]): BackpackState {
   const backpack: BackpackState = { ...fakeSession().backpack, open: true, list: [wearable()], equip: vi.fn(), preview: vi.fn(), ...over }
-  const emotes = { ...fakeSession().emotes, list: [{ slot: 1, urn: 'urn:wave', name: 'Wave' }] }
+  const emotes = { ...fakeSession().emotes, list: emoteList }
   render(
     <SessionProvider value={fakeSession()}>
       <BackpackPage
@@ -50,6 +52,19 @@ describe('backpack page clicks', () => {
     expect(screen.getByText('Cool Hat')).toBeInTheDocument()
     expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
     expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
+  })
+
+  it("the detail panel shows the selected wearable's description", async () => {
+    renderBackpack({ list: [wearable({ description: '  Keeps the sun off.  ' })] })
+    await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(screen.getByText('Keeps the sun off.')).toBeInTheDocument()
+    expect(screen.queryByText(/does not have a description set/)).toBeNull()
+  })
+
+  it.each([undefined, '', '   '])('the detail panel says a wearable has no description when it is %j', async (description) => {
+    renderBackpack({ list: [wearable({ description })] })
+    await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(screen.getByText('This wearable does not have a description set.')).toBeInTheDocument()
   })
 
   it('in the modal (the lobby) a click shows no detail panel, and a double-click still equips', async () => {
@@ -151,6 +166,16 @@ describe('backpack page clicks', () => {
     renderBackpack()
     await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
     expect(screen.getByText('Wave')).toBeInTheDocument()
+  })
+
+  it("the detail panel shows an emote's description, and says so when it has none", async () => {
+    renderBackpack({}, false, [WAVE, { urn: 'urn:clap', name: 'Clap', description: 'A slow, sincere clap.' }])
+    await userEvent.click(screen.getByRole('tab', { name: 'Emotes' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Clap' }))
+    expect(screen.getByText('A slow, sincere clap.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Wave' }))
+    expect(screen.getByText('This emote does not have a description set.')).toBeInTheDocument()
+    expect(screen.queryByText('A slow, sincere clap.')).toBeNull()
   })
 
   it('opens directly on the Emotes tab when initialTab="emotes" (the wheel\'s "Customise [E]")', () => {

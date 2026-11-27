@@ -138,7 +138,7 @@ impl PortalSettings {
         for net in ChainNet::ALL {
             let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
             anyhow::ensure!(
-                reader.chain() == net.chain_id() as u64,
+                reader.chain() == net.chain_id_u64(),
                 "the {} portal dataset {:?} is not {} mainnet",
                 net.db_name(),
                 reader.dataset(),
@@ -1124,7 +1124,7 @@ async fn settle_one(
             slot.checkpoint = None;
             slot.invitable = false;
             slot.line = format!("failed; next in {} s", wait.as_secs());
-            tracing::warn!(lease = %projection.lease, acquisition = number, error = %format!("{err:#}"), wait_ms = wait.as_millis() as u64, "marketplace chain index pass failed");
+            tracing::warn!(lease = %projection.lease, acquisition = number, error = %format!("{err:#}"), wait_ms = super::casts::millis(wait), "marketplace chain index pass failed");
             ctx.error(format!("{}: {err:#}", projection.lease));
         }
         Attempt::Panicked(msg) => {

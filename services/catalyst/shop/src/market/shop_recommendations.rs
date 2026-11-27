@@ -38,7 +38,12 @@ pub fn rank_trending(
         )
     };
     let signal = |i: &UnifiedItem| signals.get(&key(i)).cloned().unwrap_or_default();
-    let sales_slots = (first as f64 * TRENDING_SALES_CUT).ceil() as i64;
+    let first_f = f64::from(crate::market::casts::clamp_i32(first));
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a share of `first`, which fits i32"
+    )]
+    let sales_slots = (first_f * TRENDING_SALES_CUT).ceil() as i64;
     let volume_slots = first - sales_slots;
     items.sort_by(|a, b| {
         let (sa, sb) = (signal(a), signal(b));
@@ -48,7 +53,7 @@ pub fn rank_trending(
             .then(a.contract_address.cmp(&b.contract_address))
             .then(a.item_id.cmp(&b.item_id))
     });
-    let rest = items.split_off((sales_slots.max(0) as usize).min(items.len()));
+    let rest = items.split_off(crate::market::casts::page(sales_slots).min(items.len()));
     let mut by_sales = items;
     let mut by_volume = rest;
     by_volume.sort_by(|a, b| {
@@ -59,9 +64,9 @@ pub fn rank_trending(
             .then(a.contract_address.cmp(&b.contract_address))
             .then(a.item_id.cmp(&b.item_id))
     });
-    by_volume.truncate(volume_slots.max(0) as usize);
+    by_volume.truncate(crate::market::casts::page(volume_slots));
     by_sales.extend(by_volume);
-    by_sales.truncate(first.max(0) as usize);
+    by_sales.truncate(crate::market::casts::page(first));
     by_sales
         .into_iter()
         .map(|item| {
@@ -232,7 +237,13 @@ pub(super) fn rerank_for_diversity(
     } else {
         DEFAULT_WEARABLE_RATIO
     };
-    let wearable_target = (limit as f64 * ratio).round() as usize;
+    let limit_f = f64::from(u32::try_from(limit).unwrap_or(u32::MAX));
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a finite, positive product; `as` saturates"
+    )]
+    let wearable_target = (limit_f * ratio).round() as usize;
     let emote_target = limit.saturating_sub(wearable_target);
     let mut picked: Vec<RailCandidate> = Vec::new();
     let mut per_collection: HashMap<String, usize> = HashMap::new();
@@ -399,7 +410,7 @@ pub(super) async fn personal_rows(
         &mut *read.tx,
         &seeds,
         &skip,
-        (limit * 3) as i64,
+        crate::market::casts::len_i64(limit * 3),
     )
     .await?;
     if scored.is_empty() {

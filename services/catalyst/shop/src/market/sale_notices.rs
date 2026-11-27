@@ -608,13 +608,13 @@ async fn drain(
         notice_cursor::advance(&mut txn, producer, None, done_block, done_log).await?;
         txn.commit().await?;
         // A page short of full read everything up to `published`.
-        let drained = !held && rows.len() < PAGE_SIZE as usize;
+        let drained = !held && rows.len() < crate::market::casts::page(PAGE_SIZE);
         notice_cursor::report_lag(
             producer,
             published,
             if drained { published } else { done_block },
         );
-        if held || rows.len() < PAGE_SIZE as usize {
+        if held || rows.len() < crate::market::casts::page(PAGE_SIZE) {
             break;
         }
     }

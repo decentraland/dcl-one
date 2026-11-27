@@ -1,0 +1,10 @@
+.mutuals {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-12);
+  color: var(--text-dim);
+}
+.face + .face {
+  margin-left: -8px;
+}
