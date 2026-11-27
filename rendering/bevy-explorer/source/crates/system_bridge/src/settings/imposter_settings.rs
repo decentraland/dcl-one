@@ -82,7 +82,7 @@ impl AppSetting for ImposterSetting {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{max_lods::MaxFarLodsSetting, rings::FarLodRingSetting, AppSetting as _};
+    use crate::settings::{max_lods::MaxFarLodsSetting, rings::FarLodRingSetting};
 
     #[test]
     fn off_turns_far_lods_off_and_keeps_the_far_settings() {
