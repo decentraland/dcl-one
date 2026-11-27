@@ -315,6 +315,11 @@ is the engine default); changing one shows the preset as Custom.
   12, 20 and 30, linear between and 600 at ring 40. They bound memory where scenes are dense,
   nearest in view first. The config's `near_lods_budget` and `far_lods_budget` replace them when
   set, for tests and measurements; no setting writes them.
+- **The rings move together.** Setting a ring moves the others along where they would cross it
+  (`AppConfig::set_scene_ring`): one further out is pushed out, one further in is pulled in, so
+  near LODs reach past the live ring, far LODs at least two rings past the near ring, and
+  imposters at least as far as far LODs. Lowering the imposter ring below the far ring brings
+  the far ring down with it. Every preset is in order.
 - **The live ring replaces the load distance settings.** The live ring and its one-ring keep
   margin do what the load and unload distance sliders did, in the unit of the other bands. A
   saved config with a raised load distance moves once to the live ring that covers it (64 m to
