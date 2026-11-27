@@ -1272,8 +1272,8 @@ fn the_builder_doc_states_each_bound_the_code_enforces() {
             span(video::DEFAULT_DEADLINE),
         ),
         (
-            "items::video::DEFAULT_IDLE_TIMEOUT",
-            span(video::DEFAULT_IDLE_TIMEOUT),
+            "items::places::IDLE_TIMEOUT",
+            span(crate::items::places::IDLE_TIMEOUT),
         ),
         (
             "items::video::MAX_UPLOADS",

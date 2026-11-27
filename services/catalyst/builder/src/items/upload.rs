@@ -1,7 +1,8 @@
 //! `POST /v1/items/:id/files`: a multipart upload of files an item names,
 //! each part's field name the content hash the item names for it (as the
 //! old builder web sends them). The decision runs before the body is read;
-//! the body is read part by part and refused once it passes a bound, and each
+//! the body is read part by part, within its deadline and the idle bound
+//! ([`super::places`]), and refused once it passes a bound, and each
 //! file is hashed and compared with the hash it was sent under before
 //! anything is stored. File names and part content types are never read.
 //! Every hash must be one the item names under a name other than its
@@ -30,6 +31,7 @@ use crate::storage::gc::{self, GcError};
 use dcl_auth::{hash_bytes_v1, is_canonical_cid};
 
 use super::ItemsComponent;
+use super::places::Admission;
 use super::save::lock_item;
 use super::schema::EMPTY_CONTENT_HASH;
 use super::video::VIDEO_FILE;
@@ -67,10 +69,14 @@ pub(crate) fn too_large() -> ApiError {
     ApiError::too_large("The upload is too large").with_data(json!({ "maxBytes": MAX_BYTES }))
 }
 
-/// The files of `multipart`, each verified against the hash it was sent
+/// The files of `multipart`, read through `place` ([`Admission::read`],
+/// [`Admission::arrived`]), each verified against the hash it was sent
 /// under, within [`MAX_FILES`] and [`MAX_BYTES`]; an empty file (a folder
 /// entry or a 0-byte file, which a save drops from `contents`) is skipped.
-pub async fn read(mut multipart: Multipart) -> Result<Vec<(String, Bytes)>, ApiError> {
+pub async fn read(
+    mut multipart: Multipart,
+    place: &mut Admission,
+) -> Result<Vec<(String, Bytes)>, ApiError> {
     let invalid = |e: MultipartError| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             too_large()
@@ -80,7 +86,7 @@ pub async fn read(mut multipart: Multipart) -> Result<Vec<(String, Bytes)>, ApiE
     };
     let mut files = Vec::new();
     let (mut parts, mut total) = (0usize, 0usize);
-    while let Some(mut field) = multipart.next_field().await.map_err(invalid)? {
+    while let Some(mut field) = place.read(multipart.next_field()).await?.map_err(invalid)? {
         parts += 1;
         if parts > MAX_FILES {
             return Err(
@@ -94,7 +100,8 @@ pub async fn read(mut multipart: Multipart) -> Result<Vec<(String, Bytes)>, ApiE
             ));
         }
         let mut bytes = BytesMut::new();
-        while let Some(chunk) = field.chunk().await.map_err(invalid)? {
+        while let Some(chunk) = place.read(field.chunk()).await?.map_err(invalid)? {
+            place.arrived(chunk.len())?;
             total += chunk.len();
             if total > MAX_BYTES {
                 return Err(too_large());
