@@ -29,8 +29,10 @@
 //! ```
 //!
 //! Bounds: a response holds at most [`COMMITTEE_CAP`] rows (the committee's
-//! listing and the public search) or [`ADDRESS_CAP`] rows (an address's own
-//! listing), with or without pagination; `q` is at most [`Q_MAX`]
+//! listing, the public search and a page of addresses) or [`ADDRESS_CAP`]
+//! rows (an address's own listing), with or without pagination, except the
+//! addresses without pages, every published standard collection's; `q` is
+//! at most [`Q_MAX`]
 //! characters, matched literally; at most 20 assignees and 5 tags of at most
 //! 64 characters.
 
@@ -696,13 +698,17 @@ impl PublicSearch {
 
 impl PublishedAddresses {
     /// The listing `q` asks for: its `type` ignored, standard collections
-    /// only, published ones only.
+    /// only, published ones only; without pages, every one of them, as
+    /// builder-server answers.
     pub fn new(q: &ListQuery) -> Result<Self, ApiError> {
         let mut listing = Listing::everyone(&q.without("type"))?;
         listing
             .filters
             .push(Filter::Fragment("c.third_party_id IS NULL"));
         listing.published_only = true;
+        if listing.page.page.is_none() {
+            listing.page.limit = i64::MAX;
+        }
         Ok(Self { listing })
     }
 }

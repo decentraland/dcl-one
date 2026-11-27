@@ -99,7 +99,7 @@
       "anchors": []
     },
     "collection-list-bounds": {
-      "text": "GET /v1/collections, GET /v1/addresses and GET /v1/:address/collections: the node answers at most 1,000 rows (the committee's listing, the public search and the addresses) or 5,000 rows (an address's own listing) per response, with or without page and limit, and a page's limit above that is answered with the cap as its limit. It refuses with 400 a q longer than 256 characters, more than 5 tag values, a tag longer than 64 characters, a repeated page, limit, q, sort, type or is_published, a type other than standard or third_party, and a negative page or limit, and matches q literally, % and _ included. Upstream answers every matching row, reads % and _ in q as wildcards, and answers those inputs otherwise.",
+      "text": "GET /v1/collections, GET /v1/addresses and GET /v1/:address/collections: the node answers at most 1,000 rows (the committee's listing, the public search and a page of addresses) or 5,000 rows (an address's own listing) per response, with or without page and limit, and a page's limit above that is answered with the cap as its limit; GET /v1/addresses without page and limit answers every published standard collection, as upstream does. It refuses with 400 a q longer than 256 characters, more than 5 tag values, a tag longer than 64 characters, a repeated page, limit, q, sort, type or is_published, a type other than standard or third_party, and a negative page or limit, and matches q literally, % and _ included. Upstream answers every matching row, reads % and _ in q as wildcards, and answers those inputs otherwise.",
       "captures": [],
       "anchors": []
     },
