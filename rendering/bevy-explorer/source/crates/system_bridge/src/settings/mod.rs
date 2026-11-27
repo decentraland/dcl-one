@@ -763,9 +763,8 @@ mod tests {
             settings: Vec::default(),
         };
         settings.add_enum_setting::<ChatBubbleVisibility>(&config);
-        settings.add_enum_setting::<ChatReactionsSetting>(&config);
         let categories: Vec<_> = settings.get().into_iter().map(|s| s.category).collect();
-        assert_eq!(categories, ["Chat", "Chat"]);
+        assert_eq!(categories, ["Chat"]);
     }
 
     #[test]
