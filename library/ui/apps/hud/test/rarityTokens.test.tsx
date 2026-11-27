@@ -11,6 +11,16 @@ const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', '
 
 const tokens = readFileSync(join(__dirname, '../styles/tokens.css'), 'utf8')
 const foundations = readFileSync(join(__dirname, '../../../foundations/colors/colors.css'), 'utf8')
+// The shared WearableCard and EquippedItemCard read their rarity tone from here, not from --rm.
+const sharedTones = readFileSync(join(__dirname, '../../../components/WearableCard/rarity.module.css'), 'utf8')
+
+function sharedTone(selector: string): string {
+  const rule = [...sharedTones.matchAll(/([^{}]+)\{([^}]*)\}/g)].find(([, sel]) => sel.replace(/\/\*[\s\S]*?\*\//g, '').trim() === selector)
+  if (!rule) throw new Error(`no rule ${selector}`)
+  const value = /--item-rarity:\s*([^;]+);/.exec(rule[2])?.[1]
+  if (!value) throw new Error(`${selector} sets no --item-rarity`)
+  return value.trim()
+}
 
 function declarations(selector: string): Record<string, string> {
   const rule = [...tokens.matchAll(/([^{}]+)\{([^}]*)\}/g)].find(([, sel]) => sel.replace(/\/\*[\s\S]*?\*\//g, '').trim() === selector)
@@ -40,6 +50,10 @@ describe('rarity colours', () => {
       expect(foundationColour(rule['--rl'])).toBe(foundationColour(rule['--rarity-light']))
     })
 
+    it('should draw the shared cards with the same colour as the Backpack main tone', () => {
+      expect(sharedTone(`.tone[data-rarity='${rarity}']`)).toBe(rule['--rm'])
+    })
+
     it("should draw the emote slot's flap with the palette colour of that rarity", () => {
       const { container } = render(<EmoteSlot rarity={rarity} />)
       expect(container.innerHTML.toLowerCase()).toContain(`fill="${foundationColour(rule['--rm'])}"`)
@@ -51,6 +65,10 @@ describe('rarity colours', () => {
       const base = declarations('[data-rarity]')
       expect(base['--rm']).toBe('var(--dcl-neutrals-silver)')
       expect(base['--rl']).toBe('var(--dcl-neutrals-gray)')
+    })
+
+    it('should draw the shared cards with the same neutral as the Backpack main tone', () => {
+      expect(sharedTone('.tone')).toBe(declarations('[data-rarity]')['--rm'])
     })
 
     it('should declare the base before every rarity, so a known rarity wins over it', () => {

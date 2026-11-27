@@ -17,6 +17,19 @@ impl LocalAudioTrack {
         });
     }
 
+    /// Moves the live track to `device` (`None`: the system default) without unpublishing it.
+    /// Only for a published, unmuted track: a restart re-enables the capture.
+    pub fn set_device(&self, device: Option<String>) {
+        super::send_command(LivekitCommand::SetLocalAudioDevice {
+            track: self.id,
+            device,
+        });
+    }
+
+    pub(crate) fn id(&self) -> ObjectId {
+        self.id
+    }
+
     pub async fn stop(&self, release: bool) -> RoomResult<()> {
         match request(|request| LivekitCommand::StopLocalAudio {
             request,

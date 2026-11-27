@@ -161,11 +161,13 @@ pub struct DecodeError {
     pub why: String,
 }
 
-/// A legacy order's `expiresAt`: the 2018 Ethereum contract took seconds
+pub(super) const LEGACY_EXPIRY_UNIT_THRESHOLD: i64 = 100_000_000_000;
+
+/// A legacy order's `expiresAt`: the Ethereum Marketplace took seconds
 /// from some clients and milliseconds from others; below 10^11 is seconds.
 pub fn expires_ms(raw: u128) -> i64 {
     let v = raw.min(i64::MAX as u128) as i64;
-    if v < 100_000_000_000 {
+    if v < LEGACY_EXPIRY_UNIT_THRESHOLD {
         v.saturating_mul(1000)
     } else {
         v

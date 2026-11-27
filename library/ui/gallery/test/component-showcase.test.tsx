@@ -13,6 +13,7 @@ import { ComponentShowcase } from '../src/frame/ComponentShowcase'
 import { keepLinksInCanvas } from '../src/frame/links'
 import { HEIGHT_MESSAGE, OPEN_MESSAGE, WIDTH_MESSAGE } from '../src/messages'
 import type { GalleryEntry } from '../src/registry'
+import { stubElementScroll } from './hud/jsdom'
 
 vi.stubGlobal(
   'ResizeObserver',
@@ -21,6 +22,8 @@ vi.stubGlobal(
     disconnect() {}
   }
 )
+
+stubElementScroll()
 
 afterEach(() => vi.restoreAllMocks())
 
