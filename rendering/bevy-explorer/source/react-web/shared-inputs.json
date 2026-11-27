@@ -5941,6 +5941,10 @@
           "kind": "regular"
         },
         {
+          "name": "invite",
+          "kind": "directory"
+        },
+        {
           "name": "jump",
           "kind": "directory"
         },
@@ -6121,6 +6125,10 @@
         {
           "name": "hero_tablet.webp",
           "kind": "regular"
+        },
+        {
+          "name": "invite",
+          "kind": "directory"
         },
         {
           "name": "ios-logo.svg",
@@ -6326,6 +6334,19 @@
       "entries": [
         {
           "name": "help_girl.webp",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/sites/assets/invite",
+      "entries": [
+        {
+          "name": "referral-poster.webp",
+          "kind": "regular"
+        },
+        {
+          "name": "referral.webm",
           "kind": "regular"
         }
       ]
@@ -7286,6 +7307,23 @@
         },
         {
           "name": "WhatsOn.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/sites/invite",
+      "entries": [
+        {
+          "name": "InviteLanding.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "InviteLanding.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "InviteLanding.tsx",
           "kind": "regular"
         }
       ]
@@ -15517,6 +15555,22 @@
       }
     },
     {
+      "path": "library/ui/apps/sites/assets/invite/referral-poster.webp",
+      "sha256": "b273ba2370c4daf9c1c924b624f242ffa2d669c71d70be7e767bd65a7d31f8df",
+      "lfs": {
+        "oid": "b273ba2370c4daf9c1c924b624f242ffa2d669c71d70be7e767bd65a7d31f8df",
+        "size": 37828
+      }
+    },
+    {
+      "path": "library/ui/apps/sites/assets/invite/referral.webm",
+      "sha256": "5f3de13d91852cb0f5efecf7d2c87b0e415d73e968b4b1a51c4606ac740ceaae",
+      "lfs": {
+        "oid": "5f3de13d91852cb0f5efecf7d2c87b0e415d73e968b4b1a51c4606ac740ceaae",
+        "size": 3397854
+      }
+    },
+    {
       "path": "library/ui/apps/sites/assets/ios-logo.svg",
       "sha256": "0457d6066002ce2c4cc37b03a6fc68ec699dafb1e24bd38bc148e188f9155cee"
     },
@@ -16386,7 +16440,15 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "dc7b29dfe8cc3c8ab21a75fd3709c540e6a53df862f782718e8326e579fc2580"
+      "sha256": "96af375104a21fe3c6b6901fb7d5dd4523e0ccfa478189c9e876167334bad730"
+    },
+    {
+      "path": "library/ui/apps/sites/invite/InviteLanding.module.css",
+      "sha256": "66e5ae4f4683a1d01bdebf0ab8476c77d3426a08fd392336105fa654776a1b11"
+    },
+    {
+      "path": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "sha256": "f5cd6c1fbed3e51206b0107f84f53eb22d7b7f677e54be0e9364119eea0e019f"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpCard.module.css",
@@ -59299,6 +59361,21 @@
     },
     {
       "from": "library/ui/apps/sites/index.ts",
+      "to": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/index.ts",
+      "to": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/index.ts",
+      "to": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/jump/JumpCard.tsx",
       "kind": "native:runtime"
     },
@@ -59850,6 +59927,81 @@
     {
       "from": "library/ui/apps/sites/index.ts",
       "to": "library/web-core/status-copy.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral-poster.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral-poster.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral-poster.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral.webm",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral.webm",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/invite/referral.webm",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/assets/referrals/referral-envelope.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/invite/InviteLanding.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/invite/InviteLanding.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/apps/sites/invite/InviteLanding.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -70844,6 +70996,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/sites/invite/InviteLanding.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/sites/jump/JumpCard.tsx",
       "kind": "type"
     },
@@ -77820,6 +77977,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/sites/assets/hero_tablet.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/sites/assets/invite/referral-poster.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/sites/assets/invite/referral.webm",
       "kind": "test:asset"
     },
     {
