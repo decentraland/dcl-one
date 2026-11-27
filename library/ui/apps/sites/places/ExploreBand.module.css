@@ -91,11 +91,7 @@
   height: clamp(19px, 1.25vw, 24px);
 }
 
-.tab:focus-visible,
-.filterButton:focus-visible,
-.chip:focus-visible,
-.drawerClose:focus-visible,
-.select:focus-visible {
+.tab:focus-visible {
   outline: 2px solid var(--dcl-neutrals-snow);
   outline-offset: 2px;
 }
@@ -115,182 +111,31 @@
   }
 }
 
-/* One outlined pill holds the magnifier and the field, as the reference's outlined input does. */
+/* The shared search field's width: the row's free space on a phone, the reference's width from 1024px. */
 .search {
-  position: relative;
-  display: flex;
   flex: 1 1 auto;
-  align-items: center;
-  box-sizing: border-box;
   min-width: 0;
-  height: clamp(38px, 2.396vw, 46px);
-  padding-left: var(--dcl-space-16);
-  border-radius: var(--dcl-space-8);
-  background: var(--dcl-transparencies-black-20);
-  color: var(--dcl-neutrals-snow);
-  font-size: clamp(14px, 0.885vw, 17px);
-  line-height: 1.4375;
-  letter-spacing: -0.2px;
-}
-
-/* The hairline is out of flow, like the reference's notched outline, so it moves no text. */
-.search::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--dcl-neutrals-gray);
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.search:hover::after {
-  border-color: var(--dcl-neutrals-snow);
-}
-
-.search:focus-within::after {
-  border: 1px solid var(--dcl-action-primary);
 }
 
 @media (min-width: 1024px) {
   .search {
     flex: 0 1 auto;
     width: clamp(340px, 27.083vw, 520px);
-    border-radius: 50px;
   }
 }
 
-.searchIcon {
-  display: block;
-  flex: none;
-  width: auto;
-  height: clamp(19px, 1.25vw, 24px);
-  margin-right: var(--dcl-space-8);
-  color: var(--dcl-neutrals-snow);
-  pointer-events: none;
-}
-
-.searchInput {
-  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
-  box-sizing: content-box;
-  /* The reference's input has its line-height as an explicit height, which sits the text one pixel lower. */
-  height: 1.4375em;
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 10px var(--dcl-space-16) 10px 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  letter-spacing: inherit;
-  appearance: none;
-}
-
-.searchInput::placeholder {
-  color: var(--dcl-neutrals-snow);
-  opacity: 0.8;
-}
-
-.searchInput:focus {
-  outline: none;
-}
-
-.searchInput:-webkit-autofill {
-  -webkit-text-fill-color: var(--dcl-neutrals-snow);
-  box-shadow: 0 0 0 1000px var(--dcl-transparencies-black-20) inset;
-}
-
-/* The category pill shows the reference's label and arrow over a transparent native select. */
-.selectWrap {
-  position: relative;
+/* The category's shared select keeps the reference's minimum width instead of filling the row. */
+.selectBox {
   display: inline-flex;
-  align-items: center;
-  box-sizing: border-box;
+  flex: none;
   min-width: clamp(120px, 7.813vw, 150px);
-  height: clamp(36px, 2.292vw, 44px);
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-pearl);
-  font-size: clamp(13px, 0.833vw, 16px);
-  line-height: 1.4375;
-  letter-spacing: 0.00938em;
-  cursor: pointer;
-}
-
-.selectWrap:focus-within {
-  outline: 2px solid var(--dcl-neutrals-snow);
-  outline-offset: 2px;
-}
-
-.selectLabel {
-  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  box-sizing: border-box;
-  min-width: 0;
-  padding: 0 clamp(32px, 2.083vw, 40px) 0 clamp(18px, 1.25vw, 24px);
-  overflow: hidden;
-  border-radius: 6px;
-  font-size: inherit;
-  line-height: inherit;
-  letter-spacing: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
-  appearance: none;
-}
-
-.select option {
-  background: var(--dcl-neutrals-charcoal);
-  color: var(--dcl-neutrals-snow);
-}
-
-.selectIcon {
-  position: absolute;
-  top: 50%;
-  right: var(--dcl-space-12);
-  width: 20px;
-  height: 20px;
-  transform: translateY(-50%);
-  color: var(--dcl-neutrals-pearl);
-  pointer-events: none;
 }
 
 .desktopOnly {
   display: none;
 }
 
-/* Phones open the filter drawer instead (Figma 2019:76192: 40×40, 8px radius). */
-.filterButton {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
-}
-
-.filterButton:hover {
-  background: var(--dcl-transparencies-black-60);
-}
-
+/* Phones open the filter drawer instead, from the shared Button. */
 @media (min-width: 1024px) {
   .desktopOnly {
     display: inline-flex;
@@ -309,26 +154,6 @@
   margin-bottom: var(--dcl-space-16);
 }
 
-.chip {
-  composes: text6c6162656c2f736d2d63617073 from '../../../foundations/typography/text-styles.module.css';
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dcl-space-8);
-  height: 32px;
-  padding: var(--dcl-space-4) var(--dcl-space-12);
-  border: 0;
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-neutrals-snow);
-  color: var(--dcl-neutrals-shadow);
-  cursor: pointer;
-  font-size: 15px;
-  text-transform: none;
-}
-
-.chip:hover {
-  background: var(--dcl-neutrals-pearl);
-}
-
 .drawerHeader {
   display: flex;
   align-items: center;
@@ -338,16 +163,6 @@
 .drawerTitle {
   composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
-}
-
-.drawerClose {
-  display: grid;
-  place-items: center;
-  padding: var(--dcl-space-4);
-  border: 0;
-  background: none;
-  color: var(--dcl-neutrals-snow);
-  cursor: pointer;
 }
 
 .drawerSection {
@@ -361,15 +176,6 @@
   color: var(--dcl-neutrals-pearl);
 }
 
-.drawerSection .selectWrap {
+.drawerSection .selectBox {
   display: flex;
-}
-
-.visuallyHidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
