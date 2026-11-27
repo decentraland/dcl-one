@@ -85,9 +85,14 @@ class UiStandardsTest(unittest.TestCase):
         private = 'import { AvatarStage } from "@dcl/one-ui/apps/shop/preview/AvatarStage"'
         self.assertEqual(ui_standards.shared_import_issues([web], {web: entry}.__getitem__), [])
         stylesheet = 'import "@dcl/one-ui/apps/shop/preview/PreviewFrame.module.css"'
-        for path, text in ((web, private), (hud, entry), (hud, private), (web, stylesheet), (hud, stylesheet)):
+        for path, text in ((web, private), (hud, private), (web, stylesheet), (hud, stylesheet)):
             with self.subTest(path=path, text=text):
-                self.assertTrue(ui_standards.shared_import_issues([path], {path: text}.__getitem__))
+                issues = ui_standards.shared_import_issues([path], {path: text}.__getitem__)
+                self.assertEqual(len(issues), 1)
+                self.assertIn('is private to the Shop web preview', issues[0])
+        issues = ui_standards.shared_import_issues([hud], {hud: entry}.__getitem__)
+        self.assertEqual(len(issues), 1)
+        self.assertIn('restricted to the listed Shop web preview adapters', issues[0])
 
     def test_inspector_tooltip_import_is_limited_to_its_adapter_and_component(self):
         adapter = 'apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts'

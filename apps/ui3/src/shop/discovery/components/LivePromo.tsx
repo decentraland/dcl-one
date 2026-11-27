@@ -1,3 +1,7 @@
+// from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.tsx, app/src/components/LivePromo/LivePromo.styles.ts;
+//       shop@32377959:app/src/components/LivePromo/LivePromo.tsx (the wearable-preview iframe, Babylon, muted and
+//       looping; mounted only while on screen) and app/src/hooks/usePreviewActive.ts
+
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { LivePromo as Promo, type LivePromoProps } from "@dcl/one-ui/apps/shop/preview";

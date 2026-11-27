@@ -1,3 +1,7 @@
+// from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.tsx, app/src/components/LivePromo/LivePromo.styles.ts;
+//       shop@32377959:app/src/components/LivePromo/LivePromo.tsx (the wearable-preview iframe, Babylon, muted and
+//       looping; mounted only while on screen) and app/src/hooks/usePreviewActive.ts
+
 import {
   useState,
   type ComponentType,

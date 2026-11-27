@@ -1,3 +1,5 @@
+// from: shop@ae3083ac:app/src/lib/pickRenderer.ts
+// The measured speed is the preview probe download. Page resource timings include latency on small chunks.
 export type PreviewRenderer = "full" | "lite";
 
 export const FULL_MIN_MBPS = 10;

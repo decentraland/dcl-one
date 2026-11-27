@@ -4,6 +4,20 @@ import { pickRenderer, type PreviewDevice } from "./pickRenderer";
 const capable: PreviewDevice = { webgl: true, mobile: false, measuredMbps: null };
 
 describe("Shop preview device selection", () => {
+  it.each<[Partial<PreviewDevice>, string]>([
+    [{ webgl: false }, "no-webgl"],
+    [{ forced: "full" }, "env-override"],
+  ])("skips the viewport measurement when %j settles the decision", (device, reason) => {
+    const result = pickRenderer({
+      ...capable,
+      ...device,
+      get mobile(): boolean {
+        throw new Error("The viewport was measured");
+      },
+    });
+    expect(result.reason).toBe(reason);
+  });
+
   it.each<[Partial<PreviewDevice>, string, string]>([
     [{ forced: "full", webgl: false }, "full", "env-override"],
     [{ forced: "lite", webgl: true }, "lite", "env-override"],

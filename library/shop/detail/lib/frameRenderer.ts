@@ -1,7 +1,6 @@
 // Which renderer draws a Shop avatar in its preview iframe: the Bevy avatar preview where its flag allows it, then
 // wearable-preview's Unity where that flag does, then Babylon.
 
-
 export type FrameRenderer = "bevy" | "unity" | "babylon";
 
 /**

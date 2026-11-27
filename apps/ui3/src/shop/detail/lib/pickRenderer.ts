@@ -1,3 +1,4 @@
+// from: shop@ae3083ac:app/src/lib/pickRenderer.ts
 import { pickRenderer as chooseRenderer, type RendererDecision } from "@shop/detail/lib/pickRenderer";
 export type { RendererDecision } from "@shop/detail/lib/pickRenderer";
 

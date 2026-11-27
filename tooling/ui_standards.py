@@ -25,9 +25,10 @@ either kind, which is the floor of an unlisted one.
 `--shared-imports` is a check over the whole tree: a script under apps/, library/
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
 fails, because shared UI comes only from the `@dcl/one-ui` entry
-(docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
-paths. In-world Shop and HUD modules that require host aliases can use their
-app subpaths. Web Shop views use the public entry.
+(docs/ui-standards.md, "Shared UI: library/ui"). Public stylesheets keep their paths. In-world Shop
+and HUD modules that require host aliases can use their app subpaths. Only the
+listed Shop adapters and AvatarStage test import the public web preview entry.
+Its internal modules and stylesheets are private, including for HUD consumers.
 A script under apps/ that imports a library/ui module by a relative path
 (`import`, `export ... from`, `import()`, `require()`, `vi.mock()`) fails the same
 way; stylesheets and the Node-only Figma review tooling listed in
@@ -455,7 +456,12 @@ def shared_import_issues(paths, read):
         for specifier in deep_shared_imports(text):
             if (name, specifier) in SHARED_IMPORT_KEPT:
                 continue
-            issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+            if specifier.startswith(SHOP_PREVIEW_ENTRY + '/'):
+                issues.append(f'{name}: {specifier!r} is private to the Shop web preview')
+            elif specifier == SHOP_PREVIEW_ENTRY:
+                issues.append(f'{name}: {specifier!r} is restricted to the listed Shop web preview adapters')
+            else:
+                issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
     return issues
 
 

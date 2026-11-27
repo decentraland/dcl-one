@@ -65,7 +65,7 @@
   display: inline-flex;
   align-items: center;
   padding: 6px var(--dcl-space-16);
-  border: 1px solid #ecebed;
+  border: 1px solid var(--dcl-neutrals-pearl);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
