@@ -9,6 +9,7 @@ type Measured = {
   scrollY: number
   backgroundCoversHero: boolean
   avatarAboveTitle: boolean
+  heroFitsScreen: boolean
 }
 
 // The first hero's background is its only aria-hidden box: AnimatedBackground's root.
@@ -26,7 +27,8 @@ const MEASURE = `(async()=>{
     hit:document.elementFromPoint((left+right)/2,(top+bottom)/2)?.closest("a")===link,
     scrollY,
     backgroundCoversHero:bg.top<=box.top&&bg.bottom>=box.bottom&&bg.left<=box.left&&bg.right>=box.right,
-    avatarAboveTitle:avatar.bottom<=title.top
+    avatarAboveTitle:avatar.bottom<=title.top,
+    heroFitsScreen:Math.round(box.height)<=innerHeight
   }
 })()`
 
@@ -61,3 +63,33 @@ describe.each([
     expect(measured.avatarAboveTitle).toBe(true)
   })
 })
+
+describe.each([
+  { width: 485, height: 878 },
+  { width: 390, height: 640 },
+  { width: 320, height: 480 }
+])(
+  'when the avatar drawn in the slot is taller than a $width × $height phone',
+  ({ width, height }) => {
+    let measured: Measured
+
+    beforeAll(async () => {
+      await browser.session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: true
+      })
+      await browser.session.navigate(`${browser.origin}?avatar=tall`)
+      measured = await browser.evaluate<Measured>(MEASURE)
+    })
+
+    it('should keep the hero to one screen', () => {
+      expect(measured.heroFitsScreen).toBe(true)
+    })
+
+    it('should still expose the entire Join Now link before scrolling', () => {
+      expect(measured).toMatchObject({ visible: true, hit: true, scrollY: 0 })
+    })
+  }
+)
