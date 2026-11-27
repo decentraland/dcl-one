@@ -2576,7 +2576,7 @@ async fn declared_paced(
 
 /// A video upload below the pace that, at the rate it keeps, delivers its
 /// declared length within the time that length needs at the pace plus the
-/// idle bound keeps its place: a newcomer that earned a place finds no
+/// grace keeps its place: a newcomer that earned a place finds no
 /// upload behind and is refused with 429 and `Retry-After`, and the
 /// creator's video is kept.
 #[tokio::test]
@@ -2598,7 +2598,7 @@ async fn an_upload_on_track_to_finish_in_the_time_its_size_needs_keeps_its_place
         format!("/v1/items/{item}/videos"),
         "198.51.100.40",
         &form,
-        headers_end(&form) + 1_000_000,
+        headers_end(&form) + 2_000_000,
         &[(10, 1)],
     )
     .await;
@@ -2686,6 +2686,71 @@ async fn a_tiny_declared_trickle_gives_its_place_to_a_creator_that_earns_it() {
     })
     .await;
     cleanup(&node.pool, &[trickler, creator], &[hash(&large)]).await;
+}
+
+/// A file upload that declares its length, sends all its file but a few
+/// bytes at once and then goes quiet holds no place once that length's
+/// time at the pace plus the grace has passed: a creator whose file earns a
+/// place cuts it, and the quiet upload answers 408 with `Retry-After`.
+#[tokio::test]
+async fn an_upload_that_sends_its_body_up_front_then_stops_gives_its_place_to_a_creator() {
+    let Some(node) = node_with(
+        |state| state.file_uploads = crate::items::places::Places::new("file uploads", 1, 1, 2),
+        true,
+    )
+    .await
+    else {
+        return;
+    };
+    let quiet = smart_wearable_of(&node, WALLET_KEYS[0], &mp4("sent up front")).await;
+    let held = item_of(&node, quiet).await;
+    let file = vec![5u8; 1_200];
+    let small = form(&[(&hash(&file), Some("blob"), &file)]);
+    let (front_loaded, _tx, _) = declared_paced(
+        &node,
+        WALLET_KEYS[0],
+        format!("/v1/items/{held}/files"),
+        "198.51.100.84",
+        &small,
+        headers_end(&small) + 1_190,
+        &[(6, 1)],
+    )
+    .await;
+    let large = vec![9u8; 2_400_000];
+    let (creator, item) = bounded_wearable(&node, WALLET_KEYS[2], &mp4("unused up front")).await;
+    saved_item(
+        &node.state.items,
+        &address(WALLET_KEYS[2]),
+        &json!({ "id": item, "name": "Large hat", "collection_id": creator, "rarity": "common",
+                 "contents": { "model.glb": hash(&large) } }),
+    )
+    .await;
+    let (status, body, _) = send_from(
+        &node.app,
+        Some(WALLET_KEYS[2]),
+        &format!("/v1/items/{item}/files"),
+        Some("198.51.100.86"),
+        Body::from(form(&[(&hash(&large), Some("blob"), &large)])),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, answer, retry) = tokio::time::timeout(Duration::from_secs(10), front_loaded)
+        .await
+        .expect("the quiet upload ended")
+        .unwrap();
+    assert_eq!(
+        (status, answer["error"].as_str(), retry.as_deref()),
+        (
+            408,
+            Some("The upload gave its place to another while the node was busy"),
+            Some("30")
+        )
+    );
+    until("every place back", || {
+        node.state.file_uploads.in_flight() == 0
+    })
+    .await;
+    cleanup(&node.pool, &[quiet, creator], &[hash(&large)]).await;
 }
 
 /// An upload keeping the pace its route needs keeps its place, whatever its

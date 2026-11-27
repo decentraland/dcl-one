@@ -104,9 +104,12 @@ The builder answers items as `github.com/decentraland/builder-server` at
   free. A small video on a slow link finishes while places are free, and
   while they are held when it declares its length and keeps the rate that
   length needs. Holding a place costs a sender that pace: a declared length
-  spares an upload only for the time that length takes at the pace plus 30
-  seconds, so declaring a tiny length and trickling it buys a place for
-  about 30 seconds, not 20 minutes. The video must be an MP4 container (an `ftyp`
+  spares an upload only for the time that length takes at the pace plus 5
+  seconds, so sending the body up front and going quiet, or declaring a
+  tiny length and trickling it, buys a place for about 5 seconds beyond
+  what the pace pays for. The rate counts from the body's first read, so a
+  restart pays that pace again and at least 1 MiB of its source's daily
+  upload budget. The video must be an MP4 container (an `ftyp`
   box first, a `moov` box, boxes that end where the file does), whatever
   its part's name or content type says. Only then the node syncs the spool
   file, decides access again, checks that the item still names the hash at
