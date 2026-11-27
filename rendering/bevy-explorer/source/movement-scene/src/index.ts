@@ -87,7 +87,6 @@ const GLIDE_LANDING: Record<JumpVariation, string> = {
   jog: ANIM + 'Gliding_Jog_Jump_EndRig.glb',
   run: ANIM + 'Gliding_Run_Jump_EndRig.glb',
 };
-const CLIP_JOG_STOP = ANIM + 'Jog_Stop.glb';
 // Hard landing on a stunning touchdown out of the long fall loop. The engine's network state reads a stun from these
 // clips played at speed 1 or slower: Enter and Loop, not the faster Exit.
 const HARD_LANDING = {
@@ -178,7 +177,7 @@ const GLIDE_FALL_BLEND = 0.1; // the glide's End to Down, at the end of End
 const PRELOAD_CLIPS: string[] = [
   CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN,
   ...Object.values(JUMP_SETS).flatMap((s) => [s.start, s.mid, s.fall, s.end]),
-  CLIP_LONG_FALL, ...Object.values(GLIDE_LANDING), CLIP_JOG_STOP,
+  CLIP_LONG_FALL, ...Object.values(GLIDE_LANDING),
   ...Object.values(HARD_LANDING),
   ...Object.values(DOUBLE_JUMP).flatMap((d) => [d.plain, d.right]),
   ...Object.values(GLIDE_AVATAR),
@@ -345,17 +344,6 @@ var landingFromGlide = false;
 // Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
 var prevGlideSrc: string | undefined = undefined;
 
-// --- Jog/run stop transition ---
-// True while the one-shot stop clip is playing out before settling to idle.
-var stopping = false;
-// Last time (s) horizontal speed was at jog+ pace, so we can detect a recent
-// fast move when the avatar comes to a halt (deceleration passes through walk
-// speeds, so we can't rely on the immediately-previous frame's speed).
-var lastFastMoveTime = -Infinity;
-// When the current uninterrupted stretch of jog+ movement started — the stop
-// clip only plays if the run lasted at least settings.jogStopMinRun.
-var fastMoveStartTime = Infinity;
-
 // True once the engine reports a non-looped clip has played to its end.
 function clipFinished(src: string): boolean {
   const s = activeAnimationState;
@@ -406,7 +394,6 @@ function enterState(state: AnimState, blend?: number, offset?: number) {
   animBlend = blend;
   animOffset = offset;
   glideLanding = false;
-  if (state !== 'Movement') stopping = false;
   if (state !== 'HardLanding') hardLanding = 'none';
 }
 
@@ -661,12 +648,6 @@ function selectAnimation(): MovementAnimation {
   if (justLanded) maxUngroundedY = -Infinity;
 
   const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-  if (horizontalSpeed > settings.walkRunThreshold) {
-    // Track when this stretch of jog+ movement began, so the stop clip can
-    // require a sustained run — a quick reposition tap shouldn't foot-plant.
-    if (time - lastFastMoveTime > 0.25) fastMoveStartTime = time;
-    lastFastMoveTime = time;
-  }
 
   updateAnimationParameters(horizontalSpeed);
   // A jump starts when the model counts one more since the ground (an air jump from its press; a fall past the grace
@@ -698,10 +679,9 @@ function locomotionAnimation(horizontalSpeed: number): MovementAnimation {
   // Locomotion tiers only while there's actual movement input. With no keys
   // held, the residual decelerating velocity (jog -> 0 passes through walk
   // speeds for a few frames) would otherwise flash the walk clip — the
-  // "residual walking" shuffle — instead of going straight to stop/idle.
+  // "residual walking" shuffle — instead of going straight to idle.
   const hasMoveInput = Vector3.lengthSquared(movementAxis) > 0;
   if (horizontalSpeed > settings.moveGate && hasMoveInput) {
-    stopping = false; // moving again — cancel any pending stop
     // Tier 1: walk
     if (horizontalSpeed <= settings.walkRunThreshold) {
       return {
@@ -735,33 +715,7 @@ function locomotionAnimation(horizontalSpeed: number): MovementAnimation {
     };
   }
 
-  // Jog/run stop: if we halted within a moment of moving at jog+ pace, play the
-  // one-shot stop clip before settling into idle.
-  let newStop = false;
-  // Only foot-plant after a sustained run (jogStopMinRun) — brief taps and
-  // small repositions settle straight into idle instead.
-  const ranLongEnough = lastFastMoveTime - fastMoveStartTime >= settings.jogStopMinRun;
-  if (!stopping && time - lastFastMoveTime < 0.25 && ranLongEnough) {
-    stopping = true;
-    newStop = true;
-  }
-  if (stopping) {
-    if (clipFinished(CLIP_JOG_STOP)) {
-      stopping = false;
-    } else {
-      return {
-        src: CLIP_JOG_STOP,
-        speed: settings.jogStopSpeed,
-        loop: false,
-        idle: false,
-        transitionSeconds: settings.transWalk,
-        // Skip past the clip's opening step if tuned (jogStopStart > 0).
-        ...(newStop ? { playbackTime: settings.jogStopStart } : {}),
-        sounds: [],
-      };
-    }
-  }
-
+  // A stop settles straight into idle, as in the reference client, which never plays a stop clip.
   return {
     src: CLIP_IDLE,
     speed: 1.0,

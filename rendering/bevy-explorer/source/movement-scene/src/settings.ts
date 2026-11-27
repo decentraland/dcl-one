@@ -25,15 +25,6 @@ export const settings = {
   transRun: 0.2,
   transIdle: 0.2,
   transAir: 0.1, // jump phases / glide / double-jump / landing
-  // Minimum sustained jog+ time (s) before stopping plays the Jog_Stop clip.
-  // Short taps / repositioning moves settle straight into idle instead of
-  // foot-planting after two steps.
-  jogStopMinRun: 0.7,
-  // Jog_Stop playback speed — higher = quicker foot-plant, less visible step.
-  jogStopSpeed: 1,
-  // Playback time (s) the Jog_Stop clip starts at — skips the clip's opening
-  // step, which otherwise reads as a shuffle (0.1 tuned in testing).
-  jogStopStart: 0.1,
   // --- Glide pose selection ---
   // Turn rate (deg/s) at which the glide bank reaches its full angle (GLIDE_TILT_FULL_ANGLE).
   glideLeanRate: 300,
