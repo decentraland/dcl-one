@@ -1,6 +1,7 @@
 export { ShopFooter } from './ShopFooter'
 export { default as ShopChrome, ShopNavigation } from './ShopChrome'
 export type { ShopNavSet, ShopNavTab, ShopSection } from './ShopChrome'
+export { ShopManaMark } from './ShopManaMark'
 export * from './ShopSearch'
 export { ShopHeldCredits } from './ShopHeldCredits'
 export * from './ShopCartDrawer'
