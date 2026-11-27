@@ -8,8 +8,8 @@
 //! the deployed collection's creator and item count, and finishes the
 //! attempt as `published` or `reverted`. A transaction the wallet sped up or
 //! replaced carries the same reviewed call under a new hash: it replaces the
-//! recorded one once the RPC no longer knows the recorded hash. v2 never
-//! holds a signing key.
+//! recorded one once the RPC knows neither the recorded hash nor its
+//! receipt, asked twice a few seconds apart. v2 never holds a signing key.
 
 use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use alloy_sol_types::{SolCall, sol};
@@ -25,6 +25,10 @@ use super::items::ItemsComponent;
 use super::publication::PublicationPreparation;
 use super::publication_store::PublicationState;
 use crate::network::Network;
+
+/// How long the node waits before it asks the RPC a second time whether a
+/// recorded transaction is gone.
+pub const RECHECK: std::time::Duration = std::time::Duration::from_secs(3);
 
 sol! {
     struct ContractItem { string rarity; uint256 price; address beneficiary; string metadata; }
@@ -86,6 +90,29 @@ impl PublicationChain<'_> {
         })
     }
 
+    /// The RPC knows neither `hash` nor its receipt, asked twice
+    /// [`RECHECK`] apart, so one empty answer from a lagging or
+    /// load-balanced node never counts as a transaction gone.
+    async fn forgot(&self, hash: &str) -> Result<bool, ApiError> {
+        for check in 0..2 {
+            if check > 0 {
+                tokio::time::sleep(RECHECK).await;
+            }
+            if !self
+                .rpc("eth_getTransactionByHash", json!([hash]))
+                .await?
+                .is_null()
+                || !self
+                    .rpc("eth_getTransactionReceipt", json!([hash]))
+                    .await?
+                    .is_null()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub async fn verify(
         &self,
         store: &ItemsComponent,
@@ -112,10 +139,7 @@ impl PublicationChain<'_> {
             )));
         }
         if let Some(saved) = replaced
-            && !self
-                .rpc("eth_getTransactionByHash", json!([saved]))
-                .await?
-                .is_null()
+            && !self.forgot(saved).await?
         {
             return Err(another_recorded());
         }
